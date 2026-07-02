@@ -1,0 +1,22 @@
+{
+  "scene": "dam_break",
+  "gravity": 9.81,
+  "column_height": 1.2,
+  "column_width": 0.6,
+  "domain": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      3.2,
+      0.6,
+      1.6
+    ]
+  ],
+  "voxel_size": 0.03,
+  "fps": 24,
+  "spacing": 0.015,
+  "injected": 128000
+}

@@ -1,0 +1,28 @@
+{
+  "scene": "crown_splash",
+  "gravity": 9.81,
+  "pool_depth": 0.05,
+  "drop_center": [
+    0.4,
+    0.4,
+    0.2
+  ],
+  "drop_radius": 0.045,
+  "drop_speed": 3.5,
+  "domain": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.8,
+      0.8,
+      0.5
+    ]
+  ],
+  "voxel_size": 0.01,
+  "fps": 24,
+  "pool_particles": 256000,
+  "total_particles": 259112
+}

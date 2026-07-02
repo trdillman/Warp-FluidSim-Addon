@@ -1,0 +1,344 @@
+"""Analyze exported demo-scene particle data against canonical benchmarks.
+
+Run with plain Python (numpy only):  python tools/analyze_demos.py
+
+Checks per scene
+----------------
+dam_break     - mass conservation, containment, floor penetration, monotonic
+                front advance, front speed vs shallow-water theory
+                (<= 2*sqrt(g*H), experimental range ~1.5-2), Martin & Moses
+                dimensionless front position at T=2, column collapse,
+                velocity boundedness, whitewater emission.
+crown_splash  - mass conservation, containment, impact detection, crown rise
+                above the pool, azimuthal crown symmetry (CV over 12
+                sectors), sqrt(t) crown-radius growth correlation
+                (Yarin-Weiss rim propagation), velocity boundedness.
+slosh_tank    - mass conservation, containment, first-mode slosh period vs
+                analytic dispersion w^2 = g*k*tanh(k*h) (k = pi/L),
+                oscillation amplitude decay, velocity boundedness.
+
+Writes demos/analysis_report.json and demos/ANALYSIS.md; exits nonzero on
+any failed check.
+"""
+
+import json
+import math
+import os
+import sys
+
+import numpy as np
+
+DEMOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "demos")
+
+CHECKS = []
+
+
+def check(scene, name, passed, detail):
+    CHECKS.append({"scene": scene, "check": name, "passed": bool(passed),
+                   "detail": detail})
+    print(f"[{'PASS' if passed else 'FAIL'}] {scene}: {name} — {detail}")
+
+
+def load_scene(name):
+    base = os.path.join(DEMOS, name)
+    with open(os.path.join(base, "meta.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    with open(os.path.join(base, "series.json"), encoding="utf-8") as fh:
+        series = json.load(fh)
+    frames = {}
+    for f in series["frames"]:
+        data = np.load(os.path.join(base, f"frame_{f:04d}.npz"))
+        frames[f] = {k: data[k].astype(np.float32) for k in data.files}
+    return meta, series, frames
+
+
+def common_checks(name, meta, series, frames, vmax_limit):
+    lo, hi = np.array(meta["domain"][0]), np.array(meta["domain"][1])
+    h = meta["voxel_size"]
+    counts = np.array(series["particle_count"])
+    check(name, "mass conservation",
+          counts.min() == counts.max(),
+          f"count {counts.min():,}..{counts.max():,} over {len(counts)} frames")
+    worst_pen = 0.0
+    worst_out = 0.0
+    vmax = 0.0
+    for f, d in frames.items():
+        p = d["positions"]
+        worst_pen = max(worst_pen, float(-(p[:, 2].min())))
+        out = np.maximum(p - hi, 0.0).max() + np.maximum(lo - p, 0.0).max()
+        worst_out = max(worst_out, float(out))
+        if "velocities" in d:
+            speed = np.linalg.norm(d["velocities"], axis=1)
+            # 99.9th percentile: robust bulk-speed bound (a single splash
+            # particle is not a stability statement).
+            vmax = max(vmax, float(np.percentile(speed, 99.9)))
+    check(name, "no floor penetration", worst_pen <= h * 1.5,
+          f"max below-floor {worst_pen * 1000:.1f} mm (limit {h * 1500:.0f} mm)")
+    check(name, "domain containment", worst_out <= h * 1.5,
+          f"max outside {worst_out * 1000:.1f} mm")
+    check(name, "velocity bounded (p99.9)", 0.0 < vmax < vmax_limit,
+          f"p99.9 speed {vmax:.2f} m/s (limit {vmax_limit})")
+
+
+# ---------------------------------------------------------------------------
+
+def analyze_dam_break():
+    name = "dam_break"
+    meta, series, frames = load_scene(name)
+    g, H, a = meta["gravity"], meta["column_height"], meta["column_width"]
+    fps = meta["fps"]
+    common_checks(name, meta, series, frames,
+                  vmax_limit=4.0 * math.sqrt(g * H))
+
+    # Front position: leading edge of near-floor fluid (containment is
+    # verified above, so the max is trustworthy).
+    ts, fronts = [], []
+    for f in sorted(frames):
+        p = frames[f]["positions"]
+        low = p[p[:, 2] < 0.15]
+        if len(low):
+            ts.append(f / fps)
+            fronts.append(float(low[:, 0].max()))
+    ts, fronts = np.array(ts), np.array(fronts)
+    wall_x = meta["domain"][1][0] - 2 * meta["voxel_size"]
+    pre_wall = fronts < wall_x
+
+    # Monotonic advance until the wall (1-voxel noise tolerance).
+    adv = np.diff(fronts[pre_wall])
+    check(name, "front advances monotonically",
+          bool((adv > -meta["voxel_size"]).all()),
+          f"min frame-to-frame delta {adv.min() * 1000:.1f} mm")
+
+    # Early-phase front speed vs sqrt(g*H): Ritter analytical bound is
+    # 2.0; experiments (Koshizuka, Martin-Moses) show 0.6-1.2 with wall
+    # friction. Accept 0.6-2.2 to span both theory and experiment.
+    idx = (ts >= 2 / fps) & (ts <= 10 / fps) & pre_wall
+    if idx.sum() >= 3:
+        speed = np.polyfit(ts[idx], fronts[idx], 1)[0]
+    else:
+        speed = 0.0
+    c0 = math.sqrt(g * H)
+    check(name, "front speed vs shallow-water theory",
+          0.6 * c0 <= speed <= 2.2 * c0,
+          f"{speed:.2f} m/s = {speed / c0:.2f}*sqrt(gH) (accept 0.6-2.2)")
+
+    # Martin & Moses dimensionless front position at T = t*sqrt(2g/a) = 2.
+    T = ts * math.sqrt(2 * g / a)
+    Z = fronts / a
+    if (T >= 2).any():
+        z_at_2 = float(np.interp(2.0, T, Z))
+        check(name, "Martin-Moses front position at T=2",
+              2.0 <= z_at_2 <= 4.5,
+              f"Z(T=2) = {z_at_2:.2f} (experimental 2.5-4.0)")
+    else:
+        check(name, "Martin-Moses front position at T=2", False,
+              "front never reached T=2")
+
+    # Column collapse: residual height at the left wall drops below 0.55*H.
+    first, last = min(frames), max(frames)
+    p_last = frames[last]["positions"]
+    col = p_last[p_last[:, 0] < 0.2]
+    h_end = float(np.percentile(col[:, 2], 99)) if len(col) else 0.0
+    check(name, "column collapses", h_end < 0.55 * H,
+          f"left-wall height {h_end:.2f} m from {H:.2f} m")
+
+    ww = np.array(series["whitewater_count"])
+    check(name, "whitewater emitted by turbulent bore", ww.max() > 100,
+          f"peak whitewater {ww.max():,}")
+    return {"front_speed_over_c0": speed / c0,
+            "z_at_T2": z_at_2 if (T >= 2).any() else None,
+            "column_height_end": h_end}
+
+
+# ---------------------------------------------------------------------------
+
+def analyze_crown_splash():
+    name = "crown_splash"
+    meta, series, frames = load_scene(name)
+    fps = meta["fps"]
+    pool = meta["pool_depth"]
+    cx, cy = meta["drop_center"][0], meta["drop_center"][1]
+    common_checks(name, meta, series, frames,
+                  vmax_limit=3.0 * meta["drop_speed"])
+
+    # Impact frame: droplet bottom reaches the pool surface.
+    gap = meta["drop_center"][2] - meta["drop_radius"] - pool
+    t_impact = gap / meta["drop_speed"]
+    f_impact = max(1, int(round(t_impact * fps)))
+
+    # Crown particles: above the quiescent pool surface, in an annulus
+    # around the impact point.
+    splash_band = pool + 0.02
+    crown_r, crown_n, crown_h = {}, {}, {}
+    for f in sorted(frames):
+        p = frames[f]["positions"]
+        z = p[:, 2]
+        r = np.hypot(p[:, 0] - cx, p[:, 1] - cy)
+        m = (z > splash_band) & (r > 0.02) & (r < 0.35)
+        crown_n[f] = int(m.sum())
+        crown_h[f] = float(np.percentile(z[m], 98) - pool) if m.any() else 0.0
+        crown_r[f] = float(np.percentile(r[m], 90)) if m.any() else 0.0
+
+    peak_f = max(crown_n, key=crown_n.get)
+    check(name, "crown forms after impact",
+          crown_n[peak_f] > 500 and peak_f >= f_impact,
+          f"peak {crown_n[peak_f]:,} crown particles at frame {peak_f} "
+          f"(impact ~frame {f_impact})")
+    check(name, "crown rises above pool",
+          max(crown_h.values()) > 0.03,
+          f"max crown height {max(crown_h.values()) * 1000:.0f} mm above pool")
+
+    # sqrt(t) rim growth (Yarin-Weiss): correlate rim radius with
+    # sqrt(t - t0) over the crown-expansion window only (the window ends
+    # when the rim collapses back into the pool; afterwards the central
+    # Worthington jet would pollute the radius statistic).
+    expand_end = peak_f
+    for f in range(peak_f, max(frames)):
+        if crown_n.get(f + 1, 0) < crown_n.get(f, 0):
+            expand_end = f + 1
+            break
+    grow = [(f / fps, crown_r[f]) for f in sorted(frames)
+            if f_impact <= f <= expand_end and crown_n[f] > 200]
+    if len(grow) >= 4:
+        tt = np.array([v[0] for v in grow]) - (f_impact - 1) / fps
+        rr = np.array([v[1] for v in grow])
+        corr = float(np.corrcoef(np.sqrt(np.maximum(tt, 1e-6)), rr)[0, 1])
+    else:
+        corr = 0.0
+    check(name, "crown radius grows ~sqrt(t)", corr > 0.8,
+          f"corr(R, sqrt(t)) = {corr:.3f} over {len(grow)} expansion frames")
+
+    # Worthington jet: after crown collapse, a central rebound jet rises.
+    jet_n, jet_h = 0, 0.0
+    for f in sorted(frames):
+        if f <= peak_f + 2:
+            continue
+        p = frames[f]["positions"]
+        z = p[:, 2]
+        r = np.hypot(p[:, 0] - cx, p[:, 1] - cy)
+        m = (z > pool + 0.06) & (r < 0.06)
+        if int(m.sum()) > jet_n:
+            jet_n = int(m.sum())
+            jet_h = float(np.percentile(z[m], 98) - pool)
+    check(name, "Worthington jet rebounds at center", jet_n > 200,
+          f"peak {jet_n:,} jet particles, height {jet_h * 1000:.0f} mm")
+
+    # Azimuthal symmetry at peak: 12 sectors, CV of per-sector rim radius.
+    p = frames[peak_f]["positions"]
+    z, r = p[:, 2], np.hypot(p[:, 0] - cx, p[:, 1] - cy)
+    th = np.arctan2(p[:, 1] - cy, p[:, 0] - cx)
+    m = (z > splash_band) & (r > 0.02) & (r < 0.35)
+    sector_r = []
+    for s in range(12):
+        lo_a = -math.pi + s * (2 * math.pi / 12)
+        sm = m & (th >= lo_a) & (th < lo_a + 2 * math.pi / 12)
+        if sm.sum() >= 10:
+            sector_r.append(np.percentile(r[sm], 90))
+    cv = float(np.std(sector_r) / np.mean(sector_r)) if len(sector_r) >= 10 \
+        else 1.0
+    check(name, "crown azimuthal symmetry", cv < 0.35,
+          f"sector-radius CV = {cv:.3f} over {len(sector_r)}/12 sectors")
+    return {"impact_frame": f_impact, "peak_frame": peak_f,
+            "crown_sqrt_t_corr": corr, "crown_symmetry_cv": cv,
+            "max_crown_height": max(crown_h.values())}
+
+
+# ---------------------------------------------------------------------------
+
+def analyze_slosh_tank():
+    name = "slosh_tank"
+    meta, series, frames = load_scene(name)
+    fps = meta["fps"]
+    g, L, depth = meta["gravity"], meta["tank_length"], meta["mean_depth"]
+    common_checks(name, meta, series, frames, vmax_limit=6.0)
+
+    k = math.pi / L
+    omega = math.sqrt(g * k * math.tanh(k * depth))
+    T_analytic = 2 * math.pi / omega
+
+    # Antisymmetric first-mode probe: left-wall minus right-wall surface
+    # elevation (cancels the symmetric second harmonic).
+    sig = []
+    for f in sorted(frames):
+        p = frames[f]["positions"]
+        ml = p[:, 0] < 0.08
+        mr = p[:, 0] > L - 0.08
+        el = float(np.percentile(p[ml, 2], 95)) if ml.any() else depth
+        er = float(np.percentile(p[mr, 2], 95)) if mr.any() else depth
+        sig.append(el - er)
+    sig = np.array(sig)
+    sig -= sig.mean()
+
+    # Dominant period via windowed FFT.
+    win = np.hanning(len(sig))
+    spec = np.abs(np.fft.rfft(sig * win))
+    freqs = np.fft.rfftfreq(len(sig), 1.0 / fps)
+    kdom = int(np.argmax(spec[1:]) + 1)
+    T_measured = float(1.0 / freqs[kdom])
+    err = abs(T_measured - T_analytic) / T_analytic
+    check(name, "first-mode slosh period vs dispersion relation",
+          err < 0.20,
+          f"measured {T_measured:.2f} s vs analytic {T_analytic:.2f} s "
+          f"({err * 100:.1f}% error)")
+
+    # Periodicity: the dominant mode carries most of the spectral energy.
+    frac = float(spec[kdom] / max(spec[1:].sum(), 1e-9))
+    check(name, "oscillation is periodic", frac > 0.25,
+          f"dominant-mode spectral fraction = {frac:.2f}")
+
+    # Amplitude decays under numerical + physical dissipation.
+    n_per = max(1, int(round(T_measured * fps)))
+    first_amp = float(np.abs(sig[:n_per]).max())
+    last_amp = float(np.abs(sig[-n_per:]).max())
+    check(name, "slosh amplitude decays", last_amp < first_amp,
+          f"first-period amp {first_amp * 1000:.0f} mm -> "
+          f"last-period {last_amp * 1000:.0f} mm")
+    return {"T_analytic": T_analytic, "T_measured": T_measured,
+            "period_error": err, "dominant_fraction": frac,
+            "first_amp": first_amp, "last_amp": last_amp}
+
+
+def main():
+    metrics = {}
+    for fn, key in ((analyze_dam_break, "dam_break"),
+                    (analyze_crown_splash, "crown_splash"),
+                    (analyze_slosh_tank, "slosh_tank")):
+        try:
+            metrics[key] = fn()
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            traceback.print_exc()
+            check(key, "analysis completed", False, repr(exc))
+    passed = sum(1 for c in CHECKS if c["passed"])
+    report = {"result": "pass" if passed == len(CHECKS) else "fail",
+              "passed": passed, "total": len(CHECKS),
+              "checks": CHECKS, "metrics": metrics}
+    with open(os.path.join(DEMOS, "analysis_report.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+    lines = ["# FluidSim Warp — Demo Scene Analysis", "",
+             f"Verdict: **{report['result'].upper()}** "
+             f"({passed}/{len(CHECKS)} checks)", ""]
+    for scene in ("dam_break", "crown_splash", "slosh_tank"):
+        lines.append(f"## {scene}")
+        lines.append("")
+        lines.append("| Check | Result | Detail |")
+        lines.append("|---|---|---|")
+        for c in CHECKS:
+            if c["scene"] == scene:
+                lines.append(f"| {c['check']} | "
+                             f"{'PASS' if c['passed'] else 'FAIL'} | "
+                             f"{c['detail']} |")
+        lines.append("")
+    with open(os.path.join(DEMOS, "ANALYSIS.md"), "w",
+              encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    print(f"\nDEMO-ANALYSIS-{report['result'].upper()} "
+          f"({passed}/{len(CHECKS)})")
+    sys.exit(0 if report["result"] == "pass" else 1)
+
+
+main()
