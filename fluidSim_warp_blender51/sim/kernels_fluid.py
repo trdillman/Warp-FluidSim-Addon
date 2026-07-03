@@ -965,11 +965,31 @@ def k_particles_relax(
     if push_len > max_push:
         push = push * (max_push / push_len)
     p_new = p + push * (strength * separation)
-    # do not push into colliders
+    # If the relaxed position enters a collider, project it out along the SDF
+    # gradient instead of reverting to p, which may already be inside.
     vp = world_to_voxel(p_new, origin, voxel_size)
     phi = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp, 1.0e9)
     if phi < 0.0:
-        p_new = p
+        gx = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp + wp.vec3(1.0, 0.0, 0.0), 1.0e9) - sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp - wp.vec3(1.0, 0.0, 0.0), 1.0e9)
+        gy = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp + wp.vec3(0.0, 1.0, 0.0), 1.0e9) - sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp - wp.vec3(0.0, 1.0, 0.0), 1.0e9)
+        gz = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp + wp.vec3(0.0, 0.0, 1.0), 1.0e9) - sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            vp - wp.vec3(0.0, 0.0, 1.0), 1.0e9)
+        n = wp.vec3(gx, gy, gz)
+        ln = wp.length(n)
+        if ln > 1.0e-8:
+            n = n * (1.0 / ln)
+            p_new = p_new - n * phi * 1.01
     # keep inside the domain (same margin as advection)
     margin = 1.0e-4
     p_new = wp.vec3(
