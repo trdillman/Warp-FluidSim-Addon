@@ -20,6 +20,8 @@ No bpy imports allowed here.
 
 from __future__ import annotations
 
+import math
+
 import warp as wp
 
 wp.set_module_options({"enable_backward": False})
@@ -30,6 +32,39 @@ from .fields import (
     voxel_flat_index,
 )
 from .registry import register_fn
+
+PRESSURE_STATUS_NOT_RUN = "not_run"
+PRESSURE_STATUS_JACOBI = "jacobi"
+PRESSURE_STATUS_CONVERGED = "converged"
+PRESSURE_STATUS_MAX_ITERATIONS = "max_iterations"
+PRESSURE_STATUS_STALLED = "stalled"
+PRESSURE_STATUS_SINGULAR = "singular"
+PRESSURE_STATUS_INVALID = "invalid"
+
+PRESSURE_STATUS_CODES = {
+    PRESSURE_STATUS_NOT_RUN: 0,
+    PRESSURE_STATUS_JACOBI: 1,
+    PRESSURE_STATUS_CONVERGED: 2,
+    PRESSURE_STATUS_MAX_ITERATIONS: 3,
+    PRESSURE_STATUS_STALLED: 4,
+    PRESSURE_STATUS_SINGULAR: 5,
+    PRESSURE_STATUS_INVALID: 6,
+}
+
+
+@wp.func
+def finite_pressure_value(value: float) -> float:
+    if wp.isnan(value) or wp.isinf(value):
+        return 0.0
+    return value
+
+
+@wp.func
+def bounded_pressure_gradient(p_hi: float, p_lo: float, inv_h: float, limit: float) -> float:
+    g = (p_hi - p_lo) * inv_h
+    if wp.isnan(g) or wp.isinf(g):
+        g = 0.0
+    return wp.clamp(g, -limit, limit)
 
 # ---------------------------------------------------------------------------
 # Divergence + matrix helpers
@@ -127,9 +162,23 @@ def k_particle_count_to_pressure_rhs(
     vt = voxel_type[tid]
     if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
         return
+    if stiffness <= 0.0 or wp.isnan(stiffness) or wp.isinf(stiffness):
+        return
+    if rest_count <= 0.0 or wp.isnan(rest_count) or wp.isinf(rest_count):
+        return
+    if voxel_size <= 0.0 or wp.isnan(voxel_size) or wp.isinf(voxel_size):
+        return
+
     over = float(voxel_counts[tid]) - rest_count
     if over > 0.0:
-        rhs[tid] = rhs[tid] + stiffness * over * voxel_size * voxel_size
+        safe_over = wp.min(over, rest_count)
+        source = stiffness * safe_over * voxel_size * voxel_size
+        if wp.isnan(source) or wp.isinf(source):
+            return
+        base = rhs[tid]
+        if wp.isnan(base) or wp.isinf(base):
+            base = 0.0
+        rhs[tid] = base + source
 
 
 @wp.kernel
@@ -485,6 +534,7 @@ def k_project(
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
     voxel_size: float,
+    max_gradient: float,
     collision_vel: wp.array(dtype=wp.vec3),
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
@@ -499,7 +549,10 @@ def k_project(
     inv_h = 1.0 / voxel_size
     here_fluid = (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0
     here_solid = (vt & VOXEL_COLLISION) != 0
-    x_here = wp.where(here_fluid, x[tid], 0.0)
+    limit = wp.max(max_gradient, 1.0e-6)
+    x_here = float(0.0)
+    if here_fluid:
+        x_here = finite_pressure_value(x[tid])
     for axis in range(3):
         n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         n_fluid = wp.int32(0)
@@ -511,7 +564,7 @@ def k_project(
                 n_solid = 1
             elif (nvt & VOXEL_FLUID) != 0:
                 n_fluid = 1
-                x_n = x[n]
+                x_n = finite_pressure_value(x[n])
         else:
             n_solid = 1  # domain wall
         if here_solid or n_solid != 0:
@@ -531,7 +584,7 @@ def k_project(
                 w[tid] = vel_c[2]
                 ww[tid] = wp.max(ww[tid], 1.0e-6)
         elif here_fluid or n_fluid != 0:
-            g = (x_here - x_n) * inv_h
+            g = bounded_pressure_gradient(x_here, x_n, inv_h, limit)
             if axis == 0:
                 u[tid] = u[tid] - g
             elif axis == 1:
@@ -622,7 +675,9 @@ def k_pressure_threshold_compute(
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
-    wp.atomic_max(out_max, 0, wp.abs(x[tid]))
+    v = x[tid]
+    if not wp.isnan(v) and not wp.isinf(v):
+        wp.atomic_max(out_max, 0, wp.abs(v))
 
 
 @wp.kernel
@@ -636,7 +691,16 @@ def k_pressure_threshold_apply(
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
-    if wp.abs(x[tid]) < relative_threshold * max_val[0]:
+
+    v = x[tid]
+    if wp.isnan(v) or wp.isinf(v):
+        x[tid] = 0.0
+        return
+
+    threshold = relative_threshold * max_val[0]
+    if threshold <= 0.0 or wp.isnan(threshold) or wp.isinf(threshold):
+        return
+    if wp.abs(v) < threshold:
         x[tid] = 0.0
 
 
@@ -744,6 +808,13 @@ class PressureSolver:
         self.max_pressure = wp.zeros(1, dtype=float, device=device)
         self.last_iterations = 0
         self.last_residual = 0.0
+        self.last_residual_squared = 0.0
+        self.last_pressure_status = PRESSURE_STATUS_NOT_RUN
+        self.last_pressure_status_code = PRESSURE_STATUS_CODES[PRESSURE_STATUS_NOT_RUN]
+        self.last_pcg_failure = ""
+        self.last_pressure_valid = False
+        self.last_status = self._make_status(
+            False, PRESSURE_STATUS_NOT_RUN, 0.0, 0)
 
     # -- helpers -------------------------------------------------------------
 
@@ -753,6 +824,29 @@ class PressureSolver:
     def _stencil_args(self):
         g = self.grid
         return [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim, g.num_leaves]
+
+    def _make_status(self, converged, reason, residual, iterations):
+        return {
+            "converged": bool(converged),
+            "iterations": int(iterations),
+            "reason": reason,
+            "residual": float(residual),
+            "project_velocity": bool(converged),
+        }
+
+    def _set_pressure_status(self, status, failure="", pressure_valid=False):
+        self.last_pressure_status = status
+        self.last_pressure_status_code = PRESSURE_STATUS_CODES.get(
+            status, PRESSURE_STATUS_CODES[PRESSURE_STATUS_INVALID])
+        self.last_pcg_failure = failure
+        self.last_pressure_valid = pressure_valid
+        self.last_status = self._make_status(
+            pressure_valid, failure or status, self.last_residual,
+            self.last_iterations)
+
+    def should_project_pressure(self):
+        """True when the current pressure field is safe to project."""
+        return self.last_pressure_valid
 
     def build_rhs(self, vel, voxel_type, collision_vel, voxel_counts,
                   rest_count=8.0, count_stiffness=0.0):
@@ -825,6 +919,10 @@ class PressureSolver:
             wp.copy(self.pressure, src)
         self.last_iterations = iterations
         self.last_residual = -1.0
+        self.last_residual_squared = -1.0
+        self._set_pressure_status(
+            PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
+        return self.last_status
 
     def solve_pcg(self, voxel_type, max_iterations, tolerance, use_coarse_guess=False,
                   check_every=25):
@@ -853,9 +951,25 @@ class PressureSolver:
                         self.r, self.z, self.p_dir],
                 device=self.device,
             )
+        check_every = max(1, int(check_every))
+        tol_sq = tolerance * tolerance * max(1, n)
+        status = PRESSURE_STATUS_MAX_ITERATIONS
+        failure = "max_iterations"
+        pressure_valid = False
         wp.utils.array_inner(self.r, self.z, out=self.rz)
+        wp.utils.array_inner(self.r, self.r, out=self.residual)
+        last_checked_res = float(self.residual.numpy()[0])
         it = 0
+        if not math.isfinite(last_checked_res):
+            status = PRESSURE_STATUS_INVALID
+            failure = "non_finite_residual"
+        elif last_checked_res < tol_sq:
+            status = PRESSURE_STATUS_CONVERGED
+            failure = PRESSURE_STATUS_CONVERGED
+            pressure_valid = True
         while it < max_iterations:
+            if status != PRESSURE_STATUS_MAX_ITERATIONS:
+                break
             wp.launch(
                 k_apply_matrix, dim=n,
                 inputs=[self.p_dir, voxel_type, self.inv_diag,
@@ -863,6 +977,16 @@ class PressureSolver:
                 device=self.device,
             )
             wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap)
+            denom = float(self.p_ap.numpy()[0])
+            rz_old = float(self.rz.numpy()[0])
+            if not math.isfinite(denom) or not math.isfinite(rz_old):
+                status = PRESSURE_STATUS_INVALID
+                failure = "non_finite_residual"
+                break
+            if abs(denom) < 1.0e-30 or abs(rz_old) < 1.0e-30:
+                status = PRESSURE_STATUS_SINGULAR
+                failure = "singular_system"
+                break
             wp.launch(k_compute_alpha, dim=1,
                       inputs=[self.rz, self.p_ap, self.alpha], device=self.device)
             wp.launch(
@@ -876,6 +1000,15 @@ class PressureSolver:
                 device=self.device,
             )
             wp.utils.array_inner(self.r, self.z, out=self.rz_new)
+            rz_new = float(self.rz_new.numpy()[0])
+            if not math.isfinite(rz_new):
+                status = PRESSURE_STATUS_INVALID
+                failure = "non_finite_residual"
+                break
+            if rz_new < -1.0e-20:
+                status = PRESSURE_STATUS_SINGULAR
+                failure = "singular_system"
+                break
             wp.launch(k_compute_beta, dim=1,
                       inputs=[self.rz_new, self.rz, self.beta], device=self.device)
             wp.launch(
@@ -887,12 +1020,34 @@ class PressureSolver:
             it += 1
             if it % check_every == 0 or it == max_iterations:
                 wp.utils.array_inner(self.r, self.r, out=self.residual)
-                res = float(self.residual.numpy()[0])
-                if res < tolerance * tolerance * max(1, n):
+                res_sq = float(self.residual.numpy()[0])
+                if not math.isfinite(res_sq):
+                    status = PRESSURE_STATUS_INVALID
+                    failure = "non_finite_residual"
                     break
+                if res_sq < tol_sq:
+                    status = PRESSURE_STATUS_CONVERGED
+                    failure = PRESSURE_STATUS_CONVERGED
+                    pressure_valid = True
+                    break
+                if res_sq >= last_checked_res * (1.0 - 1.0e-6):
+                    status = PRESSURE_STATUS_STALLED
+                    failure = "stalled"
+                    break
+                last_checked_res = res_sq
         self.last_iterations = it
         wp.utils.array_inner(self.r, self.r, out=self.residual)
-        self.last_residual = float(self.residual.numpy()[0]) ** 0.5
+        res_sq = float(self.residual.numpy()[0])
+        if not math.isfinite(res_sq):
+            status = PRESSURE_STATUS_INVALID
+            failure = "non_finite_residual"
+            res_sq = math.inf
+        self.last_residual_squared = res_sq
+        self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
+        if status != PRESSURE_STATUS_CONVERGED:
+            self.pressure.zero_()
+        self._set_pressure_status(status, failure, pressure_valid)
+        return self.last_status
 
     def measure_residual(self, voxel_type):
         """L2 norm of (rhs - A*pressure) for the current pressure solution.
@@ -935,12 +1090,13 @@ class PressureSolver:
             device=self.device,
         )
 
-    def project(self, vel, voxel_type, collision_vel):
+    def project(self, vel, voxel_type, collision_vel, max_gradient=1.0e6):
         g = self.grid
         wp.launch(
             k_project, dim=self._dim(),
             inputs=[self.pressure, voxel_type, g.leaf_table, g.leaf_coords,
                     g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                    max_gradient,
                     collision_vel,
                     vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
             device=self.device,

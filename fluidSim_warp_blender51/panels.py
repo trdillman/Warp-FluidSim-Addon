@@ -334,12 +334,20 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
         col = layout.column(align=True)
+        col.prop(fs, "liquid_view_mode")
         col.prop(fs, "show_surface")
+        sub = col.column(align=True)
+        sub.enabled = fs.show_surface
+        sub.prop(fs, "surface_attribute_mode")
         col.prop(fs, "show_particles")
         sub = col.column(align=True)
         sub.enabled = fs.show_particles
         sub.prop(fs, "particle_display_fraction")
+        sub.prop(fs, "particle_attribute_mode")
         col.prop(fs, "show_whitewater")
+        sub = col.column(align=True)
+        sub.enabled = fs.show_whitewater
+        sub.prop(fs, "whitewater_attribute_mode")
         col.separator()
         col.prop(fs, "surface_material")
         col.prop(fs, "whitewater_material")
