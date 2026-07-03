@@ -1,0 +1,77 @@
+{
+  "dimension": "Type System",
+  "agent_type": "Explore",
+  "files_reviewed": 9,
+  "findings": [
+    {
+      "id": "TYPE-001",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 120,
+      "severity": "high",
+      "title": "Missing SolverSettings field name: `pressure_multigrid` written as `multigrid`",
+      "description": "Line 120 assigns `s.multigrid = MultiGrid[fs.multigrid]`, but the SolverSettings dataclass defines the field as `pressure_multigrid: int = int(MultiGrid.OFF)` (solver.py:402). Python dataclasses do not raise an error on dynamic attribute assignment, so `s.multigrid` is silently created as a new attribute while `s.pressure_multigrid` retains its default value of 0 (OFF). The solver reads `s.pressure_multigrid` at solver.py:891 to decide whether to use multigrid. The user's multigrid selection never reaches the solver.",
+      "impact": "Multigrid enable/disable from the UI is silently ignored. The pressure solver always uses the OFF default regardless of user selection. Users enabling multigrid in the UI will not receive the performance benefit and will not be warned.",
+      "fix": "Change line 120 from `s.multigrid = MultiGrid[fs.multigrid]` to `s.pressure_multigrid = MultiGrid[fs.multigrid]`."
+    },
+    {
+      "id": "TYPE-002",
+      "file": "fluidSim_warp_blender51/properties.py",
+      "line": 106,
+      "severity": "medium",
+      "title": "FloatProperty stores INT constant values with potential precision loss",
+      "description": "The `constant_value: FloatProperty(name=\"Value\", default=0.0)` on line 106 is used for both FLOAT and INT constant types as controlled by `constant_type` (line 103-104). When the user selects INT mode, the value is stored in a Blender FloatProperty (64-bit float), which cannot represent integers beyond 2^53 exactly. The custom kernel compiler in `custom.py` line 118 recovers the integer via `int(round(value))`, introducing a rounding step. Blender provides no way to dynamically switch between IntProperty and FloatProperty.",
+      "impact": "Integer constant values above 9007199254740992 or values with intentional exact integer semantics may suffer rounding errors. In practice most use cases involve small ints, so impact is limited but the type system is unsound.",
+      "fix": "Store both a `FloatProperty` and a separate `IntProperty`, using the `mode` enum to determine which is visible. Alternatively, store the value as FloatProperty and document the precision limitation."
+    },
+    {
+      "id": "TYPE-003",
+      "file": "fluidSim_warp_blender51/sim/fields.py",
+      "line": 497,
+      "severity": "medium",
+      "title": "Ambiguous `dtype=float` in Warp array creation across multiple files",
+      "description": "Python's builtin `float` is used as the dtype argument to `wp.zeros()` in ScalaraField.__init__ (default `dtype=float`, line 497), MacVelocityField.__init__ (lines 514-519), ParticleSystem.__init__ (particles.py line 94), WhitewaterSystem.__init__ (whitewater.py lines 351-352), and PressureSolver.__init__ (pressure.py lines 786-808). In Python/numpy, `float` is float64, while Warp kernel parameter type annotations resolve `float` to float32. If Warp treats dtype=float as float64 while kernels expect float32, every kernel launch is a type mismatch risk.",
+      "impact": "Potential runtime type errors on kernel launch, or double-wide memory allocation (2x VRAM) for all float grid fields and particle attributes. Behavior depends on Warp version and configuration, creating an unpredictable dependency.",
+      "fix": "Replace `dtype=float` with `dtype=wp.float32` (or `dtype=np.float32`) in all `wp.zeros()` and `wp.array()` calls in fields.py, particles.py, whitewater.py, solver.py, pressure.py, and viscosity.py."
+    },
+    {
+      "id": "TYPE-004",
+      "file": "fluidSim_warp_blender51/sim/whitewater.py",
+      "line": 417,
+      "severity": "medium",
+      "title": "Unused `out_count` parameter in `k_ww_compact_scatter` kernel",
+      "description": "The `k_ww_compact_scatter` kernel declares `out_count: wp.array(dtype=wp.int32)` as its 5th output parameter (lines 417-438) and it is passed as output `self._count2` in the `wp.launch()` call at line 393. However, the kernel body never writes to `out_count`. The correct count is computed by `k_ww_final_count` called at lines 396-401. The dead parameter is an incomplete refactor from the liquid particle `k_compact_alive_scatter` kernel (particles.py lines 26-61) which does write its count output.",
+      "impact": "No functional impact (count is computed correctly by `k_ww_final_count`), but the dead parameter wastes GPU launch bandwidth, creates misleading code, and suggests an incomplete refactor.",
+      "fix": "Remove `out_count` from `k_ww_compact_scatter` kernel signature, its type annotation, and the `outputs` list in the `wp.launch()` call at line 393."
+    },
+    {
+      "id": "TYPE-005",
+      "file": "fluidSim_warp_blender51/sim/solver.py",
+      "line": 1198,
+      "severity": "low",
+      "title": "Default `life=0.0` kills particles when `use_lifespan=True`",
+      "description": "The `inject_particles` method declares `life=0.0` as a default (line 1198) alongside `use_lifespan=False`. If a caller passes `use_lifespan=True` without providing a `life` value, particle life is set to 0.0, immediately killing particles on the first lifecycle check (age 0.0 >= life 0.0). The sentinel `1.0e30` fallback in `k_source_particles` (sourcing.py line 492) only applies when `use_lifespan` is false.",
+      "impact": "Low severity because the default `use_lifespan=False` protects typical usage. Only affects programmatic API callers who enable lifespan without setting life. The Blender bridge never calls `inject_particles`.",
+      "fix": "Change the default to `life=1.0e30` to match the no-lifespan sentinel, or raise `ValueError` if `use_lifespan=True` and `life <= 0.0`."
+    },
+    {
+      "id": "TYPE-006",
+      "file": "fluidSim_warp_blender51/properties.py",
+      "line": 218,
+      "severity": "low",
+      "title": "`particles_per_voxel` typed as IntProperty but used as float in solver",
+      "description": "The Blender property `particles_per_voxel: IntProperty(default=8, min=1, max=64)` (properties.py line 218) constrains input to whole integers. However, `SolverSettings.particles_per_voxel: float` (solver.py line 389) stores it as float, and the pressure solver uses it as `rest_count: float` (pressure.py line 152). The pipeline is fully float-capable, but the UI prevents fractional values.",
+      "impact": "Users cannot set fractional particles-per-voxel targets (e.g., 4.5) even though the downstream solver supports float. Capability limitation, not a correctness bug.",
+      "fix": "Change `IntProperty` to `FloatProperty` in properties.py line 218 to expose the full float range that the solver supports."
+    },
+    {
+      "id": "TYPE-007",
+      "file": "fluidSim_warp_blender51/properties.py",
+      "line": 225,
+      "severity": "low",
+      "title": "`relax_mode` default mismatch between UI (NEIGHBOR_VOXELS) and SolverSettings (LOCAL_VOXEL)",
+      "description": "The Blender property `relax_mode` defaults to `\"NEIGHBOR_VOXELS\"` (properties.py line 225, value 1), while `SolverSettings.relax_mode` defaults to `int(RelaxMode.LOCAL_VOXEL)` (solver.py line 393, value 0). The scene_bridge.py line 114 overwrites the solver default with the UI value, so normal interactive use is correct. However, any code path that constructs `SolverSettings` directly without going through `build_settings` would silently use a different mode than the UI shows.",
+      "impact": "No impact in the normal UI-driven workflow. Minor risk in headless or programmatic use where the UI default and solver default could diverge silently.",
+      "fix": "Either change the UI default to `\"LOCAL_VOXEL\"` or change the SolverSettings default to `int(RelaxMode.NEIGHBOR_VOXELS)` to keep both defaults in agreement."
+    }
+  ]
+}

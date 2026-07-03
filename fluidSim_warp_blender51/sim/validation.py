@@ -1,4 +1,4 @@
-"""GPU validation suite implementing the 13 synthesized validation targets.
+"""GPU validation suite implementing the synthesized validation targets.
 
 Each test runs real Warp kernels on the configured device and returns a
 ``ValidationResult``. ``run_all()`` executes every registered test and is the
@@ -22,12 +22,14 @@ from .constants import (
     VOXEL_ACTIVE,
     VOXEL_COLLISION,
     VOXEL_FLUID,
+    VOXEL_SOURCE_REGION_TRACKING,
     VOXEL_SINK,
 )
 from . import fields as F
 from . import kernels_core as KC
 from . import kernels_fluid as KF
 from . import pressure as P
+from . import sourcing as SRC
 from . import surface as SURF
 from . import whitewater as WW
 from .fields import MacVelocityField, ScalarField, SparseGrid
@@ -40,6 +42,8 @@ VALIDATION_TESTS = [
     "particle-to-grid count/average/active masks",
     "grid-to-particle velocity/attribute sampling",
     "source shape coverage and source particle attribute transfer",
+    "height-field sourcing flat/profile behavior",
+    "NanoVDB/OpenVDB volume sourcing kernels",
     "collision/sink voxel-type bit behavior",
     "pressure projection divergence reduction",
     "Jacobi and PCG residual convergence",
@@ -113,6 +117,29 @@ def _seed_particles(grid, device, spacing_frac=0.5, lo=(-0.4, -0.4, 0.1), hi=(0.
     alive[:n] = 1
     wp.copy(psys.alive, wp.array(alive, dtype=wp.int32, device=device))
     return psys, n
+
+
+def _voxel_centers(grid):
+    """Host-side centers for active leaf slots, in validation order."""
+    leaf_coords = grid.leaf_coords.numpy()[: grid.active_leaf_count]
+    centers = np.zeros((grid.voxel_capacity, 3), dtype=np.float32)
+    for slot, lc in enumerate(leaf_coords):
+        for lz in range(LEAF_DIM):
+            for ly in range(LEAF_DIM):
+                for lx in range(LEAF_DIM):
+                    flat = slot * LEAF_VOLUME + (lz * LEAF_DIM + ly) * LEAF_DIM + lx
+                    centers[flat] = (
+                        np.array(grid.origin, dtype=np.float32)
+                        + (np.array(
+                            [
+                                int(lc[0]) * LEAF_DIM + lx,
+                                int(lc[1]) * LEAF_DIM + ly,
+                                int(lc[2]) * LEAF_DIM + lz,
+                            ],
+                            dtype=np.float32,
+                        ) + 0.5) * grid.voxel_size
+                    )
+    return centers
 
 
 # ---------------------------------------------------------------------------
@@ -323,11 +350,352 @@ def test_source_shapes(device):
 
 
 # ---------------------------------------------------------------------------
-# 7. collision/sink voxel bit behavior
+# 7. height-field sourcing flat/profile behavior
 # ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[6])
+def test_height_field_sourcing(device):
+    grid = _make_grid(device, size=0.8, voxel_size=0.1, capacity=64)
+    centers = _voxel_centers(grid)
+
+    profile = wp.array2d(
+        np.array(
+            [
+                [0.0, 0.0],
+                [0.4, 0.4],
+            ],
+            dtype=np.float32,
+        ),
+        dtype=wp.float32,
+        device=device,
+    )
+    empty_profile = wp.zeros((1, 1), dtype=wp.float32, device=device)
+
+    flat_type = ScalarField(grid, dtype=wp.int32, name="height_flat_type")
+    flat_u = ScalarField(grid, name="height_flat_u")
+    flat_v = ScalarField(grid, name="height_flat_v")
+    flat_w = ScalarField(grid, name="height_flat_w")
+    for field in (flat_type, flat_u, flat_v, flat_w):
+        field.zero()
+
+    wp.launch(
+        SRC.k_source_height,
+        dim=grid.voxel_capacity,
+        inputs=[
+            grid.leaf_coords, grid.num_leaves, grid.origin, grid.voxel_size,
+            0.25, 1, empty_profile, wp.vec2i(1, 1),
+            grid.origin,
+            wp.vec3(
+                grid.origin[0] + 0.8,
+                grid.origin[1] + 0.8,
+                grid.origin[2] + 0.8,
+            ),
+            wp.vec3(1.0, 2.0, 3.0),
+            flat_type.data, flat_u.data, flat_v.data, flat_w.data,
+        ],
+        device=device,
+    )
+
+    flat_types = flat_type.data.numpy()
+    flat_fluid = (flat_types & VOXEL_FLUID) != 0
+    flat_expected = centers[:, 2] <= 0.25 + 1.0e-6
+    flat_ok = bool(np.array_equal(flat_fluid, flat_expected))
+    flat_tracking = bool(np.all((flat_types[flat_expected] & VOXEL_SOURCE_REGION_TRACKING) != 0))
+    flat_velocity = bool(
+        np.allclose(flat_u.data.numpy()[flat_expected], 1.0)
+        and np.allclose(flat_v.data.numpy()[flat_expected], 2.0)
+        and np.allclose(flat_w.data.numpy()[flat_expected], 3.0)
+    )
+
+    prof_type = ScalarField(grid, dtype=wp.int32, name="height_profile_type")
+    prof_u = ScalarField(grid, name="height_profile_u")
+    prof_v = ScalarField(grid, name="height_profile_v")
+    prof_w = ScalarField(grid, name="height_profile_w")
+    for field in (prof_type, prof_u, prof_v, prof_w):
+        field.zero()
+
+    wp.launch(
+        SRC.k_source_height,
+        dim=grid.voxel_capacity,
+        inputs=[
+            grid.leaf_coords, grid.num_leaves, grid.origin, grid.voxel_size,
+            0.10, 2, profile, wp.vec2i(2, 2),
+            grid.origin,
+            wp.vec3(
+                grid.origin[0] + 0.8,
+                grid.origin[1] + 0.8,
+                grid.origin[2] + 0.8,
+            ),
+            wp.vec3(-1.0, 0.5, 4.0),
+            prof_type.data, prof_u.data, prof_v.data, prof_w.data,
+        ],
+        device=device,
+    )
+
+    prof_types = prof_type.data.numpy()
+    prof_fluid = (prof_types & VOXEL_FLUID) != 0
+    fx = np.clip((centers[:, 0] - grid.origin[0]) / 0.8, 0.0, 1.0)
+    prof_expected = centers[:, 2] <= 0.10 + 0.4 * fx + 1.0e-6
+    gained_from_profile = int((prof_fluid & ~flat_expected).sum())
+    profile_ok = bool(np.array_equal(prof_fluid, prof_expected))
+    profile_velocity = bool(
+        np.allclose(prof_u.data.numpy()[prof_expected], -1.0)
+        and np.allclose(prof_v.data.numpy()[prof_expected], 0.5)
+        and np.allclose(prof_w.data.numpy()[prof_expected], 4.0)
+    )
+
+    ok = flat_ok and flat_tracking and flat_velocity and profile_ok and profile_velocity
+    return ok, (
+        f"flat marked {int(flat_fluid.sum())} voxels; profile marked "
+        f"{int(prof_fluid.sum())} voxels ({gained_from_profile} profile-only), "
+        f"flat_ok={flat_ok}, profile_ok={profile_ok}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 8. NanoVDB/OpenVDB volume sourcing kernels
+# ---------------------------------------------------------------------------
+
+
+@_test(VALIDATION_TESTS[7])
+def test_volume_sourcing_kernels(device):
+    from .registry import lookup
+
+    grid = _make_grid(device, size=0.8, voxel_size=0.1, capacity=64)
+    centers = _voxel_centers(grid)
+    interior = np.all(
+        centers <= np.array(grid.origin, dtype=np.float32) + 0.65 + 1.0e-6,
+        axis=1,
+    )
+    shape = (8, 8, 8)
+    fog_np = np.zeros(shape, dtype=np.float32)
+    fog_np[:4, :, :] = 1.0
+    sdf_np = np.ones(shape, dtype=np.float32)
+    sdf_np[:4, :, :] = -1.0
+    temp_np = np.full(shape, 37.5, dtype=np.float32)
+    scalar_np = np.full(shape, 2.0, dtype=np.float32)
+    vector_np = np.zeros(shape + (3,), dtype=np.float32)
+    vector_np[..., 0] = 1.25
+    vector_np[..., 1] = -2.5
+    vector_np[..., 2] = 4.0
+
+    volume_kwargs = {
+        "min_world": tuple(float(x) for x in grid.origin),
+        "voxel_size": grid.voxel_size,
+        "device": device,
+    }
+    fog_volume = wp.Volume.load_from_numpy(fog_np, bg_value=0.0, **volume_kwargs)
+    sdf_volume = wp.Volume.load_from_numpy(sdf_np, bg_value=1.0, **volume_kwargs)
+    temp_volume = wp.Volume.load_from_numpy(temp_np, bg_value=0.0, **volume_kwargs)
+    scalar_volume = wp.Volume.load_from_numpy(scalar_np, bg_value=0.0, **volume_kwargs)
+    vector_volume = wp.Volume.load_from_numpy(
+        vector_np, bg_value=(0.0, 0.0, 0.0), **volume_kwargs
+    )
+
+    scalar_dst = ScalarField(grid, name="volume_scalar")
+    scalar_dst.zero()
+    wp.launch(
+        SRC.k_source_volume_float,
+        dim=grid.voxel_capacity,
+        inputs=[
+            scalar_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, 1, 1.0, 3.0, scalar_dst.data,
+        ],
+        device=device,
+    )
+
+    vec_u = ScalarField(grid, name="volume_u")
+    vec_v = ScalarField(grid, name="volume_v")
+    vec_w = ScalarField(grid, name="volume_w")
+    for field in (vec_u, vec_v, vec_w):
+        field.zero()
+    wp.launch(
+        SRC.k_source_volume_vector,
+        dim=grid.voxel_capacity,
+        inputs=[
+            vector_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, 1, 1.0, 2.0,
+            vec_u.data, vec_v.data, vec_w.data,
+        ],
+        device=device,
+    )
+
+    component_dst = ScalarField(grid, name="volume_component")
+    component_dst.zero()
+    wp.launch(
+        SRC.k_source_volume_vector_component,
+        dim=grid.voxel_capacity,
+        inputs=[
+            vector_volume.id, 2, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, 1, 1.0, 0.5, component_dst.data,
+        ],
+        device=device,
+    )
+
+    fog_type = ScalarField(grid, dtype=wp.int32, name="volume_fog_type")
+    fog_u = ScalarField(grid, name="volume_fog_u")
+    fog_v = ScalarField(grid, name="volume_fog_v")
+    fog_w = ScalarField(grid, name="volume_fog_w")
+    fog_temp = ScalarField(grid, name="volume_fog_temp")
+    for field in (fog_type, fog_u, fog_v, fog_w, fog_temp):
+        field.zero()
+    wp.launch(
+        SRC.k_source_volume_type_fog_with_temperature,
+        dim=grid.voxel_capacity,
+        inputs=[
+            fog_volume.id, temp_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, 0.5, wp.vec3(3.0, 4.0, 5.0),
+            fog_type.data, fog_u.data, fog_v.data, fog_w.data, fog_temp.data,
+        ],
+        device=device,
+    )
+
+    fog_plain_type = ScalarField(grid, dtype=wp.int32, name="volume_fog_plain_type")
+    fog_plain_u = ScalarField(grid, name="volume_fog_plain_u")
+    fog_plain_v = ScalarField(grid, name="volume_fog_plain_v")
+    fog_plain_w = ScalarField(grid, name="volume_fog_plain_w")
+    for field in (fog_plain_type, fog_plain_u, fog_plain_v, fog_plain_w):
+        field.zero()
+    wp.launch(
+        SRC.k_source_volume_type_fog,
+        dim=grid.voxel_capacity,
+        inputs=[
+            fog_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, 0.5, wp.vec3(7.0, 8.0, 9.0),
+            fog_plain_type.data,
+            fog_plain_u.data, fog_plain_v.data, fog_plain_w.data,
+        ],
+        device=device,
+    )
+
+    mask_type = ScalarField(grid, dtype=wp.int32, name="volume_mask_type")
+    mask_type.zero()
+    wp.launch(
+        SRC.k_source_volume_mask_fog,
+        dim=grid.voxel_capacity,
+        inputs=[
+            fog_volume.id, grid.leaf_coords, grid.num_leaves, grid.origin,
+            grid.voxel_size, 0.5, VOXEL_SINK, mask_type.data,
+        ],
+        device=device,
+    )
+
+    sdf_type = ScalarField(grid, dtype=wp.int32, name="volume_sdf_type")
+    sdf_u = ScalarField(grid, name="volume_sdf_u")
+    sdf_v = ScalarField(grid, name="volume_sdf_v")
+    sdf_w = ScalarField(grid, name="volume_sdf_w")
+    sdf_temp = ScalarField(grid, name="volume_sdf_temp")
+    for field in (sdf_type, sdf_u, sdf_v, sdf_w, sdf_temp):
+        field.zero()
+    wp.launch(
+        SRC.k_source_volume_type_sdf_with_temperature,
+        dim=grid.voxel_capacity,
+        inputs=[
+            sdf_volume.id, temp_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, wp.vec3(-2.0, 0.0, 1.0),
+            sdf_type.data, sdf_u.data, sdf_v.data, sdf_w.data, sdf_temp.data,
+        ],
+        device=device,
+    )
+
+    sdf_plain_type = ScalarField(grid, dtype=wp.int32, name="volume_sdf_plain_type")
+    sdf_plain_u = ScalarField(grid, name="volume_sdf_plain_u")
+    sdf_plain_v = ScalarField(grid, name="volume_sdf_plain_v")
+    sdf_plain_w = ScalarField(grid, name="volume_sdf_plain_w")
+    for field in (sdf_plain_type, sdf_plain_u, sdf_plain_v, sdf_plain_w):
+        field.zero()
+    wp.launch(
+        SRC.k_source_volume_type_sdf,
+        dim=grid.voxel_capacity,
+        inputs=[
+            sdf_volume.id, grid.leaf_coords, grid.num_leaves,
+            grid.origin, grid.voxel_size, wp.vec3(0.25, 0.5, 0.75),
+            sdf_plain_type.data,
+            sdf_plain_u.data, sdf_plain_v.data, sdf_plain_w.data,
+        ],
+        device=device,
+    )
+
+    sdf_mask_type = ScalarField(grid, dtype=wp.int32, name="volume_sdf_mask")
+    sdf_mask_type.zero()
+    wp.launch(
+        SRC.k_source_volume_mask_sdf,
+        dim=grid.voxel_capacity,
+        inputs=[
+            sdf_volume.id, grid.leaf_coords, grid.num_leaves, grid.origin,
+            grid.voxel_size, VOXEL_ACTIVE, sdf_mask_type.data,
+        ],
+        device=device,
+    )
+
+    scalar_ok = bool(np.allclose(scalar_dst.data.numpy()[interior], 6.0))
+    vector_ok = bool(
+        np.allclose(vec_u.data.numpy()[interior], 2.5)
+        and np.allclose(vec_v.data.numpy()[interior], -5.0)
+        and np.allclose(vec_w.data.numpy()[interior], 8.0)
+        and np.allclose(component_dst.data.numpy()[interior], 2.0)
+    )
+
+    fog_types = fog_type.data.numpy()
+    fog_marked = (fog_types & VOXEL_FLUID) != 0
+    fog_plain_types = fog_plain_type.data.numpy()
+    fog_plain_marked = (fog_plain_types & VOXEL_FLUID) != 0
+    fog_ok = bool(
+        fog_marked.any()
+        and np.all((fog_types[fog_marked] & VOXEL_SOURCE_REGION_TRACKING) != 0)
+        and np.allclose(fog_u.data.numpy()[fog_marked], 3.0)
+        and np.allclose(fog_v.data.numpy()[fog_marked], 4.0)
+        and np.allclose(fog_w.data.numpy()[fog_marked], 5.0)
+        and np.allclose(fog_temp.data.numpy()[fog_marked], 37.5)
+        and np.array_equal(fog_plain_marked, fog_marked)
+        and np.allclose(fog_plain_u.data.numpy()[fog_plain_marked], 7.0)
+        and np.allclose(fog_plain_v.data.numpy()[fog_plain_marked], 8.0)
+        and np.allclose(fog_plain_w.data.numpy()[fog_plain_marked], 9.0)
+    )
+    fog_mask_count = int(((mask_type.data.numpy() & VOXEL_SINK) != 0).sum())
+
+    sdf_types = sdf_type.data.numpy()
+    sdf_marked = (sdf_types & VOXEL_FLUID) != 0
+    sdf_plain_types = sdf_plain_type.data.numpy()
+    sdf_plain_marked = (sdf_plain_types & VOXEL_FLUID) != 0
+    sdf_ok = bool(
+        sdf_marked.any()
+        and np.all((sdf_types[sdf_marked] & VOXEL_SOURCE_REGION_TRACKING) != 0)
+        and np.allclose(sdf_u.data.numpy()[sdf_marked], -2.0)
+        and np.allclose(sdf_w.data.numpy()[sdf_marked], 1.0)
+        and np.allclose(sdf_temp.data.numpy()[sdf_marked], 37.5)
+        and np.array_equal(sdf_plain_marked, sdf_marked)
+        and np.allclose(sdf_plain_u.data.numpy()[sdf_plain_marked], 0.25)
+        and np.allclose(sdf_plain_v.data.numpy()[sdf_plain_marked], 0.5)
+        and np.allclose(sdf_plain_w.data.numpy()[sdf_plain_marked], 0.75)
+    )
+    sdf_mask_count = int(((sdf_mask_type.data.numpy() & VOXEL_ACTIVE) != 0).sum())
+
+    alias_ok = (
+        lookup("coreSourceOpenVDBFloat").fn is lookup("coreSourceNanoVDBFloat").fn
+        and lookup("coreSourceOpenVDBType").fn is lookup("coreSourceNanoVDBTypeFog").fn
+        and lookup("coreSourceOpenVDBTypeWithTemperature").fn
+        is lookup("coreSourceNanoVDBTypeFogWithTemperature").fn
+        and lookup("coreSourceOpenVDBMask").fn is lookup("coreSourceNanoVDBMaskFog").fn
+    )
+    ok = (
+        scalar_ok and vector_ok and fog_ok and fog_mask_count > 0
+        and sdf_ok and sdf_mask_count > 0 and alias_ok
+    )
+    return ok, (
+        f"scalar={scalar_ok}, vector={vector_ok}, fog fluid={int(fog_marked.sum())}, "
+        f"fog masks={fog_mask_count}, sdf fluid={int(sdf_marked.sum())}, "
+        f"sdf masks={sdf_mask_count}, openvdb aliases={alias_ok}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 9. collision/sink voxel bit behavior
+# ---------------------------------------------------------------------------
+
+
+@_test(VALIDATION_TESTS[8])
 def test_collision_sink_bits(device):
     from .enums import SourceShapeShape, SourceShapeSourceMode, SourceShapeType
     from .solver import FluidSolver, SolverSettings, SourceShapeDesc
@@ -373,7 +741,7 @@ def test_collision_sink_bits(device):
 
 
 # ---------------------------------------------------------------------------
-# 8. pressure projection divergence reduction
+# 10. pressure projection divergence reduction
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +754,7 @@ def _divergence_norm(solver):
     return float(np.abs(div).max())
 
 
-@_test(VALIDATION_TESTS[7])
+@_test(VALIDATION_TESTS[9])
 def test_divergence_reduction(device):
     from .enums import SourceShapeShape, SourceShapeSourceMode, SourceShapeType
     from .solver import FluidSolver, SolverSettings, SourceShapeDesc
@@ -433,11 +801,11 @@ def test_divergence_reduction(device):
 
 
 # ---------------------------------------------------------------------------
-# 9. Jacobi and PCG residual convergence
+# 11. Jacobi and PCG residual convergence
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[8])
+@_test(VALIDATION_TESTS[10])
 def test_solver_convergence(device):
     grid = _make_grid(device, size=0.8)
     psys, n = _seed_particles(
@@ -496,11 +864,11 @@ def test_solver_convergence(device):
 
 
 # ---------------------------------------------------------------------------
-# 10. surface SDF build/filter parity
+# 12. surface SDF build/filter parity
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[9])
+@_test(VALIDATION_TESTS[11])
 def test_surface_sdf(device):
     grid = _make_grid(device)
     # Ball of particles at center.
@@ -548,11 +916,11 @@ def test_surface_sdf(device):
 
 
 # ---------------------------------------------------------------------------
-# 11. viscosity solve stability
+# 13. viscosity solve stability
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[10])
+@_test(VALIDATION_TESTS[12])
 def test_viscosity_stability(device):
     from .viscosity import ViscositySolver
 
@@ -603,11 +971,11 @@ def test_viscosity_stability(device):
 
 
 # ---------------------------------------------------------------------------
-# 12. whitewater churn/emission/advection
+# 14. whitewater churn/emission/advection
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[11])
+@_test(VALIDATION_TESTS[13])
 def test_whitewater(device):
     from .enums import SourceShapeShape, SourceShapeSourceMode, SourceShapeType
     from .solver import FluidSolver, SolverSettings, SourceShapeDesc
@@ -668,11 +1036,11 @@ def test_whitewater(device):
 
 
 # ---------------------------------------------------------------------------
-# 13. benchmark profile schema compatibility
+# 15. benchmark profile schema compatibility
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[12])
+@_test(VALIDATION_TESTS[14])
 def test_benchmark_schema(device):
     from ..diagnostics.benchmark import (
         BENCHMARK_FIELDS,

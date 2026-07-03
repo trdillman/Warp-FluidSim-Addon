@@ -8,6 +8,8 @@ stored as compressed .npz files.
 from __future__ import annotations
 
 import os
+import pickle
+import zipfile
 
 import numpy as np
 
@@ -43,8 +45,11 @@ def read_frame(base_dir: str, frame: int) -> dict | None:
     path = _frame_path(base_dir, frame)
     if not os.path.exists(path):
         return None
-    with np.load(path) as data:
-        return {k: data[k] for k in data.files}
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            return {k: data[k] for k in data.files}
+    except (EOFError, OSError, ValueError, pickle.UnpicklingError, zipfile.BadZipFile):
+        return None
 
 
 def available_frames(base_dir: str) -> list:

@@ -1,0 +1,187 @@
+{
+  "dimension": "Architecture & Style",
+  "agent_type": "Explore",
+  "files_reviewed": 45,
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "file": "fluidSim_warp_blender51/operators.py",
+      "line": 5,
+      "severity": "low",
+      "title": "Unused import of 'json' module",
+      "description": "The `json` module is imported at the top of operators.py but never referenced anywhere in the file. All JSON serialization is handled by diagnostics/report.py and diagnostics/benchmark.py, which maintain their own imports. This is a dead import that adds unnecessary module-load overhead.",
+      "impact": "Negligible runtime cost per load; clutters the import namespace and may confuse future maintainers into thinking JSON is used in operator definitions.",
+      "fix": "Remove line 5: `import json`"
+    },
+    {
+      "id": "ARCH-002",
+      "file": "fluidSim_warp_blender51/properties.py",
+      "line": 326,
+      "severity": "medium",
+      "title": "Three viewport attribute-mode properties defined but never exposed in any panel",
+      "description": "The properties `surface_attribute_mode` (line 326), `particle_attribute_mode` (line 335), and `whitewater_attribute_mode` (line 346) are fully defined with extensive enum items in FLUIDSIM_PG_settings but are never drawn in any panel. A grep for `attribute_mode` across all panel files yields zero results. These represent UI surface area intended for color-by-attribute rendering that was either postponed or abandoned.",
+      "impact": "Users have no way to access these features through the UI despite the properties being registered. The properties occupy space in .blend files and registration overhead with no observable functionality.",
+      "fix": "Either wire these properties into the Output panel (FLUIDSIM_PT_output), or remove them from FLUIDSIM_PG_settings, or document them as programmatic-only API surface."
+    },
+    {
+      "id": "ARCH-003",
+      "file": "fluidSim_warp_blender51/sim/enums.py",
+      "line": 35,
+      "severity": "medium",
+      "title": "Twelve IntEnum classes defined but never imported by any consumer module",
+      "description": "The following enums are defined in enums.py but are never imported by any other module: `MultiGridResolutionDecomposition`, `PressureDownloadProperty`, `ParticleAttributeDataType`, `FieldPrecision`, `Completion`, `ComputeAPI`, `DeviceType`, `CustomKernelType`, `CustomKernelFieldPermission`, `SourceVolumeType`, `SourceShapeNoiseSpace`, `GravityFieldsCombine`, `TurbulenceType`, `RampToScaleFieldType`, `TimeStepType`. These were ported for completeness from the synthesized enum tables but serve no runtime purpose.",
+      "impact": "Code bloat and maintainer confusion. A future developer may spend time investigating why these are unused. No functional impact at runtime.",
+      "fix": "Remove unused enum classes, or gate them behind a `__all__` with an explicit export list. Optionally move them to a `_legacy_enums.py` module with a deprecation notice."
+    },
+    {
+      "id": "ARCH-004",
+      "file": "fluidSim_warp_blender51/sim/__init__.py",
+      "line": 1,
+      "severity": "low",
+      "title": "Empty sim/__init__.py forces deep import paths on all consumers",
+      "description": "The `sim/__init__.py` is completely empty (zero lines). Every consumer must write fully qualified imports such as `from fluidSim_warp_blender51.sim.fields import SparseGrid` rather than `from fluidSim_warp_blender51.sim import SparseGrid, FluidSolver`. This effectively treats `sim` as a namespace package, pushing import verbosity and tight file-name coupling to every calling module.",
+      "impact": "Increased import verbosity and tighter coupling to internal module file names. If modules are ever renamed or reorganized, every import site must change.",
+      "fix": "Populate `sim/__init__.py` with explicit re-exports of the public API surface (SparseGrid, FluidSolver, ParticleSystem, SolverSettings, constants, enums, etc.) to decouple consumers from internal file layout."
+    },
+    {
+      "id": "ARCH-005",
+      "file": "fluidSim_warp_blender51/sim/solver.py",
+      "line": 484,
+      "severity": "high",
+      "title": "FluidSolver is a God class violating the Single Responsibility Principle",
+      "description": "The `FluidSolver` class (spanning lines 484-1263, ~780 lines) owns topology management, grid-field lifecycle, source/collider descriptors, particle/whitewater systems, pressure/viscosity/surface solvers, snippet execution, profiling, statistics, and all per-substep orchestration. It is directly coupled to 8+ sub-module imports (kernels_core, kernels_fluid, pressure, viscosity, whitewater, surface, sourcing, custom). The single `step_frame()` method (line 1128) directly orchestrates 20+ private `_phase*()` calls in a monolithic loop with no extension points.",
+      "impact": "Extreme rigidity: changing the solver pipeline order, adding a new physics phase, or substituting a solver variant requires modifying the class body. Testing the orchestration requires instantiating the full GPU pipeline. The class cannot be extended without modification (violates Open/Closed principle).",
+      "fix": "Extract orchestrator phases into strategy or command-pattern classes (e.g., `TopologyManager`, `PressurePhase`, `ViscosityPhase`, `AdvectionPhase`). Have `FluidSolver` own a list of `Phase` objects and iterate them in `step_frame()`. This would collapse the ~20 private `_phase*` methods into a handful of phase objects."
+    },
+    {
+      "id": "ARCH-006",
+      "file": "fluidSim_warp_blender51/properties.py",
+      "line": 148,
+      "severity": "medium",
+      "title": "Global re-entrancy guard _LIQUID_VIEW_SYNCING is a fragile anti-pattern",
+      "description": "A module-level global `_LIQUID_VIEW_SYNCING` boolean (line 148) acts as a re-entrancy guard between `_apply_liquid_view_mode()` and `_sync_liquid_view_mode()` callbacks to prevent infinite recursion when two properties update each other. This pattern is fragile: it is not thread-safe (relevant for Blender background-mode rendering), may not reset correctly if an exception is raised inside the guard (the `try/finally` block is missing), and the global state persists across scenes.",
+      "impact": "If an exception occurs between setting the guard and resetting it, synchronization is permanently disabled for the session. In multi-scene or background-render contexts, the global flag could be erroneously set.",
+      "fix": "Replace with a context manager or decorator pattern that uses `try/finally` to guarantee reset. Alternatively, eliminate the mutual recursion entirely by coalescing the two callbacks into a single update function that checks which property triggered it."
+    },
+    {
+      "id": "ARCH-007",
+      "file": "fluidSim_warp_blender51/preferences.py",
+      "line": 37,
+      "severity": "low",
+      "title": "_probe_warp() called on every preferences draw() including Warp init",
+      "description": "The `draw()` method calls `_probe_warp()` unconditionally on every UI redraw. `_probe_warp()` calls `wp.init()` and queries device capability. On a slow or missing CUDA setup, these calls could block the Blender UI thread for hundreds of milliseconds on every redraw of the preferences panel.",
+      "impact": "Potential UI stuttering when opening or resizing the add-on preferences panel, especially on systems without CUDA where the Warp import or init may time out.",
+      "fix": "Cache the probe result with a timestamp-based refresh (e.g., re-probe only every 5 seconds). Move `wp.init()` into a one-time lazy init with a `_probed` flag."
+    },
+    {
+      "id": "ARCH-008",
+      "file": "fluidSim_warp_blender51/sim/solver.py",
+      "line": 487,
+      "severity": "medium",
+      "title": "FluidSolver constructor allocates 25+ wp.array fields inline with no abstraction",
+      "description": "The `FluidSolver.__init__()` method (lines 487-550) directly creates every grid field, velocity component, temporary buffer, particle system, bin data, solver sub-object, and scratch array inline. This creates tight coupling between the orchestrator and every field's storage format. Adding a new scalar field requires modifying the constructor, the `_clear_grid_fields()` method, and potentially the `_remap` logic.",
+      "impact": "The solver's construction protocol is rigid and non-extensible. Any field addition or storage format change requires modifying the core orchestrator class rather than extending a field registry.",
+      "fix": "Introduce a `FieldRegistry` or `GridFields` container class that owns all field arrays and exposes them by name. Have `FluidSolver` own a single instance. This would also consolidate the 6-line velocity field allocation pattern into a single data class."
+    },
+    {
+      "id": "ARCH-009",
+      "file": "fluidSim_warp_blender51/operators.py",
+      "line": 11,
+      "severity": "low",
+      "title": "Lazy-import _bridge() function duplicated across all operator execute() methods",
+      "description": "The `_bridge()` helper (line 11-14) provides deferred import of `scene_bridge`. It is called from every operator's `execute()` method, repeating the pattern 12+ times. This violates DRY and scatters the coupling to `scene_bridge` across the entire operators module.",
+      "impact": "Maintenance burden: if the bridge import path or API surface changes, every call site must be updated individually.",
+      "fix": "Promote the bridge reference to a module-level variable. Since `scene_bridge` has no bpy registration side effects at import time, a regular `from .blender import scene_bridge` at the top of operators.py is safe and eliminates all `_bridge()` call sites."
+    },
+    {
+      "id": "ARCH-010",
+      "file": "fluidSim_warp_blender51/panels.py",
+      "line": 423,
+      "severity": "low",
+      "title": "Hardcoded compute phase name-to-label mapping duplicates constants.py knowledge",
+      "description": "The `names` dictionary (lines 423-431) in `FLUIDSIM_PT_diagnostics.draw()` maps compute slot indices (e.g., `compute_0`, `compute_1`) to human-readable labels. This mapping is related to `TIMER_PHASE_SLOTS` in `constants.py` (lines 69-86) but is independently hardcoded in the UI layer, duplicating phase-ordering knowledge.",
+      "impact": "If a new compute phase is added to `TIMER_PHASE_SLOTS` in constants.py, the panel must be updated separately or the new phase will not appear in the diagnostics UI. The two mappings may silently drift.",
+      "fix": "Replace the hardcoded dict with a reverse-lookup on `C.TIMER_PHASE_SLOTS` that generates labels from the phase keys. Add a `PHASE_LABELS` constant to `constants.py` as the single source of truth."
+    },
+    {
+      "id": "ARCH-011",
+      "file": "fluidSim_warp_blender51/sim/constants.py",
+      "line": 30,
+      "severity": "low",
+      "title": "VOXEL_UNUSED_1 defined but never referenced in any kernel or logic",
+      "description": "The constant `VOXEL_UNUSED_1 = 512` is defined in the voxel-type bitmask table but is never used, set, or tested anywhere in the codebase. Its name itself suggests it was intentionally unused, yet it remains in the canonical constants module.",
+      "impact": "Cosmetic clutter. A maintainer searching for available bits for a new feature cannot determine if `512` is reserved for external ABI compatibility or free for use.",
+      "fix": "Remove `VOXEL_UNUSED_1` or replace it with a comment at the end of the bitmask group: `# Bits 512+ available for extension`."
+    },
+    {
+      "id": "ARCH-012",
+      "file": "fluidSim_warp_blender51/sim/kernels_core.py",
+      "line": 267,
+      "severity": "low",
+      "title": "RampToScaleFieldCombine enum values used as magic integers instead of enum references",
+      "description": "In `k_ramp_to_scale_field_volume` and `k_ramp_to_scale_field_particle`, the combine modes are hardcoded as integer literals: `if combine == 0:` (multiply), `elif combine == 1:` (max), `else:` (min). The `RampToScaleFieldCombine` enum class in enums.py defines these semantically but is never imported by kernels_core.py.",
+      "impact": "Magic numbers bypass the enum's documentation value. If the enum values were ever reordered or changed, the kernel would silently produce incorrect results.",
+      "fix": "Import `RampToScaleFieldCombine` from `.enums` and replace `0`, `1`, and the bare `else` with `int(RampToScaleFieldCombine.MULTIPLY)`, `int(RampToScaleFieldCombine.MAX)`, `int(RampToScaleFieldCombine.MIN)` respectively."
+    },
+    {
+      "id": "ARCH-013",
+      "file": "fluidSim_warp_blender51/sim/particles.py",
+      "line": 97,
+      "severity": "low",
+      "title": "Swap-buffer attributes named with opaque numeric suffix _position2, _velocity2, _attrs2",
+      "description": "The double-buffered scratch arrays are named `_position2`, `_velocity2`, `_attrs2` (lines 97-101). The `2` suffix is ambiguous: it does not convey whether this is a scratch, swap, next, or previous buffer. This reduces code readability, especially in `compact()` where ownership is exchanged via `self.position, self._position2 = self._position2, self.position`.",
+      "impact": "Moderate readability concern. A developer new to the codebase must study `compact()` carefully to understand the double-buffer swap semantics.",
+      "fix": "Rename to `_position_swap`, `_velocity_swap`, `_attrs_swap` or `_position_next`, `_velocity_next`, `_attrs_next`."
+    },
+    {
+      "id": "ARCH-014",
+      "file": "fluidSim_warp_blender51/sim/solver.py",
+      "line": 596,
+      "severity": "low",
+      "title": "Module-level import of contextlib placed inside a method body",
+      "description": "The `_phase()` method (line 593) conditionally imports `contextlib` inside a rarely-taken branch (`if self.profiler is None`). This places a standard-library import inside a method body when it could be at the top of the file.",
+      "impact": "Minor style concern. The import incurs a lookup cost on every invocation where the profiler is absent. Mostly a readability and discoverability issue.",
+      "fix": "Move `import contextlib` to the top of the file alongside other standard-library imports (after line 12)."
+    },
+    {
+      "id": "ARCH-015",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 64,
+      "severity": "medium",
+      "title": "build_settings() is a monolithic 80-line property-to-dataclass mapping with no abstraction",
+      "description": "The `build_settings()` function (lines 64-143) manually copies every single property from the scene's property group into a `SolverSettings` dataclass -- an 80-line sequential block with no iteration or mapping table. The same manual pattern is repeated in `gather_sources()` (lines 201-263, 60+ lines) with field-by-field copying.",
+      "impact": "High maintenance burden: each new simulator knob requires manual wiring across three locations (properties.py field -> SolverSettings default -> scene_bridge.py copy line). The mapping is error-prone with no compile-time check that all properties are transferred.",
+      "fix": "Introduce an auto-mapping pattern: (a) have `SolverSettings` accept a property-group reference directly, (b) define a field-name mapping tuple iterated at module level, or (c) implement `to_dict()`/`from_dict()` protocols on property groups consumed generically."
+    },
+    {
+      "id": "ARCH-016",
+      "file": "fluidSim_warp_blender51/sim/sourcing.py",
+      "line": 1021,
+      "severity": "medium",
+      "title": "Sourcing module exceeds 1000 lines mixing GPU kernel definitions with registry boilerplate",
+      "description": "The `sourcing.py` module is 1021 lines long, containing 20+ Warp kernel definitions interleaved with 20+ `register_fn()` calls. The `register_fn(k_source_*, ...)` pattern after every kernel creates structural noise that obscures the kernel logic and violates single responsibility at the module level.",
+      "impact": "Low discoverability of kernel definitions amid registration boilerplate. The module is hard to navigate, jumping from kernel to registry call repeatedly.",
+      "fix": "Split into `sourcing/kernels.py` (pure GPU kernel definitions) and `sourcing/__init__.py` (registry wiring), following the same pattern as `kernels_core.py` / `kernels_fluid.py` which separate definition from orchestration."
+    },
+    {
+      "id": "ARCH-017",
+      "file": "fluidSim_warp_blender51/sim/registry.py",
+      "line": 30,
+      "severity": "low",
+      "title": "register() decorator is defined but never used; register_fn() is the sole consumer API",
+      "description": "The registry module exposes `register()` as a decorator factory (line 30) and `register_fn()` as a regular function (line 43). All 53 call sites use `register_fn()`. The decorator `register()` is dead code. Having both APIs creates ambiguity about which to use and why.",
+      "impact": "Unused decorator path adds module complexity and confuses new contributors who must parse both API forms.",
+      "fix": "Remove the unused `register()` decorator and rename `register_fn()` to `register()` to expose a single, simple API."
+    },
+    {
+      "id": "ARCH-018",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 19,
+      "severity": "medium",
+      "title": "Session class is a mutable data holder with no lifecycle protection or interface contract",
+      "description": "The `Session` class (lines 19-37) is a plain data holder without methods, mixing solver reference, profiler reference, frame statistics, validation results, benchmark data, error strings, and collider state. It is accessed as a module-level singleton via `session()`. There is no interface, no property validation, and no lifecycle state machine. Any module can freely mutate any field at any time.",
+      "impact": "Session state is unprotected: the solver can be set to `None` while panels read `sess.solver.grid`, causing `AttributeError` in the UI. There is no encapsulation of the session lifecycle (created, initialized, running, released).",
+      "fix": "Add lifecycle methods (`create()`, `release()`, `is_active()`), make fields read-only with properties, and protect against use-after-release with explicit state checks in accessors."
+    }
+  ]
+}

@@ -9,18 +9,35 @@ starts viewport animation playback with live simulation, verifies the solver
 advances during real playback, checks rewind-reset behavior, forces UI
 redraws of the sidebar panels, captures a viewport screenshot, renders a
 frame, and writes a JSON verdict before quitting Blender.
+
+Set FLUIDSIM_PANEL_DRAW_INJECT_FAILURE=1 to prove the panel draw smoke gate
+fails on real Blender panel draw exceptions.
 """
 
 import json
 import os
 import tempfile
 import time
+import traceback
 
 import bpy
 
 RESULT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_result.json")
 SCREENSHOT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_viewport.png")
 RENDER_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_render.png")
+PANEL_DRAW_FAILURE_ENV = "FLUIDSIM_PANEL_DRAW_INJECT_FAILURE"
+PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_simulation"
+PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
+
+PANEL_IDS = [
+    "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain",
+    "FLUIDSIM_PT_particles", "FLUIDSIM_PT_sources",
+    "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
+    "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity",
+    "FLUIDSIM_PT_surface", "FLUIDSIM_PT_output",
+    "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_diagnostics",
+    "FLUIDSIM_PT_validation",
+]
 
 STATE = {
     "phase": "init",
@@ -28,6 +45,11 @@ STATE = {
     "t_play_start": 0.0,
     "frame_at_play": 0,
     "solver_frame_at_play": 0,
+    "panel_draw_state": "",
+    "panel_draw_hits": [],
+    "panel_draw_errors": [],
+    "panel_draw_probes_installed": False,
+    "panel_failure_injected": False,
 }
 
 
@@ -93,6 +115,117 @@ def _redraw_all():
             area.tag_redraw()
 
 
+def _select_object(name):
+    obj = bpy.data.objects.get(name)
+    for candidate in bpy.context.scene.objects:
+        candidate.select_set(False)
+    if obj is not None:
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+    return obj
+
+
+def _install_panel_draw_probes():
+    if STATE["panel_draw_probes_installed"]:
+        return
+
+    from fluidSim_warp_blender51 import panels
+
+    inject_failure = os.environ.get(PANEL_DRAW_FAILURE_ENV) == "1"
+    for cls in panels.CLASSES:
+        original_draw = cls.draw
+
+        def make_wrapped(panel_cls, draw_fn):
+            def wrapped(self, context):
+                try:
+                    if (
+                        inject_failure
+                        and panel_cls.bl_idname == PANEL_DRAW_FAILURE_PANEL
+                        and not STATE["panel_failure_injected"]
+                    ):
+                        STATE["panel_failure_injected"] = True
+                        raise RuntimeError(
+                            "intentional panel draw smoke failure")
+                    result = draw_fn(self, context)
+                    STATE["panel_draw_hits"].append({
+                        "state": STATE["panel_draw_state"],
+                        "panel": panel_cls.bl_idname,
+                    })
+                    return result
+                except Exception as exc:  # noqa: BLE001
+                    STATE["panel_draw_errors"].append({
+                        "state": STATE["panel_draw_state"],
+                        "panel": panel_cls.bl_idname,
+                        "error": repr(exc),
+                        "traceback": traceback.format_exc(limit=8),
+                    })
+                    raise
+
+            return wrapped
+
+        cls.draw = make_wrapped(cls, original_draw)
+
+    STATE["panel_draw_probes_installed"] = True
+
+
+def _call_panel(panel_id):
+    override = _view3d_override()
+    kwargs = {"name": panel_id, "keep_open": False}
+    if override:
+        with bpy.context.temp_override(**override):
+            return bpy.ops.wm.call_panel(**kwargs)
+    return bpy.ops.wm.call_panel(**kwargs)
+
+
+def _draw_all_panels_smoke(state_name, active_object_name=None):
+    _install_panel_draw_probes()
+    STATE["panel_draw_state"] = state_name
+    if active_object_name is not None:
+        _select_object(active_object_name)
+
+    missing = [p for p in PANEL_IDS if not hasattr(bpy.types, p)]
+    call_failures = []
+    before_hits = len(STATE["panel_draw_hits"])
+    before_errors = len(STATE["panel_draw_errors"])
+
+    if not missing:
+        for panel_id in PANEL_IDS:
+            try:
+                result = _call_panel(panel_id)
+                if result not in PANEL_CALL_SUCCESS:
+                    call_failures.append(f"{panel_id}: {result}")
+            except Exception as exc:  # noqa: BLE001
+                call_failures.append(f"{panel_id}: {exc!r}")
+            _redraw_all()
+            override = _view3d_override()
+            if override:
+                with bpy.context.temp_override(**override):
+                    bpy.ops.wm.redraw_timer(
+                        type="DRAW_WIN_SWAP", iterations=1)
+
+    hits = STATE["panel_draw_hits"][before_hits:]
+    errors = STATE["panel_draw_errors"][before_errors:]
+    seen = {hit["panel"] for hit in hits}
+    undrawn = [p for p in PANEL_IDS if p not in seen]
+    details = []
+    if missing:
+        details.append(f"missing={missing}")
+    if undrawn:
+        details.append(f"undrawn={undrawn}")
+    if call_failures:
+        details.append(f"call_failures={call_failures}")
+    if errors:
+        compact_errors = [
+            f"{err['panel']}: {err['error']}" for err in errors]
+        details.append(f"errors={compact_errors}")
+
+    check(
+        f"panel draw smoke ({state_name})",
+        not missing and not undrawn and not call_failures and not errors,
+        "; ".join(details) if details else f"{len(seen)} panels drew",
+    )
+
+
 def finish():
     passed = [c for c in STATE["checks"] if c["passed"]]
     verdict = {
@@ -101,6 +234,8 @@ def finish():
         "total": len(STATE["checks"]),
         "checks": STATE["checks"],
     }
+    if STATE["panel_draw_errors"]:
+        verdict["panel_draw_errors"] = STATE["panel_draw_errors"]
     with open(RESULT_PATH, "w", encoding="utf-8") as fh:
         json.dump(verdict, fh, indent=2)
     print(f"GUI-ACCEPTANCE-{verdict['result'].upper()} "
@@ -137,6 +272,7 @@ def _run_phase(phase, scene):
             finish()
             return None
         check("gui mode", not bpy.app.background)
+        _draw_all_panels_smoke("addon enabled, solver inactive")
         STATE["phase"] = "setup"
         return 0.1
 
@@ -147,8 +283,20 @@ def _run_phase(phase, scene):
         fs.whitewater_enabled = True
         fs.profiling_enabled = True
         fs.show_overlay = True
+        fs.height_enabled = True
+        fs.viscosity_enabled = True
+        fs.max_speed = 2.5
+        fs.limit_behavior = "PERCENT"
         bpy.ops.fluidsim.setup_scene()
         check("setup_scene", fs.domain_object is not None)
+        src = bpy.data.objects.get("FluidSim Source")
+        if src is not None:
+            src.fluidsim.use_lifespan = True
+            src.fluidsim.force_type = "DIRECTIONAL"
+        bpy.ops.fluidsim.snippet_add()
+        fs.snippets[-1].enabled = False
+        _draw_all_panels_smoke("demo configured, solver inactive",
+                               "FluidSim Source")
 
         # Camera + light for the render check.
         cam_data = bpy.data.cameras.new("FluidSim Cam")
@@ -169,6 +317,7 @@ def _run_phase(phase, scene):
               scene.fluidsim.status)
         check("cuda device", sess.active
               and str(sess.solver.device).startswith("cuda"))
+        _draw_all_panels_smoke("solver initialized", "FluidSim Collider")
         STATE["phase"] = "play"
         return 0.2
 
@@ -237,28 +386,20 @@ def _run_phase(phase, scene):
         result = bpy.ops.fluidsim.step(frames=3)
         check("manual step after reset", result == {"FINISHED"},
               scene.fluidsim.status)
+        _draw_all_panels_smoke("post-playback manual step",
+                               "FluidSim Source")
         STATE["phase"] = "ui"
         return 0.2
 
     if phase == "ui":
-        # Force full UI redraws so all 13 sidebar panels + overlay draw with
-        # a real context (draw errors would print tracebacks and leave the
-        # checks list short at the end).
+        # Force full UI redraws so sidebar panels + overlay draw with a real
+        # context. Panel draw coverage is checked explicitly above.
         _redraw_all()
         override = _view3d_override()
         if override:
             with bpy.context.temp_override(**override):
                 bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=2)
-        panel_ids = [
-            "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain",
-            "FLUIDSIM_PT_particles", "FLUIDSIM_PT_sources",
-            "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-            "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity",
-            "FLUIDSIM_PT_surface", "FLUIDSIM_PT_output",
-            "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_diagnostics",
-            "FLUIDSIM_PT_validation",
-        ]
-        missing = [p for p in panel_ids if not hasattr(bpy.types, p)]
+        missing = [p for p in PANEL_IDS if not hasattr(bpy.types, p)]
         check("panels registered in GUI", not missing, str(missing))
         check("ui redraw with overlay", True)
 
@@ -315,6 +456,8 @@ def _run_phase(phase, scene):
         ok = sess.benchmark_result is not None and \
             "timeStepAverage" in (sess.benchmark_result or {})
         check("benchmark result schema", ok)
+        _draw_all_panels_smoke("diagnostics populated",
+                               "FluidSim Source")
         finish()
         return None
 

@@ -1,6 +1,6 @@
 """Headless CUDA validation suite runner (no Blender required).
 
-Runs all 13 synthesized validation targets on the real Warp/CUDA device and
+Runs all synthesized validation targets on the real Warp/CUDA device and
 exits non-zero on any failure.
 """
 
