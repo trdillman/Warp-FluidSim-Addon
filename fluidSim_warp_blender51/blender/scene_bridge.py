@@ -117,7 +117,7 @@ def build_settings(scene):
     s.pressure_solver = ProjectNonDivergentSolver[fs.pressure_solver]
     s.pressure_iterations = fs.pressure_iterations
     s.pressure_tolerance = fs.pressure_tolerance
-    s.multigrid = MultiGrid[fs.multigrid]
+    s.pressure_multigrid = MultiGrid[fs.multigrid]
     s.pressure_threshold = fs.pressure_threshold
     s.viscosity_enabled = fs.viscosity_enabled
     s.viscosity_solver = ViscositySolver[fs.viscosity_solver]
