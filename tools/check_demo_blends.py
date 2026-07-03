@@ -12,7 +12,7 @@ import addon_utils
 import bpy
 
 
-REPO = r"C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEMOS = os.path.join(REPO, "demos")
 SCENES = ("dam_break", "crown_splash", "slosh_tank")
 

@@ -77,10 +77,36 @@ WHITEWATER_ATTR_ITEMS = (
 )
 
 
+_LIQUID_VIEW_SYNCING = False
+
+
 def _apply_liquid_view_mode(self, _context):
-    mode = self.liquid_view_mode
-    self.show_surface = mode in {"SURFACE", "SURFACE_PARTICLES"}
-    self.show_particles = mode in {"PARTICLES", "SURFACE_PARTICLES"}
+    global _LIQUID_VIEW_SYNCING
+    if _LIQUID_VIEW_SYNCING:
+        return
+    _LIQUID_VIEW_SYNCING = True
+    try:
+        mode = self.liquid_view_mode
+        self.show_surface = mode in {"SURFACE", "SURFACE_PARTICLES"}
+        self.show_particles = mode in {"PARTICLES", "SURFACE_PARTICLES"}
+    finally:
+        _LIQUID_VIEW_SYNCING = False
+
+
+def _sync_liquid_view_mode(self, _context):
+    global _LIQUID_VIEW_SYNCING
+    if _LIQUID_VIEW_SYNCING:
+        return
+    _LIQUID_VIEW_SYNCING = True
+    try:
+        if self.show_surface and self.show_particles:
+            self.liquid_view_mode = "SURFACE_PARTICLES"
+        elif self.show_surface:
+            self.liquid_view_mode = "SURFACE"
+        elif self.show_particles:
+            self.liquid_view_mode = "PARTICLES"
+    finally:
+        _LIQUID_VIEW_SYNCING = False
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +330,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         default="SURFACE",
         update=_apply_liquid_view_mode,
     )
-    show_surface: BoolProperty(name="Surface Mesh", default=True)
-    show_particles: BoolProperty(name="Particles", default=False)
+    show_surface: BoolProperty(
+        name="Surface Mesh", default=True, update=_sync_liquid_view_mode)
+    show_particles: BoolProperty(
+        name="Particles", default=False, update=_sync_liquid_view_mode)
     show_whitewater: BoolProperty(name="Whitewater", default=True)
     particle_display_fraction: FloatProperty(
         name="Display Fraction", default=1.0, min=0.01, max=1.0,

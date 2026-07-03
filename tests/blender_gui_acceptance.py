@@ -37,6 +37,45 @@ def check(name, cond, detail=""):
                             "detail": str(detail)})
 
 
+def _image_has_visible_content(path, min_width, min_height,
+                               sample_limit=4000, threshold=0.02):
+    if not os.path.exists(path):
+        return False, "missing"
+    try:
+        img = bpy.data.images.load(path)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"unreadable: {exc!r}"
+    try:
+        width, height = img.size
+        if width < min_width or height < min_height:
+            return False, f"{width}x{height}"
+        pixels = img.pixels
+        pixel_count = width * height
+        if pixel_count == 0:
+            return False, f"{width}x{height}, empty pixels"
+        stride = max(pixel_count // sample_limit, 1)
+        visible = 0
+        sampled = 0
+        for pixel_idx in range(0, pixel_count, stride):
+            rgba_idx = pixel_idx * 4
+            luminance = (
+                pixels[rgba_idx] + pixels[rgba_idx + 1] + pixels[rgba_idx + 2]
+            ) / 3.0
+            sampled += 1
+            if luminance > threshold:
+                visible += 1
+            if sampled >= sample_limit:
+                break
+        minimum_visible = max(20, sampled // 40)
+        if visible <= minimum_visible:
+            return False, (
+                f"{width}x{height}, {visible}/{sampled} visible samples"
+            )
+        return True, f"{width}x{height}, {visible}/{sampled} visible samples"
+    finally:
+        bpy.data.images.remove(img)
+
+
 def _view3d_override():
     wm = bpy.context.window_manager
     for window in wm.windows:
@@ -236,11 +275,9 @@ def _run_phase(phase, scene):
             override = _view3d_override()
             with bpy.context.temp_override(**override):
                 bpy.ops.screen.screenshot_area(filepath=SCREENSHOT_PATH)
-            ok = os.path.exists(SCREENSHOT_PATH) and \
-                os.path.getsize(SCREENSHOT_PATH) > 10000
-            check("viewport screenshot", ok,
-                  f"{os.path.getsize(SCREENSHOT_PATH)} bytes"
-                  if os.path.exists(SCREENSHOT_PATH) else "missing")
+            ok, detail = _image_has_visible_content(
+                SCREENSHOT_PATH, min_width=320, min_height=200)
+            check("viewport screenshot", ok, detail)
         except Exception as exc:  # noqa: BLE001
             check("viewport screenshot", False, repr(exc))
         STATE["phase"] = "render"
@@ -257,16 +294,10 @@ def _run_phase(phase, scene):
         scene.render.resolution_y = 320
         scene.render.filepath = RENDER_PATH
         bpy.ops.render.render(write_still=True)
-        ok = os.path.exists(RENDER_PATH) and os.path.getsize(RENDER_PATH) > 5000
-        check("render output written", ok,
-              f"{os.path.getsize(RENDER_PATH)} bytes"
-              if os.path.exists(RENDER_PATH) else "missing")
-        if ok:
-            img = bpy.data.images.load(RENDER_PATH)
-            px = list(img.pixels[: 4000])
-            non_black = sum(1 for v in px if v > 0.02)
-            check("render contains visible content", non_black > 100,
-                  f"{non_black} bright samples")
+        ok, detail = _image_has_visible_content(
+            RENDER_PATH, min_width=480, min_height=320)
+        check("render output written", os.path.exists(RENDER_PATH), detail)
+        check("render contains visible content", ok, detail)
         STATE["phase"] = "diag"
         return 0.2
 

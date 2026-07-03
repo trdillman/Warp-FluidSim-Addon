@@ -46,6 +46,24 @@ def main():
           hasattr(bpy.data.objects.new("probe", None), "fluidsim"))
 
     fs = scene.fluidsim
+    fs.liquid_view_mode = "PARTICLES"
+    check("liquid view mode sets particles",
+          (fs.show_surface, fs.show_particles) == (False, True),
+          f"{fs.liquid_view_mode} {fs.show_surface}/{fs.show_particles}")
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    check("liquid view mode sets combined output",
+          (fs.show_surface, fs.show_particles) == (True, True),
+          f"{fs.liquid_view_mode} {fs.show_surface}/{fs.show_particles}")
+    fs.show_surface = False
+    check("output toggles sync to particles mode",
+          fs.liquid_view_mode == "PARTICLES",
+          fs.liquid_view_mode)
+    fs.show_surface = True
+    fs.show_particles = False
+    check("output toggles sync to surface mode",
+          fs.liquid_view_mode == "SURFACE",
+          fs.liquid_view_mode)
+    fs.liquid_view_mode = "SURFACE"
     fs.voxel_size = 0.08
     fs.max_particles = 500_000
     fs.whitewater_enabled = True
