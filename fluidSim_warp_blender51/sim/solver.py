@@ -214,6 +214,7 @@ def k_sanitize_mac_velocity(
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
+
     val = u[tid]
     if wp.isnan(val) or wp.isinf(val):
         u[tid] = 0.0
@@ -221,6 +222,7 @@ def k_sanitize_mac_velocity(
             wu[tid] = 1.0e-6
     elif wu[tid] > 1.0e-8:
         u[tid] = wp.clamp(val, -max_speed, max_speed)
+
     val = v[tid]
     if wp.isnan(val) or wp.isinf(val):
         v[tid] = 0.0
@@ -228,6 +230,7 @@ def k_sanitize_mac_velocity(
             wv[tid] = 1.0e-6
     elif wv[tid] > 1.0e-8:
         v[tid] = wp.clamp(val, -max_speed, max_speed)
+
     val = w[tid]
     if wp.isnan(val) or wp.isinf(val):
         w[tid] = 0.0
@@ -872,6 +875,11 @@ class FluidSolver:
         self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
         self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
 
+    def _cfl_speed_limit(self, dt):
+        safe_dt = max(float(dt), 1.0e-8)
+        return max(float(self.settings.cfl) * self.grid.voxel_size / safe_dt,
+                   1.0e-6)
+
     def _pressure(self, dt):
         s = self.settings
         ps = self.pressure_solver
@@ -888,20 +896,22 @@ class FluidSolver:
         else:
             ps.solve_pcg(self.voxel_type.data, s.pressure_iterations,
                          s.pressure_tolerance, use_coarse_guess=use_mg)
+        if not ps.should_project_pressure():
+            self.stats.pressure_iterations = ps.last_iterations
+            self.stats.pressure_residual = ps.last_residual
+            return False
         if s.pressure_threshold > 0.0:
             ps.apply_threshold(s.pressure_threshold)
-        ps.project(self.vel, self.voxel_type.data, self.collision_vel)
+        ps.project(self.vel, self.voxel_type.data, self.collision_vel,
+                   max_gradient=self._cfl_speed_limit(dt))
         self.stats.pressure_iterations = ps.last_iterations
         self.stats.pressure_residual = ps.last_residual
+        return True
 
     def _sanitize(self, dt):
         """Clamp MAC velocity to a CFL-safe bound and kill inf/nan."""
-        s = self.settings
         g = self.grid
-        # CFL-safe per-substep max speed with a reasonable absolute floor
-        # (a single dam-break column can reach ~2*sqrt(g*H); the floor gives
-        # generous headroom while catching pressure-solve instabilities).
-        max_speed = max(s.cfl * g.voxel_size / dt, 15.0)
+        max_speed = self._cfl_speed_limit(dt)
         wp.launch(
             k_sanitize_mac_velocity, dim=g.voxel_capacity,
             inputs=[self.vel.u, self.vel.v, self.vel.w,

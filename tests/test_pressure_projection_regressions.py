@@ -13,6 +13,7 @@ wp = pytest.importorskip("warp")
 
 from fluidSim_warp_blender51.sim.constants import (
     LEAF_VOLUME,
+    VOXEL_COLLISION,
     VOXEL_FLUID,
 )
 from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
@@ -93,6 +94,36 @@ def test_pressure_project_does_not_spread_non_finite_pressure_to_mac_velocity(cu
     for component in (vel.u, vel.v, vel.w):
         assert np.all(np.isfinite(component.numpy()))
         assert np.max(np.abs(component.numpy())) <= 2.0
+
+
+def test_pcg_reports_failure_status_when_system_cannot_converge(cuda_device):
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_COLLISION, dtype=np.int32)
+    voxel_type_wp = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    _copy_float(solver.rhs, np.ones(grid.voxel_capacity, dtype=np.float32), cuda_device)
+
+    solver.build_preconditioner(voxel_type_wp)
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=3,
+        tolerance=1.0e-12,
+        check_every=1,
+    )
+
+    assert status["converged"] is False
+    assert status["project_velocity"] is False
+    assert status["iterations"] == solver.last_iterations
+    assert status["reason"] in {
+        "max_iterations",
+        "non_finite_residual",
+        "singular_system",
+        "stalled",
+    }
+    assert math.isfinite(float(status["residual"]))
+    assert solver.should_project_pressure() is False
 
 
 def test_sanitize_mac_velocity_zeroes_non_finite_faces_and_clamps_speed(cuda_device):
