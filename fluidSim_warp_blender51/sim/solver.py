@@ -214,23 +214,26 @@ def k_sanitize_mac_velocity(
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
-    if wu[tid] > 1.0e-8:
-        val = u[tid]
-        if wp.isnan(val) or wp.isinf(val):
-            val = 0.0
+    val = u[tid]
+    if wp.isnan(val) or wp.isinf(val):
+        u[tid] = 0.0
+        if wu[tid] > 1.0e-8:
             wu[tid] = 1.0e-6
+    elif wu[tid] > 1.0e-8:
         u[tid] = wp.clamp(val, -max_speed, max_speed)
-    if wv[tid] > 1.0e-8:
-        val = v[tid]
-        if wp.isnan(val) or wp.isinf(val):
-            val = 0.0
+    val = v[tid]
+    if wp.isnan(val) or wp.isinf(val):
+        v[tid] = 0.0
+        if wv[tid] > 1.0e-8:
             wv[tid] = 1.0e-6
+    elif wv[tid] > 1.0e-8:
         v[tid] = wp.clamp(val, -max_speed, max_speed)
-    if ww[tid] > 1.0e-8:
-        val = w[tid]
-        if wp.isnan(val) or wp.isinf(val):
-            val = 0.0
+    val = w[tid]
+    if wp.isnan(val) or wp.isinf(val):
+        w[tid] = 0.0
+        if ww[tid] > 1.0e-8:
             ww[tid] = 1.0e-6
+    elif ww[tid] > 1.0e-8:
         w[tid] = wp.clamp(val, -max_speed, max_speed)
 
 
