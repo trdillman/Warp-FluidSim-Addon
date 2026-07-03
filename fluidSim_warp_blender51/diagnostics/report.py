@@ -7,6 +7,7 @@ validation outcomes into a single JSON document for offline inspection.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import time
 
@@ -50,6 +51,9 @@ def build_report(
 
 
 def write_report(path: str, report: dict) -> str:
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        raise FileNotFoundError(f"Output parent directory does not exist: {parent}")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
     return path

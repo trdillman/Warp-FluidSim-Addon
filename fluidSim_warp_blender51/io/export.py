@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
+
+
+def _require_existing_parent(path: str) -> None:
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        raise FileNotFoundError(f"Output parent directory does not exist: {parent}")
 
 
 def export_surface_obj(solver, path: str) -> str:
     verts, tris = solver.surface_mesh()
+    _require_existing_parent(path)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# FluidSim Warp surface export\n")
         for v in verts:
@@ -20,6 +29,7 @@ def export_points_ply(positions: np.ndarray, path: str,
                       velocities: np.ndarray | None = None) -> str:
     n = len(positions)
     has_vel = velocities is not None and len(velocities) == n
+    _require_existing_parent(path)
     with open(path, "wb") as fh:
         header = ["ply", "format binary_little_endian 1.0",
                   f"element vertex {n}",
@@ -40,6 +50,7 @@ def export_points_ply(positions: np.ndarray, path: str,
 
 def export_frame(solver, base_path: str) -> list:
     """Export current frame surface + particles + whitewater next to base."""
+    _require_existing_parent(base_path)
     paths = []
     if solver.settings.surface_enabled:
         paths.append(export_surface_obj(solver, base_path + "_surface.obj"))

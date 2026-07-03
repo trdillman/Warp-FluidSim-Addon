@@ -9,6 +9,7 @@ performance fields.
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -156,6 +157,9 @@ def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.2
 
 
 def save_benchmark(path: str, result: dict) -> None:
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        raise FileNotFoundError(f"Output parent directory does not exist: {parent}")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2)
 
