@@ -45,6 +45,44 @@ def _items(enum_cls):
     return enum_items(enum_cls)
 
 
+LIQUID_VIEW_ITEMS = (
+    ("SURFACE", "Surface", "Show the marching-cubes liquid surface"),
+    ("PARTICLES", "Particles", "Show liquid as particles only"),
+    ("SURFACE_PARTICLES", "Surface + Particles", "Show both surface mesh and liquid particles"),
+)
+
+
+LIQUID_ATTR_ITEMS = (
+    ("NONE", "Material", "Use the assigned material color"),
+    ("HEIGHT", "Height", "Color by world-space height"),
+    ("SPEED", "Speed", "Color by liquid velocity magnitude"),
+    ("TEMPERATURE", "Temperature", "Color by particle temperature attribute"),
+    ("VISCOSITY", "Viscosity", "Color by particle viscosity attribute"),
+    ("DENSITY", "Density", "Color by particle density attribute"),
+)
+
+
+PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
+    ("AGE", "Age", "Color by particle age"),
+    ("LIFE", "Life", "Color by particle life span"),
+)
+
+
+WHITEWATER_ATTR_ITEMS = (
+    ("NONE", "Material", "Use the assigned material color"),
+    ("HEIGHT", "Height", "Color by world-space height"),
+    ("SPEED", "Speed", "Color by whitewater velocity magnitude"),
+    ("AGE", "Age", "Color by whitewater age"),
+    ("LIFE", "Life", "Color by whitewater life span"),
+)
+
+
+def _apply_liquid_view_mode(self, _context):
+    mode = self.liquid_view_mode
+    self.show_surface = mode in {"SURFACE", "SURFACE_PARTICLES"}
+    self.show_particles = mode in {"PARTICLES", "SURFACE_PARTICLES"}
+
+
 # ---------------------------------------------------------------------------
 # Custom snippet argument / snippet property groups
 # ---------------------------------------------------------------------------
@@ -260,12 +298,36 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     height_emit_particles: BoolProperty(name="Emit Particles", default=True)
 
     # -- Output ---------------------------------------------------------------------
+    liquid_view_mode: EnumProperty(
+        name="Liquid View",
+        items=LIQUID_VIEW_ITEMS,
+        default="SURFACE",
+        update=_apply_liquid_view_mode,
+    )
     show_surface: BoolProperty(name="Surface Mesh", default=True)
     show_particles: BoolProperty(name="Particles", default=False)
     show_whitewater: BoolProperty(name="Whitewater", default=True)
     particle_display_fraction: FloatProperty(
         name="Display Fraction", default=1.0, min=0.01, max=1.0,
         description="Fraction of particles shown in the viewport")
+    surface_attribute_mode: EnumProperty(
+        name="Surface Attribute",
+        items=LIQUID_ATTR_ITEMS,
+        default="NONE",
+        description="Color the liquid surface by a simulation attribute",
+    )
+    particle_attribute_mode: EnumProperty(
+        name="Particle Attribute",
+        items=PARTICLE_ATTR_ITEMS,
+        default="NONE",
+        description="Color liquid particles by a simulation attribute",
+    )
+    whitewater_attribute_mode: EnumProperty(
+        name="Whitewater Attribute",
+        items=WHITEWATER_ATTR_ITEMS,
+        default="NONE",
+        description="Color whitewater particles by a simulation attribute",
+    )
     surface_material: PointerProperty(name="Surface Material",
                                       type=bpy.types.Material)
     whitewater_material: PointerProperty(name="Whitewater Material",
