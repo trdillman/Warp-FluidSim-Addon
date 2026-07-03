@@ -25,7 +25,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        from .blender.scene_bridge import session
+        from .blender.scene_bridge import current_error, session
 
         sess = session()
 
@@ -52,6 +52,10 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
 
         box = layout.box()
         box.label(text=fs.status, icon="INFO")
+        error = current_error(context.scene)
+        if error:
+            box.label(text=error[:120], icon="ERROR")
+            box.operator("fluidsim.clear_error", icon="X")
         if sess.active:
             col = box.column(align=True)
             col.label(text=f"Particles: {fs.stat_particles:,}")

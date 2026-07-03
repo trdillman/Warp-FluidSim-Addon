@@ -16,11 +16,16 @@ fails on real Blender panel draw exceptions.
 
 import json
 import os
+import sys
 import tempfile
 import time
 import traceback
 
 import bpy
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 RESULT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_result.json")
 SCREENSHOT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_viewport.png")
@@ -226,6 +231,77 @@ def _draw_all_panels_smoke(state_name, active_object_name=None):
     )
 
 
+class _PanelCaptureLayout:
+    def __init__(self):
+        self.labels = []
+        self.operators = []
+        self.enabled = True
+
+    def column(self, align=False):
+        return self
+
+    def row(self, align=False):
+        return self
+
+    def box(self):
+        return self
+
+    def separator(self):
+        return None
+
+    def prop(self, *_args, **_kwargs):
+        return None
+
+    def label(self, text="", icon="NONE"):
+        self.labels.append({"text": text, "icon": icon})
+
+    def operator(self, operator_id, **kwargs):
+        op = type("PanelOperatorCapture", (), {})()
+        self.operators.append({"id": operator_id, **kwargs})
+        return op
+
+
+def _assert_panel_state(panel_id, state_name, *, label_contains=None,
+                        operator_id=None, icon=None):
+    cls = getattr(bpy.types, panel_id, None)
+    if cls is None:
+        check(f"panel state {state_name}", False, f"{panel_id} missing")
+        return
+    layout = _PanelCaptureLayout()
+    panel = type("PanelDrawProbe", (), {"layout": layout})()
+    try:
+        cls.draw(panel, bpy.context)
+    except Exception as exc:  # noqa: BLE001
+        check(f"panel state {state_name}", False, repr(exc))
+        return
+
+    labels = [item["text"] for item in layout.labels]
+    operators = [item["id"] for item in layout.operators]
+    ok = True
+    details = []
+    if label_contains is not None:
+        label_ok = any(label_contains in text for text in labels)
+        ok = ok and label_ok
+        if not label_ok:
+            details.append(f"missing label {label_contains!r}")
+    if operator_id is not None:
+        operator_ok = operator_id in operators
+        ok = ok and operator_ok
+        if not operator_ok:
+            details.append(f"missing operator {operator_id}")
+    if icon is not None:
+        icon_ok = any(item["icon"] == icon for item in layout.labels)
+        ok = ok and icon_ok
+        if not icon_ok:
+            details.append(f"missing icon {icon}")
+    check(
+        f"panel state {state_name}",
+        ok,
+        "; ".join(details) if details else
+        f"{len(labels)} labels, {len(operators)} operators",
+    )
+
+
 def finish():
     passed = [c for c in STATE["checks"] if c["passed"]]
     verdict = {
@@ -258,12 +334,16 @@ def state_machine():
 
 
 def _run_phase(phase, scene):
-    from fluidSim_warp_blender51.blender.scene_bridge import session
-
     if phase == "init":
         import addon_utils
 
         try:
+            addon_utils.disable("fluidSim_warp_blender51", default_set=False)
+            for name in list(sys.modules):
+                if name == "fluidSim_warp_blender51" or name.startswith(
+                    "fluidSim_warp_blender51."
+                ):
+                    sys.modules.pop(name, None)
             addon_utils.enable("fluidSim_warp_blender51", default_set=True,
                                persistent=True)
             check("addon enable", True)
@@ -273,8 +353,15 @@ def _run_phase(phase, scene):
             return None
         check("gui mode", not bpy.app.background)
         _draw_all_panels_smoke("addon enabled, solver inactive")
+        _assert_panel_state(
+            "FLUIDSIM_PT_simulation",
+            "uninitialized status",
+            label_contains="Solver not initialized",
+        )
         STATE["phase"] = "setup"
         return 0.1
+
+    from fluidSim_warp_blender51.blender.scene_bridge import session
 
     if phase == "setup":
         fs = scene.fluidsim
@@ -318,6 +405,11 @@ def _run_phase(phase, scene):
         check("cuda device", sess.active
               and str(sess.solver.device).startswith("cuda"))
         _draw_all_panels_smoke("solver initialized", "FluidSim Collider")
+        _assert_panel_state(
+            "FLUIDSIM_PT_simulation",
+            "initialized stats",
+            label_contains="Particles:",
+        )
         STATE["phase"] = "play"
         return 0.2
 
@@ -388,6 +480,11 @@ def _run_phase(phase, scene):
               scene.fluidsim.status)
         _draw_all_panels_smoke("post-playback manual step",
                                "FluidSim Source")
+        _assert_panel_state(
+            "FLUIDSIM_PT_simulation",
+            "stepped status",
+            label_contains="Frame ",
+        )
         STATE["phase"] = "ui"
         return 0.2
 
@@ -447,6 +544,26 @@ def _run_phase(phase, scene):
         check("profiler frames in GUI",
               sess.profiler is not None and len(sess.profiler.history) >= 3,
               f"{len(sess.profiler.history) if sess.profiler else 0}")
+        sess.validation_results = [
+            {"name": "synthetic pass", "passed": True},
+            {"name": "synthetic fail", "passed": False},
+        ]
+        _assert_panel_state(
+            "FLUIDSIM_PT_validation",
+            "validation result",
+            label_contains="1/2 passed",
+        )
+        from fluidSim_warp_blender51.blender import scene_bridge
+
+        scene_bridge.set_error(scene, "intentional panel-visible error")
+        _assert_panel_state(
+            "FLUIDSIM_PT_simulation",
+            "error visible",
+            label_contains="intentional panel-visible error",
+            operator_id="fluidsim.clear_error",
+            icon="ERROR",
+        )
+        bpy.ops.fluidsim.clear_error()
         # Benchmark (short) through the operator.
         scene = bpy.context.scene
         scene.fluidsim.benchmark_frames = 6
@@ -456,6 +573,11 @@ def _run_phase(phase, scene):
         ok = sess.benchmark_result is not None and \
             "timeStepAverage" in (sess.benchmark_result or {})
         check("benchmark result schema", ok)
+        _assert_panel_state(
+            "FLUIDSIM_PT_validation",
+            "benchmark result",
+            label_contains="Avg step:",
+        )
         _draw_all_panels_smoke("diagnostics populated",
                                "FluidSim Source")
         finish()

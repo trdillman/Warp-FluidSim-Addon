@@ -14,6 +14,17 @@ def _bridge():
     return scene_bridge
 
 
+def _configured_device():
+    try:
+        prefs = bpy.context.preferences.addons[
+            "fluidSim_warp_blender51"].preferences
+        if prefs.device:
+            return prefs.device
+    except (KeyError, AttributeError):
+        pass
+    return "cuda:0"
+
+
 class FLUIDSIM_OT_initialize(bpy.types.Operator):
     """Create (or recreate) the GPU solver from current scene settings"""
 
@@ -46,6 +57,21 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
     def execute(self, context):
         _bridge().release_session()
         context.scene.fluidsim.status = "Solver released"
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_clear_error(bpy.types.Operator):
+    """Clear the persistent simulation error shown in the UI"""
+
+    bl_idname = "fluidsim.clear_error"
+    bl_label = "Clear Simulation Error"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        bridge = _bridge()
+        bridge.clear_error(context.scene)
+        fs = context.scene.fluidsim
+        fs.status = "Solver ready" if bridge.session().active else "Solver not initialized"
         return {"FINISHED"}
 
 
@@ -254,7 +280,7 @@ class FLUIDSIM_OT_run_validation(bpy.types.Operator):
         try:
             from .sim import validation
 
-            results = validation.run_all(device="cuda:0")
+            results = validation.run_all(device=_configured_device())
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Validation failed to run: {exc}")
             return {"CANCELLED"}
@@ -350,6 +376,7 @@ class FLUIDSIM_OT_snippet_add(bpy.types.Operator):
 
     bl_idname = "fluidsim.snippet_add"
     bl_label = "Add Snippet"
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         fs = context.scene.fluidsim
@@ -372,6 +399,7 @@ class FLUIDSIM_OT_snippet_remove(bpy.types.Operator):
 
     bl_idname = "fluidsim.snippet_remove"
     bl_label = "Remove Snippet"
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         fs = context.scene.fluidsim
@@ -386,6 +414,7 @@ class FLUIDSIM_OT_snippet_argument_add(bpy.types.Operator):
 
     bl_idname = "fluidsim.snippet_argument_add"
     bl_label = "Add Argument"
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         fs = context.scene.fluidsim
@@ -399,6 +428,7 @@ class FLUIDSIM_OT_snippet_argument_remove(bpy.types.Operator):
 
     bl_idname = "fluidsim.snippet_argument_remove"
     bl_label = "Remove Argument"
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         fs = context.scene.fluidsim
@@ -446,6 +476,10 @@ class FLUIDSIM_OT_export_frame(bpy.types.Operator):
 
     filepath: StringProperty(subtype="FILE_PATH", default="//fluidsim_frame")
 
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
     def execute(self, context):
         bridge = _bridge()
         sess = bridge.session()
@@ -463,6 +497,7 @@ class FLUIDSIM_OT_export_frame(bpy.types.Operator):
 CLASSES = (
     FLUIDSIM_OT_initialize,
     FLUIDSIM_OT_release,
+    FLUIDSIM_OT_clear_error,
     FLUIDSIM_OT_reset,
     FLUIDSIM_OT_step,
     FLUIDSIM_OT_toggle_live,

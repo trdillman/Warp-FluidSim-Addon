@@ -30,6 +30,8 @@ class Session:
         self.benchmark_compare = None
         self.error = ""
         self._collider_prev = {}  # object name -> (matrix, frame)
+        self._collider_mesh_cache = {}
+        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
 
     @property
     def active(self):
@@ -37,10 +39,41 @@ class Session:
 
 
 _SESSION = Session()
+ERROR_SCENE_KEY = "fluidsim_last_error"
 
 
 def session() -> Session:
     return _SESSION
+
+
+def _scene_get(scene, key: str, default=""):
+    try:
+        return scene.get(key, default)
+    except AttributeError:
+        return getattr(scene, key, default)
+
+
+def _scene_set(scene, key: str, value):
+    try:
+        scene[key] = value
+    except TypeError:
+        setattr(scene, key, value)
+
+
+def set_error(scene, message: str):
+    """Persist the latest simulation error for panel-visible recovery."""
+    text = str(message)
+    session().error = text
+    _scene_set(scene, ERROR_SCENE_KEY, text)
+
+
+def clear_error(scene):
+    session().error = ""
+    _scene_set(scene, ERROR_SCENE_KEY, "")
+
+
+def current_error(scene) -> str:
+    return str(_scene_get(scene, ERROR_SCENE_KEY, "") or session().error or "")
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +231,29 @@ def _object_velocity(obj, scene, session_obj):
     return tuple(float(x) for x in v)
 
 
+def _object_identity(obj):
+    as_pointer = getattr(obj, "as_pointer", None)
+    if as_pointer is not None:
+        return int(as_pointer())
+    return id(obj)
+
+
+def _array_signature(array):
+    contiguous = np.ascontiguousarray(array)
+    return (contiguous.shape, str(contiguous.dtype), contiguous.tobytes())
+
+
+def _collider_cache_signature(object_id, device, verts, tris, matrix_world):
+    matrix = np.ascontiguousarray(matrix_world, dtype=np.float32)
+    return (
+        object_id,
+        device,
+        _array_signature(verts),
+        _array_signature(tris),
+        _array_signature(matrix),
+    )
+
+
 def gather_sources(scene, sess: Session):
     """Build SourceShapeDesc list from tagged objects + height source."""
     from ..sim.enums import (
@@ -272,16 +328,20 @@ def gather_colliders(scene, sess: Session, depsgraph=None):
 
     depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
     colliders = []
+    seen_cache_keys = set()
     for obj in scene.objects:
         pg = getattr(obj, "fluidsim", None)
         if pg is None or pg.role != "COLLIDER" or not pg.enabled:
             continue
         if obj.type != "MESH" or obj.hide_viewport:
             continue
+        object_id = _object_identity(obj)
+        seen_cache_keys.add(object_id)
         eval_obj = obj.evaluated_get(depsgraph)
         mesh = eval_obj.to_mesh()
         if mesh is None or len(mesh.polygons) == 0:
             eval_obj.to_mesh_clear()
+            sess._collider_mesh_cache.pop(object_id, None)
             continue
         mesh.calc_loop_triangles()
         nv = len(mesh.vertices)
@@ -296,14 +356,29 @@ def gather_colliders(scene, sess: Session, depsgraph=None):
         eval_obj.to_mesh_clear()
 
         device = sess.solver.device if sess.solver else "cuda:0"
-        wmesh = wp.Mesh(
-            points=wp.array(verts_w, dtype=wp.vec3, device=device),
-            indices=wp.array(tris, dtype=wp.int32, device=device),
-        )
+        signature = _collider_cache_signature(object_id, device, verts, tris, mw)
+        entry = sess._collider_mesh_cache.get(object_id)
+        if entry is not None and entry["signature"] == signature:
+            wmesh = entry["mesh"]
+            lo = entry["aabb_min"]
+            hi = entry["aabb_max"]
+            sess.collider_mesh_cache_stats["reuses"] += 1
+        else:
+            wmesh = wp.Mesh(
+                points=wp.array(verts_w, dtype=wp.vec3, device=device),
+                indices=wp.array(tris, dtype=wp.int32, device=device),
+            )
+            lo = verts_w.min(axis=0)
+            hi = verts_w.max(axis=0)
+            sess._collider_mesh_cache[object_id] = {
+                "signature": signature,
+                "mesh": wmesh,
+                "aabb_min": lo,
+                "aabb_max": hi,
+            }
+            sess.collider_mesh_cache_stats["rebuilds"] += 1
         desc = ColliderDesc()
         desc.mesh = wmesh
-        lo = verts_w.min(axis=0)
-        hi = verts_w.max(axis=0)
         desc.aabb_min = tuple(float(x) for x in lo)
         desc.aabb_max = tuple(float(x) for x in hi)
         c = obj.matrix_world.translation
@@ -311,6 +386,9 @@ def gather_colliders(scene, sess: Session, depsgraph=None):
         if pg.transfer_velocity:
             desc.linear_velocity = _object_velocity(obj, scene, sess)
         colliders.append(desc)
+    for cache_key in list(sess._collider_mesh_cache):
+        if cache_key not in seen_cache_keys:
+            del sess._collider_mesh_cache[cache_key]
     return colliders
 
 
@@ -354,8 +432,10 @@ def initialize_session(scene) -> Session:
     sess.start_frame = scene.frame_start
     sess.last_frame = -1
     sess.frame_stats = []
-    sess.error = ""
+    clear_error(scene)
     sess._collider_prev = {}
+    sess._collider_mesh_cache = {}
+    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
     sync_scene_to_solver(scene, sess)
     errors = solver.set_custom_snippets(build_snippets(scene))
     for name, err in errors:
@@ -373,6 +453,8 @@ def release_session():
     sess.last_frame = -1
     sess.frame_stats = []
     sess._collider_prev = {}
+    sess._collider_mesh_cache = {}
+    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
 
 
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
@@ -427,7 +509,10 @@ def reset_simulation(scene):
     sess.solver.reset()
     sess.last_frame = -1
     sess.frame_stats = []
+    clear_error(scene)
     sess._collider_prev = {}
+    sess._collider_mesh_cache = {}
+    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
     sync_scene_to_solver(scene, sess)
     viewport.update_outputs(scene, sess)
     scene.fluidsim.status = "Simulation reset"
@@ -458,7 +543,7 @@ def _on_frame_change(scene, depsgraph):
         sync_scene_to_solver(scene, sess, depsgraph)
         step_frame(scene, sess)
     except Exception as exc:  # noqa: BLE001 - never break playback
-        sess.error = repr(exc)
+        set_error(scene, repr(exc))
         fs.status = f"Solver error: {exc}"
         print(f"fluidSim step failed: {exc!r}")
 
