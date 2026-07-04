@@ -4,3 +4,21 @@ __pycache__/
 *.blend2
 *.tmp
 *.log
+
+# Local tool/runtime state
+/.codex/
+/blender/
+
+# Generated simulation/demo outputs
+/artifacts/
+/_quarantine/
+/review_output/
+/fluidsim_warp_snippets/
+*.npz
+/demos/*/series.json
+/demos/*/frame_*.npz
+/demos/fluidsim_report.json
+/demos/moses_split_snippet_demo.blend
+/fluidsim_report.json
+/fluidsim_test_*.obj
+/fluidsim_test_*.ply

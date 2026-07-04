@@ -2,9 +2,9 @@
 
 Run:  blender --background --python tools/build_demo_scenes.py
 
-Scenes (each saved as demos/<name>.blend with per-frame particle exports in
-demos/<name>/frame_####.npz and per-frame aggregate metrics in
-demos/<name>/series.json):
+Scenes are saved as demos/<name>.blend. Large per-frame particle exports and
+aggregate metrics are generated under artifacts/demo_cache/<name>/ so they do
+not become source-control assets.
 
 1. dam_break     - classic Martin & Moses dam-break column collapse.
 2. crown_splash  - droplet impact into a shallow pool (Worthington crown).
@@ -25,6 +25,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEMOS = os.path.join(REPO, "demos")
+CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 FPS = 24
 
 
@@ -82,6 +83,45 @@ def make_domain(scene, lo, hi, name):
     return dom
 
 
+def make_particle_seed(scene, points, name):
+    """Create a hidden-in-render mesh whose vertices can seed a live run."""
+    pts = np.asarray(points, dtype=np.float32)
+    mesh = bpy.data.meshes.new(name)
+    if len(pts):
+        mesh.vertices.add(len(pts) - 1)
+        mesh.vertices.foreach_set("co", pts.ravel())
+        mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    scene.collection.objects.link(obj)
+    obj.display_type = "BOUNDS"
+    obj.hide_render = True
+    obj.show_name = True
+    return obj
+
+
+def make_source_box(scene, lo, hi, name, emit_rate=8.0):
+    """Create a tagged analytic source so reopened scenes are playable."""
+    from fluidSim_warp_blender51.blender import sources as _sources
+
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    src = bpy.context.active_object
+    src.name = name
+    src.location = tuple((lo[i] + hi[i]) * 0.5 for i in range(3))
+    src.scale = tuple((hi[i] - lo[i]) * 0.5 for i in range(3))
+    _sources.tag_source(src, shape="BOX", mode="PARTICLES")
+    src.fluidsim.emit_rate = emit_rate
+    src.fluidsim.use_object_velocity = False
+    src.show_name = True
+    return src
+
+
+def add_text_block(name, body):
+    text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
+    text.clear()
+    text.write(body)
+    return text
+
+
 def add_camera_light(scene, cam_loc, cam_rot):
     cam_data = bpy.data.cameras.new("Demo Cam")
     cam = bpy.data.objects.new("Demo Cam", cam_data)
@@ -102,7 +142,7 @@ def run_scene(name, frames, dump_velocities=True):
 
     scene = bpy.context.scene
     sess = session()
-    out_dir = os.path.join(DEMOS, name)
+    out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     series = {
         "fps": FPS,
@@ -179,14 +219,49 @@ def build_dam_break():
     fs.profiling_enabled = False
     fs.show_particles = True
     fs.show_surface = True
-    bpy.ops.fluidsim.initialize()
-    sess = session()
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    fs.particle_display_fraction = 1.0
+    fs.live = True
+    scene.frame_start = 1
+    scene.frame_end = 120
+    scene.frame_set(1)
     # H = 1.2 m column, a = 0.6 m wide, spanning the tank in y.
     pts = lattice((0.0, 0.0, 0.0), (0.6, 0.6, 1.2), 0.015)
+    seed = make_particle_seed(scene, pts, "DamBreak Initial Particle Seed")
+    src = make_source_box(
+        scene,
+        (0.0, 0.0, 0.0),
+        (0.6, 0.6, 1.2),
+        "DamBreak Source Column",
+        emit_rate=32.0,
+    )
+    src.fluidsim.enabled = True
+    # The source creates a normal UI playback path from any timeline frame. The
+    # seed remains available for manual one-shot injection / debugging.
+    src.fluidsim.enabled = False  # preview bake uses the one-shot seed only
+    bpy.ops.fluidsim.initialize()
+    sess = session()
     n = sess.solver.inject_particles(pts)
     log(f"dam_break: injected {n:,} particles (H=1.2, a=0.6)")
     add_camera_light(scene, (1.6, -4.4, 1.9), (1.30, 0.0, 0.0))
     run_scene("dam_break", 72)
+    src.fluidsim.enabled = True
+    add_text_block(
+        "README_Dam_Break_Playable",
+        "Dam Break live playback notes\n"
+        "=============================\n\n"
+        "This file contains both a baked preview output and a reusable live setup.\n\n"
+        "Best path: open with blender/open_dam_break_playable.py. The script enables "
+        "the FluidSim add-on, initializes the CUDA solver, advances to frame 2 "
+        "using the 'DamBreak Source Column', enables Live Simulation, "
+        "and starts playback.\n\n"
+        "Manual path: press Initialize Solver, enable Live Simulation, then "
+        "press Play. The 'DamBreak Source Column' stays enabled so Reset or "
+        "Reinitialize can create visible fluid from any timeline frame. For a "
+        "one-shot seed test, disable that source, select 'DamBreak Initial "
+        "Particle Seed', and click Sources > Inject Object Particles after "
+        "initializing.\n",
+    )
     save_scene("dam_break")
     meta = {
         "scene": "dam_break",
@@ -198,6 +273,9 @@ def build_dam_break():
         "fps": FPS,
         "spacing": 0.015,
         "injected": int(n),
+        "seed_object": seed.name,
+        "source_object": src.name,
+        "playable_live_setup": True,
     }
     with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",
               encoding="utf-8") as fh:

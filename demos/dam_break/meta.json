@@ -18,5 +18,8 @@
   "voxel_size": 0.03,
   "fps": 24,
   "spacing": 0.015,
-  "injected": 128000
+  "injected": 128000,
+  "seed_object": "DamBreak Initial Particle Seed",
+  "source_object": "DamBreak Source Column",
+  "playable_live_setup": true
 }
