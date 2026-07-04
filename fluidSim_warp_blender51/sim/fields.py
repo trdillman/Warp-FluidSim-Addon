@@ -407,7 +407,7 @@ class SparseGrid:
         self.leaf_coords = wp.zeros(self.capacity, dtype=wp.vec3i, device=device)
         self.num_leaves = wp.zeros(1, dtype=wp.int32, device=device)
         self.overflow = wp.zeros(1, dtype=wp.int32, device=device)
-        self.active_leaf_count = 0  # host mirror, refreshed by finalize_topology
+        self.active_leaf_count = 0  # host mirror, refreshed by refresh_topology_counts
 
     # -- properties ---------------------------------------------------------
     @property
@@ -471,7 +471,7 @@ class SparseGrid:
                 device=self.device,
             )
 
-    def finalize_topology(self) -> int:
+    def finalize_topology(self, sync: bool = True) -> int:
         wp.launch(
             k_allocate_leaves,
             dim=self.num_leaf_cells,
@@ -481,13 +481,20 @@ class SparseGrid:
             ],
             device=self.device,
         )
+        if not sync:
+            return self.active_leaf_count
+        return self.refresh_topology_counts()
+
+    def refresh_topology_counts(self) -> int:
         counts = self.num_leaves.numpy()
+        count = int(counts[0])
         if int(self.overflow.numpy()[0]) != 0:
+            self.active_leaf_count = min(count, self.capacity)
             raise RuntimeError(
-                f"FluidSim: leaf capacity exceeded ({counts[0]} > {self.capacity}); "
+                f"FluidSim: leaf capacity exceeded ({count} > {self.capacity}); "
                 "increase the domain leaf allocation."
             )
-        self.active_leaf_count = int(counts[0])
+        self.active_leaf_count = count
         return self.active_leaf_count
 
 

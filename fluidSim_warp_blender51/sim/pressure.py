@@ -398,6 +398,19 @@ def k_compute_beta(
 
 
 @wp.kernel
+def k_pack_pcg_stats(
+    residual: wp.array(dtype=float),
+    rz: wp.array(dtype=float),
+    p_ap: wp.array(dtype=float),
+    stats: wp.array(dtype=float),
+):
+    """Pack PCG monitor scalars into one array for a single host readback."""
+    stats[0] = residual[0]
+    stats[1] = rz[0]
+    stats[2] = p_ap[0]
+
+
+@wp.kernel
 def k_update_p(
     z: wp.array(dtype=float),
     beta: wp.array(dtype=float),
@@ -806,6 +819,9 @@ class PressureSolver:
         self.beta = wp.zeros(1, dtype=float, device=device)
         self.residual = wp.zeros(1, dtype=float, device=device)
         self.max_pressure = wp.zeros(1, dtype=float, device=device)
+        # packed [residual^2, r.z, p.Ap] monitor scalars: one readback per
+        # convergence checkpoint instead of three per PCG iteration.
+        self.pcg_stats = wp.zeros(3, dtype=float, device=device)
         self.last_iterations = 0
         self.last_residual = 0.0
         self.last_residual_squared = 0.0
@@ -959,6 +975,7 @@ class PressureSolver:
         wp.utils.array_inner(self.r, self.z, out=self.rz)
         wp.utils.array_inner(self.r, self.r, out=self.residual)
         last_checked_res = float(self.residual.numpy()[0])
+        res_sq = last_checked_res
         it = 0
         if not math.isfinite(last_checked_res):
             status = PRESSURE_STATUS_INVALID
@@ -967,77 +984,74 @@ class PressureSolver:
             status = PRESSURE_STATUS_CONVERGED
             failure = PRESSURE_STATUS_CONVERGED
             pressure_valid = True
-        while it < max_iterations:
-            if status != PRESSURE_STATUS_MAX_ITERATIONS:
-                break
-            wp.launch(
-                k_apply_matrix, dim=n,
-                inputs=[self.p_dir, voxel_type, self.inv_diag,
-                        *self._stencil_args(), self.ap],
-                device=self.device,
-            )
-            wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap)
-            denom = float(self.p_ap.numpy()[0])
-            rz_old = float(self.rz.numpy()[0])
-            if not math.isfinite(denom) or not math.isfinite(rz_old):
+        # Batched device-resident iterations: all recurrence scalars (alpha,
+        # beta) stay on the GPU. k_compute_alpha/k_compute_beta clamp to zero
+        # on tiny denominators, so a breakdown mid-batch freezes x/r in place
+        # and is classified at the next checkpoint from one packed readback
+        # instead of three host syncs per iteration.
+        while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
+            batch = min(check_every, max_iterations - it)
+            for _ in range(batch):
+                wp.launch(
+                    k_apply_matrix, dim=n,
+                    inputs=[self.p_dir, voxel_type, self.inv_diag,
+                            *self._stencil_args(), self.ap],
+                    device=self.device,
+                )
+                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap)
+                wp.launch(k_compute_alpha, dim=1,
+                          inputs=[self.rz, self.p_ap, self.alpha],
+                          device=self.device)
+                wp.launch(
+                    k_update_xr, dim=n,
+                    inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
+                            x, self.r],
+                    device=self.device,
+                )
+                wp.launch(
+                    k_apply_preconditioner, dim=n,
+                    inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
+                    device=self.device,
+                )
+                wp.utils.array_inner(self.r, self.z, out=self.rz_new)
+                wp.launch(k_compute_beta, dim=1,
+                          inputs=[self.rz_new, self.rz, self.beta],
+                          device=self.device)
+                wp.launch(
+                    k_update_p, dim=n,
+                    inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
+                    device=self.device,
+                )
+                wp.copy(self.rz, self.rz_new)
+                it += 1
+            # single checkpoint readback: [residual^2, r.z, p.Ap]
+            wp.utils.array_inner(self.r, self.r, out=self.residual)
+            wp.launch(k_pack_pcg_stats, dim=1,
+                      inputs=[self.residual, self.rz, self.p_ap,
+                              self.pcg_stats],
+                      device=self.device)
+            stats = self.pcg_stats.numpy()
+            res_sq = float(stats[0])
+            rz_cur = float(stats[1])
+            p_ap_cur = float(stats[2])
+            if (not math.isfinite(res_sq) or not math.isfinite(rz_cur)
+                    or not math.isfinite(p_ap_cur)):
                 status = PRESSURE_STATUS_INVALID
                 failure = "non_finite_residual"
-                break
-            if abs(denom) < 1.0e-30 or abs(rz_old) < 1.0e-30:
+            elif res_sq < tol_sq:
+                status = PRESSURE_STATUS_CONVERGED
+                failure = PRESSURE_STATUS_CONVERGED
+                pressure_valid = True
+            elif (rz_cur < -1.0e-20 or abs(rz_cur) < 1.0e-30
+                    or abs(p_ap_cur) < 1.0e-30):
                 status = PRESSURE_STATUS_SINGULAR
                 failure = "singular_system"
-                break
-            wp.launch(k_compute_alpha, dim=1,
-                      inputs=[self.rz, self.p_ap, self.alpha], device=self.device)
-            wp.launch(
-                k_update_xr, dim=n,
-                inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves, x, self.r],
-                device=self.device,
-            )
-            wp.launch(
-                k_apply_preconditioner, dim=n,
-                inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
-                device=self.device,
-            )
-            wp.utils.array_inner(self.r, self.z, out=self.rz_new)
-            rz_new = float(self.rz_new.numpy()[0])
-            if not math.isfinite(rz_new):
-                status = PRESSURE_STATUS_INVALID
-                failure = "non_finite_residual"
-                break
-            if rz_new < -1.0e-20:
-                status = PRESSURE_STATUS_SINGULAR
-                failure = "singular_system"
-                break
-            wp.launch(k_compute_beta, dim=1,
-                      inputs=[self.rz_new, self.rz, self.beta], device=self.device)
-            wp.launch(
-                k_update_p, dim=n,
-                inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
-                device=self.device,
-            )
-            wp.copy(self.rz, self.rz_new)
-            it += 1
-            if it % check_every == 0 or it == max_iterations:
-                wp.utils.array_inner(self.r, self.r, out=self.residual)
-                res_sq = float(self.residual.numpy()[0])
-                if not math.isfinite(res_sq):
-                    status = PRESSURE_STATUS_INVALID
-                    failure = "non_finite_residual"
-                    break
-                if res_sq < tol_sq:
-                    status = PRESSURE_STATUS_CONVERGED
-                    failure = PRESSURE_STATUS_CONVERGED
-                    pressure_valid = True
-                    break
-                if res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                    status = PRESSURE_STATUS_STALLED
-                    failure = "stalled"
-                    break
+            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
+                status = PRESSURE_STATUS_STALLED
+                failure = "stalled"
+            else:
                 last_checked_res = res_sq
         self.last_iterations = it
-        wp.utils.array_inner(self.r, self.r, out=self.residual)
-        res_sq = float(self.residual.numpy()[0])
         if not math.isfinite(res_sq):
             status = PRESSURE_STATUS_INVALID
             failure = "non_finite_residual"

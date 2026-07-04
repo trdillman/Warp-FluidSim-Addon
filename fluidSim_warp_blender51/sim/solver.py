@@ -529,6 +529,11 @@ class FluidSolver:
         self.colliders: list[ColliderDesc] = []
         self.height_source = HeightSourceDesc()
         self._shape_array = None
+        # Cached particle-emission shape array (sources + derived height box).
+        # Rebuilt only when sources/height/domain change instead of once per
+        # substep (host alloc + H2D upload).
+        self._emit_shape_array = None
+        self._emit_shape_key = None
         self._height_profile = wp.zeros((2, 2), dtype=float, device=self.device)
         self._height_profile_res = (2, 2)
 
@@ -545,6 +550,7 @@ class FluidSolver:
     def set_sources(self, sources):
         self.sources = list(sources)
         self._shape_array = None
+        self._emit_shape_array = None
 
     def set_colliders(self, colliders):
         self.colliders = list(colliders)
@@ -553,6 +559,7 @@ class FluidSolver:
         if desc is None:
             desc = HeightSourceDesc()  # disabled by default
         self.height_source = desc
+        self._emit_shape_array = None
         if desc.profile is not None:
             arr = np.ascontiguousarray(desc.profile, dtype=np.float32)
             self._height_profile = wp.array(arr, dtype=float, device=self.device)
@@ -608,11 +615,13 @@ class FluidSolver:
             dmin = s.domain_min
             dmax = s.domain_max
             g.mark_world_box(dmin, (dmax[0], dmax[1], hs.base_height + 4.0 * s.voxel_size))
-        if self.whitewater.host_count > 0:
+        # Gate on the setting, not host_count: compact() keeps the count on
+        # the device and the mark kernel already guards on count[0].
+        if s.whitewater_enabled:
             g.mark_points(self.whitewater.position, self.whitewater.count,
                           self.whitewater.capacity)
         g.expand(s.topology_expand)
-        leaves = g.finalize_topology()
+        g.finalize_topology(sync=False)
 
         # Carry churn across the rebuild (only persistent grid field).
         wp.launch(
@@ -622,7 +631,7 @@ class FluidSolver:
             outputs=[self.churn_tmp.data], device=self.device,
         )
         self.churn.data, self.churn_tmp.data = self.churn_tmp.data, self.churn.data
-        return leaves
+        return g.active_leaf_count
 
     # -- per-substep phases ----------------------------------------------------
 
@@ -736,24 +745,34 @@ class FluidSolver:
         )
         height_particles = hs.enabled and hs.emit_particles
         if emit_shapes or height_particles:
-            all_shapes = list(self.sources)
+            n_emit = n_shapes
             if height_particles:
                 dmin = s.domain_min
                 dmax = s.domain_max
-                cz = (dmin[2] + hs.base_height) * 0.5
-                hz = max((hs.base_height - dmin[2]) * 0.5, 0.0)
-                all_shapes.append(SourceShapeDesc(
-                    enabled=True, shape=2, stype=0, mode=1,
-                    position=((dmin[0] + dmax[0]) * 0.5, (dmin[1] + dmax[1]) * 0.5, cz),
-                    half_extents=((dmax[0] - dmin[0]) * 0.5, (dmax[1] - dmin[1]) * 0.5, hz),
-                    velocity=tuple(hs.velocity), emit_rate=hs.emit_rate,
-                ))
-                shapes = wp.array([sh.to_struct() for sh in all_shapes],
-                                  dtype=SourceShape, device=self.device)
+                key = (n_shapes, hs.base_height, tuple(hs.velocity),
+                       hs.emit_rate, tuple(dmin), tuple(dmax))
+                if self._emit_shape_array is None or self._emit_shape_key != key:
+                    cz = (dmin[2] + hs.base_height) * 0.5
+                    hz = max((hs.base_height - dmin[2]) * 0.5, 0.0)
+                    all_shapes = list(self.sources)
+                    all_shapes.append(SourceShapeDesc(
+                        enabled=True, shape=2, stype=0, mode=1,
+                        position=((dmin[0] + dmax[0]) * 0.5,
+                                  (dmin[1] + dmax[1]) * 0.5, cz),
+                        half_extents=((dmax[0] - dmin[0]) * 0.5,
+                                      (dmax[1] - dmin[1]) * 0.5, hz),
+                        velocity=tuple(hs.velocity), emit_rate=hs.emit_rate,
+                    ))
+                    self._emit_shape_array = wp.array(
+                        [sh.to_struct() for sh in all_shapes],
+                        dtype=SourceShape, device=self.device)
+                    self._emit_shape_key = key
+                shapes = self._emit_shape_array
+                n_emit = n_shapes + 1
             p = self.particles
             wp.launch(
                 k_source_shapes_particles, dim=g.voxel_capacity,
-                inputs=[shapes, len(all_shapes), g.leaf_coords, g.num_leaves,
+                inputs=[shapes, n_emit, g.leaf_coords, g.num_leaves,
                         g.origin, s.voxel_size, self.voxel_counts.data,
                         self._emit_seed, p.capacity],
                 outputs=[p.position, p.velocity, p.attr("age"), p.attr("life"),
@@ -761,6 +780,8 @@ class FluidSolver:
                          p.attr("density"), p.alive, p.count],
                 device=self.device,
             )
+            return True
+        return False
 
     def _p2g(self):
         g = self.grid
@@ -1093,7 +1114,8 @@ class FluidSolver:
 
     def _compute_substeps(self, frame_dt):
         s = self.settings
-        self.particles.refresh_host_count()
+        # host_count is kept current by end-of-frame stats, inject_particles
+        # and clear(); avoid an extra device sync here.
         if self.particles.host_count == 0:
             return max(1, s.min_substeps)
         self.max_speed_dev.zero_()
@@ -1141,9 +1163,11 @@ class FluidSolver:
             with self._phase("indexing"):
                 self._index_particles()
             with self._phase("sourcing"):
-                self._source(dt)
+                emitted = self._source(dt)
                 # Re-count after emission so P2G activity sees new particles.
-                self._index_particles()
+                # Skipped when no emitter ran: indexing is already current.
+                if emitted:
+                    self._index_particles()
             with self._phase("p2g"):
                 self._p2g()
             self._save_velocities()
@@ -1176,6 +1200,7 @@ class FluidSolver:
             time_ctx["time"] = self.sim_time
 
         wp.synchronize_device(self.device)
+        self.grid.refresh_topology_counts()
         self.frame += 1
 
         st = self.stats

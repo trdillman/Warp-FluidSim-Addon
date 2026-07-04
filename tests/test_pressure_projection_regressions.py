@@ -210,3 +210,90 @@ def test_sanitize_particles_kills_non_finite_state_and_clamps_finite_speed(cuda_
     out_vel = velocities.numpy()
     assert np.linalg.norm(out_vel[0]) == pytest.approx(1.0)
     assert np.all(np.isfinite(out_vel[0]))
+
+
+def test_sparse_grid_finalize_topology_can_defer_host_readback(cuda_device):
+    grid = SparseGrid(
+        origin=(0.0, 0.0, 0.0),
+        size=(0.4, 0.4, 0.4),
+        voxel_size=0.05,
+        leaf_capacity=1,
+        device=cuda_device,
+    )
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.399, 0.399, 0.399))
+
+    assert grid.finalize_topology(sync=False) == 0
+    assert grid.active_leaf_count == 0
+    assert grid.refresh_topology_counts() == 1
+    assert grid.active_leaf_count == 1
+
+
+def test_sparse_grid_deferred_topology_preserves_overflow_error(cuda_device):
+    grid = SparseGrid(
+        origin=(0.0, 0.0, 0.0),
+        size=(1.0, 1.0, 1.0),
+        voxel_size=0.1,
+        leaf_capacity=1,
+        device=cuda_device,
+    )
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.999, 0.999, 0.999))
+
+    grid.finalize_topology(sync=False)
+    with pytest.raises(RuntimeError, match="leaf capacity exceeded"):
+        grid.refresh_topology_counts()
+
+
+def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
+    """Convergence must still be detected with checkpoint-only readbacks."""
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+    voxel_type_wp = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0] = 1.0
+    rhs[1] = -1.0  # zero-mean RHS: solvable under the pure-Neumann stencil
+    _copy_float(solver.rhs, rhs, cuda_device)
+
+    solver.build_preconditioner(voxel_type_wp)
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+
+    assert status["converged"] is True
+    assert status["project_velocity"] is True
+    assert solver.should_project_pressure() is True
+    assert solver.last_residual_squared < 1.0e-6 * 1.0e-6 * grid.voxel_capacity
+    assert np.all(np.isfinite(solver.pressure.numpy()))
+
+
+def test_whitewater_compact_is_correct_without_host_count_refresh(cuda_device):
+    """compact() must preserve live particles with device-only bookkeeping."""
+    from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
+
+    ww = WhitewaterSystem(capacity=64, device=cuda_device)
+    n = 10
+    pos = np.zeros((64, 3), dtype=np.float32)
+    pos[:n, 0] = np.arange(n, dtype=np.float32)
+    alive = np.zeros(64, dtype=np.int32)
+    alive[:n] = [1, 0, 1, 1, 0, 0, 1, 1, 0, 1]
+    src_pos = wp.array(pos, dtype=wp.vec3, device=cuda_device)
+    wp.copy(ww.position, src_pos)
+    _copy_int(ww.alive, alive, cuda_device)
+    _copy_int(ww.count, np.array([n], dtype=np.int32), cuda_device)
+
+    ww.compact()
+
+    live = ww.refresh_host_count()
+    assert live == int(alive.sum()) == 6
+    got = ww.position.numpy()[:live, 0]
+    assert np.allclose(got, [0.0, 2.0, 3.0, 6.0, 7.0, 9.0])
+    alive_out = ww.alive.numpy()
+    assert np.all(alive_out[:live] == 1)
+    assert np.all(alive_out[live:] == 0)

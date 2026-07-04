@@ -371,17 +371,19 @@ class WhitewaterSystem:
         return self.host_count
 
     def compact(self):
-        n = self.refresh_host_count()
-        if n == 0:
-            return 0
-        wp.utils.array_scan(
-            self.alive[:n] if n < self.capacity else self.alive,
-            self._scan[:n] if n < self.capacity else self._scan,
-            inclusive=False,
-        )
+        """Stream-compact live particles without any host synchronization.
+
+        `alive` is maintained as zero beyond the live range (see `clear` and
+        the trailing `k_ww_mark_alive`), so scanning the full capacity is
+        equivalent to scanning only the first `count` entries. All bookkeeping
+        stays on the device; `host_count` is refreshed lazily by callers that
+        actually need a CPU-side value (end-of-frame stats, viewport export).
+        """
+        cap = self.capacity
+        wp.utils.array_scan(self.alive, self._scan, inclusive=False)
         wp.launch(
             k_ww_compact_scatter,
-            dim=n,
+            dim=cap,
             inputs=[
                 self.alive, self._scan, self.position, self.velocity,
                 self.age, self.life,
@@ -392,11 +394,10 @@ class WhitewaterSystem:
             ],
             device=self.device,
         )
-        self._count2.zero_()
         wp.launch(
             k_ww_final_count,
             dim=1,
-            inputs=[self.alive, self._scan, n],
+            inputs=[self.alive, self._scan, cap],
             outputs=[self._count2],
             device=self.device,
         )
@@ -405,13 +406,12 @@ class WhitewaterSystem:
         self.age, self._age2 = self._age2, self.age
         self.life, self._life2 = self._life2, self.life
         self.count, self._count2 = self._count2, self.count
-        n2 = self.refresh_host_count()
         self.alive.zero_()
         wp.launch(
-            k_ww_mark_alive, dim=n2, inputs=[self.count], outputs=[self.alive],
+            k_ww_mark_alive, dim=cap, inputs=[self.count],
+            outputs=[self.alive],
             device=self.device,
         )
-        return n2
 
 
 @wp.kernel
