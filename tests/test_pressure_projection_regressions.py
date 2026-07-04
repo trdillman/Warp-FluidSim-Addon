@@ -19,6 +19,8 @@ from fluidSim_warp_blender51.sim.constants import (
 from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 from fluidSim_warp_blender51.sim.solver import (
+    FluidSolver,
+    SolverSettings,
     k_sanitize_mac_velocity,
     k_sanitize_particles,
 )
@@ -297,3 +299,48 @@ def test_whitewater_compact_is_correct_without_host_count_refresh(cuda_device):
     alive_out = ww.alive.numpy()
     assert np.all(alive_out[:live] == 1)
     assert np.all(alive_out[live:] == 0)
+
+
+def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device):
+    settings = SolverSettings(
+        domain_min=(0.0, 0.0, 0.0),
+        domain_max=(0.4, 0.4, 0.4),
+        voxel_size=0.1,
+        leaf_capacity=1,
+        max_particles=8,
+        max_whitewater=8,
+        min_substeps=3,
+        max_substeps=3,
+        device=cuda_device,
+    )
+    solver = FluidSolver(settings)
+    solver.particles.host_count = 1
+
+    class _NoCflReduction:
+        def zero_(self):
+            raise AssertionError("fixed substeps should not reduce max speed")
+
+        def numpy(self):
+            raise AssertionError("fixed substeps should not read max speed")
+
+    solver.max_speed_dev = _NoCflReduction()
+    assert solver._compute_substeps(1.0 / 24.0) == 3
+
+
+def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
+    settings = SolverSettings(
+        domain_min=(0.0, 0.0, 0.0),
+        domain_max=(0.4, 0.4, 0.4),
+        voxel_size=0.1,
+        leaf_capacity=1,
+        max_particles=8,
+        max_whitewater=8,
+        min_substeps=1,
+        max_substeps=4,
+        gravity=(0.0, 0.0, 0.0),
+        device=cuda_device,
+    )
+    solver = FluidSolver(settings)
+    solver.inject_particles([(0.1, 0.1, 0.1)], velocity=(100.0, 0.0, 0.0))
+
+    assert solver._compute_substeps(1.0 / 24.0) == 4

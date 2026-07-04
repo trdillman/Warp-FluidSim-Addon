@@ -1114,13 +1114,17 @@ class FluidSolver:
 
     def _compute_substeps(self, frame_dt):
         s = self.settings
+        min_substeps = max(1, int(s.min_substeps))
+        max_substeps = max(min_substeps, int(s.max_substeps))
         # host_count is kept current by end-of-frame stats, inject_particles
         # and clear(); avoid an extra device sync here.
         if self.particles.host_count == 0:
-            return max(1, s.min_substeps)
+            return min_substeps
+        if min_substeps == max_substeps:
+            return min_substeps
         self.max_speed_dev.zero_()
         wp.launch(
-            k_max_vec3_magnitude, dim=self.particles.capacity,
+            k_max_vec3_magnitude, dim=self.particles.host_count,
             inputs=[self.particles.velocity, self.particles.count],
             outputs=[self.max_speed_dev], device=self.device,
         )
@@ -1128,10 +1132,10 @@ class FluidSolver:
         gmag = math.sqrt(sum(x * x for x in s.gravity))
         vmax = vmax + gmag * frame_dt
         if vmax < 1.0e-6:
-            return max(1, s.min_substeps)
+            return min_substeps
         dt_cfl = s.cfl * s.voxel_size / vmax
         n = int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6)))
-        return max(s.min_substeps, min(s.max_substeps, n))
+        return max(min_substeps, min(max_substeps, n))
 
     # -- main entry -----------------------------------------------------------
 

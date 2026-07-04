@@ -217,12 +217,16 @@ def _swap_vertex_cloud(obj, positions, colors=None):
     _swap_mesh(obj, positions, np.zeros((0, 3), dtype=np.int32), colors)
 
 
-def _particle_values(solver, mode, positions, velocities, indices=None):
+def _particle_values(solver, mode, positions, velocities=None, indices=None):
     if mode == "NONE":
         return None
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
+        if velocities is None:
+            velocities = solver.particle_velocities()
+            if indices is not None:
+                velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
@@ -253,7 +257,7 @@ def _surface_values(solver, mode, verts):
     if mode == "HEIGHT":
         return verts[:, 2]
     pos = solver.particle_positions()
-    vel = solver.particle_velocities()
+    vel = solver.particle_velocities() if mode == "SPEED" else None
     values = _particle_values(solver, mode, pos, vel)
     if values is None:
         return None
@@ -289,14 +293,17 @@ def update_outputs(scene, sess):
 
     if fs.show_particles:
         pos = solver.particle_positions()
-        vel = solver.particle_velocities()
+        vel = None
         indices = None
         frac = fs.particle_display_fraction
         if frac < 1.0 and len(pos):
             step = max(1, int(round(1.0 / frac)))
             indices = np.arange(0, len(pos), step, dtype=np.int64)
             pos = pos[::step]
-            vel = vel[::step]
+        if fs.particle_attribute_mode == "SPEED":
+            vel = solver.particle_velocities()
+            if indices is not None:
+                vel = vel[indices]
         values = _particle_values(
             solver, fs.particle_attribute_mode, pos, vel, indices)
         colors = _values_to_colors(values) if values is not None else None

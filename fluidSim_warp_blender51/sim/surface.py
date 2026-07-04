@@ -9,6 +9,7 @@ Ports of the fluid_surface_collision kernel group:
 
 from __future__ import annotations
 
+import numpy as np
 import warp as wp
 
 wp.set_module_options({"enable_backward": False})
@@ -468,9 +469,11 @@ class SurfaceExtractor:
         verts = self._mc.verts.numpy()
         tris = self._mc.indices.numpy().reshape(-1, 3)
         # Vertices are in dense-voxel index space; convert to world.
-        origin = [float(g.origin[0]), float(g.origin[1]), float(g.origin[2])]
-        vs = g.voxel_size
-        verts = verts * vs + [origin[0] + 0.5 * vs, origin[1] + 0.5 * vs, origin[2] + 0.5 * vs]
+        vs = np.float32(g.voxel_size)
+        offset = np.asarray(g.origin, dtype=np.float32) + np.float32(0.5) * vs
+        verts = np.asarray(verts, dtype=np.float32)
+        verts *= vs
+        verts += offset
         return verts, tris
 
 
