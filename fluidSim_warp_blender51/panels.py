@@ -368,6 +368,16 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         box.operator("fluidsim.export_frame", icon="EXPORT")
 
 
+def _snippet_state_icon(snip):
+    """Icon reflecting validation state of a snippet's current source."""
+    from .sim import snippet_library
+
+    code = snip.text_block.as_string() if snip.text_block else ""
+    if snip.validated_hash != snippet_library.code_hash(code):
+        return "QUESTION"          # edited since last validation
+    return "CHECKMARK" if snip.is_valid else "ERROR"
+
+
 class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
     bl_label = "Custom Warp Snippets"
     bl_idname = "FLUIDSIM_PT_snippets"
@@ -376,6 +386,16 @@ class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+
+        # -- Snippet library (Houdini-preset-style dropdown) ----------------
+        box = layout.box()
+        box.label(text="Snippet Library", icon="PRESET")
+        row = box.row(align=True)
+        row.prop(fs, "snippet_library_selection", text="")
+        row.operator("fluidsim.snippet_load_preset", text="Load",
+                     icon="IMPORT")
+
+        # -- Snippet stack (layer multiple snippets, reorder by slot) -------
         row = layout.row(align=True)
         row.operator("fluidsim.snippet_add", icon="ADD")
         row.operator("fluidsim.snippet_remove", icon="REMOVE")
@@ -386,10 +406,19 @@ class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
             row = box.row(align=True)
             row.prop(snip, "enabled", text="")
             row.prop(snip, "kernel_name", text="")
+            row.label(text="", icon=_snippet_state_icon(snip))
+            if i != fs.active_snippet:
+                op = row.operator("fluidsim.snippet_select", text="",
+                                  icon="RESTRICT_SELECT_OFF")
+                op.index = i
             if i == fs.active_snippet:
                 col = box.column(align=True)
                 col.prop(snip, "order")
                 col.prop(snip, "run_over")
+                row = col.row(align=True)
+                row.prop(snip, "frame_start", text="Start")
+                row.prop(snip, "frame_end", text="End")
+                row.prop(snip, "frame_step", text="Step")
                 col.prop(snip, "text_block")
                 col.separator()
                 row = col.row(align=True)
@@ -407,6 +436,107 @@ class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
                         arow.prop(arg, "constant_value", text="")
                 if snip.last_error:
                     col.label(text=snip.last_error[:64], icon="ERROR")
+
+
+class FLUIDSIM_PT_snippet_editor(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Snippet Editor"
+    bl_idname = "FLUIDSIM_PT_snippet_editor"
+    bl_parent_id = "FLUIDSIM_PT_snippets"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+        if not (0 <= fs.active_snippet < len(fs.snippets)):
+            layout.label(text="Add or load a snippet first", icon="INFO")
+            return
+        snip = fs.snippets[fs.active_snippet]
+
+        row = layout.row(align=True)
+        row.operator("fluidsim.snippet_validate", icon="CHECKMARK")
+        row.operator("fluidsim.snippet_autofix", icon="TOOL_SETTINGS")
+        row.operator("fluidsim.snippet_test", icon="EXPERIMENTAL")
+        row.operator("fluidsim.snippet_save_preset", icon="FILE_TICK")
+
+        code = snip.text_block.as_string() if snip.text_block else ""
+        box = layout.box()
+        header = box.row(align=True)
+        header.label(text=f"Source ({snip.kernel_name})",
+                     icon=_snippet_state_icon(snip))
+        header.operator("fluidsim.snippet_line_add", text="", icon="ADD")
+        lines = code.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        shown = lines[: fs.snippet_editor_lines]
+        col = box.column(align=True)
+        if not shown:
+            col.label(text="(empty - use Add Line or the Shortcuts below)")
+        for idx, line in enumerate(shown):
+            row = col.row(align=True)
+            row.label(text=f"{idx + 1:>3}  {line[:88]}")
+            op = row.operator("fluidsim.snippet_edit_line", text="",
+                              icon="GREASEPENCIL", emboss=False)
+            op.line_index = idx
+            op = row.operator("fluidsim.snippet_line_delete", text="",
+                              icon="X", emboss=False)
+            op.line_index = idx
+        if len(lines) > len(shown):
+            col.label(text=f"... {len(lines) - len(shown)} more line(s); "
+                           f"raise Editor Lines or use the Text Editor")
+        box.prop(fs, "snippet_editor_lines")
+
+        if snip.validation_report:
+            box = layout.box()
+            box.label(text="Validation", icon="INFO")
+            for line in snip.validation_report.split("\n")[:8]:
+                icon = "ERROR" if line.startswith("ERROR") else "INFO"
+                box.label(text=line[:96], icon=icon)
+
+
+class FLUIDSIM_PT_snippet_shortcuts(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Shortcuts"
+    bl_idname = "FLUIDSIM_PT_snippet_shortcuts"
+    bl_parent_id = "FLUIDSIM_PT_snippets"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        from .sim import snippet_library
+
+        layout = self.layout
+        fs = context.scene.fluidsim
+        if not (0 <= fs.active_snippet < len(fs.snippets)):
+            layout.label(text="Add or load a snippet first", icon="INFO")
+            return
+        snip = fs.snippets[fs.active_snippet]
+
+        # Bind a solver field / named constant (adds argument + code line).
+        box = layout.box()
+        box.label(text="Bind Data", icon="RNA")
+        row = box.row(align=True)
+        row.prop(fs, "shortcut_field", text="")
+        row.operator("fluidsim.snippet_shortcut_field", text="Add Field")
+        row = box.row(align=True)
+        row.prop(fs, "shortcut_constant_name", text="")
+        row.prop(fs, "shortcut_constant_value", text="")
+        row.operator("fluidsim.snippet_shortcut_constant", text="Add")
+
+        # One-click code shortcuts grouped by category.
+        grouped = {}
+        for shortcut in snippet_library.shortcuts_for(snip.run_over):
+            grouped.setdefault(shortcut.category, []).append(shortcut)
+        for category in ("Context", "Time", "Math", "Constants"):
+            shortcuts = grouped.pop(category, None)
+            if not shortcuts:
+                continue
+            box = layout.box()
+            box.label(text=category, icon="DOT")
+            col = box.column(align=True)
+            for i in range(0, len(shortcuts), 2):
+                row = col.row(align=True)
+                for shortcut in shortcuts[i:i + 2]:
+                    op = row.operator("fluidsim.snippet_insert_shortcut",
+                                      text=shortcut.label)
+                    op.shortcut_id = shortcut.shortcut_id
 
 
 class FLUIDSIM_PT_diagnostics(FluidSimPanel, bpy.types.Panel):
@@ -500,6 +630,8 @@ CLASSES = (
     FLUIDSIM_PT_surface,
     FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
+    FLUIDSIM_PT_snippet_editor,
+    FLUIDSIM_PT_snippet_shortcuts,
     FLUIDSIM_PT_diagnostics,
     FLUIDSIM_PT_validation,
 )

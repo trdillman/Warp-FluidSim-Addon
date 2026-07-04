@@ -40,6 +40,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from . import constants as C
+from . import snippet_library
 from .enums import (
     CustomKernelOrder,
     CustomKernelRunOver,
@@ -98,6 +99,32 @@ class CustomSnippet:
     run_over: CustomKernelRunOver = CustomKernelRunOver.VOXEL_LINEAR
     code: str = ""
     arguments: list = dc_field(default_factory=list)  # list[CustomArgument]
+    # Layering window: restrict when this snippet fires so multiple snippets
+    # can be combined at different times (0 = open ended, step = every Nth).
+    frame_start: int = 0
+    frame_end: int = 0
+    frame_step: int = 1
+
+    def active_on_frame(self, frame: int) -> bool:
+        if self.frame_start and frame < self.frame_start:
+            return False
+        if self.frame_end and frame > self.frame_end:
+            return False
+        step = max(1, int(self.frame_step))
+        if step > 1:
+            base = self.frame_start if self.frame_start else 0
+            if (frame - base) % step != 0:
+                return False
+        return True
+
+    def argument_names(self):
+        names = []
+        for arg in self.arguments:
+            if arg.mode == CustomKernelArgumentMode.FIELD:
+                names.append(arg.field)
+            else:
+                names.append(arg.constant_name)
+        return names
 
     def signature_params(self):
         """Returns (param_decl_list, launch_binder) for declared arguments."""
@@ -307,6 +334,17 @@ class SnippetManager:
         for sn in snippets:
             if not sn.enabled:
                 continue
+            # Static validation gate: invalid snippets never reach codegen
+            # or the running scene (Warp compile remains the final check).
+            static_errors = [
+                issue for issue in snippet_library.validate_snippet(
+                    sn.code, sn.run_over.name, sn.argument_names())
+                if issue.level == "ERROR"
+            ]
+            if static_errors:
+                self.errors.append(
+                    (sn.kernel_name, "; ".join(str(i) for i in static_errors)))
+                continue
             compiled = CompiledSnippet(sn)
             if compiled.error:
                 self.errors.append((sn.kernel_name, compiled.error))
@@ -314,7 +352,10 @@ class SnippetManager:
                 self._by_order[sn.order].append(compiled)
 
     def run(self, order, solver, time_ctx):
+        frame = int(time_ctx.get("frame", 0))
         for compiled in self._by_order.get(order, ()):
+            if not compiled.snippet.active_on_frame(frame):
+                continue
             compiled.launch(solver, time_ctx)
 
     def has_any(self):

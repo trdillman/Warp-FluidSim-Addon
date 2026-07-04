@@ -19,6 +19,7 @@ from bpy.props import (
     StringProperty,
 )
 
+from .sim import snippet_library
 from .sim.enums import (
     BlendMode,
     CustomKernelConstantType,
@@ -110,6 +111,66 @@ def _sync_liquid_view_mode(self, _context):
 
 
 # ---------------------------------------------------------------------------
+# Snippet library dropdown (examples + user-saved presets)
+# ---------------------------------------------------------------------------
+
+
+def user_snippet_dir(create=False) -> str:
+    """Directory where user snippet presets are saved as JSON."""
+    import os
+
+    try:
+        base = bpy.utils.user_resource("CONFIG", path="fluidsim_snippets",
+                                       create=create)
+    except Exception:  # headless/stub environments
+        base = os.path.join(os.path.expanduser("~"), ".fluidsim_snippets")
+        if create:
+            os.makedirs(base, exist_ok=True)
+    return base
+
+
+# Blender requires enum item strings to stay referenced from Python.
+_SNIPPET_LIBRARY_ITEMS = []
+
+_LIBRARY_CATEGORY_ORDER = ("Impressive", "Creative", "Learning", "Utility")
+
+
+def _snippet_library_items(self, context):
+    global _SNIPPET_LIBRARY_ITEMS
+    import os
+
+    items = []
+    by_cat = {}
+    for preset in snippet_library.EXAMPLE_PRESETS:
+        by_cat.setdefault(preset.category, []).append(preset)
+    for cat in _LIBRARY_CATEGORY_ORDER:
+        presets = by_cat.pop(cat, None)
+        if not presets:
+            continue
+        items.append(("", cat, ""))
+        for p in presets:
+            items.append((f"EX:{p.preset_id}", p.label, p.description))
+    for cat in sorted(by_cat):  # any future categories
+        items.append(("", cat, ""))
+        for p in by_cat[cat]:
+            items.append((f"EX:{p.preset_id}", p.label, p.description))
+    user_presets = snippet_library.load_user_presets(user_snippet_dir())
+    if user_presets:
+        items.append(("", "My Snippets", ""))
+        for data in user_presets:
+            ident = "USR:" + os.path.basename(data["_path"])
+            items.append((ident, data["label"],
+                          data.get("description", "User snippet")))
+    _SNIPPET_LIBRARY_ITEMS = items
+    return items
+
+
+_SHORTCUT_FIELD_ITEMS = [
+    (name, name, f"Solver field '{name}'") for name in snippet_library.KNOWN_FIELDS
+]
+
+
+# ---------------------------------------------------------------------------
 # Custom snippet argument / snippet property groups
 # ---------------------------------------------------------------------------
 
@@ -135,6 +196,7 @@ class FLUIDSIM_PG_snippet_argument(bpy.types.PropertyGroup):
 class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
     enabled: BoolProperty(name="Enabled", default=True)
     kernel_name: StringProperty(name="Kernel Name", default="my_kernel")
+    description: StringProperty(name="Description", default="")
     order: EnumProperty(name="Order", items=_items(CustomKernelOrder),
                         default="BEFORE_FORCES")
     run_over: EnumProperty(name="Run Over", items=_items(CustomKernelRunOver),
@@ -146,6 +208,21 @@ class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
     arguments: CollectionProperty(type=FLUIDSIM_PG_snippet_argument)
     active_argument: IntProperty(default=0)
     last_error: StringProperty(name="Last Error", default="")
+    # Validation gate: a snippet only reaches the solver when its current
+    # source passed static validation (is_valid + matching hash).
+    is_valid: BoolProperty(name="Valid", default=False)
+    validated_hash: StringProperty(default="")
+    validation_report: StringProperty(name="Validation Report", default="")
+    # Layering window: combine snippets at different times / frame strides.
+    frame_start: IntProperty(
+        name="Start Frame", default=0, min=0,
+        description="First frame this snippet runs on (0 = from the start)")
+    frame_end: IntProperty(
+        name="End Frame", default=0, min=0,
+        description="Last frame this snippet runs on (0 = never stops)")
+    frame_step: IntProperty(
+        name="Frame Step", default=1, min=1, max=250,
+        description="Run this snippet every Nth frame")
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +443,24 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     # -- Custom snippets ----------------------------------------------------------
     snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
     active_snippet: IntProperty(default=0)
+    snippet_library_selection: EnumProperty(
+        name="Library",
+        description="Example and saved snippets that can be loaded into the stack",
+        items=_snippet_library_items,
+    )
+    snippet_editor_lines: IntProperty(
+        name="Editor Lines", default=24, min=4, max=200,
+        description="Maximum source lines shown in the inline snippet editor")
+    # Shortcut inputs (Houdini-wrangle-style quick insertion).
+    shortcut_field: EnumProperty(
+        name="Field", items=_SHORTCUT_FIELD_ITEMS, default="temperature",
+        description="Solver field to bind as an argument and reference in code")
+    shortcut_constant_name: StringProperty(
+        name="Name", default="strength",
+        description="Name of the constant to add to the snippet")
+    shortcut_constant_value: FloatProperty(
+        name="Value", default=1.0,
+        description="Value of the constant to add to the snippet")
 
     # -- Diagnostics ---------------------------------------------------------------
     profiling_enabled: BoolProperty(name="Enable Profiling", default=False)

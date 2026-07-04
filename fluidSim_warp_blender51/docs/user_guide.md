@@ -107,9 +107,14 @@ collection name, overlay toggle. **Optional Cache / Export**: enable cache,
 cache path, **Export Current Frame**.
 
 ### Custom Warp Snippets
-Add / remove / apply custom kernels. Per-snippet: enabled, kernel name,
-**Order** slot, **Run Over**, code text block, and field/constant arguments
-(see §5).
+**Snippet Library** dropdown with ten ready-to-run examples plus your saved
+snippets, and a **Load** button. Add / remove / apply custom kernels.
+Per-snippet: enabled, kernel name, **Order** slot, **Run Over**, frame window
+(**Start / End / Step**) for layering, code text block, and field/constant
+arguments. Subpanels: **Snippet Editor** (inline source view with per-line
+editing, **Validate**, **Auto Fix**, **Test**, **Save to Library**) and
+**Shortcuts** (one-click insertion of fields, constants, and common
+context/time/math code). See §5.
 
 ### Diagnostics / Profiling
 **Enable Profiling**, **Accurate GPU Timing** (CUDA-sync each phase),
@@ -181,6 +186,60 @@ custom-OpenCL-kernel feature.
 A time context (`frame`, `time`, `real_time_step`, `solver_time_step`,
 `time_scale`, `substeps`) is always in scope. Generated kernels are written to
 a temp directory and imported (Warp re-reads kernel source for codegen).
+
+### Snippet library
+
+The **Snippet Library** dropdown ships ten examples in four categories —
+*Impressive* (Vortex Tornado, Curl Noise Turbulence), *Creative* (Moses
+Split, Heartbeat Pulse), *Learning* (commented walkthroughs of grid-field
+and particle snippets), and *Utility* (Whirlpool Drain, Wave Maker, Thermal
+Buoyancy, Age Dye). **Load** appends the preset to the snippet stack with
+its arguments pre-bound, so you can inspect, edit, and layer it like any
+hand-written snippet. **Save to Library** writes the active snippet (code,
+arguments, order, frame window) as JSON under the user config directory
+(`fluidsim_snippets/`); saved snippets appear in the dropdown under
+*My Snippets*.
+
+### Validation, Auto Fix, and Test
+
+Snippets can only run in the scene when they pass static validation — both
+**Apply Snippets** and solver initialization gate on it, and the sim layer
+re-checks before compiling. The **Snippet Editor** subpanel shows the source
+of the active snippet (loaded example, saved preset, or hand-written) with
+per-line edit/delete, and:
+
+* **Validate** — static analysis: syntax, unknown names (with
+  did-you-mean suggestions), fields referenced without a bound argument,
+  unsupported constructs (imports, comprehensions, `.x/.y/.z` component
+  access), and run-over mismatches. Issues appear in the panel.
+* **Auto Fix** — conservatively repairs common mistakes: `;`, `//`
+  comments, `&&`/`||`, `true/false`, C float suffixes (`1.0f`),
+  `math.*`/`np.*` → `wp.*`, vector `.x` → `[0]`, smart quotes, tabs.
+* **Test** — runs validation plus a real Warp module compile without
+  attaching the snippet to the running scene.
+
+A snippet's state icon shows valid (check), invalid (error), or edited
+since last validation (question mark).
+
+### Layering snippets
+
+The stack runs every enabled snippet, grouped by **Order** slot, in list
+order — so multiple snippets combine freely (e.g. Curl Noise + Wave Maker
++ a speed limit at `FINAL_STEP`). Each snippet also has a frame window:
+**Start Frame** / **End Frame** (0 = open ended) and **Frame Step** (run
+every Nth frame), letting you sequence effects over time — a tornado for
+frames 1–100, then a heartbeat pulse from 120, with a dye pass every 4th
+frame.
+
+### Shortcuts
+
+The **Shortcuts** subpanel (inspired by Houdini's VEXpression presets)
+speeds up snippet writing: **Bind Data** adds a solver-field or named
+float-constant argument to the active snippet and inserts a reference
+comment; the **Context / Time / Math / Constants** buttons insert ready
+snippets of code (world position, speed, dt, sine wave, lerp, clamp,
+noise, curl noise, leaf constants ...) filtered to the snippet's run-over
+domain.
 
 ---
 

@@ -148,6 +148,74 @@ def main():
     check("snippet executed on GPU", float(np.abs(temp - 123.0).min()) < 1e-3,
           f"temperature field max {temp.max():.1f}")
 
+    # -- snippet library / validation / auto-fix / layering ---------------------
+    fs.snippet_library_selection = "EX:learn_particles_speed_limit"
+    result = bpy.ops.fluidsim.snippet_load_preset()
+    check("library preset loads", result == {"FINISHED"})
+    loaded = fs.snippets[-1]
+    check("preset arguments bound",
+          any(a.mode == "FIELD" and a.field == "particle_velocity"
+              for a in loaded.arguments))
+    check("preset validates", loaded.is_valid, loaded.validation_report)
+    result = bpy.ops.fluidsim.snippet_test()
+    check("snippet test compiles preset", result == {"FINISHED"},
+          loaded.last_error)
+
+    # Invalid code must be rejected and gated out of the scene.
+    loaded.text_block.clear()
+    loaded.text_block.write("import os\nx = os.getcwd()\n")
+    result = bpy.ops.fluidsim.snippet_apply()
+    check("invalid snippet rejected by apply", result == {"CANCELLED"})
+    check("invalid snippet flagged", not loaded.is_valid,
+          loaded.validation_report)
+
+    # Auto-fix repairs C-style habits; validation then passes.
+    loaded.text_block.clear()
+    loaded.text_block.write(
+        "// damp fast particles\n"
+        "speed = wp.length(velocity);\n"
+        "if speed > max_speed:\n"
+        "    particle_velocity[particle_index] = velocity * 0.5;\n")
+    result = bpy.ops.fluidsim.snippet_autofix()
+    check("autofix operator", result == {"FINISHED"})
+    check("autofix produces valid snippet", loaded.is_valid,
+          loaded.validation_report)
+
+    # Layering: frame-windowed snippet runs alongside the first one.
+    loaded.frame_start = 1
+    loaded.frame_end = 0
+    loaded.frame_step = 1
+    result = bpy.ops.fluidsim.snippet_apply()
+    check("layered snippets apply", result == {"FINISHED"},
+          str([(s.kernel_name, s.last_error) for s in fs.snippets]))
+    result = bpy.ops.fluidsim.step(frames=1)
+    check("layered snippets step", result == {"FINISHED"})
+
+    # Save to the user library and see it in the dropdown items.
+    result = bpy.ops.fluidsim.snippet_save_preset(preset_name="accept_saved")
+    check("snippet save preset", result == {"FINISHED"})
+    from fluidSim_warp_blender51.properties import (
+        _snippet_library_items, user_snippet_dir,
+    )
+
+    items = _snippet_library_items(None, bpy.context)
+    check("saved preset listed in library",
+          any(ident.startswith("USR:") and "accept_saved" in ident
+              for ident, _, _ in items if ident),
+          str([i[0] for i in items if i[0]]))
+    saved_path = os.path.join(user_snippet_dir(), "accept_saved.json")
+    if os.path.exists(saved_path):
+        os.remove(saved_path)  # keep the environment clean for reruns
+
+    # Shortcut insertion appends code and revalidates.
+    fs.shortcut_constant_name = "boost"
+    fs.shortcut_constant_value = 2.0
+    result = bpy.ops.fluidsim.snippet_shortcut_constant()
+    check("constant shortcut", result == {"FINISHED"})
+    check("constant argument added",
+          any(a.mode == "CONSTANT" and a.constant_name == "boost"
+              for a in loaded.arguments))
+
     # -- report -----------------------------------------------------------------
     report_path = os.path.join(tempfile.gettempdir(), "fluidsim_report.json")
     fs.report_path = report_path
@@ -176,16 +244,22 @@ def main():
         "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
         "FLUIDSIM_PT_sources", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
         "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
-        "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_diagnostics",
-        "FLUIDSIM_PT_validation",
+        "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets",
+        "FLUIDSIM_PT_snippet_editor", "FLUIDSIM_PT_snippet_shortcuts",
+        "FLUIDSIM_PT_diagnostics", "FLUIDSIM_PT_validation",
     ]
     missing = [p for p in panel_ids if not hasattr(bpy.types, p)]
-    check("all 13 panels registered", not missing, str(missing))
+    check("all 15 panels registered", not missing, str(missing))
 
     ops = ["initialize", "release", "reset", "step", "toggle_live",
            "setup_scene", "tag_object", "inject_particles", "run_validation",
            "run_benchmark", "write_report", "snippet_add", "snippet_remove",
-           "snippet_apply", "export_frame"]
+           "snippet_apply", "snippet_load_preset", "snippet_validate",
+           "snippet_autofix", "snippet_test", "snippet_save_preset",
+           "snippet_insert_shortcut", "snippet_shortcut_field",
+           "snippet_shortcut_constant", "snippet_select",
+           "snippet_edit_line", "snippet_line_add", "snippet_line_delete",
+           "export_frame"]
     missing_ops = [o for o in ops if not hasattr(bpy.ops.fluidsim, o)]
     check("operators registered", not missing_ops, str(missing_ops))
 
