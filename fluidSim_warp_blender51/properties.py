@@ -81,7 +81,7 @@ WHITEWATER_ATTR_ITEMS = (
 _LIQUID_VIEW_SYNCING = False
 
 
-def _apply_liquid_view_mode(self, _context):
+def _apply_liquid_view_mode(self, context):
     global _LIQUID_VIEW_SYNCING
     if _LIQUID_VIEW_SYNCING:
         return
@@ -92,9 +92,10 @@ def _apply_liquid_view_mode(self, _context):
         self.show_particles = mode in {"PARTICLES", "SURFACE_PARTICLES"}
     finally:
         _LIQUID_VIEW_SYNCING = False
+    _request_output_refresh(self, context)
 
 
-def _sync_liquid_view_mode(self, _context):
+def _sync_liquid_view_mode(self, context):
     global _LIQUID_VIEW_SYNCING
     if _LIQUID_VIEW_SYNCING:
         return
@@ -108,6 +109,50 @@ def _sync_liquid_view_mode(self, _context):
             self.liquid_view_mode = "PARTICLES"
     finally:
         _LIQUID_VIEW_SYNCING = False
+    _request_output_refresh(self, context)
+
+
+def _request_scene_update(context, action: str, reason: str):
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None:
+        return
+    try:
+        from .blender import scene_bridge
+
+        scene_bridge.request_scene_update(scene, action, reason)
+    except Exception as exc:  # noqa: BLE001 - property callbacks must be safe
+        try:
+            scene.fluidsim.status = f"Settings changed; auto-update failed: {exc}"
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _request_rebuild(self, context):
+    _request_scene_update(context, "REBUILD", "Solver allocation changed")
+
+
+def _request_reset(self, context):
+    _request_scene_update(context, "RESET", "Simulation settings changed")
+
+
+def _request_sync(self, context):
+    _request_scene_update(context, "SYNC", "Scene source settings changed")
+
+
+def _request_output_refresh(self, context):
+    _request_scene_update(context, "OUTPUT", "Viewport display settings changed")
+
+
+def _on_live_changed(self, context):
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None:
+        return
+    try:
+        from .blender import scene_bridge
+
+        scene_bridge.set_live_enabled(scene, bool(self.live))
+    except Exception as exc:  # noqa: BLE001
+        self.status = f"Live toggle failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -241,44 +286,74 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
             ("FORCE", "Force", "Force region"),
         ],
         default="NONE",
+        update=_request_reset,
     )
     # Source shape settings.
     shape: EnumProperty(
         name="Shape", items=_items(SourceShapeShape), default="BOX",
+        update=_request_sync,
         description="Analytic emission shape (object transform applies)")
     use_mesh_shape: BoolProperty(
         name="Use Mesh", default=False,
+        update=_request_sync,
         description="Sample the object's mesh volume (SDF) instead of an analytic shape")
     source_mode: EnumProperty(
-        name="Mode", items=_items(SourceShapeSourceMode), default="PARTICLES")
+        name="Mode", items=_items(SourceShapeSourceMode), default="PARTICLES",
+        update=_request_sync)
     emit_rate: FloatProperty(
         name="Emit Rate", default=8.0, min=0.0, soft_max=32.0,
+        update=_request_sync,
         description="Target particles per voxel inside the source")
     initial_velocity: FloatVectorProperty(
-        name="Initial Velocity", size=3, default=(0.0, 0.0, 0.0), subtype="VELOCITY")
+        name="Initial Velocity", size=3, default=(0.0, 0.0, 0.0), subtype="VELOCITY",
+        update=_request_sync)
     use_object_velocity: BoolProperty(
         name="Inherit Object Velocity", default=True,
+        update=_request_sync,
         description="Add velocity from animated object motion")
-    blend_mode: EnumProperty(name="Blend", items=_items(BlendMode), default="REPLACE")
-    feather: FloatProperty(name="Feather", default=0.0, min=0.0)
-    temperature: FloatProperty(name="Temperature", default=0.0)
-    viscosity: FloatProperty(name="Viscosity", default=0.0, min=0.0)
-    density: FloatProperty(name="Density", default=1.0, min=0.0)
-    use_lifespan: BoolProperty(name="Use Lifespan", default=False)
-    life_min: FloatProperty(name="Life Min", default=2.0, min=0.0)
-    life_max: FloatProperty(name="Life Max", default=4.0, min=0.0)
+    blend_mode: EnumProperty(name="Blend", items=_items(BlendMode), default="REPLACE",
+                             update=_request_sync)
+    feather: FloatProperty(name="Feather", default=0.0, min=0.0,
+                           update=_request_sync)
+    temperature: FloatProperty(name="Temperature", default=0.0,
+                               update=_request_sync)
+    viscosity: FloatProperty(name="Viscosity", default=0.0, min=0.0,
+                             update=_request_sync)
+    density: FloatProperty(name="Density", default=1.0, min=0.0,
+                           update=_request_sync)
+    use_lifespan: BoolProperty(name="Use Lifespan", default=False,
+                               update=_request_sync)
+    life_min: FloatProperty(name="Life Min", default=2.0, min=0.0,
+                            update=_request_sync)
+    life_max: FloatProperty(name="Life Max", default=4.0, min=0.0,
+                            update=_request_sync)
     force_type: EnumProperty(
-        name="Force Type", items=_items(SourceShapeForceType), default="OFF")
-    force_strength: FloatProperty(name="Force Strength", default=1.0)
+        name="Force Type", items=_items(SourceShapeForceType), default="OFF",
+        update=_request_sync)
+    force_strength: FloatProperty(name="Force Strength", default=1.0,
+                                  update=_request_sync)
     force_direction: FloatVectorProperty(
-        name="Force Direction", size=3, default=(0.0, 0.0, 1.0))
+        name="Force Direction", size=3, default=(0.0, 0.0, 1.0),
+        update=_request_sync)
     # Collider settings.
-    collider_friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0)
-    collider_restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0)
+    collider_friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0,
+                                     update=_request_sync)
+    collider_restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0,
+                                        update=_request_sync)
     transfer_velocity: BoolProperty(
         name="Transfer Velocity", default=True,
+        update=_request_sync,
         description="Push liquid with animated collider motion")
-    enabled: BoolProperty(name="Enabled", default=True)
+    enabled: BoolProperty(name="Enabled", default=True, update=_request_sync)
+    auto_inject_seed: BoolProperty(
+        name="Auto Inject Seed",
+        default=False,
+        update=_request_reset,
+        description=(
+            "Inject this object's points when the solver is initialized or "
+            "reset; use for playable seed-based demo scenes"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -290,115 +365,172 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     # -- Simulation -----------------------------------------------------------
     live: BoolProperty(
         name="Live Simulation", default=False,
+        update=_on_live_changed,
         description="Step the GPU solver during animation playback")
     domain_object: PointerProperty(
         name="Domain", type=bpy.types.Object,
+        update=_request_rebuild,
         description="Object whose bounding box defines the simulation domain")
-    time_scale: FloatProperty(name="Time Scale", default=1.0, min=0.0, soft_max=4.0)
-    cfl: FloatProperty(name="CFL", default=1.0, min=0.1, soft_max=5.0)
-    min_substeps: IntProperty(name="Min Substeps", default=1, min=1, max=16)
-    max_substeps: IntProperty(name="Max Substeps", default=4, min=1, max=32)
+    time_scale: FloatProperty(name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
+                              update=_request_reset)
+    cfl: FloatProperty(name="CFL", default=1.0, min=0.1, soft_max=5.0,
+                       update=_request_reset)
+    min_substeps: IntProperty(name="Min Substeps", default=1, min=1, max=16,
+                              update=_request_reset)
+    max_substeps: IntProperty(name="Max Substeps", default=4, min=1, max=32,
+                              update=_request_reset)
     gravity: FloatVectorProperty(
-        name="Gravity", size=3, default=(0.0, 0.0, -9.81), subtype="ACCELERATION")
-    use_scene_gravity: BoolProperty(name="Use Scene Gravity", default=True)
+        name="Gravity", size=3, default=(0.0, 0.0, -9.81), subtype="ACCELERATION",
+        update=_request_reset)
+    use_scene_gravity: BoolProperty(name="Use Scene Gravity", default=True,
+                                    update=_request_reset)
 
     # -- Domain / sparse grid -------------------------------------------------
     voxel_size: FloatProperty(
-        name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4)
+        name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
+        update=_request_rebuild)
     leaf_capacity: IntProperty(
         name="Leaf Capacity", default=8192, min=64, max=262144,
-        description="Maximum allocated 8x8x8 leaves (sparse octree)")
+        update=_request_rebuild,
+        description="Maximum allocated 8x8x8 leaves (sparse tiled leaf grid)")
     topology_expand: IntProperty(
         name="Topology Expand", default=1, min=0, max=4,
+        update=_request_reset,
         description="Leaf dilation iterations around active fluid")
     open_boundaries: BoolProperty(
         name="Open Boundaries", default=False,
+        update=_request_reset,
         description="Kill particles leaving the domain instead of clamping")
 
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(
-        name="Max Particles", default=2_000_000, min=1024, max=50_000_000)
-    particles_per_voxel: IntProperty(name="Particles / Voxel", default=8, min=1, max=64)
+        name="Max Particles", default=2_000_000, min=1024, max=50_000_000,
+        update=_request_rebuild)
+    particles_per_voxel: IntProperty(name="Particles / Voxel", default=8, min=1, max=64,
+                                     update=_request_reset)
     sample_type: EnumProperty(
-        name="Transfer", items=_items(ParticleSampleType), default="FLIP")
-    flip_ratio: FloatProperty(name="FLIP Ratio", default=0.97, min=0.0, max=1.0)
-    trace_mode: EnumProperty(name="Trace", items=_items(TraceMode), default="RK3")
-    relax_enabled: BoolProperty(name="Relax Particles", default=True)
-    relax_strength: FloatProperty(name="Relax Strength", default=0.5, min=0.0, max=1.0)
+        name="Transfer", items=_items(ParticleSampleType), default="FLIP",
+        update=_request_reset)
+    flip_ratio: FloatProperty(name="FLIP Ratio", default=0.97, min=0.0, max=1.0,
+                              update=_request_reset)
+    trace_mode: EnumProperty(name="Trace", items=_items(TraceMode), default="RK3",
+                             update=_request_reset)
+    relax_enabled: BoolProperty(name="Relax Particles", default=True,
+                                update=_request_reset)
+    relax_strength: FloatProperty(name="Relax Strength", default=0.5, min=0.0, max=1.0,
+                                  update=_request_reset)
     relax_mode: EnumProperty(name="Relax Mode", items=_items(RelaxMode),
-                             default="NEIGHBOR_VOXELS")
+                             default="LOCAL_VOXEL", update=_request_reset)
     max_speed: FloatProperty(
         name="Max Speed", default=0.0, min=0.0,
+        update=_request_reset,
         description="Speed limit in m/s (0 disables)")
     limit_behavior: EnumProperty(
-        name="Limit Behavior", items=_items(LimitBehavior), default="MAINTAIN")
-    limit_percent: FloatProperty(name="Limit Percent", default=0.5, min=0.0, max=1.0)
+        name="Limit Behavior", items=_items(LimitBehavior), default="MAINTAIN",
+        update=_request_reset)
+    limit_percent: FloatProperty(name="Limit Percent", default=0.5, min=0.0, max=1.0,
+                                 update=_request_reset)
     count_stiffness: FloatProperty(
         name="Count Stiffness", default=0.0, min=0.0, soft_max=4.0,
+        update=_request_reset,
         description="Anti-clumping pressure from particle counts")
 
     # -- Collision ---------------------------------------------------------------
-    restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0)
-    friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0)
+    restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0,
+                               update=_request_reset)
+    friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0,
+                            update=_request_reset)
 
     # -- Pressure ---------------------------------------------------------------
     pressure_solver: EnumProperty(
-        name="Solver", items=_items(ProjectNonDivergentSolver), default="PCG")
-    pressure_iterations: IntProperty(name="Iterations", default=200, min=1, max=4000)
+        name="Solver", items=_items(ProjectNonDivergentSolver), default="PCG",
+        update=_request_reset)
+    pressure_iterations: IntProperty(name="Iterations", default=200, min=1, max=4000,
+                                     update=_request_reset)
     pressure_tolerance: FloatProperty(
-        name="Tolerance", default=1.0e-5, min=0.0, precision=8)
-    multigrid: EnumProperty(name="Multigrid", items=_items(MultiGrid), default="OFF")
+        name="Tolerance", default=1.0e-5, min=0.0, precision=8,
+        update=_request_reset)
+    multigrid: EnumProperty(name="Multigrid", items=_items(MultiGrid), default="OFF",
+                            update=_request_reset)
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
+        update=_request_reset,
         description="Relative pressure threshold (removes tiny pressures)")
 
     # -- Viscosity ---------------------------------------------------------------
-    viscosity_enabled: BoolProperty(name="Enable Viscosity", default=False)
+    viscosity_enabled: BoolProperty(name="Enable Viscosity", default=False,
+                                    update=_request_reset)
     viscosity_solver: EnumProperty(
-        name="Solver", items=_items(ViscositySolver), default="PCG")
+        name="Solver", items=_items(ViscositySolver), default="PCG",
+        update=_request_reset)
     viscosity_constant: FloatProperty(
-        name="Viscosity", default=0.05, min=0.0, soft_max=100.0)
+        name="Viscosity", default=0.05, min=0.0, soft_max=100.0,
+        update=_request_reset)
     viscosity_from_particles: BoolProperty(
         name="From Particles", default=False,
+        update=_request_reset,
         description="Use per-particle viscosity attribute instead of the constant")
-    viscosity_iterations: IntProperty(name="Iterations", default=40, min=1, max=1000)
+    viscosity_iterations: IntProperty(name="Iterations", default=40, min=1, max=1000,
+                                      update=_request_reset)
     viscosity_tolerance: FloatProperty(
-        name="Tolerance", default=1.0e-4, min=0.0, precision=8)
+        name="Tolerance", default=1.0e-4, min=0.0, precision=8,
+        update=_request_reset)
 
     # -- Surface -------------------------------------------------------------------
-    surface_enabled: BoolProperty(name="Generate Surface", default=True)
+    surface_enabled: BoolProperty(name="Generate Surface", default=True,
+                                  update=_request_reset)
     particle_radius_scale: FloatProperty(
-        name="Particle Radius", default=1.2, min=0.5, soft_max=4.0)
+        name="Particle Radius", default=1.2, min=0.5, soft_max=4.0,
+        update=_request_reset)
     surface_filter_type: EnumProperty(
-        name="Filter", items=_items(SdfFilterType), default="BOX")
+        name="Filter", items=_items(SdfFilterType), default="BOX",
+        update=_request_reset)
     surface_filter_iterations: IntProperty(name="Filter Iterations",
-                                           default=1, min=0, max=16)
+                                           default=1, min=0, max=16,
+                                           update=_request_reset)
     surface_filter_strength: FloatProperty(name="Filter Strength",
-                                           default=0.7, min=0.0, max=1.0)
+                                           default=0.7, min=0.0, max=1.0,
+                                           update=_request_reset)
 
     # -- Whitewater -------------------------------------------------------------
-    whitewater_enabled: BoolProperty(name="Enable Whitewater", default=False)
+    whitewater_enabled: BoolProperty(name="Enable Whitewater", default=False,
+                                     update=_request_reset)
     max_whitewater: IntProperty(
-        name="Max Whitewater", default=1_000_000, min=1024, max=20_000_000)
-    ww_churn_decay: FloatProperty(name="Churn Decay", default=2.0, min=0.0)
-    ww_churn_gain: FloatProperty(name="Churn Gain", default=1.0, min=0.0)
-    ww_churn_threshold: FloatProperty(name="Churn Threshold", default=0.5, min=0.0)
-    ww_emission_rate: FloatProperty(name="Emission Rate", default=2.0, min=0.0)
-    ww_min_speed: FloatProperty(name="Min Speed", default=0.5, min=0.0)
-    ww_life_min: FloatProperty(name="Life Min", default=1.0, min=0.0)
-    ww_life_max: FloatProperty(name="Life Max", default=3.0, min=0.0)
-    ww_bubble_drag: FloatProperty(name="Bubble Drag", default=4.0, min=0.0)
-    ww_spray_drag: FloatProperty(name="Spray Drag", default=0.2, min=0.0)
+        name="Max Whitewater", default=1_000_000, min=1024, max=20_000_000,
+        update=_request_rebuild)
+    ww_churn_decay: FloatProperty(name="Churn Decay", default=2.0, min=0.0,
+                                  update=_request_reset)
+    ww_churn_gain: FloatProperty(name="Churn Gain", default=1.0, min=0.0,
+                                 update=_request_reset)
+    ww_churn_threshold: FloatProperty(name="Churn Threshold", default=0.5, min=0.0,
+                                      update=_request_reset)
+    ww_emission_rate: FloatProperty(name="Emission Rate", default=2.0, min=0.0,
+                                    update=_request_reset)
+    ww_min_speed: FloatProperty(name="Min Speed", default=0.5, min=0.0,
+                                update=_request_reset)
+    ww_life_min: FloatProperty(name="Life Min", default=1.0, min=0.0,
+                               update=_request_reset)
+    ww_life_max: FloatProperty(name="Life Max", default=3.0, min=0.0,
+                               update=_request_reset)
+    ww_bubble_drag: FloatProperty(name="Bubble Drag", default=4.0, min=0.0,
+                                  update=_request_reset)
+    ww_spray_drag: FloatProperty(name="Spray Drag", default=0.2, min=0.0,
+                                 update=_request_reset)
 
     # -- Height source ------------------------------------------------------------
     height_enabled: BoolProperty(name="Height Fill", default=False,
+                                 update=_request_reset,
                                  description="Fill the domain below a height")
-    height_base: FloatProperty(name="Base Height", default=0.3)
+    height_base: FloatProperty(name="Base Height", default=0.3,
+                               update=_request_reset)
     height_back_mode: EnumProperty(
-        name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT")
+        name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT",
+        update=_request_reset)
     height_velocity: FloatVectorProperty(name="Velocity", size=3,
-                                         default=(0.0, 0.0, 0.0))
-    height_emit_particles: BoolProperty(name="Emit Particles", default=True)
+                                         default=(0.0, 0.0, 0.0),
+                                         update=_request_reset)
+    height_emit_particles: BoolProperty(name="Emit Particles", default=True,
+                                        update=_request_reset)
 
     # -- Output ---------------------------------------------------------------------
     liquid_view_mode: EnumProperty(
@@ -411,34 +543,42 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Surface Mesh", default=True, update=_sync_liquid_view_mode)
     show_particles: BoolProperty(
         name="Particles", default=False, update=_sync_liquid_view_mode)
-    show_whitewater: BoolProperty(name="Whitewater", default=True)
+    show_whitewater: BoolProperty(name="Whitewater", default=True,
+                                  update=_request_output_refresh)
     particle_display_fraction: FloatProperty(
         name="Display Fraction", default=1.0, min=0.01, max=1.0,
+        update=_request_output_refresh,
         description="Fraction of particles shown in the viewport")
     surface_attribute_mode: EnumProperty(
         name="Surface Attribute",
         items=LIQUID_ATTR_ITEMS,
         default="NONE",
+        update=_request_output_refresh,
         description="Color the liquid surface by a simulation attribute",
     )
     particle_attribute_mode: EnumProperty(
         name="Particle Attribute",
         items=PARTICLE_ATTR_ITEMS,
         default="NONE",
+        update=_request_output_refresh,
         description="Color liquid particles by a simulation attribute",
     )
     whitewater_attribute_mode: EnumProperty(
         name="Whitewater Attribute",
         items=WHITEWATER_ATTR_ITEMS,
         default="NONE",
+        update=_request_output_refresh,
         description="Color whitewater particles by a simulation attribute",
     )
     surface_material: PointerProperty(name="Surface Material",
-                                      type=bpy.types.Material)
+                                      type=bpy.types.Material,
+                                      update=_request_output_refresh)
     whitewater_material: PointerProperty(name="Whitewater Material",
-                                         type=bpy.types.Material)
+                                         type=bpy.types.Material,
+                                         update=_request_output_refresh)
     output_collection_name: StringProperty(
-        name="Output Collection", default="FluidSim Output")
+        name="Output Collection", default="FluidSim Output",
+        update=_request_output_refresh)
 
     # -- Custom snippets ----------------------------------------------------------
     snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
@@ -463,11 +603,14 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         description="Value of the constant to add to the snippet")
 
     # -- Diagnostics ---------------------------------------------------------------
-    profiling_enabled: BoolProperty(name="Enable Profiling", default=False)
+    profiling_enabled: BoolProperty(name="Enable Profiling", default=False,
+                                    update=_request_rebuild)
     profiling_sync: BoolProperty(
         name="Accurate GPU Timing", default=True,
+        update=_request_rebuild,
         description="Synchronize CUDA around each phase for exact timings")
-    show_overlay: BoolProperty(name="Viewport Overlay", default=True)
+    show_overlay: BoolProperty(name="Viewport Overlay", default=True,
+                               update=_request_output_refresh)
     report_path: StringProperty(
         name="Report Path", subtype="FILE_PATH", default="//fluidsim_report.json")
     benchmark_frames: IntProperty(name="Benchmark Frames", default=24, min=4, max=500)
@@ -480,6 +623,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         description="Optionally record frames to disk during playback")
     cache_path: StringProperty(name="Cache Path", subtype="DIR_PATH",
                                default="//fluidsim_cache/")
+    cache_compress: BoolProperty(
+        name="Compress Cache", default=False,
+        description="zlib-compress cache frames (smaller files, much slower "
+                    "writes during playback)")
 
     # -- Status mirrors (read-only UI feedback) ----------------------------------------
     status: StringProperty(name="Status", default="Solver not initialized")

@@ -211,7 +211,7 @@ def build_dam_break():
 
     scene = fresh_scene()
     fs = scene.fluidsim
-    lo, hi = (0.0, 0.0, 0.0), (3.2, 0.6, 1.6)
+    lo, hi = (0.0, 0.0, 0.0), (5.6, 0.6, 1.6)
     make_domain(scene, lo, hi, "DamBreak Domain")
     fs.voxel_size = 0.03
     fs.max_particles = 600_000

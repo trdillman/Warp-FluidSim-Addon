@@ -12,6 +12,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from .constants import (
+    DEFAULT_RELAX_BIN_SAMPLE_LIMIT,
     LEAF_VOLUME,
     VOXEL_ACTIVE,
     VOXEL_COLLISION,
@@ -951,8 +952,14 @@ def k_particles_relax(
                     continue
                 start = bin_starts[nflat]
                 num = bin_counts[nflat]
-                for s in range(num):
-                    j = bin_indices[start + s]
+                limit = num
+                if limit > DEFAULT_RELAX_BIN_SAMPLE_LIMIT:
+                    limit = DEFAULT_RELAX_BIN_SAMPLE_LIMIT
+                stride = 1
+                if num > limit:
+                    stride = (num + limit - 1) // limit
+                for sample in range(limit):
+                    j = bin_indices[start + sample * stride]
                     if j == tid:
                         continue
                     d = p - positions[j]

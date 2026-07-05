@@ -165,11 +165,12 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         bmesh.ops.create_cube(bm, size=1.0)
         bm.to_mesh(mesh)
         bm.free()
-        domain.scale = (4.0, 4.0, 4.0)
-        domain.location = (0.0, 0.0, 2.0)
+        domain.scale = (7.6, 4.0, 4.0)
+        domain.location = (1.8, 0.0, 2.0)
         domain.display_type = "WIRE"
         domain.hide_render = True
         fs.domain_object = domain
+        fs.relax_mode = "LOCAL_VOXEL"
 
         # Particle source box.
         src_mesh = bpy.data.meshes.new("FluidSim Source")

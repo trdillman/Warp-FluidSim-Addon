@@ -425,8 +425,17 @@ register_fn(k_expand_shift_axis_velocity_in_collider,
 
 class SurfaceExtractor:
     """Extracts a triangle mesh from the liquid surface SDF using
-    warp's built-in marching cubes on a dense sub-grid covering the
-    allocated leaves. Dense extraction is bounded by max_dense_voxels."""
+    warp's built-in marching cubes on a dense sub-grid.
+
+    The dense region is bounded by the axis-aligned bounding box of the
+    active leaves (plus a small background margin) instead of the whole
+    domain, so extraction cost scales with the liquid extent. Sub-grid
+    dimensions are padded to multiples of ``_PAD`` and grow monotonically
+    within a session to avoid reallocating the marching cubes buffers
+    every frame.
+    """
+
+    _PAD = 32
 
     def __init__(self, grid, device, max_dense_dim=256):
         self.grid = grid
@@ -435,6 +444,7 @@ class SurfaceExtractor:
         self._mc = None
         self._dense = None
         self._dense_dim = None
+        self._bounds = wp.zeros(6, dtype=wp.int32, device=device)
 
     def _ensure_dense(self, dims):
         nx, ny, nz = dims
@@ -449,18 +459,74 @@ class SurfaceExtractor:
             device=self.device,
         )
 
+    def reset_buffers(self):
+        """Release cached dense extraction buffers after a simulation reset."""
+        self._mc = None
+        self._dense = None
+        self._dense_dim = None
+
+    def _empty(self):
+        return (np.zeros((0, 3), dtype=np.float32),
+                np.zeros((0, 3), dtype=np.int32))
+
+    def _active_voxel_box(self):
+        """Voxel-space (lo, hi exclusive) AABB of active leaves, or None."""
+        g = self.grid
+        n_leaves = int(getattr(g, "active_leaf_count", 0))
+        if n_leaves <= 0:
+            return None
+        wp.launch(
+            k_leaf_coord_bounds_init, dim=1,
+            inputs=[g.voxels_dim], outputs=[self._bounds],
+            device=self.device,
+        )
+        wp.launch(
+            k_leaf_coord_bounds, dim=n_leaves,
+            inputs=[g.leaf_coords, g.num_leaves],
+            outputs=[self._bounds],
+            device=self.device,
+        )
+        b = self._bounds.numpy()
+        if b[3] < b[0]:  # no valid leaf wrote bounds
+            return None
+        lo = b[:3] * C.LEAF_DIM
+        hi = (b[3:] + 1) * C.LEAF_DIM
+        return lo, hi
+
     def extract(self, sdf_field, iso=0.0):
         g = self.grid
-        nx = min(int(g.voxels_dim[0]), self.max_dense_dim)
-        ny = min(int(g.voxels_dim[1]), self.max_dense_dim)
-        nz = min(int(g.voxels_dim[2]), self.max_dense_dim)
+        box = self._active_voxel_box()
+        if box is None:
+            return self._empty()
+        lo, hi = box
+        vdim = np.array([int(g.voxels_dim[0]), int(g.voxels_dim[1]),
+                         int(g.voxels_dim[2])], dtype=np.int64)
+        # Margin of background voxels so marching cubes closes the surface.
+        lo = np.maximum(lo - 2, 0)
+        hi = np.minimum(hi + 2, vdim)
+        span = hi - lo
+        # Pad to stable bucket sizes (monotonic growth caps reallocations).
+        dims = np.minimum(
+            np.minimum(-(-span // self._PAD) * self._PAD, vdim),
+            self.max_dense_dim)
+        if self._dense_dim is not None:
+            dims = np.maximum(dims, np.minimum(
+                np.array(self._dense_dim, dtype=np.int64),
+                np.minimum(vdim, self.max_dense_dim)))
+        dims = np.maximum(dims, np.minimum(np.minimum(8, vdim),
+                                           self.max_dense_dim))
+        # Anchor the padded box on lo; shift back when it overruns the domain.
+        lo = np.maximum(np.minimum(lo, vdim - dims), 0)
+        nx, ny, nz = (int(dims[0]), int(dims[1]), int(dims[2]))
         self._ensure_dense((nx, ny, nz))
         wp.launch(
             k_sparse_to_dense_sdf,
             dim=nx * ny * nz,
             inputs=[
                 sdf_field.data, g.leaf_table, g.voxels_dim, g.leaves_dim,
-                wp.vec3i(nx, ny, nz), 4.0 * g.voxel_size,
+                wp.vec3i(nx, ny, nz),
+                wp.vec3i(int(lo[0]), int(lo[1]), int(lo[2])),
+                4.0 * g.voxel_size,
             ],
             outputs=[self._dense],
             device=self.device,
@@ -468,13 +534,39 @@ class SurfaceExtractor:
         self._mc.surface(self._dense, iso)
         verts = self._mc.verts.numpy()
         tris = self._mc.indices.numpy().reshape(-1, 3)
-        # Vertices are in dense-voxel index space; convert to world.
+        # Vertices are in dense sub-box index space; convert to world.
         vs = np.float32(g.voxel_size)
-        offset = np.asarray(g.origin, dtype=np.float32) + np.float32(0.5) * vs
+        offset = (np.asarray(g.origin, dtype=np.float32)
+                  + (lo.astype(np.float32) + np.float32(0.5)) * vs)
         verts = np.asarray(verts, dtype=np.float32)
         verts *= vs
         verts += offset
         return verts, tris
+
+
+@wp.kernel
+def k_leaf_coord_bounds_init(
+    voxels_dim: wp.vec3i,
+    bounds: wp.array(dtype=wp.int32),
+):
+    for a in range(3):
+        bounds[a] = voxels_dim[a]  # min slots start above any leaf coord
+        bounds[3 + a] = -1  # max slots start below any leaf coord
+
+
+@wp.kernel
+def k_leaf_coord_bounds(
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    bounds: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    if tid >= num_leaves[0]:
+        return
+    lc = leaf_coords[tid]
+    for a in range(3):
+        wp.atomic_min(bounds, a, lc[a])
+        wp.atomic_max(bounds, 3 + a, lc[a])
 
 
 @wp.kernel
@@ -484,6 +576,7 @@ def k_sparse_to_dense_sdf(
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
     dense_dim: wp.vec3i,
+    dense_origin: wp.vec3i,
     background: float,
     dense: wp.array3d(dtype=float),
 ):
@@ -496,7 +589,8 @@ def k_sparse_to_dense_sdf(
     k = tid // (nx * ny)
     j = (tid - k * nx * ny) // nx
     i = tid - k * nx * ny - j * nx
-    ijk = wp.vec3i(i, j, k)
+    ijk = wp.vec3i(i + dense_origin[0], j + dense_origin[1],
+                   k + dense_origin[2])
     flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
     val = background
     if flat >= 0:

@@ -42,7 +42,7 @@ PARTICLE_SEPARATION_SIZE = 0.0
 MAX_PARTICLE_COUNT = 0
 
 # ---------------------------------------------------------------------------
-# Sparse leaf layout: leaves are 8x8x8 voxel tiles ("octree leaf" tiles).
+# Sparse tiled leaf grid: leaves are 8x8x8 voxel tiles in a flat leaf table.
 # ---------------------------------------------------------------------------
 LEAF_DIM = 8
 LEAF_SHIFT = 3          # log2(LEAF_DIM)
@@ -54,6 +54,7 @@ DEFAULT_MAX_PARTICLES = 2_000_000
 DEFAULT_MAX_WHITEWATER = 1_000_000
 DEFAULT_LEAF_CAPACITY = 8192          # 8192 leaves * 512 voxels = 4.19M voxels
 DEFAULT_PARTICLES_PER_VOXEL = 8
+DEFAULT_RELAX_BIN_SAMPLE_LIMIT = 32
 
 # Numerical defaults
 DEFAULT_VOXEL_SIZE = 0.05

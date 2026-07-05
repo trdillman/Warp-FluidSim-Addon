@@ -23,6 +23,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import statistics
 import os
@@ -59,6 +60,8 @@ USER_PATH_CONTRACT = {
         "particles_mean",
         "voxels_mean",
         "surface_verts_last",
+        "surface_dense_dim_last",
+        "reset_probe",
     ],
     "regression_focus": [
         "CUDA session remains active",
@@ -80,6 +83,16 @@ def parse_args():
     ap.add_argument("--cache", action="store_true")
     ap.add_argument("--collider-subdiv", type=int, default=5,
                     help="icosphere subdivision for a static high-poly collider")
+    ap.add_argument("--disable-whitewater", action="store_true",
+                    help="keep whitewater disabled to match the default Quick Setup path")
+    ap.add_argument("--profile-phases", action="store_true",
+                    help="record solver phase timers in per-frame output")
+    ap.add_argument("--profile-sync", action="store_true",
+                    help="synchronize CUDA around each phase timer")
+    ap.add_argument("--domain-scale-x", type=float, default=0.0,
+                    help="override Quick Setup domain X scale after scene setup")
+    ap.add_argument("--domain-location-x", type=float, default=0.0,
+                    help="override Quick Setup domain X location after scene setup")
     ap.add_argument("--max-mean-view-ms", type=float, default=80.0,
                     help="validation ceiling for warm-frame viewport update mean")
     ap.add_argument("--max-mean-total-ms", type=float, default=250.0,
@@ -90,8 +103,61 @@ def parse_args():
                     help="minimum mean active voxels required by validation")
     ap.add_argument("--no-validate", action="store_true",
                     help="write timing data without failing on regression checks")
+    ap.add_argument("--frame-csv-out", default="",
+                    help="stream per-frame timing rows while profiling")
+    ap.add_argument("--stop-after-total-ms", type=float, default=0.0,
+                    help="stop once a frame exceeds this total time")
     ap.add_argument("--json-out", default="")
     return ap.parse_args(argv)
+
+
+FRAME_CSV_FIELDS = [
+    "frame",
+    "sync_ms",
+    "solve_ms",
+    "view_ms",
+    "cache_ms",
+    "total_ms",
+    "particles",
+    "voxels",
+    "whitewater",
+    "substeps",
+    "pressure_iterations",
+    "pressure_residual",
+    "surface_verts",
+    "particle_points",
+    "surface_dense_dim",
+    "timer_solver",
+    "timer_compute_0",
+    "timer_compute_1",
+    "timer_compute_2",
+    "timer_compute_3",
+    "timer_compute_4",
+    "timer_compute_5",
+    "timer_compute_6",
+    "timer_compute_7",
+    "timer_compute_8",
+    "timer_compute_9",
+    "timer_compute_10",
+    "timer_compute_11",
+    "timer_compute_12",
+    "timer_compute_13",
+    "timer_compute_14",
+    "timer_compute_15",
+]
+
+
+def _open_frame_csv(path):
+    if not path:
+        return None, None
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    fh = open(path, "w", newline="")
+    writer = csv.DictWriter(fh, fieldnames=FRAME_CSV_FIELDS)
+    writer.writeheader()
+    fh.flush()
+    return fh, writer
 
 
 def _viewport_counts(bpy, particles_mode):
@@ -119,6 +185,14 @@ def _check(checks, name, condition, detail=""):
     return ok
 
 
+def _surface_dense_dim(sess):
+    extractor = getattr(sess.solver, "surface_extractor", None)
+    dims = getattr(extractor, "_dense_dim", None)
+    if dims is None:
+        return [0, 0, 0]
+    return [int(d) for d in dims]
+
+
 def _validate_contract(args, summary, sess, device, output_counts):
     checks = []
     frames = summary["frames"]
@@ -132,7 +206,8 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "contract path", summary["contract"]["name"] == USER_PATH_CONTRACT["name"])
     _check(checks, "cuda session", sess.active and str(device).startswith("cuda"), device)
     _check(checks, "frames measured", len(frames) == args.frames, len(frames))
-    _check(checks, "solver advanced", sess.solver.frame >= args.frames, sess.solver.frame)
+    _check(checks, "solver advanced", scene_probe["solver_frame"] >= args.frames,
+           scene_probe["solver_frame"])
     _check(checks, "particles active", summary["particles_mean"] >= args.min_particles,
            f"{summary['particles_mean']:.0f} >= {args.min_particles}")
     _check(checks, "voxels active", summary["voxels_mean"] >= args.min_voxels,
@@ -188,8 +263,10 @@ def main():
     fs.voxel_size = args.voxel_size
     fs.max_particles = args.max_particles
     fs.max_whitewater = 500_000
-    fs.whitewater_enabled = True
+    fs.whitewater_enabled = not args.disable_whitewater
     fs.surface_enabled = True
+    fs.profiling_enabled = bool(args.profile_phases)
+    fs.profiling_sync = bool(args.profile_sync)
     if args.particles:
         fs.liquid_view_mode = "PARTICLES"
     else:
@@ -198,6 +275,10 @@ def main():
     fs.cache_enabled = False  # timed manually below
 
     assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
+    if args.domain_scale_x > 0.0:
+        domain = fs.domain_object
+        domain.scale.x = args.domain_scale_x
+        domain.location.x = args.domain_location_x
 
     # Static high-poly collider to exercise the per-frame collider gather.
     if args.collider_subdiv > 0:
@@ -220,42 +301,71 @@ def main():
 
     sess = scene_bridge.session()
     assert sess.active
+    domain = fs.domain_object
+    domain_bounds = None
+    if domain is not None:
+        x0 = float(domain.location.x - domain.scale.x * 0.5)
+        x1 = float(domain.location.x + domain.scale.x * 0.5)
+        domain_bounds = {
+            "location": [float(v) for v in domain.location],
+            "scale": [float(v) for v in domain.scale],
+            "x_bounds": [x0, x1],
+        }
     if args.cache:
         fs.cache_enabled = True
         fs.cache_path = "//_bench_user_cache/"
 
     rows = []
     output_counts = []
-    for f in range(args.frames):
-        scene.frame_set(f + 1)
-        t0 = time.perf_counter()
-        dg = bpy.context.evaluated_depsgraph_get()
-        scene_bridge.sync_scene_to_solver(scene, sess, dg)
-        t1 = time.perf_counter()
-        stats = sess.solver.step_frame()
-        t2 = time.perf_counter()
-        viewport.update_outputs(scene, sess)
-        t3 = time.perf_counter()
-        counts = _viewport_counts(bpy, args.particles)
-        output_counts.append(counts)
-        cache_ms = 0.0
-        if args.cache:
-            tc = time.perf_counter()
-            cache_io.write_frame(scene, sess)
-            cache_ms = (time.perf_counter() - tc) * 1000.0
-        rows.append({
-            "frame": f,
-            "sync_ms": (t1 - t0) * 1000.0,
-            "solve_ms": (t2 - t1) * 1000.0,
-            "view_ms": (t3 - t2) * 1000.0,
-            "cache_ms": cache_ms,
-            "total_ms": (t3 - t0) * 1000.0 + cache_ms,
-            "particles": int(stats.active_particles),
-            "voxels": int(stats.active_voxels),
-            "whitewater": int(stats.whitewater_particles),
-            "surface_verts": counts["surface_verts"],
-            "particle_points": counts["particle_points"],
-        })
+    frame_csv_fh, frame_csv_writer = _open_frame_csv(args.frame_csv_out)
+    try:
+        for f in range(args.frames):
+            scene.frame_set(f + 1)
+            t0 = time.perf_counter()
+            dg = bpy.context.evaluated_depsgraph_get()
+            scene_bridge.sync_scene_to_solver(scene, sess, dg)
+            t1 = time.perf_counter()
+            stats = sess.solver.step_frame()
+            t2 = time.perf_counter()
+            viewport.update_outputs(scene, sess)
+            t3 = time.perf_counter()
+            counts = _viewport_counts(bpy, args.particles)
+            output_counts.append(counts)
+            cache_ms = 0.0
+            if args.cache:
+                tc = time.perf_counter()
+                cache_io.write_frame(scene, sess)
+                cache_ms = (time.perf_counter() - tc) * 1000.0
+            row = {
+                "frame": f,
+                "sync_ms": (t1 - t0) * 1000.0,
+                "solve_ms": (t2 - t1) * 1000.0,
+                "view_ms": (t3 - t2) * 1000.0,
+                "cache_ms": cache_ms,
+                "total_ms": (t3 - t0) * 1000.0 + cache_ms,
+                "particles": int(stats.active_particles),
+                "voxels": int(stats.active_voxels),
+                "whitewater": int(stats.whitewater_particles),
+                "substeps": int(stats.substeps),
+                "pressure_iterations": int(stats.pressure_iterations),
+                "pressure_residual": float(stats.pressure_residual),
+                "surface_verts": counts["surface_verts"],
+                "particle_points": counts["particle_points"],
+                "surface_dense_dim": _surface_dense_dim(sess),
+            }
+            timers = getattr(stats, "timers", {}) or {}
+            row["timer_solver"] = float(timers.get("solver", 0.0))
+            for i in range(16):
+                row[f"timer_compute_{i}"] = float(timers.get(f"compute_{i}", 0.0))
+            rows.append(row)
+            if frame_csv_writer is not None:
+                frame_csv_writer.writerow(row)
+                frame_csv_fh.flush()
+            if args.stop_after_total_ms > 0.0 and row["total_ms"] >= args.stop_after_total_ms:
+                break
+    finally:
+        if frame_csv_fh is not None:
+            frame_csv_fh.close()
 
     warm = rows[3:] if len(rows) > 6 else rows
 
@@ -284,16 +394,30 @@ def main():
         "step_voxels": int(probe_stats.active_voxels),
         "step_whitewater": int(probe_stats.whitewater_particles),
     }
+    pre_reset_dense_dim = _surface_dense_dim(sess)
+    scene_bridge.reset_simulation(scene)
+    reset_sess = scene_bridge.session()
+    reset_probe = {
+        "pre_reset_surface_dense_dim": pre_reset_dense_dim,
+        "post_reset_surface_dense_dim": _surface_dense_dim(reset_sess),
+        "solver_frame_after_reset": int(reset_sess.solver.frame),
+    }
     summary = {
         "result": "USER-PATH-PROFILE-PASS",
         "contract": USER_PATH_CONTRACT,
         "config": vars(args),
+        "domain": domain_bounds,
         "means": {k: mean(k) for k in
                   ("sync_ms", "solve_ms", "view_ms", "cache_ms", "total_ms")},
         "particles_mean": mean("particles"),
         "voxels_mean": mean("voxels"),
         "whitewater_mean": mean("whitewater"),
         "surface_verts_last": n_surf_verts,
+        "substeps_mean": mean("substeps"),
+        "pressure_iterations_mean": mean("pressure_iterations"),
+        "pressure_residual_last": rows[-1]["pressure_residual"] if rows else 0.0,
+        "surface_dense_dim_last": rows[-1]["surface_dense_dim"] if rows else [0, 0, 0],
+        "reset_probe": reset_probe,
         "viewport_counts": output_counts,
         "scene_stats_probe": scene_stats_probe,
         "frames": rows,
