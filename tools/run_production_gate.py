@@ -57,6 +57,7 @@ def main():
     _run("python syntax", [
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
+        "tools/profile_user_path.py",
         "tools/run_production_gate.py",
         "tests/blender_viewport_2frame_gate.py",
     ])
@@ -92,6 +93,29 @@ def main():
         "tests/blender_attribute_viz_acceptance.py",
     ):
         _run(script, [blender_exe, "--background", "--factory-startup", "--python", script])
+    if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
+        _run("interactive user-path profile", [
+            blender_exe,
+            "--background",
+            "--factory-startup",
+            "--python",
+            "tools/profile_user_path.py",
+            "--",
+            "--frames",
+            "6",
+            "--voxel-size",
+            "0.08",
+            "--max-particles",
+            "200000",
+            "--collider-subdiv",
+            "2",
+            "--max-mean-view-ms",
+            "120",
+            "--max-mean-total-ms",
+            "350",
+            "--json-out",
+            "artifacts/user_path_profile.json",
+        ])
     print("\nPRODUCTION-GATE-PASS")
 
 
