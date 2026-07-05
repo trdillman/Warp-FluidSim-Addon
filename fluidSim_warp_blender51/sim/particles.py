@@ -118,10 +118,25 @@ class ParticleSystem:
         self.count.zero_()
         self.host_count = 0
 
-    def compact(self, count_hint=None):
-        """Remove dead particles (alive==0) with a GPU scan + scatter."""
-        n = self.capacity
-        wp.utils.array_scan(self.alive, self.scan_tmp, inclusive=False)
+    def compact(self, count_hint: int | None = None):
+        """Remove dead particles (alive==0) with a GPU scan + scatter.
+
+        Args:
+            count_hint: Optional upper bound for the live particle prefix. When
+                provided by the solver, scan and scatter only that active range.
+        """
+        n = self.capacity if count_hint is None else max(0, min(int(count_hint), self.capacity))
+        if n <= 0:
+            self.count.zero_()
+            self.host_count = 0
+            return
+
+        # The solver keeps host_count as an upper bound on device count. Use
+        # that bound here so compaction does not silently return to capacity
+        # scans after active-work launch bounds have trimmed the hot path.
+        alive = self.alive if count_hint is None else self.alive[:n]
+        scan_tmp = self.scan_tmp if count_hint is None else self.scan_tmp[:n]
+        wp.utils.array_scan(alive, scan_tmp, inclusive=False)
         wp.launch(
             k_last_offset_count,
             dim=1,
@@ -150,7 +165,7 @@ class ParticleSystem:
             self.attrs[k], self._attrs2[k] = self._attrs2[k], self.attrs[k]
         wp.copy(self.count, self._count2)
         # Re-mark the surviving prefix as alive so the next scan is valid.
-        wp.launch(k_reset_alive, dim=self.capacity,
+        wp.launch(k_reset_alive, dim=n,
                   inputs=[self.count, self.alive], device=self.device)
 
 

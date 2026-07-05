@@ -370,17 +370,30 @@ class WhitewaterSystem:
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
 
-    def compact(self, count_hint=None):
+    def compact(self, count_hint: int | None = None):
         """Stream-compact live particles without any host synchronization.
 
-        `alive` is maintained as zero beyond the live range (see `clear` and
-        the trailing `k_ww_mark_alive`), so scanning the full capacity is
-        equivalent to scanning only the first `count` entries. All bookkeeping
-        stays on the device; `host_count` is refreshed lazily by callers that
-        actually need a CPU-side value (end-of-frame stats, viewport export).
+        Args:
+            count_hint: Optional upper bound for the live particle prefix. When
+                provided by the solver, scan and scatter only that active range.
+
+        All bookkeeping stays on the device; `host_count` is refreshed lazily
+        by callers that actually need a CPU-side value (end-of-frame stats,
+        viewport export).
         """
-        cap = self.capacity
-        wp.utils.array_scan(self.alive, self._scan, inclusive=False)
+        cap = self.capacity if count_hint is None else max(0, min(int(count_hint), self.capacity))
+        if cap <= 0:
+            self.count.zero_()
+            self.alive.zero_()
+            self.host_count = 0
+            return
+
+        # count_hint is the same host-side upper-bound contract used for
+        # particle kernels. Keep the scan/reset bounded so whitewater does not
+        # scale with maximum capacity when only a small live prefix exists.
+        alive = self.alive if count_hint is None else self.alive[:cap]
+        scan = self._scan if count_hint is None else self._scan[:cap]
+        wp.utils.array_scan(alive, scan, inclusive=False)
         wp.launch(
             k_ww_compact_scatter,
             dim=cap,
@@ -406,7 +419,10 @@ class WhitewaterSystem:
         self.age, self._age2 = self._age2, self.age
         self.life, self._life2 = self._life2, self.life
         self.count, self._count2 = self._count2, self.count
-        self.alive.zero_()
+        if count_hint is None:
+            self.alive.zero_()
+        else:
+            self.alive[:cap].zero_()
         wp.launch(
             k_ww_mark_alive, dim=cap, inputs=[self.count],
             outputs=[self.alive],

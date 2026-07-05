@@ -5,8 +5,10 @@ import inspect
 from fluidSim_warp_blender51.diagnostics.profiler import PROFILE_FRAME_FIELDS
 from fluidSim_warp_blender51.sim import constants as C
 from fluidSim_warp_blender51.sim.kernels_fluid import k_particles_relax
+from fluidSim_warp_blender51.sim.particles import ParticleSystem
 from fluidSim_warp_blender51.sim.solver import FluidSolver, FrameStats
 from fluidSim_warp_blender51.sim.surface import SurfaceExtractor
+from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
 
 
 def test_surface_extractor_reset_buffers_releases_dense_cache():
@@ -105,3 +107,9 @@ def test_relax_kernel_caps_per_bin_particle_scan():
     assert C.DEFAULT_RELAX_BIN_SAMPLE_LIMIT == 32
     assert "DEFAULT_RELAX_BIN_SAMPLE_LIMIT" in source
     assert "range(limit)" in source
+
+
+def test_compaction_accepts_active_count_hint():
+    """Solver compaction calls must keep accepting active-work bounds."""
+    assert "count_hint" in inspect.signature(ParticleSystem.compact).parameters
+    assert "count_hint" in inspect.signature(WhitewaterSystem.compact).parameters
