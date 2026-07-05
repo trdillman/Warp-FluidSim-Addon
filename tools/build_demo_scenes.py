@@ -1,4 +1,4 @@
-"""Build the three canonical FluidSim Warp demo scenes and export particle data.
+"""Build the canonical FluidSim Warp demo scenes and export particle data.
 
 Run:  blender --background --python tools/build_demo_scenes.py
 
@@ -6,10 +6,11 @@ Scenes are saved as demos/<name>.blend. Large per-frame particle exports and
 aggregate metrics are generated under artifacts/demo_cache/<name>/ so they do
 not become source-control assets.
 
-1. dam_break     - classic Martin & Moses dam-break column collapse.
-2. crown_splash  - droplet impact into a shallow pool (Worthington crown).
-3. slosh_tank    - offset water column sloshing in a closed tank; first-mode
-                   period is analytically known (w^2 = g k tanh(k h)).
+1. dam_break       - classic Martin & Moses dam-break column collapse.
+2. crown_splash    - droplet impact into a shallow pool (Worthington crown).
+3. slosh_tank      - offset water column sloshing in a closed tank; first-mode
+                     period is analytically known (w^2 = g k tanh(k h)).
+4. maelstrom_basin - high-particle vortex basin with live playback metadata.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -19,6 +20,7 @@ import math
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 import bpy
 import numpy as np
@@ -386,12 +388,39 @@ def build_slosh_tank():
     bpy.ops.fluidsim.release()
 
 
+# ---------------------------------------------------------------------------
+# Scene 4: maelstrom basin
+# ---------------------------------------------------------------------------
+
+def build_maelstrom_basin():
+    """Build the maelstrom basin through its dedicated playable-demo builder."""
+    import build_maelstrom_demo as maelstrom
+
+    args = SimpleNamespace(
+        output=os.path.join(DEMOS, "maelstrom_basin.blend"),
+        preview=os.path.join(DEMOS, "maelstrom_basin_preview.png"),
+        voxel_size=0.05,
+        fill_depth=0.92,
+        spin=7.0,
+        particle_spacing=0.0106,
+        max_particles=2_000_000,
+        frames=48,
+        warmup=6,
+        fps_target=10.0,
+        no_whitewater=False,
+    )
+    result = maelstrom.build(args)
+    measurement = maelstrom.measure(args, result)
+    maelstrom.save_demo(args, result, measurement)
+
+
 def main():
     os.makedirs(DEMOS, exist_ok=True)
     builders = {
         "dam_break": build_dam_break,
         "crown_splash": build_crown_splash,
         "slosh_tank": build_slosh_tank,
+        "maelstrom_basin": build_maelstrom_basin,
     }
     # One scene per Blender process:  ... --python this.py -- <scene>
     which = None
@@ -414,4 +443,5 @@ def main():
     print("DEMO-BUILD-PASS", flush=True)
 
 
-main()
+if __name__ == "__main__":
+    main()

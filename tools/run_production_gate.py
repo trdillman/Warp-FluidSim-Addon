@@ -3,7 +3,8 @@
 
 This script is intentionally strict: it checks repo hygiene, runs the CUDA/Warp
 solver tests through Blender's bundled Python, and proves live viewport playback
-advances at least two frames in Blender background mode.
+advances at least two frames in Blender background mode. It also checks the
+canonical demo analysis and saved-demo blend surfaces.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
 DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
-DEFAULT_PYTEST_PATH = r"C:\Users\Tyler\AppData\Local\Programs\Python\Python311\Lib\site-packages"
+DEFAULT_PYTEST_PATH = ""
 
 
 def _env():
@@ -58,14 +59,21 @@ def main():
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
         "tools/profile_user_path.py",
+        "tools/analyze_demos.py",
+        "tools/build_demo_scenes.py",
+        "tools/build_maelstrom_demo.py",
+        "tools/check_demo_blends.py",
+        "tools/open_maelstrom_basin_playable.py",
         "tools/run_production_gate.py",
         "tests/blender_viewport_2frame_gate.py",
+        "tests/test_demo_analysis_maelstrom.py",
     ])
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
         "tests/test_pressure_projection_regressions.py",
         "tests/test_cache_io.py",
         "tests/test_io_path_policy.py",
+        "tests/test_demo_analysis_maelstrom.py",
         "-q",
     ], env=env)
     for script in (
@@ -93,6 +101,14 @@ def main():
         "tests/blender_attribute_viz_acceptance.py",
     ):
         _run(script, [blender_exe, "--background", "--factory-startup", "--python", script])
+    _run("demo analysis", [blender_py, "tools/analyze_demos.py"], env=env)
+    _run("demo blend checks", [
+        blender_exe,
+        "--background",
+        "--factory-startup",
+        "--python",
+        "tools/check_demo_blends.py",
+    ])
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", [
             blender_exe,

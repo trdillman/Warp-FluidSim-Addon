@@ -43,3 +43,14 @@ fluidSim_warp_blender51_synth_package/
 - `profiler_contract.py`: profile/benchmark schema and timer-track expectations.
 - `blender_addon_blueprint.py`: target package structure and performance policy.
 - `validation_plan.py`: validation and comparison targets.
+
+## Official demo pipeline
+
+- `tools/build_demo_scenes.py`: builds the canonical demo scenes:
+  `dam_break`, `crown_splash`, `slosh_tank`, and `maelstrom_basin`.
+- `tools/analyze_demos.py`: analyzes the generated demo evidence and now
+  treats maelstrom metadata as a first-class demo lane.
+- `tools/check_demo_blends.py`: opens all canonical `.blend` files, including
+  `demos/maelstrom_basin.blend`.
+- `tests/test_demo_analysis_maelstrom.py`: focused regression coverage for the
+  maelstrom-specific spin/churn/playback contract.

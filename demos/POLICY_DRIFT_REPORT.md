@@ -16,9 +16,9 @@ This unit contains generated demo `.blend` files, per-frame `.npz` outputs, prev
 
 ## Strongest Current Evidence
 
-- Current generated outputs exist for `dam_break`, `crown_splash`, and `slosh_tank`.
-- `python tools/analyze_demos.py` passed 25/25 against the current generated per-frame outputs.
-- `blender --background --python tools/check_demo_blends.py` opened all three `.blend` files and passed scene-content checks.
+- Current generated outputs exist for `dam_break`, `crown_splash`, `slosh_tank`, and `maelstrom_basin`.
+- `python tools/analyze_demos.py` passed 30/30 against the current generated per-frame outputs and maelstrom metadata.
+- `blender --background --python tools/check_demo_blends.py` opened all four `.blend` files and passed scene-content checks.
 - The root Blender/Warp acceptance lanes also passed on live CUDA/Warp runtime.
 
 ## Findings

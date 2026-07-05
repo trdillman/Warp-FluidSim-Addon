@@ -19,6 +19,9 @@ crown_splash  - mass conservation, containment, impact detection, crown rise
 slosh_tank    - mass conservation, containment, first-mode slosh period vs
                 analytic dispersion w^2 = g*k*tanh(k*h) (k = pi/L),
                 oscillation amplitude decay, velocity boundedness.
+maelstrom_basin - playable live setup metadata, spin-force contract,
+                  million-particle measurement, live FPS target, whitewater
+                  churn.
 
 Writes artifacts/demo_analysis/analysis_report.json and
 artifacts/demo_analysis/ANALYSIS.md; exits nonzero on any failed check.
@@ -46,11 +49,15 @@ def check(scene, name, passed, detail):
     print(f"[{'PASS' if passed else 'FAIL'}] {scene}: {name} — {detail}")
 
 
-def load_scene(name):
+def load_meta(name):
     base = os.path.join(DEMOS, name)
-    cache = os.path.join(CACHE, name)
     with open(os.path.join(base, "meta.json"), encoding="utf-8") as fh:
-        meta = json.load(fh)
+        return json.load(fh)
+
+
+def load_scene(name):
+    meta = load_meta(name)
+    cache = os.path.join(CACHE, name)
     series_path = os.path.join(cache, "series.json")
     if not os.path.exists(series_path):
         raise FileNotFoundError(
@@ -312,11 +319,57 @@ def analyze_slosh_tank():
             "first_amp": first_amp, "last_amp": last_amp}
 
 
+# ---------------------------------------------------------------------------
+
+def validate_maelstrom_basin(meta):
+    """Validate maelstrom-specific metadata without duplicating cache checks."""
+    name = "maelstrom_basin"
+    seed = meta.get("seed_object", "")
+    force = meta.get("spin_force_object", "")
+    spin = float(meta.get("spin_strength", 0.0))
+    max_particles = int(meta.get("max_particles", 0))
+    injected = int(meta.get("injected", 0))
+    fps = float(meta.get("fps", 0.0))
+    fps_target = float(meta.get("fps_target", 10.0))
+    p95_ms = float(meta.get("p95_ms", 1e9))
+    max_whitewater = int(meta.get("max_whitewater", 0))
+
+    check(name, "playable live setup metadata",
+          bool(meta.get("playable_live_setup") and seed and force),
+          f"seed='{seed}', force='{force}'")
+    check(name, "spin force configured",
+          spin >= 5.0 and bool(force),
+          f"strength {spin:.1f} on '{force}'")
+    check(name, "high-particle basin measured",
+          max_particles >= 1_000_000 and injected >= 1_000_000,
+          f"particles {max_particles:,}, injected {injected:,}")
+    check(name, "live playback meets FPS target",
+          fps >= fps_target and p95_ms <= 1000.0 / fps_target,
+          f"fps {fps:.2f} >= {fps_target:.1f}, "
+          f"p95 {p95_ms:.1f} ms <= {1000.0 / fps_target:.1f} ms")
+    check(name, "whitewater churn generated",
+          max_whitewater >= 10_000,
+          f"peak whitewater {max_whitewater:,}")
+
+
+def analyze_maelstrom_basin():
+    meta = load_meta("maelstrom_basin")
+    validate_maelstrom_basin(meta)
+    return {
+        "fps": meta.get("fps"),
+        "fps_target": meta.get("fps_target"),
+        "p95_ms": meta.get("p95_ms"),
+        "max_whitewater": meta.get("max_whitewater"),
+        "injected": meta.get("injected"),
+    }
+
+
 def main():
     metrics = {}
     for fn, key in ((analyze_dam_break, "dam_break"),
                     (analyze_crown_splash, "crown_splash"),
-                    (analyze_slosh_tank, "slosh_tank")):
+                    (analyze_slosh_tank, "slosh_tank"),
+                    (analyze_maelstrom_basin, "maelstrom_basin")):
         try:
             metrics[key] = fn()
         except Exception as exc:  # noqa: BLE001
@@ -336,7 +389,8 @@ def main():
     lines = ["# FluidSim Warp — Demo Scene Analysis", "",
              f"Verdict: **{report['result'].upper()}** "
              f"({passed}/{len(CHECKS)} checks)", ""]
-    for scene in ("dam_break", "crown_splash", "slosh_tank"):
+    for scene in ("dam_break", "crown_splash", "slosh_tank",
+                  "maelstrom_basin"):
         lines.append(f"## {scene}")
         lines.append("")
         lines.append("| Check | Result | Detail |")
@@ -352,7 +406,8 @@ def main():
         fh.write("\n".join(lines))
     print(f"\nDEMO-ANALYSIS-{report['result'].upper()} "
           f"({passed}/{len(CHECKS)})")
-    sys.exit(0 if report["result"] == "pass" else 1)
+    return 0 if report["result"] == "pass" else 1
 
 
-main()
+if __name__ == "__main__":
+    sys.exit(main())

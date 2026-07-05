@@ -22,8 +22,8 @@ Nested output unit: `demos` has its own current report at `demos/POLICY_DRIFT_RE
 - `blender --background --python tests/blender_background_acceptance.py` passed on Warp 1.12.1, CUDA Toolkit 12.9, Driver 13.3, `cuda:0` NVIDIA GeForce RTX 4080 SUPER.
 - `blender --background --python tests/blender_attribute_viz_acceptance.py` passed on the same live CUDA/Warp device.
 - `blender --python tests/blender_gui_acceptance.py` passed 35/35 with interactive playback, visible viewport samples, render output, panel draw smoke, profiling, and benchmark operator proof.
-- `python tools/analyze_demos.py` passed 25/25 against the current generated demo outputs.
-- `blender --background --python tools/check_demo_blends.py` passed for `dam_break.blend`, `crown_splash.blend`, and `slosh_tank.blend`.
+- `python tools/analyze_demos.py` passed 30/30 against the current generated demo outputs and maelstrom metadata.
+- `blender --background --python tools/check_demo_blends.py` passed for `dam_break.blend`, `crown_splash.blend`, `slosh_tank.blend`, and `maelstrom_basin.blend`.
 
 These current lanes supersede stale review claims where source or tests have already changed. Confirmed stale review findings include cache pickle loading, pressure multigrid mapping, panel draw smoke, height-source coverage, and NanoVDB/OpenVDB validation coverage.
 
