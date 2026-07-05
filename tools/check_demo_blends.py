@@ -8,11 +8,15 @@ import json
 import os
 import sys
 
-import addon_utils
 import bpy
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from tools.repo_addon_loader import enable_repo_addon
+
 DEMOS = os.path.join(REPO, "demos")
 SCENES = ("dam_break", "crown_splash", "slosh_tank", "maelstrom_basin")
 
@@ -48,7 +52,7 @@ def check_scene(name):
         return result
 
     bpy.ops.wm.open_mainfile(filepath=path)
-    addon_utils.enable("fluidSim_warp_blender51", default_set=False)
+    enable_repo_addon(REPO, default_set=False, persistent=False)
     scene = bpy.context.scene
     result["opened"] = True
     meta = load_meta(name)

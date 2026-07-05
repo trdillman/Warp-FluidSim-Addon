@@ -370,7 +370,7 @@ class WhitewaterSystem:
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
 
-    def compact(self):
+    def compact(self, count_hint=None):
         """Stream-compact live particles without any host synchronization.
 
         `alive` is maintained as zero beyond the live range (see `clear` and

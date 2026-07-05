@@ -15,6 +15,12 @@ import tempfile
 
 import bpy
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from tools.repo_addon_loader import enable_repo_addon
+
 FAILURES = []
 
 
@@ -26,13 +32,10 @@ def check(name, cond, detail=""):
 
 
 def main():
-    import addon_utils
-
     # -- enable add-on -------------------------------------------------------
     ok = False
     try:
-        addon_utils.enable("fluidSim_warp_blender51", default_set=True,
-                           persistent=True)
+        enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
         ok = True
     except Exception as exc:  # noqa: BLE001
         print(f"enable failed: {exc!r}")

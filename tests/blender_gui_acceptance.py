@@ -27,6 +27,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools.repo_addon_loader import enable_repo_addon
+
 RESULT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_result.json")
 SCREENSHOT_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_viewport.png")
 RENDER_PATH = os.path.join(tempfile.gettempdir(), "fluidsim_gui_render.png")
@@ -335,17 +337,8 @@ def state_machine():
 
 def _run_phase(phase, scene):
     if phase == "init":
-        import addon_utils
-
         try:
-            addon_utils.disable("fluidSim_warp_blender51", default_set=False)
-            for name in list(sys.modules):
-                if name == "fluidSim_warp_blender51" or name.startswith(
-                    "fluidSim_warp_blender51."
-                ):
-                    sys.modules.pop(name, None)
-            addon_utils.enable("fluidSim_warp_blender51", default_set=True,
-                               persistent=True)
+            enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
             check("addon enable", True)
         except Exception as exc:  # noqa: BLE001
             check("addon enable", False, repr(exc))

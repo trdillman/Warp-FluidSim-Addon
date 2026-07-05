@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-import addon_utils
+import os
 import sys
 
 import bpy
 import numpy as np
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from tools.repo_addon_loader import enable_repo_addon
 
 
 CHECKS = []
@@ -36,7 +42,7 @@ def _material_uses_display_color(mat):
 
 
 def main():
-    addon_utils.enable("fluidSim_warp_blender51", default_set=True, persistent=True)
+    enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.voxel_size = 0.08

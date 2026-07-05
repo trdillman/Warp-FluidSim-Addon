@@ -118,7 +118,7 @@ class ParticleSystem:
         self.count.zero_()
         self.host_count = 0
 
-    def compact(self):
+    def compact(self, count_hint=None):
         """Remove dead particles (alive==0) with a GPU scan + scatter."""
         n = self.capacity
         wp.utils.array_scan(self.alive, self.scan_tmp, inclusive=False)
