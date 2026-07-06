@@ -163,6 +163,13 @@ def build_settings(scene):
     s.surface_filter_type = SdfFilterType[fs.surface_filter_type]
     s.surface_filter_iterations = fs.surface_filter_iterations
     s.surface_filter_strength = fs.surface_filter_strength
+    s.surface_dilate_iterations = fs.surface_dilate_iterations
+    s.surface_dilate_strength = fs.surface_dilate_strength
+    s.surface_erode_iterations = fs.surface_erode_iterations
+    s.surface_erode_strength = fs.surface_erode_strength
+    s.surface_smooth_type = SdfFilterType[fs.surface_smooth_type]
+    s.surface_smooth_iterations = fs.surface_smooth_iterations
+    s.surface_smooth_strength = fs.surface_smooth_strength
     s.whitewater_enabled = fs.whitewater_enabled
     s.ww_churn_decay = fs.ww_churn_decay
     s.ww_churn_gain = fs.ww_churn_gain
@@ -564,6 +571,87 @@ def reset_simulation(scene):
     sync_scene_to_solver(scene, sess)
     viewport.update_outputs(scene, sess)
     scene.fluidsim.status = "Simulation reset"
+
+
+def _tag_view3d_redraw():
+    screen = getattr(bpy.context, "screen", None)
+    for area in getattr(screen, "areas", []) or []:
+        if getattr(area, "type", "") == "VIEW_3D":
+            area.tag_redraw()
+
+
+def _apply_realtime_surface_settings(scene, sess: Session | None = None):
+    """Push current surface UI settings into an active solver frame."""
+    from ..sim.enums import SdfFilterType
+
+    sess = sess or session()
+    if not sess.active:
+        return False
+    fs = scene.fluidsim
+    solver = sess.solver
+    solver.settings.surface_enabled = fs.surface_enabled
+    solver.settings.particle_radius_scale = fs.particle_radius_scale
+    solver.settings.surface_filter_type = SdfFilterType[fs.surface_filter_type]
+    solver.settings.surface_filter_iterations = fs.surface_filter_iterations
+    solver.settings.surface_filter_strength = fs.surface_filter_strength
+    solver.settings.surface_dilate_iterations = fs.surface_dilate_iterations
+    solver.settings.surface_dilate_strength = fs.surface_dilate_strength
+    solver.settings.surface_erode_iterations = fs.surface_erode_iterations
+    solver.settings.surface_erode_strength = fs.surface_erode_strength
+    solver.settings.surface_smooth_type = SdfFilterType[fs.surface_smooth_type]
+    solver.settings.surface_smooth_iterations = fs.surface_smooth_iterations
+    solver.settings.surface_smooth_strength = fs.surface_smooth_strength
+    # These knobs affect the SDF build, not just the extracted mesh. Rebuild
+    # the current-frame SDF so paused playback reflects the slider immediately.
+    solver._surface_mesh_cache = None
+    solver._surface_mesh_key = None
+    solver._surface()
+    return True
+
+
+def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
+    sess = sess or session()
+    if not sess.active:
+        return False
+    sess.solver.settings.whitewater_enabled = scene.fluidsim.whitewater_enabled
+    return True
+
+
+def request_scene_update(scene, action: str, reason: str = ""):
+    """Apply property changes immediately where the live session allows it."""
+    from . import viewport
+
+    sess = session()
+    action = str(action or "").upper()
+    if not sess.active:
+        try:
+            if action in {"OUTPUT", "SURFACE", "WHITEWATER"}:
+                # Cache/export playback leaves Blender output objects behind
+                # even when no live solver session exists. Keep their material
+                # and visibility settings responsive without inventing geometry.
+                viewport.refresh_existing_output_settings(scene)
+            scene.fluidsim.status = reason or "Settings changed"
+        finally:
+            _tag_view3d_redraw()
+        return
+
+    if action == "REBUILD":
+        initialize_session(scene)
+    elif action == "RESET":
+        reset_simulation(scene)
+    elif action == "SYNC":
+        sync_scene_to_solver(scene, sess)
+    elif action == "SURFACE":
+        _apply_realtime_surface_settings(scene, sess)
+        viewport.update_outputs(scene, sess)
+    elif action == "WHITEWATER":
+        _apply_realtime_whitewater_settings(scene, sess)
+        viewport.update_outputs(scene, sess)
+    elif action == "OUTPUT":
+        viewport.update_outputs(scene, sess)
+    else:
+        scene.fluidsim.status = reason or "Settings changed"
+    _tag_view3d_redraw()
 
 
 # ---------------------------------------------------------------------------

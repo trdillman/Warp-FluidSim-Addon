@@ -835,7 +835,10 @@ class PressureSolver:
     # -- helpers -------------------------------------------------------------
 
     def _dim(self):
-        return self.grid.voxel_capacity
+        return max(1, self.grid.active_voxel_count)
+
+    def _leaf_dim(self):
+        return max(1, self.grid.active_leaf_count)
 
     def _stencil_args(self):
         g = self.grid
@@ -906,7 +909,7 @@ class PressureSolver:
         src, dst = self.leaf_pot, self.leaf_pot_tmp
         for _ in range(iterations):
             wp.launch(
-                k_solve_leaf_potential_jacobi, dim=g.capacity,
+                k_solve_leaf_potential_jacobi, dim=self._leaf_dim(),
                 inputs=[self.leaf_rhs, self.leaf_fluid, g.leaf_table,
                         g.leaf_coords, g.leaves_dim, g.num_leaves, src, dst],
                 device=self.device,

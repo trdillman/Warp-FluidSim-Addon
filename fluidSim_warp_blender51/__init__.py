@@ -18,6 +18,11 @@ bl_info = {
 }
 
 
+from .warp_discovery import ensure_warp_discoverable
+
+ensure_warp_discoverable()
+
+
 def register():
     from . import operators, panels, preferences, properties
     from .blender import render, scene_bridge, viewport

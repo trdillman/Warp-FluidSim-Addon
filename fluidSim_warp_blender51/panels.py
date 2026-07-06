@@ -3,8 +3,8 @@
 Panel set mirrors the synthesized UI contract:
 Simulation, Domain / Sparse Grid, Particles, Sources, Colliders / Sinks,
 Forces / Attraction, Pressure Projection, Viscosity, Surface / Whitewater,
-Viewport / Render Output, Custom Warp Snippets, Diagnostics / Profiling,
-Validation / Benchmarks.
+Realtime Surfacing / Particles, Viewport / Render Output, Custom Warp
+Snippets, Diagnostics / Profiling, Validation / Benchmarks.
 """
 
 from __future__ import annotations
@@ -302,19 +302,7 @@ class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
         col = layout.column(align=True)
-        col.prop(fs, "surface_enabled")
         sub = col.column(align=True)
-        sub.enabled = fs.surface_enabled
-        sub.prop(fs, "particle_radius_scale")
-        sub.prop(fs, "surface_filter_type")
-        sub.prop(fs, "surface_filter_iterations")
-        sub.prop(fs, "surface_filter_strength")
-
-        layout.separator()
-        col = layout.column(align=True)
-        col.prop(fs, "whitewater_enabled")
-        sub = col.column(align=True)
-        sub.enabled = fs.whitewater_enabled
         sub.prop(fs, "max_whitewater")
         sub.prop(fs, "ww_churn_gain")
         sub.prop(fs, "ww_churn_decay")
@@ -338,25 +326,7 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
         col = layout.column(align=True)
-        col.prop(fs, "liquid_view_mode")
-        col.prop(fs, "show_surface")
-        sub = col.column(align=True)
-        sub.enabled = fs.show_surface
-        sub.prop(fs, "surface_attribute_mode")
-        col.prop(fs, "show_particles")
-        sub = col.column(align=True)
-        sub.enabled = fs.show_particles
-        sub.prop(fs, "particle_display_fraction")
-        sub.prop(fs, "particle_attribute_mode")
-        col.prop(fs, "show_whitewater")
-        sub = col.column(align=True)
-        sub.enabled = fs.show_whitewater
-        sub.prop(fs, "whitewater_attribute_mode")
-        col.separator()
-        col.prop(fs, "surface_material")
-        col.prop(fs, "whitewater_material")
         col.prop(fs, "output_collection_name")
-        col.separator()
         col.prop(fs, "show_overlay")
         layout.separator()
         box = layout.box()
@@ -366,6 +336,57 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         sub.enabled = fs.cache_enabled
         sub.prop(fs, "cache_path")
         box.operator("fluidsim.export_frame", icon="EXPORT")
+
+
+class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Realtime Surfacing / Particles"
+    bl_idname = "FLUIDSIM_PT_realtime_display"
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+
+        layout.prop(fs, "liquid_view_mode")
+
+        box = layout.box()
+        box.label(text="Surface Mesh", icon="MESH_DATA")
+        box.prop(fs, "show_surface")
+        sub = box.column(align=True)
+        sub.enabled = fs.show_surface
+        sub.prop(fs, "surface_enabled")
+        sub.prop(fs, "particle_radius_scale")
+        row = sub.row(align=True)
+        row.prop(fs, "surface_dilate_iterations", text="Dilate")
+        row.prop(fs, "surface_dilate_strength", text="Strength")
+        row = sub.row(align=True)
+        row.prop(fs, "surface_erode_iterations", text="Erode")
+        row.prop(fs, "surface_erode_strength", text="Strength")
+        sub.prop(fs, "surface_smooth_type")
+        row = sub.row(align=True)
+        row.prop(fs, "surface_smooth_iterations", text="Smooth")
+        row.prop(fs, "surface_smooth_strength", text="Strength")
+        sub.prop(fs, "surface_attribute_mode")
+        sub.prop(fs, "surface_material")
+
+        box = layout.box()
+        box.label(text="Liquid Particles", icon="PARTICLE_DATA")
+        box.prop(fs, "show_particles")
+        sub = box.column(align=True)
+        sub.enabled = fs.show_particles
+        sub.prop(fs, "particle_display_fraction")
+        sub.prop(fs, "particle_display_scale")
+        sub.prop(fs, "particle_attribute_mode")
+        sub.prop(fs, "particle_material")
+
+        box = layout.box()
+        box.label(text="Whitewater Particles", icon="OUTLINER_OB_POINTCLOUD")
+        box.prop(fs, "show_whitewater")
+        sub = box.column(align=True)
+        sub.enabled = fs.show_whitewater
+        sub.prop(fs, "whitewater_enabled")
+        sub.prop(fs, "whitewater_display_scale")
+        sub.prop(fs, "whitewater_attribute_mode")
+        sub.prop(fs, "whitewater_material")
 
 
 def _snippet_state_icon(snip):
@@ -628,6 +649,7 @@ CLASSES = (
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
     FLUIDSIM_PT_surface,
+    FLUIDSIM_PT_realtime_display,
     FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
     FLUIDSIM_PT_snippet_editor,

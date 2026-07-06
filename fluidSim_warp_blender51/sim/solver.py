@@ -415,6 +415,13 @@ class SolverSettings:
     surface_filter_type: int = int(SdfFilterType.BOX)
     surface_filter_iterations: int = 1
     surface_filter_strength: float = 0.7
+    surface_dilate_iterations: int = 0
+    surface_dilate_strength: float = 1.0
+    surface_erode_iterations: int = 0
+    surface_erode_strength: float = 1.0
+    surface_smooth_type: int = int(SdfFilterType.BOX)
+    surface_smooth_iterations: int = 1
+    surface_smooth_strength: float = 0.7
 
     whitewater_enabled: bool = False
     churn_decay: float = 1.0
@@ -1090,22 +1097,36 @@ class FluidSolver:
                     int(s.surface_splat_radius)],
             outputs=[self.surface_sdf.data], device=self.device,
         )
-        kernel = {
+
+        def apply_filter(kernel, iterations, strength):
+            for _ in range(max(0, int(iterations))):
+                wp.launch(
+                    kernel, dim=self._nvox,
+                    inputs=[self.surface_sdf.data, g.leaf_table, g.leaf_coords,
+                            g.voxels_dim, g.leaves_dim, g.num_leaves,
+                            s.voxel_size, strength],
+                    outputs=[self.surface_tmp.data], device=self.device,
+                )
+                self.surface_sdf.data, self.surface_tmp.data = (
+                    self.surface_tmp.data, self.surface_sdf.data)
+
+        # Houdini-style fixed stack: grow/close, shrink/open, then smooth.
+        # Defaults keep the legacy behavior: no dilate/erode, one Box pass.
+        apply_filter(k_smooth_surface_sdf_dilate,
+                     s.surface_dilate_iterations,
+                     s.surface_dilate_strength)
+        apply_filter(k_smooth_surface_sdf_erode,
+                     s.surface_erode_iterations,
+                     s.surface_erode_strength)
+        smooth_kernel = {
             0: k_smooth_surface_sdf_dilate,
             1: k_smooth_surface_sdf_erode,
             2: k_smooth_surface_sdf_box,
             3: k_smooth_surface_sdf_mean_curvature,
-        }[int(s.surface_filter_type)]
-        for _ in range(max(0, int(s.surface_filter_iterations))):
-            wp.launch(
-                kernel, dim=self._nvox,
-                inputs=[self.surface_sdf.data, g.leaf_table, g.leaf_coords,
-                        g.voxels_dim, g.leaves_dim, g.num_leaves,
-                        s.voxel_size, s.surface_filter_strength],
-                outputs=[self.surface_tmp.data], device=self.device,
-            )
-            self.surface_sdf.data, self.surface_tmp.data = (
-                self.surface_tmp.data, self.surface_sdf.data)
+        }[int(s.surface_smooth_type)]
+        apply_filter(smooth_kernel,
+                     s.surface_smooth_iterations,
+                     s.surface_smooth_strength)
 
     def _whitewater(self, dt):
         s = self.settings

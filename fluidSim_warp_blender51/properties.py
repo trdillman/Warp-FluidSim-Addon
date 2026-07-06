@@ -78,6 +78,12 @@ WHITEWATER_ATTR_ITEMS = (
 )
 
 
+SURFACE_SMOOTH_ITEMS = (
+    ("BOX", "Box", "Use the existing box smoothing filter"),
+    ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Use the existing mean-curvature smoothing filter"),
+)
+
+
 _LIQUID_VIEW_SYNCING = False
 
 
@@ -141,6 +147,14 @@ def _request_sync(self, context):
 
 def _request_output_refresh(self, context):
     _request_scene_update(context, "OUTPUT", "Viewport display settings changed")
+
+
+def _request_surface_refresh(self, context):
+    _request_scene_update(context, "SURFACE", "Surface display settings changed")
+
+
+def _request_whitewater_refresh(self, context):
+    _request_scene_update(context, "WHITEWATER", "Whitewater display settings changed")
 
 
 def _on_live_changed(self, context):
@@ -478,23 +492,45 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
 
     # -- Surface -------------------------------------------------------------------
     surface_enabled: BoolProperty(name="Generate Surface", default=True,
-                                  update=_request_reset)
+                                  update=_request_surface_refresh)
     particle_radius_scale: FloatProperty(
         name="Particle Radius", default=1.2, min=0.5, soft_max=4.0,
-        update=_request_reset)
+        update=_request_surface_refresh)
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
-        update=_request_reset)
+        update=_request_surface_refresh)
     surface_filter_iterations: IntProperty(name="Filter Iterations",
                                            default=1, min=0, max=16,
-                                           update=_request_reset)
+                                           update=_request_surface_refresh)
     surface_filter_strength: FloatProperty(name="Filter Strength",
                                            default=0.7, min=0.0, max=1.0,
-                                           update=_request_reset)
+                                           update=_request_surface_refresh)
+    surface_dilate_iterations: IntProperty(name="Dilate Iterations",
+                                           default=0, min=0, max=16,
+                                           update=_request_surface_refresh)
+    surface_dilate_strength: FloatProperty(name="Dilate Strength",
+                                           default=1.0, min=0.0, max=1.0,
+                                           update=_request_surface_refresh)
+    surface_erode_iterations: IntProperty(name="Erode Iterations",
+                                          default=0, min=0, max=16,
+                                          update=_request_surface_refresh)
+    surface_erode_strength: FloatProperty(name="Erode Strength",
+                                          default=1.0, min=0.0, max=1.0,
+                                          update=_request_surface_refresh)
+    surface_smooth_type: EnumProperty(name="Smooth Type",
+                                      items=SURFACE_SMOOTH_ITEMS,
+                                      default="BOX",
+                                      update=_request_surface_refresh)
+    surface_smooth_iterations: IntProperty(name="Smooth Iterations",
+                                           default=1, min=0, max=16,
+                                           update=_request_surface_refresh)
+    surface_smooth_strength: FloatProperty(name="Smooth Strength",
+                                           default=0.7, min=0.0, max=1.0,
+                                           update=_request_surface_refresh)
 
     # -- Whitewater -------------------------------------------------------------
     whitewater_enabled: BoolProperty(name="Enable Whitewater", default=False,
-                                     update=_request_reset)
+                                     update=_request_whitewater_refresh)
     max_whitewater: IntProperty(
         name="Max Whitewater", default=1_000_000, min=1024, max=20_000_000,
         update=_request_rebuild)
@@ -549,6 +585,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Display Fraction", default=1.0, min=0.01, max=1.0,
         update=_request_output_refresh,
         description="Fraction of particles shown in the viewport")
+    particle_display_scale: FloatProperty(
+        name="Display Scale", default=1.0, min=0.05, soft_max=4.0,
+        update=_request_output_refresh,
+        description="Viewport point radius scale for liquid particles")
     surface_attribute_mode: EnumProperty(
         name="Surface Attribute",
         items=LIQUID_ATTR_ITEMS,
@@ -570,9 +610,16 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Color whitewater particles by a simulation attribute",
     )
+    whitewater_display_scale: FloatProperty(
+        name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
+        update=_request_output_refresh,
+        description="Viewport point radius scale for whitewater particles")
     surface_material: PointerProperty(name="Surface Material",
                                       type=bpy.types.Material,
                                       update=_request_output_refresh)
+    particle_material: PointerProperty(name="Particle Material",
+                                       type=bpy.types.Material,
+                                       update=_request_output_refresh)
     whitewater_material: PointerProperty(name="Whitewater Material",
                                          type=bpy.types.Material,
                                          update=_request_output_refresh)

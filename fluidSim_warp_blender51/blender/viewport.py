@@ -141,6 +141,10 @@ def _write_mesh_colors(mesh, tris, vertex_colors):
             attr = mesh.color_attributes.new(
                 name=COLOR_ATTR, type="FLOAT_COLOR", domain="CORNER")
         attr.data.foreach_set("color", loop_colors.ravel())
+    try:
+        mesh.color_attributes.active_color = attr
+    except Exception:
+        pass
 
 
 def _write_point_colors(data, colors):
@@ -150,6 +154,24 @@ def _write_point_colors(data, colors):
     if attr is None:
         attr = data.attributes.new(COLOR_ATTR, "FLOAT_COLOR", "POINT")
     attr.data.foreach_set("color", np.asarray(colors, dtype=np.float32).ravel())
+    try:
+        data.attributes.active = attr
+    except Exception:
+        pass
+
+
+def _set_point_radius(data, radius):
+    attr = getattr(data, "attributes", None)
+    if attr is None:
+        return
+    rad_attr = attr.get("radius")
+    if rad_attr is None:
+        return
+    n = len(rad_attr.data)
+    if n:
+        rad_attr.data.foreach_set("value", np.full(n, radius, dtype=np.float32))
+        if hasattr(data, "update_tag"):
+            data.update_tag()
 
 
 def _swap_mesh(obj, verts, tris, colors=None):
@@ -269,6 +291,46 @@ def _surface_values(solver, mode, verts):
 # ---------------------------------------------------------------------------
 
 
+def refresh_existing_output_settings(scene):
+    """Apply display/material settings to existing output objects only."""
+    from . import materials
+
+    # This is intentionally metadata-only. Without an active solver we cannot
+    # recompute attributes or surfaces, but cache/current-output objects should
+    # still respond to visibility and material picker changes.
+    fs = scene.fluidsim
+    surface = bpy.data.objects.get(SURFACE_NAME)
+    if surface is not None:
+        visible = fs.show_surface and fs.surface_enabled
+        surface.hide_viewport = not visible
+        surface.hide_render = not visible
+        if visible:
+            materials.ensure_surface_material(scene, surface)
+
+    particles = bpy.data.objects.get(PARTICLES_NAME)
+    if particles is not None:
+        particles.hide_viewport = not fs.show_particles
+        particles.hide_render = not fs.show_particles
+        if fs.show_particles:
+            if hasattr(particles.data, "attributes"):
+                radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
+                          getattr(fs, "particle_display_scale", 1.0))
+                _set_point_radius(particles.data, radius)
+            materials.ensure_particle_material(scene, particles)
+
+    whitewater = bpy.data.objects.get(WHITEWATER_NAME)
+    if whitewater is not None:
+        visible = fs.show_whitewater and fs.whitewater_enabled
+        whitewater.hide_viewport = not visible
+        whitewater.hide_render = not visible
+        if visible:
+            if hasattr(whitewater.data, "attributes"):
+                radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
+                          getattr(fs, "whitewater_display_scale", 1.0))
+                _set_point_radius(whitewater.data, radius)
+            materials.ensure_whitewater_material(scene, whitewater)
+
+
 def update_outputs(scene, sess):
     """Write current solver outputs into Blender datablocks."""
     from . import materials
@@ -307,7 +369,8 @@ def update_outputs(scene, sess):
         values = _particle_values(
             solver, fs.particle_attribute_mode, pos, vel, indices)
         colors = _values_to_colors(values) if values is not None else None
-        radius = solver.settings.voxel_size * 0.25
+        radius = (solver.settings.voxel_size * 0.25 *
+                  getattr(fs, "particle_display_scale", 1.0))
         if _supports_pointcloud():
             obj = _ensure_object(scene, PARTICLES_NAME,
                                   lambda: bpy.data.pointclouds.new(PARTICLES_NAME))
@@ -320,11 +383,12 @@ def update_outputs(scene, sess):
     else:
         _clear_points(PARTICLES_NAME)
 
-    if fs.show_whitewater and solver.settings.whitewater_enabled:
+    if fs.show_whitewater and fs.whitewater_enabled and solver.settings.whitewater_enabled:
         pos = solver.whitewater_positions()
         values = _whitewater_values(solver, fs.whitewater_attribute_mode, pos)
         colors = _values_to_colors(values) if values is not None else None
-        radius = solver.settings.voxel_size * 0.15
+        radius = (solver.settings.voxel_size * 0.15 *
+                  getattr(fs, "whitewater_display_scale", 1.0))
         if _supports_pointcloud():
             obj = _ensure_object(scene, WHITEWATER_NAME,
                                   lambda: bpy.data.pointclouds.new(WHITEWATER_NAME))

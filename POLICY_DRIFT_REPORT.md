@@ -1,5 +1,5 @@
 ---
-status: fresh
+status: in-progress
 escalated: false
 generated_at: 2026-07-03T21:18:03Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
@@ -62,19 +62,19 @@ Status: unresolved
 Authoritative evidence:
 
 - Current live lanes pass at the tested sizes, including GUI acceptance at 500,000 particle capacity and generated demos up to 259,112 particles.
-- `fluidSim_warp_blender51/sim/particles.py` compacts particles by scanning `self.capacity`, then launches reset over `self.capacity`.
-- `fluidSim_warp_blender51/sim/solver.py` launches multiple per-frame phases over `self.particles.capacity`, `self.whitewater.capacity`, or `g.voxel_capacity` even when active counts are smaller.
-- Existing `review_output/CONSOLIDATED_CODEBASE_REVIEW.md` and JSON findings also identify capacity-proportional particle compaction, binning, and whitewater compaction risks. The current runtime did not contradict those scale risks; it only proved the current acceptance envelope passes.
+- Particle and whitewater launch bounds now use host-side active-count mirrors where active counts are available.
+- `fluidSim_warp_blender51/sim/pressure.py` still needs a final active-work check because pressure voxel phases and the coarse leaf pass were previously capacity-bound even when `SparseGrid.active_leaf_count` was smaller.
+- Existing `review_output/CONSOLIDATED_CODEBASE_REVIEW.md` and JSON findings identified capacity-proportional particle compaction, binning, whitewater compaction, and grid-phase risks. The current runtime should be judged by focused active-work regressions, not stale review text alone.
 
 Why this is policy drift:
 
-The project promotes high-performance interactive GPU liquid simulation. Passing the current scenes is not enough proof that the design holds under reasonable increases in allocation capacity, sparse-domain size, or frame window. Allocation-wide scans and launches turn unused capacity into frame cost, so the semantics do not scale with the active sparse workload the docs advertise.
+The project promotes high-performance interactive GPU liquid simulation. Passing the current scenes is not enough proof that the design holds under reasonable increases in allocation capacity, sparse-domain size, or frame window. Any remaining allocation-wide scans and launches turn unused capacity into frame cost, so the semantics must be guarded by focused active-work scale regressions.
 
 Required corrective action:
 
-- Bound compaction, binning, advection, whitewater, and grid phases by active particle, active whitewater, or active leaf/voxel ranges where Warp kernels allow it.
-- Add a scale regression that compares a fixed active particle/leaf count under low and high allocation capacity and fails on disproportionate frame-time growth.
-- Update benchmark/report wording to distinguish current tested envelope from robust capacity-scale proof until that regression exists.
+- Keep compaction, binning, advection, whitewater, and grid phases bounded by active particle, active whitewater, or active leaf/voxel ranges where Warp kernels allow it.
+- Keep the allocation-scale regression that compares fixed active particle/leaf count under low and high allocation capacity and fails on disproportionate frame-time growth.
+- Keep benchmark/report wording tied to the tested envelope unless the active-work regression and live acceptance lanes pass.
 
 Backlog task: `backlog/tasks/TASK-POLICY-DRIFT-002-ACTIVE-WORK-SCALING.md`
 
@@ -89,7 +89,7 @@ generated_at: 2026-07-03T21:18:03Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
 git_head: 91388c67699aac3c4c693a5dd6545e5951e7d3ce
 freshness: fresh
-status: fresh
+status: in-progress
 blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification:
