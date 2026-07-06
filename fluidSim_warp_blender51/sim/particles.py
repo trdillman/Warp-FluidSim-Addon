@@ -14,6 +14,17 @@ from .constants import LEAF_VOLUME
 
 
 @wp.kernel
+def k_clamp_count(
+    count: wp.array(dtype=wp.int32),
+    capacity: int,
+):
+    if count[0] < 0:
+        count[0] = 0
+    elif count[0] > capacity:
+        count[0] = capacity
+
+
+@wp.kernel
 def k_reset_alive(
     count: wp.array(dtype=wp.int32),
     alive: wp.array(dtype=wp.int32),
@@ -110,7 +121,14 @@ class ParticleSystem:
     def attr(self, name: str) -> wp.array:
         return self.attrs[name]
 
+    def clamp_count(self):
+        wp.launch(
+            k_clamp_count, dim=1, inputs=[self.count, self.capacity],
+            device=self.device,
+        )
+
     def refresh_host_count(self) -> int:
+        self.clamp_count()
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
 
@@ -130,6 +148,7 @@ class ParticleSystem:
             self.count.zero_()
             self.host_count = 0
             return
+        self.clamp_count()
 
         # The solver keeps host_count as an upper bound on device count. Use
         # that bound here so compaction does not silently return to capacity

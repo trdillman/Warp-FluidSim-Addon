@@ -156,9 +156,12 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 - `k_surface_sdf_reset` seeds a far-field SDF; `k_build_surface_sdf` splats
   each particle as a signed-distance contribution (radius =
   `0.5*voxel_size*particle_radius_scale`, splat radius 2 voxels).
-- **Smoothing filters** (`SdfFilterType`): `k_smooth_surface_sdf_dilate`,
-  `_erode`, `_box`, `_mean_curvature`, run for `surface_filter_iterations`
-  with `surface_filter_strength`.
+- **Realtime surface stack**: after particle SDF build, surfacing applies the
+  existing kernels in fixed order: dilate, erode, then smooth. Dilate and erode
+  each expose independent iteration/strength controls. Smooth exposes Box or
+  Mean Curvature Flow with independent iteration/strength controls. Defaults
+  preserve the prior behavior: no dilate, no erode, one Box smoothing pass at
+  the legacy strength.
 - `SurfaceExtractor.extract` runs **marching cubes** on the SDF and returns
   `(verts Nx3 float32, tris Mx3 int32)` consumed by the viewport bridge.
 
@@ -236,7 +239,16 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   `foreach_set`), `FluidSim Particles` and `FluidSim Whitewater` (PointCloud
   objects with `position`/`radius`/`display_color` attributes, falling back to
   a vertex cloud if `bpy.data.pointclouds` is absent). The `_draw_overlay`
-  handler renders the live status + per-phase timers via `blf`.
+  handler renders the live status + per-phase timers via `blf`. Output object
+  colors and material diffuse colors are also written for Solid viewport
+  legibility without changing the user's global viewport shading mode.
+- **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
+  bridge for realtime UI edits. Surface radius/dilate/erode/smooth changes
+  push into the active solver, rebuild the current-frame surface SDF, invalidate
+  the cached mesh, and refresh output datablocks without advancing playback.
+  Inactive output/cache objects receive visibility/material refreshes only;
+  geometry recomputation still requires an active solver frame or cached
+  particles.
 - **`blender/materials.py`** provides default liquid / particle / whitewater
   Principled BSDF materials, plus **attribute materials** that add a
   `ShaderNodeAttribute` (`attribute_name = "display_color"`) linked into the

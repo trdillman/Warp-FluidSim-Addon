@@ -358,6 +358,37 @@ def test_whitewater_compact_is_correct_without_host_count_refresh(cuda_device):
     assert np.all(alive_out[live:] == 0)
 
 
+def test_particle_count_refresh_clamps_device_overflow(cuda_device):
+    """Overflow races must not leave count[0] beyond allocated particles."""
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+
+    psys = ParticleSystem(capacity=8, device=cuda_device)
+    _copy_int(psys.count, np.array([37], dtype=np.int32), cuda_device)
+
+    assert psys.refresh_host_count() == 8
+    assert int(psys.count.numpy()[0]) == 8
+
+
+def test_compaction_clamps_overflowed_counts_before_indexing(cuda_device):
+    """Compaction must not read alive[count-1] after saturated emission."""
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+    from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
+
+    psys = ParticleSystem(capacity=8, device=cuda_device)
+    ww = WhitewaterSystem(capacity=8, device=cuda_device)
+    alive = np.ones(8, dtype=np.int32)
+
+    _copy_int(psys.alive, alive, cuda_device)
+    _copy_int(psys.count, np.array([37], dtype=np.int32), cuda_device)
+    psys.compact()
+    assert psys.refresh_host_count() == 8
+
+    _copy_int(ww.alive, alive, cuda_device)
+    _copy_int(ww.count, np.array([37], dtype=np.int32), cuda_device)
+    ww.compact()
+    assert ww.refresh_host_count() == 8
+
+
 def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device):
     settings = SolverSettings(
         domain_min=(0.0, 0.0, 0.0),

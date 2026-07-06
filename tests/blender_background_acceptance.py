@@ -107,6 +107,58 @@ def main():
               f"{len(surf.data.vertices)} verts")
         check("surface material assigned", len(surf.data.materials) > 0)
 
+    paused_frame = sess.solver.frame
+    surface_mat = bpy.data.materials.new("Acceptance Surface Solid Color")
+    surface_mat.diffuse_color = (0.9, 0.2, 0.05, 1.0)
+    fs.surface_material = surface_mat
+    fs.surface_attribute_mode = "NONE"
+    fs.particle_radius_scale = 1.6
+    fs.surface_dilate_iterations = 1
+    fs.surface_dilate_strength = 0.2
+    fs.surface_erode_iterations = 2
+    fs.surface_erode_strength = 0.35
+    fs.surface_smooth_type = "MEAN_CURVATURE_FLOW"
+    fs.surface_smooth_iterations = 2
+    fs.surface_smooth_strength = 0.45
+    check("realtime surface refresh keeps frame",
+          sess.solver.frame == paused_frame,
+          f"{paused_frame} -> {sess.solver.frame}")
+    check("realtime surface radius applied",
+          abs(sess.solver.settings.particle_radius_scale - 1.6) < 1.0e-6,
+          str(sess.solver.settings.particle_radius_scale))
+    check("realtime surface dilate applied",
+          sess.solver.settings.surface_dilate_iterations == 1,
+          str(sess.solver.settings.surface_dilate_iterations))
+    check("realtime surface erode applied",
+          sess.solver.settings.surface_erode_iterations == 2,
+          str(sess.solver.settings.surface_erode_iterations))
+    check("realtime surface smooth applied",
+          sess.solver.settings.surface_smooth_type.name == "MEAN_CURVATURE_FLOW",
+          str(sess.solver.settings.surface_smooth_type))
+    surf = bpy.data.objects.get("FluidSim Surface")
+    check("realtime surface mesh still populated",
+          surf is not None and len(surf.data.vertices) > 100,
+          f"{len(surf.data.vertices) if surf else 0} verts")
+    check("surface solid viewport material color applied",
+          surf is not None and tuple(round(v, 3) for v in surf.color) == (0.9, 0.2, 0.05, 1.0),
+          str(tuple(surf.color) if surf else None))
+    fs.surface_attribute_mode = "HEIGHT"
+    surf = bpy.data.objects.get("FluidSim Surface")
+    check("surface color attribute active for solid viewport",
+          surf is not None and getattr(surf.data.color_attributes, "active_color", None) is not None,
+          str(getattr(surf.data.color_attributes, "active_color", None).name
+              if surf and getattr(surf.data.color_attributes, "active_color", None) else ""))
+
+    paused_frame = sess.solver.frame
+    fs.whitewater_enabled = False
+    check("realtime whitewater toggle keeps frame",
+          sess.solver.frame == paused_frame,
+          f"{paused_frame} -> {sess.solver.frame}")
+    check("realtime whitewater setting applied",
+          sess.solver.settings.whitewater_enabled is False,
+          str(sess.solver.settings.whitewater_enabled))
+    fs.whitewater_enabled = True
+
     parts = bpy.data.objects.get("FluidSim Particles")
     check("particles object exists", parts is not None,
           parts.type if parts else "")
@@ -247,12 +299,12 @@ def main():
         "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
         "FLUIDSIM_PT_sources", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
         "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
-        "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets",
+        "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets",
         "FLUIDSIM_PT_snippet_editor", "FLUIDSIM_PT_snippet_shortcuts",
         "FLUIDSIM_PT_diagnostics", "FLUIDSIM_PT_validation",
     ]
     missing = [p for p in panel_ids if not hasattr(bpy.types, p)]
-    check("all 15 panels registered", not missing, str(missing))
+    check("all 16 panels registered", not missing, str(missing))
 
     ops = ["initialize", "release", "reset", "step", "toggle_live",
            "setup_scene", "tag_object", "inject_particles", "run_validation",

@@ -83,6 +83,11 @@ def _assign_material(obj, mat):
     if not obj.data.materials or obj.data.materials[0] is not mat:
         obj.data.materials.clear()
         obj.data.materials.append(mat)
+    try:
+        obj.color = tuple(mat.diffuse_color)
+        obj.display_type = "TEXTURED"
+    except Exception:
+        pass
 
 
 def ensure_surface_material(scene, obj):
@@ -105,7 +110,7 @@ def ensure_particle_material(scene, obj):
                or _new_attribute_material(PARTICLE_ATTR_MATERIAL,
                                           (0.1, 0.55, 1.0, 1.0)))
     else:
-        mat = fs.surface_material
+        mat = fs.particle_material
         if mat is None:
             mat = bpy.data.materials.get(PARTICLE_MATERIAL) or _new_particle_material()
     _assign_material(obj, mat)

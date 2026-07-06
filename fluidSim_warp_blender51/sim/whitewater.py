@@ -20,6 +20,7 @@ from .fields import (
     sample_mac_velocity,
     sample_scalar_trilinear,
 )
+from .particles import k_clamp_count
 from .registry import register_fn
 
 
@@ -366,7 +367,14 @@ class WhitewaterSystem:
         self.alive.zero_()
         self.host_count = 0
 
+    def clamp_count(self):
+        wp.launch(
+            k_clamp_count, dim=1, inputs=[self.count, self.capacity],
+            device=self.device,
+        )
+
     def refresh_host_count(self):
+        self.clamp_count()
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
 
@@ -387,6 +395,7 @@ class WhitewaterSystem:
             self.alive.zero_()
             self.host_count = 0
             return
+        self.clamp_count()
 
         # count_hint is the same host-side upper-bound contract used for
         # particle kernels. Keep the scan/reset bounded so whitewater does not

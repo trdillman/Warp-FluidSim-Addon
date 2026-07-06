@@ -94,17 +94,30 @@ Enable checkbox. **Solver** (Jacobi / PCG), **Viscosity** constant, **From
 Particles** (per-particle viscosity attribute), **Iterations**, **Tolerance**.
 
 ### Surface / Whitewater
-**Generate Surface**, particle radius scale, **Filter** (Dilate / Erode /
-Box / Mean-Curvature-Flow), filter iterations & strength. **Whitewater**
-enable, max whitewater, churn gain/decay/threshold, emission rate, min speed,
-life min/max, bubble & spray drag.
+Whitewater simulation budgets and emission dynamics: max whitewater, churn
+gain/decay/threshold, emission rate, min speed, life min/max, bubble & spray
+drag.
+
+### Realtime Surfacing / Particles
+The sole owner for viewport-facing liquid surface and particle display
+settings. Surface mesh controls include visibility, generate surface, particle
+radius, independent dilate iterations/strength, independent erode
+iterations/strength, Box or Mean-Curvature smooth iterations/strength,
+attribute color mode, and material. Liquid particle controls include
+visibility, display fraction, display scale, attribute color mode, and particle
+material. Whitewater particle controls include visibility, enable, display
+scale, attribute color mode, and material.
+
+When a live solver is active, surface stack edits rebuild the current frame's
+surface SDF and output mesh without advancing the simulation frame.
+Particle and material display edits refresh the viewport output immediately.
+When only existing output/cache objects remain, visibility and material edits
+still apply to those objects; geometry-dependent surfacing requires an active
+solver frame.
 
 ### Viewport / Render Output
-**Liquid View** (Surface / Particles / Surface + Particles). Surface, particle,
-and whitewater visibility toggles. **Display Fraction** for particles.
-Attribute modes (see §4). Surface/whitewater material pickers, output
-collection name, overlay toggle. **Optional Cache / Export**: enable cache,
-cache path, **Export Current Frame**.
+Output collection name and overlay toggle. **Optional Cache / Export**: enable
+cache, cache path, **Export Current Frame**.
 
 ### Custom Warp Snippets
 **Snippet Library** dropdown with ten ready-to-run examples plus your saved

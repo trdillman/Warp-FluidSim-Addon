@@ -25,6 +25,7 @@ BLENDER_UI_PANELS = [
     "Pressure Projection",
     "Viscosity",
     "Surface / Whitewater",
+    "Realtime Surfacing / Particles",
     "Viewport / Render Output",
     "Custom Warp Snippets",
     "Diagnostics / Profiling",
@@ -44,4 +45,38 @@ BLENDER_DATA_INTEGRATIONS = {
     "colliders": ["mesh SDF", "signed distance volume", "animated transforms", "velocity transfer"],
     "outputs": ["liquid surface mesh or volume", "whitewater particles/points", "debug fields", "profiling overlay"],
     "render": ["material assignment", "viewport visibility", "render visibility", "optional cache/export"],
+}
+
+REALTIME_SURFACING_PARTICLES_SECTION = {
+    "surface_stack": [
+        "particle_radius_scale",
+        "surface_dilate_iterations",
+        "surface_dilate_strength",
+        "surface_erode_iterations",
+        "surface_erode_strength",
+        "surface_smooth_type",
+        "surface_smooth_iterations",
+        "surface_smooth_strength",
+        "surface_attribute_mode",
+        "surface_material",
+    ],
+    "particles": [
+        "show_particles",
+        "particle_display_fraction",
+        "particle_display_scale",
+        "particle_attribute_mode",
+        "particle_material",
+    ],
+    "whitewater_display": [
+        "show_whitewater",
+        "whitewater_enabled",
+        "whitewater_display_scale",
+        "whitewater_attribute_mode",
+        "whitewater_material",
+    ],
+    "legacy_hidden_compatibility": [
+        "surface_filter_type",
+        "surface_filter_iterations",
+        "surface_filter_strength",
+    ],
 }
