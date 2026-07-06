@@ -1,9 +1,9 @@
 ---
-status: fresh
+status: in-progress
 escalated: false
-generated_at: 2026-07-03T21:18:03Z
+generated_at: 2026-07-05T16:22:25Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
-git_head: 91388c67699aac3c4c693a5dd6545e5951e7d3ce
+git_head: 27b3024
 ---
 
 # Policy Drift Report
@@ -18,10 +18,10 @@ Nested output unit: `demos` has its own current report at `demos/POLICY_DRIFT_RE
 
 ## Strongest Current Evidence
 
-- `python -m pytest -q` passed: 25 tests.
-- `blender --background --python tests/blender_background_acceptance.py` passed on Warp 1.12.1, CUDA Toolkit 12.9, Driver 13.3, `cuda:0` NVIDIA GeForce RTX 4080 SUPER.
+- `python -m pytest -q` passed: 69 tests, including fixed-active pressure allocation regression.
+- `blender --background --python tests/blender_background_acceptance.py` passed on Warp 1.14.0, CUDA Toolkit 12.9, Driver 13.3, `cuda:0` NVIDIA GeForce RTX 4080 SUPER.
 - `blender --background --python tests/blender_attribute_viz_acceptance.py` passed on the same live CUDA/Warp device.
-- `blender --python tests/blender_gui_acceptance.py` passed 35/35 with interactive playback, visible viewport samples, render output, panel draw smoke, profiling, and benchmark operator proof.
+- `blender --python tests/blender_gui_acceptance.py` was rerun twice and failed the viewport screenshot visibility check both times: `GUI-ACCEPTANCE-FAIL (34/35)`, with live playback, visible surface object, render output, profiling, and benchmark operator checks passing.
 - `python tools/analyze_demos.py` passed 30/30 against the current generated demo outputs and maelstrom metadata.
 - `blender --background --python tools/check_demo_blends.py` passed for `dam_break.blend`, `crown_splash.blend`, `slosh_tank.blend`, and `maelstrom_basin.blend`.
 
@@ -33,7 +33,7 @@ These current lanes supersede stale review claims where source or tests have alr
 
 Type: documentation drift
 
-Status: unresolved
+Status: in-progress; pressure/grid capacity repair implemented, GUI viewport-screenshot acceptance still failing
 
 Authoritative evidence:
 
@@ -62,19 +62,18 @@ Status: unresolved
 Authoritative evidence:
 
 - Current live lanes pass at the tested sizes, including GUI acceptance at 500,000 particle capacity and generated demos up to 259,112 particles.
-- `fluidSim_warp_blender51/sim/particles.py` compacts particles by scanning `self.capacity`, then launches reset over `self.capacity`.
-- `fluidSim_warp_blender51/sim/solver.py` launches multiple per-frame phases over `self.particles.capacity`, `self.whitewater.capacity`, or `g.voxel_capacity` even when active counts are smaller.
-- Existing `review_output/CONSOLIDATED_CODEBASE_REVIEW.md` and JSON findings also identify capacity-proportional particle compaction, binning, and whitewater compaction risks. The current runtime did not contradict those scale risks; it only proved the current acceptance envelope passes.
+- Particle and whitewater launch bounds now use host-side active-count mirrors where active counts are available.
+- `fluidSim_warp_blender51/sim/pressure.py` now launches pressure voxel phases over `SparseGrid.active_voxel_count` and the coarse leaf pass over `SparseGrid.active_leaf_count`.
+- Existing `review_output/CONSOLIDATED_CODEBASE_REVIEW.md` and JSON findings identified capacity-proportional particle compaction, binning, whitewater compaction, and grid-phase risks. The current runtime should be judged by focused active-work regressions, not stale review text alone.
 
 Why this is policy drift:
 
-The project promotes high-performance interactive GPU liquid simulation. Passing the current scenes is not enough proof that the design holds under reasonable increases in allocation capacity, sparse-domain size, or frame window. Allocation-wide scans and launches turn unused capacity into frame cost, so the semantics do not scale with the active sparse workload the docs advertise.
+The project promotes high-performance interactive GPU liquid simulation. Passing the current scenes is not enough proof that the design holds under reasonable increases in allocation capacity, sparse-domain size, or frame window. Any remaining allocation-wide scans and launches turn unused capacity into frame cost, so the semantics must be guarded by focused active-work scale regressions.
 
 Required corrective action:
 
-- Bound compaction, binning, advection, whitewater, and grid phases by active particle, active whitewater, or active leaf/voxel ranges where Warp kernels allow it.
-- Add a scale regression that compares a fixed active particle/leaf count under low and high allocation capacity and fails on disproportionate frame-time growth.
-- Update benchmark/report wording to distinguish current tested envelope from robust capacity-scale proof until that regression exists.
+- Investigate or stabilize the GUI viewport screenshot lane before marking this report completed.
+- Keep benchmark/report wording tied to the tested envelope unless the active-work regression and live acceptance lanes pass.
 
 Backlog task: `backlog/tasks/TASK-POLICY-DRIFT-002-ACTIVE-WORK-SCALING.md`
 
@@ -85,25 +84,22 @@ Backlog task: `backlog/tasks/TASK-POLICY-DRIFT-002-ACTIVE-WORK-SCALING.md`
 
 ## Machine-Readable Summary
 
-generated_at: 2026-07-03T21:18:03Z
+generated_at: 2026-07-05T16:22:25Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
-git_head: 91388c67699aac3c4c693a5dd6545e5951e7d3ce
+git_head: 27b3024
 freshness: fresh
-status: fresh
+status: in-progress
 blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification:
   - python -m pytest -q
   - blender --background --python tests/blender_background_acceptance.py
   - blender --background --python tests/blender_attribute_viz_acceptance.py
-  - blender --python tests/blender_gui_acceptance.py
+  - blender --python tests/blender_gui_acceptance.py (fails viewport screenshot, 34/35)
   - python tools/analyze_demos.py
   - blender --background --python tools/check_demo_blends.py
 files_that_need_correction:
-  - fluidSim_warp_blender51/sim/fields.py
-  - fluidSim_warp_blender51/sim/particles.py
-  - fluidSim_warp_blender51/sim/solver.py
-  - fluidSim_warp_blender51/sim/whitewater.py
+  - fluidSim_warp_blender51/sim/pressure.py
   - fluidSim_warp_blender51/docs/technical_report.md
   - fluidSim_warp_blender51/docs/user_guide.md
   - fluidSim_warp_blender51/properties.py
@@ -112,9 +108,10 @@ active_backlog_tasks:
   - backlog/tasks/TASK-POLICY-DRIFT-001-SPARSE-OCTREE-CONTRACT.md
   - backlog/tasks/TASK-POLICY-DRIFT-002-ACTIVE-WORK-SCALING.md
 repair_checklist:
-  - set report status to in-progress before project-file edits
+  - report is in-progress; original ordering criterion could not be truthfully satisfied because repair edits already existed in the working tree before this pass
   - settle sparse-octree versus sparse-tiled-grid contract
   - add contract guard for chosen wording
-  - replace capacity-wide hot phases or prove bounded scale envelope
-  - add allocation-scale regression
+  - pressure voxel and coarse leaf phases now use active voxel/leaf bounds
+  - allocation-scale regression added for fixed active pressure work
+  - resolve repeated GUI viewport screenshot failure before completed status
   - rerun pytest, Blender acceptance, demo analysis, and demo blend checks
