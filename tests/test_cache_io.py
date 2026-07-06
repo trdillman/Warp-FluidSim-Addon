@@ -5,7 +5,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from fluidSim_warp_blender51.io.cache import read_frame, write_frame
+from fluidSim_warp_blender51.io.cache import (
+    available_frames,
+    read_frame,
+    read_sequence_metadata,
+    resolve_frame_range,
+    validate_contiguous_frames,
+    write_frame,
+    write_sequence_metadata,
+)
 
 
 class _PicklePayload:
@@ -114,3 +122,56 @@ def test_write_frame_uses_same_directory_temp_and_atomic_replace(tmp_path, monke
 
     assert written == str(tmp_path / "fluidsim_00006.npz")
     assert calls["replace"][1] == written
+
+
+def test_resolve_frame_range_defaults_to_scene_range():
+    scene = SimpleNamespace(frame_start=12, frame_end=18)
+
+    assert resolve_frame_range(
+        scene,
+        use_custom=False,
+        frame_start=1,
+        frame_end=2,
+    ) == (12, 18)
+
+
+def test_resolve_frame_range_uses_custom_override_and_rejects_inverted_range():
+    scene = SimpleNamespace(frame_start=1, frame_end=10)
+
+    assert resolve_frame_range(
+        scene,
+        use_custom=True,
+        frame_start=3,
+        frame_end=5,
+    ) == (3, 5)
+    with pytest.raises(ValueError, match="end frame"):
+        resolve_frame_range(
+            scene,
+            use_custom=True,
+            frame_start=6,
+            frame_end=5,
+        )
+
+
+def test_sequence_metadata_round_trips_frame_range(tmp_path):
+    path = write_sequence_metadata(str(tmp_path), 4, 6, source="simulation")
+
+    metadata = read_sequence_metadata(str(tmp_path))
+
+    assert path == str(tmp_path / "fluidsim_sequence.json")
+    assert metadata["format_version"] == 1
+    assert metadata["frame_start"] == 4
+    assert metadata["frame_end"] == 6
+    assert metadata["frame_count"] == 3
+    assert metadata["source"] == "simulation"
+
+
+def test_validate_contiguous_frames_reports_missing_frames(tmp_path):
+    for frame in (1, 3):
+        np.savez_compressed(
+            tmp_path / f"fluidsim_{frame:05d}.npz",
+            format_version=np.array(1, dtype=np.int32),
+        )
+
+    assert available_frames(str(tmp_path)) == [1, 3]
+    assert validate_contiguous_frames(str(tmp_path), 1, 3) == [2]

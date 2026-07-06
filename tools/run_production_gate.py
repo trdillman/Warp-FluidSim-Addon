@@ -16,8 +16,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
-DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
+if os.name == "nt":
+    DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
+    DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe"
+else:
+    DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
+    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
 DEFAULT_PYTEST_PATH = ""
 
 
@@ -65,6 +69,7 @@ def main():
         "tools/check_demo_blends.py",
         "tools/open_maelstrom_basin_playable.py",
         "tools/run_production_gate.py",
+        "tests/blender_cache_export_pipeline.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/test_demo_analysis_maelstrom.py",
     ])
@@ -96,6 +101,7 @@ def main():
         "--no-surface",
     ])
     for script in (
+        "tests/blender_cache_export_pipeline.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_background_acceptance.py",
         "tests/blender_attribute_viz_acceptance.py",

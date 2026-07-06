@@ -264,6 +264,47 @@ def _surface_values(solver, mode, verts):
     return _nearest_values(verts, pos, values, solver.settings.voxel_size * 2.0)
 
 
+def _cached_values(mode, positions, velocities=None):
+    if mode == "NONE":
+        return None
+    if len(positions) == 0:
+        return np.zeros(0, dtype=np.float32)
+    if mode == "HEIGHT":
+        return positions[:, 2]
+    if mode == "SPEED" and velocities is not None and len(velocities) == len(positions):
+        return np.linalg.norm(velocities, axis=1)
+    return None
+
+
+def _cached_named_values(
+        frame_data,
+        prefix,
+        mode,
+        positions,
+        velocities=None,
+        indices=None):
+    values = _cached_values(mode, positions, velocities)
+    if values is not None:
+        return values
+    key = f"{prefix}_{mode.lower()}"
+    cached = frame_data.get(key)
+    if cached is None:
+        return None
+    cached = np.asarray(cached, dtype=np.float32)
+    if indices is not None and len(cached):
+        cached = cached[indices]
+    if len(cached) != len(positions):
+        return None
+    return cached
+
+
+def _cache_array(frame_data, name, shape):
+    value = frame_data.get(name)
+    if value is None:
+        return np.zeros(shape, dtype=np.float32)
+    return np.asarray(value)
+
+
 # ---------------------------------------------------------------------------
 # Main update
 # ---------------------------------------------------------------------------
@@ -333,6 +374,112 @@ def update_outputs(scene, sess):
             obj = _ensure_object(scene, WHITEWATER_NAME,
                                   lambda: bpy.data.meshes.new(WHITEWATER_NAME))
             _swap_vertex_cloud(obj, pos, colors)
+        materials.ensure_whitewater_material(scene, obj)
+    else:
+        _clear_points(WHITEWATER_NAME)
+
+
+def update_outputs_from_cache_frame(scene, frame_data):
+    """Write a cached frame snapshot into the regular Blender output objects."""
+    from . import materials
+
+    fs = scene.fluidsim
+    positions = np.asarray(
+        _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
+    velocities = np.asarray(
+        _cache_array(frame_data, "velocities", (0, 3)), dtype=np.float32)
+    whitewater = np.asarray(
+        _cache_array(frame_data, "whitewater", (0, 3)), dtype=np.float32)
+    verts = np.asarray(
+        _cache_array(frame_data, "surface_verts", (0, 3)), dtype=np.float32)
+    tris = np.asarray(
+        _cache_array(frame_data, "surface_tris", (0, 3)), dtype=np.int32)
+    voxel_size = float(np.asarray(
+        frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
+
+    if fs.show_surface and len(verts):
+        values = _cached_values(fs.surface_attribute_mode, verts)
+        if values is None and fs.surface_attribute_mode == "SPEED":
+            particle_values = _cached_named_values(
+                frame_data, "particle", "SPEED", positions, velocities)
+            if particle_values is not None:
+                values = _nearest_values(
+                    verts, positions, particle_values, voxel_size * 2.0)
+        elif values is None:
+            particle_values = _cached_named_values(
+                frame_data,
+                "particle",
+                fs.surface_attribute_mode,
+                positions,
+                velocities,
+            )
+            if particle_values is not None:
+                values = _nearest_values(
+                    verts, positions, particle_values, voxel_size * 2.0)
+        colors = _values_to_colors(values) if values is not None else None
+        obj = _ensure_object(scene, SURFACE_NAME,
+                             lambda: bpy.data.meshes.new(SURFACE_NAME))
+        _swap_mesh(obj, verts, tris, colors)
+        materials.ensure_surface_material(scene, obj)
+    else:
+        obj = bpy.data.objects.get(SURFACE_NAME)
+        if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
+            _swap_mesh(obj, np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int32))
+
+    if fs.show_particles:
+        pos = positions
+        vel = velocities if len(velocities) == len(positions) else None
+        indices = None
+        frac = fs.particle_display_fraction
+        if frac < 1.0 and len(pos):
+            step = max(1, int(round(1.0 / frac)))
+            indices = np.arange(0, len(pos), step, dtype=np.int64)
+            pos = pos[::step]
+            if vel is not None:
+                vel = vel[indices]
+        values = _cached_named_values(
+            frame_data,
+            "particle",
+            fs.particle_attribute_mode,
+            pos,
+            vel,
+            indices,
+        )
+        colors = _values_to_colors(values) if values is not None else None
+        radius = voxel_size * 0.25
+        if _supports_pointcloud():
+            obj = _ensure_object(scene, PARTICLES_NAME,
+                                  lambda: bpy.data.pointclouds.new(PARTICLES_NAME))
+            _swap_points(obj, pos, radius, colors)
+        else:
+            obj = _ensure_object(scene, PARTICLES_NAME,
+                                  lambda: bpy.data.meshes.new(PARTICLES_NAME))
+            _swap_vertex_cloud(obj, pos, colors)
+        materials.ensure_particle_material(scene, obj)
+    else:
+        _clear_points(PARTICLES_NAME)
+
+    if fs.show_whitewater and len(whitewater):
+        ww_vel = frame_data.get("whitewater_velocities")
+        if ww_vel is not None:
+            ww_vel = np.asarray(ww_vel, dtype=np.float32)
+        values = _cached_named_values(
+            frame_data,
+            "whitewater",
+            fs.whitewater_attribute_mode,
+            whitewater,
+            ww_vel,
+        )
+        colors = _values_to_colors(values) if values is not None else None
+        radius = voxel_size * 0.15
+        if _supports_pointcloud():
+            obj = _ensure_object(scene, WHITEWATER_NAME,
+                                  lambda: bpy.data.pointclouds.new(WHITEWATER_NAME))
+            _swap_points(obj, whitewater, radius, colors)
+        else:
+            obj = _ensure_object(scene, WHITEWATER_NAME,
+                                  lambda: bpy.data.meshes.new(WHITEWATER_NAME))
+            _swap_vertex_cloud(obj, whitewater, colors)
         materials.ensure_whitewater_material(scene, obj)
     else:
         _clear_points(WHITEWATER_NAME)

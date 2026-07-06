@@ -360,11 +360,17 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "show_overlay")
         layout.separator()
         box = layout.box()
-        box.label(text="Optional Cache / Export", icon="DISK_DRIVE")
+        box.label(text="Cache / Export", icon="DISK_DRIVE")
+        box.prop(fs, "cache_path")
         box.prop(fs, "cache_enabled")
+        box.prop(fs, "cache_playback_enabled")
+        box.prop(fs, "cache_use_custom_range")
         sub = box.column(align=True)
-        sub.enabled = fs.cache_enabled
-        sub.prop(fs, "cache_path")
+        sub.enabled = fs.cache_use_custom_range
+        row = sub.row(align=True)
+        row.prop(fs, "cache_frame_start")
+        row.prop(fs, "cache_frame_end")
+        box.operator("fluidsim.export_cache_sequence", icon="RENDER_ANIMATION")
         box.operator("fluidsim.export_frame", icon="EXPORT")
 
 

@@ -910,6 +910,67 @@ class FLUIDSIM_OT_export_frame(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
+    """Bake the selected timeline range to FluidSim cache frames"""
+
+    bl_idname = "fluidsim.export_cache_sequence"
+    bl_label = "Export Cache Sequence"
+
+    def execute(self, context):
+        scene = context.scene
+        fs = scene.fluidsim
+        bridge = _bridge()
+        from .io import cache
+
+        try:
+            start, end = cache.resolve_frame_range(
+                scene,
+                use_custom=fs.cache_use_custom_range,
+                frame_start=fs.cache_frame_start,
+                frame_end=fs.cache_frame_end,
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            fs.status = f"Cache export failed: {exc}"
+            return {"CANCELLED"}
+
+        base = bpy.path.abspath(fs.cache_path)
+        original_frame = scene.frame_current
+        original_live = fs.live
+        frame_set = getattr(scene, "frame_set", None)
+        fs.live = False
+        try:
+            sess = bridge.initialize_session(scene)
+            sess.start_frame = start
+            for timeline_frame in range(start, end + 1):
+                if frame_set is not None:
+                    frame_set(timeline_frame)
+                if sess.active:
+                    sess.solver.frame = timeline_frame - 1
+                bridge.sync_scene_to_solver(scene, sess)
+                bridge.step_frame(scene, sess, write_cache=False)
+                if sess.active:
+                    sess.solver.frame = timeline_frame
+                cache.write_frame(scene, sess)
+            cache.write_sequence_metadata(base, start, end, source="simulation")
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache sequence export failed: {exc}")
+            fs.status = f"Cache export failed: {exc}"
+            return {"CANCELLED"}
+        finally:
+            if frame_set is not None:
+                try:
+                    frame_set(original_frame)
+                except Exception:  # noqa: BLE001
+                    pass
+            fs.live = original_live
+
+        count = end - start + 1
+        fs.status = f"Exported {count} cache frame(s) to {base}"
+        self.report({"INFO"}, fs.status)
+        return {"FINISHED"}
+
+
 CLASSES = (
     FLUIDSIM_OT_initialize,
     FLUIDSIM_OT_release,
@@ -941,6 +1002,7 @@ CLASSES = (
     FLUIDSIM_OT_snippet_line_add,
     FLUIDSIM_OT_snippet_line_delete,
     FLUIDSIM_OT_export_frame,
+    FLUIDSIM_OT_export_cache_sequence,
 )
 
 

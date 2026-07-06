@@ -627,6 +627,24 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Compress Cache", default=False,
         description="zlib-compress cache frames (smaller files, much slower "
                     "writes during playback)")
+    cache_playback_enabled: BoolProperty(
+        name="Cache Playback",
+        default=False,
+        description="Use cached frames as the timeline source during playback")
+    cache_use_custom_range: BoolProperty(
+        name="Custom Cache Range",
+        default=False,
+        description="Override the scene frame range for cache export/playback")
+    cache_frame_start: IntProperty(
+        name="Start",
+        default=1,
+        min=0,
+        description="First frame for custom cache sequence operations")
+    cache_frame_end: IntProperty(
+        name="End",
+        default=250,
+        min=0,
+        description="Last frame for custom cache sequence operations")
 
     # -- Status mirrors (read-only UI feedback) ----------------------------------------
     status: StringProperty(name="Status", default="Solver not initialized")

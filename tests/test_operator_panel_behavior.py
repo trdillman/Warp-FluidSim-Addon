@@ -125,6 +125,7 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
         operators.FLUIDSIM_OT_run_benchmark,
         operators.FLUIDSIM_OT_write_report,
         operators.FLUIDSIM_OT_export_frame,
+        operators.FLUIDSIM_OT_export_cache_sequence,
     }
 
     for cls in undoable:
@@ -137,6 +138,7 @@ class _Layout:
     def __init__(self):
         self.labels = []
         self.operators = []
+        self.props = []
         self.enabled = True
 
     def column(self, align=False):
@@ -151,7 +153,9 @@ class _Layout:
     def separator(self):
         return None
 
-    def prop(self, *_args, **_kwargs):
+    def prop(self, *args, **_kwargs):
+        if len(args) >= 2:
+            self.props.append(args[1])
         return None
 
     def label(self, text="", icon="NONE"):
@@ -212,3 +216,40 @@ def test_clear_error_operator_resets_session_and_scene_error(monkeypatch):
     assert result == {"FINISHED"}
     assert scene_bridge.current_error(scene) == ""
     assert scene.fluidsim.status == "Solver ready"
+
+
+def test_output_panel_exposes_cache_sequence_and_playback_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    fs = SimpleNamespace(
+        liquid_view_mode="SURFACE",
+        show_surface=True,
+        surface_attribute_mode="NONE",
+        show_particles=False,
+        particle_display_fraction=1.0,
+        particle_attribute_mode="NONE",
+        show_whitewater=False,
+        whitewater_attribute_mode="NONE",
+        surface_material=None,
+        whitewater_material=None,
+        output_collection_name="FluidSim Output",
+        show_overlay=True,
+        cache_enabled=False,
+        cache_playback_enabled=True,
+        cache_path="//fluidsim_cache/",
+        cache_use_custom_range=True,
+        cache_frame_start=3,
+        cache_frame_end=5,
+    )
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_output()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert "cache_path" in layout.props
+    assert "cache_playback_enabled" in layout.props
+    assert "cache_use_custom_range" in layout.props
+    assert "cache_frame_start" in layout.props
+    assert "cache_frame_end" in layout.props
+    assert any(op["id"] == "fluidsim.export_cache_sequence" for op in layout.operators)

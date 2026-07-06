@@ -515,7 +515,7 @@ def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
     sess.solver.set_height_source(gather_height_source(scene))
 
 
-def step_frame(scene, sess: Session | None = None):
+def step_frame(scene, sess: Session | None = None, *, write_cache: bool = True):
     """Advance the solver one frame and update output objects."""
     from . import viewport
 
@@ -537,7 +537,7 @@ def step_frame(scene, sess: Session | None = None):
         f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
     )
     viewport.update_outputs(scene, sess)
-    if fs.cache_enabled:
+    if write_cache and fs.cache_enabled:
         from ..io import cache
 
         try:
@@ -545,6 +545,39 @@ def step_frame(scene, sess: Session | None = None):
         except Exception as exc:  # noqa: BLE001 - cache is supplemental
             print(f"fluidSim cache write failed: {exc!r}")
     return stats
+
+
+def play_cache_frame(scene, frame: int | None = None):
+    """Load one cached timeline frame into the regular output objects."""
+    from . import viewport
+    from ..io import cache
+
+    fs = scene.fluidsim
+    frame = int(scene.frame_current if frame is None else frame)
+    if getattr(fs, "cache_use_custom_range", False):
+        start, end = cache.resolve_frame_range(
+            scene,
+            use_custom=True,
+            frame_start=fs.cache_frame_start,
+            frame_end=fs.cache_frame_end,
+        )
+        if frame < start or frame > end:
+            raise FileNotFoundError(
+                f"Cache frame {frame} is outside playback range {start}-{end}"
+            )
+    base = bpy.path.abspath(fs.cache_path)
+    frame_data = cache.read_frame(base, frame)
+    if frame_data is None:
+        raise FileNotFoundError(f"Cache frame {frame} is missing or corrupt in {base}")
+    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    fs.stat_particles = len(frame_data.get("positions", ()))
+    fs.stat_whitewater = len(frame_data.get("whitewater", ()))
+    fs.stat_voxels = 0
+    fs.stat_step_ms = 0.0
+    fs.stat_substeps = 0
+    fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
+    clear_error(scene)
+    return frame_data
 
 
 def reset_simulation(scene):
@@ -574,10 +607,21 @@ def reset_simulation(scene):
 def _on_frame_change(scene, depsgraph):
     sess = session()
     fs = getattr(scene, "fluidsim", None)
-    if fs is None or not fs.live or not sess.active:
+    if fs is None or not fs.live:
         return
     frame = scene.frame_current
     if frame == sess.last_frame:
+        return
+    if getattr(fs, "cache_playback_enabled", False):
+        sess.last_frame = frame
+        try:
+            play_cache_frame(scene, frame)
+        except Exception as exc:  # noqa: BLE001 - never break playback
+            set_error(scene, repr(exc))
+            fs.status = f"Cache playback error: {exc}"
+            print(f"fluidSim cache playback failed: {exc!r}")
+        return
+    if not sess.active:
         return
     if frame <= sess.start_frame or frame < sess.last_frame:
         # Rewind / loop restart -> reset the simulation.
