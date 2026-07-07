@@ -2,7 +2,7 @@
 
 Use the synthesized modules as a compact clean-room map for the Blender 5.1 Warp implementation. The central requirements are:
 
-1. Implement the sparse-octree field and particle storage model on the GPU.
+1. Implement the sparse tiled leaf-grid field and particle storage model on the GPU.
 2. Preserve PIC/FLIP sampling, pressure projection, viscosity, surface SDF, collision, source, and whitewater behavior by feature group.
 3. Use Warp flat kernels for simple per-element work and Warp tiled/cooperative strategies for OpenCL kernels that originally used local memory, barriers, reductions, and workgroup assumptions.
 4. Keep simulation buffers GPU-resident during viewport playback.

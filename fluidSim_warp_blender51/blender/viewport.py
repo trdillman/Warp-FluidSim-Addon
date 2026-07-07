@@ -461,7 +461,7 @@ def update_outputs_from_cache_frame(scene, frame_data):
     voxel_size = float(np.asarray(
         frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
 
-    if fs.show_surface and len(verts):
+    if fs.show_surface and fs.surface_enabled and len(verts):
         values = _cached_values(fs.surface_attribute_mode, verts)
         if values is None and fs.surface_attribute_mode == "SPEED":
             particle_values = _cached_named_values(
@@ -510,7 +510,7 @@ def update_outputs_from_cache_frame(scene, frame_data):
             indices,
         )
         colors = _values_to_colors(values) if values is not None else None
-        radius = voxel_size * 0.25
+        radius = voxel_size * 0.25 * getattr(fs, "particle_display_scale", 1.0)
         if _supports_pointcloud():
             obj = _ensure_object(scene, PARTICLES_NAME,
                                   lambda: bpy.data.pointclouds.new(PARTICLES_NAME))
@@ -523,7 +523,7 @@ def update_outputs_from_cache_frame(scene, frame_data):
     else:
         _clear_points(PARTICLES_NAME)
 
-    if fs.show_whitewater and len(whitewater):
+    if fs.show_whitewater and fs.whitewater_enabled and len(whitewater):
         ww_vel = frame_data.get("whitewater_velocities")
         if ww_vel is not None:
             ww_vel = np.asarray(ww_vel, dtype=np.float32)
@@ -535,7 +535,8 @@ def update_outputs_from_cache_frame(scene, frame_data):
             ww_vel,
         )
         colors = _values_to_colors(values) if values is not None else None
-        radius = voxel_size * 0.15
+        radius = voxel_size * 0.15 * getattr(
+            fs, "whitewater_display_scale", 1.0)
         if _supports_pointcloud():
             obj = _ensure_object(scene, WHITEWATER_NAME,
                                   lambda: bpy.data.pointclouds.new(WHITEWATER_NAME))

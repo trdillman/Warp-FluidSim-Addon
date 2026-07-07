@@ -8,7 +8,7 @@ datablocks every frame for live viewport playback and rendering. There is no
 required cache-bake step; optional npz caching and OBJ/PLY export are
 supplemental tooling.
 
-- Package: `fluidSim_warp_blender51` · `bl_info` version `(1, 0, 226)`
+- Package: `fluidSim_warp_blender51` · `bl_info` version `(1, 0, 227)`
 - Blender target: `5.1` · Category: `Physics`
 - Backend: NVIDIA Warp / CUDA · `enable_backward=False` everywhere
 
@@ -20,8 +20,8 @@ supplemental tooling.
 fluidSim_warp_blender51/
 ├── __init__.py              bl_info + register()/unregister()
 ├── properties.py            PropertyGroups + attribute-viz item tuples
-├── operators.py             17 fluidsim.* operators
-├── panels.py                13 sidebar panels
+├── operators.py             31 fluidsim.* operators
+├── panels.py                16 sidebar panels
 ├── preferences.py           add-on preferences
 ├── blender/                 bpy integration layer
 │   ├── scene_bridge.py      Session, gather sources/colliders, frame handler
@@ -43,7 +43,7 @@ fluidSim_warp_blender51/
 │   ├── kernels_core.py      core kernels (registered)
 │   ├── kernels_fluid.py     fluid kernels (registered)
 │   ├── solver.py            FluidSolver + SolverSettings orchestration
-│   ├── validation.py        13-test GPU validation suite
+│   ├── validation.py        15-test GPU validation suite
 │   ├── registry.py          KERNEL_REGISTRY dispatch contract
 │   └── custom.py            custom Warp snippet manager
 ├── diagnostics/             bpy-free
@@ -195,7 +195,7 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 - **Size-suffixed variants** (OpenCL workgroup knobs like `Jacobi8/16/32`,
   `ReduceSum128..1024`) collapse to one parameterized Warp kernel registered
   under all aliases.
-- Coverage is asserted at **188/188** canonical names by
+- Kernel identity registration coverage is asserted at **188/188** canonical names by
   `tests/test_kernel_coverage.py` against `fluidSim_synth.kernel_manifest`.
 
 ---
@@ -302,7 +302,7 @@ disabling it shrinks codegen.
 
 ## 11. Validation Methodology
 
-`sim/validation.py` defines **13 tests**, each decorated with
+`sim/validation.py` defines **15 tests**, each decorated with
 `@_test(name)` and registered in `_TESTS`. `run_all(device, progress)`
 executes them on the real CUDA device; each returns
 `(passed, detail)` wrapped in a `ValidationResult`. Tests cover: sparse tiled
@@ -320,8 +320,8 @@ never crash the suite.
 
 | Check | Result |
 |---|---|
-| Kernel coverage | **188 / 188** canonical names registered (`KERNEL-COVERAGE-PASS`) |
-| GPU validation | **13 / 13** passing (`VALIDATION-PASS`) |
+| Kernel identity registration coverage | **188 / 188** canonical names registered (`KERNEL-COVERAGE-PASS`) |
+| GPU validation | **15 / 15** passing (`VALIDATION-PASS`) |
 | Pressure projection regressions | **5 / 5** passing (`pytest tests/test_pressure_projection_regressions.py`) |
 | Blender background acceptance | **34 / 34** checks (`BACKGROUND-ACCEPTANCE-PASS`) |
 | Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |

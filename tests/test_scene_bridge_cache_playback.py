@@ -144,3 +144,83 @@ def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monk
 
     assert scene.fluidsim.status.startswith("Cache playback error:")
     assert "missing or corrupt" in scene_bridge.current_error(scene)
+
+
+def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch):
+    _install_scene_bridge_stubs(monkeypatch)
+    import bpy
+
+    bpy.data = SimpleNamespace(
+        objects=SimpleNamespace(get=lambda _name: None),
+        meshes=SimpleNamespace(new=lambda name: SimpleNamespace(name=name)),
+        pointclouds=SimpleNamespace(new=lambda name: SimpleNamespace(name=name)),
+    )
+    fake_materials = types.ModuleType("fluidSim_warp_blender51.blender.materials")
+    fake_materials.ensure_surface_material = lambda *_args: None
+    fake_materials.ensure_particle_material = lambda *_args: None
+    fake_materials.ensure_whitewater_material = lambda *_args: None
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials)
+    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
+    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+
+    calls = []
+    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(
+        viewport,
+        "_ensure_object",
+        lambda _scene, name, _factory: SimpleNamespace(name=name, data=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        viewport,
+        "_swap_mesh",
+        lambda obj, *_args, **_kwargs: calls.append(("mesh", obj.name)),
+    )
+    monkeypatch.setattr(
+        viewport,
+        "_swap_points",
+        lambda obj, _pos, radius, _colors=None: calls.append(
+            ("points", obj.name, radius)
+        ),
+    )
+    monkeypatch.setattr(
+        viewport,
+        "_clear_points",
+        lambda name: calls.append(("clear_points", name)),
+    )
+
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            show_surface=True,
+            surface_enabled=False,
+            show_particles=True,
+            particle_display_fraction=1.0,
+            particle_display_scale=2.0,
+            particle_attribute_mode="NONE",
+            surface_attribute_mode="NONE",
+            show_whitewater=True,
+            whitewater_enabled=False,
+            whitewater_display_scale=3.0,
+            whitewater_attribute_mode="NONE",
+            voxel_size=0.2,
+        )
+    )
+    frame_data = {
+        "voxel_size": np.array(0.2, dtype=np.float32),
+        "positions": np.ones((2, 3), dtype=np.float32),
+        "velocities": np.zeros((2, 3), dtype=np.float32),
+        "whitewater": np.ones((1, 3), dtype=np.float32),
+        "surface_verts": np.ones((3, 3), dtype=np.float32),
+        "surface_tris": np.array([[0, 1, 2]], dtype=np.int32),
+    }
+
+    viewport.update_outputs_from_cache_frame(scene, frame_data)
+
+    assert ("mesh", viewport.SURFACE_NAME) not in calls
+    assert ("clear_points", viewport.WHITEWATER_NAME) in calls
+    assert any(
+        call[0] == "points"
+        and call[1] == viewport.PARTICLES_NAME
+        and abs(call[2] - 0.1) < 1e-6
+        for call in calls
+    )
+    assert all(call[:2] != ("points", viewport.WHITEWATER_NAME) for call in calls)

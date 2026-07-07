@@ -25,6 +25,14 @@ def k_clamp_count(
 
 
 @wp.kernel
+def k_set_count(
+    count: wp.array(dtype=wp.int32),
+    value: int,
+):
+    count[0] = value
+
+
+@wp.kernel
 def k_reset_alive(
     count: wp.array(dtype=wp.int32),
     alive: wp.array(dtype=wp.int32),
@@ -155,25 +163,32 @@ class ParticleSystem:
         # scans after active-work launch bounds have trimmed the hot path.
         alive = self.alive if count_hint is None else self.alive[:n]
         scan_tmp = self.scan_tmp if count_hint is None else self.scan_tmp[:n]
+        count_in = self.count
+        count_out = self._count2
+        if count_hint is not None:
+            wp.launch(k_set_count, dim=1, inputs=[self._count2, n],
+                      device=self.device)
+            count_in = self._count2
+            count_out = self.count
         wp.utils.array_scan(alive, scan_tmp, inclusive=False)
         wp.launch(
             k_last_offset_count,
             dim=1,
-            inputs=[self.alive, self.scan_tmp, self.count, self._count2],
+            inputs=[self.alive, self.scan_tmp, count_in, count_out],
             device=self.device,
         )
         wp.launch(
             k_compact_alive_scatter,
             dim=n,
             inputs=[
-                self.alive, self.scan_tmp, self.count,
+                self.alive, self.scan_tmp, count_in,
                 self.position, self.velocity,
                 self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
                 self.attrs["viscosity"], self.attrs["density"],
                 self._position2, self._velocity2,
                 self._attrs2["age"], self._attrs2["life"], self._attrs2["temperature"],
                 self._attrs2["viscosity"], self._attrs2["density"],
-                self._count2,
+                count_out,
             ],
             device=self.device,
         )
@@ -182,7 +197,8 @@ class ParticleSystem:
         self.velocity, self._velocity2 = self._velocity2, self.velocity
         for k in self.ATTR_NAMES:
             self.attrs[k], self._attrs2[k] = self._attrs2[k], self.attrs[k]
-        wp.copy(self.count, self._count2)
+        if count_out is self._count2:
+            wp.copy(self.count, self._count2)
         # Re-mark the surviving prefix as alive so the next scan is valid.
         wp.launch(k_reset_alive, dim=n,
                   inputs=[self.count, self.alive], device=self.device)

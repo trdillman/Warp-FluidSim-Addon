@@ -1,6 +1,10 @@
 """Build the canonical FluidSim Warp demo scenes and export particle data.
 
-Run:  blender --background --python tools/build_demo_scenes.py
+Run:
+  blender --background --python tools/build_demo_scenes.py
+  blender --background --python tools/build_demo_scenes.py -- --list-scenes
+  blender --background --python tools/build_demo_scenes.py -- --standard-cache-scenes
+  blender --background --python tools/build_demo_scenes.py -- dam_break slosh_tank
 
 Scenes are saved as demos/<name>.blend. Large per-frame particle exports and
 aggregate metrics are generated under artifacts/demo_cache/<name>/ so they do
@@ -26,9 +30,15 @@ import bpy
 import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from tools.repo_addon_loader import enable_repo_addon
+
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 FPS = 24
+STANDARD_CACHE_SCENES = ("dam_break", "crown_splash", "slosh_tank")
 
 
 def log(msg):
@@ -54,10 +64,7 @@ def sphere_lattice(center, radius, spacing):
 def fresh_scene():
     # Clear the default scene in place; read_homefile() crashes in
     # background mode with heavy third-party startup add-ons installed.
-    import addon_utils
-
-    addon_utils.enable("fluidSim_warp_blender51", default_set=True,
-                       persistent=True)
+    enable_repo_addon(REPO, default_set=True, persistent=True)
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=True)
     for block in (bpy.data.meshes, bpy.data.cameras, bpy.data.lights,
@@ -207,9 +214,9 @@ def save_scene(name, preview=True):
 # ---------------------------------------------------------------------------
 
 def build_dam_break():
+    scene = fresh_scene()
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
-    scene = fresh_scene()
     fs = scene.fluidsim
     lo, hi = (0.0, 0.0, 0.0), (5.6, 0.6, 1.6)
     make_domain(scene, lo, hi, "DamBreak Domain")
@@ -290,9 +297,9 @@ def build_dam_break():
 # ---------------------------------------------------------------------------
 
 def build_crown_splash():
+    scene = fresh_scene()
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
-    scene = fresh_scene()
     fs = scene.fluidsim
     lo, hi = (0.0, 0.0, 0.0), (0.8, 0.8, 0.5)
     make_domain(scene, lo, hi, "CrownSplash Domain")
@@ -344,9 +351,9 @@ def build_crown_splash():
 # ---------------------------------------------------------------------------
 
 def build_slosh_tank():
+    scene = fresh_scene()
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
-    scene = fresh_scene()
     fs = scene.fluidsim
     lo, hi = (0.0, 0.0, 0.0), (1.0, 0.3, 0.6)
     make_domain(scene, lo, hi, "Slosh Domain")
@@ -394,7 +401,7 @@ def build_slosh_tank():
 
 def build_maelstrom_basin():
     """Build the maelstrom basin through its dedicated playable-demo builder."""
-    import build_maelstrom_demo as maelstrom
+    from tools import build_maelstrom_demo as maelstrom
 
     args = SimpleNamespace(
         output=os.path.join(DEMOS, "maelstrom_basin.blend"),
@@ -422,13 +429,23 @@ def main():
         "slosh_tank": build_slosh_tank,
         "maelstrom_basin": build_maelstrom_basin,
     }
-    # One scene per Blender process:  ... --python this.py -- <scene>
-    which = None
+    targets = list(builders)
     if "--" in sys.argv:
         rest = sys.argv[sys.argv.index("--") + 1:]
-        if rest:
-            which = rest[0]
-    targets = [which] if which in builders else list(builders)
+        if "--list-scenes" in rest:
+            print("available scenes:", " ".join(builders), flush=True)
+            print("standard cache scenes:", " ".join(STANDARD_CACHE_SCENES), flush=True)
+            return
+        if "--standard-cache-scenes" in rest:
+            targets = list(STANDARD_CACHE_SCENES)
+        elif rest:
+            targets = []
+            for name in rest:
+                if name not in builders:
+                    raise SystemExit(
+                        f"unknown demo scene '{name}'. Use -- --list-scenes."
+                    )
+                targets.append(name)
     t0 = time.perf_counter()
     try:
         for key in targets:

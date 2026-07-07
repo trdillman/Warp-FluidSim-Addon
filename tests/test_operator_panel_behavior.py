@@ -22,10 +22,17 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     class _Panel:
         pass
 
+    class _AddonPreferences:
+        pass
+
     def _prop(**kwargs):
         return kwargs.get("default")
 
-    fake_bpy.types = SimpleNamespace(Operator=_Operator, Panel=_Panel)
+    fake_bpy.types = SimpleNamespace(
+        Operator=_Operator,
+        Panel=_Panel,
+        AddonPreferences=_AddonPreferences,
+    )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **kwargs: _prop(**kwargs),
         CollectionProperty=lambda **kwargs: _prop(**kwargs),
@@ -380,6 +387,85 @@ def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch
     assert init_calls == [scene]
     assert sess.active
     assert scene.fluidsim.status == "Live simulation disabled"
+
+
+def test_live_property_callback_toggles_scene_bridge_directly(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    calls = []
+    scene = SimpleNamespace()
+    fake_bridge = SimpleNamespace(
+        set_live_enabled=lambda scene, enabled: calls.append((scene, enabled))
+    )
+    import fluidSim_warp_blender51.blender as blender_pkg
+
+    monkeypatch.setattr(blender_pkg, "scene_bridge", fake_bridge, raising=False)
+
+    properties._on_live_changed(SimpleNamespace(live=True, status=""), SimpleNamespace(scene=scene))
+
+    assert calls == [(scene, True)]
+
+
+def test_scene_bridge_set_live_enabled_updates_status(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    sess = scene_bridge.session()
+
+    def fake_initialize(_scene):
+        sess.solver = object()
+        return sess
+
+    monkeypatch.setattr(scene_bridge, "initialize_session", fake_initialize)
+
+    scene_bridge.set_live_enabled(scene, True)
+    assert scene.fluidsim.status == "Live simulation enabled - press play"
+
+    scene_bridge.set_live_enabled(scene, False)
+    assert scene.fluidsim.status == "Live simulation disabled"
+
+
+def test_addon_unregister_releases_runtime_handlers(monkeypatch):
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    fake_bpy.app = SimpleNamespace(
+        handlers=SimpleNamespace(
+            frame_change_post=[],
+            render_pre=[],
+            render_post=[],
+        )
+    )
+    addon = _reload_module("fluidSim_warp_blender51")
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    render = _reload_module("fluidSim_warp_blender51.blender.render")
+    viewport = _reload_module("fluidSim_warp_blender51.blender.viewport")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    preferences = _reload_module("fluidSim_warp_blender51.preferences")
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    calls = []
+    monkeypatch.setattr(viewport, "unregister_overlay", lambda: calls.append("viewport"))
+    monkeypatch.setattr(render, "unregister_handlers", lambda: calls.append("render"))
+    monkeypatch.setattr(scene_bridge, "unregister_handlers", lambda: calls.append("scene_handlers"))
+    monkeypatch.setattr(scene_bridge, "release_session", lambda: calls.append("release"))
+    monkeypatch.setattr(panels, "unregister", lambda: calls.append("panels"))
+    monkeypatch.setattr(operators, "unregister", lambda: calls.append("operators"))
+    monkeypatch.setattr(preferences, "unregister", lambda: calls.append("preferences"))
+    monkeypatch.setattr(properties, "unregister", lambda: calls.append("properties"))
+
+    addon.unregister()
+
+    assert calls == [
+        "viewport",
+        "render",
+        "scene_handlers",
+        "release",
+        "panels",
+        "operators",
+        "preferences",
+        "properties",
+    ]
 
 
 def test_surface_refresh_updates_active_solver_and_output(monkeypatch):

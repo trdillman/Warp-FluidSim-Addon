@@ -19,9 +19,9 @@ crown_splash  - mass conservation, containment, impact detection, crown rise
 slosh_tank    - mass conservation, containment, first-mode slosh period vs
                 analytic dispersion w^2 = g*k*tanh(k*h) (k = pi/L),
                 oscillation amplitude decay, velocity boundedness.
-maelstrom_basin - playable live setup metadata, spin-force contract,
-                  million-particle measurement, live FPS target, whitewater
-                  churn.
+maelstrom_basin - playable live setup sidecar metadata, spin-force contract,
+                  high-particle capacity metadata, FPS metadata, and
+                  whitewater-count metadata.
 
 Writes artifacts/demo_analysis/analysis_report.json and
 artifacts/demo_analysis/ANALYSIS.md; exits nonzero on any failed check.
@@ -322,7 +322,7 @@ def analyze_slosh_tank():
 # ---------------------------------------------------------------------------
 
 def validate_maelstrom_basin(meta):
-    """Validate maelstrom-specific metadata without duplicating cache checks."""
+    """Validate maelstrom sidecar metadata, not fresh runtime/cache output."""
     name = "maelstrom_basin"
     seed = meta.get("seed_object", "")
     force = meta.get("spin_force_object", "")
@@ -340,14 +340,14 @@ def validate_maelstrom_basin(meta):
     check(name, "spin force configured",
           spin >= 5.0 and bool(force),
           f"strength {spin:.1f} on '{force}'")
-    check(name, "high-particle basin measured",
+    check(name, "high-particle basin metadata",
           max_particles >= 1_000_000 and injected >= 1_000_000,
           f"particles {max_particles:,}, injected {injected:,}")
-    check(name, "live playback meets FPS target",
+    check(name, "live playback metadata meets FPS target",
           fps >= fps_target and p95_ms <= 1000.0 / fps_target,
           f"fps {fps:.2f} >= {fps_target:.1f}, "
           f"p95 {p95_ms:.1f} ms <= {1000.0 / fps_target:.1f} ms")
-    check(name, "whitewater churn generated",
+    check(name, "whitewater churn metadata present",
           max_whitewater >= 10_000,
           f"peak whitewater {max_whitewater:,}")
 
@@ -361,6 +361,7 @@ def analyze_maelstrom_basin():
         "p95_ms": meta.get("p95_ms"),
         "max_whitewater": meta.get("max_whitewater"),
         "injected": meta.get("injected"),
+        "provenance": "demos/maelstrom_basin/meta.json sidecar metadata",
     }
 
 

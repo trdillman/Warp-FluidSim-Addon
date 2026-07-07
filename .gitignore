@@ -6,7 +6,10 @@ __pycache__/
 *.log
 
 # Local tool/runtime state
-/.codex/
+/.codex/*
+!/.codex/context/
+/.codex/context/*
+!/.codex/context/liquid-review-fixes-loop.md
 /blender/
 
 # Generated simulation/demo outputs

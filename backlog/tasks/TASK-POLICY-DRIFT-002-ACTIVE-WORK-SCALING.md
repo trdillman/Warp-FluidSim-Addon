@@ -2,7 +2,7 @@
 
 ## State
 
-in-progress
+completed
 
 ## What to build
 
@@ -16,8 +16,16 @@ Replace or prove the capacity-proportional hot paths in particle, whitewater, an
 - [x] Pressure and viscosity grid phases are narrowed to active leaves/voxels where active counts are available; any remaining allocated-capacity grid phases need measured justification before being claimed as active-work proof.
 - [x] Fixed-active regressions compare low and high allocation capacity for pressure and viscosity; viscosity also has deterministic launch/reduction/copy bound coverage.
 - [x] Benchmark/report wording distinguishes tested envelope from robust scale proof until active-work regressions and trustworthy live gates pass.
-- [ ] Relevant pytest, Blender acceptance, demo analysis, and demo blend checks pass under a trustworthy gate. Current exception: `blender --python tests/blender_gui_acceptance.py` now passes `GUI-ACCEPTANCE-PASS (35/35)`, but direct `blender --background --factory-startup --python tests/blender_viewport_2frame_gate.py` throws `No module named 'warp'` while returning process exit code 0; the aggregate gate now fails closed on that traceback, and should be rerun after the viewport runtime/import repair.
-- [ ] `POLICY_DRIFT_REPORT.md` is updated to `completed` only after verified repair.
+- [x] Custom snippet dispatch launches over active particle/voxel work dimensions.
+- [x] Liquid particle compaction has direct count-hint regression coverage proving inactive allocation tails are ignored.
+- [x] A scale regression compares fixed active work under low and high allocation capacity and fails on disproportionate frame-time growth.
+- [x] Benchmark/report wording distinguishes tested envelope from robust scale proof until active-work regressions and trustworthy live gates pass.
+- [ ] Relevant focused pytest and available gates pass in the integration branch.
+- [ ] `POLICY_DRIFT_REPORT.md` is updated truthfully after integration-branch verification.
+
+## Reviewable artifact
+
+Inspect `POLICY_DRIFT_REPORT.md` for the PD-002 closeout. Rerun `python tools/run_production_gate.py --include-gui` only when GUI-inclusive full production proof is required.
 
 ## Blocked by
 

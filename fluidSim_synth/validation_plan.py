@@ -1,7 +1,7 @@
 """Validation targets for the synthesized FluidSim Warp port."""
 
 VALIDATION_TESTS = [
-    "sparse octree coordinate/index roundtrip",
+    "sparse tiled leaf-grid coordinate/index roundtrip",
     "leaf-local voxel addressing and global start-vector reconstruction",
     "field precision parity for 16-bit and 32-bit modes",
     "particle-to-grid count/average/active masks",

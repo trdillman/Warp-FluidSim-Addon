@@ -318,63 +318,86 @@ def test_snippet_manager_rejects_invalid_before_compile():
     assert manager.has_any()
 
 
-def test_compiled_snippet_launch_uses_active_work_bounds(monkeypatch):
+def _fake_solver_for_snippet_launch():
+    particles = SimpleNamespace(
+        capacity=1000,
+        position=object(),
+        velocity=object(),
+        alive=object(),
+        count=object(),
+    )
+    grid = SimpleNamespace(
+        voxel_capacity=2000,
+        voxel_size=0.1,
+        leaf_coords=object(),
+        num_leaves=object(),
+        origin=(0.0, 0.0, 0.0),
+    )
+    return SimpleNamespace(
+        particles=particles,
+        grid=grid,
+        voxel_type=SimpleNamespace(data=object()),
+        device="cuda:0",
+        _nvox=23,
+        _np_dim=lambda: 17,
+    )
+
+
+def _compiled_launch_probe(run_over):
     pytest.importorskip("warp")
-    from fluidSim_warp_blender51.sim import custom as custom_mod
     from fluidSim_warp_blender51.sim.custom import (
         CompiledSnippet, CustomSnippet,
     )
     from fluidSim_warp_blender51.sim.enums import CustomKernelRunOver
 
-    launch_dims = []
+    compiled = object.__new__(CompiledSnippet)
+    compiled.kernel = object()
+    compiled.error = None
+    compiled._binders = []
+    compiled.snippet = CustomSnippet(run_over=CustomKernelRunOver[run_over])
+    return compiled
 
-    def fake_launch(kernel, *, dim, inputs, device):
-        launch_dims.append(dim)
 
-    monkeypatch.setattr(custom_mod.wp, "launch", fake_launch)
+def test_particle_snippet_launch_uses_active_particle_dimension(monkeypatch):
+    pytest.importorskip("warp")
+    from fluidSim_warp_blender51.sim import custom
 
-    solver = SimpleNamespace(
-        device="cuda:test",
-        _nvox=1024,
-        _np_dim=lambda: 2048,
-        grid=SimpleNamespace(
-            voxel_size=0.1,
-            voxel_capacity=512000,
-            leaf_coords=object(),
-            num_leaves=object(),
-            origin=(0.0, 0.0, 0.0),
-        ),
-        voxel_type=SimpleNamespace(data=object()),
-        particles=SimpleNamespace(
-            capacity=2000000,
-            position=object(),
-            velocity=object(),
-            alive=object(),
-            count=object(),
-        ),
+    seen = {}
+
+    def fake_launch(_kernel, *, dim, inputs, device):
+        seen["dim"] = dim
+        seen["device"] = device
+
+    monkeypatch.setattr(custom.wp, "launch", fake_launch)
+    compiled = _compiled_launch_probe("PARTICLES")
+    compiled.launch(
+        _fake_solver_for_snippet_launch(),
+        {"frame": 1, "time": 0.0, "real_time_step": 1 / 24,
+         "solver_time_step": 1 / 24, "time_scale": 1.0, "substeps": 1},
     )
-    time_ctx = {
-        "frame": 1,
-        "time": 0.0,
-        "real_time_step": 1.0 / 24.0,
-        "solver_time_step": 1.0 / 24.0,
-        "time_scale": 1.0,
-        "substeps": 1,
-    }
 
-    voxel = CompiledSnippet.__new__(CompiledSnippet)
-    voxel.kernel = object()
-    voxel.snippet = CustomSnippet(run_over=CustomKernelRunOver.VOXEL_LINEAR)
-    voxel._binders = []
-    voxel.launch(solver, time_ctx)
+    assert seen == {"dim": 17, "device": "cuda:0"}
 
-    particle = CompiledSnippet.__new__(CompiledSnippet)
-    particle.kernel = object()
-    particle.snippet = CustomSnippet(run_over=CustomKernelRunOver.PARTICLES)
-    particle._binders = []
-    particle.launch(solver, time_ctx)
 
-    assert launch_dims == [1024, 2048]
+def test_voxel_snippet_launch_uses_active_voxel_dimension(monkeypatch):
+    pytest.importorskip("warp")
+    from fluidSim_warp_blender51.sim import custom
+
+    seen = {}
+
+    def fake_launch(_kernel, *, dim, inputs, device):
+        seen["dim"] = dim
+        seen["device"] = device
+
+    monkeypatch.setattr(custom.wp, "launch", fake_launch)
+    compiled = _compiled_launch_probe("VOXEL_LINEAR")
+    compiled.launch(
+        _fake_solver_for_snippet_launch(),
+        {"frame": 1, "time": 0.0, "real_time_step": 1 / 24,
+         "solver_time_step": 1 / 24, "time_scale": 1.0, "substeps": 1},
+    )
+
+    assert seen == {"dim": 23, "device": "cuda:0"}
 
 
 def test_all_presets_compile_with_warp():

@@ -1,7 +1,7 @@
 from tools import run_production_gate
 
 
-def test_production_gate_pass_requires_foreground_gui_acceptance(monkeypatch, capsys):
+def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, capsys):
     calls = []
 
     def fake_run(label, command, env=None, reject_output=False):
@@ -13,19 +13,45 @@ def test_production_gate_pass_requires_foreground_gui_acceptance(monkeypatch, ca
     monkeypatch.setenv("BLENDER_PY", "python")
     monkeypatch.delenv("FLUIDSIM_USER_PATH_PROFILE", raising=False)
 
-    run_production_gate.main()
+    run_production_gate.main([])
 
     out = capsys.readouterr().out
     gui_calls = [
         (label, command, reject_output)
         for label, command, _env, reject_output in calls
-        if label == "Blender GUI acceptance"
+        if label == "interactive GUI acceptance"
     ]
 
-    assert "\nPRODUCTION-GATE-PASS" in out
+    assert "\nHEADLESS-GATE-PASS" in out
+    assert "FULL-PRODUCTION-GATE-PASS" not in out
+    assert gui_calls == []
+
+
+def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(label, command, env=None, reject_output=False):
+        calls.append((label, command, env, reject_output))
+
+    monkeypatch.setattr(run_production_gate, "_run", fake_run)
+    monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
+    monkeypatch.setenv("BLENDER_EXE", "blender")
+    monkeypatch.setenv("BLENDER_PY", "python")
+
+    run_production_gate.main(["--include-gui"])
+
+    out = capsys.readouterr().out
+    gui_calls = [
+        (label, command, reject_output)
+        for label, command, _env, reject_output in calls
+        if label == "interactive GUI acceptance"
+    ]
+
+    assert "\nFULL-PRODUCTION-GATE-PASS" in out
     assert gui_calls == [
         (
-            "Blender GUI acceptance",
+            "interactive GUI acceptance",
             ["blender", "--python", "tests/blender_gui_acceptance.py"],
             True,
         )

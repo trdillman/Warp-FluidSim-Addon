@@ -318,6 +318,38 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     assert np.all(np.isfinite(solver.pressure.numpy()))
 
 
+def test_pressure_pcg_reductions_ignore_inactive_allocation_tail(cuda_device):
+    """Inactive allocation slots must not affect active pressure PCG phases."""
+    grid = _one_active_leaf_grid(cuda_device, leaf_capacity=512)
+    solver = PressureSolver(grid, cuda_device)
+
+    voxel_type = np.zeros(grid.voxel_capacity, dtype=np.int32)
+    voxel_type[:grid.active_voxel_count] = VOXEL_FLUID
+    voxel_type_wp = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+
+    inactive_tail = np.full(grid.voxel_capacity, 1.0e12, dtype=np.float32)
+    inactive_tail[:grid.active_voxel_count] = 0.0
+    for arr in (solver.r, solver.z, solver.p_dir, solver.ap, solver.x0):
+        _copy_float(arr, inactive_tail, cuda_device)
+
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0] = 1.0
+    rhs[1] = -1.0
+    _copy_float(solver.rhs, rhs, cuda_device)
+
+    solver.build_preconditioner(voxel_type_wp)
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+
+    assert status["converged"] is True
+    assert solver.last_residual_squared < 1.0e-6 * 1.0e-6 * grid.active_voxel_count
+
+
 def test_pressure_grid_phases_scale_with_active_leaves_not_allocation(cuda_device):
     """Fixed active pressure work must not grow with unused leaf allocation."""
     low = _pressure_phase_elapsed(cuda_device, leaf_capacity=1)
@@ -387,6 +419,27 @@ def test_compaction_clamps_overflowed_counts_before_indexing(cuda_device):
     _copy_int(ww.count, np.array([37], dtype=np.int32), cuda_device)
     ww.compact()
     assert ww.refresh_host_count() == 8
+
+
+def test_liquid_particle_compact_count_hint_ignores_inactive_tail(cuda_device):
+    """Liquid compaction must scan/scatter only the solver-provided live prefix."""
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+
+    psys = ParticleSystem(capacity=16, device=cuda_device)
+    pos = np.zeros((16, 3), dtype=np.float32)
+    pos[:, 0] = np.arange(16, dtype=np.float32)
+    alive = np.ones(16, dtype=np.int32)
+    alive[:8] = [1, 0, 1, 0, 1, 1, 0, 0]
+
+    wp.copy(psys.position, wp.array(pos, dtype=wp.vec3, device=cuda_device))
+    _copy_int(psys.alive, alive, cuda_device)
+    _copy_int(psys.count, np.array([16], dtype=np.int32), cuda_device)
+
+    psys.compact(count_hint=8)
+
+    live = psys.refresh_host_count()
+    assert live == 4
+    assert np.allclose(psys.position.numpy()[:live, 0], [0.0, 2.0, 4.0, 5.0])
 
 
 def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device):

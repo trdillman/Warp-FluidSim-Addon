@@ -2,13 +2,27 @@
 """Run the production verification gate for master-touching changes.
 
 This script is intentionally strict: it checks repo hygiene, runs the CUDA/Warp
-solver tests through Blender's bundled Python, proves live viewport playback in
-Blender background mode, and runs the foreground GUI acceptance lane. It also
-checks the canonical demo analysis and saved-demo blend surfaces.
+solver tests through Blender's bundled Python, and proves live viewport playback
+advances at least two frames in Blender background mode. It also checks the
+canonical demo analysis and saved-demo blend surfaces.
+
+Control surface
+---------------
+- Default: headless/background validation only, ending in HEADLESS-GATE-PASS.
+- --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
+  GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
+- BLENDER_EXE, BLENDER_PY, and PYTEST_PATH override runtime resolution.
+
+Debug surface
+-------------
+The gate always prints timestamp, git head, dirty state, tracked ignored-file
+state, resolved Blender paths, and whether GUI acceptance is included.
 """
 
 from __future__ import annotations
 
+import argparse
+import datetime as _dt
 import os
 import subprocess
 import sys
@@ -78,13 +92,67 @@ def _check_no_tracked_npz():
         raise SystemExit(1)
 
 
-def main():
+def _check_no_tracked_ignored_files():
+    out = subprocess.check_output(
+        ["git", "ls-files", "-ci", "--exclude-standard"],
+        cwd=ROOT,
+        text=True,
+    )
+    files = [line for line in out.splitlines() if line.strip()]
+    if files:
+        print("Tracked files matching ignore rules are not allowed:")
+        for path in files[:50]:
+            print(f"  {path}")
+        if len(files) > 50:
+            print(f"  ... {len(files) - 50} more")
+        raise SystemExit(1)
+
+
+def _git_text(*args):
+    try:
+        return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
+    except Exception as exc:  # noqa: BLE001 - metadata should not hide gate checks
+        return f"unavailable: {exc}"
+
+
+def _print_gate_metadata(blender_exe, blender_py, include_gui):
+    status = _git_text("status", "--porcelain")
+    ignored = _git_text("ls-files", "-ci", "--exclude-standard")
+    print("\n== gate metadata ==")
+    print(f"timestamp_utc: {_dt.datetime.now(_dt.UTC).isoformat()}")
+    print(f"git_head: {_git_text('rev-parse', '--short=12', 'HEAD')}")
+    print(f"git_dirty: {bool(status)}")
+    print(f"tracked_ignored_files: {bool(ignored)}")
+    print(f"blender_exe: {blender_exe}")
+    print(f"blender_py: {blender_py}")
+    print(f"gui_acceptance: {'included' if include_gui else 'not-run-headless-gate'}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Run FluidSim verification gates with explicit GUI semantics.",
+        epilog=(
+            "Default status is HEADLESS-GATE-PASS. Use --include-gui for "
+            "FULL-PRODUCTION-GATE-PASS. Metadata printed at start includes "
+            "timestamp, git head, dirty state, tracked ignored-file state, "
+            "resolved Blender paths, and GUI inclusion."
+        ),
+    )
+    parser.add_argument(
+        "--include-gui",
+        action="store_true",
+        help="also run tests/blender_gui_acceptance.py and report full production proof",
+    )
+    args = parser.parse_args(argv)
     blender_exe = os.environ.get("BLENDER_EXE", DEFAULT_BLENDER_EXE)
     blender_py = os.environ.get("BLENDER_PY", DEFAULT_BLENDER_PY)
+    include_gui = args.include_gui or os.environ.get("FLUIDSIM_FULL_GUI_ACCEPTANCE") == "1"
     env = _env()
 
+    _print_gate_metadata(blender_exe, blender_py, include_gui)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
+    _check_no_tracked_ignored_files()
     _run("python syntax", [
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
@@ -135,11 +203,16 @@ def main():
     ):
         _run(script, [blender_exe, "--background", "--factory-startup", "--python", script],
              reject_output=True)
-    _run("Blender GUI acceptance", [
-        blender_exe,
-        "--python",
-        "tests/blender_gui_acceptance.py",
-    ], reject_output=True)
+    for scene_name in ("dam_break", "crown_splash", "slosh_tank"):
+        _run(f"demo cache build {scene_name}", [
+            blender_exe,
+            "--background",
+            "--factory-startup",
+            "--python",
+            "tools/build_demo_scenes.py",
+            "--",
+            scene_name,
+        ], reject_output=True)
     _run("demo analysis", [blender_py, "tools/analyze_demos.py"], env=env)
     _run("demo blend checks", [
         blender_exe,
@@ -148,6 +221,12 @@ def main():
         "--python",
         "tools/check_demo_blends.py",
     ], reject_output=True)
+    if include_gui:
+        _run("interactive GUI acceptance", [
+            blender_exe,
+            "--python",
+            "tests/blender_gui_acceptance.py",
+        ], reject_output=True)
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", [
             blender_exe,
@@ -171,12 +250,17 @@ def main():
             "--json-out",
             "artifacts/user_path_profile.json",
         ])
-    print("\nPRODUCTION-GATE-PASS")
+    if include_gui:
+        print("\nFULL-PRODUCTION-GATE-PASS")
+    else:
+        print("\nHEADLESS-GATE-PASS")
+        print("GUI acceptance not run; use --include-gui for full production proof.")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except subprocess.CalledProcessError as exc:
         print(f"\nPRODUCTION-GATE-FAIL: {exc}")
         sys.exit(exc.returncode or 1)

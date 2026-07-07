@@ -274,7 +274,7 @@ tracks and device memory metadata.
 
 ## 7. Validation
 
-**Validation / Benchmarks → Run Validation Suite** runs 13 GPU tests on
+**Validation / Benchmarks → Run Validation Suite** runs 15 GPU tests on
 `cuda:0` (~30 s):
 
 1. Sparse tiled leaf-grid coordinate/index roundtrip

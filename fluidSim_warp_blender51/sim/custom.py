@@ -296,9 +296,12 @@ class CompiledSnippet:
             int(time_ctx["substeps"]),
         ]
         if sn.run_over == CustomKernelRunOver.PARTICLES:
+            particle_dim_fn = getattr(solver, "_np_dim", None)
+            particle_dim = (particle_dim_fn() if callable(particle_dim_fn)
+                            else solver.particles.capacity)
             wp.launch(
                 self.kernel,
-                dim=solver._np_dim(),
+                dim=particle_dim,
                 inputs=[
                     solver.particles.position,
                     solver.particles.velocity,
@@ -308,9 +311,10 @@ class CompiledSnippet:
                 device=solver.device,
             )
         else:
+            voxel_dim = max(1, int(getattr(solver, "_nvox", solver.grid.voxel_capacity)))
             wp.launch(
                 self.kernel,
-                dim=max(1, int(solver._nvox)),
+                dim=voxel_dim,
                 inputs=[
                     solver.grid.leaf_coords,
                     solver.grid.num_leaves,

@@ -897,10 +897,11 @@ class PressureSolver:
     def coarse_initial_guess(self, voxel_type, iterations=32):
         """Electrostatic leaf-aggregate long-range guess (multigrid path)."""
         g = self.grid
-        self.leaf_rhs.zero_()
-        self.leaf_fluid.zero_()
-        self.leaf_pot.zero_()
-        self.leaf_pot_tmp.zero_()
+        n_leaf = self._leaf_dim()
+        self.leaf_rhs[:n_leaf].zero_()
+        self.leaf_fluid[:n_leaf].zero_()
+        self.leaf_pot[:n_leaf].zero_()
+        self.leaf_pot_tmp[:n_leaf].zero_()
         wp.launch(
             k_build_leaf_aggregates, dim=self._dim(),
             inputs=[self.rhs, voxel_type, g.num_leaves, self.leaf_rhs, self.leaf_fluid],
@@ -923,11 +924,12 @@ class PressureSolver:
 
     def solve_jacobi(self, voxel_type, iterations):
         g = self.grid
+        n = self._dim()
         src, dst = self.pressure, self.pressure_tmp
-        src.zero_()
+        src[:n].zero_()
         for _ in range(iterations):
             wp.launch(
-                k_jacobi_iteration, dim=self._dim(),
+                k_jacobi_iteration, dim=n,
                 inputs=[src, self.rhs, voxel_type, self.inv_diag,
                         g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
                         g.num_leaves, dst],
@@ -935,7 +937,7 @@ class PressureSolver:
             )
             src, dst = dst, src
         if src is not self.pressure:
-            wp.copy(self.pressure, src)
+            wp.copy(self.pressure, src, count=n)
         self.last_iterations = iterations
         self.last_residual = -1.0
         self.last_residual_squared = -1.0
@@ -951,7 +953,7 @@ class PressureSolver:
         if use_coarse_guess:
             self.coarse_initial_guess(voxel_type)
         else:
-            self.x0.zero_()
+            self.x0[:n].zero_()
         wp.launch(
             k_initialize_pcg, dim=n,
             inputs=[self.rhs, self.x0, self.inv_diag, g.num_leaves,
@@ -975,8 +977,8 @@ class PressureSolver:
         status = PRESSURE_STATUS_MAX_ITERATIONS
         failure = "max_iterations"
         pressure_valid = False
-        wp.utils.array_inner(self.r, self.z, out=self.rz)
-        wp.utils.array_inner(self.r, self.r, out=self.residual)
+        wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
+        wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
         last_checked_res = float(self.residual.numpy()[0])
         res_sq = last_checked_res
         it = 0
@@ -1001,7 +1003,7 @@ class PressureSolver:
                             *self._stencil_args(), self.ap],
                     device=self.device,
                 )
-                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap)
+                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
                 wp.launch(k_compute_alpha, dim=1,
                           inputs=[self.rz, self.p_ap, self.alpha],
                           device=self.device)
@@ -1016,7 +1018,7 @@ class PressureSolver:
                     inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
                     device=self.device,
                 )
-                wp.utils.array_inner(self.r, self.z, out=self.rz_new)
+                wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
                 wp.launch(k_compute_beta, dim=1,
                           inputs=[self.rz_new, self.rz, self.beta],
                           device=self.device)
@@ -1028,7 +1030,7 @@ class PressureSolver:
                 wp.copy(self.rz, self.rz_new)
                 it += 1
             # single checkpoint readback: [residual^2, r.z, p.Ap]
-            wp.utils.array_inner(self.r, self.r, out=self.residual)
+            wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
             wp.launch(k_pack_pcg_stats, dim=1,
                       inputs=[self.residual, self.rz, self.p_ap,
                               self.pcg_stats],
@@ -1062,7 +1064,7 @@ class PressureSolver:
         self.last_residual_squared = res_sq
         self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
         if status != PRESSURE_STATUS_CONVERGED:
-            self.pressure.zero_()
+            self.pressure[:n].zero_()
         self._set_pressure_status(status, failure, pressure_valid)
         return self.last_status
 

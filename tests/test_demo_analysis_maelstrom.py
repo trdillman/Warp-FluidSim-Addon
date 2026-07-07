@@ -41,6 +41,11 @@ def test_maelstrom_contract_accepts_playable_measured_basin():
 
     assert len(checks) == 5
     assert all(item["passed"] for item in checks)
+    names = {item["check"] for item in checks}
+    assert "high-particle basin metadata" in names
+    assert "live playback metadata meets FPS target" in names
+    assert "whitewater churn metadata present" in names
+    assert not any("measured" in item["check"] for item in checks)
 
 
 def test_maelstrom_contract_rejects_lost_spin_and_churn():
@@ -53,4 +58,4 @@ def test_maelstrom_contract_rejects_lost_spin_and_churn():
     failed = {item["check"] for item in checks if not item["passed"]}
 
     assert "spin force configured" in failed
-    assert "whitewater churn generated" in failed
+    assert "whitewater churn metadata present" in failed
