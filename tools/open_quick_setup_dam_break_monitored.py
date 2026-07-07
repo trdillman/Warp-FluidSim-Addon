@@ -111,8 +111,10 @@ def main():
     fs = scene.fluidsim
     fs.live = True
     fs.surface_enabled = True
+    fs.whitewater_enabled = True
     fs.show_surface = True
     fs.show_particles = True
+    fs.show_whitewater = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
     fs.profiling_enabled = True

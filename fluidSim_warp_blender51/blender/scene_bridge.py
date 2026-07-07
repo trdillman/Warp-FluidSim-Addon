@@ -751,6 +751,8 @@ def _on_frame_change(scene, depsgraph):
     except Exception as exc:  # noqa: BLE001 - never break playback
         set_error(scene, repr(exc))
         fs.status = f"Solver error: {exc}"
+        fs.live = False
+        release_session()
         print(f"fluidSim step failed: {exc!r}")
 
 

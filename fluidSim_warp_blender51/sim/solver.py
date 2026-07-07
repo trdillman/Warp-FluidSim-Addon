@@ -1159,7 +1159,10 @@ class FluidSolver:
         )
         # Refresh the whitewater bound after device-side emission so the
         # advect/deposit launches cover new particles without dispatching
-        # full capacity (one readback per substep, whitewater only).
+        # full capacity (one readback per substep, whitewater only). Live
+        # playback needs an explicit stream barrier here: otherwise the
+        # device-to-host count copy can race the high-volume atomic emission.
+        wp.synchronize_device(self.device)
         ww.refresh_host_count()
         nww = self._nww_dim()
         wp.launch(

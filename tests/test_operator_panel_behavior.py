@@ -426,6 +426,37 @@ def test_scene_bridge_set_live_enabled_updates_status(monkeypatch):
     assert scene.fluidsim.status == "Live simulation disabled"
 
 
+def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene = SimpleNamespace(
+        frame_current=2,
+        fluidsim=SimpleNamespace(
+            live=True,
+            cache_playback_enabled=False,
+            status="",
+        ),
+    )
+    sess = scene_bridge.session()
+    sess.solver = object()
+    sess.start_frame = 1
+    sess.last_frame = 1
+
+    monkeypatch.setattr(scene_bridge, "sync_scene_to_solver", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        scene_bridge,
+        "step_frame",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert scene.fluidsim.live is False
+    assert scene_bridge.session().active is False
+    assert scene_bridge.current_error(scene) == "RuntimeError('boom')"
+    assert scene.fluidsim.status == "Solver error: boom"
+
+
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     fake_bpy = _install_bpy_stub(monkeypatch)
     fake_bpy.app = SimpleNamespace(
