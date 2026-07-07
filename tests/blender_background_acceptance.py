@@ -172,6 +172,22 @@ def main():
     check("frame handler stepped solver", sess.solver.frame >= before + 2,
           f"solver frame {before} -> {sess.solver.frame}")
     bpy.ops.fluidsim.toggle_live()
+    check("operator live disabled", not fs.live)
+
+    before = sess.solver.frame
+    fs.live = True
+    check("direct live property enabled",
+          fs.live and fs.status == "Live simulation enabled - press play",
+          fs.status)
+    scene.frame_set(scene.frame_current + 1)
+    scene.frame_set(scene.frame_current + 1)
+    check("direct live property drives frame handler",
+          sess.solver.frame >= before + 2,
+          f"solver frame {before} -> {sess.solver.frame}")
+    fs.live = False
+    check("direct live property disabled",
+          not fs.live and fs.status == "Live simulation disabled",
+          fs.status)
 
     # -- profiling ---------------------------------------------------------------
     check("profiler collected frames",

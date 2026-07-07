@@ -512,6 +512,17 @@ def release_session():
     sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
 
 
+def set_live_enabled(scene, enabled: bool):
+    """Own the scene.fluidsim.live enable/disable lifecycle."""
+    fs = scene.fluidsim
+    if enabled:
+        if not session().active:
+            initialize_session(scene)
+        fs.status = "Live simulation enabled - press play"
+    else:
+        fs.status = "Live simulation disabled"
+
+
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
     """Push current scene objects (sources/colliders/height) to the solver."""
     sess = sess or session()

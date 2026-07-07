@@ -357,6 +357,31 @@ def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypat
     ]
 
 
+def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+
+    init_calls = []
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    sess = scene_bridge.session()
+    sess.solver = None
+
+    def fake_initialize(scene_arg):
+        init_calls.append(scene_arg)
+        sess.solver = object()
+        return sess
+
+    monkeypatch.setattr(scene_bridge, "initialize_session", fake_initialize)
+
+    scene_bridge.set_live_enabled(scene, True)
+    scene_bridge.set_live_enabled(scene, True)
+    scene_bridge.set_live_enabled(scene, False)
+
+    assert init_calls == [scene]
+    assert sess.active
+    assert scene.fluidsim.status == "Live simulation disabled"
+
+
 def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
