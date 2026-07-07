@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: completed
 escalated: false
 generated_at: 2026-07-07T21:55:00Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
@@ -18,13 +18,20 @@ Nested output unit: `demos` has its own report at `demos/POLICY_DRIFT_REPORT.md`
 
 ## Current Integration State
 
-This branch is integrating worktree recommendations after backing up `master` at `87971a7` and preserving `UNMERGED_WORKTREES_REPORT.md`.
+This branch integrated worktree recommendations after backing up `master` at `87971a7` and preserving `UNMERGED_WORKTREES_REPORT.md`.
 
 Imported surfaces:
 
 - Quick Setup domain/source/collider layout from the dirty detached cherry-pick worktree; `review_2635080.blend` was not imported.
 - Slowdown lane behavior was already present through the existing `b5787a0` ancestor and master hardening; no duplicate empty slowdown commit is needed.
-- Audit-corrections code/docs/tests are being ported without generated demo `.blend` or preview PNG artifacts.
+- Audit-corrections code/docs/tests were ported without committing generated demo `.blend` or preview PNG artifacts.
+
+## Strongest Current Evidence
+
+- `python -m pytest -q` passed: 113 tests.
+- Direct viewport gate passed in Blender 5.1 on Warp 1.12.1 / CUDA `cuda:0`: `blender --background --factory-startup --python tests\blender_viewport_2frame_gate.py` ended in `VIEWPORT-2FRAME-GATE-PASS`.
+- Aggregate headless production gate passed: `python tools/run_production_gate.py` ended in `HEADLESS-GATE-PASS`.
+- The production gate explicitly did not run GUI acceptance; GUI-inclusive proof still requires `--include-gui` or `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`.
 
 ## Findings
 
@@ -48,7 +55,7 @@ Required corrective action:
 
 Type: implementation drift
 
-Status: in-progress until this integration branch finishes verification
+Status: completed for current integration branch
 
 Authoritative evidence:
 
@@ -59,18 +66,19 @@ Authoritative evidence:
 
 Required corrective action:
 
-- Run focused integration tests for operator behavior, scene bridge cache playback, snippet dispatch, viscosity/pressure regressions, policy-drift gate semantics, and slowdown telemetry.
-- Run the broad available pytest gate before declaring this branch ready.
+- Keep future benchmark/report wording tied to tested evidence.
+- Run GUI-inclusive production proof only when GUI acceptance is required.
 
 ### PD-003 - Viewport gate failure must fail closed
 
 Type: validation drift
 
-Status: in-progress until integration-branch verification
+Status: completed for current integration branch
 
 Authoritative evidence:
 
 - `tools/run_production_gate.py` rejects Blender traceback/fail markers even when Blender exits 0.
+- `tests/blender_viewport_2frame_gate.py` catches unexpected exceptions and emits `VIEWPORT-2FRAME-GATE-FAIL` before exiting nonzero.
 - The production gate now has explicit headless versus GUI-inclusive proof semantics; GUI proof requires `--include-gui` or `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`.
 
 Required corrective action:
@@ -84,17 +92,17 @@ generated_at: 2026-07-07T21:55:00Z
 audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
 branch: codex/execute-worktree-recommendations
 freshness: integration-branch
-status: in-progress
-blocking_criticality: medium
+status: completed
+blocking_criticality: low
 human_decision_required: false
 strongest_live_verification:
-  - pending focused integration pytest
-  - pending broad available pytest
+  - python -m pytest -q (113 passed)
+  - blender --background --factory-startup --python tests\blender_viewport_2frame_gate.py (VIEWPORT-2FRAME-GATE-PASS)
+  - python tools/run_production_gate.py (HEADLESS-GATE-PASS; GUI not run)
 files_that_need_correction: []
 active_backlog_tasks:
-  - backlog/tasks/TASK-POLICY-DRIFT-002-ACTIVE-WORK-SCALING.md
-  - backlog/tasks/TASK-POLICY-DRIFT-003-VIEWPORT-GATE-FAIL-CLOSED.md
+  - none
 repair_checklist:
-  - preserve master backup before integration
-  - exclude generated binary demo artifacts unless separately reviewed
-  - rerun focused and broad available tests before ready claim
+  - master backup preserved before integration
+  - generated binary demo artifacts excluded from commits
+  - focused, broad pytest, direct viewport, and headless production gates passed

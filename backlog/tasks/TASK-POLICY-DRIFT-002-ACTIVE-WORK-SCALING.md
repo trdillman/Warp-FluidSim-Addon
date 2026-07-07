@@ -20,8 +20,8 @@ Replace or prove the capacity-proportional hot paths in particle, whitewater, an
 - [x] Liquid particle compaction has direct count-hint regression coverage proving inactive allocation tails are ignored.
 - [x] A scale regression compares fixed active work under low and high allocation capacity and fails on disproportionate frame-time growth.
 - [x] Benchmark/report wording distinguishes tested envelope from robust scale proof until active-work regressions and trustworthy live gates pass.
-- [ ] Relevant focused pytest and available gates pass in the integration branch.
-- [ ] `POLICY_DRIFT_REPORT.md` is updated truthfully after integration-branch verification.
+- [x] Relevant focused pytest and available gates pass in the integration branch: full `python -m pytest -q` passed 113 tests, direct viewport gate passed, and `python tools/run_production_gate.py` ended in `HEADLESS-GATE-PASS`.
+- [x] `POLICY_DRIFT_REPORT.md` is updated truthfully after integration-branch verification.
 
 ## Reviewable artifact
 

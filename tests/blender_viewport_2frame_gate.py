@@ -75,7 +75,12 @@ def main():
     bpy.ops.fluidsim.release()
 
 
-main()
+try:
+    main()
+except Exception as exc:  # noqa: BLE001 - Blender may return 0 for script exceptions
+    print(f"VIEWPORT-2FRAME-GATE-FAIL unexpected exception: {exc!r}")
+    sys.exit(1)
+
 print()
 if FAILURES:
     print(f"VIEWPORT-2FRAME-GATE-FAIL ({len(FAILURES)}): {FAILURES}")
