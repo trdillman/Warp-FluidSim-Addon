@@ -155,7 +155,9 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         scene = context.scene
         fs = scene.fluidsim
 
-        # Domain box.
+        # Domain box - extended horizontally (X) and slightly taller (Z)
+        # so the released water has room to spread and fall.
+        # X range: -6..+6, Y range: -2..+2, Z range: 0..+6.
         mesh = bpy.data.meshes.new("FluidSim Domain")
         domain = bpy.data.objects.new("FluidSim Domain", mesh)
         scene.collection.objects.link(domain)
@@ -165,14 +167,16 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         bmesh.ops.create_cube(bm, size=1.0)
         bm.to_mesh(mesh)
         bm.free()
-        domain.scale = (7.6, 4.0, 4.0)
-        domain.location = (1.8, 0.0, 2.0)
+        domain.scale = (12.0, 4.0, 6.0)
+        domain.location = (0.0, 0.0, 3.0)
         domain.display_type = "WIRE"
         domain.hide_render = True
         fs.domain_object = domain
         fs.relax_mode = "LOCAL_VOXEL"
 
-        # Particle source box.
+        # Particle source box - kept inside the extended domain.
+        # Higher up so the water has drop potential; offset in -X so it
+        # spreads toward +X after splash.
         src_mesh = bpy.data.meshes.new("FluidSim Source")
         src = bpy.data.objects.new("FluidSim Source", src_mesh)
         scene.collection.objects.link(src)
@@ -180,21 +184,22 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         bmesh.ops.create_cube(bm, size=1.0)
         bm.to_mesh(src_mesh)
         bm.free()
-        src.location = (-1.2, 0.0, 2.6)
+        src.location = (-4.0, 0.0, 4.0)
         src.scale = (1.2, 3.2, 2.2)
         from .blender import sources as _sources
 
         _sources.tag_source(src, shape="BOX", mode="PARTICLES")
 
-        # Sphere collider.
+        # Sphere collider - repositioned under the source so the stream
+        # hits it and splashes outward into the longer +X run.
         col_mesh = bpy.data.meshes.new("FluidSim Collider")
         col = bpy.data.objects.new("FluidSim Collider", col_mesh)
         scene.collection.objects.link(col)
         bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=16, radius=0.5)
+        bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=16, radius=0.75)
         bm.to_mesh(col_mesh)
         bm.free()
-        col.location = (0.8, 0.0, 0.5)
+        col.location = (-2.0, 0.0, 0.75)
         from .blender import colliders as _colliders
 
         _colliders.tag_collider(col)
