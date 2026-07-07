@@ -298,7 +298,7 @@ class CompiledSnippet:
         if sn.run_over == CustomKernelRunOver.PARTICLES:
             wp.launch(
                 self.kernel,
-                dim=solver.particles.capacity,
+                dim=solver._np_dim(),
                 inputs=[
                     solver.particles.position,
                     solver.particles.velocity,
@@ -310,7 +310,7 @@ class CompiledSnippet:
         else:
             wp.launch(
                 self.kernel,
-                dim=solver.grid.voxel_capacity,
+                dim=max(1, int(solver._nvox)),
                 inputs=[
                     solver.grid.leaf_coords,
                     solver.grid.num_leaves,

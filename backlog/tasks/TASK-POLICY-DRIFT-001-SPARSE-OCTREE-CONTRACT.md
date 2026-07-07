@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## What to build
 
@@ -10,12 +10,12 @@ Resolve the mismatch between the promoted sparse-octree product contract and the
 
 ## Acceptance criteria
 
-- [ ] `POLICY_DRIFT_REPORT.md` is changed to `in-progress` before project files are edited.
-- [ ] Product, docs, UI descriptions, and validation names no longer overstate "sparse-octree" if the flat leaf-grid design remains.
-- [ ] If "octree" remains promoted, the runtime includes hierarchical parent/child or adaptive-level behavior and a validation test proves it.
-- [ ] A focused guard prevents the chosen contract from drifting again.
-- [ ] Relevant pytest and Blender acceptance lanes pass.
-- [ ] `POLICY_DRIFT_REPORT.md` is updated to `completed` only after verified repair.
+- [x] `POLICY_DRIFT_REPORT.md` is changed to `in-progress` before project files are edited.
+- [x] Product, docs, UI descriptions, and validation names no longer overstate "sparse-octree" if the flat leaf-grid design remains.
+- [x] "octree" no longer remains promoted, so hierarchical parent/child or adaptive-level validation is not applicable.
+- [x] A focused guard prevents the chosen contract from drifting again.
+- [x] Relevant pytest and Blender acceptance lanes pass.
+- [x] `POLICY_DRIFT_REPORT.md` is updated to `completed` only after verified repair.
 
 ## Blocked by
 

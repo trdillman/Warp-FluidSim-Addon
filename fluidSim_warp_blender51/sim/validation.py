@@ -36,7 +36,7 @@ from .fields import MacVelocityField, ScalarField, SparseGrid
 from .particles import ParticleSystem
 
 VALIDATION_TESTS = [
-    "sparse octree coordinate/index roundtrip",
+    "sparse tiled leaf-grid coordinate/index roundtrip",
     "leaf-local voxel addressing and global start-vector reconstruction",
     "field precision parity for 16-bit and 32-bit modes",
     "particle-to-grid count/average/active masks",
@@ -143,7 +143,7 @@ def _voxel_centers(grid):
 
 
 # ---------------------------------------------------------------------------
-# 1. sparse octree coordinate/index roundtrip
+# 1. sparse tiled leaf-grid coordinate/index roundtrip
 # ---------------------------------------------------------------------------
 
 
@@ -166,7 +166,7 @@ def _k_roundtrip(
 
 
 @_test(VALIDATION_TESTS[0])
-def test_octree_roundtrip(device):
+def test_leaf_grid_roundtrip(device):
     grid = _make_grid(device)
     failures = wp.zeros(1, dtype=wp.int32, device=device)
     wp.launch(

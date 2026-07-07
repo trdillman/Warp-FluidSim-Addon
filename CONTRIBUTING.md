@@ -13,8 +13,8 @@ python3 tools/run_production_gate.py
 ```
 
 The gate checks repository hygiene, runs the CUDA/Warp solver tests through
-Blender 5.1's bundled Python, and proves the Blender viewport/live handler runs
-the simulation for at least two frames.
+Blender 5.1's bundled Python, proves the Blender viewport/live handler runs the
+simulation in background mode, and runs the foreground GUI acceptance lane.
 
 For solver, scene-bridge, viewport, or cache changes that could affect
 interactive playback cost, also run the user-path regression profile. It

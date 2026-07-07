@@ -1,4 +1,4 @@
-"""Sparse leaf-tile ("octree leaf") field storage for the FluidSim Warp port.
+"""Sparse tiled leaf-grid field storage for the FluidSim Warp port.
 
 The original OpenCL solver stores fields in 8x8x8 leaf tiles addressed through
 a leaf table, with leaf-local voxel addressing and global start-vector

@@ -64,13 +64,15 @@ headlessly with only `warp`.
 
 ## 2. Sparse Tiled Grid
 
-`SparseGrid` (`sim/fields.py`) is the octree-equivalent sparse structure:
+`SparseGrid` (`sim/fields.py`) is a sparse tiled leaf-grid structure:
 
-- **Leaves are 8³ voxel tiles** (`LEAF_DIM=8`, `LEAF_VOLUME=512`).
+- **Leaves are fixed 8³ voxel tiles** (`LEAF_DIM=8`, `LEAF_VOLUME=512`).
 - A `leaf_table` (dense over `leaves_dim`) maps a leaf coordinate to an
   allocated slot; `leaf_coords[slot]` is the inverse.
 - Per-leaf voxel storage is flat: `flat = slot*512 + (lz*8+ly)*8+lx`, decoded
   by `voxel_coord_of_flat`.
+- There is no parent/child hierarchy, adaptive level traversal, or runtime
+  tree-refinement contract; sparsity comes from demand-allocated leaf slots.
 - **Allocation is demand-driven.** Each frame `_rebuild_topology()`:
   1. copies the current `leaf_table` to `old_leaf_table`,
   2. `begin_topology()`, marks active voxels from particle positions, source
@@ -303,8 +305,8 @@ disabling it shrinks codegen.
 `sim/validation.py` defines **13 tests**, each decorated with
 `@_test(name)` and registered in `_TESTS`. `run_all(device, progress)`
 executes them on the real CUDA device; each returns
-`(passed, detail)` wrapped in a `ValidationResult`. Tests cover: octree
-coordinate/index roundtrip; leaf addressing; 16/32-bit precision parity; P2G
+`(passed, detail)` wrapped in a `ValidationResult`. Tests cover: sparse tiled
+leaf-grid coordinate/index roundtrip; leaf addressing; 16/32-bit precision parity; P2G
 count/average/active masks; G2P sampling; source shape coverage + attribute
 transfer; collision/sink voxel bits; divergence reduction under projection;
 Jacobi + PCG residual convergence; surface SDF build + box-filter parity;

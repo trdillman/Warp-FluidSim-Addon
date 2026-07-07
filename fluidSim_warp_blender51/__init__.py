@@ -1,7 +1,7 @@
 """FluidSim Warp - GPU liquid simulation for Blender 5.1.
 
 Native Blender port of the FluidSim OpenCL tool (fluidSim.cl 1.0.226) on
-NVIDIA Warp/CUDA. Interactive viewport simulation with sparse-octree fields,
+NVIDIA Warp/CUDA. Interactive viewport simulation with sparse tiled leaf-grid fields,
 PIC/FLIP transfer, pressure projection (Jacobi/PCG), viscosity, surface SDF
 extraction, whitewater, profiling, benchmarking, validation, and custom
 user-kernel extensibility.

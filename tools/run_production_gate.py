@@ -2,9 +2,9 @@
 """Run the production verification gate for master-touching changes.
 
 This script is intentionally strict: it checks repo hygiene, runs the CUDA/Warp
-solver tests through Blender's bundled Python, and proves live viewport playback
-advances at least two frames in Blender background mode. It also checks the
-canonical demo analysis and saved-demo blend surfaces.
+solver tests through Blender's bundled Python, proves live viewport playback in
+Blender background mode, and runs the foreground GUI acceptance lane. It also
+checks the canonical demo analysis and saved-demo blend surfaces.
 """
 
 from __future__ import annotations
@@ -23,6 +23,15 @@ else:
     DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
     DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
 DEFAULT_PYTEST_PATH = ""
+BLENDER_FAILURE_MARKERS = (
+    "Traceback (most recent call last):",
+    "CACHE-EXPORT-PIPELINE-FAIL",
+    "VIEWPORT-GATE-FAIL",
+    "BACKGROUND-ACCEPTANCE-FAIL",
+    "ATTRIBUTE-VIZ-ACCEPTANCE-FAIL",
+    "GUI-ACCEPTANCE-FAIL",
+    "DEMO-BLEND-CHECK-FAIL",
+)
 
 
 def _env():
@@ -34,10 +43,27 @@ def _env():
     return env
 
 
-def _run(label, command, env=None):
+def _run(label, command, env=None, reject_output=False):
     print(f"\n== {label} ==")
     print(" ".join(str(x) for x in command))
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    if not reject_output:
+        subprocess.run(command, cwd=ROOT, env=env, check=True)
+        return
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, command)
+    for marker in BLENDER_FAILURE_MARKERS:
+        if marker in result.stdout:
+            raise subprocess.CalledProcessError(1, command)
 
 
 def _check_no_tracked_npz():
@@ -70,6 +96,7 @@ def main():
         "tools/open_maelstrom_basin_playable.py",
         "tools/run_production_gate.py",
         "tests/blender_cache_export_pipeline.py",
+        "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/test_demo_analysis_maelstrom.py",
     ])
@@ -106,7 +133,13 @@ def main():
         "tests/blender_background_acceptance.py",
         "tests/blender_attribute_viz_acceptance.py",
     ):
-        _run(script, [blender_exe, "--background", "--factory-startup", "--python", script])
+        _run(script, [blender_exe, "--background", "--factory-startup", "--python", script],
+             reject_output=True)
+    _run("Blender GUI acceptance", [
+        blender_exe,
+        "--python",
+        "tests/blender_gui_acceptance.py",
+    ], reject_output=True)
     _run("demo analysis", [blender_py, "tools/analyze_demos.py"], env=env)
     _run("demo blend checks", [
         blender_exe,
@@ -114,7 +147,7 @@ def main():
         "--factory-startup",
         "--python",
         "tools/check_demo_blends.py",
-    ])
+    ], reject_output=True)
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", [
             blender_exe,

@@ -290,9 +290,14 @@ class ViscositySolver:
         self.residual = wp.zeros(1, dtype=float, device=device)
         self.last_iterations = 0
 
+    def _active_count(self):
+        return int(self.grid.active_voxel_count)
+
     def smooth(self, vel, viscosity_field, voxel_type, dt, iterations=1):
         g = self.grid
-        n = g.voxel_capacity
+        n = self._active_count()
+        if n <= 0:
+            return
         for _ in range(iterations):
             wp.launch(
                 k_viscosity_smooth, dim=n,
@@ -303,14 +308,17 @@ class ViscositySolver:
                         self.tmp_u, self.tmp_v, self.tmp_w],
                 device=self.device,
             )
-            wp.copy(vel.u, self.tmp_u)
-            wp.copy(vel.v, self.tmp_v)
-            wp.copy(vel.w, self.tmp_w)
+            wp.copy(vel.u, self.tmp_u, count=n)
+            wp.copy(vel.v, self.tmp_v, count=n)
+            wp.copy(vel.w, self.tmp_w, count=n)
 
     def _solve_component(self, comp, weight, viscosity_field, voxel_type, dt,
                          use_pcg, iterations, tolerance):
         g = self.grid
-        n = g.voxel_capacity
+        n = self._active_count()
+        if n <= 0:
+            self.last_iterations = 0
+            return
         stencil = [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim, g.num_leaves]
         wp.launch(k_viscosity_counter_increment, dim=1, inputs=[self.counter],
                   device=self.device)
@@ -374,7 +382,7 @@ class ViscositySolver:
                 inputs=[self.z, g.num_leaves, self.p_dir],
                 device=self.device,
             )
-            wp.utils.array_inner(self.r, self.z, out=self.rz)
+            wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
             it = 0
             while it < iterations:
                 wp.launch(
@@ -383,7 +391,7 @@ class ViscositySolver:
                             *stencil, g.voxel_size, dt, self.ap],
                     device=self.device,
                 )
-                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap)
+                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
                 wp.launch(k_compute_alpha, dim=1,
                           inputs=[self.rz, self.p_ap, self.alpha], device=self.device)
                 wp.launch(k_update_xr, dim=n,
@@ -393,16 +401,16 @@ class ViscositySolver:
                 wp.launch(k_apply_preconditioner, dim=n,
                           inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
                           device=self.device)
-                wp.utils.array_inner(self.r, self.z, out=self.rz_new)
+                wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
                 wp.launch(k_compute_beta, dim=1,
                           inputs=[self.rz_new, self.rz, self.beta], device=self.device)
                 wp.launch(k_update_p, dim=n,
                           inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
                           device=self.device)
-                wp.copy(self.rz, self.rz_new)
+                wp.copy(self.rz, self.rz_new, count=1)
                 it += 1
                 if it % 10 == 0 or it == iterations:
-                    wp.utils.array_inner(self.r, self.r, out=self.residual)
+                    wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
                     if float(self.residual.numpy()[0]) < tolerance * tolerance * max(1, n):
                         break
             self.last_iterations = it
@@ -412,7 +420,7 @@ class ViscositySolver:
             inputs=[self.x, comp, weight, voxel_type, g.num_leaves, self.tmp_u],
             device=self.device,
         )
-        wp.copy(comp, self.tmp_u)
+        wp.copy(comp, self.tmp_u, count=n)
 
     def solve(self, vel, viscosity_field, voxel_type, dt, use_pcg=True,
               iterations=40, tolerance=1.0e-4):

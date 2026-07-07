@@ -94,6 +94,34 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
 
 
+def test_live_property_cache_playback_does_not_initialize_solver(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=True)
+
+    monkeypatch.setattr(scene_bridge, "initialize_session", lambda _scene: (
+        (_ for _ in ()).throw(AssertionError("cache playback must not initialize solver"))
+    ))
+
+    scene_bridge.release_session()
+    scene_bridge.set_live_enabled(scene, True)
+
+    assert not scene_bridge.session().active
+    assert scene.fluidsim.status == "Cache playback enabled - press play"
+
+
+def test_enabling_cache_playback_releases_live_solver(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    scene.fluidsim.live = True
+    scene_bridge.session().solver = object()
+
+    scene.fluidsim.cache_playback_enabled = True
+    scene_bridge.set_cache_playback_enabled(scene, True)
+
+    assert not scene_bridge.session().active
+    assert scene.fluidsim.status == "Cache playback enabled - press play"
+
+
 def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()

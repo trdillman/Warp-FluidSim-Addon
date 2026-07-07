@@ -277,7 +277,7 @@ tracks and device memory metadata.
 **Validation / Benchmarks → Run Validation Suite** runs 13 GPU tests on
 `cuda:0` (~30 s):
 
-1. Sparse octree coordinate/index roundtrip
+1. Sparse tiled leaf-grid coordinate/index roundtrip
 2. Leaf-local addressing & start-vector reconstruction
 3. Field precision parity (16/32-bit)
 4. Particle-to-grid count/average/active masks

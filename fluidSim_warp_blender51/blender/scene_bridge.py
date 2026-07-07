@@ -516,11 +516,26 @@ def set_live_enabled(scene, enabled: bool):
     """Own the scene.fluidsim.live enable/disable lifecycle."""
     fs = scene.fluidsim
     if enabled:
-        if not session().active:
+        if getattr(fs, "cache_playback_enabled", False):
+            fs.status = "Cache playback enabled - press play"
+        elif not session().active:
             initialize_session(scene)
-        fs.status = "Live simulation enabled - press play"
+            fs.status = "Live simulation enabled - press play"
+        else:
+            fs.status = "Live simulation enabled - press play"
     else:
         fs.status = "Live simulation disabled"
+
+
+def set_cache_playback_enabled(scene, enabled: bool):
+    """Own cache playback transition without requiring a live solver."""
+    fs = scene.fluidsim
+    if enabled:
+        release_session()
+        if getattr(fs, "live", False):
+            fs.status = "Cache playback enabled - press play"
+    elif getattr(fs, "live", False):
+        set_live_enabled(scene, True)
 
 
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):

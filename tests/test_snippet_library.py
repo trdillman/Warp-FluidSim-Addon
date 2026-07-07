@@ -7,6 +7,7 @@ section covering the sim-side frame gating.
 
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -315,6 +316,65 @@ def test_snippet_manager_rejects_invalid_before_compile():
     manager.set_snippets([bad, good])
     assert any(name == "bad_import" for name, _ in manager.errors)
     assert manager.has_any()
+
+
+def test_compiled_snippet_launch_uses_active_work_bounds(monkeypatch):
+    pytest.importorskip("warp")
+    from fluidSim_warp_blender51.sim import custom as custom_mod
+    from fluidSim_warp_blender51.sim.custom import (
+        CompiledSnippet, CustomSnippet,
+    )
+    from fluidSim_warp_blender51.sim.enums import CustomKernelRunOver
+
+    launch_dims = []
+
+    def fake_launch(kernel, *, dim, inputs, device):
+        launch_dims.append(dim)
+
+    monkeypatch.setattr(custom_mod.wp, "launch", fake_launch)
+
+    solver = SimpleNamespace(
+        device="cuda:test",
+        _nvox=1024,
+        _np_dim=lambda: 2048,
+        grid=SimpleNamespace(
+            voxel_size=0.1,
+            voxel_capacity=512000,
+            leaf_coords=object(),
+            num_leaves=object(),
+            origin=(0.0, 0.0, 0.0),
+        ),
+        voxel_type=SimpleNamespace(data=object()),
+        particles=SimpleNamespace(
+            capacity=2000000,
+            position=object(),
+            velocity=object(),
+            alive=object(),
+            count=object(),
+        ),
+    )
+    time_ctx = {
+        "frame": 1,
+        "time": 0.0,
+        "real_time_step": 1.0 / 24.0,
+        "solver_time_step": 1.0 / 24.0,
+        "time_scale": 1.0,
+        "substeps": 1,
+    }
+
+    voxel = CompiledSnippet.__new__(CompiledSnippet)
+    voxel.kernel = object()
+    voxel.snippet = CustomSnippet(run_over=CustomKernelRunOver.VOXEL_LINEAR)
+    voxel._binders = []
+    voxel.launch(solver, time_ctx)
+
+    particle = CompiledSnippet.__new__(CompiledSnippet)
+    particle.kernel = object()
+    particle.snippet = CustomSnippet(run_over=CustomKernelRunOver.PARTICLES)
+    particle._binders = []
+    particle.launch(solver, time_ctx)
+
+    assert launch_dims == [1024, 2048]
 
 
 def test_all_presets_compile_with_warp():

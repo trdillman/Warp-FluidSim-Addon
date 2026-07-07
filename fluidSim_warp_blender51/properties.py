@@ -169,6 +169,19 @@ def _on_live_changed(self, context):
         self.status = f"Live toggle failed: {exc}"
 
 
+def _on_cache_playback_changed(self, context):
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None:
+        return
+    try:
+        from .blender import scene_bridge
+
+        scene_bridge.set_cache_playback_enabled(
+            scene, bool(self.cache_playback_enabled))
+    except Exception as exc:  # noqa: BLE001
+        self.status = f"Cache playback toggle failed: {exc}"
+
+
 # ---------------------------------------------------------------------------
 # Snippet library dropdown (examples + user-saved presets)
 # ---------------------------------------------------------------------------
@@ -677,6 +690,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     cache_playback_enabled: BoolProperty(
         name="Cache Playback",
         default=False,
+        update=_on_cache_playback_changed,
         description="Use cached frames as the timeline source during playback")
     cache_use_custom_range: BoolProperty(
         name="Custom Cache Range",
