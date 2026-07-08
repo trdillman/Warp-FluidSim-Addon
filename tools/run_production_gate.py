@@ -224,6 +224,7 @@ def main(argv=None):
     if include_gui:
         _run("interactive GUI acceptance", [
             blender_exe,
+            "--factory-startup",
             "--python",
             "tests/blender_gui_acceptance.py",
         ], reject_output=True)

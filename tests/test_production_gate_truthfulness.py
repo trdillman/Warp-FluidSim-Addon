@@ -52,7 +52,12 @@ def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypa
     assert gui_calls == [
         (
             "interactive GUI acceptance",
-            ["blender", "--python", "tests/blender_gui_acceptance.py"],
+            [
+                "blender",
+                "--factory-startup",
+                "--python",
+                "tests/blender_gui_acceptance.py",
+            ],
             True,
         )
     ]
