@@ -19,6 +19,8 @@ crown_splash  - mass conservation, containment, impact detection, crown rise
 slosh_tank    - mass conservation, containment, first-mode slosh period vs
                 analytic dispersion w^2 = g*k*tanh(k*h) (k = pi/L),
                 oscillation amplitude decay, velocity boundedness.
+tidal_lock    - opposed particle columns collide through staggered lock gates,
+                producing central mixing, lateral braid, uplift, and churn.
 maelstrom_basin - playable live setup sidecar metadata, spin-force contract,
                   high-particle capacity metadata, FPS metadata, and
                   whitewater-count metadata.
@@ -321,6 +323,65 @@ def analyze_slosh_tank():
 
 # ---------------------------------------------------------------------------
 
+def analyze_tidal_lock():
+    name = "tidal_lock"
+    meta, series, frames = load_scene(name)
+    common_checks(name, meta, series, frames, vmax_limit=12.0)
+
+    central_ratio = 0.0
+    y_span = 0.0
+    z_p99 = 0.0
+    speed_p50 = 0.0
+    peak_frame = min(frames)
+    for f, data in frames.items():
+        p = data["positions"]
+        total = max(1, len(p))
+        central = p[(p[:, 0] > 0.92) & (p[:, 0] < 1.48)]
+        frame_ratio = len(central) / total
+        frame_span = float(central[:, 1].max() - central[:, 1].min()) \
+            if len(central) else 0.0
+        frame_z99 = float(np.percentile(p[:, 2], 99))
+        if frame_z99 > z_p99:
+            peak_frame = f
+            z_p99 = frame_z99
+        central_ratio = max(central_ratio, frame_ratio)
+        y_span = max(y_span, frame_span)
+        v = data.get("velocities")
+        if v is not None:
+            speed_p50 = max(
+                speed_p50,
+                float(np.percentile(np.linalg.norm(v, axis=1), 50)),
+            )
+    ww = np.array(series["whitewater_count"])
+
+    check(name, "columns meet in lock throat",
+          central_ratio > 0.18,
+          f"{central_ratio * 100:.1f}% of particles in central throat")
+    check(name, "offset gates create lateral braid",
+          y_span > 0.48,
+          f"central y-span {y_span:.2f} m")
+    check(name, "collision lifts fluid above initial columns",
+          z_p99 > float(meta["initial_height"]) + 0.08,
+          f"peak p99 height {z_p99:.2f} m at frame {peak_frame} "
+          f"from initial {meta['initial_height']:.2f}")
+    check(name, "flow remains energetic after collision",
+          speed_p50 > 0.18,
+          f"peak median speed {speed_p50:.2f} m/s")
+    check(name, "whitewater/churn path exercised",
+          ww.max() >= 1,
+          f"peak whitewater {ww.max():,}")
+    return {
+        "central_ratio": central_ratio,
+        "central_y_span": y_span,
+        "z_p99": z_p99,
+        "peak_frame": int(peak_frame),
+        "speed_p50": speed_p50,
+        "peak_whitewater": int(ww.max()),
+    }
+
+
+# ---------------------------------------------------------------------------
+
 def validate_maelstrom_basin(meta):
     """Validate maelstrom sidecar metadata, not fresh runtime/cache output."""
     name = "maelstrom_basin"
@@ -370,6 +431,7 @@ def main():
     for fn, key in ((analyze_dam_break, "dam_break"),
                     (analyze_crown_splash, "crown_splash"),
                     (analyze_slosh_tank, "slosh_tank"),
+                    (analyze_tidal_lock, "tidal_lock"),
                     (analyze_maelstrom_basin, "maelstrom_basin")):
         try:
             metrics[key] = fn()
@@ -390,7 +452,7 @@ def main():
     lines = ["# FluidSim Warp — Demo Scene Analysis", "",
              f"Verdict: **{report['result'].upper()}** "
              f"({passed}/{len(CHECKS)} checks)", ""]
-    for scene in ("dam_break", "crown_splash", "slosh_tank",
+    for scene in ("dam_break", "crown_splash", "slosh_tank", "tidal_lock",
                   "maelstrom_basin"):
         lines.append(f"## {scene}")
         lines.append("")

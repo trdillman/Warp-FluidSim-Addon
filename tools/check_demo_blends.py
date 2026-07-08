@@ -18,7 +18,8 @@ if REPO not in sys.path:
 from tools.repo_addon_loader import enable_repo_addon
 
 DEMOS = os.path.join(REPO, "demos")
-SCENES = ("dam_break", "crown_splash", "slosh_tank", "maelstrom_basin")
+SCENES = ("dam_break", "crown_splash", "slosh_tank", "tidal_lock",
+          "maelstrom_basin")
 
 
 def load_meta(name):
@@ -67,6 +68,20 @@ def check_scene(name):
         "domain_object": bool(fs and fs.domain_object),
         "camera": bool(scene.camera),
     }
+    if name == "tidal_lock":
+        checks.update({
+            "surface_mesh": bool(surface and surface.type == "MESH" and len(surface.data.vertices) > 100),
+            "particle_output": bool(particles and point_count(particles) > 100),
+            "playable_live_setup": bool(meta.get("playable_live_setup")),
+            "source_objects": all(
+                bpy.data.objects.get(obj_name)
+                for obj_name in meta.get("source_objects", [])
+            ),
+            "gate_objects": all(
+                bpy.data.objects.get(obj_name)
+                for obj_name in meta.get("gate_objects", [])
+            ),
+        })
     if name == "maelstrom_basin":
         seed = bpy.data.objects.get(meta.get("seed_object", ""))
         force = bpy.data.objects.get(meta.get("spin_force_object", ""))

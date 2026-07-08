@@ -14,7 +14,8 @@ not become source-control assets.
 2. crown_splash    - droplet impact into a shallow pool (Worthington crown).
 3. slosh_tank      - offset water column sloshing in a closed tank; first-mode
                      period is analytically known (w^2 = g k tanh(k h)).
-4. maelstrom_basin - high-particle vortex basin with live playback metadata.
+4. tidal_lock      - opposed columns colliding through offset lock gates.
+5. maelstrom_basin - high-particle vortex basin with live playback metadata.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -38,7 +39,8 @@ from tools.repo_addon_loader import enable_repo_addon
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 FPS = 24
-STANDARD_CACHE_SCENES = ("dam_break", "crown_splash", "slosh_tank")
+STANDARD_CACHE_SCENES = ("dam_break", "crown_splash", "slosh_tank",
+                         "tidal_lock")
 
 
 def log(msg):
@@ -122,6 +124,22 @@ def make_source_box(scene, lo, hi, name, emit_rate=8.0):
     src.fluidsim.use_object_velocity = False
     src.show_name = True
     return src
+
+
+def make_collider_box(scene, lo, hi, name, friction=0.05):
+    """Create a tagged box collider for demo-scene flow shaping."""
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    col = bpy.context.active_object
+    col.name = name
+    col.location = tuple((lo[i] + hi[i]) * 0.5 for i in range(3))
+    col.scale = tuple((hi[i] - lo[i]) * 0.5 for i in range(3))
+    col.display_type = "WIRE"
+    col.hide_render = True
+    col.show_name = True
+    _colliders.tag_collider(col, friction=friction, restitution=0.0)
+    return col
 
 
 def add_text_block(name, body):
@@ -396,7 +414,132 @@ def build_slosh_tank():
 
 
 # ---------------------------------------------------------------------------
-# Scene 4: maelstrom basin
+# Scene 4: tidal lock
+# ---------------------------------------------------------------------------
+
+def build_tidal_lock():
+    scene = fresh_scene()
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    fs = scene.fluidsim
+    lo, hi = (0.0, 0.0, 0.0), (2.4, 0.8, 0.7)
+    make_domain(scene, lo, hi, "TidalLock Domain")
+    fs.voxel_size = 0.02
+    fs.max_particles = 320_000
+    fs.min_substeps = 1
+    fs.max_substeps = 18
+    fs.flip_ratio = 0.96
+    fs.whitewater_enabled = True
+    fs.max_whitewater = 120_000
+    fs.ww_churn_gain = 1.8
+    fs.ww_churn_threshold = 0.02
+    fs.ww_emission_rate = 120.0
+    fs.ww_min_speed = 0.10
+    fs.profiling_enabled = False
+    fs.show_particles = True
+    fs.show_surface = True
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    fs.particle_display_fraction = 1.0
+    fs.live = False
+    scene.frame_start = 1
+    scene.frame_end = 96
+    scene.frame_set(1)
+
+    left_src = make_source_box(
+        scene,
+        (0.08, 0.08, 0.0),
+        (0.62, 0.36, 0.32),
+        "TidalLock West Source",
+        emit_rate=18.0,
+    )
+    right_src = make_source_box(
+        scene,
+        (1.78, 0.44, 0.0),
+        (2.32, 0.72, 0.32),
+        "TidalLock East Source",
+        emit_rate=18.0,
+    )
+    left_src.fluidsim.enabled = False
+    right_src.fluidsim.enabled = False
+    north_gate = make_collider_box(
+        scene,
+        (0.92, 0.00, 0.0),
+        (1.08, 0.40, 0.46),
+        "TidalLock North Gate",
+    )
+    south_gate = make_collider_box(
+        scene,
+        (1.32, 0.40, 0.0),
+        (1.48, 0.80, 0.46),
+        "TidalLock South Gate",
+    )
+
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    sess.solver.settings.domain_sdf_walls = True
+    left = lattice((0.08, 0.08, 0.0), (0.62, 0.36, 0.32), 0.012)
+    right = lattice((1.78, 0.44, 0.0), (2.32, 0.72, 0.32), 0.012)
+    n_left = sess.solver.inject_particles(
+        left,
+        velocity=(2.2, 0.55, 0.0),
+        temperature=0.2,
+    )
+    n_total = sess.solver.inject_particles(
+        right,
+        velocity=(-2.2, -0.55, 0.0),
+        temperature=0.8,
+    )
+    log(f"tidal_lock: west {n_left:,} + east {n_total - n_left:,} particles")
+    add_camera_light(scene, (1.2, -2.55, 0.95), (1.25, 0.0, 0.0))
+    run_scene("tidal_lock", 72)
+    from fluidSim_warp_blender51.blender import viewport
+
+    viewport.update_outputs(scene, sess)
+    bpy.context.view_layer.update()
+    surface = bpy.data.objects.get("FluidSim Surface")
+    particles = bpy.data.objects.get("FluidSim Particles")
+    whitewater = bpy.data.objects.get("FluidSim Whitewater")
+    log(
+        "tidal_lock output counts before save: "
+        f"surface={len(surface.data.vertices) if surface else 0}, "
+        "particles="
+        f"{len(particles.data.points) if particles and particles.type == 'POINTCLOUD' else 0}, "
+        "whitewater="
+        f"{len(whitewater.data.points) if whitewater and whitewater.type == 'POINTCLOUD' else 0}"
+    )
+    add_text_block(
+        "README_Tidal_Lock",
+        "Tidal Lock live playback notes\n"
+        "==============================\n\n"
+        "Two offset particle columns rush through staggered lock gates. The "
+        "saved preview shows the collision braid; the source boxes remain in "
+        "the scene and can be enabled for live replay after Initialize Solver.\n",
+    )
+    save_scene("tidal_lock")
+    os.makedirs(os.path.join(DEMOS, "tidal_lock"), exist_ok=True)
+    meta = {
+        "scene": "tidal_lock",
+        "gravity": 9.81,
+        "domain": [list(lo), list(hi)],
+        "voxel_size": 0.02,
+        "fps": FPS,
+        "spacing": 0.012,
+        "injected": int(n_total),
+        "west_particles": int(n_left),
+        "east_particles": int(n_total - n_left),
+        "source_objects": [left_src.name, right_src.name],
+        "gate_objects": [north_gate.name, south_gate.name],
+        "playable_live_setup": True,
+        "initial_height": 0.32,
+    }
+    with open(os.path.join(DEMOS, "tidal_lock", "meta.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
+    bpy.ops.fluidsim.release()
+
+
+# ---------------------------------------------------------------------------
+# Scene 5: maelstrom basin
 # ---------------------------------------------------------------------------
 
 def build_maelstrom_basin():
@@ -427,6 +570,7 @@ def main():
         "dam_break": build_dam_break,
         "crown_splash": build_crown_splash,
         "slosh_tank": build_slosh_tank,
+        "tidal_lock": build_tidal_lock,
         "maelstrom_basin": build_maelstrom_basin,
     }
     targets = list(builders)

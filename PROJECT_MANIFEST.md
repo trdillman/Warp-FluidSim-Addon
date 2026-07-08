@@ -47,7 +47,8 @@ fluidSim_warp_blender51_synth_package/
 ## Official demo pipeline
 
 - `tools/build_demo_scenes.py`: builds the canonical demo scenes:
-  `dam_break`, `crown_splash`, `slosh_tank`, and `maelstrom_basin`.
+  `dam_break`, `crown_splash`, `slosh_tank`, `tidal_lock`, and
+  `maelstrom_basin`.
 - `tools/analyze_demos.py`: analyzes the generated demo evidence and now
   treats maelstrom metadata as a first-class demo lane.
 - `tools/check_demo_blends.py`: opens all canonical `.blend` files, including
