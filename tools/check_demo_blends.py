@@ -68,6 +68,30 @@ def check_scene(name):
         "domain_object": bool(fs and fs.domain_object),
         "camera": bool(scene.camera),
     }
+    if name == "dam_break":
+        domain = bpy.data.objects.get("DamBreak Domain")
+        source = bpy.data.objects.get("DamBreak Source Column")
+        collider = bpy.data.objects.get("Sphere")
+        near = lambda actual, expected: all(
+            abs(float(a) - float(e)) < 1.0e-4
+            for a, e in zip(actual, expected)
+        )
+        checks.update({
+            "canonical_domain_scale": bool(
+                domain and near(domain.dimensions, (5.6, 2.00292993, 1.6))),
+            "canonical_source_transform": bool(
+                source
+                and near(source.location, (0.47105896, 0.0, 1.06185913))
+                and near(source.scale, (0.73273778, 1.70176971, 0.99442428))),
+            "sphere_collider": bool(
+                collider and collider.fluidsim.role == "COLLIDER"
+                and near(collider.location, (2.41923952, 0.0, 0.0))),
+            "canonical_friction": bool(
+                collider
+                and abs(float(collider.fluidsim.collider_friction) - 1.0) < 1.0e-6),
+            "no_redundant_empties": not any(
+                obj.type == "EMPTY" for obj in scene.objects),
+        })
     if name == "tidal_lock":
         checks.update({
             "surface_mesh": bool(surface and surface.type == "MESH" and len(surface.data.vertices) > 100),

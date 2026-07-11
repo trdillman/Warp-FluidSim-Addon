@@ -46,6 +46,13 @@ BLENDER_FAILURE_MARKERS = (
     "GUI-ACCEPTANCE-FAIL",
     "DEMO-BLEND-CHECK-FAIL",
 )
+CANONICAL_DEMO_SCENES = (
+    "dam_break",
+    "crown_splash",
+    "slosh_tank",
+    "tidal_lock",
+    "maelstrom_basin",
+)
 
 
 def _env():
@@ -164,6 +171,7 @@ def main(argv=None):
         "tools/open_maelstrom_basin_playable.py",
         "tools/run_production_gate.py",
         "tests/blender_cache_export_pipeline.py",
+        "tests/blender_memory_safety_gate.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/test_demo_analysis_maelstrom.py",
@@ -197,13 +205,14 @@ def main(argv=None):
     ])
     for script in (
         "tests/blender_cache_export_pipeline.py",
+        "tests/blender_memory_safety_gate.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_background_acceptance.py",
         "tests/blender_attribute_viz_acceptance.py",
     ):
         _run(script, [blender_exe, "--background", "--factory-startup", "--python", script],
              reject_output=True)
-    for scene_name in ("dam_break", "crown_splash", "slosh_tank"):
+    for scene_name in CANONICAL_DEMO_SCENES:
         _run(f"demo cache build {scene_name}", [
             blender_exe,
             "--background",

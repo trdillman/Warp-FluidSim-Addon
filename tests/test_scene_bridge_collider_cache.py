@@ -91,8 +91,11 @@ class _FakeObject:
             role="COLLIDER",
             enabled=True,
             transfer_velocity=False,
+            collider_friction=0.25,
+            collider_restitution=0.75,
         )
         self.mesh = mesh
+        self.data = object()
         self.matrix_world = _FakeMatrix()
         self.to_mesh_count = 0
         self._eval = _FakeEvalObject(self)
@@ -174,8 +177,21 @@ def test_repeated_collider_gather_reuses_cached_warp_mesh(monkeypatch):
     second = colliders.gather_colliders(scene, sess, depsgraph=object())
 
     assert len(fake_warp.meshes) == 1
+    assert obj.to_mesh_count == 1
     assert first[0].mesh is second[0].mesh
     assert sess.collider_mesh_cache_stats == {"rebuilds": 1, "reuses": 1}
+
+
+def test_collider_gather_preserves_individual_material_response(monkeypatch):
+    scene_bridge, colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+
+    desc = colliders.gather_colliders(
+        SimpleNamespace(objects=[obj]), sess, depsgraph=object())[0]
+
+    assert desc.friction == 0.25
+    assert desc.restitution == 0.75
 
 
 def test_collider_cache_rebuilds_when_topology_or_transform_changes(monkeypatch):
@@ -186,6 +202,7 @@ def test_collider_cache_rebuilds_when_topology_or_transform_changes(monkeypatch)
 
     first = colliders.gather_colliders(scene, sess, depsgraph=object())[0]
     obj.mesh = _triangle_mesh(extra_vert=True)
+    obj.data = object()
     after_topology_change = colliders.gather_colliders(
         scene, sess, depsgraph=object())[0]
     obj.matrix_world = _FakeMatrix(tx=2.0)
@@ -196,6 +213,23 @@ def test_collider_cache_rebuilds_when_topology_or_transform_changes(monkeypatch)
     assert first.mesh is not after_topology_change.mesh
     assert after_topology_change.mesh is not after_transform_change.mesh
     assert sess.collider_mesh_cache_stats == {"rebuilds": 3, "reuses": 0}
+
+
+def test_collider_cache_rebuilds_for_depsgraph_object_update(monkeypatch):
+    scene_bridge, colliders, fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    scene = SimpleNamespace(objects=[obj])
+
+    colliders.gather_colliders(scene, sess, depsgraph=SimpleNamespace(updates=[]))
+    obj.mesh = _triangle_mesh(extra_vert=True)
+    update = SimpleNamespace(id=SimpleNamespace(original=obj))
+    colliders.gather_colliders(
+        scene, sess, depsgraph=SimpleNamespace(updates=[update]))
+
+    assert obj.to_mesh_count == 2
+    assert len(fake_warp.meshes) == 2
+    assert sess.collider_mesh_cache_stats == {"rebuilds": 2, "reuses": 0}
 
 
 def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch):

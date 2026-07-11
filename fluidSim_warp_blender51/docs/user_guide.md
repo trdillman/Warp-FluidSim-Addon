@@ -77,8 +77,9 @@ viscosity, lifespan. **Height Fill** (base height, back mode, velocity,
 particle emission). Lists all tagged sources/sinks/forces.
 
 ### Colliders / Sinks
-**Tag Collider** / **Tag Sink**. Per-collider friction, restitution, and
-velocity transfer toggle. Global restitution/friction. Lists colliders.
+**Tag Collider** / **Tag Sink**. Each collider owns its friction, restitution,
+and velocity-transfer settings; collision response uses the values stored on
+the collider whose SDF is hit. Lists colliders.
 
 ### Forces / Attraction
 Per-object force regions (tag a Source as a force). Force type
@@ -337,3 +338,37 @@ FluidSim Warp is interactive-first; these are supplemental:
   whitewater needs turbulent impact regions.
 - **Performance.** Watch the overlay timers; Pressure and Surface phases
   dominate at high resolution. Multigrid coarse guess can speed pressure.
+
+## Surface resolution
+
+Viewport, cache, and export meshes can use a sparse render grid independent
+from simulation resolution. The optional 2x multiplier halves surface voxel
+size without multiplying pressure, collision, or particle-transfer grid cost.
+Simulation resolution remains the default to preserve interactive performance.
+Frame cadence builds once after simulation substeps; Manual builds lazily when
+the mesh is requested. Keep the simulation surface field enabled when using
+whitewater or snippets that consume `surface_sdf`.
+
+## ST-FLIP beta
+
+Enable **Particles > ST-FLIP (Beta)** to test spatiotemporal sampling at large
+time steps. The implementation includes temporal residuals, space-time P2G,
+phase-field activation, optional variable pressure, local trajectory
+substepping, and render-surface re-synchronization. It is beta because phase
+three still needs multi-scene reference-error and long-run conservation work.
+Keep the default feature disabled for production scenes until those results
+are acceptable for the scene type.
+
+## Safe Settings recovery
+
+Before allocating solver arrays, FluidSim estimates peak VRAM against the
+GPU's current free memory and reserved safety margin. If the configuration is
+too large, initialization stops without creating the solver and the Simulation
+panel shows **Apply Safe Settings & Retry**. The same button appears after leaf
+overflow or recognized CUDA out-of-memory errors.
+
+The recommendation samples current VRAM and GPU utilization through Warp and
+the NVIDIA driver, plus Windows CPU and RAM pressure. It stays as close as
+possible to the scene configuration while adjusting the largest cost drivers:
+leaf capacity, voxel size, particle and whitewater capacities, particles per
+voxel, topology expansion, and secondary surface-grid settings.

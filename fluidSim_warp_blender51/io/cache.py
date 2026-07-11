@@ -143,11 +143,29 @@ def write_frame(scene, sess) -> str:
             frame=solver.frame,
             voxel_size=np.array(
                 getattr(solver.settings, "voxel_size", 0.05), dtype=np.float32),
+            surface_voxel_size=np.array(
+                (solver._render_surface_voxel_size()
+                 if hasattr(solver, "_render_surface_voxel_size")
+                 else getattr(solver.settings, "voxel_size", 0.05)),
+                dtype=np.float32),
+            surface_resolution_multiplier=np.array(
+                getattr(solver.settings, "surface_resolution_multiplier", 1.0),
+                dtype=np.float32),
+            surface_resolution_mode=np.array(
+                int(getattr(solver.settings, "surface_resolution_mode", 0)),
+                dtype=np.int32),
+            surface_update_cadence=np.array(
+                int(getattr(solver.settings, "surface_update_cadence", 1)),
+                dtype=np.int32),
+            surface_smooth_iterations=np.array(
+                int(getattr(solver.settings, "surface_smooth_iterations", 0)),
+                dtype=np.int32),
             particle_age=_optional_particle_attr(solver, "age"),
             particle_life=_optional_particle_attr(solver, "life"),
             particle_temperature=_optional_particle_attr(solver, "temperature"),
             particle_viscosity=_optional_particle_attr(solver, "viscosity"),
             particle_density=_optional_particle_attr(solver, "density"),
+            particle_time_offset=_optional_particle_attr(solver, "time_offset"),
             whitewater_velocities=_optional_whitewater_attr(solver, "velocity"),
             whitewater_age=_optional_whitewater_attr(solver, "age"),
             whitewater_life=_optional_whitewater_attr(solver, "life"),

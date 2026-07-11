@@ -154,7 +154,171 @@ def k_particle_to_grid_active(
         voxel_type[tid] = vt & (~VOXEL_FLUID)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Spatiotemporal FLIP (ST-FLIP) P2G / phase helpers
+# ---------------------------------------------------------------------------
+
+
+@wp.func
+def _st_poly6_1d(r: float) -> float:
+    q = 1.0 - r * r
+    if q <= 0.0:
+        return 0.0
+    return q * q * q
+
+
+@wp.func
+def _st_spatial_weight_1d(r: float) -> float:
+    # Eq. (18), separable 1-D poly6 normalized over [-1, 1].
+    return (35.0 / 32.0) * _st_poly6_1d(r)
+
+
+@wp.func
+def _st_temporal_weight(tau: float) -> float:
+    # Eq. (19), one-sided half-step-shifted poly6 on tau <= 1/2.
+    if tau > 0.5:
+        return 0.0
+    return (35.0 / 16.0) * _st_poly6_1d(tau - 0.5)
+
+
+@wp.func
+def _st_phase_from_mass(weight_sum: float, reference_mass: float, eta_phi: float) -> float:
+    denom = wp.max(reference_mass * wp.max(eta_phi, 1.0e-6), 1.0e-8)
+    x = weight_sum / denom
+    if x <= 0.0:
+        return 0.0
+    return wp.min(wp.sqrt(x), 1.0)
+
+
+@wp.kernel
+def k_particle_set_grid_data_spacetime(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    time_offsets: wp.array(dtype=float),
+    count: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    previous_dt: float,
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+):
+    """ST-FLIP 4D->3D P2G scatter.
+
+    Particle velocity/mass are deposited to MAC faces with the separable
+    spatial poly6 kernel W_S (Eq. 18) multiplied by the one-sided temporal
+    kernel W_T(-delta_t / previous_dt) (Eq. 19).  The face accumulators are
+    intentionally left as raw weighted mass sums; velocity normalization still
+    divides momentum by mass, while the raw sums become the space-time phase
+    field used by projection.
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    safe_prev_dt = wp.max(wp.abs(previous_dt), 1.0e-8)
+    tau = -time_offsets[tid] / safe_prev_dt
+    wt = _st_temporal_weight(tau)
+    if wt <= 0.0:
+        return
+
+    vp = world_to_voxel(positions[tid], origin, voxel_size)
+    vel = velocities[tid]
+    for axis in range(3):
+        off = wp.vec3(0.5, 0.5, 0.5)
+        if axis == 0:
+            off = wp.vec3(0.0, 0.5, 0.5)
+        elif axis == 1:
+            off = wp.vec3(0.5, 0.0, 0.5)
+        else:
+            off = wp.vec3(0.5, 0.5, 0.0)
+        q = vp - off
+        base = voxel_floor(q)
+        comp = vel[axis]
+        for dz in range(2):
+            for dy in range(2):
+                for dx in range(2):
+                    ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                    if flat >= 0:
+                        rx = q[0] - float(ijk[0])
+                        ry = q[1] - float(ijk[1])
+                        rz = q[2] - float(ijk[2])
+                        wgt = wt * _st_spatial_weight_1d(rx) * _st_spatial_weight_1d(ry) * _st_spatial_weight_1d(rz)
+                        if axis == 0:
+                            wp.atomic_add(u, flat, wgt * comp)
+                            wp.atomic_add(wu, flat, wgt)
+                        elif axis == 1:
+                            wp.atomic_add(v, flat, wgt * comp)
+                            wp.atomic_add(wv, flat, wgt)
+                        else:
+                            wp.atomic_add(w, flat, wgt * comp)
+                            wp.atomic_add(ww, flat, wgt)
+
+
+@wp.kernel
+def k_spacetime_weights_to_phase_active(
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    reference_mass: float,
+    eta_phi: float,
+    active_threshold: float,
+    phase_cell: wp.array(dtype=float),
+):
+    """Collapse face P2G accumulators into a cell-centered phase mask.
+
+    The field is C(m/(eta*m0)) with C(x)=min(sqrt(x), 1), following Eq. (13).
+    Free-surface cells below active_threshold are removed from the pressure
+    system as p=0 Dirichlet air cells; source-region fluid bits are preserved.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    vt = voxel_type[tid]
+    if (vt & VOXEL_COLLISION) != 0:
+        phase_cell[tid] = 0.0
+        voxel_type[tid] = vt & (~VOXEL_FLUID)
+        return
+
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    accum = _st_phase_from_mass(wu[tid], reference_mass, eta_phi)
+    accum += _st_phase_from_mass(wv[tid], reference_mass, eta_phi)
+    accum += _st_phase_from_mass(ww[tid], reference_mass, eta_phi)
+    hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
+    if hi >= 0:
+        accum += _st_phase_from_mass(wu[hi], reference_mass, eta_phi)
+    hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
+    if hi >= 0:
+        accum += _st_phase_from_mass(wv[hi], reference_mass, eta_phi)
+    hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1))
+    if hi >= 0:
+        accum += _st_phase_from_mass(ww[hi], reference_mass, eta_phi)
+    phi = accum / 6.0
+    phase_cell[tid] = phi
+
+    if phi >= active_threshold or (vt & VOXEL_SOURCE_REGION_TRACKING) != 0:
+        voxel_type[tid] = vt | VOXEL_FLUID | VOXEL_ACTIVE
+    else:
+        voxel_type[tid] = vt & (~VOXEL_FLUID)
+
+
 register_fn(k_particle_set_grid_data, "fluidSimParticleSetGridData")
+register_fn(k_particle_set_grid_data_spacetime, "fluidSimParticleSetGridDataSpatiotemporal")
+register_fn(k_spacetime_weights_to_phase_active, "fluidSimSpacetimeWeightsToPhaseActive")
 register_fn(k_normalize_mac, "fluidSimWhiteWaterSetGridDataNormalize_internal")
 register_fn(k_particle_to_count, "fluidSimParticleToCount")
 register_fn(k_particle_to_grid_active, "fluidSimParticleToGridActive")
@@ -271,13 +435,13 @@ def resolve_collision(
     vel: wp.vec3,
     collision_sdf: wp.array(dtype=float),
     collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
     origin: wp.vec3,
     voxel_size: float,
-    restitution: float,
-    friction: float,
 ):
     """Push a particle out of the collision SDF and reflect velocity."""
     vp = world_to_voxel(p, origin, voxel_size)
@@ -301,6 +465,11 @@ def resolve_collision(
             vcol = wp.vec3(0.0, 0.0, 0.0)
             if flat >= 0:
                 vcol = collision_vel[flat]
+                friction = collision_friction[flat]
+                restitution = collision_restitution[flat]
+            else:
+                friction = 0.0
+                restitution = 0.0
             vrel = v_out - vcol
             vn = wp.dot(vrel, n)
             if vn < 0.0:
@@ -318,6 +487,8 @@ def k_advect_particles(
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
     collision_sdf: wp.array(dtype=float),
     collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
@@ -325,8 +496,6 @@ def k_advect_particles(
     voxel_size: float,
     dt: float,
     trace_mode: wp.int32,
-    restitution: float,
-    friction: float,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
     open_boundaries: wp.int32,
@@ -347,8 +516,8 @@ def k_advect_particles(
     )
     p1, vel = resolve_collision(
         p1, vel, collision_sdf, collision_vel,
+        collision_friction, collision_restitution,
         leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
-        restitution, friction,
     )
     # domain boundary
     margin = 1.0e-4
@@ -385,7 +554,195 @@ def k_advect_particles(
     velocities[tid] = vel
 
 
+
+
+@wp.func
+def _st_smoothstep01(x: float) -> float:
+    s = wp.clamp(x, 0.0, 1.0)
+    return s * s * (3.0 - 2.0 * s)
+
+
+@wp.kernel
+def k_advect_particles_spacetime(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    time_offsets: wp.array(dtype=float),
+    count: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    dt: float,
+    trace_mode: wp.int32,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+    open_boundaries: wp.int32,
+    step_seed: wp.int32,
+    jitter_strength: float,
+    adaptive_jitter: wp.int32,
+    local_cfl_limit: float,
+    max_local_substeps: wp.int32,
+    alive: wp.array(dtype=wp.int32),
+):
+    """ST-FLIP stochastic staggered-time advection with residual carryover.
+
+    Implements Eq. (10)-(12): each particle carries delta_t = t_global-t_p.
+    The actual advection interval is clamp(dt + delta_t + gamma*xi*dt, 0, 2dt),
+    and the residual is updated to dt + delta_t - dt_act to prevent time drift.
+    The trajectory is internally sub-stepped to a local CFL bound for collision
+    robustness at high global CFL.
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    if alive[tid] == 0:
+        return
+
+    vel = velocities[tid]
+    local_cfl = wp.length(vel) * wp.abs(dt) / wp.max(voxel_size, 1.0e-8)
+    gamma = wp.max(jitter_strength, 0.0)
+    if adaptive_jitter != 0:
+        gamma = gamma * _st_smoothstep01(local_cfl)
+
+    state = wp.rand_init(step_seed, tid)
+    xi = wp.randf(state) - 0.5
+    residual = time_offsets[tid]
+    dt_act = wp.clamp(dt + residual + gamma * xi * dt, 0.0, 2.0 * dt)
+    time_offsets[tid] = dt + residual - dt_act
+
+    nsteps = wp.int32(1)
+    if local_cfl_limit > 1.0e-6:
+        est = wp.length(vel) * wp.abs(dt_act) / (wp.max(voxel_size, 1.0e-8) * local_cfl_limit)
+        nsteps = wp.int32(wp.ceil(est))
+        if nsteps < 1:
+            nsteps = 1
+    max_steps = max_local_substeps
+    if max_steps < 1:
+        max_steps = 1
+    if nsteps > max_steps:
+        nsteps = max_steps
+    sub_dt = dt_act / float(nsteps)
+
+    pcur = positions[tid]
+    vcur = vel
+    i = wp.int32(0)
+    while i < nsteps:
+        pnext = trace_position(
+            pcur, vcur, sub_dt, trace_mode,
+            u, v, w, wu, wv, ww,
+            leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        )
+        pnext, vcur = resolve_collision(
+            pnext, vcur, collision_sdf, collision_vel,
+            collision_friction, collision_restitution,
+            leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        )
+        margin = 1.0e-4
+        for a in range(3):
+            lo = domain_min[a] + margin
+            hi = domain_max[a] - margin
+            if pnext[a] < lo:
+                if open_boundaries != 0:
+                    alive[tid] = 0
+                    positions[tid] = pnext
+                    velocities[tid] = vcur
+                    return
+                else:
+                    if a == 0:
+                        pnext = wp.vec3(lo, pnext[1], pnext[2])
+                        vcur = wp.vec3(wp.max(vcur[0], 0.0), vcur[1], vcur[2])
+                    elif a == 1:
+                        pnext = wp.vec3(pnext[0], lo, pnext[2])
+                        vcur = wp.vec3(vcur[0], wp.max(vcur[1], 0.0), vcur[2])
+                    else:
+                        pnext = wp.vec3(pnext[0], pnext[1], lo)
+                        vcur = wp.vec3(vcur[0], vcur[1], wp.max(vcur[2], 0.0))
+            if pnext[a] > hi:
+                if open_boundaries != 0:
+                    alive[tid] = 0
+                    positions[tid] = pnext
+                    velocities[tid] = vcur
+                    return
+                else:
+                    if a == 0:
+                        pnext = wp.vec3(hi, pnext[1], pnext[2])
+                        vcur = wp.vec3(wp.min(vcur[0], 0.0), vcur[1], vcur[2])
+                    elif a == 1:
+                        pnext = wp.vec3(pnext[0], hi, pnext[2])
+                        vcur = wp.vec3(vcur[0], wp.min(vcur[1], 0.0), vcur[2])
+                    else:
+                        pnext = wp.vec3(pnext[0], pnext[1], hi)
+                        vcur = wp.vec3(vcur[0], vcur[1], wp.min(vcur[2], 0.0))
+        pcur = pnext
+        i = i + 1
+
+    positions[tid] = pcur
+    velocities[tid] = vcur
+
+
+@wp.kernel
+def k_resync_particle_positions_spacetime(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    time_offsets: wp.array(dtype=float),
+    count: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    trace_mode: wp.int32,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+    render_positions: wp.array(dtype=wp.vec3),
+):
+    """Temporary render/export re-synchronization (Algorithm 1, lines 31-34).
+
+    The simulation state remains at each particle's jittered sample time; this
+    kernel predicts an aligned position at the global frame time by advecting
+    a copy by the residual delta_t.
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    p0 = positions[tid]
+    vel = velocities[tid]
+    dt_resync = time_offsets[tid]
+    p1 = trace_position(
+        p0, vel, dt_resync, trace_mode,
+        u, v, w, wu, wv, ww,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+    )
+    p1, vel = resolve_collision(
+        p1, vel, collision_sdf, collision_vel,
+        collision_friction, collision_restitution,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+    )
+    margin = 1.0e-4
+    p1 = wp.vec3(
+        wp.clamp(p1[0], domain_min[0] + margin, domain_max[0] - margin),
+        wp.clamp(p1[1], domain_min[1] + margin, domain_max[1] - margin),
+        wp.clamp(p1[2], domain_min[2] + margin, domain_max[2] - margin),
+    )
+    render_positions[tid] = p1
+
+
 register_fn(k_advect_particles, "fluidSimAdvectParticles")
+register_fn(k_advect_particles_spacetime, "fluidSimAdvectParticlesSpatiotemporal")
+register_fn(k_resync_particle_positions_spacetime, "fluidSimResyncParticlePositionsSpatiotemporal")
 
 
 # ---------------------------------------------------------------------------

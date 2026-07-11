@@ -44,7 +44,7 @@ def test_surface_filters_stack_in_fixed_houdini_style_order(monkeypatch):
     settings.surface_smooth_strength = 0.4
     solver = _fake_solver(solver_mod, settings)
 
-    solver_mod.FluidSolver._surface(solver)
+    solver_mod.FluidSolver._surface(solver, build_render=False)
 
     assert [call[0] for call in launches] == [
         solver_mod.k_surface_sdf_reset,
@@ -71,7 +71,7 @@ def test_surface_stack_defaults_preserve_legacy_box_smoothing(monkeypatch):
     )
     solver = _fake_solver(solver_mod, solver_mod.SolverSettings())
 
-    solver_mod.FluidSolver._surface(solver)
+    solver_mod.FluidSolver._surface(solver, build_render=False)
 
     assert [call[0] for call in launches] == [
         solver_mod.k_surface_sdf_reset,

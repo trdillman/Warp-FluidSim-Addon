@@ -75,6 +75,7 @@ FIELD_ACCESSORS = {
     "particle_temperature": ("float", lambda s: s.particles.attr("temperature")),
     "particle_viscosity": ("float", lambda s: s.particles.attr("viscosity")),
     "particle_density": ("float", lambda s: s.particles.attr("density")),
+    "particle_time_offset": ("float", lambda s: s.particles.time_offset),
 }
 
 _DTYPE_DECL = {"float": "wp.array(dtype=float)",

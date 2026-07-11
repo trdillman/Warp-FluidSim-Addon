@@ -505,6 +505,13 @@ class SurfaceExtractor:
         lo = np.maximum(lo - 2, 0)
         hi = np.minimum(hi + 2, vdim)
         span = hi - lo
+        if np.any(span > self.max_dense_dim):
+            raise RuntimeError(
+                "FluidSim: surface extraction dense span "
+                f"{tuple(int(x) for x in span)} exceeds Surface Max Dense Dim "
+                f"{int(self.max_dense_dim)}; increase Surface Max Dense Dim "
+                "or lower the surface resolution multiplier."
+            )
         # Pad to stable bucket sizes (monotonic growth caps reallocations).
         dims = np.minimum(
             np.minimum(-(-span // self._PAD) * self._PAD, vdim),

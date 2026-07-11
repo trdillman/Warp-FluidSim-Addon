@@ -236,7 +236,7 @@ def build_dam_break():
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
     fs = scene.fluidsim
-    lo, hi = (0.0, 0.0, 0.0), (5.6, 0.6, 1.6)
+    lo, hi = (0.0, -1.00146496, 0.0), (5.6, 1.00146496, 1.6)
     make_domain(scene, lo, hi, "DamBreak Domain")
     fs.voxel_size = 0.03
     fs.max_particles = 600_000
@@ -252,9 +252,9 @@ def build_dam_break():
     scene.frame_start = 1
     scene.frame_end = 120
     scene.frame_set(1)
-    # H = 1.2 m column, a = 0.6 m wide, spanning the tank in y.
+    # Keep the historical 128k preview seed while matching Tyler's reviewed
+    # live emitter transform for future playback.
     pts = lattice((0.0, 0.0, 0.0), (0.6, 0.6, 1.2), 0.015)
-    seed = make_particle_seed(scene, pts, "DamBreak Initial Particle Seed")
     src = make_source_box(
         scene,
         (0.0, 0.0, 0.0),
@@ -262,10 +262,18 @@ def build_dam_break():
         "DamBreak Source Column",
         emit_rate=32.0,
     )
+    src.location = (0.47105896, 0.0, 1.06185913)
+    src.scale = (0.73273778, 1.70176971, 0.99442428)
+    src.display_type = "WIRE"
+    src.hide_render = True
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        location=(2.41923952, 0.0, 0.0), radius=0.39267302)
+    collider = bpy.context.active_object
+    collider.name = "Sphere"
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+    _colliders.tag_collider(collider, friction=1.0, restitution=0.0)
     src.fluidsim.enabled = True
-    # The source creates a normal UI playback path from any timeline frame. The
-    # seed remains available for manual one-shot injection / debugging.
-    src.fluidsim.enabled = False  # preview bake uses the one-shot seed only
+    src.fluidsim.enabled = False  # preview bake uses direct particle injection
     bpy.ops.fluidsim.initialize()
     sess = session()
     n = sess.solver.inject_particles(pts)
@@ -277,17 +285,15 @@ def build_dam_break():
         "README_Dam_Break_Playable",
         "Dam Break live playback notes\n"
         "=============================\n\n"
-        "This file contains both a baked preview output and a reusable live setup.\n\n"
+        "This file contains Tyler's canonical wide-domain dam-break setup: "
+        "a raised source column and a spherical flow collider.\n\n"
         "Best path: open with blender/open_dam_break_playable.py. The script enables "
         "the FluidSim add-on, initializes the CUDA solver, advances to frame 2 "
         "using the 'DamBreak Source Column', enables Live Simulation, "
         "and starts playback.\n\n"
         "Manual path: press Initialize Solver, enable Live Simulation, then "
         "press Play. The 'DamBreak Source Column' stays enabled so Reset or "
-        "Reinitialize can create visible fluid from any timeline frame. For a "
-        "one-shot seed test, disable that source, select 'DamBreak Initial "
-        "Particle Seed', and click Sources > Inject Object Particles after "
-        "initializing.\n",
+        "Reinitialize can create visible fluid from any timeline frame.\n",
     )
     save_scene("dam_break")
     meta = {
@@ -300,8 +306,10 @@ def build_dam_break():
         "fps": FPS,
         "spacing": 0.015,
         "injected": int(n),
-        "seed_object": seed.name,
         "source_object": src.name,
+        "source_location": list(src.location),
+        "source_scale": list(src.scale),
+        "collider_object": collider.name,
         "playable_live_setup": True,
     }
     with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",

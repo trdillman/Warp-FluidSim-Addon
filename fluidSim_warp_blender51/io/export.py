@@ -18,6 +18,17 @@ def export_surface_obj(solver, path: str) -> str:
     _require_existing_parent(path)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# FluidSim Warp surface export\n")
+        fh.write(f"# surface_voxel_size {solver._render_surface_voxel_size():.8g}\n")
+        fh.write(
+            f"# surface_resolution_mode {int(solver.settings.surface_resolution_mode)}\n"
+        )
+        fh.write(
+            "# surface_resolution_multiplier "
+            f"{float(solver.settings.surface_resolution_multiplier):.8g}\n"
+        )
+        fh.write(
+            f"# surface_smooth_iterations {int(solver.settings.surface_smooth_iterations)}\n"
+        )
         for v in verts:
             fh.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
         for t in tris:

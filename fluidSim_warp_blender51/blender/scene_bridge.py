@@ -53,6 +53,7 @@ class Session:
 
     def clear_error(self, scene=None):
         self.error = ""
+        self.memory_assessment = {}
         if scene is not None:
             _scene_set(scene, ERROR_SCENE_KEY, "")
 
@@ -89,6 +90,19 @@ class Session:
         try:
             fs = scene.fluidsim
             settings = build_settings(scene)
+            from ..sim.memory_safety import assess_configuration, resource_snapshot
+
+            self.memory_assessment = assess_configuration(
+                settings, resource_snapshot(settings.device)
+            )
+            if not self.memory_assessment["safe"]:
+                estimate_gib = self.memory_assessment["estimated_bytes"] / 1024**3
+                budget_gib = self.memory_assessment["budget_bytes"] / 1024**3
+                raise RuntimeError(
+                    "FluidSim memory safeguard stopped initialization before CUDA "
+                    f"allocation (estimated {estimate_gib:.1f} GiB, safe live budget "
+                    f"{budget_gib:.1f} GiB). Apply Safe Settings & Retry."
+                )
             profiler = None
             if fs.profiling_enabled:
                 profiler = Profiler(
@@ -103,9 +117,11 @@ class Session:
                     if pg.kernel_name == name:
                         pg.last_error = str(error)[:256]
             fs.status = "Solver ready"
+            self.memory_assessment = {}
             return self
-        except Exception:
-            self.release(scene)
+        except Exception as exc:
+            self.set_error(scene, repr(exc))
+            self.release(scene, preserve_error=True)
             raise
 
     def set_live_enabled(self, scene, enabled):
@@ -340,11 +356,21 @@ _DIRECT_SETTING_FIELDS = (
     "max_particles", "max_whitewater", "time_scale", "cfl",
     "min_substeps", "max_substeps", "flip_ratio", "max_speed",
     "limit_percent", "particles_per_voxel", "count_stiffness",
-    "relax_enabled", "relax_strength", "restitution", "friction",
+    "spacetime_enabled", "spacetime_jitter_strength",
+    "spacetime_adaptive_jitter", "spacetime_phase_eta",
+    "spacetime_phase_threshold", "spacetime_reference_mass",
+    "spacetime_variable_projection", "spacetime_liquid_density",
+    "spacetime_gas_density", "spacetime_min_density",
+    "spacetime_local_cfl", "spacetime_max_local_substeps",
+    "spacetime_resync_surface", "spacetime_seed",
+    "relax_enabled", "relax_strength",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
     "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
     "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
-    "particle_radius_scale", "surface_filter_iterations",
+    "particle_radius_scale", "surface_splat_radius",
+    "surface_resolution_multiplier", "surface_voxel_size",
+    "surface_leaf_capacity_scale", "surface_max_dense_dim",
+    "surface_build_lowres_sdf", "surface_filter_iterations",
     "surface_filter_strength", "surface_dilate_iterations",
     "surface_dilate_strength", "surface_erode_iterations",
     "surface_erode_strength", "surface_smooth_iterations",
@@ -355,7 +381,11 @@ _DIRECT_SETTING_FIELDS = (
 )
 
 _SURFACE_SETTING_FIELDS = frozenset({
-    "surface_enabled", "particle_radius_scale", "surface_filter_type",
+    "surface_enabled", "particle_radius_scale", "surface_splat_radius",
+    "surface_resolution_mode", "surface_resolution_multiplier",
+    "surface_voxel_size", "surface_leaf_capacity_scale",
+    "surface_max_dense_dim", "surface_update_cadence",
+    "surface_build_lowres_sdf", "surface_filter_type",
     "surface_filter_iterations", "surface_filter_strength",
     "surface_dilate_iterations", "surface_dilate_strength",
     "surface_erode_iterations", "surface_erode_strength",
@@ -372,13 +402,15 @@ def _apply_scene_settings(fs, settings, fields=None):
         ProjectNonDivergentSolver,
         RelaxMode,
         SdfFilterType,
+        SurfaceResolutionMode,
+        SurfaceUpdateCadence,
         TraceMode,
         ViscositySolver,
     )
 
     selected = None if fields is None else set(fields)
     for name in _DIRECT_SETTING_FIELDS:
-        if selected is None or name in selected:
+        if (selected is None or name in selected) and hasattr(fs, name):
             setattr(settings, name, getattr(fs, name))
     enum_fields = {
         "sample_type": ("sample_type", ParticleSampleType),
@@ -390,9 +422,11 @@ def _apply_scene_settings(fs, settings, fields=None):
         "viscosity_solver": ("viscosity_solver", ViscositySolver),
         "surface_filter_type": ("surface_filter_type", SdfFilterType),
         "surface_smooth_type": ("surface_smooth_type", SdfFilterType),
+        "surface_resolution_mode": ("surface_resolution_mode", SurfaceResolutionMode),
+        "surface_update_cadence": ("surface_update_cadence", SurfaceUpdateCadence),
     }
     for target, (source, enum_type) in enum_fields.items():
-        if selected is None or target in selected:
+        if (selected is None or target in selected) and hasattr(fs, source):
             setattr(settings, target, enum_type[getattr(fs, source)])
 
 

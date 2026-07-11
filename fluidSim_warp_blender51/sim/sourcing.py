@@ -300,6 +300,7 @@ def k_source_shapes_particles(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
 ):
@@ -345,6 +346,7 @@ def k_source_shapes_particles(
             temperature[slot] = s.temperature
             viscosity[slot] = s.viscosity
             density[slot] = s.density
+            time_offset[slot] = 0.0
             alive[slot] = 1
 
 
@@ -470,6 +472,7 @@ def k_source_particles(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
     first_slot: wp.array(dtype=wp.int32),
@@ -493,6 +496,7 @@ def k_source_particles(
     temperature[slot] = temperature_value
     viscosity[slot] = viscosity_value
     density[slot] = density_value
+    time_offset[slot] = 0.0
     alive[slot] = 1
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
@@ -72,6 +73,78 @@ class FLUIDSIM_OT_clear_error(bpy.types.Operator):
         bridge.clear_error(context.scene)
         fs = context.scene.fluidsim
         fs.status = "Solver ready" if bridge.session().active else "Solver not initialized"
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
+    """Apply machine-aware memory settings and retry solver initialization."""
+
+    bl_idname = "fluidsim.apply_safe_settings"
+    bl_label = "Apply Safe Settings & Retry"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        from .sim.memory_safety import (
+            assess_configuration,
+            estimate_solver_bytes,
+            recommend_safe_settings,
+            resource_snapshot,
+        )
+
+        bridge = _bridge()
+        scene = context.scene
+        fs = scene.fluidsim
+        settings = bridge.build_settings(scene)
+        resources = resource_snapshot(settings.device)
+        assessment = assess_configuration(settings, resources)
+        budget = assessment["budget_bytes"]
+        recommended = dict(assessment["recommended"])
+
+        error = bridge.current_error(scene)
+        overflow = re.search(
+            r"leaf capacity exceeded \((\d+) > (\d+)\)", error, re.IGNORECASE
+        )
+        if overflow:
+            required = int(overflow.group(1))
+            candidate = min(262_144, 1 << max(6, (required - 1).bit_length()))
+            candidate_settings = vars(settings).copy()
+            candidate_settings["leaf_capacity"] = candidate
+            if estimate_solver_bytes(candidate_settings) <= budget:
+                recommended["leaf_capacity"] = candidate
+            else:
+                ratio = max(1.0, required / max(int(settings.leaf_capacity), 1))
+                recommended["voxel_size"] = float(settings.voxel_size) * (
+                    ratio ** (1.0 / 3.0)
+                ) * 1.1
+
+        if not recommended:
+            recovery_budget = min(
+                budget, max(512 * 1024**2, int(assessment["estimated_bytes"] * 0.75))
+            )
+            recommended = recommend_safe_settings(settings, recovery_budget, {
+                **resources,
+                "gpu_utilization": max(85.0, resources["gpu_utilization"]),
+            })
+        if not recommended:
+            self.report({"ERROR"}, "Safe Settings could not find a lower-risk configuration")
+            return {"CANCELLED"}
+
+        changed = []
+        for name, value in recommended.items():
+            if name == "surface_resolution_mode":
+                value = "SIMULATION"
+            if hasattr(fs, name):
+                setattr(fs, name, value)
+                changed.append(name)
+
+        bridge.clear_error(scene)
+        fs.status = "Safe settings applied: " + ", ".join(changed)
+        try:
+            bridge.initialize_session(scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Safe retry stopped: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, fs.status)
         return {"FINISHED"}
 
 
@@ -956,6 +1029,7 @@ CLASSES = (
     FLUIDSIM_OT_initialize,
     FLUIDSIM_OT_release,
     FLUIDSIM_OT_clear_error,
+    FLUIDSIM_OT_apply_safe_settings,
     FLUIDSIM_OT_reset,
     FLUIDSIM_OT_step,
     FLUIDSIM_OT_toggle_live,

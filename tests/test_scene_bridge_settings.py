@@ -143,7 +143,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "max_particles", "max_whitewater", "time_scale", "cfl",
         "min_substeps", "max_substeps", "flip_ratio", "max_speed",
         "limit_percent", "particles_per_voxel", "count_stiffness",
-        "relax_enabled", "relax_strength", "restitution", "friction",
+        "relax_enabled", "relax_strength",
         "pressure_iterations", "pressure_tolerance", "pressure_threshold",
         "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
         "viscosity_iterations", "viscosity_tolerance", "surface_enabled",

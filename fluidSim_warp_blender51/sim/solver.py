@@ -25,6 +25,8 @@ from .enums import (
     MultiGrid,
     RelaxMode,
     SdfFilterType,
+    SurfaceResolutionMode,
+    SurfaceUpdateCadence,
     CustomKernelOrder,
 )
 from .fields import (
@@ -63,18 +65,21 @@ from .sourcing import (
     k_source_resolve_type,
 )
 from .kernels_core import (
-    k_create_sdf_from_mesh_axis,
     k_particle_to_grid_collect,
     k_particle_to_grid_average,
     k_max_vec3_magnitude,
 )
 from .kernels_fluid import (
     k_particle_set_grid_data,
+    k_particle_set_grid_data_spacetime,
+    k_spacetime_weights_to_phase_active,
     k_normalize_mac,
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
     k_advect_particles,
+    k_advect_particles_spacetime,
+    k_resync_particle_positions_spacetime,
     k_forces_gravity,
     k_forces_speed_limit,
     k_particle_to_voxel_count_and_update_index,
@@ -87,6 +92,28 @@ from .kernels_fluid import (
     k_clear_just_initialized_tracked,
 )
 from .custom import SnippetManager
+
+
+# ---------------------------------------------------------------------------
+# ST-FLIP host-side calibration helpers
+# ---------------------------------------------------------------------------
+
+
+def _st_poly6_1d_host(r: float) -> float:
+    q = 1.0 - r * r
+    if q <= 0.0:
+        return 0.0
+    return q * q * q
+
+
+def _st_spatial_weight_1d_host(r: float) -> float:
+    return (35.0 / 32.0) * _st_poly6_1d_host(r)
+
+
+def _st_temporal_weight_host(tau: float) -> float:
+    if tau > 0.5:
+        return 0.0
+    return (35.0 / 16.0) * _st_poly6_1d_host(tau - 0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +183,7 @@ def k_remap_leaf_field(
 
 
 @wp.kernel
-def k_mesh_collision_velocity(
+def k_rasterize_collider_material(
     mesh_id: wp.uint64,
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
@@ -166,7 +193,12 @@ def k_mesh_collision_velocity(
     linear_velocity: wp.vec3,
     angular_velocity: wp.vec3,
     center: wp.vec3,
+    friction: float,
+    restitution: float,
+    collision_sdf: wp.array(dtype=float),
     collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
 ):
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
@@ -182,10 +214,16 @@ def k_mesh_collision_velocity(
         (float(ijk[1]) + 0.5) * voxel_size,
         (float(ijk[2]) + 0.5) * voxel_size,
     )
-    q = wp.mesh_query_point_no_sign(mesh_id, p, band)
+    q = wp.mesh_query_point_sign_normal(mesh_id, p, band)
     if not q.result:
         return
-    collision_vel[tid] = linear_velocity + wp.cross(angular_velocity, p - center)
+    cp = wp.mesh_eval_position(mesh_id, q.face, q.u, q.v)
+    distance = wp.length(p - cp) * q.sign
+    if distance < collision_sdf[tid]:
+        collision_sdf[tid] = distance
+        collision_vel[tid] = linear_velocity + wp.cross(angular_velocity, p - center)
+        collision_friction[tid] = friction
+        collision_restitution[tid] = restitution
 
 
 @wp.kernel
@@ -350,6 +388,8 @@ class ColliderDesc:
     center: tuple = (0.0, 0.0, 0.0)
     aabb_min: tuple = (0.0, 0.0, 0.0)
     aabb_max: tuple = (0.0, 0.0, 0.0)
+    friction: float = 0.0
+    restitution: float = 0.0
 
 
 @dataclass
@@ -388,14 +428,28 @@ class SolverSettings:
 
     particles_per_voxel: float = float(C.DEFAULT_PARTICLES_PER_VOXEL)
     count_stiffness: float = 0.0
+
+    # Spatiotemporal FLIP (ST-FLIP, Braun et al. 2026).
+    spacetime_enabled: bool = False
+    spacetime_jitter_strength: float = 1.0
+    spacetime_adaptive_jitter: bool = True
+    spacetime_phase_eta: float = 0.5
+    spacetime_phase_threshold: float = 0.5
+    spacetime_reference_mass: float = 0.0  # <=0 derives from particles_per_voxel
+    spacetime_variable_projection: bool = True
+    spacetime_liquid_density: float = 1.0
+    spacetime_gas_density: float = 0.0
+    spacetime_min_density: float = 0.05
+    spacetime_local_cfl: float = 1.0
+    spacetime_max_local_substeps: int = 64
+    spacetime_resync_surface: bool = True
+    spacetime_seed: int = 1729
+
     relax_enabled: bool = True
     relax_strength: float = 0.5
     relax_mode: int = int(RelaxMode.LOCAL_VOXEL)
     open_boundaries: bool = False
     domain_sdf_walls: bool = False
-    restitution: float = 0.0
-    friction: float = 0.0
-
     pressure_solver: int = int(ProjectNonDivergentSolver.PCG)
     pressure_iterations: int = C.DEFAULT_PRESSURE_ITERATIONS
     pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
@@ -412,8 +466,18 @@ class SolverSettings:
     surface_enabled: bool = True
     particle_radius_scale: float = 1.2
     surface_splat_radius: int = 2
+    # Render surfacing is intentionally decoupled from the simulation grid.
+    # The simulation SDF remains on the solver grid for whitewater/snippets,
+    # while the render SDF can use a higher-resolution grid for viewport/export.
+    surface_resolution_mode: int = int(SurfaceResolutionMode.SIMULATION)
+    surface_resolution_multiplier: float = 2.0
+    surface_voxel_size: float = 0.0
+    surface_leaf_capacity_scale: float = 8.0
+    surface_max_dense_dim: int = 512
+    surface_update_cadence: int = int(SurfaceUpdateCadence.FRAME)
+    surface_build_lowres_sdf: bool = True
     surface_filter_type: int = int(SdfFilterType.BOX)
-    surface_filter_iterations: int = 1
+    surface_filter_iterations: int = 0
     surface_filter_strength: float = 0.7
     surface_dilate_iterations: int = 0
     surface_dilate_strength: float = 1.0
@@ -451,6 +515,9 @@ class FrameStats:
         self.active_particles = 0
         self.total_particles = 0
         self.whitewater_particles = 0
+        self.surface_voxel_size = 0.0
+        self.surface_active_voxels = 0
+        self.surface_active_leaves = 0
         self.substeps = 0
         self.pressure_iterations = 0
         self.pressure_residual = 0.0
@@ -467,6 +534,9 @@ class FrameStats:
             "activeParticles": self.active_particles,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
+            "surfaceVoxelSize": self.surface_voxel_size,
+            "surfaceActiveVoxels": self.surface_active_voxels,
+            "surfaceActiveLeaves": self.surface_active_leaves,
             "substeps": self.substeps,
             "pressureIterations": self.pressure_iterations,
             "pressureResidual": self.pressure_residual,
@@ -516,6 +586,8 @@ class FluidSolver:
         self.density = ScalarField(g, name="density")
         self.collision_sdf = ScalarField(g, name="collision_sdf")
         self.collision_vel = wp.zeros(vc, dtype=wp.vec3, device=self.device)
+        self.collision_friction = wp.zeros(vc, dtype=float, device=self.device)
+        self.collision_restitution = wp.zeros(vc, dtype=float, device=self.device)
         self.surface_sdf = ScalarField(g, name="surface_sdf")
         self.surface_tmp = ScalarField(g, name="surface_tmp")
         self.churn = ScalarField(g, name="churn")
@@ -534,8 +606,16 @@ class FluidSolver:
         self.pressure_solver = PressureSolver(g, self.device)
         self.viscosity_solver = ViscositySolver(g, self.device)
         self.surface_extractor = SurfaceExtractor(g, self.device)
+        self.render_surface_grid = g
+        self.render_surface_sdf = self.surface_sdf
+        self.render_surface_tmp = self.surface_tmp
+        self.render_surface_extractor = self.surface_extractor
+        self._render_surface_grid_key = None
+        self._render_surface_nvox = self._nvox if hasattr(self, "_nvox") else max(1, g.voxel_capacity)
+        self._surface_topology_generation = 0
         self._surface_mesh_cache = None
         self._surface_mesh_key = None
+        self._render_surface_built_key = None
         self.snippets = SnippetManager()
 
         self.sources: list[SourceShapeDesc] = []
@@ -557,6 +637,14 @@ class FluidSolver:
         self.sim_time = 0.0
         self.stats = FrameStats()
         self._emit_seed = 12345
+        self._st_step_seed = int(settings.spacetime_seed) & 0x7FFFFFFF
+        self._st_previous_dt = 0.0
+        reference_mass = float(getattr(settings, "spacetime_reference_mass", 0.0))
+        self._st_reference_mass_cached = (
+            reference_mass if reference_mass > 0.0
+            else self._calibrate_st_reference_mass()
+            if settings.spacetime_enabled else 0.0
+        )
         # Active-work launch bound for per-voxel kernels, refreshed after
         # every topology rebuild. Kernels guard on the device-side count, so
         # any dim >= the active voxel count is safe; dispatching only the
@@ -598,10 +686,24 @@ class FluidSolver:
         self.sim_time = 0.0
         self._surface_mesh_cache = None
         self._surface_mesh_key = None
+        self._render_surface_built_key = None
+        self._st_previous_dt = 0.0
+        settings = getattr(self, "settings", None)
+        if settings is not None:
+            self._st_step_seed = int(settings.spacetime_seed) & 0x7FFFFFFF
+            reference_mass = float(getattr(settings, "spacetime_reference_mass", 0.0))
+            self._st_reference_mass_cached = (
+                reference_mass if reference_mass > 0.0
+                else self._calibrate_st_reference_mass()
+                if settings.spacetime_enabled else 0.0
+            )
         self.surface_extractor.reset_buffers()
+        self._render_surface_grid_key = None
         self.grid.begin_topology()
         self.grid.finalize_topology()
         self._nvox = max(1, self.grid.active_voxel_count)
+        if settings is not None:
+            self._ensure_render_surface_resources(force=True)
 
     # -- active-work launch bounds -------------------------------------------
 
@@ -618,6 +720,213 @@ class FluidSolver:
     def _nww_dim(self):
         """Live whitewater launch bound (same contract as ``_np_dim``)."""
         return max(1, min(self.whitewater.capacity, self.whitewater.host_count))
+
+    # -- render surfacing resources -----------------------------------------
+
+    def _surface_mode(self) -> int:
+        mode = int(getattr(self.settings, "surface_resolution_mode", int(SurfaceResolutionMode.SIMULATION)))
+        if mode not in {int(SurfaceResolutionMode.SIMULATION), int(SurfaceResolutionMode.MULTIPLIER), int(SurfaceResolutionMode.CUSTOM)}:
+            mode = int(SurfaceResolutionMode.SIMULATION)
+        return mode
+
+    def _render_surface_voxel_size(self) -> float:
+        s = self.settings
+        sim_h = max(float(s.voxel_size), 1.0e-9)
+        mode = self._surface_mode()
+        if mode == int(SurfaceResolutionMode.CUSTOM):
+            custom_h = float(getattr(s, "surface_voxel_size", 0.0))
+            if custom_h > 0.0:
+                return max(custom_h, sim_h / 16.0)
+        if mode == int(SurfaceResolutionMode.MULTIPLIER):
+            mult = float(getattr(s, "surface_resolution_multiplier", 1.0))
+            mult = max(0.25, min(mult, 8.0))
+            return sim_h / mult
+        return sim_h
+
+    def _render_surface_leaf_capacity(self, h: float) -> int:
+        s = self.settings
+        dmin = np.asarray(s.domain_min, dtype=np.float64)
+        dmax = np.asarray(s.domain_max, dtype=np.float64)
+        size = np.maximum(dmax - dmin, h)
+        nx = max(C.LEAF_DIM, int(np.ceil(size[0] / h)))
+        ny = max(C.LEAF_DIM, int(np.ceil(size[1] / h)))
+        nz = max(C.LEAF_DIM, int(np.ceil(size[2] / h)))
+        nx = (nx + C.LEAF_MASK) & ~C.LEAF_MASK
+        ny = (ny + C.LEAF_MASK) & ~C.LEAF_MASK
+        nz = (nz + C.LEAF_MASK) & ~C.LEAF_MASK
+        total_leaf_cells = (nx >> C.LEAF_SHIFT) * (ny >> C.LEAF_SHIFT) * (nz >> C.LEAF_SHIFT)
+        if abs(h - float(s.voxel_size)) <= 1.0e-8:
+            return min(int(self.grid.capacity), int(total_leaf_cells))
+        scale = max(1.0, float(getattr(s, "surface_leaf_capacity_scale", 8.0)))
+        return int(min(total_leaf_cells, max(1, math.ceil(float(s.leaf_capacity) * scale))))
+
+    def _render_surface_grid_key_from_settings(self):
+        s = self.settings
+        h = float(self._render_surface_voxel_size())
+        capacity = self._render_surface_leaf_capacity(h)
+        max_dense = max(8, int(getattr(s, "surface_max_dense_dim", 512)))
+        return (
+            round(h, 12), int(capacity), int(max_dense),
+            tuple(float(x) for x in s.domain_min),
+            tuple(float(x) for x in s.domain_max),
+        )
+
+    def _surface_filter_kernel(self, filter_type: int):
+        return {
+            int(SdfFilterType.DIALATE): k_smooth_surface_sdf_dilate,
+            int(SdfFilterType.ERODE): k_smooth_surface_sdf_erode,
+            int(SdfFilterType.BOX): k_smooth_surface_sdf_box,
+            int(SdfFilterType.MEAN_CURVATURE_FLOW): k_smooth_surface_sdf_mean_curvature,
+        }[int(filter_type)]
+
+    def _surface_settings_signature(self):
+        s = self.settings
+        return (
+            int(getattr(s, "surface_resolution_mode", 0)),
+            round(float(getattr(s, "surface_resolution_multiplier", 1.0)), 6),
+            round(float(getattr(s, "surface_voxel_size", 0.0)), 9),
+            round(float(getattr(s, "surface_leaf_capacity_scale", 1.0)), 6),
+            int(getattr(s, "surface_max_dense_dim", 512)),
+            int(getattr(s, "surface_update_cadence", 1)),
+            bool(getattr(s, "surface_build_lowres_sdf", True)),
+            round(float(s.particle_radius_scale), 6),
+            int(s.surface_splat_radius),
+            int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
+            int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6),
+            int(s.surface_erode_iterations), round(float(s.surface_erode_strength), 6),
+            int(s.surface_smooth_type), int(s.surface_smooth_iterations), round(float(s.surface_smooth_strength), 6),
+            bool(getattr(s, "spacetime_enabled", False)),
+            bool(getattr(s, "spacetime_resync_surface", True)),
+            int(self._surface_topology_generation),
+        )
+
+    def _invalidate_surface_mesh(self):
+        self._surface_mesh_cache = None
+        self._surface_mesh_key = None
+
+    def _render_surface_build_key(self):
+        return (self.frame, round(float(self.sim_time), 12), self._surface_settings_signature())
+
+    def _ensure_render_surface_resources(self, force: bool = False):
+        """Ensure the selected render-surface grid/SDF/extractor exists.
+
+        The simulation-grid surface_sdf is preserved for whitewater, snippets
+        and legacy behavior. When the requested surface voxel size matches the
+        simulation grid, render resources alias the legacy resources. Otherwise
+        a dedicated high-resolution sparse grid is allocated for viewport/export
+        surfacing.
+        """
+        s = self.settings
+        h = self._render_surface_voxel_size()
+        max_dense = max(8, int(getattr(s, "surface_max_dense_dim", 512)))
+        if abs(h - float(self.grid.voxel_size)) <= 1.0e-8:
+            self.render_surface_grid = self.grid
+            self.render_surface_sdf = self.surface_sdf
+            self.render_surface_tmp = self.surface_tmp
+            self.render_surface_extractor = self.surface_extractor
+            self.render_surface_extractor.max_dense_dim = max_dense
+            if force:
+                self.render_surface_extractor.reset_buffers()
+            self._render_surface_grid_key = ("simulation", max_dense)
+            self._render_surface_nvox = self._nvox if hasattr(self, "_nvox") else max(1, self.grid.active_voxel_count)
+            self._invalidate_surface_mesh()
+            return
+
+        key = self._render_surface_grid_key_from_settings()
+        if not force and self._render_surface_grid_key == key:
+            # Max-dense can be changed without recreating the sparse fields.
+            self.render_surface_extractor.max_dense_dim = max_dense
+            return
+
+        dmin = np.asarray(s.domain_min, dtype=np.float64)
+        dmax = np.asarray(s.domain_max, dtype=np.float64)
+        size = np.maximum(dmax - dmin, h)
+        capacity = self._render_surface_leaf_capacity(h)
+        rg = SparseGrid(origin=dmin, size=size, voxel_size=h,
+                        leaf_capacity=capacity, device=self.device)
+        self.render_surface_grid = rg
+        self.render_surface_sdf = ScalarField(rg, name="render_surface_sdf")
+        self.render_surface_tmp = ScalarField(rg, name="render_surface_tmp")
+        self.render_surface_extractor = SurfaceExtractor(rg, self.device, max_dense_dim=max_dense)
+        self._render_surface_grid_key = key
+        self._render_surface_nvox = max(1, rg.active_voxel_count)
+        self._surface_topology_generation += 1
+        self._invalidate_surface_mesh()
+
+    def _surface_positions(self):
+        s = self.settings
+        p = self.particles
+        if s.spacetime_enabled and s.spacetime_resync_surface:
+            g = self.grid
+            wp.launch(
+                k_resync_particle_positions_spacetime, dim=self._np_dim(),
+                inputs=[p.position, p.velocity, p.time_offset, p.count,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.collision_sdf.data, self.collision_vel,
+                        self.collision_friction, self.collision_restitution,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size, int(s.trace_mode),
+                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max)],
+                outputs=[p._position2], device=self.device,
+            )
+            return p._position2
+        return p.position
+
+    def _build_surface_sdf_on_grid(self, grid, sdf, tmp, nvox: int, surface_positions, surface_voxel_size: float):
+        s = self.settings
+        h = float(surface_voxel_size)
+        nvox = max(1, int(nvox))
+        wp.launch(k_surface_sdf_reset, dim=nvox,
+                  inputs=[sdf.data, grid.num_leaves, 4.0 * h],
+                  device=self.device)
+        radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+        splat_radius = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
+        wp.launch(
+            k_build_surface_sdf, dim=self._np_dim(),
+            inputs=[surface_positions, self.particles.count,
+                    grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                    grid.origin, h, radius, splat_radius],
+            outputs=[sdf.data], device=self.device,
+        )
+
+        def apply_filter(kernel, iterations, strength):
+            for _ in range(max(0, int(iterations))):
+                wp.launch(
+                    kernel, dim=nvox,
+                    inputs=[sdf.data, grid.leaf_table, grid.leaf_coords,
+                            grid.voxels_dim, grid.leaves_dim, grid.num_leaves,
+                            h, float(strength)],
+                    outputs=[tmp.data], device=self.device,
+                )
+                sdf.data, tmp.data = tmp.data, sdf.data
+
+        # Explicit pre-filter pass. This setting existed previously but was not
+        # consumed by the solver path; default iterations are now zero to
+        # preserve the prior effective default.
+        apply_filter(self._surface_filter_kernel(int(s.surface_filter_type)),
+                     s.surface_filter_iterations, s.surface_filter_strength)
+        # Houdini-style fixed stack: grow/close, shrink/open, then smooth.
+        apply_filter(k_smooth_surface_sdf_dilate,
+                     s.surface_dilate_iterations, s.surface_dilate_strength)
+        apply_filter(k_smooth_surface_sdf_erode,
+                     s.surface_erode_iterations, s.surface_erode_strength)
+        apply_filter(self._surface_filter_kernel(int(s.surface_smooth_type)),
+                     s.surface_smooth_iterations, s.surface_smooth_strength)
+        return sdf
+
+    def _rebuild_render_surface_topology(self, surface_positions):
+        rg = self.render_surface_grid
+        if rg is self.grid:
+            self._render_surface_nvox = self._nvox
+            return self._render_surface_nvox
+        rg.begin_topology()
+        rg.mark_points(surface_positions, self.particles.count, self._np_dim())
+        rg.expand(max(1, int(getattr(self.settings, "topology_expand", 1))))
+        rg.finalize_topology(sync=True)
+        self._render_surface_nvox = max(1, rg.active_voxel_count)
+        self._surface_topology_generation += 1
+        return self._render_surface_nvox
 
     def _shapes(self):
         if self._shape_array is None:
@@ -689,7 +998,8 @@ class FluidSolver:
         for a in (*self.vel.arrays(), self.voxel_type.data,
                   self.voxel_counts.data, self.temperature.data,
                   self.viscosity_field.data, self.density.data,
-                  self.collision_vel):
+                  self.collision_vel, self.collision_friction,
+                  self.collision_restitution):
             a[:nv].zero_()
         wp.launch(k_fill_float, dim=nv,
                   inputs=[self.collision_sdf.data, 1.0e6], device=self.device)
@@ -711,22 +1021,17 @@ class FluidSolver:
         for col in self.colliders:
             if col.mesh is None:
                 continue
-            wp.launch(
-                k_create_sdf_from_mesh_axis, dim=self._nvox,
-                inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
-                        s.voxel_size, band, band],
-                outputs=[self.collision_sdf.data], device=self.device,
-            )
             lv = col.linear_velocity
             av = col.angular_velocity
-            if any(abs(x) > 1e-12 for x in (*lv, *av)):
-                wp.launch(
-                    k_mesh_collision_velocity, dim=self._nvox,
-                    inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
-                            s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
-                            wp.vec3(*col.center)],
-                    outputs=[self.collision_vel], device=self.device,
-                )
+            wp.launch(
+                k_rasterize_collider_material, dim=self._nvox,
+                inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
+                        s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
+                        wp.vec3(*col.center), col.friction, col.restitution],
+                outputs=[self.collision_sdf.data, self.collision_vel,
+                         self.collision_friction, self.collision_restitution],
+                device=self.device,
+            )
 
     def _index_particles(self):
         g = self.grid
@@ -827,7 +1132,7 @@ class FluidSolver:
                         self._emit_seed, p.capacity],
                 outputs=[p.position, p.velocity, p.attr("age"), p.attr("life"),
                          p.attr("temperature"), p.attr("viscosity"),
-                         p.attr("density"), p.alive, p.count],
+                         p.attr("density"), p.time_offset, p.alive, p.count],
                 device=self.device,
             )
             # Refresh the host-side particle bound after device-side growth
@@ -838,18 +1143,99 @@ class FluidSolver:
             return True
         return False
 
-    def _p2g(self):
+    def _calibrate_st_reference_mass(self):
+        """Monte Carlo estimate of the ST phase reference mass m0.
+
+        The paper defines m0 as the expected space-time mass estimator at a
+        face under a uniform particle distribution with Nppc particles per
+        cell.  Use the exact kernels used by the Warp P2G path on a small
+        particle-filled patch with tau uniformly sampled in [-1/2, 1/2].
+        This keeps phase thresholds tied to the implemented kernel constants,
+        support convention, and particle-per-cell density rather than assuming
+        a closed-form normalization.
+        """
+        s = self.settings
+        manual = float(getattr(s, "spacetime_reference_mass", 0.0))
+        if manual > 0.0 and math.isfinite(manual):
+            return manual
+        ppc = max(1.0e-6, float(s.particles_per_voxel))
+        particles_per_cell = max(1, int(math.ceil(ppc)))
+        particle_mass = ppc / float(particles_per_cell)
+        # Deterministic and intentionally small: 3 MAC face orientations,
+        # 27 cells around the face support, 32 random realizations.
+        rng = np.random.default_rng(int(getattr(s, "spacetime_seed", 1729)) & 0xFFFFFFFF)
+        faces = (
+            np.array((0.0, 0.5, 0.5), dtype=np.float64),
+            np.array((0.5, 0.0, 0.5), dtype=np.float64),
+            np.array((0.5, 0.5, 0.0), dtype=np.float64),
+        )
+        total = 0.0
+        samples = 0
+        for face in faces:
+            lo = np.floor(face - 1.0).astype(int)
+            hi = np.floor(face + 1.0).astype(int)
+            for _ in range(32):
+                accum = 0.0
+                for ix in range(int(lo[0]), int(hi[0]) + 1):
+                    for iy in range(int(lo[1]), int(hi[1]) + 1):
+                        for iz in range(int(lo[2]), int(hi[2]) + 1):
+                            cell = np.array((ix, iy, iz), dtype=np.float64)
+                            for _p in range(particles_per_cell):
+                                pos = cell + rng.random(3)
+                                r = face - pos
+                                ws = (
+                                    _st_spatial_weight_1d_host(float(r[0]))
+                                    * _st_spatial_weight_1d_host(float(r[1]))
+                                    * _st_spatial_weight_1d_host(float(r[2]))
+                                )
+                                if ws <= 0.0:
+                                    continue
+                                tau = rng.random() - 0.5
+                                accum += particle_mass * ws * _st_temporal_weight_host(float(tau))
+                total += accum
+                samples += 1
+        if samples <= 0:
+            return max(1.0, ppc)
+        estimate = total / float(samples)
+        if not math.isfinite(estimate) or estimate <= 1.0e-8:
+            return max(1.0, ppc)
+        return float(estimate)
+
+    def _st_reference_mass(self):
+        s = self.settings
+        ref = float(getattr(s, "spacetime_reference_mass", 0.0))
+        if ref > 0.0 and math.isfinite(ref):
+            return ref
+        cached = float(getattr(self, "_st_reference_mass_cached", 0.0))
+        if cached > 0.0 and math.isfinite(cached):
+            return cached
+        return max(1.0, float(s.particles_per_voxel))
+
+    def _p2g(self, dt=None):
         g = self.grid
         p = self.particles
-        wp.launch(
-            k_particle_set_grid_data, dim=self._np_dim(),
-            inputs=[p.position, p.velocity, p.count,
-                    g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, g.voxel_size],
-            outputs=[self.vel.u, self.vel.v, self.vel.w,
-                     self.vel.wu, self.vel.wv, self.vel.ww],
-            device=self.device,
-        )
+        st = self.settings
+        if st.spacetime_enabled:
+            prev_dt = self._st_previous_dt if self._st_previous_dt > 0.0 else float(dt or (st.time_scale / max(st.frame_rate, 1.0)))
+            wp.launch(
+                k_particle_set_grid_data_spacetime, dim=self._np_dim(),
+                inputs=[p.position, p.velocity, p.time_offset, p.count,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size, prev_dt],
+                outputs=[self.vel.u, self.vel.v, self.vel.w,
+                         self.vel.wu, self.vel.wv, self.vel.ww],
+                device=self.device,
+            )
+        else:
+            wp.launch(
+                k_particle_set_grid_data, dim=self._np_dim(),
+                inputs=[p.position, p.velocity, p.count,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size],
+                outputs=[self.vel.u, self.vel.v, self.vel.w,
+                         self.vel.wu, self.vel.wv, self.vel.ww],
+                device=self.device,
+            )
         wp.launch(
             k_normalize_mac, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
@@ -857,12 +1243,23 @@ class FluidSolver:
                     g.num_leaves],
             device=self.device,
         )
-        # Particle counts -> voxel activity (fluid mask).
-        wp.launch(
-            k_particle_to_grid_active, dim=self._nvox,
-            inputs=[self.voxel_counts.data, g.num_leaves],
-            outputs=[self.voxel_type.data], device=self.device,
-        )
+        # Particle/phase accumulators -> voxel activity (fluid mask).
+        if st.spacetime_enabled:
+            wp.launch(
+                k_spacetime_weights_to_phase_active, dim=self._nvox,
+                inputs=[self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.voxel_type.data, g.leaf_table, g.leaf_coords,
+                        g.voxels_dim, g.leaves_dim, g.num_leaves,
+                        self._st_reference_mass(), st.spacetime_phase_eta,
+                        st.spacetime_phase_threshold],
+                outputs=[self.density.data], device=self.device,
+            )
+        else:
+            wp.launch(
+                k_particle_to_grid_active, dim=self._nvox,
+                inputs=[self.voxel_counts.data, g.num_leaves],
+                outputs=[self.voxel_type.data], device=self.device,
+            )
         # Splat viscosity attribute when requested.
         st = self.settings
         if st.viscosity_enabled and st.viscosity_from_particles:
@@ -964,23 +1361,66 @@ class FluidSolver:
                      self.voxel_counts.data,
                      rest_count=s.particles_per_voxel,
                      count_stiffness=s.count_stiffness)
-        ps.build_preconditioner(self.voxel_type.data)
-        use_mg = int(s.pressure_multigrid) != int(MultiGrid.OFF)
-        if int(s.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
-            if use_mg:
-                ps.coarse_initial_guess(self.voxel_type.data)
-            ps.solve_jacobi(self.voxel_type.data, s.pressure_iterations)
+        st_projection = bool(s.spacetime_enabled and s.spacetime_variable_projection)
+        if st_projection:
+            ps.build_preconditioner_st(
+                self.voxel_type.data, self.vel,
+                reference_mass=self._st_reference_mass(),
+                eta_phi=s.spacetime_phase_eta,
+                rho_liquid=s.spacetime_liquid_density,
+                rho_gas=s.spacetime_gas_density,
+                eps_rho=s.spacetime_min_density,
+            )
         else:
-            ps.solve_pcg(self.voxel_type.data, s.pressure_iterations,
-                         s.pressure_tolerance, use_coarse_guess=use_mg)
+            ps.build_preconditioner(self.voxel_type.data)
+        use_mg = int(s.pressure_multigrid) != int(MultiGrid.OFF) and not st_projection
+        if int(s.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
+            if st_projection:
+                ps.solve_jacobi_st(
+                    self.voxel_type.data, s.pressure_iterations, self.vel,
+                    reference_mass=self._st_reference_mass(),
+                    eta_phi=s.spacetime_phase_eta,
+                    rho_liquid=s.spacetime_liquid_density,
+                    rho_gas=s.spacetime_gas_density,
+                    eps_rho=s.spacetime_min_density,
+                )
+            else:
+                if use_mg:
+                    ps.coarse_initial_guess(self.voxel_type.data)
+                ps.solve_jacobi(self.voxel_type.data, s.pressure_iterations)
+        else:
+            if st_projection:
+                ps.solve_pcg_st(
+                    self.voxel_type.data, s.pressure_iterations,
+                    s.pressure_tolerance, self.vel,
+                    reference_mass=self._st_reference_mass(),
+                    eta_phi=s.spacetime_phase_eta,
+                    rho_liquid=s.spacetime_liquid_density,
+                    rho_gas=s.spacetime_gas_density,
+                    eps_rho=s.spacetime_min_density,
+                )
+            else:
+                ps.solve_pcg(self.voxel_type.data, s.pressure_iterations,
+                             s.pressure_tolerance, use_coarse_guess=use_mg)
         if not ps.should_project_pressure():
             self.stats.pressure_iterations = ps.last_iterations
             self.stats.pressure_residual = ps.last_residual
             return False
         if s.pressure_threshold > 0.0:
             ps.apply_threshold(s.pressure_threshold)
-        ps.project(self.vel, self.voxel_type.data, self.collision_vel,
-                   max_gradient=self._cfl_speed_limit(dt))
+        if st_projection:
+            ps.project_st(
+                self.vel, self.voxel_type.data, self.collision_vel,
+                max_gradient=self._cfl_speed_limit(dt),
+                reference_mass=self._st_reference_mass(),
+                eta_phi=s.spacetime_phase_eta,
+                rho_liquid=s.spacetime_liquid_density,
+                rho_gas=s.spacetime_gas_density,
+                eps_rho=s.spacetime_min_density,
+            )
+        else:
+            ps.project(self.vel, self.voxel_type.data, self.collision_vel,
+                       max_gradient=self._cfl_speed_limit(dt))
         self.stats.pressure_iterations = ps.last_iterations
         self.stats.pressure_residual = ps.last_residual
         return True
@@ -1025,19 +1465,39 @@ class FluidSolver:
                     int(s.sample_type), s.flip_ratio],
             outputs=[p.velocity], device=self.device,
         )
-        wp.launch(
-            k_advect_particles, dim=self._np_dim(),
-            inputs=[p.position, p.velocity, p.count,
-                    self.vel.u, self.vel.v, self.vel.w,
-                    self.vel.wu, self.vel.wv, self.vel.ww,
-                    self.collision_sdf.data, self.collision_vel,
-                    g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, g.voxel_size, dt, int(s.trace_mode),
-                    s.restitution, s.friction,
-                    wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                    1 if s.open_boundaries else 0],
-            outputs=[p.alive], device=self.device,
-        )
+        if s.spacetime_enabled:
+            self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+            wp.launch(
+                k_advect_particles_spacetime, dim=self._np_dim(),
+                inputs=[p.position, p.velocity, p.time_offset, p.count,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.collision_sdf.data, self.collision_vel,
+                        self.collision_friction, self.collision_restitution,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size, dt, int(s.trace_mode),
+                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
+                        1 if s.open_boundaries else 0,
+                        self._st_step_seed, s.spacetime_jitter_strength,
+                        1 if s.spacetime_adaptive_jitter else 0,
+                        s.spacetime_local_cfl, int(s.spacetime_max_local_substeps)],
+                outputs=[p.alive], device=self.device,
+            )
+            self._st_previous_dt = float(dt)
+        else:
+            wp.launch(
+                k_advect_particles, dim=self._np_dim(),
+                inputs=[p.position, p.velocity, p.count,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.collision_sdf.data, self.collision_vel,
+                        self.collision_friction, self.collision_restitution,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size, dt, int(s.trace_mode),
+                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
+                        1 if s.open_boundaries else 0],
+                outputs=[p.alive], device=self.device,
+            )
 
     def _lifecycle(self, dt):
         g = self.grid
@@ -1078,60 +1538,51 @@ class FluidSolver:
         )
         p.position, p._position2 = p._position2, p.position
 
-    def _surface(self):
+    def _surface(self, build_render: bool = True, build_lowres: bool | None = None):
+        """Build simulation-grid and/or render-grid surface SDFs.
+
+        ``surface_sdf`` remains on the simulation grid for legacy fields,
+        whitewater and snippets. ``render_surface_sdf`` may live on a separate
+        higher-resolution grid and is the source for viewport/cache/export mesh
+        extraction.
+        """
         s = self.settings
         if not s.surface_enabled:
             return
-        g = self.grid
-        p = self.particles
-        wp.launch(k_surface_sdf_reset, dim=self._nvox,
-                  inputs=[self.surface_sdf.data, g.num_leaves,
-                          4.0 * s.voxel_size],
-                  device=self.device)
-        radius = 0.5 * s.voxel_size * s.particle_radius_scale
-        wp.launch(
-            k_build_surface_sdf, dim=self._np_dim(),
-            inputs=[p.position, p.count,
-                    g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, s.voxel_size, radius,
-                    int(s.surface_splat_radius)],
-            outputs=[self.surface_sdf.data], device=self.device,
-        )
+        if build_lowres is None:
+            build_lowres = bool(getattr(s, "surface_build_lowres_sdf", True))
+        surface_positions = self._surface_positions()
 
-        def apply_filter(kernel, iterations, strength):
-            for _ in range(max(0, int(iterations))):
-                wp.launch(
-                    kernel, dim=self._nvox,
-                    inputs=[self.surface_sdf.data, g.leaf_table, g.leaf_coords,
-                            g.voxels_dim, g.leaves_dim, g.num_leaves,
-                            s.voxel_size, strength],
-                    outputs=[self.surface_tmp.data], device=self.device,
+        if build_lowres:
+            self._build_surface_sdf_on_grid(
+                self.grid, self.surface_sdf, self.surface_tmp, self._nvox,
+                surface_positions, float(s.voxel_size),
+            )
+
+        if not build_render:
+            return
+        self._ensure_render_surface_resources()
+        rg = self.render_surface_grid
+        if rg is self.grid:
+            if not build_lowres:
+                self._build_surface_sdf_on_grid(
+                    self.grid, self.surface_sdf, self.surface_tmp, self._nvox,
+                    surface_positions, float(s.voxel_size),
                 )
-                self.surface_sdf.data, self.surface_tmp.data = (
-                    self.surface_tmp.data, self.surface_sdf.data)
-
-        # Houdini-style fixed stack: grow/close, shrink/open, then smooth.
-        # Defaults keep the legacy behavior: no dilate/erode, one Box pass.
-        apply_filter(k_smooth_surface_sdf_dilate,
-                     s.surface_dilate_iterations,
-                     s.surface_dilate_strength)
-        apply_filter(k_smooth_surface_sdf_erode,
-                     s.surface_erode_iterations,
-                     s.surface_erode_strength)
-        smooth_kernel = {
-            0: k_smooth_surface_sdf_dilate,
-            1: k_smooth_surface_sdf_erode,
-            2: k_smooth_surface_sdf_box,
-            3: k_smooth_surface_sdf_mean_curvature,
-        }[int(s.surface_smooth_type)]
-        apply_filter(smooth_kernel,
-                     s.surface_smooth_iterations,
-                     s.surface_smooth_strength)
+            self._render_surface_nvox = self._nvox
+        else:
+            rnvox = self._rebuild_render_surface_topology(surface_positions)
+            self._build_surface_sdf_on_grid(
+                rg, self.render_surface_sdf, self.render_surface_tmp, rnvox,
+                surface_positions, float(rg.voxel_size),
+            )
+        self._render_surface_built_key = self._render_surface_build_key()
+        self._invalidate_surface_mesh()
 
     def rebuild_surface(self):
         """Rebuild current-frame surface data after realtime setting changes."""
-        self._surface_mesh_cache = None
-        self._surface_mesh_key = None
+        self._render_surface_built_key = None
+        self._invalidate_surface_mesh()
         self._surface()
 
     def _whitewater(self, dt):
@@ -1258,7 +1709,7 @@ class FluidSolver:
                 if emitted:
                     self._index_particles()
             with self._phase("p2g"):
-                self._p2g()
+                self._p2g(dt)
             self._save_velocities()
             self.snippets.run(CustomKernelOrder.BEFORE_FORCES, self, time_ctx)
             with self._phase("forces"):
@@ -1281,16 +1732,27 @@ class FluidSolver:
             with self._phase("relax"):
                 self._relax()
             with self._phase("surface"):
-                self._surface()
+                cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+                if cadence == int(SurfaceUpdateCadence.SUBSTEP):
+                    self._surface(build_render=True, build_lowres=True)
+                elif s.whitewater_enabled:
+                    # Whitewater uses the legacy simulation-grid surface SDF.
+                    self._surface(build_render=False, build_lowres=True)
             with self._phase("whitewater"):
                 self._whitewater(dt)
             self.snippets.run(CustomKernelOrder.FINAL_STEP, self, time_ctx)
             self.sim_time += dt
             time_ctx["time"] = self.sim_time
 
+        self.frame += 1
+        cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+        if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
+            with self._phase("surface"):
+                self._surface(build_render=True,
+                              build_lowres=bool(getattr(s, "surface_build_lowres_sdf", True)))
+
         wp.synchronize_device(self.device)
         self.grid.refresh_topology_counts()
-        self.frame += 1
 
         st = self.stats
         st.step_time = _time.perf_counter() - t_start
@@ -1301,6 +1763,9 @@ class FluidSolver:
         st.active_particles = self.particles.refresh_host_count()
         st.total_particles = self.particles.capacity
         st.whitewater_particles = self.whitewater.refresh_host_count()
+        st.surface_voxel_size = float(self._render_surface_voxel_size())
+        st.surface_active_leaves = int(getattr(self.render_surface_grid, "active_leaf_count", 0))
+        st.surface_active_voxels = int(st.surface_active_leaves * C.LEAF_VOLUME)
         if self.profiler is not None:
             st.timers = self.profiler.collect()
         return st
@@ -1335,7 +1800,7 @@ class FluidSolver:
                     float(viscosity), float(density), p.capacity,
                     p.position, p.velocity, p.attr("age"), p.attr("life"),
                     p.attr("temperature"), p.attr("viscosity"),
-                    p.attr("density"), p.alive, p.count, self.first_slot_dev],
+                    p.attr("density"), p.time_offset, p.alive, p.count, self.first_slot_dev],
             device=self.device,
         )
         return p.refresh_host_count()
@@ -1343,16 +1808,22 @@ class FluidSolver:
     # -- output ---------------------------------------------------------------
 
     def surface_mesh(self):
-        """Extract the liquid surface as (verts Nx3 float32, tris Mx3 int32).
+        """Extract the selected render surface as (verts Nx3, tris Mx3).
 
-        Memoized per simulation step: viewport display and cache writes both
-        request the mesh each frame, and marching cubes plus the vertex
-        readback is too expensive to run twice for identical state.
+        The selected mesh source may be a separate high-resolution render
+        surface grid. Meshes are memoized per frame and surfacing settings.
         """
-        key = (self.frame, self.sim_time)
+        if self.settings.surface_enabled:
+            # In MANUAL cadence or after a settings change the render SDF may
+            # be stale/missing. Rebuilding here keeps viewport/export calls
+            # deterministic without changing particle simulation state.
+            desired = self._render_surface_build_key()
+            if self._render_surface_built_key != desired:
+                self._surface(build_render=True, build_lowres=False)
+        key = self._render_surface_build_key()
         if self._surface_mesh_cache is not None and self._surface_mesh_key == key:
             return self._surface_mesh_cache
-        mesh = self.surface_extractor.extract(self.surface_sdf)
+        mesh = self.render_surface_extractor.extract(self.render_surface_sdf)
         self._surface_mesh_key = key
         self._surface_mesh_cache = mesh
         return mesh

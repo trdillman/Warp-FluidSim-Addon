@@ -1,6 +1,7 @@
 """Regression tests for slowdown diagnostics and reset cache behavior."""
 
 import inspect
+from types import SimpleNamespace
 
 from fluidSim_warp_blender51.diagnostics.profiler import PROFILE_FRAME_FIELDS
 from fluidSim_warp_blender51.sim import constants as C
@@ -63,6 +64,10 @@ def test_solver_reset_clears_surface_extractor_buffers():
     solver.churn = Clearable()
     solver.grid = Grid()
     solver.surface_extractor = Extractor()
+    solver.settings = SimpleNamespace(spacetime_enabled=False, spacetime_seed=1729)
+    calibration_calls = []
+    solver._calibrate_st_reference_mass = lambda: calibration_calls.append("calibrated")
+    solver._ensure_render_surface_resources = lambda force=False: None
     solver._surface_mesh_cache = object()
     solver._surface_mesh_key = (99, 1.0)
     solver.frame = 99
@@ -71,6 +76,7 @@ def test_solver_reset_clears_surface_extractor_buffers():
     FluidSolver.reset(solver)
 
     assert solver.surface_extractor.reset_calls == 1
+    assert calibration_calls == []
     assert solver._surface_mesh_cache is None
     assert solver._surface_mesh_key is None
     assert solver._nvox == 42

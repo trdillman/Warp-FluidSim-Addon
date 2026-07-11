@@ -31,6 +31,8 @@ from .sim.enums import (
     ProjectNonDivergentSolver,
     RelaxMode,
     SdfFilterType,
+    SurfaceResolutionMode,
+    SurfaceUpdateCadence,
     SourceHeightBackMode,
     SourceShapeForceType,
     SourceShapeShape,
@@ -66,6 +68,7 @@ LIQUID_ATTR_ITEMS = (
 PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
     ("AGE", "Age", "Color by particle age"),
     ("LIFE", "Life", "Color by particle life span"),
+    ("TIME_OFFSET", "ST Time Offset", "Color by beta ST-FLIP time residual"),
 )
 
 
@@ -363,10 +366,14 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Force Direction", size=3, default=(0.0, 0.0, 1.0),
         update=_request_sync)
     # Collider settings.
-    collider_friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0,
-                                     update=_request_sync)
-    collider_restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0,
-                                        update=_request_sync)
+    collider_friction: FloatProperty(
+        name="Friction", default=0.0, min=0.0, max=1.0,
+        description="Tangential velocity loss for collisions with this collider only",
+        update=_request_sync)
+    collider_restitution: FloatProperty(
+        name="Restitution", default=0.0, min=0.0, max=1.0,
+        description="Bounce for collisions with this collider only",
+        update=_request_sync)
     transfer_velocity: BoolProperty(
         name="Transfer Velocity", default=True,
         update=_request_sync,
@@ -462,11 +469,42 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Anti-clumping pressure from particle counts")
 
-    # -- Collision ---------------------------------------------------------------
-    restitution: FloatProperty(name="Restitution", default=0.0, min=0.0, max=1.0,
-                               update=_request_reset)
-    friction: FloatProperty(name="Friction", default=0.0, min=0.0, max=1.0,
-                            update=_request_reset)
+    # -- Spatiotemporal FLIP (beta) -------------------------------------------
+    spacetime_enabled: BoolProperty(
+        name="Enable ST-FLIP (Beta)", default=False, update=_request_reset,
+        description="Experimental spatiotemporal FLIP path for large time steps")
+    spacetime_jitter_strength: FloatProperty(
+        name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_reset)
+    spacetime_adaptive_jitter: BoolProperty(
+        name="Adaptive Jitter", default=True, update=_request_reset)
+    spacetime_phase_eta: FloatProperty(
+        name="Phase Eta", default=0.5, min=0.01, soft_max=2.0, update=_request_reset)
+    spacetime_phase_threshold: FloatProperty(
+        name="Phase Threshold", default=0.5, min=0.0, max=1.0, update=_request_reset)
+    spacetime_reference_mass: FloatProperty(
+        name="Reference Mass", default=0.0, min=0.0, soft_max=64.0,
+        update=_request_reset)
+    spacetime_variable_projection: BoolProperty(
+        name="Variable Projection (Beta)", default=True, update=_request_reset)
+    spacetime_liquid_density: FloatProperty(
+        name="Liquid Density", default=1.0, min=1.0e-6, soft_max=10.0,
+        update=_request_reset)
+    spacetime_gas_density: FloatProperty(
+        name="Gas Density", default=0.0, min=0.0, soft_max=1.0,
+        update=_request_reset)
+    spacetime_min_density: FloatProperty(
+        name="Min Density", default=0.05, min=1.0e-6, soft_max=1.0,
+        update=_request_reset)
+    spacetime_local_cfl: FloatProperty(
+        name="Local CFL", default=1.0, min=0.0, soft_max=4.0,
+        update=_request_reset)
+    spacetime_max_local_substeps: IntProperty(
+        name="Max Local Substeps", default=64, min=1, max=256,
+        update=_request_reset)
+    spacetime_resync_surface: BoolProperty(
+        name="Resync Surface", default=True, update=_request_surface_refresh)
+    spacetime_seed: IntProperty(
+        name="Seed", default=1729, min=0, max=2147483647, update=_request_reset)
 
     # -- Pressure ---------------------------------------------------------------
     pressure_solver: EnumProperty(
@@ -509,11 +547,37 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     particle_radius_scale: FloatProperty(
         name="Particle Radius", default=1.2, min=0.5, soft_max=4.0,
         update=_request_surface_refresh)
+    surface_splat_radius: IntProperty(
+        name="Splat Radius", default=2, min=1, max=16,
+        update=_request_surface_refresh,
+        description="Minimum particle SDF splat support in surface-grid voxels")
+    surface_resolution_mode: EnumProperty(
+        name="Resolution Mode", items=_items(SurfaceResolutionMode),
+        default="SIMULATION", update=_request_surface_refresh)
+    surface_resolution_multiplier: FloatProperty(
+        name="Resolution Multiplier", default=2.0, min=0.25, soft_max=4.0, max=8.0,
+        update=_request_surface_refresh,
+        description="Render surface density relative to simulation; 2 means half voxel size")
+    surface_voxel_size: FloatProperty(
+        name="Surface Voxel Size", default=0.0, min=0.0, soft_max=1.0,
+        precision=5, update=_request_surface_refresh)
+    surface_leaf_capacity_scale: FloatProperty(
+        name="Leaf Capacity Scale", default=8.0, min=1.0, soft_max=16.0, max=128.0,
+        update=_request_surface_refresh)
+    surface_max_dense_dim: IntProperty(
+        name="Max Dense Dim", default=512, min=32, max=2048,
+        update=_request_surface_refresh)
+    surface_update_cadence: EnumProperty(
+        name="Update Cadence", items=_items(SurfaceUpdateCadence),
+        default="FRAME", update=_request_surface_refresh)
+    surface_build_lowres_sdf: BoolProperty(
+        name="Keep Sim Surface Field", default=True,
+        update=_request_surface_refresh)
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
         update=_request_surface_refresh)
     surface_filter_iterations: IntProperty(name="Filter Iterations",
-                                           default=1, min=0, max=16,
+                                           default=0, min=0, max=16,
                                            update=_request_surface_refresh)
     surface_filter_strength: FloatProperty(name="Filter Strength",
                                            default=0.7, min=0.0, max=1.0,

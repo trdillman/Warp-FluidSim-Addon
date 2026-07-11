@@ -12,6 +12,11 @@ from dataclasses import dataclass
 import bpy
 import numpy as np
 
+try:
+    from mathutils.kdtree import KDTree as _KDTree
+except ImportError:  # Blender-free unit tests.
+    _KDTree = None
+
 from ..sim.constants import TIMER_PHASE_SLOTS
 
 SURFACE_NAME = "FluidSim Surface"
@@ -98,6 +103,14 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
         step = int(np.ceil(len(sample_points) / max_samples))
         sample_points = sample_points[::step]
         sample_values = sample_values[::step]
+    if _KDTree is not None:
+        tree = _KDTree(len(sample_points))
+        for index, point in enumerate(sample_points):
+            tree.insert(tuple(point), index)
+        tree.balance()
+        return np.asarray([
+            sample_values[tree.find(tuple(point))[1]] for point in points
+        ], dtype=np.float32)
     cell_size = max(float(cell_size), 1.0e-5)
     keys = np.floor(sample_points / cell_size).astype(np.int32)
     buckets = {}
@@ -181,7 +194,17 @@ def _set_point_radius(data, radius):
 def _swap_mesh(obj, verts, tris, colors=None):
     """Replace an object's mesh with new geometry (fast bulk transfer)."""
     old = obj.data if obj.type == "MESH" else None
-    mesh = bpy.data.meshes.new(obj.name)
+    reuse = (old is not None and getattr(old, "users", 1) == 1
+             and hasattr(old, "clear_geometry"))
+    if reuse:
+        attr = getattr(old, "color_attributes", None)
+        color = attr.get(COLOR_ATTR) if attr is not None else None
+        if color is not None:
+            attr.remove(color)
+        mesh = old
+        mesh.clear_geometry()
+    else:
+        mesh = bpy.data.meshes.new(obj.name)
     nv = len(verts)
     nt = len(tris)
     if nv:
@@ -200,12 +223,13 @@ def _swap_mesh(obj, verts, tris, colors=None):
     if nv:
         _write_mesh_colors(mesh, tris, colors)
     mesh.update()
-    mats = [m for m in (old.materials if old else [])]
-    obj.data = mesh
-    for m in mats:
-        obj.data.materials.append(m)
-    if old is not None and old.users == 0:
-        bpy.data.meshes.remove(old)
+    if not reuse:
+        mats = [m for m in (old.materials if old else [])]
+        obj.data = mesh
+        for m in mats:
+            obj.data.materials.append(m)
+        if old is not None and old.users == 0:
+            bpy.data.meshes.remove(old)
 
 
 def _supports_pointcloud():
@@ -217,8 +241,8 @@ def _swap_points(obj, positions, radius, colors=None):
     pc_old = obj.data
     pc = bpy.data.pointclouds.new(obj.name)
     n = len(positions)
+    pc.resize(n)
     if n:
-        pc.resize(n)
         pos_attr = pc.attributes.get("position")
         if pos_attr is None:
             pos_attr = pc.attributes.new("position", "FLOAT_VECTOR", "POINT")
@@ -230,7 +254,7 @@ def _swap_points(obj, positions, radius, colors=None):
         rad_attr.data.foreach_set(
             "value", np.full(n, radius, dtype=np.float32))
         _write_point_colors(pc, colors)
-        pc.update_tag()
+    pc.update_tag()
     mats = [m for m in (pc_old.materials if pc_old else [])]
     obj.data = pc
     for m in mats:
@@ -254,6 +278,9 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None):
             if indices is not None:
                 velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
+    if mode == "TIME_OFFSET":
+        values = solver.particles.time_offset.numpy()[:solver.particles.host_count]
+        return values[indices] if indices is not None else values
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
         vals = solver.particles.attr(name).numpy()[:solver.particles.host_count]

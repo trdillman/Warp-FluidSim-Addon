@@ -2,18 +2,18 @@
 
 Native Blender port of the FluidSim OpenCL tool (fluidSim.cl 1.0.226) on
 NVIDIA Warp/CUDA. Interactive viewport simulation with sparse tiled leaf-grid fields,
-PIC/FLIP transfer, pressure projection (Jacobi/PCG), viscosity, surface SDF
-extraction, whitewater, profiling, benchmarking, validation, and custom
+PIC/FLIP transfer, beta ST-FLIP, pressure projection (Jacobi/PCG), viscosity,
+decoupled-resolution surface extraction, whitewater, profiling, validation, and custom
 user-kernel extensibility.
 """
 
 bl_info = {
     "name": "FluidSim Warp",
     "author": "FluidSim port (synthesized reference)",
-    "version": (1, 0, 227),
+    "version": (1, 0, 237),
     "blender": (5, 1, 0),
     "location": "3D Viewport > Sidebar > FluidSim",
-    "description": "Interactive GPU liquid simulation (NVIDIA Warp/CUDA)",
+    "description": "Interactive GPU liquid simulation with beta ST-FLIP",
     "category": "Physics",
 }
 

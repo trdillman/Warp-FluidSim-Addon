@@ -6,12 +6,12 @@
   "domain": [
     [
       0.0,
-      0.0,
+      -1.00146496,
       0.0
     ],
     [
       5.6,
-      0.6,
+      1.00146496,
       1.6
     ]
   ],
@@ -19,7 +19,17 @@
   "fps": 24,
   "spacing": 0.015,
   "injected": 128000,
-  "seed_object": "DamBreak Initial Particle Seed",
   "source_object": "DamBreak Source Column",
+  "source_location": [
+    0.4710589647293091,
+    0.0,
+    1.061859130859375
+  ],
+  "source_scale": [
+    0.7327377796173096,
+    1.7017697095870972,
+    0.9944242835044861
+  ],
+  "collider_object": "Sphere",
   "playable_live_setup": true
 }

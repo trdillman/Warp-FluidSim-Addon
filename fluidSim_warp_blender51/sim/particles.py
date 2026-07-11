@@ -53,6 +53,7 @@ def k_compact_alive_scatter(
     src_f2: wp.array(dtype=float),  # temperature
     src_f3: wp.array(dtype=float),  # viscosity
     src_f4: wp.array(dtype=float),  # density/extra
+    src_time_offset: wp.array(dtype=float),
     dst_pos: wp.array(dtype=wp.vec3),
     dst_vel: wp.array(dtype=wp.vec3),
     dst_f0: wp.array(dtype=float),
@@ -60,6 +61,7 @@ def k_compact_alive_scatter(
     dst_f2: wp.array(dtype=float),
     dst_f3: wp.array(dtype=float),
     dst_f4: wp.array(dtype=float),
+    dst_time_offset: wp.array(dtype=float),
     count_out: wp.array(dtype=wp.int32),
 ):
     tid = wp.tid()
@@ -76,6 +78,7 @@ def k_compact_alive_scatter(
     dst_f2[j] = src_f2[tid]
     dst_f3[j] = src_f3[tid]
     dst_f4[j] = src_f4[tid]
+    dst_time_offset[j] = src_time_offset[tid]
     if tid == n - 1:
         count_out[0] = j + 1
 
@@ -112,12 +115,18 @@ class ParticleSystem:
         self.attrs = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
         }
+        # ST-FLIP residual: delta_t = t_global - t_particle.  Stored as
+        # float32 for broad Warp-device compatibility; the paper notes that
+        # half precision is sufficient, but Blender/Warp builds vary in
+        # float16 atomic/indexing support.
+        self.time_offset = wp.zeros(n, dtype=float, device=device)
         # scratch (compaction targets)
         self._position2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._velocity2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._attrs2 = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
         }
+        self._time_offset2 = wp.zeros(n, dtype=float, device=device)
         self.alive = wp.zeros(n, dtype=wp.int32, device=device)
         self.scan_tmp = wp.zeros(n, dtype=wp.int32, device=device)
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
@@ -127,6 +136,8 @@ class ParticleSystem:
         self.host_count = 0
 
     def attr(self, name: str) -> wp.array:
+        if name in {"time_offset", "st_time_offset"}:
+            return self.time_offset
         return self.attrs[name]
 
     def clamp_count(self):
@@ -142,6 +153,7 @@ class ParticleSystem:
 
     def clear(self):
         self.count.zero_()
+        self.time_offset.zero_()
         self.host_count = 0
 
     def compact(self, count_hint: int | None = None):
@@ -154,6 +166,7 @@ class ParticleSystem:
         n = self.capacity if count_hint is None else max(0, min(int(count_hint), self.capacity))
         if n <= 0:
             self.count.zero_()
+            self.time_offset.zero_()
             self.host_count = 0
             return
         self.clamp_count()
@@ -185,9 +198,11 @@ class ParticleSystem:
                 self.position, self.velocity,
                 self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
                 self.attrs["viscosity"], self.attrs["density"],
+                self.time_offset,
                 self._position2, self._velocity2,
                 self._attrs2["age"], self._attrs2["life"], self._attrs2["temperature"],
                 self._attrs2["viscosity"], self._attrs2["density"],
+                self._time_offset2,
                 count_out,
             ],
             device=self.device,
@@ -195,6 +210,7 @@ class ParticleSystem:
         # swap buffers
         self.position, self._position2 = self._position2, self.position
         self.velocity, self._velocity2 = self._velocity2, self.velocity
+        self.time_offset, self._time_offset2 = self._time_offset2, self.time_offset
         for k in self.ATTR_NAMES:
             self.attrs[k], self._attrs2[k] = self._attrs2[k], self.attrs[k]
         if count_out is self._count2:

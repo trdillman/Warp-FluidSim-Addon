@@ -51,6 +51,7 @@ VALIDATION_TESTS = [
     "viscosity solve stability",
     "whitewater churn/emission/advection behavior",
     "benchmark profile schema compatibility",
+    "spatiotemporal FLIP jitter, phase, and residual boundedness",
 ]
 
 
@@ -1083,6 +1084,91 @@ def test_benchmark_schema(device):
     return True, (
         f"benchmark fields ok ({len(BENCHMARK_FIELDS)}), "
         f"frame fields ok ({len(PROFILE_FRAME_FIELDS)}), self-compare pass"
+    )
+
+
+
+
+# ---------------------------------------------------------------------------
+# 16. spatiotemporal FLIP jitter/phase/projection smoke test
+# ---------------------------------------------------------------------------
+
+
+@_test(VALIDATION_TESTS[15])
+def test_spatiotemporal_flip(device):
+    from .solver import FluidSolver, SolverSettings
+
+    settings = SolverSettings()
+    settings.domain_min = (-0.7, -0.4, 0.0)
+    settings.domain_max = (0.7, 0.4, 0.8)
+    settings.voxel_size = 0.08
+    settings.leaf_capacity = 512
+    settings.max_particles = 80_000
+    settings.frame_rate = 24.0
+    settings.time_scale = 1.0
+    settings.min_substeps = 1
+    settings.max_substeps = 1
+    settings.cfl = 16.0
+    settings.gravity = (0.0, 0.0, 0.0)
+    settings.relax_enabled = False
+    settings.surface_enabled = False
+    settings.whitewater_enabled = False
+    settings.pressure_iterations = 80
+    settings.pressure_tolerance = 1.0e-5
+    settings.spacetime_enabled = True
+    settings.spacetime_jitter_strength = 1.0
+    settings.spacetime_adaptive_jitter = False
+    settings.spacetime_variable_projection = True
+    settings.spacetime_phase_eta = 0.5
+    settings.spacetime_phase_threshold = 0.2
+    settings.spacetime_min_density = 0.05
+    settings.spacetime_local_cfl = 1.0
+    settings.spacetime_max_local_substeps = 32
+    settings.device = device
+
+    solver = FluidSolver(settings)
+    ref_mass = float(solver._st_reference_mass())
+    ref_expected = float(settings.particles_per_voxel)
+    ref_ok = bool(
+        np.isfinite(ref_mass)
+        and ref_mass > 0.0
+        and 0.5 * ref_expected <= ref_mass <= 1.5 * ref_expected
+    )
+    xs = np.linspace(-0.35, -0.05, 7, dtype=np.float32)
+    ys = np.linspace(-0.18, 0.18, 5, dtype=np.float32)
+    zs = np.linspace(0.18, 0.58, 6, dtype=np.float32)
+    pts = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
+    vels = np.tile(np.array((0.35, 0.0, 0.0), dtype=np.float32), (len(pts), 1))
+    solver.inject_particles(pts, velocities=vels)
+
+    for _ in range(4):
+        solver.step_frame()
+
+    n = solver.particles.refresh_host_count()
+    if n <= 0:
+        return False, "all particles were lost"
+    offsets = solver.particles.time_offset.numpy()[:n]
+    frame_dt = settings.time_scale / settings.frame_rate
+    max_abs = float(np.max(np.abs(offsets))) if len(offsets) else 0.0
+    bound_ok = max_abs <= 0.5 * frame_dt + 2.0e-5
+    pos = solver.particle_positions()
+    finite_pos = bool(np.isfinite(pos).all())
+    weights = solver.vel.wu.numpy()[: solver._nvox]
+    phase = solver.density.data.numpy()[: solver._nvox]
+    weights_ok = bool(np.isfinite(weights).all() and float(weights.max()) > 0.0)
+    phase_ok = bool(
+        np.isfinite(phase).all()
+        and float(phase.max()) > 0.0
+        and float(phase.min()) >= -1.0e-6
+        and float(phase.max()) <= 1.0001
+    )
+    status_ok = bool(np.isfinite(solver.pressure_solver.last_residual))
+    ok = ref_ok and bound_ok and finite_pos and weights_ok and phase_ok and status_ok
+    return ok, (
+        f"particles={n}, m0={ref_mass:.4f} (target ppc={ref_expected:.4f}), "
+        f"max |delta_t|={max_abs:.6f} <= {0.5 * frame_dt:.6f}, "
+        f"max weight={float(weights.max()):.4f}, max phase={float(phase.max()):.4f}, "
+        f"pressure={solver.pressure_solver.last_pressure_status}"
     )
 
 

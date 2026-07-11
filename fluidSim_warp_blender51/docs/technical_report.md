@@ -347,3 +347,17 @@ never crash the suite.
   will fail the exact fields even if it stays fast.
 - Surface attribute coloring performs a host-side nearest-neighbour sample from
   particles to mesh vertices; sample counts are capped for interactive use.
+
+## Decoupled render surfacing and ST-FLIP beta
+
+Version 1.0.235 adds a separate sparse render-surface grid with multiplier or
+custom voxel sizing, frame/manual rebuild cadence, filtering, bounded dense
+extraction, and shared viewport/cache/export mesh ownership. The simulation
+grid remains authoritative for physics and optional low-resolution surface
+fields.
+
+The beta ST-FLIP lane adds a device-resident particle time residual,
+spatiotemporal P2G deposition, phase-field activation, optional
+variable-coefficient pressure projection, local particle CFL substeps, and
+temporary render-surface re-synchronization. Default FLIP remains unchanged
+and retains its recorded-launch/CUDA-graph PCG path.

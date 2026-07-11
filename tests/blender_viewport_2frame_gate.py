@@ -50,6 +50,9 @@ def main():
     check("live toggle on", bpy.ops.fluidsim.toggle_live() == {"FINISHED"})
     before = sess.solver.frame
     scene.frame_set(scene.frame_current + 1)
+    surface_after_first = bpy.data.objects.get("FluidSim Surface")
+    surface_data_pointer = (
+        surface_after_first.data.as_pointer() if surface_after_first else 0)
     scene.frame_set(scene.frame_current + 1)
     after = sess.solver.frame
     check("viewport live advanced two frames", after >= before + 2, f"{before} -> {after}")
@@ -59,6 +62,8 @@ def main():
     check("surface viewport object", surf is not None and surf.type == "MESH")
     check("surface viewport mesh updated", surf is not None and len(surf.data.vertices) > 0,
           f"{len(surf.data.vertices) if surf else 0} verts")
+    check("surface mesh datablock reused",
+          surf is not None and surf.data.as_pointer() == surface_data_pointer)
     check("particle viewport object", parts is not None)
     if parts is not None and hasattr(parts.data, "attributes"):
         attr = parts.data.attributes.get("position")

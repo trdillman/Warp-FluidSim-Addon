@@ -64,6 +64,39 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
 
+def test_nearest_values_native_and_fallback_agree(monkeypatch):
+    _install_scene_bridge_stubs(monkeypatch)
+    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
+    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    points = np.array([[0.1, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float32)
+    samples = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
+    values = np.array([2.0, 7.0], dtype=np.float32)
+
+    class FakeKDTree:
+        def __init__(self, _size):
+            self.items = []
+
+        def insert(self, point, index):
+            self.items.append((np.asarray(point), index))
+
+        def balance(self):
+            pass
+
+        def find(self, point):
+            point = np.asarray(point)
+            sample, index = min(
+                self.items, key=lambda item: np.sum((item[0] - point) ** 2))
+            return sample, index, float(np.linalg.norm(sample - point))
+
+    monkeypatch.setattr(viewport, "_KDTree", FakeKDTree)
+    native = viewport._nearest_values(points, samples, values, 0.5)
+    monkeypatch.setattr(viewport, "_KDTree", None)
+    fallback = viewport._nearest_values(points, samples, values, 0.5)
+
+    np.testing.assert_array_equal(native, [2.0, 7.0])
+    np.testing.assert_array_equal(fallback, native)
+
+
 def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()

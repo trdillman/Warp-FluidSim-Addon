@@ -57,6 +57,12 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         error = current_error(context.scene)
         if error:
             box.label(text=error[:120], icon="ERROR")
+            from .sim.memory_safety import is_memory_capacity_error
+            if is_memory_capacity_error(error):
+                recovery = box.column(align=True)
+                recovery.alert = True
+                recovery.label(text="GPU capacity risk detected")
+                recovery.operator("fluidsim.apply_safe_settings", icon="MODIFIER")
             box.operator("fluidsim.clear_error", icon="X")
         if sess.active:
             col = box.column(align=True)
@@ -135,6 +141,30 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
             sub.prop(fs, "limit_percent")
         col.prop(fs, "count_stiffness")
 
+        box = layout.box()
+        box.label(text="ST-FLIP (Beta)", icon="EXPERIMENTAL")
+        box.prop(fs, "spacetime_enabled")
+        sub = box.column(align=True)
+        sub.enabled = fs.spacetime_enabled
+        sub.prop(fs, "spacetime_jitter_strength")
+        sub.prop(fs, "spacetime_adaptive_jitter")
+        row = sub.row(align=True)
+        row.prop(fs, "spacetime_phase_eta", text="Eta")
+        row.prop(fs, "spacetime_phase_threshold", text="Threshold")
+        sub.prop(fs, "spacetime_reference_mass")
+        sub.prop(fs, "spacetime_variable_projection")
+        projection = sub.column(align=True)
+        projection.enabled = fs.spacetime_variable_projection
+        row = projection.row(align=True)
+        row.prop(fs, "spacetime_liquid_density", text="Liquid Density")
+        row.prop(fs, "spacetime_gas_density", text="Gas Density")
+        projection.prop(fs, "spacetime_min_density")
+        row = sub.row(align=True)
+        row.prop(fs, "spacetime_local_cfl", text="Local CFL")
+        row.prop(fs, "spacetime_max_local_substeps", text="Max Steps")
+        sub.prop(fs, "spacetime_resync_surface")
+        sub.prop(fs, "spacetime_seed")
+
 
 class FLUIDSIM_PT_sources(FluidSimPanel, bpy.types.Panel):
     bl_label = "Sources"
@@ -205,7 +235,6 @@ class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        fs = context.scene.fluidsim
         row = layout.row(align=True)
         op = row.operator("fluidsim.tag_object", text="Tag Collider", icon="ADD")
         op.role = "COLLIDER"
@@ -222,10 +251,6 @@ class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
             col.prop(pg, "collider_friction")
             col.prop(pg, "collider_restitution")
             col.prop(pg, "transfer_velocity")
-
-        col = layout.column(align=True)
-        col.prop(fs, "restitution")
-        col.prop(fs, "friction")
 
         tagged = [o for o in context.scene.objects
                   if o.fluidsim.role == "COLLIDER"]
@@ -296,15 +321,18 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Surface / Whitewater"
+    bl_label = "Whitewater"
     bl_idname = "FLUIDSIM_PT_surface"
     bl_options = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, context):
+        self.layout.prop(context.scene.fluidsim, "whitewater_enabled", text="")
 
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        col = layout.column(align=True)
-        sub = col.column(align=True)
+        sub = layout.column(align=True)
+        sub.enabled = fs.whitewater_enabled
         sub.prop(fs, "max_whitewater")
         sub.prop(fs, "ww_churn_gain")
         sub.prop(fs, "ww_churn_decay")
@@ -317,6 +345,16 @@ class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
         row = sub.row(align=True)
         row.prop(fs, "ww_bubble_drag")
         row.prop(fs, "ww_spray_drag")
+
+        layout.separator()
+        box = layout.box()
+        box.label(text="Viewport / Render", icon="OUTLINER_OB_POINTCLOUD")
+        box.prop(fs, "show_whitewater")
+        display = box.column(align=True)
+        display.enabled = fs.show_whitewater
+        display.prop(fs, "whitewater_display_scale")
+        display.prop(fs, "whitewater_attribute_mode")
+        display.prop(fs, "whitewater_material")
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
@@ -363,6 +401,21 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         sub.enabled = fs.show_surface
         sub.prop(fs, "surface_enabled")
         sub.prop(fs, "particle_radius_scale")
+        sub.prop(fs, "surface_splat_radius")
+        sub.prop(fs, "surface_resolution_mode")
+        sub.prop(fs, "surface_resolution_multiplier")
+        if fs.surface_resolution_mode == "CUSTOM":
+            sub.prop(fs, "surface_voxel_size")
+        row = sub.row(align=True)
+        row.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
+        row.prop(fs, "surface_max_dense_dim", text="Dense Max")
+        sub.prop(fs, "surface_update_cadence")
+        sub.prop(fs, "surface_build_lowres_sdf")
+        sub.separator()
+        sub.prop(fs, "surface_filter_type")
+        row = sub.row(align=True)
+        row.prop(fs, "surface_filter_iterations", text="Filter")
+        row.prop(fs, "surface_filter_strength", text="Strength")
         row = sub.row(align=True)
         row.prop(fs, "surface_dilate_iterations", text="Dilate")
         row.prop(fs, "surface_dilate_strength", text="Strength")
@@ -385,17 +438,6 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         sub.prop(fs, "particle_display_scale")
         sub.prop(fs, "particle_attribute_mode")
         sub.prop(fs, "particle_material")
-
-        box = layout.box()
-        box.label(text="Whitewater Particles", icon="OUTLINER_OB_POINTCLOUD")
-        box.prop(fs, "show_whitewater")
-        sub = box.column(align=True)
-        sub.enabled = fs.show_whitewater
-        sub.prop(fs, "whitewater_enabled")
-        sub.prop(fs, "whitewater_display_scale")
-        sub.prop(fs, "whitewater_attribute_mode")
-        sub.prop(fs, "whitewater_material")
-
 
 def _snippet_state_icon(snip):
     """Icon reflecting validation state of a snippet's current source."""

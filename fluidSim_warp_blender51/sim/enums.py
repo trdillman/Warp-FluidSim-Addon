@@ -69,6 +69,20 @@ class SdfFilterType(IntEnum):
     MEAN_CURVATURE_FLOW = 3
 
 
+class SurfaceResolutionMode(IntEnum):
+    """Render/viewport surface grid resolution policy."""
+    SIMULATION = 0      # use the simulation voxel size and legacy grid
+    MULTIPLIER = 1      # voxel_size / surface_resolution_multiplier
+    CUSTOM = 2          # explicit surface_voxel_size
+
+
+class SurfaceUpdateCadence(IntEnum):
+    """How often the expensive render surface is rebuilt."""
+    SUBSTEP = 0         # legacy behavior: rebuild inside every solver substep
+    FRAME = 1           # recommended: rebuild once at the end of each display frame
+    MANUAL = 2          # no automatic rebuild; surface_mesh() can force one
+
+
 class ParticleAttributeDataType(IntEnum):
     """FLUIDSIM::Parameters::ParticleAttributeDataType"""
     INT = 0

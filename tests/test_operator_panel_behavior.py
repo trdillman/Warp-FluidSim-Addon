@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import types
@@ -213,6 +214,28 @@ def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
     assert any(op["id"] == "fluidsim.clear_error" for op in layout.operators)
 
 
+def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        status="Init failed", live=False, stat_particles=0, stat_voxels=0,
+        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
+        min_substeps=1, max_substeps=4, use_scene_gravity=True,
+        gravity=(0.0, 0.0, -9.81),
+    ))
+    scene_bridge.set_error(scene, "CUDA error 2: out of memory")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_simulation()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=scene))
+
+    assert any(
+        op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators
+    )
+
+
 def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
@@ -221,6 +244,17 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         show_surface=True,
         surface_enabled=True,
         particle_radius_scale=1.2,
+        surface_splat_radius=2,
+        surface_resolution_mode="MULTIPLIER",
+        surface_resolution_multiplier=2.0,
+        surface_voxel_size=0.0,
+        surface_leaf_capacity_scale=8.0,
+        surface_max_dense_dim=512,
+        surface_update_cadence="FRAME",
+        surface_build_lowres_sdf=True,
+        surface_filter_type="BOX",
+        surface_filter_iterations=1,
+        surface_filter_strength=0.7,
         surface_dilate_iterations=0,
         surface_dilate_strength=1.0,
         surface_erode_iterations=0,
@@ -251,7 +285,17 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "liquid_view_mode",
         "show_surface",
         "surface_enabled",
-        "particle_radius_scale",
+            "particle_radius_scale",
+            "surface_splat_radius",
+            "surface_resolution_mode",
+            "surface_resolution_multiplier",
+            "surface_leaf_capacity_scale",
+            "surface_max_dense_dim",
+            "surface_update_cadence",
+            "surface_build_lowres_sdf",
+            "surface_filter_type",
+            "surface_filter_iterations",
+            "surface_filter_strength",
         "surface_dilate_iterations",
         "surface_dilate_strength",
         "surface_erode_iterations",
@@ -266,21 +310,18 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "particle_display_scale",
         "particle_attribute_mode",
         "particle_material",
+    }
+    assert expected.issubset(set(layout.props))
+    assert {
         "show_whitewater",
         "whitewater_enabled",
         "whitewater_display_scale",
         "whitewater_attribute_mode",
         "whitewater_material",
-    }
-    assert expected.issubset(set(layout.props))
-    assert {
-        "surface_filter_type",
-        "surface_filter_iterations",
-        "surface_filter_strength",
     }.isdisjoint(layout.props)
 
 
-def test_realtime_display_panel_is_sole_owner_of_live_display_controls(monkeypatch):
+def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
@@ -296,48 +337,50 @@ def test_realtime_display_panel_is_sole_owner_of_live_display_controls(monkeypat
         ww_life_max=3.0,
         ww_bubble_drag=4.0,
         ww_spray_drag=0.2,
-        output_collection_name="FluidSim Output",
-        show_overlay=True,
-        cache_enabled=False,
-        cache_playback_enabled=False,
-        cache_use_custom_range=False,
-        cache_frame_start=1,
-        cache_frame_end=120,
-        cache_path="",
+        show_whitewater=True,
+        whitewater_display_scale=1.0,
+        whitewater_attribute_mode="NONE",
+        whitewater_material=None,
     )
     scene = SimpleNamespace(fluidsim=fs)
-    duplicate_owned = {
-        "liquid_view_mode",
-        "show_surface",
-        "surface_enabled",
-        "particle_radius_scale",
-        "surface_dilate_iterations",
-        "surface_dilate_strength",
-        "surface_erode_iterations",
-        "surface_erode_strength",
-        "surface_smooth_type",
-        "surface_smooth_iterations",
-        "surface_smooth_strength",
-        "surface_attribute_mode",
-        "surface_material",
-        "show_particles",
-        "particle_display_fraction",
-        "particle_display_scale",
-        "particle_attribute_mode",
-        "particle_material",
+    expected = {
         "show_whitewater",
         "whitewater_enabled",
         "whitewater_display_scale",
         "whitewater_attribute_mode",
         "whitewater_material",
+        "max_whitewater",
+        "ww_churn_gain",
+        "ww_churn_decay",
+        "ww_churn_threshold",
+        "ww_emission_rate",
+        "ww_min_speed",
+        "ww_life_min",
+        "ww_life_max",
+        "ww_bubble_drag",
+        "ww_spray_drag",
     }
 
-    for panel_cls in (panels.FLUIDSIM_PT_surface, panels.FLUIDSIM_PT_output):
-        layout = _Layout()
-        panel = panel_cls()
-        panel.layout = layout
-        panel.draw(SimpleNamespace(scene=scene))
-        assert duplicate_owned.isdisjoint(layout.props), panel_cls.__name__
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_surface()
+    panel.layout = layout
+    panel.draw_header(SimpleNamespace(scene=scene))
+    panel.draw(SimpleNamespace(scene=scene))
+    assert expected.issubset(layout.props)
+
+    realtime_source = inspect.getsource(panels.FLUIDSIM_PT_realtime_display.draw)
+    assert all(name not in realtime_source for name in expected)
+
+
+def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = inspect.getsource(panels.FLUIDSIM_PT_colliders.draw)
+
+    assert 'col.prop(pg, "collider_friction")' in source
+    assert 'col.prop(pg, "collider_restitution")' in source
+    assert 'col.prop(fs, "friction")' not in source
+    assert 'col.prop(fs, "restitution")' not in source
 
 
 def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypatch):
@@ -520,6 +563,14 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     fs = SimpleNamespace(
         surface_enabled=False,
         particle_radius_scale=2.0,
+        surface_splat_radius=2,
+        surface_resolution_mode="MULTIPLIER",
+        surface_resolution_multiplier=2.0,
+        surface_voxel_size=0.0,
+        surface_leaf_capacity_scale=8.0,
+        surface_max_dense_dim=512,
+        surface_update_cadence="FRAME",
+        surface_build_lowres_sdf=True,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
         surface_filter_strength=0.7,

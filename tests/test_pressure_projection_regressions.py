@@ -18,13 +18,64 @@ from fluidSim_warp_blender51.sim.constants import (
     VOXEL_FLUID,
 )
 from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
+from fluidSim_warp_blender51.sim.kernels_fluid import resolve_collision
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 from fluidSim_warp_blender51.sim.solver import (
+    ColliderDesc,
     FluidSolver,
     SolverSettings,
     k_sanitize_mac_velocity,
     k_sanitize_particles,
 )
+
+
+@wp.kernel
+def _resolve_material_test(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+):
+    tid = wp.tid()
+    p, v = resolve_collision(
+        positions[tid], velocities[tid], collision_sdf, collision_vel,
+        collision_friction, collision_restitution,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size)
+    positions[tid] = p
+    velocities[tid] = v
+
+
+def _box_collider(center, half_size, friction, restitution, device):
+    cx, cy, cz = center
+    sx, sy, sz = half_size
+    verts = np.asarray([
+        [cx-sx, cy-sy, cz-sz], [cx+sx, cy-sy, cz-sz],
+        [cx+sx, cy+sy, cz-sz], [cx-sx, cy+sy, cz-sz],
+        [cx-sx, cy-sy, cz+sz], [cx+sx, cy-sy, cz+sz],
+        [cx+sx, cy+sy, cz+sz], [cx-sx, cy+sy, cz+sz],
+    ], dtype=np.float32)
+    tris = np.asarray([
+        0,1,2, 0,2,3, 4,6,5, 4,7,6,
+        0,4,5, 0,5,1, 1,5,6, 1,6,2,
+        2,6,7, 2,7,3, 3,7,4, 3,4,0,
+    ], dtype=np.int32)
+    return ColliderDesc(
+        mesh=wp.Mesh(
+            points=wp.array(verts, dtype=wp.vec3, device=device),
+            indices=wp.array(tris, dtype=wp.int32, device=device)),
+        center=center,
+        aabb_min=tuple(verts.min(axis=0)),
+        aabb_max=tuple(verts.max(axis=0)),
+        friction=friction,
+        restitution=restitution,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +99,72 @@ def _one_leaf_grid(device):
     assert grid.finalize_topology() == 1
     assert grid.voxel_capacity == LEAF_VOLUME
     return grid
+
+
+def test_collision_grid_keeps_material_of_each_collider(cuda_device):
+    settings = SolverSettings(
+        domain_min=(0.0, 0.0, 0.0), domain_max=(1.2, 0.4, 0.4),
+        voxel_size=0.05, leaf_capacity=8, max_particles=8,
+        max_whitewater=8, device=cuda_device,
+    )
+    solver = FluidSolver(settings)
+    solver.set_colliders([
+        _box_collider((0.25, 0.2, 0.2), (0.12, 0.12, 0.12),
+                      0.1, 0.2, cuda_device),
+        _box_collider((0.85, 0.2, 0.2), (0.12, 0.12, 0.12),
+                      0.8, 0.9, cuda_device),
+    ])
+
+    solver._rebuild_topology()
+    solver._clear_grid_fields()
+    solver._apply_collisions()
+    nvox = solver._nvox
+    sdf = solver.collision_sdf.data.numpy()[:nvox]
+    friction = solver.collision_friction.numpy()[:nvox]
+    restitution = solver.collision_restitution.numpy()[:nvox]
+    inside = sdf < 0.0
+
+    assert inside.any()
+    assert np.any(np.isclose(friction[inside], 0.1))
+    assert np.any(np.isclose(friction[inside], 0.8))
+    assert np.any(np.isclose(restitution[inside], 0.2))
+    assert np.any(np.isclose(restitution[inside], 0.9))
+
+
+def test_particles_use_the_material_of_the_collider_they_hit(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    friction = np.empty(LEAF_VOLUME, dtype=np.float32)
+    restitution = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        local = flat % LEAF_VOLUME
+        i = local & 7
+        k = local >> 6
+        sdf[flat] = (k + 0.5) * 0.05 - 0.2
+        friction[flat] = 0.1 if i < 4 else 0.8
+        restitution[flat] = 0.2 if i < 4 else 0.9
+    collision_sdf = wp.array(sdf, dtype=float, device=cuda_device)
+    collision_vel = wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device)
+    collision_friction = wp.array(friction, dtype=float, device=cuda_device)
+    collision_restitution = wp.array(
+        restitution, dtype=float, device=cuda_device)
+    positions = wp.array(
+        [(0.125, 0.125, 0.15), (0.275, 0.125, 0.15)],
+        dtype=wp.vec3, device=cuda_device)
+    velocities = wp.array(
+        [(1.0, 0.0, -1.0), (1.0, 0.0, -1.0)],
+        dtype=wp.vec3, device=cuda_device)
+    wp.launch(
+        _resolve_material_test, dim=2,
+        inputs=[positions, velocities, collision_sdf,
+                collision_vel, collision_friction,
+                collision_restitution, g.leaf_table, g.voxels_dim,
+                g.leaves_dim, g.origin, g.voxel_size],
+        device=cuda_device)
+    result = velocities.numpy()
+
+    assert result[0, 0] > result[1, 0]
+    assert result[0, 2] < result[1, 2]
 
 
 def _one_active_leaf_grid(device, leaf_capacity):
@@ -316,6 +433,59 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     assert solver.should_project_pressure() is True
     assert solver.last_residual_squared < 1.0e-6 * 1.0e-6 * grid.voxel_capacity
     assert np.all(np.isfinite(solver.pressure.numpy()))
+
+    commands = (
+        solver._pcg_apply_cmd,
+        solver._pcg_update_cmd,
+        solver._pcg_update_p_cmd,
+        solver._pcg_alpha_cmds,
+        solver._pcg_beta_cmds,
+        solver._pcg_pack_cmds,
+    )
+    graphs = dict(solver._pcg_graphs)
+    assert graphs
+    assert len(graphs) <= 8
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+
+    assert status["converged"] is True
+    assert commands == (
+        solver._pcg_apply_cmd,
+        solver._pcg_update_cmd,
+        solver._pcg_update_p_cmd,
+        solver._pcg_alpha_cmds,
+        solver._pcg_beta_cmds,
+        solver._pcg_pack_cmds,
+    )
+    assert solver._pcg_graphs == graphs
+    assert np.all(np.isfinite(solver.pressure.numpy()))
+
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=25,
+        tolerance=1.0e-3,
+        check_every=25,
+    )
+    assert status["converged"] is True
+    assert solver.last_iterations == 25
+
+    replacement = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(replacement, voxel_type, cuda_device)
+    previous_apply_cmd = solver._pcg_apply_cmd
+    status = solver.solve_pcg(
+        replacement,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+    assert status["converged"] is True
+    assert solver._pcg_apply_cmd is not previous_apply_cmd
+    assert solver._pcg_graphs
+    assert not any(graph in graphs.values() for graph in solver._pcg_graphs.values())
 
 
 def test_pressure_pcg_reductions_ignore_inactive_allocation_tail(cuda_device):
