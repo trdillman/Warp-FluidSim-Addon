@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import bpy
 
+from .sim.constants import TIMER_PHASE_SLOTS
+
 
 class FluidSimPanel:
     bl_space_type = "VIEW_3D"
@@ -590,13 +592,8 @@ class FLUIDSIM_PT_diagnostics(FluidSimPanel, bpy.types.Panel):
             box.label(text="Average timers (ms):", icon="TIME")
             summary = sess.profiler.summary(last_n=30)
             names = {
-                "compute_0": "Sourcing", "compute_1": "Indexing",
-                "compute_2": "P2G", "compute_3": "Forces",
-                "compute_4": "Viscosity", "compute_5": "Pressure",
-                "compute_6": "G2P", "compute_8": "Collision",
-                "compute_10": "Relax", "compute_11": "Surface",
-                "compute_12": "Whitewater", "compute_13": "Custom",
-                "compute_14": "Lifecycle", "compute_15": "Topology",
+                f"compute_{slot}": phase.replace("_", " ").title()
+                for phase, slot in TIMER_PHASE_SLOTS.items()
             }
             for slot, label in names.items():
                 v = summary.get(slot, 0.0)

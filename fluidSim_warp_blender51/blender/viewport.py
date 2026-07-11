@@ -7,8 +7,12 @@ renders without any caching step.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import bpy
 import numpy as np
+
+from ..sim.constants import TIMER_PHASE_SLOTS
 
 SURFACE_NAME = "FluidSim Surface"
 PARTICLES_NAME = "FluidSim Particles"
@@ -332,6 +336,191 @@ def _cache_array(frame_data, name, shape):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _ViewportFrame:
+    voxel_size: float
+    surface_verts: np.ndarray
+    surface_tris: np.ndarray
+    surface_attributes: dict[str, np.ndarray]
+    particles: np.ndarray
+    particle_attributes: dict[str, np.ndarray]
+    whitewater: np.ndarray
+    whitewater_attributes: dict[str, np.ndarray]
+
+
+def _attribute_map(mode, values):
+    return {} if values is None else {mode: np.asarray(values)}
+
+
+def _solver_frame(scene, solver):
+    fs = scene.fluidsim
+    positions = (solver.particle_positions() if fs.show_particles else
+                 np.zeros((0, 3), dtype=np.float32))
+    particle_values = (_particle_values(
+        solver, fs.particle_attribute_mode, positions) if fs.show_particles
+        else None)
+    whitewater = (solver.whitewater_positions()
+                  if fs.show_whitewater and fs.whitewater_enabled else
+                  np.zeros((0, 3), dtype=np.float32))
+    whitewater_values = (_whitewater_values(
+        solver, fs.whitewater_attribute_mode, whitewater)
+        if fs.show_whitewater and fs.whitewater_enabled else None)
+    if fs.show_surface and fs.surface_enabled:
+        verts, tris = solver.surface_mesh()
+        surface_values = _surface_values(
+            solver, fs.surface_attribute_mode, verts)
+    else:
+        verts = np.zeros((0, 3), dtype=np.float32)
+        tris = np.zeros((0, 3), dtype=np.int32)
+        surface_values = None
+    return _ViewportFrame(
+        voxel_size=float(solver.settings.voxel_size),
+        surface_verts=np.asarray(verts, dtype=np.float32),
+        surface_tris=np.asarray(tris, dtype=np.int32),
+        surface_attributes=_attribute_map(
+            fs.surface_attribute_mode, surface_values),
+        particles=np.asarray(positions, dtype=np.float32),
+        particle_attributes=_attribute_map(
+            fs.particle_attribute_mode, particle_values),
+        whitewater=np.asarray(whitewater, dtype=np.float32),
+        whitewater_attributes=_attribute_map(
+            fs.whitewater_attribute_mode, whitewater_values),
+    )
+
+
+def _cached_frame(scene, frame_data):
+    fs = scene.fluidsim
+    positions = np.asarray(
+        _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
+    velocities = np.asarray(
+        _cache_array(frame_data, "velocities", (0, 3)), dtype=np.float32)
+    whitewater = np.asarray(
+        _cache_array(frame_data, "whitewater", (0, 3)), dtype=np.float32)
+    verts = np.asarray(
+        _cache_array(frame_data, "surface_verts", (0, 3)), dtype=np.float32)
+    tris = np.asarray(
+        _cache_array(frame_data, "surface_tris", (0, 3)), dtype=np.int32)
+    voxel_size = float(np.asarray(
+        frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
+
+    surface_values = _cached_values(fs.surface_attribute_mode, verts)
+    if surface_values is None:
+        particle_surface_values = _cached_named_values(
+            frame_data,
+            "particle",
+            fs.surface_attribute_mode,
+            positions,
+            velocities,
+        )
+        if particle_surface_values is not None:
+            surface_values = _nearest_values(
+                verts, positions, particle_surface_values, voxel_size * 2.0)
+    particle_values = _cached_named_values(
+        frame_data,
+        "particle",
+        fs.particle_attribute_mode,
+        positions,
+        velocities if len(velocities) == len(positions) else None,
+    )
+    whitewater_velocities = frame_data.get("whitewater_velocities")
+    if whitewater_velocities is not None:
+        whitewater_velocities = np.asarray(whitewater_velocities, dtype=np.float32)
+    whitewater_values = _cached_named_values(
+        frame_data,
+        "whitewater",
+        fs.whitewater_attribute_mode,
+        whitewater,
+        whitewater_velocities,
+    )
+    return _ViewportFrame(
+        voxel_size=voxel_size,
+        surface_verts=verts,
+        surface_tris=tris,
+        surface_attributes=_attribute_map(
+            fs.surface_attribute_mode, surface_values),
+        particles=positions,
+        particle_attributes=_attribute_map(
+            fs.particle_attribute_mode, particle_values),
+        whitewater=whitewater,
+        whitewater_attributes=_attribute_map(
+            fs.whitewater_attribute_mode, whitewater_values),
+    )
+
+
+def _render_outputs(scene, frame):
+    from . import materials
+
+    fs = scene.fluidsim
+    if fs.show_surface and fs.surface_enabled:
+        values = frame.surface_attributes.get(fs.surface_attribute_mode)
+        colors = _values_to_colors(values) if values is not None else None
+        obj = _ensure_object(
+            scene, SURFACE_NAME, lambda: bpy.data.meshes.new(SURFACE_NAME))
+        _swap_mesh(obj, frame.surface_verts, frame.surface_tris, colors)
+        materials.ensure_surface_material(scene, obj)
+    else:
+        obj = bpy.data.objects.get(SURFACE_NAME)
+        if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
+            _swap_mesh(
+                obj,
+                np.zeros((0, 3), dtype=np.float32),
+                np.zeros((0, 3), dtype=np.int32),
+            )
+
+    if fs.show_particles:
+        positions = frame.particles
+        values = frame.particle_attributes.get(fs.particle_attribute_mode)
+        fraction = fs.particle_display_fraction
+        if fraction < 1.0 and len(positions):
+            step = max(1, int(round(1.0 / fraction)))
+            positions = positions[::step]
+            if values is not None:
+                values = values[::step]
+        colors = _values_to_colors(values) if values is not None else None
+        radius = (frame.voxel_size * 0.25 *
+                  getattr(fs, "particle_display_scale", 1.0))
+        if _supports_pointcloud():
+            obj = _ensure_object(
+                scene,
+                PARTICLES_NAME,
+                lambda: bpy.data.pointclouds.new(PARTICLES_NAME),
+            )
+            _swap_points(obj, positions, radius, colors)
+        else:
+            obj = _ensure_object(
+                scene,
+                PARTICLES_NAME,
+                lambda: bpy.data.meshes.new(PARTICLES_NAME),
+            )
+            _swap_vertex_cloud(obj, positions, colors)
+        materials.ensure_particle_material(scene, obj)
+    else:
+        _clear_points(PARTICLES_NAME)
+
+    if fs.show_whitewater and fs.whitewater_enabled:
+        values = frame.whitewater_attributes.get(fs.whitewater_attribute_mode)
+        colors = _values_to_colors(values) if values is not None else None
+        radius = (frame.voxel_size * 0.15 *
+                  getattr(fs, "whitewater_display_scale", 1.0))
+        if _supports_pointcloud():
+            obj = _ensure_object(
+                scene,
+                WHITEWATER_NAME,
+                lambda: bpy.data.pointclouds.new(WHITEWATER_NAME),
+            )
+            _swap_points(obj, frame.whitewater, radius, colors)
+        else:
+            obj = _ensure_object(
+                scene,
+                WHITEWATER_NAME,
+                lambda: bpy.data.meshes.new(WHITEWATER_NAME),
+            )
+            _swap_vertex_cloud(obj, frame.whitewater, colors)
+        materials.ensure_whitewater_material(scene, obj)
+    else:
+        _clear_points(WHITEWATER_NAME)
+
+
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
     from . import materials
@@ -374,180 +563,14 @@ def refresh_existing_output_settings(scene):
 
 def update_outputs(scene, sess):
     """Write current solver outputs into Blender datablocks."""
-    from . import materials
-
     if not sess.active:
         return
-    fs = scene.fluidsim
-    solver = sess.solver
-
-    if fs.show_surface and solver.settings.surface_enabled:
-        verts, tris = solver.surface_mesh()
-        values = _surface_values(solver, fs.surface_attribute_mode, verts)
-        colors = _values_to_colors(values) if values is not None else None
-        obj = _ensure_object(scene, SURFACE_NAME,
-                             lambda: bpy.data.meshes.new(SURFACE_NAME))
-        _swap_mesh(obj, verts, tris, colors)
-        materials.ensure_surface_material(scene, obj)
-    else:
-        obj = bpy.data.objects.get(SURFACE_NAME)
-        if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
-            _swap_mesh(obj, np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int32))
-
-    if fs.show_particles:
-        pos = solver.particle_positions()
-        vel = None
-        indices = None
-        frac = fs.particle_display_fraction
-        if frac < 1.0 and len(pos):
-            step = max(1, int(round(1.0 / frac)))
-            indices = np.arange(0, len(pos), step, dtype=np.int64)
-            pos = pos[::step]
-        if fs.particle_attribute_mode == "SPEED":
-            vel = solver.particle_velocities()
-            if indices is not None:
-                vel = vel[indices]
-        values = _particle_values(
-            solver, fs.particle_attribute_mode, pos, vel, indices)
-        colors = _values_to_colors(values) if values is not None else None
-        radius = (solver.settings.voxel_size * 0.25 *
-                  getattr(fs, "particle_display_scale", 1.0))
-        if _supports_pointcloud():
-            obj = _ensure_object(scene, PARTICLES_NAME,
-                                  lambda: bpy.data.pointclouds.new(PARTICLES_NAME))
-            _swap_points(obj, pos, radius, colors)
-        else:
-            obj = _ensure_object(scene, PARTICLES_NAME,
-                                  lambda: bpy.data.meshes.new(PARTICLES_NAME))
-            _swap_vertex_cloud(obj, pos, colors)
-        materials.ensure_particle_material(scene, obj)
-    else:
-        _clear_points(PARTICLES_NAME)
-
-    if fs.show_whitewater and fs.whitewater_enabled and solver.settings.whitewater_enabled:
-        pos = solver.whitewater_positions()
-        values = _whitewater_values(solver, fs.whitewater_attribute_mode, pos)
-        colors = _values_to_colors(values) if values is not None else None
-        radius = (solver.settings.voxel_size * 0.15 *
-                  getattr(fs, "whitewater_display_scale", 1.0))
-        if _supports_pointcloud():
-            obj = _ensure_object(scene, WHITEWATER_NAME,
-                                  lambda: bpy.data.pointclouds.new(WHITEWATER_NAME))
-            _swap_points(obj, pos, radius, colors)
-        else:
-            obj = _ensure_object(scene, WHITEWATER_NAME,
-                                  lambda: bpy.data.meshes.new(WHITEWATER_NAME))
-            _swap_vertex_cloud(obj, pos, colors)
-        materials.ensure_whitewater_material(scene, obj)
-    else:
-        _clear_points(WHITEWATER_NAME)
+    _render_outputs(scene, _solver_frame(scene, sess.solver))
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
-    from . import materials
-
-    fs = scene.fluidsim
-    positions = np.asarray(
-        _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
-    velocities = np.asarray(
-        _cache_array(frame_data, "velocities", (0, 3)), dtype=np.float32)
-    whitewater = np.asarray(
-        _cache_array(frame_data, "whitewater", (0, 3)), dtype=np.float32)
-    verts = np.asarray(
-        _cache_array(frame_data, "surface_verts", (0, 3)), dtype=np.float32)
-    tris = np.asarray(
-        _cache_array(frame_data, "surface_tris", (0, 3)), dtype=np.int32)
-    voxel_size = float(np.asarray(
-        frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
-
-    if fs.show_surface and fs.surface_enabled and len(verts):
-        values = _cached_values(fs.surface_attribute_mode, verts)
-        if values is None and fs.surface_attribute_mode == "SPEED":
-            particle_values = _cached_named_values(
-                frame_data, "particle", "SPEED", positions, velocities)
-            if particle_values is not None:
-                values = _nearest_values(
-                    verts, positions, particle_values, voxel_size * 2.0)
-        elif values is None:
-            particle_values = _cached_named_values(
-                frame_data,
-                "particle",
-                fs.surface_attribute_mode,
-                positions,
-                velocities,
-            )
-            if particle_values is not None:
-                values = _nearest_values(
-                    verts, positions, particle_values, voxel_size * 2.0)
-        colors = _values_to_colors(values) if values is not None else None
-        obj = _ensure_object(scene, SURFACE_NAME,
-                             lambda: bpy.data.meshes.new(SURFACE_NAME))
-        _swap_mesh(obj, verts, tris, colors)
-        materials.ensure_surface_material(scene, obj)
-    else:
-        obj = bpy.data.objects.get(SURFACE_NAME)
-        if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
-            _swap_mesh(obj, np.zeros((0, 3)), np.zeros((0, 3), dtype=np.int32))
-
-    if fs.show_particles:
-        pos = positions
-        vel = velocities if len(velocities) == len(positions) else None
-        indices = None
-        frac = fs.particle_display_fraction
-        if frac < 1.0 and len(pos):
-            step = max(1, int(round(1.0 / frac)))
-            indices = np.arange(0, len(pos), step, dtype=np.int64)
-            pos = pos[::step]
-            if vel is not None:
-                vel = vel[indices]
-        values = _cached_named_values(
-            frame_data,
-            "particle",
-            fs.particle_attribute_mode,
-            pos,
-            vel,
-            indices,
-        )
-        colors = _values_to_colors(values) if values is not None else None
-        radius = voxel_size * 0.25 * getattr(fs, "particle_display_scale", 1.0)
-        if _supports_pointcloud():
-            obj = _ensure_object(scene, PARTICLES_NAME,
-                                  lambda: bpy.data.pointclouds.new(PARTICLES_NAME))
-            _swap_points(obj, pos, radius, colors)
-        else:
-            obj = _ensure_object(scene, PARTICLES_NAME,
-                                  lambda: bpy.data.meshes.new(PARTICLES_NAME))
-            _swap_vertex_cloud(obj, pos, colors)
-        materials.ensure_particle_material(scene, obj)
-    else:
-        _clear_points(PARTICLES_NAME)
-
-    if fs.show_whitewater and fs.whitewater_enabled and len(whitewater):
-        ww_vel = frame_data.get("whitewater_velocities")
-        if ww_vel is not None:
-            ww_vel = np.asarray(ww_vel, dtype=np.float32)
-        values = _cached_named_values(
-            frame_data,
-            "whitewater",
-            fs.whitewater_attribute_mode,
-            whitewater,
-            ww_vel,
-        )
-        colors = _values_to_colors(values) if values is not None else None
-        radius = voxel_size * 0.15 * getattr(
-            fs, "whitewater_display_scale", 1.0)
-        if _supports_pointcloud():
-            obj = _ensure_object(scene, WHITEWATER_NAME,
-                                  lambda: bpy.data.pointclouds.new(WHITEWATER_NAME))
-            _swap_points(obj, whitewater, radius, colors)
-        else:
-            obj = _ensure_object(scene, WHITEWATER_NAME,
-                                  lambda: bpy.data.meshes.new(WHITEWATER_NAME))
-            _swap_vertex_cloud(obj, whitewater, colors)
-        materials.ensure_whitewater_material(scene, obj)
-    else:
-        _clear_points(WHITEWATER_NAME)
+    _render_outputs(scene, _cached_frame(scene, frame_data))
 
 
 def _clear_points(name):
@@ -611,12 +634,8 @@ def _draw_overlay():
     if sess.profiler is not None:
         summary = sess.profiler.summary(last_n=30)
         phase_names = {
-            "compute_0": "sourcing", "compute_1": "indexing", "compute_2": "p2g",
-            "compute_3": "forces", "compute_4": "viscosity", "compute_5": "pressure",
-            "compute_6": "g2p", "compute_7": "advection", "compute_8": "collision",
-            "compute_10": "relax", "compute_11": "surface",
-            "compute_12": "whitewater", "compute_13": "custom",
-            "compute_14": "lifecycle", "compute_15": "misc",
+            f"compute_{slot}": phase
+            for phase, slot in TIMER_PHASE_SLOTS.items()
         }
         parts = []
         for slot, label in phase_names.items():

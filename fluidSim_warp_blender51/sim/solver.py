@@ -1128,6 +1128,12 @@ class FluidSolver:
                      s.surface_smooth_iterations,
                      s.surface_smooth_strength)
 
+    def rebuild_surface(self):
+        """Rebuild current-frame surface data after realtime setting changes."""
+        self._surface_mesh_cache = None
+        self._surface_mesh_key = None
+        self._surface()
+
     def _whitewater(self, dt):
         s = self.settings
         if not s.whitewater_enabled:

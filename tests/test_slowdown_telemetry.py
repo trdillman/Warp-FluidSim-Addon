@@ -77,6 +77,20 @@ def test_solver_reset_clears_surface_extractor_buffers():
     assert solver.grid.calls == ["begin", "finalize"]
 
 
+def test_rebuild_surface_owns_cache_invalidation_and_current_sdf_rebuild():
+    solver = object.__new__(FluidSolver)
+    solver._surface_mesh_cache = object()
+    solver._surface_mesh_key = (3, 1.0)
+    calls = []
+    solver._surface = lambda: calls.append("surface")
+
+    FluidSolver.rebuild_surface(solver)
+
+    assert solver._surface_mesh_cache is None
+    assert solver._surface_mesh_key is None
+    assert calls == ["surface"]
+
+
 def test_frame_stats_exports_slowdown_diagnostics():
     """Frame JSON includes counters needed to explain rising frame cost."""
     stats = FrameStats()

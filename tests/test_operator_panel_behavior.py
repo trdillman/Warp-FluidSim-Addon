@@ -378,7 +378,7 @@ def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch
         sess.solver = object()
         return sess
 
-    monkeypatch.setattr(scene_bridge, "initialize_session", fake_initialize)
+    monkeypatch.setattr(sess, "initialize", fake_initialize)
 
     scene_bridge.set_live_enabled(scene, True)
     scene_bridge.set_live_enabled(scene, True)
@@ -417,7 +417,7 @@ def test_scene_bridge_set_live_enabled_updates_status(monkeypatch):
         sess.solver = object()
         return sess
 
-    monkeypatch.setattr(scene_bridge, "initialize_session", fake_initialize)
+    monkeypatch.setattr(sess, "initialize", fake_initialize)
 
     scene_bridge.set_live_enabled(scene, True)
     assert scene.fluidsim.status == "Live simulation enabled - press play"
@@ -442,10 +442,10 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
     sess.start_frame = 1
     sess.last_frame = 1
 
-    monkeypatch.setattr(scene_bridge, "sync_scene_to_solver", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        scene_bridge,
-        "step_frame",
+        sess,
+        "step",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
@@ -513,9 +513,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     monkeypatch.setattr(viewport, "update_outputs", fake_viewport.update_outputs)
     solver = SimpleNamespace(
         settings=SimpleNamespace(),
-        _surface_mesh_cache=object(),
-        _surface_mesh_key=(10, 1.0),
-        _surface=lambda: surface_calls.append("rebuilt"),
+        rebuild_surface=lambda: surface_calls.append("rebuilt"),
     )
     sess = scene_bridge.session()
     sess.solver = solver
@@ -547,8 +545,6 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     assert solver.settings.surface_smooth_type.name == "MEAN_CURVATURE_FLOW"
     assert solver.settings.surface_smooth_iterations == 3
     assert solver.settings.surface_smooth_strength == 0.6
-    assert solver._surface_mesh_cache is None
-    assert solver._surface_mesh_key is None
     assert surface_calls == ["rebuilt"]
     assert output_calls == [(scene, sess)]
 

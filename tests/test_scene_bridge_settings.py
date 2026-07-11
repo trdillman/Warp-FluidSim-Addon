@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import types
@@ -129,3 +130,55 @@ def test_build_settings_maps_scene_multigrid_to_pressure_multigrid(monkeypatch):
 
     assert settings.pressure_multigrid == MultiGrid.V_CYCLE
     assert not hasattr(settings, "multigrid")
+
+
+def test_build_settings_maps_every_declared_scene_field(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene("OFF")
+
+    settings = scene_bridge.build_settings(scene)
+
+    direct_fields = (
+        "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
+        "max_particles", "max_whitewater", "time_scale", "cfl",
+        "min_substeps", "max_substeps", "flip_ratio", "max_speed",
+        "limit_percent", "particles_per_voxel", "count_stiffness",
+        "relax_enabled", "relax_strength", "restitution", "friction",
+        "pressure_iterations", "pressure_tolerance", "pressure_threshold",
+        "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
+        "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
+        "particle_radius_scale", "surface_filter_iterations",
+        "surface_filter_strength", "surface_dilate_iterations",
+        "surface_dilate_strength", "surface_erode_iterations",
+        "surface_erode_strength", "surface_smooth_iterations",
+        "surface_smooth_strength", "whitewater_enabled", "ww_churn_decay",
+        "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
+        "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
+        "ww_spray_drag",
+    )
+    for name in direct_fields:
+        assert getattr(settings, name) == getattr(scene.fluidsim, name), name
+
+    enum_fields = {
+        "sample_type": "sample_type",
+        "trace_mode": "trace_mode",
+        "limit_behavior": "limit_behavior",
+        "relax_mode": "relax_mode",
+        "pressure_solver": "pressure_solver",
+        "viscosity_solver": "viscosity_solver",
+        "surface_filter_type": "surface_filter_type",
+        "surface_smooth_type": "surface_smooth_type",
+    }
+    for target, source in enum_fields.items():
+        assert getattr(settings, target).name == getattr(scene.fluidsim, source)
+
+
+def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+
+    source = inspect.getsource(scene_bridge._apply_realtime_surface_settings)
+
+    assert "rebuild_surface()" in source
+    assert "_surface_mesh_cache" not in source
+    assert "_surface_mesh_key" not in source
+    assert "._surface()" not in source

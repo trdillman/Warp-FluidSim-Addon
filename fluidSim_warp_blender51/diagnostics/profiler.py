@@ -14,6 +14,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from ..sim.constants import TIMER_PHASE_SLOTS
+
 PROFILER_ID = "fluidSim_profiler::1.0"
 
 # Timer track order from the synthesized profiler contract.
@@ -60,27 +62,6 @@ PROFILE_FRAME_FIELDS = [
     "particleVoxelFillRatio",
     "timers",
 ]
-
-# Phase name -> compute slot mapping (mirrors sim.constants.TIMER_PHASE_SLOTS).
-PHASE_SLOTS = {
-    "sourcing": "compute_0",
-    "indexing": "compute_1",
-    "p2g": "compute_2",
-    "forces": "compute_3",
-    "viscosity": "compute_4",
-    "pressure": "compute_5",
-    "g2p": "compute_6",
-    "advection": "compute_7",
-    "collision": "compute_8",
-    "sink": "compute_9",
-    "relax": "compute_10",
-    "surface": "compute_11",
-    "whitewater": "compute_12",
-    "custom": "compute_13",
-    "lifecycle": "compute_14",
-    "misc": "compute_15",
-}
-
 
 def _device_info(device: str) -> dict:
     """Collect device metadata via warp without keeping a module-level import."""
@@ -155,7 +136,10 @@ class Profiler:
         if not self.enabled:
             yield
             return
-        slot = PHASE_SLOTS.get(phase, "compute_15")
+        try:
+            slot = f"compute_{TIMER_PHASE_SLOTS[phase]}"
+        except KeyError:
+            raise KeyError(f"unknown profiler phase: {phase}") from None
         wp = self._warp()
         if self.sync and str(self.device).startswith("cuda"):
             wp.synchronize_device(self.device)

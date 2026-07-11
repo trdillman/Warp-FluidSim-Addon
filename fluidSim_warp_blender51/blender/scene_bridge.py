@@ -37,6 +37,250 @@ class Session:
     def active(self):
         return self.solver is not None
 
+    def _clear_runtime(self):
+        self.solver = None
+        self.profiler = None
+        self.start_frame = 1
+        self.last_frame = -1
+        self.frame_stats = []
+        self._collider_prev = {}
+        self._collider_mesh_cache = {}
+        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+
+    def set_error(self, scene, message):
+        self.error = str(message)
+        _scene_set(scene, ERROR_SCENE_KEY, self.error)
+
+    def clear_error(self, scene=None):
+        self.error = ""
+        if scene is not None:
+            _scene_set(scene, ERROR_SCENE_KEY, "")
+
+    def current_error(self, scene):
+        return str(_scene_get(scene, ERROR_SCENE_KEY, "") or self.error or "")
+
+    def object_velocity(self, obj, scene):
+        """Estimate animated-object velocity and retain frame history."""
+        fps = scene.render.fps / scene.render.fps_base
+        current = np.array(obj.matrix_world.translation)
+        previous = self._collider_prev.get(obj.name)
+        frame = scene.frame_current
+        self._collider_prev[obj.name] = (current, frame)
+        if previous is None or frame == previous[1]:
+            return (0.0, 0.0, 0.0)
+        dt = (frame - previous[1]) / fps
+        if dt == 0:
+            return (0.0, 0.0, 0.0)
+        return tuple(float(value) for value in (current - previous[0]) / dt)
+
+    def release(self, scene=None, *, preserve_error=False):
+        if scene is None:
+            scene = getattr(bpy.context, "scene", None)
+        self._clear_runtime()
+        if not preserve_error:
+            self.clear_error(scene)
+
+    def initialize(self, scene):
+        """(Re)create the solver from current scene state."""
+        from ..diagnostics.profiler import Profiler
+        from ..sim.solver import FluidSolver
+
+        self.release(scene)
+        try:
+            fs = scene.fluidsim
+            settings = build_settings(scene)
+            profiler = None
+            if fs.profiling_enabled:
+                profiler = Profiler(
+                    device=settings.device, sync=fs.profiling_sync)
+            self.solver = FluidSolver(settings, profiler=profiler)
+            self.profiler = profiler
+            self.start_frame = scene.frame_start
+            self.sync_scene(scene)
+            errors = self.solver.set_custom_snippets(build_snippets(scene))
+            for name, error in errors:
+                for pg in fs.snippets:
+                    if pg.kernel_name == name:
+                        pg.last_error = str(error)[:256]
+            fs.status = "Solver ready"
+            return self
+        except Exception:
+            self.release(scene)
+            raise
+
+    def set_live_enabled(self, scene, enabled):
+        fs = scene.fluidsim
+        if enabled:
+            if getattr(fs, "cache_playback_enabled", False):
+                fs.status = "Cache playback enabled - press play"
+            elif not self.active:
+                self.initialize(scene)
+                fs.status = "Live simulation enabled - press play"
+            else:
+                fs.status = "Live simulation enabled - press play"
+        else:
+            fs.status = "Live simulation disabled"
+
+    def set_cache_playback_enabled(self, scene, enabled):
+        fs = scene.fluidsim
+        if enabled:
+            self.release(scene)
+            if getattr(fs, "live", False):
+                fs.status = "Cache playback enabled - press play"
+        elif getattr(fs, "live", False):
+            self.set_live_enabled(scene, True)
+
+    def sync_scene(self, scene, depsgraph=None):
+        from . import colliders, sources
+
+        if not self.active:
+            return
+        self.solver.set_sources(sources.gather_sources(scene, self))
+        self.solver.set_colliders(
+            colliders.gather_colliders(scene, self, depsgraph))
+        self.solver.set_height_source(sources.gather_height_source(scene))
+
+    def step(self, scene, *, write_cache=True):
+        from . import viewport
+
+        if not self.active:
+            return None
+        fs = scene.fluidsim
+        stats = self.solver.step_frame()
+        self.frame_stats.append(stats.as_dict())
+        if len(self.frame_stats) > 1000:
+            self.frame_stats.pop(0)
+        fs.stat_particles = stats.active_particles
+        fs.stat_voxels = stats.active_voxels
+        fs.stat_whitewater = stats.whitewater_particles
+        fs.stat_step_ms = stats.step_time * 1000.0
+        fs.stat_substeps = stats.substeps
+        fs.status = (
+            f"Frame {self.solver.frame}: {stats.active_particles:,} particles, "
+            f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
+        )
+        viewport.update_outputs(scene, self)
+        if write_cache and fs.cache_enabled:
+            from ..io import cache
+
+            try:
+                cache.write_frame(scene, self)
+            except Exception as exc:  # noqa: BLE001 - cache is supplemental
+                print(f"fluidSim cache write failed: {exc!r}")
+        return stats
+
+    def play_cache_frame(self, scene, frame=None):
+        from . import viewport
+        from ..io import cache
+
+        fs = scene.fluidsim
+        frame = int(scene.frame_current if frame is None else frame)
+        if getattr(fs, "cache_use_custom_range", False):
+            start, end = cache.resolve_frame_range(
+                scene,
+                use_custom=True,
+                frame_start=fs.cache_frame_start,
+                frame_end=fs.cache_frame_end,
+            )
+            if frame < start or frame > end:
+                raise FileNotFoundError(
+                    f"Cache frame {frame} is outside playback range {start}-{end}"
+                )
+        base = bpy.path.abspath(fs.cache_path)
+        frame_data = cache.read_frame(base, frame)
+        if frame_data is None:
+            raise FileNotFoundError(
+                f"Cache frame {frame} is missing or corrupt in {base}")
+        viewport.update_outputs_from_cache_frame(scene, frame_data)
+        fs.stat_particles = len(frame_data.get("positions", ()))
+        fs.stat_whitewater = len(frame_data.get("whitewater", ()))
+        fs.stat_voxels = 0
+        fs.stat_step_ms = 0.0
+        fs.stat_substeps = 0
+        fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
+        self.clear_error(scene)
+        return frame_data
+
+    def reset(self, scene):
+        from . import viewport
+
+        if not self.active:
+            return
+        self.solver.reset()
+        self.start_frame = scene.frame_start
+        self.last_frame = -1
+        self.frame_stats = []
+        self.clear_error(scene)
+        self._collider_prev = {}
+        self._collider_mesh_cache = {}
+        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.sync_scene(scene)
+        viewport.update_outputs(scene, self)
+        scene.fluidsim.status = "Simulation reset"
+
+    def export_cache_sequence(self, scene, start, end):
+        from ..io import cache
+
+        fs = scene.fluidsim
+        base = bpy.path.abspath(fs.cache_path)
+        original_frame = scene.frame_current
+        original_live = fs.live
+        frame_set = getattr(scene, "frame_set", None)
+        fs.live = False
+        try:
+            self.initialize(scene)
+            self.start_frame = start
+            for timeline_frame in range(start, end + 1):
+                if frame_set is not None:
+                    frame_set(timeline_frame)
+                self.solver.frame = timeline_frame - 1
+                self.sync_scene(scene)
+                self.step(scene, write_cache=False)
+                self.solver.frame = timeline_frame
+                cache.write_frame(scene, self)
+            cache.write_sequence_metadata(base, start, end, source="simulation")
+        finally:
+            if frame_set is not None:
+                try:
+                    frame_set(original_frame)
+                except Exception:  # noqa: BLE001 - preserve original failure
+                    pass
+            fs.live = original_live
+        return base
+
+    def handle_frame_change(self, scene, depsgraph):
+        fs = getattr(scene, "fluidsim", None)
+        if fs is None or not fs.live:
+            return
+        frame = scene.frame_current
+        if frame == self.last_frame:
+            return
+        if getattr(fs, "cache_playback_enabled", False):
+            self.last_frame = frame
+            try:
+                self.play_cache_frame(scene, frame)
+            except Exception as exc:  # noqa: BLE001 - never break playback
+                self.set_error(scene, repr(exc))
+                fs.status = f"Cache playback error: {exc}"
+                print(f"fluidSim cache playback failed: {exc!r}")
+            return
+        if not self.active:
+            return
+        if frame <= self.start_frame or frame < self.last_frame:
+            self.reset(scene)
+            self.last_frame = frame
+            return
+        self.last_frame = frame
+        try:
+            self.sync_scene(scene, depsgraph)
+            self.step(scene)
+        except Exception as exc:  # noqa: BLE001 - never break playback
+            self.set_error(scene, repr(exc))
+            fs.status = f"Solver error: {exc}"
+            fs.live = False
+            self.release(preserve_error=True)
+            print(f"fluidSim step failed: {exc!r}")
+
 
 _SESSION = Session()
 ERROR_SCENE_KEY = "fluidsim_last_error"
@@ -62,18 +306,15 @@ def _scene_set(scene, key: str, value):
 
 def set_error(scene, message: str):
     """Persist the latest simulation error for panel-visible recovery."""
-    text = str(message)
-    session().error = text
-    _scene_set(scene, ERROR_SCENE_KEY, text)
+    session().set_error(scene, message)
 
 
 def clear_error(scene):
-    session().error = ""
-    _scene_set(scene, ERROR_SCENE_KEY, "")
+    session().clear_error(scene)
 
 
 def current_error(scene) -> str:
-    return str(_scene_get(scene, ERROR_SCENE_KEY, "") or session().error or "")
+    return session().current_error(scene)
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +335,36 @@ def _domain_bounds(scene) -> tuple:
     return (-2.0, -2.0, 0.0), (2.0, 2.0, 4.0)
 
 
-def build_settings(scene):
-    """Create SolverSettings from scene properties (imports Warp lazily)."""
+_DIRECT_SETTING_FIELDS = (
+    "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
+    "max_particles", "max_whitewater", "time_scale", "cfl",
+    "min_substeps", "max_substeps", "flip_ratio", "max_speed",
+    "limit_percent", "particles_per_voxel", "count_stiffness",
+    "relax_enabled", "relax_strength", "restitution", "friction",
+    "pressure_iterations", "pressure_tolerance", "pressure_threshold",
+    "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
+    "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
+    "particle_radius_scale", "surface_filter_iterations",
+    "surface_filter_strength", "surface_dilate_iterations",
+    "surface_dilate_strength", "surface_erode_iterations",
+    "surface_erode_strength", "surface_smooth_iterations",
+    "surface_smooth_strength", "whitewater_enabled", "ww_churn_decay",
+    "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
+    "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
+    "ww_spray_drag",
+)
+
+_SURFACE_SETTING_FIELDS = frozenset({
+    "surface_enabled", "particle_radius_scale", "surface_filter_type",
+    "surface_filter_iterations", "surface_filter_strength",
+    "surface_dilate_iterations", "surface_dilate_strength",
+    "surface_erode_iterations", "surface_erode_strength",
+    "surface_smooth_type", "surface_smooth_iterations",
+    "surface_smooth_strength",
+})
+
+
+def _apply_scene_settings(fs, settings, fields=None):
     from ..sim.enums import (
         LimitBehavior,
         MultiGrid,
@@ -106,6 +375,29 @@ def build_settings(scene):
         TraceMode,
         ViscositySolver,
     )
+
+    selected = None if fields is None else set(fields)
+    for name in _DIRECT_SETTING_FIELDS:
+        if selected is None or name in selected:
+            setattr(settings, name, getattr(fs, name))
+    enum_fields = {
+        "sample_type": ("sample_type", ParticleSampleType),
+        "trace_mode": ("trace_mode", TraceMode),
+        "limit_behavior": ("limit_behavior", LimitBehavior),
+        "relax_mode": ("relax_mode", RelaxMode),
+        "pressure_solver": ("pressure_solver", ProjectNonDivergentSolver),
+        "pressure_multigrid": ("multigrid", MultiGrid),
+        "viscosity_solver": ("viscosity_solver", ViscositySolver),
+        "surface_filter_type": ("surface_filter_type", SdfFilterType),
+        "surface_smooth_type": ("surface_smooth_type", SdfFilterType),
+    }
+    for target, (source, enum_type) in enum_fields.items():
+        if selected is None or target in selected:
+            setattr(settings, target, enum_type[getattr(fs, source)])
+
+
+def build_settings(scene):
+    """Create SolverSettings from scene properties (imports Warp lazily)."""
     from ..sim.solver import SolverSettings
 
     fs = scene.fluidsim
@@ -119,67 +411,12 @@ def build_settings(scene):
     lo, hi = _domain_bounds(scene)
     s.domain_min = lo
     s.domain_max = hi
-    s.voxel_size = fs.voxel_size
-    s.leaf_capacity = fs.leaf_capacity
-    s.topology_expand = fs.topology_expand
-    s.open_boundaries = fs.open_boundaries
-    s.max_particles = fs.max_particles
-    s.max_whitewater = fs.max_whitewater
     s.frame_rate = scene.render.fps / scene.render.fps_base
-    s.time_scale = fs.time_scale
-    s.cfl = fs.cfl
-    s.min_substeps = fs.min_substeps
-    s.max_substeps = fs.max_substeps
     if fs.use_scene_gravity and scene.use_gravity:
         s.gravity = tuple(scene.gravity)
     else:
         s.gravity = tuple(fs.gravity)
-    s.sample_type = ParticleSampleType[fs.sample_type]
-    s.flip_ratio = fs.flip_ratio
-    s.trace_mode = TraceMode[fs.trace_mode]
-    s.max_speed = fs.max_speed
-    s.limit_behavior = LimitBehavior[fs.limit_behavior]
-    s.limit_percent = fs.limit_percent
-    s.particles_per_voxel = fs.particles_per_voxel
-    s.count_stiffness = fs.count_stiffness
-    s.relax_enabled = fs.relax_enabled
-    s.relax_strength = fs.relax_strength
-    s.relax_mode = RelaxMode[fs.relax_mode]
-    s.restitution = fs.restitution
-    s.friction = fs.friction
-    s.pressure_solver = ProjectNonDivergentSolver[fs.pressure_solver]
-    s.pressure_iterations = fs.pressure_iterations
-    s.pressure_tolerance = fs.pressure_tolerance
-    s.pressure_multigrid = MultiGrid[fs.multigrid]
-    s.pressure_threshold = fs.pressure_threshold
-    s.viscosity_enabled = fs.viscosity_enabled
-    s.viscosity_solver = ViscositySolver[fs.viscosity_solver]
-    s.viscosity_constant = fs.viscosity_constant
-    s.viscosity_from_particles = fs.viscosity_from_particles
-    s.viscosity_iterations = fs.viscosity_iterations
-    s.viscosity_tolerance = fs.viscosity_tolerance
-    s.surface_enabled = fs.surface_enabled
-    s.particle_radius_scale = fs.particle_radius_scale
-    s.surface_filter_type = SdfFilterType[fs.surface_filter_type]
-    s.surface_filter_iterations = fs.surface_filter_iterations
-    s.surface_filter_strength = fs.surface_filter_strength
-    s.surface_dilate_iterations = fs.surface_dilate_iterations
-    s.surface_dilate_strength = fs.surface_dilate_strength
-    s.surface_erode_iterations = fs.surface_erode_iterations
-    s.surface_erode_strength = fs.surface_erode_strength
-    s.surface_smooth_type = SdfFilterType[fs.surface_smooth_type]
-    s.surface_smooth_iterations = fs.surface_smooth_iterations
-    s.surface_smooth_strength = fs.surface_smooth_strength
-    s.whitewater_enabled = fs.whitewater_enabled
-    s.ww_churn_decay = fs.ww_churn_decay
-    s.ww_churn_gain = fs.ww_churn_gain
-    s.ww_churn_threshold = fs.ww_churn_threshold
-    s.ww_emission_rate = fs.ww_emission_rate
-    s.ww_min_speed = fs.ww_min_speed
-    s.ww_life_min = fs.ww_life_min
-    s.ww_life_max = fs.ww_life_max
-    s.ww_bubble_drag = fs.ww_bubble_drag
-    s.ww_spray_drag = fs.ww_spray_drag
+    _apply_scene_settings(fs, s)
     return s
 
 
@@ -269,201 +506,25 @@ def snippet_from_pg(pg):
 # ---------------------------------------------------------------------------
 
 
-def _object_velocity(obj, scene, session_obj):
-    """Estimate rigid velocity of an animated object by frame differencing."""
-    fps = scene.render.fps / scene.render.fps_base
-    cur = np.array(obj.matrix_world.translation)
-    key = obj.name
-    prev = session_obj._collider_prev.get(key)
-    frame = scene.frame_current
-    session_obj._collider_prev[key] = (cur, frame)
-    if prev is None or frame == prev[1]:
-        return (0.0, 0.0, 0.0)
-    dt = (frame - prev[1]) / fps
-    if dt == 0:
-        return (0.0, 0.0, 0.0)
-    v = (cur - prev[0]) / dt
-    return tuple(float(x) for x in v)
-
-
-def _object_identity(obj):
-    as_pointer = getattr(obj, "as_pointer", None)
-    if as_pointer is not None:
-        return int(as_pointer())
-    return id(obj)
-
-
-def _array_signature(array):
-    contiguous = np.ascontiguousarray(array)
-    return (contiguous.shape, str(contiguous.dtype), contiguous.tobytes())
-
-
-def _collider_cache_signature(object_id, device, verts, tris, matrix_world):
-    matrix = np.ascontiguousarray(matrix_world, dtype=np.float32)
-    return (
-        object_id,
-        device,
-        _array_signature(verts),
-        _array_signature(tris),
-        _array_signature(matrix),
-    )
-
-
 def gather_sources(scene, sess: Session):
-    """Build SourceShapeDesc list from tagged objects + height source."""
-    from ..sim.enums import (
-        BlendMode,
-        SourceShapeForceType,
-        SourceShapeShape,
-        SourceShapeSourceMode,
-        SourceShapeType,
-    )
-    from ..sim.solver import SourceShapeDesc
+    """Compatibility wrapper for source descriptor translation."""
+    from . import sources
 
-    sources = []
-    for obj in scene.objects:
-        pg = getattr(obj, "fluidsim", None)
-        if pg is None or pg.role not in {"SOURCE", "SINK", "FORCE"} or not pg.enabled:
-            continue
-        if obj.hide_viewport:
-            continue
-        desc = SourceShapeDesc()
-        desc.shape = SourceShapeShape[pg.shape]
-        if pg.role == "SOURCE":
-            desc.stype = SourceShapeType.SOURCE
-        elif pg.role == "SINK":
-            desc.stype = SourceShapeType.SINK
-        else:
-            desc.stype = SourceShapeType.SOURCE
-        desc.mode = SourceShapeSourceMode[pg.source_mode]
-        mw = obj.matrix_world
-        loc = mw.to_translation()
-        quat = mw.to_quaternion()
-        scale = mw.to_scale()
-        desc.position = (loc.x, loc.y, loc.z)
-        desc.rotation = (quat.x, quat.y, quat.z, quat.w)
-        # Analytic shapes scale via half extents / radius from object scale
-        # and the object's bounding box (unit primitives -> world size).
-        dims = obj.dimensions
-        desc.half_extents = (max(dims.x, 1e-4) / 2,
-                             max(dims.y, 1e-4) / 2,
-                             max(dims.z, 1e-4) / 2)
-        desc.radius = max(dims.x, dims.y, dims.z) / 2
-        desc.height = max(dims.z, 1e-4) / 2
-        desc.feather = pg.feather
-        vel = tuple(pg.initial_velocity)
-        if pg.use_object_velocity:
-            ov = _object_velocity(obj, scene, sess)
-            vel = (vel[0] + ov[0], vel[1] + ov[1], vel[2] + ov[2])
-        desc.velocity = vel
-        desc.blend_mode = BlendMode[pg.blend_mode]
-        desc.emit_rate = pg.emit_rate
-        desc.temperature = pg.temperature
-        desc.viscosity = pg.viscosity
-        desc.density = pg.density
-        desc.use_lifespan = pg.use_lifespan
-        desc.life_min = pg.life_min
-        desc.life_max = pg.life_max
-        if pg.role == "FORCE":
-            desc.stype = SourceShapeType.SOURCE
-            desc.mode = SourceShapeSourceMode.FIELD
-            desc.emit_rate = 0.0
-        desc.force_type = SourceShapeForceType[pg.force_type]
-        desc.force_strength = pg.force_strength
-        desc.force_dir = tuple(pg.force_direction)
-        sources.append(desc)
-    return sources
+    return sources.gather_sources(scene, sess)
 
 
 def gather_colliders(scene, sess: Session, depsgraph=None):
-    """Build ColliderDesc list (world-space wp.Mesh) from tagged objects."""
-    import warp as wp
+    """Compatibility wrapper for collider descriptor translation."""
+    from . import colliders
 
-    from ..sim.solver import ColliderDesc
-
-    depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
-    colliders = []
-    seen_cache_keys = set()
-    for obj in scene.objects:
-        pg = getattr(obj, "fluidsim", None)
-        if pg is None or pg.role != "COLLIDER" or not pg.enabled:
-            continue
-        if obj.type != "MESH" or obj.hide_viewport:
-            continue
-        object_id = _object_identity(obj)
-        seen_cache_keys.add(object_id)
-        eval_obj = obj.evaluated_get(depsgraph)
-        mesh = eval_obj.to_mesh()
-        if mesh is None or len(mesh.polygons) == 0:
-            eval_obj.to_mesh_clear()
-            sess._collider_mesh_cache.pop(object_id, None)
-            continue
-        mesh.calc_loop_triangles()
-        nv = len(mesh.vertices)
-        nt = len(mesh.loop_triangles)
-        verts = np.empty(nv * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", verts)
-        verts = verts.reshape(nv, 3)
-        tris = np.empty(nt * 3, dtype=np.int32)
-        mesh.loop_triangles.foreach_get("vertices", tris)
-        mw = np.array(obj.matrix_world, dtype=np.float32)
-        verts_w = verts @ mw[:3, :3].T + mw[:3, 3]
-        eval_obj.to_mesh_clear()
-
-        device = sess.solver.device if sess.solver else "cuda:0"
-        signature = _collider_cache_signature(object_id, device, verts, tris, mw)
-        entry = sess._collider_mesh_cache.get(object_id)
-        if entry is not None and entry["signature"] == signature:
-            wmesh = entry["mesh"]
-            lo = entry["aabb_min"]
-            hi = entry["aabb_max"]
-            sess.collider_mesh_cache_stats["reuses"] += 1
-        else:
-            wmesh = wp.Mesh(
-                points=wp.array(verts_w, dtype=wp.vec3, device=device),
-                indices=wp.array(tris, dtype=wp.int32, device=device),
-            )
-            lo = verts_w.min(axis=0)
-            hi = verts_w.max(axis=0)
-            sess._collider_mesh_cache[object_id] = {
-                "signature": signature,
-                "mesh": wmesh,
-                "aabb_min": lo,
-                "aabb_max": hi,
-            }
-            sess.collider_mesh_cache_stats["rebuilds"] += 1
-        desc = ColliderDesc()
-        desc.mesh = wmesh
-        desc.aabb_min = tuple(float(x) for x in lo)
-        desc.aabb_max = tuple(float(x) for x in hi)
-        c = obj.matrix_world.translation
-        desc.center = (c.x, c.y, c.z)
-        if pg.transfer_velocity:
-            desc.linear_velocity = _object_velocity(obj, scene, sess)
-        colliders.append(desc)
-    for cache_key in list(sess._collider_mesh_cache):
-        if cache_key not in seen_cache_keys:
-            del sess._collider_mesh_cache[cache_key]
-    return colliders
+    return colliders.gather_colliders(scene, sess, depsgraph)
 
 
 def gather_height_source(scene):
-    from ..sim.enums import SourceHeightBackMode
-    from ..sim.solver import HeightSourceDesc
+    """Compatibility wrapper for height-source descriptor translation."""
+    from . import sources
 
-    fs = scene.fluidsim
-    if not fs.height_enabled:
-        return None
-    desc = HeightSourceDesc()
-    desc.enabled = True
-    desc.base_height = fs.height_base
-    desc.back_mode = SourceHeightBackMode[fs.height_back_mode]
-    desc.velocity = tuple(fs.height_velocity)
-    desc.emit_particles = fs.height_emit_particles
-    desc.emit_rate = fs.particles_per_voxel
-    return desc
-
-
+    return sources.gather_height_source(scene)
 # ---------------------------------------------------------------------------
 # Session lifecycle
 # ---------------------------------------------------------------------------
@@ -471,165 +532,41 @@ def gather_height_source(scene):
 
 def initialize_session(scene) -> Session:
     """(Re)create the solver from current scene state."""
-    from ..diagnostics.profiler import Profiler
-    from ..sim.solver import FluidSolver
-
-    sess = session()
-    release_session()
-    fs = scene.fluidsim
-    settings = build_settings(scene)
-    profiler = None
-    if fs.profiling_enabled:
-        profiler = Profiler(device=settings.device, sync=fs.profiling_sync)
-    solver = FluidSolver(settings, profiler=profiler)
-    sess.solver = solver
-    sess.profiler = profiler
-    sess.start_frame = scene.frame_start
-    sess.last_frame = -1
-    sess.frame_stats = []
-    clear_error(scene)
-    sess._collider_prev = {}
-    sess._collider_mesh_cache = {}
-    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
-    sync_scene_to_solver(scene, sess)
-    errors = solver.set_custom_snippets(build_snippets(scene))
-    for name, err in errors:
-        for pg in fs.snippets:
-            if pg.kernel_name == name:
-                pg.last_error = str(err)[:256]
-    fs.status = "Solver ready"
-    return sess
+    return session().initialize(scene)
 
 
-def release_session():
-    sess = session()
-    sess.solver = None
-    sess.profiler = None
-    sess.last_frame = -1
-    sess.frame_stats = []
-    sess._collider_prev = {}
-    sess._collider_mesh_cache = {}
-    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+def release_session(scene=None):
+    session().release(scene)
 
 
 def set_live_enabled(scene, enabled: bool):
     """Own the scene.fluidsim.live enable/disable lifecycle."""
-    fs = scene.fluidsim
-    if enabled:
-        if getattr(fs, "cache_playback_enabled", False):
-            fs.status = "Cache playback enabled - press play"
-        elif not session().active:
-            initialize_session(scene)
-            fs.status = "Live simulation enabled - press play"
-        else:
-            fs.status = "Live simulation enabled - press play"
-    else:
-        fs.status = "Live simulation disabled"
+    session().set_live_enabled(scene, enabled)
 
 
 def set_cache_playback_enabled(scene, enabled: bool):
     """Own cache playback transition without requiring a live solver."""
-    fs = scene.fluidsim
-    if enabled:
-        release_session()
-        if getattr(fs, "live", False):
-            fs.status = "Cache playback enabled - press play"
-    elif getattr(fs, "live", False):
-        set_live_enabled(scene, True)
+    session().set_cache_playback_enabled(scene, enabled)
 
 
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
     """Push current scene objects (sources/colliders/height) to the solver."""
-    sess = sess or session()
-    if not sess.active:
-        return
-    sess.solver.set_sources(gather_sources(scene, sess))
-    sess.solver.set_colliders(gather_colliders(scene, sess, depsgraph))
-    sess.solver.set_height_source(gather_height_source(scene))
+    (sess or session()).sync_scene(scene, depsgraph)
 
 
 def step_frame(scene, sess: Session | None = None, *, write_cache: bool = True):
     """Advance the solver one frame and update output objects."""
-    from . import viewport
-
-    sess = sess or session()
-    if not sess.active:
-        return None
-    fs = scene.fluidsim
-    stats = sess.solver.step_frame()
-    sess.frame_stats.append(stats.as_dict())
-    if len(sess.frame_stats) > 1000:
-        sess.frame_stats.pop(0)
-    fs.stat_particles = stats.active_particles
-    fs.stat_voxels = stats.active_voxels
-    fs.stat_whitewater = stats.whitewater_particles
-    fs.stat_step_ms = stats.step_time * 1000.0
-    fs.stat_substeps = stats.substeps
-    fs.status = (
-        f"Frame {sess.solver.frame}: {stats.active_particles:,} particles, "
-        f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
-    )
-    viewport.update_outputs(scene, sess)
-    if write_cache and fs.cache_enabled:
-        from ..io import cache
-
-        try:
-            cache.write_frame(scene, sess)
-        except Exception as exc:  # noqa: BLE001 - cache is supplemental
-            print(f"fluidSim cache write failed: {exc!r}")
-    return stats
+    return (sess or session()).step(scene, write_cache=write_cache)
 
 
 def play_cache_frame(scene, frame: int | None = None):
     """Load one cached timeline frame into the regular output objects."""
-    from . import viewport
-    from ..io import cache
-
-    fs = scene.fluidsim
-    frame = int(scene.frame_current if frame is None else frame)
-    if getattr(fs, "cache_use_custom_range", False):
-        start, end = cache.resolve_frame_range(
-            scene,
-            use_custom=True,
-            frame_start=fs.cache_frame_start,
-            frame_end=fs.cache_frame_end,
-        )
-        if frame < start or frame > end:
-            raise FileNotFoundError(
-                f"Cache frame {frame} is outside playback range {start}-{end}"
-            )
-    base = bpy.path.abspath(fs.cache_path)
-    frame_data = cache.read_frame(base, frame)
-    if frame_data is None:
-        raise FileNotFoundError(f"Cache frame {frame} is missing or corrupt in {base}")
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
-    fs.stat_particles = len(frame_data.get("positions", ()))
-    fs.stat_whitewater = len(frame_data.get("whitewater", ()))
-    fs.stat_voxels = 0
-    fs.stat_step_ms = 0.0
-    fs.stat_substeps = 0
-    fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
-    clear_error(scene)
-    return frame_data
+    return session().play_cache_frame(scene, frame)
 
 
 def reset_simulation(scene):
     """Reset solver state and clear outputs (used at playback start)."""
-    from . import viewport
-
-    sess = session()
-    if not sess.active:
-        return
-    sess.solver.reset()
-    sess.last_frame = -1
-    sess.frame_stats = []
-    clear_error(scene)
-    sess._collider_prev = {}
-    sess._collider_mesh_cache = {}
-    sess.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
-    sync_scene_to_solver(scene, sess)
-    viewport.update_outputs(scene, sess)
-    scene.fluidsim.status = "Simulation reset"
+    session().reset(scene)
 
 
 def _tag_view3d_redraw():
@@ -641,30 +578,13 @@ def _tag_view3d_redraw():
 
 def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     """Push current surface UI settings into an active solver frame."""
-    from ..sim.enums import SdfFilterType
-
     sess = sess or session()
     if not sess.active:
         return False
     fs = scene.fluidsim
     solver = sess.solver
-    solver.settings.surface_enabled = fs.surface_enabled
-    solver.settings.particle_radius_scale = fs.particle_radius_scale
-    solver.settings.surface_filter_type = SdfFilterType[fs.surface_filter_type]
-    solver.settings.surface_filter_iterations = fs.surface_filter_iterations
-    solver.settings.surface_filter_strength = fs.surface_filter_strength
-    solver.settings.surface_dilate_iterations = fs.surface_dilate_iterations
-    solver.settings.surface_dilate_strength = fs.surface_dilate_strength
-    solver.settings.surface_erode_iterations = fs.surface_erode_iterations
-    solver.settings.surface_erode_strength = fs.surface_erode_strength
-    solver.settings.surface_smooth_type = SdfFilterType[fs.surface_smooth_type]
-    solver.settings.surface_smooth_iterations = fs.surface_smooth_iterations
-    solver.settings.surface_smooth_strength = fs.surface_smooth_strength
-    # These knobs affect the SDF build, not just the extracted mesh. Rebuild
-    # the current-frame SDF so paused playback reflects the slider immediately.
-    solver._surface_mesh_cache = None
-    solver._surface_mesh_key = None
-    solver._surface()
+    _apply_scene_settings(fs, solver.settings, _SURFACE_SETTING_FIELDS)
+    solver.rebuild_surface()
     return True
 
 
@@ -719,41 +639,7 @@ def request_scene_update(scene, action: str, reason: str = ""):
 
 
 def _on_frame_change(scene, depsgraph):
-    sess = session()
-    fs = getattr(scene, "fluidsim", None)
-    if fs is None or not fs.live:
-        return
-    frame = scene.frame_current
-    if frame == sess.last_frame:
-        return
-    if getattr(fs, "cache_playback_enabled", False):
-        sess.last_frame = frame
-        try:
-            play_cache_frame(scene, frame)
-        except Exception as exc:  # noqa: BLE001 - never break playback
-            set_error(scene, repr(exc))
-            fs.status = f"Cache playback error: {exc}"
-            print(f"fluidSim cache playback failed: {exc!r}")
-        return
-    if not sess.active:
-        return
-    if frame <= sess.start_frame or frame < sess.last_frame:
-        # Rewind / loop restart -> reset the simulation.
-        reset_simulation(scene)
-        sess.last_frame = frame
-        return
-    # Step once per new frame (frame skips advance a single step to stay
-    # interactive rather than simulating every skipped frame).
-    sess.last_frame = frame
-    try:
-        sync_scene_to_solver(scene, sess, depsgraph)
-        step_frame(scene, sess)
-    except Exception as exc:  # noqa: BLE001 - never break playback
-        set_error(scene, repr(exc))
-        fs.status = f"Solver error: {exc}"
-        fs.live = False
-        release_session()
-        print(f"fluidSim step failed: {exc!r}")
+    session().handle_frame_change(scene, depsgraph)
 
 
 def register_handlers():

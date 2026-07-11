@@ -39,9 +39,12 @@ def _fmt_ms(seconds):
 
 
 def _phase_labels():
-    from fluidSim_warp_blender51.diagnostics.profiler import PHASE_SLOTS
+    from fluidSim_warp_blender51.sim.constants import TIMER_PHASE_SLOTS
 
-    return {slot: phase for phase, slot in PHASE_SLOTS.items()}
+    return {
+        f"compute_{slot}": phase
+        for phase, slot in TIMER_PHASE_SLOTS.items()
+    }
 
 
 def _build_settings(args):

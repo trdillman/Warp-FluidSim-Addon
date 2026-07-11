@@ -939,36 +939,12 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
             fs.status = f"Cache export failed: {exc}"
             return {"CANCELLED"}
 
-        base = bpy.path.abspath(fs.cache_path)
-        original_frame = scene.frame_current
-        original_live = fs.live
-        frame_set = getattr(scene, "frame_set", None)
-        fs.live = False
         try:
-            sess = bridge.initialize_session(scene)
-            sess.start_frame = start
-            for timeline_frame in range(start, end + 1):
-                if frame_set is not None:
-                    frame_set(timeline_frame)
-                if sess.active:
-                    sess.solver.frame = timeline_frame - 1
-                bridge.sync_scene_to_solver(scene, sess)
-                bridge.step_frame(scene, sess, write_cache=False)
-                if sess.active:
-                    sess.solver.frame = timeline_frame
-                cache.write_frame(scene, sess)
-            cache.write_sequence_metadata(base, start, end, source="simulation")
+            base = bridge.session().export_cache_sequence(scene, start, end)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Cache sequence export failed: {exc}")
             fs.status = f"Cache export failed: {exc}"
             return {"CANCELLED"}
-        finally:
-            if frame_set is not None:
-                try:
-                    frame_set(original_frame)
-                except Exception:  # noqa: BLE001
-                    pass
-            fs.live = original_live
 
         count = end - start + 1
         fs.status = f"Exported {count} cache frame(s) to {base}"
