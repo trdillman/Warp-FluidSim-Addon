@@ -434,6 +434,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         box.prop(fs, "show_particles")
         sub = box.column(align=True)
         sub.enabled = fs.show_particles
+        sub.prop(fs, "native_gpu_interop")
         sub.prop(fs, "particle_display_fraction")
         sub.prop(fs, "particle_display_scale")
         sub.prop(fs, "particle_attribute_mode")

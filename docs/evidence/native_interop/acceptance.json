@@ -1,0 +1,23 @@
+{
+  "backend": "VULKAN",
+  "device": "NVIDIA GeForce RTX 4080 SUPER",
+  "device_uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+  "particle_count": 4225,
+  "colored_pixels": 4225,
+  "center_rgba": [
+    0,
+    0,
+    0,
+    255
+  ],
+  "center_blue_peak": 255,
+  "bridge_stats": {
+    "imports": 3,
+    "maps": 1,
+    "published_frames": 1,
+    "published_bytes": 50700,
+    "bulk_host_position_bytes": 0
+  },
+  "position_readback": false,
+  "image": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop\\docs\\evidence\\native_interop\\warp_cuda_vulkan_points.png"
+}

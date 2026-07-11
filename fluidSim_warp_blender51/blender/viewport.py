@@ -241,8 +241,8 @@ def _swap_points(obj, positions, radius, colors=None):
     pc_old = obj.data
     pc = bpy.data.pointclouds.new(obj.name)
     n = len(positions)
-    pc.resize(n)
     if n:
+        pc.resize(n)
         pos_attr = pc.attributes.get("position")
         if pos_attr is None:
             pos_attr = pc.attributes.new("position", "FLOAT_VECTOR", "POINT")
@@ -379,12 +379,14 @@ def _attribute_map(mode, values):
     return {} if values is None else {mode: np.asarray(values)}
 
 
-def _solver_frame(scene, solver):
+def _solver_frame(scene, solver, *, include_particles=True):
     fs = scene.fluidsim
-    positions = (solver.particle_positions() if fs.show_particles else
+    positions = (solver.particle_positions()
+                 if fs.show_particles and include_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions) if fs.show_particles
+        solver, fs.particle_attribute_mode, positions)
+        if fs.show_particles and include_particles
         else None)
     whitewater = (solver.whitewater_positions()
                   if fs.show_whitewater and fs.whitewater_enabled else
@@ -474,7 +476,7 @@ def _cached_frame(scene, frame_data):
     )
 
 
-def _render_outputs(scene, frame):
+def _render_outputs(scene, frame, *, include_particles=True):
     from . import materials
 
     fs = scene.fluidsim
@@ -494,7 +496,7 @@ def _render_outputs(scene, frame):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
-    if fs.show_particles:
+    if fs.show_particles and include_particles:
         positions = frame.particles
         values = frame.particle_attributes.get(fs.particle_attribute_mode)
         fraction = fs.particle_display_fraction
@@ -520,7 +522,14 @@ def _render_outputs(scene, frame):
                 lambda: bpy.data.meshes.new(PARTICLES_NAME),
             )
             _swap_vertex_cloud(obj, positions, colors)
+        obj.hide_viewport = False
+        obj.hide_render = False
         materials.ensure_particle_material(scene, obj)
+    elif fs.show_particles:
+        obj = bpy.data.objects.get(PARTICLES_NAME)
+        if obj is not None:
+            obj.hide_viewport = True
+            obj.hide_render = True
     else:
         _clear_points(PARTICLES_NAME)
 
@@ -592,7 +601,55 @@ def update_outputs(scene, sess):
     """Write current solver outputs into Blender datablocks."""
     if not sess.active:
         return
-    _render_outputs(scene, _solver_frame(scene, sess.solver))
+    native_particles = _update_native_particles(scene, sess)
+    _render_outputs(
+        scene,
+        _solver_frame(scene, sess.solver,
+                      include_particles=not native_particles),
+        include_particles=not native_particles,
+    )
+
+
+def _update_native_particles(scene, sess):
+    fs = scene.fluidsim
+    presenter = getattr(sess, "native_presenter", None)
+    requested = bool(
+        fs.show_particles
+        and getattr(fs, "native_gpu_interop", False)
+        and fs.particle_display_fraction == 1.0
+        and fs.particle_attribute_mode == "NONE"
+    )
+    if not requested:
+        if presenter is not None:
+            presenter.close()
+            sess.native_presenter = None
+        return False
+
+    try:
+        from .native_interop import NativeParticlePresenter
+
+        particles = sess.solver.particles
+        if (presenter is None
+                or len(presenter.bridge.positions) != particles.capacity):
+            if presenter is not None:
+                presenter.close()
+            point_size = 3.0 * float(fs.particle_display_scale)
+            sess.native_presenter = NativeParticlePresenter(
+                particles.capacity, point_size=point_size)
+            presenter = sess.native_presenter
+        presenter.point_size = 3.0 * float(
+            fs.particle_display_scale)
+        presenter.publish(
+            particles.position, particles.host_count)
+        sess.native_interop_error = ""
+        return True
+    except Exception as exc:
+        presenter = getattr(sess, "native_presenter", None)
+        if presenter is not None:
+            presenter.close()
+            sess.native_presenter = None
+        sess.native_interop_error = str(exc)
+        return False
 
 
 def update_outputs_from_cache_frame(scene, frame_data):

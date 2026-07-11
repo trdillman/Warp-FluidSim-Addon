@@ -32,12 +32,17 @@ class Session:
         self._collider_prev = {}  # object name -> (matrix, frame)
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.native_presenter = None
+        self.native_interop_error = ""
 
     @property
     def active(self):
         return self.solver is not None
 
     def _clear_runtime(self):
+        if self.native_presenter is not None:
+            self.native_presenter.close()
+            self.native_presenter = None
         self.solver = None
         self.profiler = None
         self.start_frame = 1
@@ -46,6 +51,7 @@ class Session:
         self._collider_prev = {}
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.native_interop_error = ""
 
     def set_error(self, scene, message):
         self.error = str(message)

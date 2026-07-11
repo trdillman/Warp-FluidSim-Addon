@@ -55,3 +55,12 @@ fluidSim_warp_blender51_synth_package/
   `demos/maelstrom_basin.blend`.
 - `tests/test_demo_analysis_maelstrom.py`: focused regression coverage for the
   maelstrom-specific spin/churn/playback contract.
+
+## Native GPU interop lane
+
+- `docs/NATIVE_GPU_INTEROP.md`: supported scope, usage, results, and reproduction contract.
+- `fluidSim_warp_blender51/blender/native_interop.py`: CUDA external-memory/timeline import and native
+  particle presenter.
+- `demos/native_gpu_interop_particles.blend`: configured runnable consumer scene.
+- `docs/evidence/native_interop/`: framebuffer and benchmark evidence.
+- `tests/blender_native_interop_*`: direct draw, real solver, benchmark, and saved-demo runtime gates.

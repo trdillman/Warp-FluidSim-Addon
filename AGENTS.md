@@ -2,6 +2,18 @@
 
 Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements only. Keep simulation GPU-resident, support interactive viewport playback, preserve the listed FluidSim features, and use the synthesized Python modules for enums, kernel inventory, dispatch/custom-kernel contracts, UI behavior, profiling, and validation targets. The live field-storage contract is a sparse tiled leaf grid: fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
 
+## Active project: native GPU interop
+
+- Product authority remains the Blender source tree's `GOALS.md`; consumer sequencing and evidence live
+  in `docs/NATIVE_GPU_INTEROP_PHASE_PLAN.md` and `docs/NATIVE_GPU_INTEROP.md`.
+- Native presentation is Windows Vulkan + NVIDIA CUDA/Warp only. It is opt-in and must retain the CPU
+  point-cloud path as a reported fallback.
+- Reuse the Blender-owned exportable VBO and two directional timelines. Do not add a second allocation
+  owner, public provider ABI, indirect draw, bounds, surface interop, or Linux support in this milestone.
+- A passing import or screenshot is not completion. Require real solver frames, zero bulk host-position
+  bytes, persistent import/map counters, correct pixels, a forced fallback, benchmark JSON, and a saved
+  demo scene that reopens and advances.
+
 ## Verified workflows
 
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` for the full production gate.
@@ -10,3 +22,5 @@ Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements onl
 - For GPU solver timing changes, run `"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe" tools/profile_gpu_solver.py --device cuda:0 --frames 8 --warmup 2 --json-out artifacts/gpu_solver_profile.json`.
 - Build demos with `blender --background --python tools/build_demo_scenes.py`; use `-- --list-scenes`, `-- --standard-cache-scenes`, or `-- dam_break slosh_tank` to select targets.
 - Verify saved demo files with `blender --background --python tools/check_demo_blends.py`, then analyze outputs with `python tools/analyze_demos.py`.
+- Native interop runtime gates require the interop-enabled Blender build with `--gpu-backend vulkan`;
+  see `docs/NATIVE_GPU_INTEROP.md` for exact commands and evidence paths.

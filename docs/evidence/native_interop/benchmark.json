@@ -1,0 +1,73 @@
+{
+  "environment": {
+    "backend": "VULKAN",
+    "device": "NVIDIA GeForce RTX 4080 SUPER",
+    "device_uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+    "warp_version": "1.12.1",
+    "blender_version": "5.2.0 Alpha"
+  },
+  "workload": {
+    "particle_count": 24840,
+    "iterations": 20,
+    "bytes_per_frame": 298080,
+    "surface_enabled": false
+  },
+  "cpu_datablock_ms": {
+    "median": 1.57815,
+    "p95": 1.888,
+    "samples": [
+      1.8726,
+      1.7675,
+      1.4787,
+      1.3765,
+      1.3669,
+      1.3473,
+      1.5283,
+      1.7908,
+      1.4811,
+      1.5883,
+      1.5876,
+      1.6579,
+      1.5687,
+      1.8013,
+      1.888,
+      1.6078,
+      1.3531,
+      1.5445,
+      1.8811,
+      1.4823
+    ],
+    "bulk_host_position_bytes": 5961600
+  },
+  "native_interop_ms": {
+    "median": 0.3847,
+    "p95": 1.3756,
+    "samples": [
+      1.3756,
+      0.6781,
+      0.5216,
+      0.5445,
+      0.5323,
+      0.5934,
+      0.5958,
+      0.3407,
+      0.3205,
+      0.3059,
+      0.2897,
+      0.5419,
+      0.3641,
+      0.3531,
+      0.3354,
+      0.3589,
+      0.4053,
+      0.3544,
+      0.4503,
+      0.3308
+    ],
+    "bulk_host_position_bytes": 0,
+    "imports": 3,
+    "maps": 1
+  },
+  "median_speedup": 4.102287496750715,
+  "measurement_scope": "steady-state presentation only; native samples enqueue CUDA copy, timeline handoff, and Vulkan draw, followed by one final framebuffer drain"
+}
