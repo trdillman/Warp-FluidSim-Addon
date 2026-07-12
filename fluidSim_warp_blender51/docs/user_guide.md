@@ -86,8 +86,7 @@ Per-object force regions (tag a Source as a force). Force type
 (Off / Directional / Omnidirectional / Spin / Radial), strength, direction.
 
 ### Pressure Projection
-**Solver** (Jacobi / **PCG**), **Iterations**, **Tolerance**, **Multigrid**
-(Off / V-Cycle / Half-V-Cycle — coarse initial guess), **Threshold**
+**Solver** (Jacobi / **PCG**), **Iterations**, **Tolerance**, **Threshold**
 (relative pressure cutoff).
 
 ### Viscosity
@@ -337,7 +336,7 @@ FluidSim Warp is interactive-first; these are supplemental:
 - **No whitewater?** Lower **Churn Threshold** and raise **Emission Rate**;
   whitewater needs turbulent impact regions.
 - **Performance.** Watch the overlay timers; Pressure and Surface phases
-  dominate at high resolution. Multigrid coarse guess can speed pressure.
+  dominate at high resolution.
 
 ## Surface resolution
 

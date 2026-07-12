@@ -7,6 +7,7 @@ import inspect
 import os
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,13 +16,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class _FakeSolverSettings:
-    def __init__(self):
-        self.pressure_multigrid = 0
+    pass
 
-    def __setattr__(self, name, value):
-        if name == "multigrid":
-            raise AssertionError("build_settings must not assign settings.multigrid")
-        super().__setattr__(name, value)
+
+def test_multigrid_feature_is_not_exposed_or_scene_configurable():
+    root = Path(__file__).parents[1] / "fluidSim_warp_blender51"
+
+    assert '"multigrid"' not in (root / "panels.py").read_text(encoding="utf-8")
+    assert "multigrid:" not in (root / "properties.py").read_text(encoding="utf-8")
+    assert "pressure_multigrid" not in (
+        root / "blender" / "scene_bridge.py").read_text(encoding="utf-8")
 
 
 def _install_scene_bridge_stubs(monkeypatch):
@@ -52,7 +56,7 @@ def _install_scene_bridge_stubs(monkeypatch):
     return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
 
 
-def _scene(multigrid):
+def _scene():
     fs = SimpleNamespace(
         domain_object=None,
         voxel_size=0.1,
@@ -83,7 +87,6 @@ def _scene(multigrid):
         pressure_solver="PCG",
         pressure_iterations=80,
         pressure_tolerance=1.0e-5,
-        multigrid=multigrid,
         pressure_threshold=0.0,
         viscosity_enabled=False,
         viscosity_solver="PCG",
@@ -122,19 +125,9 @@ def _scene(multigrid):
     )
 
 
-def test_build_settings_maps_scene_multigrid_to_pressure_multigrid(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.sim.enums import MultiGrid
-
-    settings = scene_bridge.build_settings(_scene("V_CYCLE"))
-
-    assert settings.pressure_multigrid == MultiGrid.V_CYCLE
-    assert not hasattr(settings, "multigrid")
-
-
 def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    scene = _scene("OFF")
+    scene = _scene()
 
     settings = scene_bridge.build_settings(scene)
 

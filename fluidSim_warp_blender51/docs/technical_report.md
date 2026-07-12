@@ -35,7 +35,7 @@ fluidSim_warp_blender51/
 │   ├── enums.py             IntEnum mirrors of synthesized tables
 │   ├── fields.py            SparseGrid / ScalarField / MacVelocityField
 │   ├── particles.py         ParticleSystem / ParticleBins
-│   ├── pressure.py          PressureSolver (Jacobi / PCG + multigrid)
+│   ├── pressure.py          PressureSolver (Jacobi / PCG)
 │   ├── viscosity.py         ViscositySolver
 │   ├── surface.py           SDF build / smoothing / marching cubes
 │   ├── whitewater.py        churn / emit / advect whitewater kernels
@@ -112,7 +112,7 @@ Per display frame, substeps are chosen by CFL
 | — | viscosity (4) | explicit+implicit viscosity (Jacobi/PCG), constant or per-particle |
 | — | collision (8) | `k_sdf_to_axis_collision` + `k_expand_shift_axis_velocity_in_collider` |
 | — | `BEFORE_PROJECT…` custom hook | snippet run |
-| — | pressure (5) | build RHS + preconditioner, Jacobi or PCG (optional multigrid coarse guess), optional threshold, project |
+| — | pressure (5) | build RHS + preconditioner, Jacobi or PCG, optional threshold, project |
 | — | sanitize MAC | `k_sanitize_mac_velocity` (kill inf/nan, clamp to CFL bound) |
 | — | g2p (6) | `k_staggered_field_to_particle` (PIC/FLIP blend via `flip_ratio`) + `k_advect_particles` (Euler/midpoint/modified-midpoint/RK3) with SDF collision response |
 | — | sanitize particles | `k_sanitize_particles` (kill non-finite, clamp speed) |
@@ -134,8 +134,7 @@ from host-read counts; profiler timers collected.
   `count_stiffness` anti-clumping term (rest count = `particles_per_voxel`).
 - **Preconditioner** built from the voxel-type mask.
 - **Jacobi** (`solve_jacobi`) or **PCG** (`solve_pcg`, tolerance + iteration
-  cap). Optional **multigrid coarse initial guess** (`coarse_initial_guess`)
-  for V-cycle / half-V-cycle (`MultiGrid` enum) to seed PCG.
+  cap).
 - Optional **relative pressure threshold** (`apply_threshold`) zeros tiny
   pressures.
 - **Project** subtracts the pressure gradient from the MAC field and applies
@@ -338,8 +337,7 @@ never crash the suite.
   `Leaf Capacity` bounds allocation; `Topology Expand` trades memory for
   fewer per-frame topology rebuilds under fast-moving fluid.
 - **Pressure** (`compute_5`) and **Surface** (`compute_11`) dominate at high
-  resolution. Multigrid coarse guess reduces PCG iterations; surface filter
-  iterations and splat radius control surface cost.
+  resolution. Surface filter iterations and splat radius control surface cost.
 - Profiling with **Accurate GPU Timing** syncs each phase (precise but slower);
   disable it for lower-overhead approximate timings.
 - The benchmark's exact-match on active voxels makes it a deterministic

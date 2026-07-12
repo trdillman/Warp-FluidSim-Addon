@@ -406,7 +406,6 @@ _SURFACE_SETTING_FIELDS = frozenset({
 def _apply_scene_settings(fs, settings, fields=None):
     from ..sim.enums import (
         LimitBehavior,
-        MultiGrid,
         ParticleSampleType,
         ProjectNonDivergentSolver,
         RelaxMode,
@@ -427,7 +426,6 @@ def _apply_scene_settings(fs, settings, fields=None):
         "limit_behavior": ("limit_behavior", LimitBehavior),
         "relax_mode": ("relax_mode", RelaxMode),
         "pressure_solver": ("pressure_solver", ProjectNonDivergentSolver),
-        "pressure_multigrid": ("multigrid", MultiGrid),
         "viscosity_solver": ("viscosity_solver", ViscositySolver),
         "surface_filter_type": ("surface_filter_type", SdfFilterType),
         "surface_smooth_type": ("surface_smooth_type", SdfFilterType),

@@ -26,7 +26,6 @@ from .sim.enums import (
     CustomKernelOrder,
     CustomKernelRunOver,
     LimitBehavior,
-    MultiGrid,
     ParticleSampleType,
     ProjectNonDivergentSolver,
     RelaxMode,
@@ -515,8 +514,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     pressure_tolerance: FloatProperty(
         name="Tolerance", default=1.0e-5, min=0.0, precision=8,
         update=_request_reset)
-    multigrid: EnumProperty(name="Multigrid", items=_items(MultiGrid), default="OFF",
-                            update=_request_reset)
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
         update=_request_reset,

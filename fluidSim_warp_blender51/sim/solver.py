@@ -22,7 +22,6 @@ from .enums import (
     TraceMode,
     ProjectNonDivergentSolver,
     ViscositySolver as ViscositySolverEnum,
-    MultiGrid,
     RelaxMode,
     SdfFilterType,
     SurfaceResolutionMode,
@@ -454,7 +453,6 @@ class SolverSettings:
     pressure_solver: int = int(ProjectNonDivergentSolver.PCG)
     pressure_iterations: int = C.DEFAULT_PRESSURE_ITERATIONS
     pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
-    pressure_multigrid: int = int(MultiGrid.OFF)
     pressure_threshold: float = 0.0
 
     viscosity_enabled: bool = False
@@ -1377,7 +1375,6 @@ class FluidSolver:
             )
         else:
             ps.build_preconditioner(self.voxel_type.data)
-        use_mg = int(s.pressure_multigrid) != int(MultiGrid.OFF) and not st_projection
         if int(s.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
             if st_projection:
                 ps.solve_jacobi_st(
@@ -1389,8 +1386,6 @@ class FluidSolver:
                     eps_rho=s.spacetime_min_density,
                 )
             else:
-                if use_mg:
-                    ps.coarse_initial_guess(self.voxel_type.data)
                 ps.solve_jacobi(self.voxel_type.data, s.pressure_iterations)
         else:
             if st_projection:
@@ -1405,7 +1400,7 @@ class FluidSolver:
                 )
             else:
                 ps.solve_pcg(self.voxel_type.data, s.pressure_iterations,
-                             s.pressure_tolerance, use_coarse_guess=use_mg)
+                             s.pressure_tolerance)
         if not ps.should_project_pressure():
             self.stats.pressure_iterations = ps.last_iterations
             self.stats.pressure_residual = ps.last_residual

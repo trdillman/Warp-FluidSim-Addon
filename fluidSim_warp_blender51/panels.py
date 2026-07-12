@@ -296,7 +296,6 @@ class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "pressure_solver")
         col.prop(fs, "pressure_iterations")
         col.prop(fs, "pressure_tolerance")
-        col.prop(fs, "multigrid")
         col.prop(fs, "pressure_threshold")
 
 
