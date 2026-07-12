@@ -8,6 +8,7 @@ stored as compressed .npz files.
 from __future__ import annotations
 
 import json
+import io
 import os
 import pickle
 import tempfile
@@ -17,6 +18,16 @@ import numpy as np
 
 CACHE_FORMAT_VERSION = 1
 CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
+
+
+def _savez_fast_compressed(path, payload):
+    """Write a standard DEFLATED NPZ without costly size compression."""
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=0) as archive:
+        for name, value in payload.items():
+            buffer = io.BytesIO()
+            np.lib.format.write_array(buffer, np.asanyarray(value), allow_pickle=False)
+            archive.writestr(f"{name}.npy", buffer.getvalue())
 
 
 def _frame_path(base_dir: str, frame: int) -> str:
@@ -152,7 +163,7 @@ def write_frame(scene, sess) -> str:
     )
     os.close(fd)
     try:
-        np.savez(tmp_path, **_frame_payload(solver))
+        _savez_fast_compressed(tmp_path, _frame_payload(solver))
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):

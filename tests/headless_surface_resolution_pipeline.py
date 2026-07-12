@@ -104,9 +104,9 @@ def _mesh_summary(solver):
         "bbox_max": bmax,
         "checksum": checksum,
         "surface_voxel_size": float(solver.surface.metadata()["voxel_size"]),
-        "surface_active_leaves": int(getattr(solver.render_surface_grid, "active_leaf_count", 0)),
-        "surface_active_voxels": int(getattr(solver.render_surface_grid, "active_leaf_count", 0) * 512),
-        "surface_grid_is_sim_grid": bool(solver.render_surface_grid is solver.grid),
+        "surface_active_leaves": int(getattr(solver.surface.grid, "active_leaf_count", 0)),
+        "surface_active_voxels": int(getattr(solver.surface.grid, "active_leaf_count", 0) * 512),
+        "surface_grid_is_sim_grid": bool(solver.surface.grid is solver.grid),
     }
 
 
@@ -151,15 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     solver_2x, two = _run_case(args.device, 2.0, frames, particles)
 
     # Cache invalidation / filter-path acceptance on the final 2x state.
-    key_before = repr(solver_2x._surface_mesh_key)
+    key_before = repr(solver_2x.surface.mesh_key)
     mesh_before = _mesh_summary(solver_2x)
     from fluidSim_warp_blender51.sim.enums import SdfFilterType
     solver_2x.settings.surface_filter_type = SdfFilterType.DIALATE
     solver_2x.settings.surface_filter_iterations = 1
     solver_2x.settings.surface_filter_strength = 1.0
-    solver_2x._surface(build_render=True, build_lowres=False)
+    solver_2x.surface.build(build_render=True, build_lowres=False)
     mesh_after = _mesh_summary(solver_2x)
-    key_after = repr(solver_2x._surface_mesh_key)
+    key_after = repr(solver_2x.surface.mesh_key)
     bbox_delta = float(max(
         np.max(np.abs(np.asarray(one["surface"]["bbox_min"]) - np.asarray(two["surface"]["bbox_min"]))),
         np.max(np.abs(np.asarray(one["surface"]["bbox_max"]) - np.asarray(two["surface"]["bbox_max"]))),

@@ -1,5 +1,6 @@
 import os
 import sys
+import zipfile
 from types import SimpleNamespace
 
 import numpy as np
@@ -67,6 +68,10 @@ def test_write_frame_stores_format_version_and_read_frame_loads_it(tmp_path, mon
     assert written == str(tmp_path / "fluidsim_00003.npz")
     assert int(loaded["format_version"]) == 1
     np.testing.assert_array_equal(loaded["positions"], solver.particle_positions())
+    with zipfile.ZipFile(written) as archive:
+        assert archive.infolist()
+        assert all(item.compress_type == zipfile.ZIP_DEFLATED
+                   for item in archive.infolist())
 
 
 def test_read_frame_rejects_unsupported_format_version(tmp_path):

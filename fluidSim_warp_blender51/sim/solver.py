@@ -670,6 +670,7 @@ class FluidSolver:
         return self.snippets.errors
 
     def reset(self):
+        self._host_frame_cache = None
         self.particles.clear()
         self.whitewater.clear()
         self.churn.zero()
@@ -1530,13 +1531,7 @@ class FluidSolver:
                 self._lifecycle(dt)
             with self._phase("relax"):
                 self._relax()
-            with self._phase("surface"):
-                cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
-                if cadence == int(SurfaceUpdateCadence.SUBSTEP):
-                    self._surface(build_render=True, build_lowres=True)
-                elif s.whitewater_enabled:
-                    # Whitewater uses the legacy simulation-grid surface SDF.
-                    self._surface(build_render=False, build_lowres=True)
+            self.surface.after_substep()
             with self._phase("whitewater"):
                 self._whitewater(dt)
             self.snippets.run(CustomKernelOrder.FINAL_STEP, self, time_ctx)
@@ -1545,11 +1540,7 @@ class FluidSolver:
 
         self.frame += 1
         self._host_frame_cache = None
-        cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
-        if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
-            with self._phase("surface"):
-                self._surface(build_render=True,
-                              build_lowres=bool(getattr(s, "surface_build_lowres_sdf", True)))
+        self.surface.after_frame()
 
         wp.synchronize_device(self.device)
         self.grid.refresh_topology_counts()
@@ -1563,9 +1554,10 @@ class FluidSolver:
         st.active_particles = self.particles.refresh_host_count()
         st.total_particles = self.particles.capacity
         st.whitewater_particles = self.whitewater.refresh_host_count()
-        st.surface_voxel_size = float(self.surface.voxel_size())
-        st.surface_active_leaves = int(getattr(self.render_surface_grid, "active_leaf_count", 0))
-        st.surface_active_voxels = int(st.surface_active_leaves * C.LEAF_VOLUME)
+        surface_metadata = self.surface.metadata()
+        st.surface_voxel_size = float(surface_metadata["voxel_size"])
+        st.surface_active_leaves = surface_metadata["active_leaves"]
+        st.surface_active_voxels = surface_metadata["active_voxels"]
         if self.profiler is not None:
             st.timers = self.profiler.collect()
         return st

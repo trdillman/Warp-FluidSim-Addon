@@ -59,7 +59,8 @@ class HostFrame:
         def load():
             try:
                 n = self.solver.particles.host_count
-                return self.solver.particles.attr(name)[:n].numpy()
+                # Warp 1.12.1 can fail converting sliced array views to NumPy.
+                return self.solver.particles.attr(name).numpy()[:n]
             except AttributeError:
                 return np.zeros(0, dtype=np.float32)
         return self._get(("particle", name), load)

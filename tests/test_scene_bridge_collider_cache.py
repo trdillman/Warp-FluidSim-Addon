@@ -279,6 +279,23 @@ def test_animated_collider_reports_angular_velocity(monkeypatch):
     assert angular == (0.0, 0.0, pytest.approx(12.0 * math.pi))
 
 
+def test_animated_collider_reports_linear_velocity(monkeypatch):
+    scene_bridge, colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.fluidsim.transfer_velocity = True
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1),
+    )
+
+    assert colliders.gather_colliders(scene, sess, depsgraph=object())[0].linear_velocity == (0.0, 0.0, 0.0)
+    scene.frame_current = 2
+    obj.evaluated_matrix_world = _FakeMatrix(tx=2.0)
+
+    assert colliders.gather_colliders(scene, sess, depsgraph=object())[0].linear_velocity == (48.0, 0.0, 0.0)
+
+
 def test_collider_cache_rebuilds_when_topology_or_transform_changes(monkeypatch):
     scene_bridge, colliders, fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sess = scene_bridge.Session()

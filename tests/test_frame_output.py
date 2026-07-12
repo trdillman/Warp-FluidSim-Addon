@@ -32,12 +32,12 @@ def _solver(calls):
         attr=lambda name: attrs[name],
     )
     whitewater = SimpleNamespace(
-        host_count=0,
-        refresh_host_count=lambda: 0,
-        position=_Array([], calls, "whitewater"),
-        velocity=_Array([], calls, "whitewater_velocity"),
-        age=_Array([], calls, "whitewater_age"),
-        life=_Array([], calls, "whitewater_life"),
+        host_count=2,
+        refresh_host_count=lambda: 2,
+        position=_Array([[1, 2, 3], [4, 5, 6]], calls, "whitewater"),
+        velocity=_Array([[.1, .2, .3], [.4, .5, .6]], calls, "whitewater_velocity"),
+        age=_Array([1, 2], calls, "whitewater_age"),
+        life=_Array([3, 4], calls, "whitewater_life"),
     )
     solver = SimpleNamespace(frame=4, particles=particles, whitewater=whitewater)
     solver.surface_mesh = lambda: calls.__setitem__(
@@ -68,6 +68,31 @@ def test_new_host_frame_rereads_requested_outputs():
     solver.frame += 1
     HostFrame(solver).positions
     assert calls == {"positions": 2}
+
+
+def test_solver_reset_invalidates_frame_zero_host_snapshot():
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    calls = {}
+    solver = FluidSolver.__new__(FluidSolver)
+    solver.frame = 0
+    solver._host_frame_cache = None
+    solver.particles = SimpleNamespace(
+        clear=lambda: None, host_count=1, refresh_host_count=lambda: 1,
+        position=_Array([[1, 2, 3]], calls, "positions"))
+    solver.whitewater = SimpleNamespace(clear=lambda: None)
+    solver.churn = SimpleNamespace(zero=lambda: None)
+    solver.grid = SimpleNamespace(
+        active_voxel_count=0, begin_topology=lambda: None,
+        finalize_topology=lambda: None)
+    solver.surface = SimpleNamespace(reset=lambda: None)
+
+    solver.host_frame().positions
+    solver.reset()
+    solver.host_frame().positions
+
+    assert solver.frame == 0
+    assert calls["positions"] == 2
 
 
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
@@ -104,6 +129,10 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
         "particle_time_offset", "whitewater_velocities", "whitewater_age",
         "whitewater_life"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
+    for name in ("age", "life", "temperature", "viscosity", "density",
+                 "time_offset", "whitewater", "whitewater_velocity",
+                 "whitewater_age", "whitewater_life"):
+        assert calls[name] == 1
     assert calls.get("unused", 0) == 0
     sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
     sys.modules.pop("mathutils.kdtree", None)

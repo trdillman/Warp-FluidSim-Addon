@@ -208,6 +208,27 @@ class SurfacePipeline:
         self.built_key = self.build_key()
         self.invalidate()
 
+    def after_substep(self):
+        from .enums import SurfaceUpdateCadence
+
+        s = self.solver.settings
+        with self.solver._phase("surface"):
+            cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+            if cadence == int(SurfaceUpdateCadence.SUBSTEP):
+                self.build(build_render=True, build_lowres=True)
+            elif s.whitewater_enabled:
+                self.build(build_render=False, build_lowres=True)
+
+    def after_frame(self):
+        from .enums import SurfaceUpdateCadence
+
+        s = self.solver.settings
+        cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+        if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
+            with self.solver._phase("surface"):
+                self.build(build_render=True, build_lowres=bool(
+                    getattr(s, "surface_build_lowres_sdf", True)))
+
     def rebuild(self):
         self.built_key = None
         self.invalidate()
@@ -231,9 +252,11 @@ class SurfacePipeline:
 
     def metadata(self):
         s = self.solver.settings
+        leaves = int(getattr(self.grid, "active_leaf_count", 0))
         return {"voxel_size": self.voxel_size(), "resolution_mode": int(s.surface_resolution_mode),
                 "resolution_multiplier": float(s.surface_resolution_multiplier),
-                "update_cadence": int(s.surface_update_cadence), "smooth_iterations": int(s.surface_smooth_iterations)}
+                "update_cadence": int(s.surface_update_cadence), "smooth_iterations": int(s.surface_smooth_iterations),
+                "active_leaves": leaves, "active_voxels": leaves * C.LEAF_VOLUME}
 
 
 # ---------------------------------------------------------------------------
