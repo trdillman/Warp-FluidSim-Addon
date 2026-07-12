@@ -64,7 +64,7 @@ def k_viscosity_smooth(
     n = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
-            f = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
                 su += u_in[f]
                 sv += v_in[f]
@@ -138,7 +138,7 @@ def k_viscosity_compute_inverse_diagonal(
     diag = float(1.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
-            f = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and weight[f] > 0.0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
                 diag += c
     inv_diag[tid] = 1.0 / diag
@@ -171,7 +171,7 @@ def k_viscosity_apply_matrix(
     acc = x[tid]
     for axis in range(3):
         for step in range(-1, 2, 2):
-            f = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and weight[f] > 0.0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
                 acc += c * (x[tid] - x[f])
     ax[tid] = acc
