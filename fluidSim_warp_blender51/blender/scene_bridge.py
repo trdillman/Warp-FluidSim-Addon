@@ -33,6 +33,7 @@ class Session:
         self.benchmark_compare = None
         self.error = ""
         self._collider_prev = {}  # object name -> (matrix, frame)
+        self._collider_rotation_prev = {}
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
 
@@ -47,6 +48,7 @@ class Session:
         self.last_frame = -1
         self.frame_stats = []
         self._collider_prev = {}
+        self._collider_rotation_prev = {}
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
 
@@ -70,12 +72,29 @@ class Session:
         previous = self._collider_prev.get(obj.name)
         frame = scene.frame_current
         self._collider_prev[obj.name] = (current, frame)
-        if previous is None or frame == previous[1]:
+        if previous is None or frame <= previous[1]:
             return (0.0, 0.0, 0.0)
         dt = (frame - previous[1]) / fps
         if dt == 0:
             return (0.0, 0.0, 0.0)
         return tuple(float(value) for value in (current - previous[0]) / dt)
+
+    def object_angular_velocity(self, obj, scene):
+        """Estimate animated-object angular velocity in radians per second."""
+        fps = scene.render.fps / scene.render.fps_base
+        current = obj.matrix_world.to_quaternion()
+        previous = self._collider_rotation_prev.get(obj.name)
+        frame = scene.frame_current
+        self._collider_rotation_prev[obj.name] = (current.copy(), frame)
+        if previous is None or frame <= previous[1]:
+            return (0.0, 0.0, 0.0)
+        dt = (frame - previous[1]) / fps
+        delta = previous[0].rotation_difference(current)
+        scale = float(delta.angle) / dt
+        axis = delta.axis
+        return (float(axis.x) * scale,
+                float(axis.y) * scale,
+                float(axis.z) * scale)
 
     def release(self, scene=None, *, preserve_error=False):
         if scene is None:

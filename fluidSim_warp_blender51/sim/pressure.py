@@ -139,6 +139,7 @@ def st_beta_for_cell_face(
 
 @wp.func
 def neighbor_flat(
+    flat: wp.int32,
     leaf_table: wp.array(dtype=wp.int32),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
@@ -146,6 +147,14 @@ def neighbor_flat(
     axis: wp.int32,
     step: wp.int32,
 ) -> wp.int32:
+    local = ijk[axis] & 7
+    if local + step >= 0 and local + step < 8:
+        stride = wp.int32(1)
+        if axis == 1:
+            stride = 8
+        elif axis == 2:
+            stride = 64
+        return flat + step * stride
     o = wp.vec3i(ijk[0], ijk[1], ijk[2])
     if axis == 0:
         o = wp.vec3i(ijk[0] + step, ijk[1], ijk[2])
@@ -186,8 +195,8 @@ def k_compute_divergence(
     div = float(0.0)
     # low faces stored at this voxel; high faces at +axis neighbor
     for axis in range(3):
-        hi = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, 1)
-        lo_n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        hi = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, 1)
+        lo_n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         f_lo = float(0.0)
         f_hi = float(0.0)
         if axis == 0:
@@ -270,7 +279,7 @@ def k_compute_inverse_diagonal(
     diag = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             solid = wp.int32(0)
             if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
                 solid = 1
@@ -310,7 +319,7 @@ def k_apply_matrix(
     acc = diag * x[tid]
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if n >= 0:
                 nvt = voxel_type[n]
                 if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
@@ -345,7 +354,7 @@ def k_jacobi_iteration(
     acc = rhs[tid]
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if n >= 0:
                 nvt = voxel_type[n]
                 if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
@@ -389,7 +398,7 @@ def k_compute_inverse_diagonal_st(
     diag = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             solid = wp.int32(0)
             if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
                 solid = 1
@@ -436,7 +445,7 @@ def k_apply_matrix_st(
     acc = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             solid = wp.int32(0)
             if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
                 solid = 1
@@ -486,7 +495,7 @@ def k_jacobi_iteration_st(
     acc = rhs[tid]
     for axis in range(3):
         for step in range(-1, 2, 2):
-            n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
+            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             solid = wp.int32(0)
             if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
                 solid = 1
@@ -803,7 +812,7 @@ def k_project(
     if here_fluid:
         x_here = finite_pressure_value(x[tid])
     for axis in range(3):
-        n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         n_fluid = wp.int32(0)
         n_solid = wp.int32(0)
         x_n = float(0.0)
@@ -886,7 +895,7 @@ def k_project_st(
     if here_fluid:
         x_here = finite_pressure_value(x[tid])
     for axis in range(3):
-        n = neighbor_flat(leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         n_fluid = wp.int32(0)
         n_solid = wp.int32(0)
         x_n = float(0.0)
@@ -1529,6 +1538,7 @@ class PressureSolver:
                     x, self.r, self.z, self.p_dir],
             device=self.device,
         )
+        self.ap[:n].zero_()
         if use_coarse_guess:
             wp.launch(
                 k_apply_matrix, dim=n,

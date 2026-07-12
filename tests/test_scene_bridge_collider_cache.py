@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import importlib
 import importlib.machinery
+import math
 import os
 import sys
 import types
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -43,16 +45,17 @@ class _FakeMesh:
 
 
 class _FakeMatrix:
-    def __init__(self, tx=0.0):
+    def __init__(self, tx=0.0, angle=0.0):
         self._array = np.eye(4, dtype=np.float32)
         self._array[0, 3] = tx
         self.translation = _FakeVector(tx, 0.0, 0.0)
+        self.angle = angle
 
     def to_translation(self):
         return self.translation
 
     def to_quaternion(self):
-        return SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+        return _FakeQuaternion(self.angle)
 
     def __array__(self, dtype=None, copy=None):
         return self._array.astype(dtype) if dtype is not None else self._array
@@ -69,6 +72,25 @@ class _FakeVector:
         return values.astype(dtype) if dtype is not None else values
 
 
+class _FakeQuaternion:
+    def __init__(self, angle):
+        self.angle = angle
+        self.x = 0.0
+        self.y = 0.0
+        self.z = math.sin(angle * 0.5)
+        self.w = math.cos(angle * 0.5)
+
+    def rotation_difference(self, other):
+        delta = other.angle - self.angle
+        return SimpleNamespace(
+            angle=abs(delta),
+            axis=_FakeVector(0.0, 0.0, 1.0 if delta >= 0.0 else -1.0),
+        )
+
+    def copy(self):
+        return _FakeQuaternion(self.angle)
+
+
 class _FakeEvalObject:
     def __init__(self, owner):
         self.owner = owner
@@ -80,6 +102,14 @@ class _FakeEvalObject:
 
     def to_mesh_clear(self):
         self.clear_count += 1
+
+    @property
+    def name(self):
+        return self.owner.name
+
+    @property
+    def matrix_world(self):
+        return self.owner.evaluated_matrix_world or self.owner.matrix_world
 
 
 class _FakeObject:
@@ -97,6 +127,7 @@ class _FakeObject:
         self.mesh = mesh
         self.data = object()
         self.matrix_world = _FakeMatrix()
+        self.evaluated_matrix_world = None
         self.to_mesh_count = 0
         self._eval = _FakeEvalObject(self)
 
@@ -192,6 +223,37 @@ def test_collider_gather_preserves_individual_material_response(monkeypatch):
 
     assert desc.friction == 0.25
     assert desc.restitution == 0.75
+
+
+def test_collider_gather_uses_evaluated_transform(monkeypatch):
+    scene_bridge, colliders, fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.evaluated_matrix_world = _FakeMatrix(tx=3.0)
+
+    desc = colliders.gather_colliders(
+        SimpleNamespace(objects=[obj]), sess, depsgraph=object())[0]
+
+    assert desc.center == (3.0, 0.0, 0.0)
+    assert fake_warp.meshes[0].points[2][0, 0] == 3.0
+
+
+def test_animated_collider_reports_angular_velocity(monkeypatch):
+    scene_bridge, colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.fluidsim.transfer_velocity = True
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1),
+    )
+
+    assert colliders.gather_colliders(scene, sess, depsgraph=object())[0].angular_velocity == (0.0, 0.0, 0.0)
+    scene.frame_current = 2
+    obj.evaluated_matrix_world = _FakeMatrix(angle=math.pi / 2.0)
+    angular = colliders.gather_colliders(scene, sess, depsgraph=object())[0].angular_velocity
+
+    assert angular == (0.0, 0.0, pytest.approx(12.0 * math.pi))
 
 
 def test_collider_cache_rebuilds_when_topology_or_transform_changes(monkeypatch):

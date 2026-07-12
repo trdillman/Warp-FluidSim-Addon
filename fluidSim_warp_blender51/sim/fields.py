@@ -186,6 +186,38 @@ def sample_scalar_trilinear(
     return default
 
 
+@wp.func
+def sample_vec3_trilinear(
+    data: wp.array(dtype=wp.vec3),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    vp: wp.vec3,
+    default: wp.vec3,
+) -> wp.vec3:
+    """Trilinear sample of a voxel-centred vector field."""
+    q = vp - wp.vec3(0.5, 0.5, 0.5)
+    base = voxel_floor(q)
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    acc = wp.vec3(0.0)
+    wsum = float(0.0)
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                weight = wx * wy * wz
+                if flat >= 0:
+                    acc += weight * data[flat]
+                    wsum += weight
+    if wsum > 1.0e-8:
+        return acc / wsum
+    return default
+
+
 # --- staggered (MAC) velocity sampling ---------------------------------------
 # Component c face samples live at voxel lower faces:
 #   u stored at (i-1/2, j, k) -> voxel-space sample point offset (0, .5, .5)

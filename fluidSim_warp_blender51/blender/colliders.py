@@ -71,7 +71,9 @@ def gather_colliders(scene, session, depsgraph=None):
         object_id = _object_identity(obj)
         seen_cache_keys.add(object_id)
         device = session.solver.device if session.solver else "cuda:0"
-        matrix = np.array(obj.matrix_world, dtype=np.float32)
+        evaluated = obj.evaluated_get(depsgraph)
+        evaluated_matrix = evaluated.matrix_world
+        matrix = np.array(evaluated_matrix, dtype=np.float32)
         matrix_signature = _array_signature(matrix)
         data_id = _data_identity(obj)
         entry = session._collider_mesh_cache.get(object_id)
@@ -84,7 +86,6 @@ def gather_colliders(scene, session, depsgraph=None):
             aabb_max = entry["aabb_max"]
             session.collider_mesh_cache_stats["reuses"] += 1
         else:
-            evaluated = obj.evaluated_get(depsgraph)
             mesh = evaluated.to_mesh()
             if mesh is None or len(mesh.polygons) == 0:
                 evaluated.to_mesh_clear()
@@ -126,12 +127,13 @@ def gather_colliders(scene, session, depsgraph=None):
         desc.mesh = warp_mesh
         desc.aabb_min = tuple(float(value) for value in aabb_min)
         desc.aabb_max = tuple(float(value) for value in aabb_max)
-        center = obj.matrix_world.translation
+        center = evaluated_matrix.translation
         desc.center = (center.x, center.y, center.z)
         desc.friction = float(obj.fluidsim.collider_friction)
         desc.restitution = float(obj.fluidsim.collider_restitution)
         if obj.fluidsim.transfer_velocity:
-            desc.linear_velocity = session.object_velocity(obj, scene)
+            desc.linear_velocity = session.object_velocity(evaluated, scene)
+            desc.angular_velocity = session.object_angular_velocity(evaluated, scene)
         descriptors.append(desc)
     for cache_key in list(session._collider_mesh_cache):
         if cache_key not in seen_cache_keys:

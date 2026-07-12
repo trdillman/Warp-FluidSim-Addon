@@ -1019,10 +1019,14 @@ class FluidSolver:
     def _apply_collisions(self):
         g = self.grid
         s = self.settings
-        band = 4.0 * s.voxel_size
         for col in self.colliders:
             if col.mesh is None:
                 continue
+            extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
+            # Cover the entire resolved collider interior. A narrow query band
+            # turns sufficiently deep penetration into the +infinity default.
+            band = max(8.0 * s.voxel_size,
+                       math.sqrt(sum(value * value for value in extent)))
             lv = col.linear_velocity
             av = col.angular_velocity
             wp.launch(
@@ -1101,7 +1105,8 @@ class FluidSolver:
             src.enabled and src.stype == 0 and src.mode == 1 for src in self.sources
         )
         height_particles = hs.enabled and hs.emit_particles
-        if emit_shapes or height_particles:
+        p = self.particles
+        if (emit_shapes or height_particles) and p.host_count < p.capacity:
             n_emit = n_shapes
             if height_particles:
                 dmin = s.domain_min
@@ -1126,7 +1131,6 @@ class FluidSolver:
                     self._emit_shape_key = key
                 shapes = self._emit_shape_array
                 n_emit = n_shapes + 1
-            p = self.particles
             wp.launch(
                 k_source_shapes_particles, dim=self._nvox,
                 inputs=[shapes, n_emit, g.leaf_coords, g.num_leaves,

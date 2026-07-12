@@ -78,6 +78,8 @@ def parse_args():
     ap.add_argument("--frames", type=int, default=20)
     ap.add_argument("--voxel-size", type=float, default=0.05)
     ap.add_argument("--max-particles", type=int, default=2_000_000)
+    ap.add_argument("--cfl", type=float, default=0.0,
+                    help="override the scene CFL value for comparison runs")
     ap.add_argument("--particles", action="store_true",
                     help="show particle point cloud instead of surface mesh")
     ap.add_argument("--cache", action="store_true")
@@ -262,6 +264,8 @@ def main():
     fs = scene.fluidsim
     fs.voxel_size = args.voxel_size
     fs.max_particles = args.max_particles
+    if args.cfl > 0.0:
+        fs.cfl = args.cfl
     fs.max_whitewater = 500_000
     fs.whitewater_enabled = not args.disable_whitewater
     fs.surface_enabled = True
@@ -317,6 +321,10 @@ def main():
 
     rows = []
     output_counts = []
+    solve_profiler = None
+    if os.environ.get("FLUIDSIM_SOLVE_CPROFILE"):
+        import cProfile
+        solve_profiler = cProfile.Profile()
     frame_csv_fh, frame_csv_writer = _open_frame_csv(args.frame_csv_out)
     try:
         for f in range(args.frames):
@@ -325,7 +333,11 @@ def main():
             dg = bpy.context.evaluated_depsgraph_get()
             scene_bridge.sync_scene_to_solver(scene, sess, dg)
             t1 = time.perf_counter()
+            if solve_profiler is not None:
+                solve_profiler.enable()
             stats = sess.solver.step_frame()
+            if solve_profiler is not None:
+                solve_profiler.disable()
             t2 = time.perf_counter()
             viewport.update_outputs(scene, sess)
             t3 = time.perf_counter()
@@ -366,6 +378,8 @@ def main():
     finally:
         if frame_csv_fh is not None:
             frame_csv_fh.close()
+    if solve_profiler is not None:
+        solve_profiler.dump_stats("artifacts/perf_goal_solver.pstats")
 
     warm = rows[3:] if len(rows) > 6 else rows
 

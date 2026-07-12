@@ -16,7 +16,8 @@ not become source-control assets.
                      period is analytically known (w^2 = g k tanh(k h)).
 4. tidal_lock      - opposed columns colliding through offset lock gates.
 5. material_response - four-lane friction/restitution collision showcase.
-6. maelstrom_basin - high-particle vortex basin with live playback metadata.
+6. collision_update_proof - single-emitter swept-collision review scene.
+7. maelstrom_basin - high-particle vortex basin with live playback metadata.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -598,6 +599,7 @@ def build_material_response():
     fs.max_substeps = 16
     fs.flip_ratio = 0.97
     fs.trace_mode = "NONE"
+    fs.relax_enabled = False
     fs.whitewater_enabled = True
     fs.show_particles = True
     fs.show_surface = True
@@ -769,7 +771,111 @@ def build_material_response():
 
 
 # ---------------------------------------------------------------------------
-# Scene 6: maelstrom basin
+# Scene 6: single-emitter collision update proof
+# ---------------------------------------------------------------------------
+
+def build_collision_update_proof():
+    scene = fresh_scene()
+    from mathutils import Vector
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender import viewport
+
+    fs = scene.fluidsim
+    lo, hi = (0.0, -1.2, 0.0), (6.0, 1.2, 3.0)
+    make_domain(scene, lo, hi, "Collision Proof Domain")
+    fs.voxel_size = 0.04
+    fs.leaf_capacity = 4_096
+    fs.max_particles = 160_000
+    fs.max_whitewater = 40_000
+    fs.min_substeps = 1
+    fs.max_substeps = 16
+    fs.flip_ratio = 0.97
+    fs.trace_mode = "NONE"
+    fs.relax_enabled = False
+    fs.whitewater_enabled = False
+    fs.show_particles = True
+    fs.show_surface = True
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    fs.particle_display_fraction = 1.0
+    fs.live = False
+    scene.frame_start = 1
+    scene.frame_end = 72
+    scene.frame_set(1)
+
+    source_lo = (0.35, -0.36, 1.45)
+    source_hi = (1.25, 0.36, 2.25)
+    source = make_source_box(
+        scene, source_lo, source_hi, "Collision Proof Emitter", emit_rate=8.0)
+    source.scale = tuple(source_hi[i] - source_lo[i] for i in range(3))
+    source.display_type = "WIRE"
+    source.fluidsim.enabled = False
+    source.fluidsim.initial_velocity = (4.5, 0.0, -0.25)
+
+    collider = make_material_collider(
+        "Collision Proof Ramp", (3.0, 0.0, 0.78), (2.8, 0.78, 0.14),
+        0.35, 0.55, (0.08, 0.75, 0.32),
+        rotation=(0.0, math.radians(13.0), 0.0))
+
+    points = lattice(source_lo, source_hi, 0.022)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    injected = sess.solver.inject_particles(
+        points, velocity=(4.5, 0.0, -0.25), temperature=0.5)
+    log(f"collision_update_proof: injected {injected:,} particles from one emitter")
+
+    add_camera_light(scene, (7.4, -7.8, 5.4), (1.1, 0.0, 0.7))
+    camera = scene.camera
+    camera.rotation_euler = (
+        Vector((3.0, 0.0, 1.0)) - camera.location
+    ).to_track_quat("-Z", "Y").to_euler()
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 100.0
+
+    run_scene("collision_update_proof", 72)
+    sess.reset(scene)
+    sess.solver.inject_particles(
+        points, velocity=(4.5, 0.0, -0.25), temperature=0.5)
+    for _ in range(18):
+        sess.step(scene, write_cache=False)
+    viewport.update_outputs(scene, sess)
+    source.fluidsim.enabled = True
+    add_text_block(
+        "README_Collision_Update_Proof",
+        "Collision Update Proof\n"
+        "======================\n\n"
+        "One simultaneous particle batch from one emitter strikes one oblique "
+        "collider. Relaxation is disabled so the saved frame exposes collision "
+        "projection quality directly. Collider: friction 0.35, restitution 0.55.\n",
+    )
+    fs.live = False
+    scene.render.resolution_x = 640
+    scene.render.resolution_y = 420
+    scene.render.filepath = os.path.join(
+        DEMOS, "collision_update_proof_preview.png")
+    bpy.ops.render.render(write_still=True)
+    fs.live = True
+    save_scene("collision_update_proof", preview=False)
+    os.makedirs(os.path.join(DEMOS, "collision_update_proof"), exist_ok=True)
+    with open(os.path.join(DEMOS, "collision_update_proof", "meta.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump({
+            "scene": "collision_update_proof",
+            "voxel_size": fs.voxel_size,
+            "frame_end": 72,
+            "preview_frame": 18,
+            "injected": int(injected),
+            "source_objects": [source.name],
+            "collider_objects": [collider.name],
+            "friction": 0.35,
+            "restitution": 0.55,
+            "relax_enabled": False,
+            "playable_live_setup": True,
+        }, fh, indent=2)
+    bpy.ops.fluidsim.release()
+
+
+# ---------------------------------------------------------------------------
+# Scene 7: maelstrom basin
 # ---------------------------------------------------------------------------
 
 def build_maelstrom_basin():
@@ -802,6 +908,7 @@ def main():
         "slosh_tank": build_slosh_tank,
         "tidal_lock": build_tidal_lock,
         "material_response": build_material_response,
+        "collision_update_proof": build_collision_update_proof,
         "maelstrom_basin": build_maelstrom_basin,
     }
     targets = list(builders)

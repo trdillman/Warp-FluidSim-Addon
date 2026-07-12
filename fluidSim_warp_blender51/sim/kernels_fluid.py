@@ -25,6 +25,7 @@ from .fields import (
     leaf_coord_of_voxel,
     sample_mac_velocity,
     sample_scalar_trilinear,
+    sample_vec3_trilinear,
     voxel_coord_of_flat,
     voxel_flat_index,
     voxel_floor,
@@ -356,11 +357,7 @@ def k_apply_collider_material_to_grid(
     vt = voxel_type[tid]
     if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
         return
-    phi = collision_sdf[tid]
-    if phi > 2.5 * voxel_size:
-        return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
-    gradient = wp.vec3(0.0, 0.0, 0.0)
     for axis in range(3):
         lo_offset = wp.vec3i(0, 0, 0)
         hi_offset = wp.vec3i(0, 0, 0)
@@ -375,32 +372,47 @@ def k_apply_collider_material_to_grid(
             hi_offset = wp.vec3i(0, 0, 1)
         lo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + lo_offset)
         hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + hi_offset)
-        lo_phi = phi
-        hi_phi = phi
+        lo_solid = False
+        hi_solid = False
         if lo >= 0:
-            lo_phi = collision_sdf[lo]
+            lo_solid = collision_sdf[lo] < 0.0
         if hi >= 0:
-            hi_phi = collision_sdf[hi]
-        gradient[axis] = hi_phi - lo_phi
-    length = wp.length(gradient)
-    if length < 1.0e-8:
-        return
-    normal = gradient / length
-    vcol = collision_vel[tid]
-    friction = wp.clamp(collision_friction[tid], 0.0, 1.0)
-    restitution = wp.clamp(collision_restitution[tid], 0.0, 1.0)
-    relative = wp.vec3(u[tid], v[tid], w[tid]) - vcol
-    vn = wp.dot(relative, normal)
-    impact = wp.vec3(impact_u[tid], impact_v[tid], impact_w[tid]) - vcol
-    impact_vn = wp.dot(impact, normal)
-    tangent = relative - normal * vn
-    normal_speed = wp.max(vn, 0.0)
-    if impact_vn < 0.0:
-        normal_speed = wp.max(normal_speed, -impact_vn * restitution)
-    result = vcol + tangent * (1.0 - friction) + normal * normal_speed
-    u[tid] = result[0]
-    v[tid] = result[1]
-    w[tid] = result[2]
+            hi_solid = collision_sdf[hi] < 0.0
+        if lo_solid == hi_solid:
+            continue
+
+        # MAC components live on lower-axis faces. A solid lower neighbor
+        # contacts this voxel's face; a solid upper neighbor contacts the
+        # upper voxel's lower face. Only modify that normal face component.
+        face = tid
+        normal_sign = float(1.0)
+        if hi_solid:
+            face = hi
+            normal_sign = -1.0
+        vcol_axis = collision_vel[face][axis]
+        restitution = wp.clamp(collision_restitution[face], 0.0, 1.0)
+        current_axis = float(0.0)
+        impact_axis = float(0.0)
+        if axis == 0:
+            current_axis = u[face]
+            impact_axis = impact_u[face]
+        elif axis == 1:
+            current_axis = v[face]
+            impact_axis = impact_v[face]
+        else:
+            current_axis = w[face]
+            impact_axis = impact_w[face]
+        current_n = (current_axis - vcol_axis) * normal_sign
+        impact_n = (impact_axis - vcol_axis) * normal_sign
+        if impact_n < 0.0:
+            result_n = wp.max(current_n, -impact_n * restitution)
+            result_axis = vcol_axis + normal_sign * result_n
+            if axis == 0:
+                u[face] = result_axis
+            elif axis == 1:
+                v[face] = result_axis
+            else:
+                w[face] = result_axis
 
 
 register_fn(k_apply_collider_material_to_grid,
@@ -508,6 +520,21 @@ def trace_position(
 
 
 @wp.func
+def collision_sdf_gradient(
+    vp: wp.vec3,
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+) -> wp.vec3:
+    eps = 0.5
+    gx = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(eps, 0.0, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(eps, 0.0, 0.0), 1.0e9)
+    gy = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, eps, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, eps, 0.0), 1.0e9)
+    gz = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, 0.0, eps), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, 0.0, eps), 1.0e9)
+    return wp.vec3(gx, gy, gz)
+
+
+@wp.func
 def resolve_collision(
     p: wp.vec3,
     vel: wp.vec3,
@@ -529,46 +556,108 @@ def resolve_collision(
     p_out = p
     v_out = vel
     if phi < 0.0:
-        eps = 0.5
-        gx = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(eps, 0.0, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(eps, 0.0, 0.0), 1.0e9)
-        gy = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, eps, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, eps, 0.0), 1.0e9)
-        gz = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, 0.0, eps), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, 0.0, eps), 1.0e9)
-        n = wp.vec3(gx, gy, gz)
+        n = collision_sdf_gradient(
+            vp, collision_sdf, leaf_table, voxels_dim, leaves_dim)
         ln = wp.length(n)
         if ln > 1.0e-8:
             n = n / ln
-            p_out = p - n * phi * 1.001  # phi negative: push along +n
-            # The SDF is sampled trilinearly from voxel centres.  On a sloped
-            # boundary the floored particle voxel can be outside even while
-            # the interpolated SDF is inside, so select material from the
-            # deepest contributing solid sample instead of that unrelated
-            # floored voxel.
-            base = voxel_floor(vp - wp.vec3(0.5, 0.5, 0.5))
-            flat = wp.int32(-1)
-            deepest = float(0.0)
-            for dz in range(2):
-                for dy in range(2):
-                    for dx in range(2):
-                        candidate = voxel_flat_index(
-                            leaf_table, voxels_dim, leaves_dim,
-                            wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz),
-                        )
-                        if candidate >= 0 and collision_sdf[candidate] < deepest:
-                            deepest = collision_sdf[candidate]
-                            flat = candidate
-            vcol = wp.vec3(0.0, 0.0, 0.0)
-            if flat >= 0:
-                vcol = collision_vel[flat]
-                friction = collision_friction[flat]
-                restitution = collision_restitution[flat]
-            else:
-                friction = 0.0
-                restitution = 0.0
+            # Central differences span one voxel, so ln / voxel_size is the
+            # world-space gradient magnitude. Do not assume a perfect SDF.
+            p_out = p - n * phi * (voxel_size / ln) * 1.001
+            vcol = sample_vec3_trilinear(
+                collision_vel, leaf_table, voxels_dim, leaves_dim,
+                vp, wp.vec3(0.0))
+            friction = sample_scalar_trilinear(
+                collision_friction, leaf_table, voxels_dim, leaves_dim,
+                vp, 0.0)
+            restitution = sample_scalar_trilinear(
+                collision_restitution, leaf_table, voxels_dim, leaves_dim,
+                vp, 0.0)
             vrel = v_out - vcol
             vn = wp.dot(vrel, n)
             if vn < 0.0:
                 vt = vrel - n * vn
                 v_out = vcol + vt * (1.0 - friction) - n * vn * restitution
+    return p_out, v_out
+
+
+@wp.func
+def resolve_collision_segment(
+    p0: wp.vec3,
+    p1: wp.vec3,
+    vel: wp.vec3,
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    dt: float,
+):
+    """Resolve the first outside-to-inside crossing and retain clearance."""
+    vp0 = world_to_voxel(p0, origin, voxel_size)
+    vp1 = world_to_voxel(p1, origin, voxel_size)
+    phi0 = sample_scalar_trilinear(
+        collision_sdf, leaf_table, voxels_dim, leaves_dim, vp0, 1.0e9)
+    hit = p0
+    hit_found = phi0 < 0.0
+    outside = p0
+    inside = p0
+    outside_t = float(0.0)
+    inside_t = float(0.0)
+    segment_length = wp.length(p1 - p0)
+    sample_count = wp.int32(wp.ceil(segment_length / (0.5 * voxel_size)))
+    sample_count = wp.max(1, wp.min(sample_count, 16))
+    for sample_index in range(1, 17):
+        if sample_index <= sample_count and not hit_found:
+            t = float(sample_index) / float(sample_count)
+            sample = p0 + (p1 - p0) * t
+            sample_phi = sample_scalar_trilinear(
+                collision_sdf, leaf_table, voxels_dim, leaves_dim,
+                world_to_voxel(sample, origin, voxel_size), 1.0e9)
+            if sample_phi < 0.0:
+                inside = sample
+                inside_t = t
+                hit_found = True
+            else:
+                outside = sample
+                outside_t = t
+    if not hit_found:
+        return p1, vel
+    if phi0 >= 0.0:
+        for _iteration in range(8):
+            middle = 0.5 * (outside + inside)
+            middle_phi = sample_scalar_trilinear(
+                collision_sdf, leaf_table, voxels_dim, leaves_dim,
+                world_to_voxel(middle, origin, voxel_size), 1.0e9)
+            if middle_phi < 0.0:
+                inside = middle
+                inside_t = 0.5 * (outside_t + inside_t)
+            else:
+                outside = middle
+                outside_t = 0.5 * (outside_t + inside_t)
+        hit = inside
+
+    p_out, v_out = resolve_collision(
+        hit, vel, collision_sdf, collision_vel,
+        collision_friction, collision_restitution,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size)
+    vp = world_to_voxel(p_out, origin, voxel_size)
+    n = collision_sdf_gradient(
+        vp, collision_sdf, leaf_table, voxels_dim, leaves_dim)
+    n_len = wp.length(n)
+    if n_len > 1.0e-8:
+        p_out = p_out + n * ((0.05 * voxel_size) / n_len)
+    if phi0 >= 0.0:
+        remaining_dt = dt * (1.0 - inside_t)
+        candidate = p_out + v_out * remaining_dt
+        p_out, v_out = resolve_collision(
+            candidate, v_out, collision_sdf, collision_vel,
+            collision_friction, collision_restitution,
+            leaf_table, voxels_dim, leaves_dim, origin, voxel_size)
     return p_out, v_out
 
 
@@ -608,10 +697,10 @@ def k_advect_particles(
         u, v, w, wu, wv, ww,
         leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
     )
-    p1, vel = resolve_collision(
-        p1, vel, collision_sdf, collision_vel,
+    p1, vel = resolve_collision_segment(
+        p0, p1, vel, collision_sdf, collision_vel,
         collision_friction, collision_restitution,
-        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size, dt,
     )
     # domain boundary
     margin = 1.0e-4
@@ -733,10 +822,10 @@ def k_advect_particles_spacetime(
             u, v, w, wu, wv, ww,
             leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
         )
-        pnext, vcur = resolve_collision(
-            pnext, vcur, collision_sdf, collision_vel,
+        pnext, vcur = resolve_collision_segment(
+            pcur, pnext, vcur, collision_sdf, collision_vel,
             collision_friction, collision_restitution,
-            leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+            leaf_table, voxels_dim, leaves_dim, origin, voxel_size, sub_dt,
         )
         margin = 1.0e-4
         for a in range(3):
@@ -820,10 +909,10 @@ def k_resync_particle_positions_spacetime(
         u, v, w, wu, wv, ww,
         leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
     )
-    p1, vel = resolve_collision(
-        p1, vel, collision_sdf, collision_vel,
+    p1, vel = resolve_collision_segment(
+        p0, p1, vel, collision_sdf, collision_vel,
         collision_friction, collision_restitution,
-        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size, dt_resync,
     )
     margin = 1.0e-4
     p1 = wp.vec3(
