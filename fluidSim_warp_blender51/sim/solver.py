@@ -606,6 +606,7 @@ class FluidSolver:
         self.pressure_solver = PressureSolver(g, self.device)
         self.viscosity_solver = ViscositySolver(g, self.device)
         self.surface = SurfacePipeline(self)
+        self._host_frame_cache = None
         self.snippets = SnippetManager()
 
         self.sources: list[SourceShapeDesc] = []
@@ -1543,6 +1544,7 @@ class FluidSolver:
             time_ctx["time"] = self.sim_time
 
         self.frame += 1
+        self._host_frame_cache = None
         cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
         if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
             with self._phase("surface"):
@@ -1601,9 +1603,18 @@ class FluidSolver:
                     p.attr("density"), p.time_offset, p.alive, p.count, self.first_slot_dev],
             device=self.device,
         )
+        self._host_frame_cache = None
         return p.refresh_host_count()
 
     # -- output ---------------------------------------------------------------
+
+    def host_frame(self):
+        """Return the lazy host snapshot for the current solver frame."""
+        if (self._host_frame_cache is None or
+                self._host_frame_cache.frame != self.frame):
+            from .frame_output import HostFrame
+            self._host_frame_cache = HostFrame(self)
+        return self._host_frame_cache
 
     def surface_mesh(self):
         return self.surface.mesh()

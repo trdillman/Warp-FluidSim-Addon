@@ -267,51 +267,58 @@ def _swap_vertex_cloud(obj, positions, colors=None):
     _swap_mesh(obj, positions, np.zeros((0, 3), dtype=np.int32), colors)
 
 
-def _particle_values(solver, mode, positions, velocities=None, indices=None):
+def _particle_values(solver, mode, positions, velocities=None, indices=None,
+                     host=None):
     if mode == "NONE":
         return None
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
         if velocities is None:
-            velocities = solver.particle_velocities()
+            velocities = host.velocities if host is not None else solver.particle_velocities()
             if indices is not None:
                 velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
     if mode == "TIME_OFFSET":
-        values = solver.particles.time_offset.numpy()[:solver.particles.host_count]
+        values = (host.particle_attr("time_offset") if host is not None else
+                  solver.particles.time_offset.numpy()[:solver.particles.host_count])
         return values[indices] if indices is not None else values
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
-        vals = solver.particles.attr(name).numpy()[:solver.particles.host_count]
+        vals = (host.particle_attr(name) if host is not None else
+                solver.particles.attr(name).numpy()[:solver.particles.host_count])
         return vals[indices] if indices is not None else vals
     return None
 
 
-def _whitewater_values(solver, mode, positions):
+def _whitewater_values(solver, mode, positions, host=None):
     if mode == "NONE":
         return None
     n = len(positions)
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
-        vel = solver.whitewater.velocity.numpy()[:n]
+        vel = (host.whitewater_attr("velocity") if host is not None else
+               solver.whitewater.velocity.numpy()[:n])
         return np.linalg.norm(vel, axis=1)
     if mode == "AGE":
-        return solver.whitewater.age.numpy()[:n]
+        return (host.whitewater_attr("age") if host is not None else
+                solver.whitewater.age.numpy()[:n])
     if mode == "LIFE":
-        return solver.whitewater.life.numpy()[:n]
+        return (host.whitewater_attr("life") if host is not None else
+                solver.whitewater.life.numpy()[:n])
     return None
 
 
-def _surface_values(solver, mode, verts):
+def _surface_values(solver, mode, verts, host=None):
     if mode == "NONE":
         return None
     if mode == "HEIGHT":
         return verts[:, 2]
-    pos = solver.particle_positions()
-    vel = solver.particle_velocities() if mode == "SPEED" else None
-    values = _particle_values(solver, mode, pos, vel)
+    pos = host.positions if host is not None else solver.particle_positions()
+    vel = (host.velocities if host is not None and mode == "SPEED" else
+           solver.particle_velocities() if mode == "SPEED" else None)
+    values = _particle_values(solver, mode, pos, vel, host=host)
     if values is None:
         return None
     return _nearest_values(verts, pos, values, solver.settings.voxel_size * 2.0)
@@ -380,22 +387,25 @@ def _attribute_map(mode, values):
 
 
 def _solver_frame(scene, solver):
+    from ..sim.frame_output import HostFrame
+
     fs = scene.fluidsim
-    positions = (solver.particle_positions() if fs.show_particles else
+    host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
+    positions = (host.positions if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions) if fs.show_particles
+        solver, fs.particle_attribute_mode, positions, host=host) if fs.show_particles
         else None)
-    whitewater = (solver.whitewater_positions()
+    whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
                   np.zeros((0, 3), dtype=np.float32))
     whitewater_values = (_whitewater_values(
-        solver, fs.whitewater_attribute_mode, whitewater)
+        solver, fs.whitewater_attribute_mode, whitewater, host=host)
         if fs.show_whitewater and fs.whitewater_enabled else None)
     if fs.show_surface and fs.surface_enabled:
-        verts, tris = solver.surface_mesh()
+        verts, tris = host.surface_mesh
         surface_values = _surface_values(
-            solver, fs.surface_attribute_mode, verts)
+            solver, fs.surface_attribute_mode, verts, host=host)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)

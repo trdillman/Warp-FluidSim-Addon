@@ -112,6 +112,9 @@ class SurfacePipeline:
 
     def invalidate(self):
         self.mesh_cache = self.mesh_key = None
+        host = getattr(self.solver, "_host_frame_cache", None)
+        if host is not None:
+            host.invalidate_surface()
 
     def ensure_resources(self, force=False):
         from .fields import SparseGrid, ScalarField
