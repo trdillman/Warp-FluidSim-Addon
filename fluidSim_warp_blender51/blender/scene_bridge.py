@@ -11,6 +11,9 @@ import bpy
 import numpy as np
 from mathutils import Vector
 
+_handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+persistent = getattr(_handlers, "persistent", lambda fn: fn)
+
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
@@ -281,7 +284,13 @@ class Session:
                 print(f"fluidSim cache playback failed: {exc!r}")
             return
         if not self.active:
-            return
+            try:
+                self.initialize(scene)
+            except Exception as exc:  # noqa: BLE001 - never break playback
+                self.set_error(scene, repr(exc))
+                fs.status = f"Solver initialization error: {exc}"
+                print(f"FluidSim playback initialization failed: {exc!r}")
+                return
         if frame <= self.start_frame or frame < self.last_frame:
             self.reset(scene)
             self.last_frame = frame
@@ -672,17 +681,28 @@ def request_scene_update(scene, action: str, reason: str = ""):
 # ---------------------------------------------------------------------------
 
 
+@persistent
 def _on_frame_change(scene, depsgraph):
     session().handle_frame_change(scene, depsgraph)
+
+
+@persistent
+def _on_load_pre(_filepath):
+    session().release()
 
 
 def register_handlers():
     unregister_handlers()
     bpy.app.handlers.frame_change_post.append(_on_frame_change)
+    if hasattr(bpy.app.handlers, "load_pre"):
+        bpy.app.handlers.load_pre.append(_on_load_pre)
 
 
 def unregister_handlers():
-    handlers = bpy.app.handlers.frame_change_post
-    for fn in list(handlers):
-        if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
-            handlers.remove(fn)
+    handler_lists = [bpy.app.handlers.frame_change_post]
+    if hasattr(bpy.app.handlers, "load_pre"):
+        handler_lists.append(bpy.app.handlers.load_pre)
+    for handlers in handler_lists:
+        for fn in list(handlers):
+            if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
+                handlers.remove(fn)

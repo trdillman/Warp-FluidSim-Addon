@@ -8,6 +8,7 @@ from fluidSim_warp_blender51.sim.memory_safety import (
     estimate_solver_bytes,
     is_memory_capacity_error,
     recommend_safe_settings,
+    safe_memory_budget,
 )
 
 
@@ -26,6 +27,12 @@ def _risky_settings():
         surface_leaf_capacity_scale=64.0,
         surface_max_dense_dim=2048,
     )
+
+
+def test_16_gib_card_can_use_11_6_gib_when_14_gib_is_free():
+    gib = 1024**3
+
+    assert safe_memory_budget(16 * gib, 14 * gib) >= int(11.6 * gib)
 
 
 def test_memory_estimate_flags_capacity_that_exceeds_budget_before_allocation():

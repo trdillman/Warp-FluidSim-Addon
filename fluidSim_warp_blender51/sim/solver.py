@@ -77,6 +77,7 @@ from .kernels_fluid import (
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
+    k_apply_collider_material_to_grid,
     k_advect_particles,
     k_advect_particles_spacetime,
     k_resync_particle_positions_spacetime,
@@ -578,6 +579,9 @@ class FluidSolver:
         self.tmp_u = wp.zeros(vc, dtype=float, device=self.device)
         self.tmp_v = wp.zeros(vc, dtype=float, device=self.device)
         self.tmp_w = wp.zeros(vc, dtype=float, device=self.device)
+        self.collision_impact_u = wp.zeros(vc, dtype=float, device=self.device)
+        self.collision_impact_v = wp.zeros(vc, dtype=float, device=self.device)
+        self.collision_impact_w = wp.zeros(vc, dtype=float, device=self.device)
 
         self.voxel_type = ScalarField(g, dtype=wp.int32, name="voxel_type")
         self.voxel_counts = ScalarField(g, dtype=wp.int32, name="voxel_counts")
@@ -1425,6 +1429,20 @@ class FluidSolver:
         self.stats.pressure_residual = ps.last_residual
         return True
 
+    def _collider_material_response(self):
+        g = self.grid
+        wp.launch(
+            k_apply_collider_material_to_grid, dim=self._nvox,
+            inputs=[self.voxel_type.data, self.collision_sdf.data,
+                    self.collision_vel, self.collision_friction,
+                    self.collision_restitution, g.leaf_table, g.leaf_coords,
+                    g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                    self.collision_impact_u, self.collision_impact_v,
+                    self.collision_impact_w,
+                    self.vel.u, self.vel.v, self.vel.w],
+            device=self.device,
+        )
+
     def _sanitize(self, dt):
         """Clamp MAC velocity to a CFL-safe bound and kill inf/nan."""
         g = self.grid
@@ -1716,6 +1734,9 @@ class FluidSolver:
                 self._forces(dt)
             with self._phase("viscosity"):
                 self._viscosity(dt)
+            wp.copy(self.collision_impact_u, self.vel.u)
+            wp.copy(self.collision_impact_v, self.vel.v)
+            wp.copy(self.collision_impact_w, self.vel.w)
             with self._phase("collision"):
                 self._collision_faces()
             self.snippets.run(
@@ -1723,6 +1744,7 @@ class FluidSolver:
                 self, time_ctx)
             with self._phase("pressure"):
                 self._pressure(dt)
+                self._collider_material_response()
             self._sanitize(dt)
             with self._phase("g2p"):
                 self._g2p_advect(dt)

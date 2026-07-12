@@ -51,6 +51,7 @@ CANONICAL_DEMO_SCENES = (
     "crown_splash",
     "slosh_tank",
     "tidal_lock",
+    "material_response",
     "maelstrom_basin",
 )
 
@@ -169,7 +170,8 @@ def main(argv=None):
         "tools/build_maelstrom_demo.py",
         "tools/check_demo_blends.py",
         "tools/open_maelstrom_basin_playable.py",
-        "tools/run_production_gate.py",
+            "tools/run_production_gate.py",
+            "tools/validate_gui_playback_report.py",
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",
         "tests/blender_gui_acceptance.py",
@@ -206,6 +208,7 @@ def main(argv=None):
     for script in (
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",
+        "tests/blender_handler_persistence_gate.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_background_acceptance.py",
         "tests/blender_attribute_viz_acceptance.py",
@@ -237,6 +240,23 @@ def main(argv=None):
             "--python",
             "tests/blender_gui_acceptance.py",
         ], reject_output=True)
+        playback_report = os.path.abspath("artifacts/gui_playback_probe.json")
+        playback_env = env.copy()
+        playback_env.update({
+            "FLUIDSIM_PLAYBACK_BLEND": os.path.abspath("demos/material_response.blend"),
+            "FLUIDSIM_PLAYBACK_REPORT": playback_report,
+        })
+        _run("saved-demo GUI timeline playback", [
+            blender_exe,
+            "--factory-startup",
+            "--python",
+            "tests/blender_gui_playback_probe.py",
+        ], env=playback_env, reject_output=True)
+        _run("saved-demo GUI playback report", [
+            blender_py,
+            "tools/validate_gui_playback_report.py",
+            playback_report,
+        ])
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", [
             blender_exe,

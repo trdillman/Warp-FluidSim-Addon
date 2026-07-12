@@ -1,0 +1,59 @@
+{
+  "scene": "material_response",
+  "domain": [
+    [
+      0.0,
+      -2.4,
+      0.0
+    ],
+    [
+      7.2,
+      2.4,
+      3.2
+    ]
+  ],
+  "voxel_size": 0.035,
+  "fps": 24,
+  "frame_end": 250,
+  "preview_frame": 24,
+  "injected": 376272,
+  "source_objects": [
+    "SLIDE Particle Source",
+    "GRIP Particle Source",
+    "BOUNCE Particle Source",
+    "GRIP + BOUNCE Particle Source"
+  ],
+  "collider_objects": [
+    "SLIDE Ramp F0.00 R0.00",
+    "SLIDE Impact Wall F0.00 R0.00",
+    "GRIP Ramp F0.90 R0.00",
+    "GRIP Impact Wall F0.90 R0.00",
+    "BOUNCE Ramp F0.00 R0.90",
+    "BOUNCE Impact Wall F0.00 R0.90",
+    "GRIP + BOUNCE Ramp F0.75 R0.75",
+    "GRIP + BOUNCE Impact Wall F0.75 R0.75"
+  ],
+  "material_combinations": [
+    {
+      "friction": 0.0,
+      "restitution": 0.0,
+      "label": "SLIDE"
+    },
+    {
+      "friction": 0.9,
+      "restitution": 0.0,
+      "label": "GRIP"
+    },
+    {
+      "friction": 0.0,
+      "restitution": 0.9,
+      "label": "BOUNCE"
+    },
+    {
+      "friction": 0.75,
+      "restitution": 0.75,
+      "label": "GRIP + BOUNCE"
+    }
+  ],
+  "playable_live_setup": true
+}

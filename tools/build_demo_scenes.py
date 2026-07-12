@@ -15,7 +15,8 @@ not become source-control assets.
 3. slosh_tank      - offset water column sloshing in a closed tank; first-mode
                      period is analytically known (w^2 = g k tanh(k h)).
 4. tidal_lock      - opposed columns colliding through offset lock gates.
-5. maelstrom_basin - high-particle vortex basin with live playback metadata.
+5. material_response - four-lane friction/restitution collision showcase.
+6. maelstrom_basin - high-particle vortex basin with live playback metadata.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -140,6 +141,37 @@ def make_collider_box(scene, lo, hi, name, friction=0.05):
     col.show_name = True
     _colliders.tag_collider(col, friction=friction, restitution=0.0)
     return col
+
+
+def make_material_collider(name, location, scale, friction, restitution, color,
+                           rotation=(0.0, 0.0, 0.0), sphere=False):
+    """Create one visible, individually configured showcase collider."""
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    if sphere:
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            segments=32, ring_count=16, radius=scale[0], location=location)
+    else:
+        bpy.ops.mesh.primitive_cube_add(
+            size=1.0, location=location, rotation=rotation)
+    obj = bpy.context.active_object
+    obj.name = name
+    if not sphere:
+        obj.scale = scale
+    obj.show_name = True
+    material = bpy.data.materials.new(name + " Material")
+    material.diffuse_color = (*color, 1.0)
+    material.metallic = 0.25
+    material.roughness = max(0.08, 1.0 - friction * 0.75)
+    material.use_nodes = True
+    bsdf = material.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+    bsdf.inputs["Metallic"].default_value = material.metallic
+    bsdf.inputs["Roughness"].default_value = material.roughness
+    obj.data.materials.append(material)
+    _colliders.tag_collider(
+        obj, friction=friction, restitution=restitution)
+    return obj
 
 
 def add_text_block(name, body):
@@ -547,7 +579,197 @@ def build_tidal_lock():
 
 
 # ---------------------------------------------------------------------------
-# Scene 5: maelstrom basin
+# Scene 5: collider material response lab
+# ---------------------------------------------------------------------------
+
+def build_material_response():
+    scene = fresh_scene()
+    from mathutils import Vector
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    fs = scene.fluidsim
+    lo, hi = (0.0, -2.4, 0.0), (7.2, 2.4, 3.2)
+    make_domain(scene, lo, hi, "Material Response Domain")
+    fs.voxel_size = 0.035
+    fs.leaf_capacity = 16_384
+    fs.max_particles = 400_000
+    fs.max_whitewater = 180_000
+    fs.min_substeps = 1
+    fs.max_substeps = 16
+    fs.flip_ratio = 0.97
+    fs.trace_mode = "NONE"
+    fs.whitewater_enabled = True
+    fs.show_particles = True
+    fs.show_surface = True
+    fs.show_whitewater = True
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    fs.particle_attribute_mode = "TEMPERATURE"
+    fs.particle_display_fraction = 1.0
+    fs.profiling_enabled = False
+    fs.live = False
+    scene.frame_start = 1
+    scene.frame_end = 250
+    scene.frame_set(1)
+
+    lanes = (
+        (-1.8, 0.0, 0.0, "SLIDE", (0.05, 0.75, 1.0)),
+        (-0.6, 0.9, 0.0, "GRIP", (1.0, 0.25, 0.05)),
+        (0.6, 0.0, 0.9, "BOUNCE", (0.9, 0.05, 0.8)),
+        (1.8, 0.75, 0.75, "GRIP + BOUNCE", (0.45, 1.0, 0.12)),
+    )
+    # Keep these literal tuples visible as the durable demo contract.
+    combinations = (
+        (0.0, 0.0, "SLIDE"),
+        (0.9, 0.0, "GRIP"),
+        (0.0, 0.9, "BOUNCE"),
+        (0.75, 0.75, "GRIP + BOUNCE"),
+    )
+    colliders = []
+    sources = []
+    batches = []
+    for lane_index, (y, friction, restitution, label, color) in enumerate(lanes):
+        ramp = make_material_collider(
+            f"{label} Ramp F{friction:.2f} R{restitution:.2f}",
+            (3.25, y, 0.82), (5.2, 0.92, 0.16),
+            friction, restitution, color,
+            rotation=(0.0, math.radians(11.0), 0.0))
+        target = make_material_collider(
+            f"{label} Impact Wall F{friction:.2f} R{restitution:.2f}",
+            (4.55, y, 1.60), (0.20, 1.05, 3.20),
+            friction, restitution, color)
+        colliders.extend((ramp, target))
+
+        src_lo = (0.45, y - 0.32, 1.85)
+        src_hi = (1.65, y + 0.32, 2.55)
+        source = make_source_box(
+            scene, src_lo, src_hi, f"{label} Particle Source", emit_rate=12.0)
+        # make_source_box uses a unit cube; match its visible/emission bounds.
+        source.scale = tuple(src_hi[i] - src_lo[i] for i in range(3))
+        source.display_type = "WIRE"
+        source.fluidsim.enabled = False
+        source.fluidsim.initial_velocity = (5.5, 0.0, -0.15)
+        source.fluidsim.temperature = lane_index / 3.0
+        sources.append(source)
+        batches.append(lattice(src_lo, src_hi, 0.018))
+
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    injected = 0
+    for lane_index, points in enumerate(batches):
+        injected = sess.solver.inject_particles(
+            points, velocity=(5.5, 0.0, -0.15),
+            temperature=lane_index / 3.0)
+    if injected < 250_000:
+        raise RuntimeError(
+            f"material response demo requires >=250,000 particles, got {injected}")
+    log(f"material_response: injected {injected:,} particles across four lanes")
+
+    add_camera_light(scene, (8.8, -10.5, 6.5), (1.1, 0.0, 0.65))
+    camera = scene.camera
+    camera.rotation_euler = (
+        Vector((3.6, 0.0, 1.1)) - camera.location
+    ).to_track_quat("-Z", "Y").to_euler()
+    camera.data.clip_start = 0.05
+    camera.data.clip_end = 100.0
+    label_material = bpy.data.materials.new("Material Response Labels")
+    label_material.diffuse_color = (0.01, 0.01, 0.01, 1.0)
+    label_material.use_nodes = True
+    label_bsdf = label_material.node_tree.nodes.get("Principled BSDF")
+    label_bsdf.inputs["Base Color"].default_value = (0.01, 0.01, 0.01, 1.0)
+    label_bsdf.inputs["Roughness"].default_value = 0.8
+    for y, friction, restitution, label, _color in lanes:
+        bpy.ops.object.text_add(location=(2.35, y, 1.1))
+        text = bpy.context.active_object
+        text.name = label + " Material Label"
+        text.data.body = f"{label}\nF {friction:.2f}  R {restitution:.2f}"
+        text.data.align_x = "CENTER"
+        text.data.align_y = "CENTER"
+        text.data.size = 0.17
+        text.data.extrude = 0.004
+        text.rotation_euler = (0.0, math.radians(11.0), 0.0)
+        text.data.materials.append(label_material)
+    bpy.ops.object.text_add(location=(3.6, -2.2, 3.0))
+    legend = bpy.context.active_object
+    legend.name = "Material Response Legend"
+    legend.data.body = (
+        "PER-COLLIDER MATERIAL LAB\n"
+        "BLUE  SLIDE   F 0.00 / R 0.00\n"
+        "ORANGE  GRIP   F 0.90 / R 0.00\n"
+        "MAGENTA  BOUNCE   F 0.00 / R 0.90\n"
+        "GREEN  GRIP + BOUNCE   F 0.75 / R 0.75"
+    )
+    legend.data.align_x = "CENTER"
+    legend.data.align_y = "CENTER"
+    legend.data.size = 0.19
+    legend.data.extrude = 0.006
+    legend.rotation_euler = (
+        camera.location - legend.location
+    ).to_track_quat("Z", "Y").to_euler()
+    legend_material = bpy.data.materials.new("Material Response Legend Material")
+    legend_material.diffuse_color = (1.0, 1.0, 1.0, 1.0)
+    legend_material.use_nodes = True
+    legend_bsdf = legend_material.node_tree.nodes.get("Principled BSDF")
+    legend_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    legend_bsdf.inputs["Roughness"].default_value = 0.6
+    legend.data.materials.append(legend_material)
+    run_scene("material_response", 250)
+    from fluidSim_warp_blender51.blender import viewport
+
+    # Preserve the full 250-frame cache, then save a readable mid-run review
+    # state instead of the settled frame-250 apparatus.
+    sess.reset(scene)
+    for lane_index, points in enumerate(batches):
+        sess.solver.inject_particles(
+            points, velocity=(5.5, 0.0, -0.15),
+            temperature=lane_index / 3.0)
+    for _ in range(24):
+        sess.step(scene, write_cache=False)
+    viewport.update_outputs(scene, sess)
+    log("material_response: restored visible frame-24 review state")
+    for source in sources:
+        source.fluidsim.enabled = True
+    add_text_block(
+        "README_Material_Response",
+        "Per-Collider Material Response Lab\n"
+        "==================================\n\n"
+        "Four identical particle releases cross colored ramps and impact "
+        "impact walls with independent friction/restitution combinations. "
+        "The generated simulation and timeline both span 250 frames.\n\n"
+        "Blue: slide (F0/R0)\nOrange: grip (F0.9/R0)\n"
+        "Magenta: bounce (F0/R0.9)\nGreen: grip + bounce (F0.75/R0.75).\n",
+    )
+    fs.live = False
+    scene.render.resolution_x = 640
+    scene.render.resolution_y = 420
+    scene.render.filepath = os.path.join(DEMOS, "material_response_preview.png")
+    bpy.ops.render.render(write_still=True)
+    fs.live = True
+    save_scene("material_response", preview=False)
+    os.makedirs(os.path.join(DEMOS, "material_response"), exist_ok=True)
+    meta = {
+        "scene": "material_response",
+        "domain": [list(lo), list(hi)],
+        "voxel_size": 0.035,
+        "fps": FPS,
+        "frame_end": 250,
+        "preview_frame": 24,
+        "injected": int(injected),
+        "source_objects": [source.name for source in sources],
+        "collider_objects": [collider.name for collider in colliders],
+        "material_combinations": [
+            {"friction": f, "restitution": r, "label": label}
+            for f, r, label in combinations
+        ],
+        "playable_live_setup": True,
+    }
+    with open(os.path.join(DEMOS, "material_response", "meta.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
+    bpy.ops.fluidsim.release()
+
+
+# ---------------------------------------------------------------------------
+# Scene 6: maelstrom basin
 # ---------------------------------------------------------------------------
 
 def build_maelstrom_basin():
@@ -579,6 +801,7 @@ def main():
         "crown_splash": build_crown_splash,
         "slosh_tank": build_slosh_tank,
         "tidal_lock": build_tidal_lock,
+        "material_response": build_material_response,
         "maelstrom_basin": build_maelstrom_basin,
     }
     targets = list(builders)

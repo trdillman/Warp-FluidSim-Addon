@@ -39,23 +39,23 @@ def main():
     fs.particle_display_fraction = 1.0
 
     check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
-    check("initialize", bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
-
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
     sess = session()
-    check("session active", sess.active)
-    check("cuda solver", str(sess.solver.device).startswith("cuda"), str(sess.solver.device))
-
-    check("live toggle on", bpy.ops.fluidsim.toggle_live() == {"FINISHED"})
-    before = sess.solver.frame
+    fs.live = True
+    bpy.ops.fluidsim.release()
+    check("saved live scene starts inactive", not sess.active)
     scene.frame_set(scene.frame_current + 1)
+    check("timeline auto-initialized solver", sess.active)
+    check("cuda solver", str(sess.solver.device).startswith("cuda"), str(sess.solver.device))
+    after_first = sess.solver.frame
     surface_after_first = bpy.data.objects.get("FluidSim Surface")
     surface_data_pointer = (
         surface_after_first.data.as_pointer() if surface_after_first else 0)
     scene.frame_set(scene.frame_current + 1)
     after = sess.solver.frame
-    check("viewport live advanced two frames", after >= before + 2, f"{before} -> {after}")
+    check("viewport timeline advanced two frames", after >= after_first + 1,
+          f"{after_first} -> {after}")
 
     surf = bpy.data.objects.get("FluidSim Surface")
     parts = bpy.data.objects.get("FluidSim Particles")
@@ -76,7 +76,6 @@ def main():
     check("scene stats updated", fs.stat_particles > 0 and fs.stat_voxels > 0,
           f"{fs.stat_particles} particles, {fs.stat_voxels} voxels")
 
-    bpy.ops.fluidsim.toggle_live()
     bpy.ops.fluidsim.release()
 
 

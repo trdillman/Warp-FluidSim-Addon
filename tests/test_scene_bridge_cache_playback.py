@@ -507,6 +507,29 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     assert sess.last_frame == 3
 
 
+def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    calls = []
+
+    def initialize(scene_arg):
+        calls.append(("initialize", scene_arg.frame_current))
+        sess.solver = SimpleNamespace(frame=0)
+        sess.start_frame = scene_arg.frame_start
+        return sess
+
+    monkeypatch.setattr(sess, "initialize", initialize)
+    monkeypatch.setattr(
+        sess, "sync_scene", lambda *_args: calls.append(("sync", scene.frame_current)))
+    monkeypatch.setattr(
+        sess, "step", lambda *_args: calls.append(("step", scene.frame_current)))
+
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
+
+
 def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)

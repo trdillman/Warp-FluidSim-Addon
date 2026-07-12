@@ -330,6 +330,84 @@ register_fn(k_particle_to_grid_active, "fluidSimParticleToGridActive")
 
 
 @wp.kernel
+def k_apply_collider_material_to_grid(
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    impact_u: wp.array(dtype=float),
+    impact_v: wp.array(dtype=float),
+    impact_w: wp.array(dtype=float),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+):
+    """Apply collider slip and bounce to fluid cells beside solid voxels."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    vt = voxel_type[tid]
+    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
+        return
+    phi = collision_sdf[tid]
+    if phi > 2.5 * voxel_size:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    gradient = wp.vec3(0.0, 0.0, 0.0)
+    for axis in range(3):
+        lo_offset = wp.vec3i(0, 0, 0)
+        hi_offset = wp.vec3i(0, 0, 0)
+        if axis == 0:
+            lo_offset = wp.vec3i(-1, 0, 0)
+            hi_offset = wp.vec3i(1, 0, 0)
+        elif axis == 1:
+            lo_offset = wp.vec3i(0, -1, 0)
+            hi_offset = wp.vec3i(0, 1, 0)
+        else:
+            lo_offset = wp.vec3i(0, 0, -1)
+            hi_offset = wp.vec3i(0, 0, 1)
+        lo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + lo_offset)
+        hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + hi_offset)
+        lo_phi = phi
+        hi_phi = phi
+        if lo >= 0:
+            lo_phi = collision_sdf[lo]
+        if hi >= 0:
+            hi_phi = collision_sdf[hi]
+        gradient[axis] = hi_phi - lo_phi
+    length = wp.length(gradient)
+    if length < 1.0e-8:
+        return
+    normal = gradient / length
+    vcol = collision_vel[tid]
+    friction = wp.clamp(collision_friction[tid], 0.0, 1.0)
+    restitution = wp.clamp(collision_restitution[tid], 0.0, 1.0)
+    relative = wp.vec3(u[tid], v[tid], w[tid]) - vcol
+    vn = wp.dot(relative, normal)
+    impact = wp.vec3(impact_u[tid], impact_v[tid], impact_w[tid]) - vcol
+    impact_vn = wp.dot(impact, normal)
+    tangent = relative - normal * vn
+    normal_speed = wp.max(vn, 0.0)
+    if impact_vn < 0.0:
+        normal_speed = wp.max(normal_speed, -impact_vn * restitution)
+    result = vcol + tangent * (1.0 - friction) + normal * normal_speed
+    u[tid] = result[0]
+    v[tid] = result[1]
+    w[tid] = result[2]
+
+
+register_fn(k_apply_collider_material_to_grid,
+            "fluidSimApplyColliderMaterialToGrid")
+
+
+@wp.kernel
 def k_staggered_field_to_particle(
     positions: wp.array(dtype=wp.vec3),
     count: wp.array(dtype=wp.int32),
@@ -460,8 +538,24 @@ def resolve_collision(
         if ln > 1.0e-8:
             n = n / ln
             p_out = p - n * phi * 1.001  # phi negative: push along +n
-            ijk = voxel_floor(vp)
-            flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+            # The SDF is sampled trilinearly from voxel centres.  On a sloped
+            # boundary the floored particle voxel can be outside even while
+            # the interpolated SDF is inside, so select material from the
+            # deepest contributing solid sample instead of that unrelated
+            # floored voxel.
+            base = voxel_floor(vp - wp.vec3(0.5, 0.5, 0.5))
+            flat = wp.int32(-1)
+            deepest = float(0.0)
+            for dz in range(2):
+                for dy in range(2):
+                    for dx in range(2):
+                        candidate = voxel_flat_index(
+                            leaf_table, voxels_dim, leaves_dim,
+                            wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz),
+                        )
+                        if candidate >= 0 and collision_sdf[candidate] < deepest:
+                            deepest = collision_sdf[candidate]
+                            flat = candidate
             vcol = wp.vec3(0.0, 0.0, 0.0)
             if flat >= 0:
                 vcol = collision_vel[flat]

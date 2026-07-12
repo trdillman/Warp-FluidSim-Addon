@@ -7,8 +7,8 @@ No bpy imports allowed in this module.
 
 TOOL_NAME = "fluidSim"
 TOOL_NAME_LABEL = "FluidSim"
-TOOL_VERSION = "1.0.237-beta"
-TOOL_BUILD = "fluidSim1.0.237-per-collider-materials-stflip-beta"
+TOOL_VERSION = "1.0.240-beta"
+TOOL_BUILD = "fluidSim1.0.240-collider-material-response-stflip-beta"
 TOOL_PROFILER = "fluidSim_profiler::1.0"
 TOOL_PROFILER_LABEL = "FluidSim Profiler 1.0"
 BLENDER_TARGET = "5.1"

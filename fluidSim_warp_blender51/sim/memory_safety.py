@@ -33,7 +33,7 @@ def is_memory_capacity_error(message: str) -> bool:
 
 def safe_memory_budget(total_bytes: int, free_bytes: int) -> int:
     """Leave room for Blender, the display driver, and allocator variance."""
-    return int(min(max(0, total_bytes) * 0.72, max(0, free_bytes) * 0.80))
+    return int(min(max(0, total_bytes) * 0.85, max(0, free_bytes) * 0.90))
 
 
 def assess_configuration(settings, resources: dict) -> dict:
