@@ -8,6 +8,7 @@ from fluidSim_warp_blender51.sim.enums import (
     SurfaceUpdateCadence,
 )
 from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
+from fluidSim_warp_blender51.sim.surface import SurfacePipeline
 
 
 def test_surface_settings_preserve_fast_default_with_frame_cadence():
@@ -21,17 +22,16 @@ def test_surface_settings_preserve_fast_default_with_frame_cadence():
 
 
 def test_render_surface_voxel_size_is_decoupled_from_simulation_grid():
-    solver = FluidSolver.__new__(FluidSolver)
-    solver.settings = SolverSettings(voxel_size=0.1)
+    settings = SolverSettings(voxel_size=0.1)
 
-    assert solver._render_surface_voxel_size() == 0.1
+    assert SurfacePipeline.voxel_size_for(settings) == 0.1
 
-    solver.settings.surface_resolution_mode = SurfaceResolutionMode.MULTIPLIER
-    assert solver._render_surface_voxel_size() == 0.05
+    settings.surface_resolution_mode = SurfaceResolutionMode.MULTIPLIER
+    assert SurfacePipeline.voxel_size_for(settings) == 0.05
 
-    solver.settings.surface_resolution_mode = SurfaceResolutionMode.CUSTOM
-    solver.settings.surface_voxel_size = 0.025
-    assert solver._render_surface_voxel_size() == 0.025
+    settings.surface_resolution_mode = SurfaceResolutionMode.CUSTOM
+    settings.surface_voxel_size = 0.025
+    assert SurfacePipeline.voxel_size_for(settings) == 0.025
 
 
 def test_surface_panel_exposes_resolution_and_cadence_controls():

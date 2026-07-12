@@ -14,11 +14,12 @@ def _require_existing_parent(path: str) -> None:
 
 
 def export_surface_obj(solver, path: str) -> str:
-    verts, tris = solver.surface_mesh()
     _require_existing_parent(path)
+    verts, tris = solver.surface_mesh()
+    metadata = solver.surface.metadata()
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# FluidSim Warp surface export\n")
-        fh.write(f"# surface_voxel_size {solver._render_surface_voxel_size():.8g}\n")
+        fh.write(f"# surface_voxel_size {metadata['voxel_size']:.8g}\n")
         fh.write(
             f"# surface_resolution_mode {int(solver.settings.surface_resolution_mode)}\n"
         )

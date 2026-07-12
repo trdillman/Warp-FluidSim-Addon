@@ -125,6 +125,8 @@ def write_frame(scene, sess) -> str:
     if solver.settings.surface_enabled:
         verts, tris = solver.surface_mesh()
     path = _frame_path(base, solver.frame)
+    surface_metadata = (solver.surface.metadata() if hasattr(solver, "surface") else {
+        "voxel_size": getattr(solver.settings, "voxel_size", 0.05)})
     fd, tmp_path = tempfile.mkstemp(
         prefix=f"{os.path.basename(path)}.",
         suffix=".tmp.npz",
@@ -143,11 +145,7 @@ def write_frame(scene, sess) -> str:
             frame=solver.frame,
             voxel_size=np.array(
                 getattr(solver.settings, "voxel_size", 0.05), dtype=np.float32),
-            surface_voxel_size=np.array(
-                (solver._render_surface_voxel_size()
-                 if hasattr(solver, "_render_surface_voxel_size")
-                 else getattr(solver.settings, "voxel_size", 0.05)),
-                dtype=np.float32),
+            surface_voxel_size=np.array(surface_metadata["voxel_size"], dtype=np.float32),
             surface_resolution_multiplier=np.array(
                 getattr(solver.settings, "surface_resolution_multiplier", 1.0),
                 dtype=np.float32),

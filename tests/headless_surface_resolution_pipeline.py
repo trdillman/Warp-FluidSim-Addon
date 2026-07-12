@@ -103,7 +103,7 @@ def _mesh_summary(solver):
         "bbox_min": bmin,
         "bbox_max": bmax,
         "checksum": checksum,
-        "surface_voxel_size": float(solver._render_surface_voxel_size()),
+        "surface_voxel_size": float(solver.surface.metadata()["voxel_size"]),
         "surface_active_leaves": int(getattr(solver.render_surface_grid, "active_leaf_count", 0)),
         "surface_active_voxels": int(getattr(solver.render_surface_grid, "active_leaf_count", 0) * 512),
         "surface_grid_is_sim_grid": bool(solver.render_surface_grid is solver.grid),
