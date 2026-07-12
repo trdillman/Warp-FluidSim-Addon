@@ -14,9 +14,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-class _FakeSolverSettings:
-    pass
+from fluidSim_warp_blender51.sim.solver import SolverSettings
 
 
 def test_multigrid_feature_is_not_exposed_or_scene_configurable():
@@ -47,7 +45,7 @@ def _install_scene_bridge_stubs(monkeypatch):
     fake_mathutils.Vector = lambda value: value
 
     fake_solver = types.ModuleType("fluidSim_warp_blender51.sim.solver")
-    fake_solver.SolverSettings = _FakeSolverSettings
+    fake_solver.SolverSettings = SolverSettings
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
@@ -135,7 +133,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
         "max_particles", "max_whitewater", "time_scale", "cfl",
         "min_substeps", "max_substeps", "flip_ratio", "max_speed",
-        "limit_percent", "particles_per_voxel", "count_stiffness",
+        "particles_per_voxel", "count_stiffness",
         "relax_enabled", "relax_strength",
         "pressure_iterations", "pressure_tolerance", "pressure_threshold",
         "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
@@ -144,18 +142,25 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "surface_filter_strength", "surface_dilate_iterations",
         "surface_dilate_strength", "surface_erode_iterations",
         "surface_erode_strength", "surface_smooth_iterations",
-        "surface_smooth_strength", "whitewater_enabled", "ww_churn_decay",
-        "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
+        "surface_smooth_strength", "whitewater_enabled",
+        "ww_churn_threshold", "ww_emission_rate",
         "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
         "ww_spray_drag",
     )
     for name in direct_fields:
         assert getattr(settings, name) == getattr(scene.fluidsim, name), name
 
+    for target, source in {
+        "speed_limit_percent": "limit_percent",
+        "churn_decay": "ww_churn_decay",
+        "churn_gain": "ww_churn_gain",
+    }.items():
+        assert getattr(settings, target) == getattr(scene.fluidsim, source)
+
     enum_fields = {
         "sample_type": "sample_type",
         "trace_mode": "trace_mode",
-        "limit_behavior": "limit_behavior",
+        "speed_limit_behavior": "limit_behavior",
         "relax_mode": "relax_mode",
         "pressure_solver": "pressure_solver",
         "viscosity_solver": "viscosity_solver",
@@ -164,6 +169,36 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     }
     for target, source in enum_fields.items():
         assert getattr(settings, target).name == getattr(scene.fluidsim, source)
+
+
+def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    scene.fluidsim.limit_percent = 0.37
+    scene.fluidsim.limit_behavior = "ACCELERATION"
+    scene.fluidsim.ww_churn_decay = 2.75
+    scene.fluidsim.ww_churn_gain = 3.25
+
+    settings = scene_bridge.build_settings(scene)
+
+    assert settings.speed_limit_percent == 0.37
+    assert settings.speed_limit_behavior.name == "ACCELERATION"
+    assert settings.churn_decay == 2.75
+    assert settings.churn_gain == 3.25
+    assert not {"limit_percent", "limit_behavior", "ww_churn_decay", "ww_churn_gain"} & set(vars(settings))
+
+
+def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    settings = SolverSettings(voxel_size=9.0)
+    monkeypatch.setattr(
+        scene_bridge, "_DIRECT_SETTING_FIELDS",
+        scene_bridge._DIRECT_SETTING_FIELDS + ("unknown_setting",),
+    )
+
+    with pytest.raises(ValueError, match="unknown_setting"):
+        scene_bridge._apply_scene_settings(_scene().fluidsim, settings)
+    assert settings.voxel_size == 9.0
 
 
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):

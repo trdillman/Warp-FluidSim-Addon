@@ -408,6 +408,13 @@ _DIRECT_SETTING_FIELDS = (
     "ww_spray_drag",
 )
 
+_SETTING_ALIASES = {
+    "limit_percent": "speed_limit_percent",
+    "limit_behavior": "speed_limit_behavior",
+    "ww_churn_decay": "churn_decay",
+    "ww_churn_gain": "churn_gain",
+}
+
 _SURFACE_SETTING_FIELDS = frozenset({
     "surface_enabled", "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_mode", "surface_resolution_multiplier",
@@ -423,6 +430,7 @@ _SURFACE_SETTING_FIELDS = frozenset({
 
 
 def _apply_scene_settings(fs, settings, fields=None):
+    from ..sim.solver import SolverSettings
     from ..sim.enums import (
         LimitBehavior,
         ParticleSampleType,
@@ -436,9 +444,6 @@ def _apply_scene_settings(fs, settings, fields=None):
     )
 
     selected = None if fields is None else set(fields)
-    for name in _DIRECT_SETTING_FIELDS:
-        if (selected is None or name in selected) and hasattr(fs, name):
-            setattr(settings, name, getattr(fs, name))
     enum_fields = {
         "sample_type": ("sample_type", ParticleSampleType),
         "trace_mode": ("trace_mode", TraceMode),
@@ -451,9 +456,21 @@ def _apply_scene_settings(fs, settings, fields=None):
         "surface_resolution_mode": ("surface_resolution_mode", SurfaceResolutionMode),
         "surface_update_cadence": ("surface_update_cadence", SurfaceUpdateCadence),
     }
+    targets = {_SETTING_ALIASES.get(name, name) for name in _DIRECT_SETTING_FIELDS}
+    targets.update(_SETTING_ALIASES.get(target, target) for target in enum_fields)
+    declared = set(SolverSettings.__dataclass_fields__)
+    unknown = sorted(targets - declared)
+    if unknown:
+        raise ValueError(f"Scene setting targets not declared by SolverSettings: {', '.join(unknown)}")
+
+    for source in _DIRECT_SETTING_FIELDS:
+        target = _SETTING_ALIASES.get(source, source)
+        if (selected is None or source in selected) and hasattr(fs, source):
+            setattr(settings, target, getattr(fs, source))
     for target, (source, enum_type) in enum_fields.items():
-        if (selected is None or target in selected) and hasattr(fs, source):
-            setattr(settings, target, enum_type[getattr(fs, source)])
+        declared_target = _SETTING_ALIASES.get(target, target)
+        if (selected is None or source in selected) and hasattr(fs, source):
+            setattr(settings, declared_target, enum_type[getattr(fs, source)])
 
 
 def build_settings(scene):
