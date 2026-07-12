@@ -24,80 +24,14 @@ def tag_sink(obj, shape="BOX"):
 
 
 def gather_sources(scene, session):
-    """Build solver source descriptors from enabled tagged objects."""
-    from ..sim.enums import (
-        BlendMode,
-        SourceShapeForceType,
-        SourceShapeShape,
-        SourceShapeSourceMode,
-        SourceShapeType,
-    )
-    from ..sim.solver import SourceShapeDesc
-
-    sources = []
-    for obj in scene.objects:
-        pg = getattr(obj, "fluidsim", None)
-        if (pg is None or pg.role not in {"SOURCE", "SINK", "FORCE"}
-                or not pg.enabled or obj.hide_viewport):
-            continue
-        desc = SourceShapeDesc()
-        desc.shape = SourceShapeShape[pg.shape]
-        desc.stype = (SourceShapeType.SINK if pg.role == "SINK"
-                      else SourceShapeType.SOURCE)
-        desc.mode = SourceShapeSourceMode[pg.source_mode]
-        matrix = obj.matrix_world
-        location = matrix.to_translation()
-        rotation = matrix.to_quaternion()
-        desc.position = (location.x, location.y, location.z)
-        desc.rotation = (rotation.x, rotation.y, rotation.z, rotation.w)
-        dimensions = obj.dimensions
-        desc.half_extents = (
-            max(dimensions.x, 1.0e-4) / 2,
-            max(dimensions.y, 1.0e-4) / 2,
-            max(dimensions.z, 1.0e-4) / 2,
-        )
-        desc.radius = max(dimensions.x, dimensions.y, dimensions.z) / 2
-        desc.height = max(dimensions.z, 1.0e-4) / 2
-        desc.feather = pg.feather
-        velocity = tuple(pg.initial_velocity)
-        if pg.use_object_velocity:
-            object_velocity = session.object_velocity(obj, scene)
-            velocity = tuple(a + b for a, b in zip(velocity, object_velocity))
-        desc.velocity = velocity
-        desc.blend_mode = BlendMode[pg.blend_mode]
-        desc.emit_rate = pg.emit_rate
-        desc.temperature = pg.temperature
-        desc.viscosity = pg.viscosity
-        desc.density = pg.density
-        desc.use_lifespan = pg.use_lifespan
-        desc.life_min = pg.life_min
-        desc.life_max = pg.life_max
-        if pg.role == "FORCE":
-            desc.mode = SourceShapeSourceMode.FIELD
-            desc.emit_rate = 0.0
-        desc.force_type = SourceShapeForceType[pg.force_type]
-        desc.force_strength = pg.force_strength
-        desc.force_dir = tuple(pg.force_direction)
-        sources.append(desc)
-    return sources
+    """Compatibility wrapper for the SceneInputs owner."""
+    return getattr(session, "scene_inputs", session).gather_sources(scene)
 
 
 def gather_height_source(scene):
-    """Build the optional height-source descriptor from scene settings."""
-    from ..sim.enums import SourceHeightBackMode
-    from ..sim.solver import HeightSourceDesc
-
-    fs = scene.fluidsim
-    if not fs.height_enabled:
-        return None
-    desc = HeightSourceDesc()
-    desc.enabled = True
-    desc.base_height = fs.height_base
-    desc.back_mode = SourceHeightBackMode[fs.height_back_mode]
-    desc.velocity = tuple(fs.height_velocity)
-    desc.emit_particles = fs.height_emit_particles
-    desc.emit_rate = fs.particles_per_voxel
-    return desc
+    """Compatibility wrapper for callers without a live Session."""
+    from .scene_inputs import SceneInputs
+    return SceneInputs().gather_height_source(scene)
 
 
 def object_points_world(obj, depsgraph=None):

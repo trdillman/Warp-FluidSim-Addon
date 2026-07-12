@@ -198,19 +198,42 @@ def _triangle_mesh(extra_vert=False):
     return _FakeMesh(verts, tris)
 
 
+def test_scene_input_state_is_owned_outside_session(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+
+    sess = scene_bridge.Session()
+
+    assert sess.scene_inputs is not None
+    assert not hasattr(sess, "_collider_prev")
+    assert not hasattr(sess, "_collider_rotation_prev")
+    assert not hasattr(sess, "_collider_mesh_cache")
+
+
 def test_repeated_collider_gather_reuses_cached_warp_mesh(monkeypatch):
     scene_bridge, colliders, fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sess = scene_bridge.Session()
     obj = _FakeObject(_triangle_mesh())
     scene = SimpleNamespace(objects=[obj])
 
-    first = colliders.gather_colliders(scene, sess, depsgraph=object())
+    first = sess.scene_inputs.gather_colliders(scene, depsgraph=object())
     second = colliders.gather_colliders(scene, sess, depsgraph=object())
 
     assert len(fake_warp.meshes) == 1
     assert obj.to_mesh_count == 1
     assert first[0].mesh is second[0].mesh
     assert sess.collider_mesh_cache_stats == {"rebuilds": 1, "reuses": 1}
+
+
+def test_scene_input_owner_evicts_removed_collider_mesh(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    scene = SimpleNamespace(objects=[_FakeObject(_triangle_mesh())])
+
+    sess.scene_inputs.gather_colliders(scene, depsgraph=object())
+    scene.objects.clear()
+    sess.scene_inputs.gather_colliders(scene, depsgraph=object())
+
+    assert sess.scene_inputs._collider_mesh_cache == {}
 
 
 def test_collider_gather_preserves_individual_material_response(monkeypatch):
