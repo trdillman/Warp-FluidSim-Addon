@@ -78,7 +78,6 @@ def run_profile(args):
     solver = FluidSolver(settings, profiler=profiler)
     solver.set_sources(default_benchmark_sources())
 
-    measured = []
     raw_frames = []
     total_frames = args.warmup + args.frames
     t_begin = time.perf_counter()
@@ -93,20 +92,19 @@ def run_profile(args):
             record["pressureIterations"] = stats.pressure_iterations
             record["pressureResidual"] = stats.pressure_residual
             record["substeps"] = stats.substeps
-            measured.append(stats)
             raw_frames.append(record)
     wall_total = time.perf_counter() - t_begin
 
-    step_times = [s.step_time for s in measured]
-    active_voxels = [s.active_voxels for s in measured]
-    active_particles = [s.active_particles for s in measured]
-    whitewater_particles = [s.whitewater_particles for s in measured]
-    substeps = [s.substeps for s in measured]
-    pressure_iters = [s.pressure_iterations for s in measured]
+    step_times = [record["stepTime"] for record in raw_frames]
+    active_voxels = [record["activeVoxels"] for record in raw_frames]
+    active_particles = [record["activeParticles"] for record in raw_frames]
+    whitewater_particles = [record["whitewaterParticles"] for record in raw_frames]
+    substeps = [record["substeps"] for record in raw_frames]
+    pressure_iters = [record["pressureIterations"] for record in raw_frames]
     phase_labels = _phase_labels()
     phase_means = {}
-    for stats in measured:
-        for slot, value in stats.timers.items():
+    for record in raw_frames:
+        for slot, value in record["timers"].items():
             if slot.startswith("compute_") and value > 0.0:
                 phase_means.setdefault(slot, []).append(float(value))
     phase_means = {slot: _mean(values) for slot, values in phase_means.items()}
@@ -130,7 +128,8 @@ def run_profile(args):
         "whitewaterParticlesMean": _mean(whitewater_particles),
         "substepsMean": _mean(substeps),
         "pressureIterationsMean": _mean(pressure_iters),
-        "pressureResidualLast": measured[-1].pressure_residual if measured else 0.0,
+        "pressureResidualLast": raw_frames[-1]["pressureResidual"] if raw_frames else 0.0,
+        "pressurePhaseMsMean": phase_means.get("compute_5", 0.0),
         "msPer100kActiveVoxels": _fmt_ms(_mean(step_times)) / max(avg_voxels / 100000.0, 1.0e-9),
         "msPer100kParticles": _fmt_ms(_mean(step_times)) / max(avg_particles / 100000.0, 1.0e-9),
         "topPhases": [
