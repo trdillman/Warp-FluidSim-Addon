@@ -212,7 +212,6 @@ def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
         scene_bridge._apply_scene_settings(_scene().fluidsim, settings)
     assert settings.voxel_size == 9.0
 
-
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
