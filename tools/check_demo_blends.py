@@ -18,16 +18,7 @@ if REPO not in sys.path:
 from tools.repo_addon_loader import enable_repo_addon
 
 DEMOS = os.path.join(REPO, "demos")
-CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 SCENES = ("dam_break", "crown_splash")
-
-
-def load_meta(name):
-    path = os.path.join(DEMOS, name, "meta.json")
-    if not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
 
 
 def point_count(obj):
@@ -56,7 +47,6 @@ def check_scene(name):
     enable_repo_addon(REPO, default_set=False, persistent=False)
     scene = bpy.context.scene
     result["opened"] = True
-    meta = load_meta(name)
 
     fs = getattr(scene, "fluidsim", None)
     surface = bpy.data.objects.get("FluidSim Surface")

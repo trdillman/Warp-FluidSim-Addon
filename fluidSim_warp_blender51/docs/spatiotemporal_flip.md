@@ -56,4 +56,4 @@ blender --background --factory-startup --python fluidSim_warp_blender51/tests/he
 blender --background --factory-startup --python fluidSim_warp_blender51/tests/headless_stflip_timeline_viewport.py
 ```
 
-The benchmark writes `demo_outputs/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `demo_outputs/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.
+The benchmark writes `artifacts/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `artifacts/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.

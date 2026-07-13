@@ -5,7 +5,7 @@ Candidate source: `C:\Users\Tyler\Downloads\FluidSim_Warp_1.0.233_blender51_STFL
 
 ## Identity finding
 
-The directory name says `1.0.233`, but its add-on manifest declares `1.0.234`. Its 68 packaged files are byte-identical to `FluidSim_Warp_1.0.234_blender51_STFLIP_surface_resolution_pipeline_gateway_validated.zip`. The extracted directory has one additional file: `demo_outputs/single_toggle_demo/STFLIP_single_scene_1M_vortex_gate.blend`.
+The directory name says `1.0.233`, but its add-on manifest declares `1.0.234`. Its 68 packaged files are byte-identical to `FluidSim_Warp_1.0.234_blender51_STFLIP_surface_resolution_pipeline_gateway_validated.zip`.
 
 This assessment therefore treats the extracted directory as the authoritative 1.0.234 candidate.
 
@@ -92,7 +92,6 @@ The test's reported total wall times are not a reliable isolated surfacing-cost 
 | Surface filters affect output | runtime mesh comparison | cache key changes and checksum changes | Conformant | Port |
 | Frame/manual cadence avoids needless substep rebuilds | source behavior + timing | implementation is present; no isolated cadence benchmark | Partial | Port, then profile |
 | Gateway is a runtime capability | source/runtime behavior | only a corrected centered acceptance scene and documentation note | Nonconformant as feature | Treat as validation history only |
-| 1M demo proves production readiness | reference-quality and long-run evidence | a `.blend` review artifact exists | Proxy | Use for visual review, never certification |
 
 ## Feature analysis
 
@@ -163,10 +162,6 @@ This may provide collision robustness for long global steps without requiring th
 
 This is conceptually necessary when rendering time-jittered particles, but it has no standalone value in ordinary FLIP. Port it only with experimental ST-FLIP and add an SDF/surface comparison proving that re-synchronization reduces temporal noise or geometry error.
 
-### 8. UI and 1M demo — supporting surfaces only
-
-The controls and demo help users inspect the implementation, but they do not create solver value. Port UI only after the underlying feature is approved. Use the 1M `.blend` for visual review and load/performance testing, not as correctness proof.
-
 ## Proposed port order for approval
 
 1. **Surface pipeline tranche:** decoupled surface grid, resolution modes, cadence, filtering, safety/capacity controls, and current-architecture viewport/cache/export integration.
@@ -181,4 +176,4 @@ This order captures the candidate's demonstrated production value without riskin
 - `artifacts/eval_1.0.234_spatiotemporal_validation.log`
 - `artifacts/eval_1.0.234_stflip_benchmark.log`
 - `artifacts/eval_1.0.234_surface_resolution.log`
-- disposable reproduced JSON under `artifacts/_eval_1.0.234/fluidSim_warp_blender51/demo_outputs/`
+- disposable reproduced JSON under `artifacts/_eval_1.0.234/`

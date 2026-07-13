@@ -21,7 +21,6 @@ import math
 import os
 import sys
 import time
-from types import SimpleNamespace
 
 import bpy
 import numpy as np

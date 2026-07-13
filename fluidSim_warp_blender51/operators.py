@@ -295,7 +295,7 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         scene.frame_start = 1
         scene.frame_end = 250
         scene.frame_set(1)
-        self.report({"INFO"}, "Demo scene created - Initialize Solver, then play")
+        self.report({"INFO"}, "Quick setup created - Initialize Solver, then play")
         return {"FINISHED"}
 
 
