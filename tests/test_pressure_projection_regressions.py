@@ -21,6 +21,7 @@ from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
 from fluidSim_warp_blender51.sim.kernels_fluid import (
     k_apply_collider_material_to_grid,
     resolve_collision,
+    resolve_collision_segment,
 )
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 from fluidSim_warp_blender51.sim.solver import (
@@ -55,6 +56,31 @@ def _resolve_material_test(
     velocities[tid] = v
 
 
+@wp.kernel
+def _resolve_segment_test(
+    previous_positions: wp.array(dtype=wp.vec3),
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+):
+    tid = wp.tid()
+    p, v = resolve_collision_segment(
+        previous_positions[tid], positions[tid], velocities[tid],
+        collision_sdf, collision_vel, collision_friction,
+        collision_restitution, leaf_table, voxels_dim, leaves_dim,
+        origin, voxel_size, 0.1)
+    positions[tid] = p
+    velocities[tid] = v
+
+
 def _box_collider(center, half_size, friction, restitution, device):
     cx, cy, cz = center
     sx, sy, sz = half_size
@@ -65,9 +91,9 @@ def _box_collider(center, half_size, friction, restitution, device):
         [cx+sx, cy+sy, cz+sz], [cx-sx, cy+sy, cz+sz],
     ], dtype=np.float32)
     tris = np.asarray([
-        0,1,2, 0,2,3, 4,6,5, 4,7,6,
-        0,4,5, 0,5,1, 1,5,6, 1,6,2,
-        2,6,7, 2,7,3, 3,7,4, 3,4,0,
+        0,2,1, 0,3,2, 4,5,6, 4,6,7,
+        0,1,5, 0,5,4, 1,2,6, 1,6,5,
+        2,3,7, 2,7,6, 3,0,4, 3,4,7,
     ], dtype=np.int32)
     return ColliderDesc(
         mesh=wp.Mesh(
@@ -134,6 +160,33 @@ def test_collision_grid_keeps_material_of_each_collider(cuda_device):
     assert np.any(np.isclose(restitution[inside], 0.9))
 
 
+def test_collision_sdf_covers_deep_resolved_collider_interior(cuda_device):
+    settings = SolverSettings(
+        domain_min=(0.0, 0.0, 0.0), domain_max=(1.2, 1.2, 1.2),
+        voxel_size=0.05, leaf_capacity=27, max_particles=8,
+        max_whitewater=8, device=cuda_device,
+    )
+    solver = FluidSolver(settings)
+    solver.set_colliders([
+        _box_collider((0.6, 0.6, 0.6), (0.55, 0.55, 0.55),
+                      0.0, 0.0, cuda_device),
+    ])
+    solver._rebuild_topology()
+    solver._clear_grid_fields()
+    solver._apply_collisions()
+    ijk = np.floor((np.asarray((0.6, 0.6, 0.6)) -
+                    np.asarray(solver.grid.origin)) / solver.grid.voxel_size).astype(int)
+    leaf = ijk // 8
+    dense = int(leaf[0] + solver.grid.leaves_dim[0] *
+                (leaf[1] + solver.grid.leaves_dim[1] * leaf[2]))
+    slot = int(solver.grid.leaf_table.numpy()[dense])
+    local = ijk & 7
+    center = slot * LEAF_VOLUME + int(local[0] + 8 * local[1] + 64 * local[2])
+
+    assert center >= 0
+    assert solver.collision_sdf.data.numpy()[center] < 0.0
+
+
 def test_particles_use_the_material_of_the_collider_they_hit(cuda_device):
     g = _one_leaf_grid(cuda_device)
     sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
@@ -170,6 +223,134 @@ def test_particles_use_the_material_of_the_collider_they_hit(cuda_device):
     assert result[0, 2] < result[1, 2]
 
 
+def test_particle_material_response_is_continuous_across_voxels(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    friction = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        local = flat % LEAF_VOLUME
+        i = local & 7
+        k = local >> 6
+        sdf[flat] = (k + 0.5) * g.voxel_size - 0.2
+        friction[flat] = 0.1 if i < 4 else 0.9
+    positions = wp.array(
+        [(0.2249, 0.125, 0.15), (0.2251, 0.125, 0.15)],
+        dtype=wp.vec3, device=cuda_device)
+    velocities = wp.array(
+        [(1.0, 0.0, -1.0), (1.0, 0.0, -1.0)],
+        dtype=wp.vec3, device=cuda_device)
+    zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+    wp.launch(
+        _resolve_material_test, dim=2,
+        inputs=[positions, velocities,
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                wp.array(friction, dtype=float, device=cuda_device), zero,
+                g.leaf_table, g.voxels_dim, g.leaves_dim,
+                g.origin, g.voxel_size], device=cuda_device)
+
+    tangential = velocities.numpy()[:, 0]
+    assert abs(float(tangential[0] - tangential[1])) < 0.1
+
+
+def test_particle_segment_collision_stops_at_clearance(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        k = (flat % LEAF_VOLUME) >> 6
+        sdf[flat] = (k + 0.5) * g.voxel_size - 0.2
+    previous = wp.array([(0.125, 0.125, 0.275)], dtype=wp.vec3,
+                        device=cuda_device)
+    positions = wp.array([(0.125, 0.125, 0.125)], dtype=wp.vec3,
+                         device=cuda_device)
+    velocities = wp.array([(0.0, 0.0, -3.0)], dtype=wp.vec3,
+                          device=cuda_device)
+    zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+    wp.launch(
+        _resolve_segment_test, dim=1,
+        inputs=[previous, positions, velocities,
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                zero, zero, g.leaf_table, g.voxels_dim, g.leaves_dim,
+                g.origin, g.voxel_size], device=cuda_device)
+
+    assert positions.numpy()[0, 2] >= 0.202
+    assert velocities.numpy()[0, 2] == pytest.approx(0.0, abs=1.0e-5)
+
+
+def test_particle_segment_collision_uses_remaining_timestep(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        k = (flat % LEAF_VOLUME) >> 6
+        sdf[flat] = (k + 0.5) * g.voxel_size - 0.2
+    previous = wp.array([(0.1, 0.125, 0.275)], dtype=wp.vec3,
+                        device=cuda_device)
+    positions = wp.array([(0.3, 0.125, 0.125)], dtype=wp.vec3,
+                         device=cuda_device)
+    velocities = wp.array([(2.0, 0.0, -1.5)], dtype=wp.vec3,
+                          device=cuda_device)
+    zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+
+    wp.launch(
+        _resolve_segment_test, dim=1,
+        inputs=[previous, positions, velocities,
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                zero, zero, g.leaf_table, g.voxels_dim, g.leaves_dim,
+                g.origin, g.voxel_size], device=cuda_device)
+
+    assert positions.numpy()[0, 0] > 0.27
+
+
+def test_particle_segment_collision_catches_through_crossing(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        k = (flat % LEAF_VOLUME) >> 6
+        z = (k + 0.5) * g.voxel_size
+        sdf[flat] = abs(z - 0.2) - 0.03
+    previous = wp.array([(0.125, 0.125, 0.275)], dtype=wp.vec3,
+                        device=cuda_device)
+    positions = wp.array([(0.125, 0.125, 0.125)], dtype=wp.vec3,
+                         device=cuda_device)
+    velocities = wp.array([(0.0, 0.0, -3.0)], dtype=wp.vec3,
+                          device=cuda_device)
+    zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+    wp.launch(
+        _resolve_segment_test, dim=1,
+        inputs=[previous, positions, velocities,
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                zero, zero, g.leaf_table, g.voxels_dim, g.leaves_dim,
+                g.origin, g.voxel_size], device=cuda_device)
+
+    assert positions.numpy()[0, 2] > 0.225
+    assert velocities.numpy()[0, 2] == pytest.approx(0.0, abs=1.0e-5)
+
+
+def test_particle_projection_rechecks_non_unit_sdf(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    sdf = np.empty(LEAF_VOLUME, dtype=np.float32)
+    for flat in range(LEAF_VOLUME):
+        k = (flat % LEAF_VOLUME) >> 6
+        sdf[flat] = 0.5 * ((k + 0.5) * g.voxel_size - 0.2)
+    positions = wp.array([(0.125, 0.125, 0.15)], dtype=wp.vec3,
+                         device=cuda_device)
+    velocities = wp.array([(0.0, 0.0, -1.0)], dtype=wp.vec3,
+                          device=cuda_device)
+    zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+    wp.launch(
+        _resolve_segment_test, dim=1,
+        inputs=[positions, positions, velocities,
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                zero, zero, g.leaf_table, g.voxels_dim, g.leaves_dim,
+                g.origin, g.voxel_size], device=cuda_device)
+
+    assert positions.numpy()[0, 2] >= 0.202
+
+
 def test_sloped_boundary_uses_material_from_inside_collider(cuda_device):
     """Trilinear SDF contact may occur while the floored voxel is outside."""
     g = _one_leaf_grid(cuda_device)
@@ -181,9 +362,10 @@ def test_sloped_boundary_uses_material_from_inside_collider(cuda_device):
         i = local & 7
         j = (local >> 3) & 7
         sdf[flat] = 0.1 - 0.3 * (i + j - 4)
-        if sdf[flat] < 0.0:
-            friction[flat] = 0.8
-            restitution[flat] = 0.9
+        # Rasterization stores collider material throughout its query band,
+        # including the positive-SDF samples used for interpolation.
+        friction[flat] = 0.8
+        restitution[flat] = 0.9
     positions = wp.array([(0.1375, 0.1375, 0.125)], dtype=wp.vec3,
                          device=cuda_device)
     velocities = wp.array([(1.0, 1.0, 0.0)], dtype=wp.vec3,
@@ -222,7 +404,9 @@ def test_grid_boundary_applies_collider_friction_and_restitution(cuda_device):
     u = np.zeros(LEAF_VOLUME, dtype=np.float32)
     v = np.zeros(LEAF_VOLUME, dtype=np.float32)
     w = np.zeros(LEAF_VOLUME, dtype=np.float32)
-    u[fluid] = 1.0
+    # MAC u is stored on the lower-X face. For a solid at fluid + X, the
+    # contact face belongs to the solid voxel, not the fluid voxel.
+    u[solid] = 1.0
     v[fluid] = 2.0
     u_dev = wp.array(u, dtype=float, device=cuda_device)
     v_dev = wp.array(v, dtype=float, device=cuda_device)
@@ -239,24 +423,58 @@ def test_grid_boundary_applies_collider_friction_and_restitution(cuda_device):
                 u_dev, v_dev, w_dev, u_dev, v_dev, w_dev],
         device=cuda_device)
 
-    assert u_dev.numpy()[fluid] == pytest.approx(-0.9, abs=1.0e-5)
-    assert v_dev.numpy()[fluid] == pytest.approx(0.5, abs=1.0e-5)
+    assert u_dev.numpy()[solid] == pytest.approx(-0.9, abs=1.0e-5)
+    assert v_dev.numpy()[fluid] == pytest.approx(2.0, abs=1.0e-5)
 
     separating = np.zeros(LEAF_VOLUME, dtype=np.float32)
-    separating[fluid] = -1.0
+    separating[solid] = -1.0
     separating_u = wp.array(separating, dtype=float, device=cuda_device)
+    tangential = np.zeros(LEAF_VOLUME, dtype=np.float32)
+    tangential[fluid] = 2.0
+    tangential_v = wp.array(tangential, dtype=float, device=cuda_device)
     zero = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
     wp.launch(
         k_apply_collider_material_to_grid, dim=LEAF_VOLUME,
         inputs=[wp.array(voxel_type, dtype=wp.int32, device=cuda_device),
                 wp.array(sdf, dtype=float, device=cuda_device),
                 wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
-                zero, zero, g.leaf_table, g.leaf_coords,
+                wp.array(friction, dtype=float, device=cuda_device), zero,
+                g.leaf_table, g.leaf_coords,
                 g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
-                separating_u, w_dev, w_dev,
-                separating_u, w_dev, w_dev],
+                separating_u, tangential_v, w_dev,
+                separating_u, tangential_v, w_dev],
         device=cuda_device)
-    assert separating_u.numpy()[fluid] == pytest.approx(-1.0, abs=1.0e-5)
+    assert separating_u.numpy()[solid] == pytest.approx(-1.0, abs=1.0e-5)
+    assert tangential_v.numpy()[fluid] == pytest.approx(2.0, abs=1.0e-5)
+
+
+def test_grid_friction_does_not_damp_fluid_without_solid_neighbor(cuda_device):
+    g = _one_leaf_grid(cuda_device)
+    fluid = 3 + 3 * 8 + 3 * 64
+    voxel_type = np.zeros(LEAF_VOLUME, dtype=np.int32)
+    voxel_type[fluid] = VOXEL_FLUID
+    sdf = np.ones(LEAF_VOLUME, dtype=np.float32)
+    sdf[fluid - 1:fluid + 2] = (0.05, 0.075, 0.1)
+    friction = np.zeros(LEAF_VOLUME, dtype=np.float32)
+    friction[fluid] = 0.75
+    u = wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device)
+    v = np.zeros(LEAF_VOLUME, dtype=np.float32)
+    v[fluid] = 2.0
+    v_dev = wp.array(v, dtype=float, device=cuda_device)
+
+    wp.launch(
+        k_apply_collider_material_to_grid, dim=LEAF_VOLUME,
+        inputs=[wp.array(voxel_type, dtype=wp.int32, device=cuda_device),
+                wp.array(sdf, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
+                wp.array(friction, dtype=float, device=cuda_device),
+                wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device),
+                g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                g.num_leaves, g.voxel_size,
+                u, v_dev, u, u, v_dev, u],
+        device=cuda_device)
+
+    assert v_dev.numpy()[fluid] == pytest.approx(2.0)
 
 
 def _one_active_leaf_grid(device, leaf_capacity):

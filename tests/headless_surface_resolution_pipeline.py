@@ -103,10 +103,10 @@ def _mesh_summary(solver):
         "bbox_min": bmin,
         "bbox_max": bmax,
         "checksum": checksum,
-        "surface_voxel_size": float(solver._render_surface_voxel_size()),
-        "surface_active_leaves": int(getattr(solver.render_surface_grid, "active_leaf_count", 0)),
-        "surface_active_voxels": int(getattr(solver.render_surface_grid, "active_leaf_count", 0) * 512),
-        "surface_grid_is_sim_grid": bool(solver.render_surface_grid is solver.grid),
+        "surface_voxel_size": float(solver.surface.metadata()["voxel_size"]),
+        "surface_active_leaves": int(getattr(solver.surface.grid, "active_leaf_count", 0)),
+        "surface_active_voxels": int(getattr(solver.surface.grid, "active_leaf_count", 0) * 512),
+        "surface_grid_is_sim_grid": bool(solver.surface.grid is solver.grid),
     }
 
 
@@ -150,16 +150,14 @@ def main(argv: list[str] | None = None) -> int:
     _solver_1x, one = _run_case(args.device, 1.0, frames, particles)
     solver_2x, two = _run_case(args.device, 2.0, frames, particles)
 
-    # Cache invalidation / filter-path acceptance on the final 2x state.
-    key_before = repr(solver_2x._surface_mesh_key)
+    # Public rebuild / filter-path acceptance on the final 2x state.
     mesh_before = _mesh_summary(solver_2x)
     from fluidSim_warp_blender51.sim.enums import SdfFilterType
     solver_2x.settings.surface_filter_type = SdfFilterType.DIALATE
     solver_2x.settings.surface_filter_iterations = 1
     solver_2x.settings.surface_filter_strength = 1.0
-    solver_2x._surface(build_render=True, build_lowres=False)
+    solver_2x.rebuild_surface()
     mesh_after = _mesh_summary(solver_2x)
-    key_after = repr(solver_2x._surface_mesh_key)
     bbox_delta = float(max(
         np.max(np.abs(np.asarray(one["surface"]["bbox_min"]) - np.asarray(two["surface"]["bbox_min"]))),
         np.max(np.abs(np.asarray(one["surface"]["bbox_max"]) - np.asarray(two["surface"]["bbox_max"]))),
@@ -171,9 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         "frames_required": 24,
         "one_x": one,
         "two_x": two,
-        "filter_cache_probe": {
-            "key_before": key_before,
-            "key_after": key_after,
+        "filter_rebuild_probe": {
             "mesh_before": mesh_before,
             "mesh_after": mesh_after,
             "checksum_delta": float(abs(mesh_after["checksum"] - mesh_before["checksum"])),
@@ -190,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         ("2x uses separate surface grid", not two["surface"]["surface_grid_is_sim_grid"]),
         ("2x has at least 1x vertex density", two["surface"]["vertices"] >= one["surface"]["vertices"]),
         ("bounds remain comparable", bbox_delta < 0.18),
-        ("cache/filter path changes mesh", payload["filter_cache_probe"]["checksum_delta"] > 1.0e-7 or mesh_after["vertices"] != mesh_before["vertices"]),
+        ("public filter rebuild changes mesh", payload["filter_rebuild_probe"]["checksum_delta"] > 1.0e-7 or mesh_after["vertices"] != mesh_before["vertices"]),
     ]
     payload["validation"] = {"passed": all(ok for _, ok in checks), "checks": [{"name": n, "pass": bool(ok)} for n, ok in checks]}
     out = pathlib.Path(args.output)

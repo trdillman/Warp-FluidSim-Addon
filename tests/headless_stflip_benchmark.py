@@ -152,7 +152,7 @@ def _analyze(solver, settings):
         "particles": int(n),
         "surface_vertices": int(len(verts)),
         "surface_triangles": int(len(tris)),
-        "surface_voxel_size": float(solver._render_surface_voxel_size()),
+        "surface_voxel_size": float(solver.surface.metadata()["voxel_size"]),
         "surface_active_leaves": int(getattr(solver.render_surface_grid, "active_leaf_count", 0)),
         "surface_grid_is_sim_grid": bool(solver.render_surface_grid is solver.grid),
         "centroid": pos.mean(axis=0).astype(float).tolist() if len(pos) else [0.0, 0.0, 0.0],

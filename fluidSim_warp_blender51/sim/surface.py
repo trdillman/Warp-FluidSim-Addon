@@ -9,6 +9,7 @@ Ports of the fluid_surface_collision kernel group:
 
 from __future__ import annotations
 
+import math
 import numpy as np
 import warp as wp
 
@@ -28,6 +29,234 @@ from .fields import (
     field_read_i,
 )
 from .registry import register_fn
+
+
+class SurfacePipeline:
+    """Owns liquid-surface fields, cadence, extraction and mesh caching."""
+
+    def __init__(self, solver):
+        from .fields import ScalarField
+
+        self.solver = solver
+        g = solver.grid
+        self.sdf = ScalarField(g, name="surface_sdf")
+        self.tmp = ScalarField(g, name="surface_tmp")
+        self.extractor = SurfaceExtractor(g, solver.device)
+        self.grid = g
+        self.render_sdf = self.sdf
+        self.render_tmp = self.tmp
+        self.render_extractor = self.extractor
+        self.grid_key = None
+        self.nvox = max(1, g.voxel_capacity)
+        self.topology_generation = 0
+        self.mesh_cache = None
+        self.mesh_key = None
+        self.built_key = None
+
+    def mode(self):
+        from .enums import SurfaceResolutionMode
+
+        mode = int(getattr(self.solver.settings, "surface_resolution_mode", int(SurfaceResolutionMode.SIMULATION)))
+        valid = {int(SurfaceResolutionMode.SIMULATION), int(SurfaceResolutionMode.MULTIPLIER), int(SurfaceResolutionMode.CUSTOM)}
+        return mode if mode in valid else int(SurfaceResolutionMode.SIMULATION)
+
+    @staticmethod
+    def voxel_size_for(settings):
+        from .enums import SurfaceResolutionMode
+
+        sim_h = max(float(settings.voxel_size), 1.0e-9)
+        mode = int(getattr(settings, "surface_resolution_mode", int(SurfaceResolutionMode.SIMULATION)))
+        if mode == int(SurfaceResolutionMode.CUSTOM):
+            custom_h = float(getattr(settings, "surface_voxel_size", 0.0))
+            if custom_h > 0.0:
+                return max(custom_h, sim_h / 16.0)
+        if mode == int(SurfaceResolutionMode.MULTIPLIER):
+            return sim_h / max(0.25, min(float(getattr(settings, "surface_resolution_multiplier", 1.0)), 8.0))
+        return sim_h
+
+    def voxel_size(self):
+        return self.voxel_size_for(self.solver.settings)
+
+    def leaf_capacity(self, h):
+        s = self.solver.settings
+        size = np.maximum(np.asarray(s.domain_max, dtype=np.float64) - np.asarray(s.domain_min, dtype=np.float64), h)
+        dims = [max(C.LEAF_DIM, int(np.ceil(v / h))) for v in size]
+        dims = [(v + C.LEAF_MASK) & ~C.LEAF_MASK for v in dims]
+        total = (dims[0] >> C.LEAF_SHIFT) * (dims[1] >> C.LEAF_SHIFT) * (dims[2] >> C.LEAF_SHIFT)
+        if abs(h - float(s.voxel_size)) <= 1.0e-8:
+            return min(int(self.solver.grid.capacity), int(total))
+        scale = max(1.0, float(getattr(s, "surface_leaf_capacity_scale", 8.0)))
+        return int(min(total, max(1, math.ceil(float(s.leaf_capacity) * scale))))
+
+    def resource_key(self):
+        s = self.solver.settings
+        h = float(self.voxel_size())
+        return (round(h, 12), self.leaf_capacity(h), max(8, int(getattr(s, "surface_max_dense_dim", 512))),
+                tuple(float(x) for x in s.domain_min), tuple(float(x) for x in s.domain_max))
+
+    def settings_signature(self):
+        s = self.solver.settings
+        return (int(getattr(s, "surface_resolution_mode", 0)), round(float(getattr(s, "surface_resolution_multiplier", 1.0)), 6),
+                round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 1.0)), 6),
+                int(getattr(s, "surface_max_dense_dim", 512)), int(getattr(s, "surface_update_cadence", 1)),
+                bool(getattr(s, "surface_build_lowres_sdf", True)), round(float(s.particle_radius_scale), 6), int(s.surface_splat_radius),
+                int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
+                int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6), int(s.surface_erode_iterations),
+                round(float(s.surface_erode_strength), 6), int(s.surface_smooth_type), int(s.surface_smooth_iterations),
+                round(float(s.surface_smooth_strength), 6), bool(getattr(s, "spacetime_enabled", False)),
+                bool(getattr(s, "spacetime_resync_surface", True)), self.topology_generation)
+
+    def build_key(self):
+        solver = self.solver
+        return (solver.frame, round(float(solver.sim_time), 12), self.settings_signature())
+
+    def invalidate(self):
+        self.mesh_cache = self.mesh_key = None
+        host = getattr(self.solver, "_host_frame_cache", None)
+        if host is not None:
+            host.invalidate_surface()
+
+    def ensure_resources(self, force=False):
+        from .fields import SparseGrid, ScalarField
+
+        solver = self.solver
+        s = solver.settings
+        h = self.voxel_size()
+        max_dense = max(8, int(getattr(s, "surface_max_dense_dim", 512)))
+        if abs(h - float(solver.grid.voxel_size)) <= 1.0e-8:
+            self.grid, self.render_sdf, self.render_tmp, self.render_extractor = solver.grid, self.sdf, self.tmp, self.extractor
+            self.render_extractor.max_dense_dim = max_dense
+            if force:
+                self.render_extractor.reset_buffers()
+            self.grid_key = ("simulation", max_dense)
+            self.nvox = getattr(solver, "_nvox", max(1, solver.grid.active_voxel_count))
+            self.invalidate()
+            return
+        key = self.resource_key()
+        if not force and self.grid_key == key:
+            self.render_extractor.max_dense_dim = max_dense
+            return
+        dmin, dmax = np.asarray(s.domain_min, dtype=np.float64), np.asarray(s.domain_max, dtype=np.float64)
+        grid = SparseGrid(origin=dmin, size=np.maximum(dmax - dmin, h), voxel_size=h,
+                          leaf_capacity=self.leaf_capacity(h), device=solver.device)
+        self.grid = grid
+        self.render_sdf = ScalarField(grid, name="render_surface_sdf")
+        self.render_tmp = ScalarField(grid, name="render_surface_tmp")
+        self.render_extractor = SurfaceExtractor(grid, solver.device, max_dense_dim=max_dense)
+        self.grid_key, self.nvox = key, max(1, grid.active_voxel_count)
+        self.topology_generation += 1
+        self.invalidate()
+
+    @staticmethod
+    def filter_kernel(filter_type):
+        from .enums import SdfFilterType
+
+        return {int(SdfFilterType.DIALATE): k_smooth_surface_sdf_dilate,
+                int(SdfFilterType.ERODE): k_smooth_surface_sdf_erode,
+                int(SdfFilterType.BOX): k_smooth_surface_sdf_box,
+                int(SdfFilterType.MEAN_CURVATURE_FLOW): k_smooth_surface_sdf_mean_curvature}[int(filter_type)]
+
+    def build_sdf(self, grid, sdf, tmp, nvox, positions, voxel_size):
+        solver, s = self.solver, self.solver.settings
+        h, nvox = float(voxel_size), max(1, int(nvox))
+        wp.launch(k_surface_sdf_reset, dim=nvox, inputs=[sdf.data, grid.num_leaves, 4.0 * h], device=solver.device)
+        radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+        splat = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
+        wp.launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
+                  grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat], outputs=[sdf.data], device=solver.device)
+        def apply(kernel, iterations, strength):
+            for _ in range(max(0, int(iterations))):
+                wp.launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                          grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
+                sdf.data, tmp.data = tmp.data, sdf.data
+        apply(self.filter_kernel(int(s.surface_filter_type)), s.surface_filter_iterations, s.surface_filter_strength)
+        apply(k_smooth_surface_sdf_dilate, s.surface_dilate_iterations, s.surface_dilate_strength)
+        apply(k_smooth_surface_sdf_erode, s.surface_erode_iterations, s.surface_erode_strength)
+        apply(self.filter_kernel(int(s.surface_smooth_type)), s.surface_smooth_iterations, s.surface_smooth_strength)
+        return sdf
+
+    def rebuild_topology(self, positions):
+        solver, grid = self.solver, self.grid
+        if grid is solver.grid:
+            self.nvox = solver._nvox
+        else:
+            grid.begin_topology(); grid.mark_points(positions, solver.particles.count, solver._np_dim())
+            grid.expand(max(1, int(getattr(solver.settings, "topology_expand", 1))))
+            grid.finalize_topology(sync=True)
+            self.nvox = max(1, grid.active_voxel_count)
+            self.topology_generation += 1
+        return self.nvox
+
+    def build(self, build_render=True, build_lowres=None):
+        solver, s = self.solver, self.solver.settings
+        if not s.surface_enabled:
+            return
+        if build_lowres is None:
+            build_lowres = bool(getattr(s, "surface_build_lowres_sdf", True))
+        positions = solver._surface_positions()
+        if build_lowres:
+            self.build_sdf(solver.grid, self.sdf, self.tmp, solver._nvox, positions, float(s.voxel_size))
+        if not build_render:
+            return
+        self.ensure_resources()
+        if self.grid is solver.grid:
+            if not build_lowres:
+                self.build_sdf(solver.grid, self.sdf, self.tmp, solver._nvox, positions, float(s.voxel_size))
+            self.nvox = solver._nvox
+        else:
+            self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size))
+        self.built_key = self.build_key()
+        self.invalidate()
+
+    def after_substep(self):
+        from .enums import SurfaceUpdateCadence
+
+        s = self.solver.settings
+        with self.solver._phase("surface"):
+            cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+            if cadence == int(SurfaceUpdateCadence.SUBSTEP):
+                self.build(build_render=True, build_lowres=True)
+            elif s.whitewater_enabled:
+                self.build(build_render=False, build_lowres=True)
+
+    def after_frame(self):
+        from .enums import SurfaceUpdateCadence
+
+        s = self.solver.settings
+        cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
+        if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
+            with self.solver._phase("surface"):
+                self.build(build_render=True, build_lowres=bool(
+                    getattr(s, "surface_build_lowres_sdf", True)))
+
+    def rebuild(self):
+        self.built_key = None
+        self.invalidate()
+        self.build()
+
+    def reset(self):
+        self.built_key = None
+        self.invalidate()
+        self.extractor.reset_buffers()
+        self.grid_key = None
+        self.ensure_resources(force=True)
+
+    def mesh(self):
+        if self.solver.settings.surface_enabled and self.built_key != self.build_key():
+            self.build(build_render=True, build_lowres=False)
+        key = self.build_key()
+        if self.mesh_cache is None or self.mesh_key != key:
+            self.mesh_cache = self.render_extractor.extract(self.render_sdf)
+            self.mesh_key = key
+        return self.mesh_cache
+
+    def metadata(self):
+        s = self.solver.settings
+        leaves = int(getattr(self.grid, "active_leaf_count", 0))
+        return {"voxel_size": self.voxel_size(), "resolution_mode": int(s.surface_resolution_mode),
+                "resolution_multiplier": float(s.surface_resolution_multiplier),
+                "update_cadence": int(s.surface_update_cadence), "smooth_iterations": int(s.surface_smooth_iterations),
+                "active_leaves": leaves, "active_voxels": leaves * C.LEAF_VOLUME}
 
 
 # ---------------------------------------------------------------------------

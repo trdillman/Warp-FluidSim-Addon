@@ -8,6 +8,7 @@ stored as compressed .npz files.
 from __future__ import annotations
 
 import json
+import io
 import os
 import pickle
 import tempfile
@@ -19,6 +20,16 @@ CACHE_FORMAT_VERSION = 1
 CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
 
 
+def _savez_fast_compressed(path, payload):
+    """Write a standard DEFLATED NPZ without costly size compression."""
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=0) as archive:
+        for name, value in payload.items():
+            buffer = io.BytesIO()
+            np.lib.format.write_array(buffer, np.asanyarray(value), allow_pickle=False)
+            archive.writestr(f"{name}.npy", buffer.getvalue())
+
+
 def _frame_path(base_dir: str, frame: int) -> str:
     return os.path.join(base_dir, f"fluidsim_{frame:05d}.npz")
 
@@ -27,18 +38,41 @@ def _metadata_path(base_dir: str) -> str:
     return os.path.join(base_dir, CACHE_SEQUENCE_METADATA)
 
 
-def _optional_particle_attr(solver, name: str):
-    try:
-        return solver.particles.attr(name).numpy()[:solver.particles.host_count]
-    except AttributeError:
-        return np.zeros(0, dtype=np.float32)
+def _frame_payload(solver):
+    """Build the version-1 cache payload from the shared lazy host frame."""
+    from ..sim.frame_output import HostFrame
 
-
-def _optional_whitewater_attr(solver, name: str):
-    try:
-        return getattr(solver.whitewater, name).numpy()[:solver.whitewater.host_count]
-    except AttributeError:
-        return np.zeros(0, dtype=np.float32)
+    host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
+    empty_verts = np.zeros((0, 3), np.float32)
+    empty_tris = np.zeros((0, 3), np.int32)
+    verts, tris = (host.surface_mesh if solver.settings.surface_enabled else
+                   (empty_verts, empty_tris))
+    surface_metadata = (solver.surface.metadata() if hasattr(solver, "surface") else {
+        "voxel_size": getattr(solver.settings, "voxel_size", 0.05)})
+    return {
+        "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
+        "positions": host.positions,
+        "velocities": host.velocities,
+        "whitewater": host.whitewater,
+        "surface_verts": verts,
+        "surface_tris": tris,
+        "frame": solver.frame,
+        "voxel_size": np.array(getattr(solver.settings, "voxel_size", 0.05), dtype=np.float32),
+        "surface_voxel_size": np.array(surface_metadata["voxel_size"], dtype=np.float32),
+        "surface_resolution_multiplier": np.array(getattr(solver.settings, "surface_resolution_multiplier", 1.0), dtype=np.float32),
+        "surface_resolution_mode": np.array(int(getattr(solver.settings, "surface_resolution_mode", 0)), dtype=np.int32),
+        "surface_update_cadence": np.array(int(getattr(solver.settings, "surface_update_cadence", 1)), dtype=np.int32),
+        "surface_smooth_iterations": np.array(int(getattr(solver.settings, "surface_smooth_iterations", 0)), dtype=np.int32),
+        "particle_age": host.particle_attr("age"),
+        "particle_life": host.particle_attr("life"),
+        "particle_temperature": host.particle_attr("temperature"),
+        "particle_viscosity": host.particle_attr("viscosity"),
+        "particle_density": host.particle_attr("density"),
+        "particle_time_offset": host.particle_attr("time_offset"),
+        "whitewater_velocities": host.whitewater_attr("velocity"),
+        "whitewater_age": host.whitewater_attr("age"),
+        "whitewater_life": host.whitewater_attr("life"),
+    }
 
 
 def resolve_frame_range(
@@ -121,9 +155,6 @@ def write_frame(scene, sess) -> str:
     base = bpy.path.abspath(fs.cache_path)
     os.makedirs(base, exist_ok=True)
     solver = sess.solver
-    verts, tris = (np.zeros((0, 3), np.float32), np.zeros((0, 3), np.int32))
-    if solver.settings.surface_enabled:
-        verts, tris = solver.surface_mesh()
     path = _frame_path(base, solver.frame)
     fd, tmp_path = tempfile.mkstemp(
         prefix=f"{os.path.basename(path)}.",
@@ -132,44 +163,7 @@ def write_frame(scene, sess) -> str:
     )
     os.close(fd)
     try:
-        np.savez_compressed(
-            tmp_path,
-            format_version=np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
-            positions=solver.particle_positions(),
-            velocities=solver.particle_velocities(),
-            whitewater=solver.whitewater_positions(),
-            surface_verts=verts,
-            surface_tris=tris,
-            frame=solver.frame,
-            voxel_size=np.array(
-                getattr(solver.settings, "voxel_size", 0.05), dtype=np.float32),
-            surface_voxel_size=np.array(
-                (solver._render_surface_voxel_size()
-                 if hasattr(solver, "_render_surface_voxel_size")
-                 else getattr(solver.settings, "voxel_size", 0.05)),
-                dtype=np.float32),
-            surface_resolution_multiplier=np.array(
-                getattr(solver.settings, "surface_resolution_multiplier", 1.0),
-                dtype=np.float32),
-            surface_resolution_mode=np.array(
-                int(getattr(solver.settings, "surface_resolution_mode", 0)),
-                dtype=np.int32),
-            surface_update_cadence=np.array(
-                int(getattr(solver.settings, "surface_update_cadence", 1)),
-                dtype=np.int32),
-            surface_smooth_iterations=np.array(
-                int(getattr(solver.settings, "surface_smooth_iterations", 0)),
-                dtype=np.int32),
-            particle_age=_optional_particle_attr(solver, "age"),
-            particle_life=_optional_particle_attr(solver, "life"),
-            particle_temperature=_optional_particle_attr(solver, "temperature"),
-            particle_viscosity=_optional_particle_attr(solver, "viscosity"),
-            particle_density=_optional_particle_attr(solver, "density"),
-            particle_time_offset=_optional_particle_attr(solver, "time_offset"),
-            whitewater_velocities=_optional_whitewater_attr(solver, "velocity"),
-            whitewater_age=_optional_whitewater_attr(solver, "age"),
-            whitewater_life=_optional_whitewater_attr(solver, "life"),
-        )
+        _savez_fast_compressed(tmp_path, _frame_payload(solver))
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):

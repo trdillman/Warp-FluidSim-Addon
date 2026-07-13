@@ -15,6 +15,7 @@ def test_material_response_demo_is_a_rebuildable_250_frame_showcase():
     assert "fs.live = True" in builder
     assert "max_particles = 400_000" in builder
     assert 'source.fluidsim.initial_velocity = (5.5, 0.0, -0.15)' in builder
+    assert "fs.relax_enabled = False" in builder
     assert 'f"{label} Impact Wall F{friction:.2f} R{restitution:.2f}"' in builder
 
 
@@ -47,3 +48,14 @@ def test_material_response_preview_has_visible_value_labels():
 
     assert 'f"{label}\\nF {friction:.2f}  R {restitution:.2f}"' in builder
     assert '"Material Response Legend"' in builder
+
+
+def test_collision_update_proof_has_one_emitter_and_one_collider():
+    builder = (ROOT / "tools" / "build_demo_scenes.py").read_text()
+
+    assert "def build_collision_update_proof():" in builder
+    assert '"collision_update_proof": build_collision_update_proof' in builder
+    assert '"Collision Proof Emitter"' in builder
+    assert '"Collision Proof Ramp"' in builder
+    assert 'run_scene("collision_update_proof", 72)' in builder
+    assert "fs.relax_enabled = False" in builder

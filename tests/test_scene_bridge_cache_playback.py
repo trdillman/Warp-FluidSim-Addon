@@ -405,9 +405,10 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
     sess.start_frame = 9
     sess.last_frame = 12
     sess.frame_stats = [{"frame": 12}]
-    sess._collider_prev = {"Collider": (object(), 12)}
-    sess._collider_mesh_cache = {"Collider": object()}
-    sess.collider_mesh_cache_stats = {"rebuilds": 3, "reuses": 4}
+    sess.scene_inputs._collider_prev = {"Collider": (object(), 12)}
+    sess.scene_inputs._collider_rotation_prev = {"Collider": (object(), 12)}
+    sess.scene_inputs._collider_mesh_cache = {"Collider": object()}
+    sess.scene_inputs.collider_mesh_cache_stats = {"rebuilds": 3, "reuses": 4}
     scene_bridge.set_error(scene, "boom")
 
     scene_bridge.release_session(scene)
@@ -418,8 +419,9 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
     assert sess.start_frame == 1
     assert sess.last_frame == -1
     assert sess.frame_stats == []
-    assert sess._collider_prev == {}
-    assert sess._collider_mesh_cache == {}
+    assert sess.scene_inputs._collider_prev == {}
+    assert sess.scene_inputs._collider_rotation_prev == {}
+    assert sess.scene_inputs._collider_mesh_cache == {}
     assert sess.collider_mesh_cache_stats == {"rebuilds": 0, "reuses": 0}
     assert scene_bridge.current_error(scene) == ""
 
@@ -457,8 +459,8 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     assert not sess.active
     assert sess.profiler is None
     assert sess.frame_stats == []
-    assert sess._collider_prev == {}
-    assert sess._collider_mesh_cache == {}
+    assert sess.scene_inputs._collider_prev == {}
+    assert sess.scene_inputs._collider_mesh_cache == {}
 
 
 def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):

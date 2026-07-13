@@ -20,17 +20,21 @@ def _fake_solver(solver_mod, settings):
         origin=(0.0, 0.0, 0.0),
     )
     solver.particles = SimpleNamespace(position="position", count=5)
-    solver.surface_sdf = SimpleNamespace(data="sdf")
-    solver.surface_tmp = SimpleNamespace(data="tmp")
-    return solver
+    from fluidSim_warp_blender51.sim.surface import SurfacePipeline
+    pipeline = object.__new__(SurfacePipeline)
+    pipeline.solver = solver
+    pipeline.sdf = SimpleNamespace(data="sdf")
+    pipeline.tmp = SimpleNamespace(data="tmp")
+    return pipeline
 
 
 def test_surface_filters_stack_in_fixed_houdini_style_order(monkeypatch):
     import fluidSim_warp_blender51.sim.solver as solver_mod
 
     launches = []
+    import fluidSim_warp_blender51.sim.surface as surface_mod
     monkeypatch.setattr(
-        solver_mod.wp,
+        surface_mod.wp,
         "launch",
         lambda kernel, **kwargs: launches.append((kernel, kwargs)),
     )
@@ -42,9 +46,9 @@ def test_surface_filters_stack_in_fixed_houdini_style_order(monkeypatch):
     settings.surface_smooth_type = int(solver_mod.SdfFilterType.MEAN_CURVATURE_FLOW)
     settings.surface_smooth_iterations = 3
     settings.surface_smooth_strength = 0.4
-    solver = _fake_solver(solver_mod, settings)
+    pipeline = _fake_solver(solver_mod, settings)
 
-    solver_mod.FluidSolver._surface(solver, build_render=False)
+    pipeline.build(build_render=False)
 
     assert [call[0] for call in launches] == [
         solver_mod.k_surface_sdf_reset,
@@ -64,14 +68,15 @@ def test_surface_stack_defaults_preserve_legacy_box_smoothing(monkeypatch):
     import fluidSim_warp_blender51.sim.solver as solver_mod
 
     launches = []
+    import fluidSim_warp_blender51.sim.surface as surface_mod
     monkeypatch.setattr(
-        solver_mod.wp,
+        surface_mod.wp,
         "launch",
         lambda kernel, **kwargs: launches.append((kernel, kwargs)),
     )
-    solver = _fake_solver(solver_mod, solver_mod.SolverSettings())
+    pipeline = _fake_solver(solver_mod, solver_mod.SolverSettings())
 
-    solver_mod.FluidSolver._surface(solver, build_render=False)
+    pipeline.build(build_render=False)
 
     assert [call[0] for call in launches] == [
         solver_mod.k_surface_sdf_reset,

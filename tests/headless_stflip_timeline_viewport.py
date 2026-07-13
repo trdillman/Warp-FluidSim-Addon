@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         "particles_frame2": int(len(p2)),
         "surface_vertices_frame1": int(len(v1)),
         "surface_vertices_frame2": int(len(v2)),
-        "surface_voxel_size": float(solver._render_surface_voxel_size()),
+        "surface_voxel_size": float(solver.surface.metadata()["voxel_size"]),
         "surface_active_leaves": int(getattr(solver.render_surface_grid, "active_leaf_count", 0)),
         "surface_grid_is_sim_grid": bool(solver.render_surface_grid is solver.grid),
         "viewport_particle_object_count_frame1": int(out_p1),

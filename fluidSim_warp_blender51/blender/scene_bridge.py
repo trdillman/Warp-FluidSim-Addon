@@ -8,8 +8,9 @@ simulation during playback via frame-change handlers.
 from __future__ import annotations
 
 import bpy
-import numpy as np
 from mathutils import Vector
+
+from .scene_inputs import SceneInputs
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -32,13 +33,15 @@ class Session:
         self.benchmark_result = None
         self.benchmark_compare = None
         self.error = ""
-        self._collider_prev = {}  # object name -> (matrix, frame)
-        self._collider_mesh_cache = {}
-        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.scene_inputs = SceneInputs()
 
     @property
     def active(self):
         return self.solver is not None
+
+    @property
+    def collider_mesh_cache_stats(self):
+        return self.scene_inputs.collider_mesh_cache_stats
 
     def _clear_runtime(self):
         self.solver = None
@@ -46,9 +49,7 @@ class Session:
         self.start_frame = 1
         self.last_frame = -1
         self.frame_stats = []
-        self._collider_prev = {}
-        self._collider_mesh_cache = {}
-        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.scene_inputs.clear()
 
     def set_error(self, scene, message):
         self.error = str(message)
@@ -62,20 +63,6 @@ class Session:
 
     def current_error(self, scene):
         return str(_scene_get(scene, ERROR_SCENE_KEY, "") or self.error or "")
-
-    def object_velocity(self, obj, scene):
-        """Estimate animated-object velocity and retain frame history."""
-        fps = scene.render.fps / scene.render.fps_base
-        current = np.array(obj.matrix_world.translation)
-        previous = self._collider_prev.get(obj.name)
-        frame = scene.frame_current
-        self._collider_prev[obj.name] = (current, frame)
-        if previous is None or frame == previous[1]:
-            return (0.0, 0.0, 0.0)
-        dt = (frame - previous[1]) / fps
-        if dt == 0:
-            return (0.0, 0.0, 0.0)
-        return tuple(float(value) for value in (current - previous[0]) / dt)
 
     def release(self, scene=None, *, preserve_error=False):
         if scene is None:
@@ -152,14 +139,12 @@ class Session:
             self.set_live_enabled(scene, True)
 
     def sync_scene(self, scene, depsgraph=None):
-        from . import colliders, sources
-
         if not self.active:
             return
-        self.solver.set_sources(sources.gather_sources(scene, self))
-        self.solver.set_colliders(
-            colliders.gather_colliders(scene, self, depsgraph))
-        self.solver.set_height_source(sources.gather_height_source(scene))
+        self.scene_inputs.device = self.solver.device
+        self.solver.set_sources(self.scene_inputs.gather_sources(scene))
+        self.solver.set_colliders(self.scene_inputs.gather_colliders(scene, depsgraph))
+        self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
     def step(self, scene, *, write_cache=True):
         from . import viewport
@@ -232,9 +217,7 @@ class Session:
         self.last_frame = -1
         self.frame_stats = []
         self.clear_error(scene)
-        self._collider_prev = {}
-        self._collider_mesh_cache = {}
-        self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
+        self.scene_inputs.clear()
         self.sync_scene(scene)
         sources.inject_auto_seeds(scene, self)
         viewport.update_outputs(scene, self)
@@ -393,6 +376,13 @@ _DIRECT_SETTING_FIELDS = (
     "ww_spray_drag",
 )
 
+_SETTING_ALIASES = {
+    "limit_percent": "speed_limit_percent",
+    "limit_behavior": "speed_limit_behavior",
+    "ww_churn_decay": "churn_decay",
+    "ww_churn_gain": "churn_gain",
+}
+
 _SURFACE_SETTING_FIELDS = frozenset({
     "surface_enabled", "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_mode", "surface_resolution_multiplier",
@@ -408,6 +398,7 @@ _SURFACE_SETTING_FIELDS = frozenset({
 
 
 def _apply_scene_settings(fs, settings, fields=None):
+    from ..sim.solver import SolverSettings
     from ..sim.enums import (
         LimitBehavior,
         ParticleSampleType,
@@ -421,9 +412,6 @@ def _apply_scene_settings(fs, settings, fields=None):
     )
 
     selected = None if fields is None else set(fields)
-    for name in _DIRECT_SETTING_FIELDS:
-        if (selected is None or name in selected) and hasattr(fs, name):
-            setattr(settings, name, getattr(fs, name))
     enum_fields = {
         "sample_type": ("sample_type", ParticleSampleType),
         "trace_mode": ("trace_mode", TraceMode),
@@ -436,9 +424,21 @@ def _apply_scene_settings(fs, settings, fields=None):
         "surface_resolution_mode": ("surface_resolution_mode", SurfaceResolutionMode),
         "surface_update_cadence": ("surface_update_cadence", SurfaceUpdateCadence),
     }
+    targets = {_SETTING_ALIASES.get(name, name) for name in _DIRECT_SETTING_FIELDS}
+    targets.update(_SETTING_ALIASES.get(target, target) for target in enum_fields)
+    declared = set(SolverSettings.__dataclass_fields__)
+    unknown = sorted(targets - declared)
+    if unknown:
+        raise ValueError(f"Scene setting targets not declared by SolverSettings: {', '.join(unknown)}")
+
+    for source in _DIRECT_SETTING_FIELDS:
+        target = _SETTING_ALIASES.get(source, source)
+        if (selected is None or source in selected) and hasattr(fs, source):
+            setattr(settings, target, getattr(fs, source))
     for target, (source, enum_type) in enum_fields.items():
-        if (selected is None or target in selected) and hasattr(fs, source):
-            setattr(settings, target, enum_type[getattr(fs, source)])
+        declared_target = _SETTING_ALIASES.get(target, target)
+        if (selected is None or source in selected) and hasattr(fs, source):
+            setattr(settings, declared_target, enum_type[getattr(fs, source)])
 
 
 def build_settings(scene):

@@ -63,37 +63,29 @@ def test_solver_reset_clears_surface_extractor_buffers():
     solver.whitewater = Clearable()
     solver.churn = Clearable()
     solver.grid = Grid()
-    solver.surface_extractor = Extractor()
+    extractor = Extractor()
     solver.settings = SimpleNamespace(spacetime_enabled=False, spacetime_seed=1729)
     calibration_calls = []
     solver._calibrate_st_reference_mass = lambda: calibration_calls.append("calibrated")
-    solver._ensure_render_surface_resources = lambda force=False: None
-    solver._surface_mesh_cache = object()
-    solver._surface_mesh_key = (99, 1.0)
+    solver.surface = SimpleNamespace(reset=lambda: extractor.reset_buffers())
     solver.frame = 99
     solver.sim_time = 1.0
 
     FluidSolver.reset(solver)
 
-    assert solver.surface_extractor.reset_calls == 1
+    assert extractor.reset_calls == 1
     assert calibration_calls == []
-    assert solver._surface_mesh_cache is None
-    assert solver._surface_mesh_key is None
     assert solver._nvox == 42
     assert solver.grid.calls == ["begin", "finalize"]
 
 
 def test_rebuild_surface_owns_cache_invalidation_and_current_sdf_rebuild():
     solver = object.__new__(FluidSolver)
-    solver._surface_mesh_cache = object()
-    solver._surface_mesh_key = (3, 1.0)
     calls = []
-    solver._surface = lambda: calls.append("surface")
+    solver.surface = SimpleNamespace(rebuild=lambda: calls.append("surface"))
 
     FluidSolver.rebuild_surface(solver)
 
-    assert solver._surface_mesh_cache is None
-    assert solver._surface_mesh_key is None
     assert calls == ["surface"]
 
 
