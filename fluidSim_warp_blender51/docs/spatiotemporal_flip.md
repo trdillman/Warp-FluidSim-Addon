@@ -52,8 +52,8 @@ The ST-FLIP phase reference mass `m0` is now calibrated at solver construction w
 Additional headless acceptance tests are included:
 
 ```bash
-blender --background --factory-startup --python fluidSim_warp_blender51/tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6
-blender --background --factory-startup --python fluidSim_warp_blender51/tests/headless_stflip_timeline_viewport.py
+blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6
+blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --scene demos/dam_break.blend
 ```
 
 The benchmark writes `artifacts/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `artifacts/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.
