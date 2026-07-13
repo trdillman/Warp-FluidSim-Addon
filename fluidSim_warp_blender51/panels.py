@@ -63,6 +63,9 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
                 recovery.alert = True
                 recovery.label(text="GPU capacity risk detected")
                 recovery.operator("fluidsim.apply_safe_settings", icon="MODIFIER")
+                run_anyway = recovery.operator(
+                    "fluidsim.initialize", text="Run Anyway", icon="ERROR")
+                run_anyway.ignore_memory_safeguard = True
             box.operator("fluidsim.clear_error", icon="X")
         if sess.active:
             col = box.column(align=True)

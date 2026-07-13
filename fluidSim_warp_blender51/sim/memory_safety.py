@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import math
 import os
 import subprocess
@@ -17,6 +18,28 @@ SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
 WHITEWATER_BYTES = 72
 TOPOLOGY_BYTES_PER_LEAF_CELL = 12
+
+
+def release_cuda_memory(device_name: str | None) -> None:
+    """Collect released solver cycles and return pooled CUDA memory to the OS."""
+    gc.collect()
+    if not device_name:
+        return
+
+    import warp as wp
+
+    device = wp.get_device(device_name)
+    if not device.is_cuda:
+        return
+    old_threshold = None
+    try:
+        if getattr(device, "is_mempool_supported", False):
+            old_threshold = wp.get_mempool_release_threshold(device)
+            wp.set_mempool_release_threshold(device, 0)
+        wp.synchronize_device(device)
+    finally:
+        if old_threshold is not None:
+            wp.set_mempool_release_threshold(device, old_threshold)
 
 
 def is_memory_capacity_error(message: str) -> bool:

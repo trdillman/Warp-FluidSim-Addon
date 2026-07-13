@@ -7,6 +7,8 @@ simulation during playback via frame-change handlers.
 
 from __future__ import annotations
 
+import traceback
+
 import bpy
 from mathutils import Vector
 
@@ -33,6 +35,8 @@ class Session:
         self.benchmark_result = None
         self.benchmark_compare = None
         self.error = ""
+        self.device = None
+        self.memory_assessment = {}
         self.scene_inputs = SceneInputs()
 
     @property
@@ -44,12 +48,21 @@ class Session:
         return self.scene_inputs.collider_mesh_cache_stats
 
     def _clear_runtime(self):
+        solver = self.solver
+        device = getattr(solver, "device", None) or self.device
         self.solver = None
+        if solver is not None:
+            if hasattr(solver, "release"):
+                solver.release()
         self.profiler = None
         self.start_frame = 1
         self.last_frame = -1
         self.frame_stats = []
         self.scene_inputs.clear()
+        self.device = None
+        del solver
+        from ..sim.memory_safety import release_cuda_memory
+        release_cuda_memory(device)
 
     def set_error(self, scene, message):
         self.error = str(message)
@@ -71,7 +84,7 @@ class Session:
         if not preserve_error:
             self.clear_error(scene)
 
-    def initialize(self, scene):
+    def initialize(self, scene, *, ignore_memory_safeguard=False):
         """(Re)create the solver from current scene state."""
         from ..diagnostics.profiler import Profiler
         from ..sim.solver import FluidSolver
@@ -81,12 +94,13 @@ class Session:
         try:
             fs = scene.fluidsim
             settings = build_settings(scene)
+            self.device = settings.device
             from ..sim.memory_safety import assess_configuration, resource_snapshot
 
             self.memory_assessment = assess_configuration(
                 settings, resource_snapshot(settings.device)
             )
-            if not self.memory_assessment["safe"]:
+            if not self.memory_assessment["safe"] and not ignore_memory_safeguard:
                 estimate_gib = self.memory_assessment["estimated_bytes"] / 1024**3
                 budget_gib = self.memory_assessment["budget_bytes"] / 1024**3
                 raise RuntimeError(
@@ -113,6 +127,7 @@ class Session:
             return self
         except Exception as exc:
             self.set_error(scene, repr(exc))
+            traceback.clear_frames(exc.__traceback__)
             self.release(scene, preserve_error=True)
             raise
 
@@ -575,9 +590,10 @@ def gather_height_source(scene):
 # ---------------------------------------------------------------------------
 
 
-def initialize_session(scene) -> Session:
+def initialize_session(scene, *, ignore_memory_safeguard=False) -> Session:
     """(Re)create the solver from current scene state."""
-    return session().initialize(scene)
+    return session().initialize(
+        scene, ignore_memory_safeguard=ignore_memory_safeguard)
 
 
 def release_session(scene=None):

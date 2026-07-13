@@ -33,10 +33,25 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
     bl_label = "Initialize Solver"
     bl_options = {"REGISTER"}
 
+    ignore_memory_safeguard: BoolProperty(
+        name="Run Anyway",
+        description="Ignore the predictive memory safeguard; real CUDA allocation failures still stop initialization",
+        default=False,
+        options={"SKIP_SAVE"},
+    )
+
+    def invoke(self, context, event):
+        if self.ignore_memory_safeguard:
+            return context.window_manager.invoke_confirm(self, event)
+        return self.execute(context)
+
     def execute(self, context):
         scene = context.scene
         try:
-            sess = _bridge().initialize_session(scene)
+            sess = _bridge().initialize_session(
+                scene,
+                ignore_memory_safeguard=self.ignore_memory_safeguard,
+            )
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Solver initialization failed: {exc}")
             scene.fluidsim.status = f"Init failed: {exc}"

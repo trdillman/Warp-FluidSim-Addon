@@ -692,6 +692,21 @@ class FluidSolver:
         if settings is not None:
             self.surface.reset()
 
+    def release(self):
+        """Break GPU-owning backreferences before the session drops this solver."""
+        host_frame = self._host_frame_cache
+        if host_frame is not None:
+            host_frame.solver = None
+        self._host_frame_cache = None
+
+        surface = self.surface
+        if surface is not None:
+            surface.extractor.reset_buffers()
+            if surface.render_extractor is not surface.extractor:
+                surface.render_extractor.reset_buffers()
+            surface.solver = None
+        self.surface = None
+
     # -- active-work launch bounds -------------------------------------------
 
     def _np_dim(self):

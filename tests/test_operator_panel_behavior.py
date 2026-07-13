@@ -236,6 +236,52 @@ def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatc
     )
 
 
+def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        status="Init failed", live=False, stat_particles=0, stat_voxels=0,
+        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
+        min_substeps=1, max_substeps=4, use_scene_gravity=True,
+        gravity=(0.0, 0.0, -9.81),
+    ))
+    scene_bridge.set_error(scene, "FluidSim memory safeguard stopped initialization")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_simulation()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=scene))
+
+    assert any(
+        op["id"] == "fluidsim.initialize" and op.get("text") == "Run Anyway"
+        for op in layout.operators
+    )
+
+
+def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    seen = []
+    solver = SimpleNamespace(
+        device="cuda:0",
+        grid=SimpleNamespace(capacity=1),
+        particles=SimpleNamespace(capacity=1),
+    )
+    bridge = SimpleNamespace(
+        initialize_session=lambda scene, **kwargs: (
+            seen.append((scene, kwargs)) or SimpleNamespace(solver=solver)
+        )
+    )
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    op = operators.FLUIDSIM_OT_initialize()
+    op.ignore_memory_safeguard = True
+
+    assert op.execute(SimpleNamespace(scene=scene)) == {"FINISHED"}
+    assert seen == [(scene, {"ignore_memory_safeguard": True})]
+
+
 def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")

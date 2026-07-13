@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import types
+import weakref
 from types import SimpleNamespace
 
 import numpy as np
@@ -426,6 +427,53 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
     assert scene_bridge.current_error(scene) == ""
 
 
+def test_release_session_closes_solver_before_dropping_runtime(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    calls = []
+
+    class Solver:
+        device = "cuda:0"
+
+        def release(self):
+            calls.append("solver")
+
+    sess = scene_bridge.session()
+    sess.solver = Solver()
+
+    scene_bridge.release_session(scene)
+
+    assert calls == ["solver"]
+
+
+def test_release_session_drops_solver_before_cuda_pool_trim(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    class Solver:
+        device = "cuda:0"
+
+        def release(self):
+            pass
+
+    solver = Solver()
+    solver_ref = weakref.ref(solver)
+    scene_bridge.session().solver = solver
+    del solver
+
+    observed = []
+    monkeypatch.setattr(
+        memory_safety,
+        "release_cuda_memory",
+        lambda _device: observed.append(solver_ref() is None),
+    )
+
+    scene_bridge.release_session(scene)
+
+    assert observed == [True]
+
+
 def test_initialize_failure_releases_partial_session(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
@@ -461,6 +509,48 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     assert sess.frame_stats == []
     assert sess.scene_inputs._collider_prev == {}
     assert sess.scene_inputs._collider_mesh_cache == {}
+
+
+def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    scene.frame_start = 1
+    scene.fluidsim.profiling_enabled = False
+    scene.fluidsim.snippets = []
+    refs = []
+
+    class BrokenSolver:
+        def __init__(self, *_args, **_kwargs):
+            self.surface = SimpleNamespace(solver=self)
+            refs.append(weakref.ref(self))
+            raise RuntimeError("constructor failed")
+
+    fake_solver_module = types.ModuleType("fluidSim_warp_blender51.sim.solver")
+    fake_solver_module.FluidSolver = BrokenSolver
+    fake_profiler_module = types.ModuleType(
+        "fluidSim_warp_blender51.diagnostics.profiler")
+    fake_profiler_module.Profiler = object
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.sim.solver", fake_solver_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "fluidSim_warp_blender51.diagnostics.profiler",
+        fake_profiler_module,
+    )
+    monkeypatch.setattr(
+        scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cpu"))
+    from fluidSim_warp_blender51.sim import memory_safety
+    monkeypatch.setattr(memory_safety, "resource_snapshot", lambda _device: {})
+    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
+        "safe": True, "estimated_bytes": 0, "budget_bytes": 0,
+        "resources": {}, "recommended": {},
+    })
+
+    with pytest.raises(RuntimeError, match="constructor failed"):
+        scene_bridge.session().initialize(scene)
+
+    assert refs[0]() is None
+    assert not scene_bridge.session().active
 
 
 def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):

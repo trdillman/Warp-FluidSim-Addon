@@ -1,5 +1,6 @@
 """Regression contracts for pre-allocation GPU memory recovery."""
 
+import sys
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -177,3 +178,45 @@ def test_disabled_surface_does_not_allocate_secondary_grid_estimate():
     settings.surface_resolution_mode = 0
 
     assert secondary_mode == estimate_solver_bytes(settings)
+
+
+def test_solver_release_breaks_gpu_owning_backreferences():
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    solver = FluidSolver.__new__(FluidSolver)
+    extractor = SimpleNamespace(reset_buffers=lambda: None)
+    surface = SimpleNamespace(
+        solver=solver, extractor=extractor, render_extractor=extractor)
+    host_frame = SimpleNamespace(solver=solver)
+    solver.surface = surface
+    solver._host_frame_cache = host_frame
+
+    solver.release()
+
+    assert surface.solver is None
+    assert host_frame.solver is None
+    assert solver.surface is None
+    assert solver._host_frame_cache is None
+
+
+def test_cuda_release_collects_cycles_and_flushes_pool_before_restoring_threshold(
+        monkeypatch):
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    calls = []
+    device = SimpleNamespace(is_cuda=True, is_mempool_supported=True)
+    fake_warp = SimpleNamespace(
+        get_device=lambda name: calls.append(("device", name)) or device,
+        get_mempool_release_threshold=lambda dev: calls.append(("get", dev)) or 123,
+        set_mempool_release_threshold=lambda dev, value: calls.append(("set", dev, value)),
+        synchronize_device=lambda dev: calls.append(("sync", dev)),
+    )
+    monkeypatch.setattr(memory_safety.gc, "collect", lambda: calls.append(("gc",)))
+    monkeypatch.setitem(sys.modules, "warp", fake_warp)
+
+    memory_safety.release_cuda_memory("cuda:0")
+
+    assert calls == [
+        ("gc",), ("device", "cuda:0"), ("get", device),
+        ("set", device, 0), ("sync", device), ("set", device, 123),
+    ]

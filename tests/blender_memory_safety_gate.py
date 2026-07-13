@@ -7,6 +7,7 @@ import sys
 
 import bpy
 import numpy as np
+import warp as wp
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -28,6 +29,10 @@ fs.surface_resolution_mode = "MULTIPLIER"
 fs.surface_resolution_multiplier = 4.0
 fs.surface_leaf_capacity_scale = 64.0
 fs.surface_max_dense_dim = 2048
+device = wp.get_device("cuda:0")
+wp.synchronize_device(device)
+baseline_free = int(device.free_memory)
+baseline_pool = int(wp.get_mempool_used_mem_current(device))
 
 try:
     result = bpy.ops.fluidsim.initialize()
@@ -55,6 +60,40 @@ assert result == {"FINISHED"}, result
 assert scene_bridge.session().active
 assert scene_bridge.session().solver.grid.active_leaf_count > 0
 assert scene_bridge.session().solver.surface_extractor._dense is not None
+
+released_free = []
+released_pool = []
+scene_bridge.release_session(scene)
+released_free.append(int(device.free_memory))
+released_pool.append(int(wp.get_mempool_used_mem_current(device)))
+for _ in range(3):
+    assert bpy.ops.fluidsim.initialize() == {"FINISHED"}
+    assert scene_bridge.session().active
+    scene_bridge.release_session(scene)
+    released_free.append(int(device.free_memory))
+    released_pool.append(int(wp.get_mempool_used_mem_current(device)))
+
+assert all(value <= baseline_pool + 1024**2 for value in released_pool), (
+    baseline_pool, released_pool)
+assert all(value >= baseline_free - 512 * 1024**2 for value in released_free), (
+    baseline_free, released_free)
+assert max(released_free) - min(released_free) <= 1024**2, released_free
+
+from fluidSim_warp_blender51.sim import memory_safety
+real_assess = memory_safety.assess_configuration
+memory_safety.assess_configuration = lambda settings, resources: {
+    "safe": False,
+    "estimated_bytes": 2 * 1024**3,
+    "budget_bytes": 1024**3,
+    "resources": dict(resources),
+    "recommended": {},
+}
+try:
+    result = bpy.ops.fluidsim.initialize(ignore_memory_safeguard=True)
+    assert result == {"FINISHED"}, result
+    assert scene_bridge.session().active
+finally:
+    memory_safety.assess_configuration = real_assess
 
 scene_bridge.release_session(scene)
 addon.unregister()
