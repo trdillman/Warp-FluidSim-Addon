@@ -53,7 +53,7 @@ Touched surfaces:
 
 Dirty state:
 
-- Modified generated demo assets: `demos/crown_splash.blend`, `demos/crown_splash_preview.png`, `demos/dam_break.blend`, `demos/dam_break_preview.png`, `demos/slosh_tank.blend`, `demos/slosh_tank_preview.png`.
+- Modified generated demo assets: `demos/crown_splash.blend`, `demos/crown_splash_preview.png`, `demos/dam_break.blend`, `demos/dam_break_preview.png`.
 - Untracked directories: `.claude/`, `audit/`, `bench/`.
 
 Recommended next action:

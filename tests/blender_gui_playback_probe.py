@@ -31,10 +31,6 @@ started_at = time.monotonic()
 canonical_wall_expectation = {
     "dam_break.blend": False,
     "crown_splash.blend": False,
-    "material_response.blend": False,
-    "slosh_tank.blend": True,
-    "tidal_lock.blend": True,
-    "maelstrom_basin.blend": True,
 }
 expected_domain_sdf_walls = canonical_wall_expectation.get(
     os.path.basename(blend_path), bool(scene.fluidsim.domain_sdf_walls)

@@ -326,8 +326,6 @@ never crash the suite.
 | Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |
 | Demo `dam_break` | **9 / 9** (mass, containment, front speed ≈ 0.94·√(gH), Martin–Moses front, column collapse, whitewater bore) |
 | Demo `crown_splash` | **8 / 8** (mass, crown formation, √t radius corr 0.971, Worthington jet, azimuthal symmetry CV 0.007) |
-| Demo `slosh_tank` | **7 / 7** (mass, first-mode period 1.50 s vs analytic 1.40 s, periodic decay) |
-| Demo `maelstrom_basin` | **5 / 5** (playable setup metadata, spin force, million-particle measurement, live FPS target, whitewater churn) |
 
 ---
 

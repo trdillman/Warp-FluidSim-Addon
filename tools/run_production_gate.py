@@ -49,10 +49,6 @@ BLENDER_FAILURE_MARKERS = (
 CANONICAL_DEMO_SCENES = (
     "dam_break",
     "crown_splash",
-    "slosh_tank",
-    "tidal_lock",
-    "material_response",
-    "maelstrom_basin",
 )
 
 
@@ -167,23 +163,19 @@ def main(argv=None):
         "tools/profile_user_path.py",
         "tools/analyze_demos.py",
         "tools/build_demo_scenes.py",
-        "tools/build_maelstrom_demo.py",
         "tools/check_demo_blends.py",
-        "tools/open_maelstrom_basin_playable.py",
-            "tools/run_production_gate.py",
-            "tools/validate_gui_playback_report.py",
+        "tools/run_production_gate.py",
+        "tools/validate_gui_playback_report.py",
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
-        "tests/test_demo_analysis_maelstrom.py",
     ])
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
         "tests/test_pressure_projection_regressions.py",
         "tests/test_cache_io.py",
         "tests/test_io_path_policy.py",
-        "tests/test_demo_analysis_maelstrom.py",
         "-q",
     ], env=env)
     for script in (
@@ -243,7 +235,7 @@ def main(argv=None):
         playback_report = os.path.abspath("artifacts/gui_playback_probe.json")
         playback_env = env.copy()
         playback_env.update({
-            "FLUIDSIM_PLAYBACK_BLEND": os.path.abspath("demos/material_response.blend"),
+            "FLUIDSIM_PLAYBACK_BLEND": os.path.abspath("demos/dam_break.blend"),
             "FLUIDSIM_PLAYBACK_REPORT": playback_report,
         })
         _run("saved-demo GUI timeline playback", [

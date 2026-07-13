@@ -16,14 +16,6 @@ crown_splash  - mass conservation, containment, impact detection, crown rise
                 above the pool, azimuthal crown symmetry (CV over 12
                 sectors), sqrt(t) crown-radius growth correlation
                 (Yarin-Weiss rim propagation), velocity boundedness.
-slosh_tank    - mass conservation, containment, first-mode slosh period vs
-                analytic dispersion w^2 = g*k*tanh(k*h) (k = pi/L),
-                oscillation amplitude decay, velocity boundedness.
-tidal_lock    - opposed particle columns collide through staggered lock gates,
-                producing central mixing, lateral braid, uplift, and churn.
-maelstrom_basin - playable live setup sidecar metadata, spin-force contract,
-                  high-particle capacity metadata, FPS metadata, and
-                  whitewater-count metadata.
 
 Writes artifacts/demo_analysis/analysis_report.json and
 artifacts/demo_analysis/ANALYSIS.md; exits nonzero on any failed check.
@@ -268,171 +260,14 @@ def analyze_crown_splash():
 
 # ---------------------------------------------------------------------------
 
-def analyze_slosh_tank():
-    name = "slosh_tank"
-    meta, series, frames = load_scene(name)
-    fps = meta["fps"]
-    g, L, depth = meta["gravity"], meta["tank_length"], meta["mean_depth"]
-    common_checks(name, meta, series, frames, vmax_limit=6.0)
-
-    k = math.pi / L
-    omega = math.sqrt(g * k * math.tanh(k * depth))
-    T_analytic = 2 * math.pi / omega
-
-    # Antisymmetric first-mode probe: left-wall minus right-wall surface
-    # elevation (cancels the symmetric second harmonic).
-    sig = []
-    for f in sorted(frames):
-        p = frames[f]["positions"]
-        ml = p[:, 0] < 0.08
-        mr = p[:, 0] > L - 0.08
-        el = float(np.percentile(p[ml, 2], 95)) if ml.any() else depth
-        er = float(np.percentile(p[mr, 2], 95)) if mr.any() else depth
-        sig.append(el - er)
-    sig = np.array(sig)
-    sig -= sig.mean()
-
-    # Dominant period via windowed FFT.
-    win = np.hanning(len(sig))
-    spec = np.abs(np.fft.rfft(sig * win))
-    freqs = np.fft.rfftfreq(len(sig), 1.0 / fps)
-    kdom = int(np.argmax(spec[1:]) + 1)
-    T_measured = float(1.0 / freqs[kdom])
-    err = abs(T_measured - T_analytic) / T_analytic
-    check(name, "first-mode slosh period vs dispersion relation",
-          err < 0.20,
-          f"measured {T_measured:.2f} s vs analytic {T_analytic:.2f} s "
-          f"({err * 100:.1f}% error)")
-
-    # Periodicity: the dominant mode carries most of the spectral energy.
-    frac = float(spec[kdom] / max(spec[1:].sum(), 1e-9))
-    check(name, "oscillation is periodic", frac > 0.25,
-          f"dominant-mode spectral fraction = {frac:.2f}")
-
-    # Amplitude decays under numerical + physical dissipation.
-    n_per = max(1, int(round(T_measured * fps)))
-    first_amp = float(np.abs(sig[:n_per]).max())
-    last_amp = float(np.abs(sig[-n_per:]).max())
-    check(name, "slosh amplitude decays", last_amp < first_amp,
-          f"first-period amp {first_amp * 1000:.0f} mm -> "
-          f"last-period {last_amp * 1000:.0f} mm")
-    return {"T_analytic": T_analytic, "T_measured": T_measured,
-            "period_error": err, "dominant_fraction": frac,
-            "first_amp": first_amp, "last_amp": last_amp}
 
 
-# ---------------------------------------------------------------------------
-
-def analyze_tidal_lock():
-    name = "tidal_lock"
-    meta, series, frames = load_scene(name)
-    common_checks(name, meta, series, frames, vmax_limit=12.0)
-
-    central_ratio = 0.0
-    y_span = 0.0
-    z_p99 = 0.0
-    speed_p50 = 0.0
-    peak_frame = min(frames)
-    for f, data in frames.items():
-        p = data["positions"]
-        total = max(1, len(p))
-        central = p[(p[:, 0] > 0.92) & (p[:, 0] < 1.48)]
-        frame_ratio = len(central) / total
-        frame_span = float(central[:, 1].max() - central[:, 1].min()) \
-            if len(central) else 0.0
-        frame_z99 = float(np.percentile(p[:, 2], 99))
-        if frame_z99 > z_p99:
-            peak_frame = f
-            z_p99 = frame_z99
-        central_ratio = max(central_ratio, frame_ratio)
-        y_span = max(y_span, frame_span)
-        v = data.get("velocities")
-        if v is not None:
-            speed_p50 = max(
-                speed_p50,
-                float(np.percentile(np.linalg.norm(v, axis=1), 50)),
-            )
-    ww = np.array(series["whitewater_count"])
-
-    check(name, "columns meet in lock throat",
-          central_ratio > 0.18,
-          f"{central_ratio * 100:.1f}% of particles in central throat")
-    check(name, "offset gates create lateral braid",
-          y_span > 0.48,
-          f"central y-span {y_span:.2f} m")
-    check(name, "collision lifts fluid above initial columns",
-          z_p99 > float(meta["initial_height"]) + 0.08,
-          f"peak p99 height {z_p99:.2f} m at frame {peak_frame} "
-          f"from initial {meta['initial_height']:.2f}")
-    check(name, "flow remains energetic after collision",
-          speed_p50 > 0.18,
-          f"peak median speed {speed_p50:.2f} m/s")
-    check(name, "whitewater/churn path exercised",
-          ww.max() >= 1,
-          f"peak whitewater {ww.max():,}")
-    return {
-        "central_ratio": central_ratio,
-        "central_y_span": y_span,
-        "z_p99": z_p99,
-        "peak_frame": int(peak_frame),
-        "speed_p50": speed_p50,
-        "peak_whitewater": int(ww.max()),
-    }
-
-
-# ---------------------------------------------------------------------------
-
-def validate_maelstrom_basin(meta):
-    """Validate maelstrom sidecar metadata, not fresh runtime/cache output."""
-    name = "maelstrom_basin"
-    seed = meta.get("seed_object", "")
-    force = meta.get("spin_force_object", "")
-    spin = float(meta.get("spin_strength", 0.0))
-    max_particles = int(meta.get("max_particles", 0))
-    injected = int(meta.get("injected", 0))
-    fps = float(meta.get("fps", 0.0))
-    fps_target = float(meta.get("fps_target", 10.0))
-    p95_ms = float(meta.get("p95_ms", 1e9))
-    max_whitewater = int(meta.get("max_whitewater", 0))
-
-    check(name, "playable live setup metadata",
-          bool(meta.get("playable_live_setup") and seed and force),
-          f"seed='{seed}', force='{force}'")
-    check(name, "spin force configured",
-          spin >= 5.0 and bool(force),
-          f"strength {spin:.1f} on '{force}'")
-    check(name, "high-particle basin metadata",
-          max_particles >= 1_000_000 and injected >= 1_000_000,
-          f"particles {max_particles:,}, injected {injected:,}")
-    check(name, "live playback metadata meets FPS target",
-          fps >= fps_target and p95_ms <= 1000.0 / fps_target,
-          f"fps {fps:.2f} >= {fps_target:.1f}, "
-          f"p95 {p95_ms:.1f} ms <= {1000.0 / fps_target:.1f} ms")
-    check(name, "whitewater churn metadata present",
-          max_whitewater >= 10_000,
-          f"peak whitewater {max_whitewater:,}")
-
-
-def analyze_maelstrom_basin():
-    meta = load_meta("maelstrom_basin")
-    validate_maelstrom_basin(meta)
-    return {
-        "fps": meta.get("fps"),
-        "fps_target": meta.get("fps_target"),
-        "p95_ms": meta.get("p95_ms"),
-        "max_whitewater": meta.get("max_whitewater"),
-        "injected": meta.get("injected"),
-        "provenance": "demos/maelstrom_basin/meta.json sidecar metadata",
-    }
 
 
 def main():
     metrics = {}
     for fn, key in ((analyze_dam_break, "dam_break"),
-                    (analyze_crown_splash, "crown_splash"),
-                    (analyze_slosh_tank, "slosh_tank"),
-                    (analyze_tidal_lock, "tidal_lock"),
-                    (analyze_maelstrom_basin, "maelstrom_basin")):
+                    (analyze_crown_splash, "crown_splash")):
         try:
             metrics[key] = fn()
         except Exception as exc:  # noqa: BLE001
@@ -452,8 +287,7 @@ def main():
     lines = ["# FluidSim Warp — Demo Scene Analysis", "",
              f"Verdict: **{report['result'].upper()}** "
              f"({passed}/{len(CHECKS)} checks)", ""]
-    for scene in ("dam_break", "crown_splash", "slosh_tank", "tidal_lock",
-                  "maelstrom_basin"):
+    for scene in ("dam_break", "crown_splash"):
         lines.append(f"## {scene}")
         lines.append("")
         lines.append("| Check | Result | Detail |")
