@@ -297,6 +297,7 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         surface_leaf_capacity_scale=8.0,
         surface_max_dense_dim=512,
         surface_update_cadence="FRAME",
+        live_surface_publish_cadence=4,
         surface_build_lowres_sdf=True,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
@@ -338,6 +339,7 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
             "surface_leaf_capacity_scale",
             "surface_max_dense_dim",
             "surface_update_cadence",
+            "live_surface_publish_cadence",
             "surface_build_lowres_sdf",
             "surface_filter_type",
             "surface_filter_iterations",
@@ -595,7 +597,8 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     output_calls = []
     surface_calls = []
     fake_viewport = SimpleNamespace(
-        update_outputs=lambda scene, sess: output_calls.append((scene, sess))
+        update_outputs=lambda scene, sess, **kwargs: output_calls.append(
+            (scene, sess, kwargs))
     )
     import fluidSim_warp_blender51.blender.viewport as viewport
 
@@ -616,6 +619,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         surface_leaf_capacity_scale=8.0,
         surface_max_dense_dim=512,
         surface_update_cadence="FRAME",
+        live_surface_publish_cadence=4,
         surface_build_lowres_sdf=True,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
@@ -643,7 +647,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     assert solver.settings.surface_smooth_iterations == 3
     assert solver.settings.surface_smooth_strength == 0.6
     assert surface_calls == ["rebuilt"]
-    assert output_calls == [(scene, sess)]
+    assert output_calls == [(scene, sess, {"force_surface": True})]
 
 
 def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):

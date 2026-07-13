@@ -21,6 +21,10 @@ class HostFrame:
     def invalidate_surface(self):
         self._values.pop("surface_mesh", None)
 
+    def should_publish_surface(self, cadence):
+        cadence = max(1, int(cadence))
+        return self.frame <= 1 or cadence <= 1 or self.frame % cadence == 0
+
     @property
     def positions(self):
         def load():

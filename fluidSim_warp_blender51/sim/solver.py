@@ -116,6 +116,18 @@ def _st_temporal_weight_host(tau: float) -> float:
     return (35.0 / 16.0) * _st_poly6_1d_host(tau - 0.5)
 
 
+def _motion_leaf_radius(max_speed: float, frame_dt: float,
+                        gravity_magnitude: float, voxel_size: float) -> int:
+    """Conservative leaf radius for ballistic motion over one frame."""
+    dt = max(0.0, float(frame_dt))
+    travel = (max(0.0, float(max_speed)) * dt
+              + 0.5 * max(0.0, float(gravity_magnitude)) * dt * dt)
+    if travel <= 0.0:
+        return 0
+    leaf_world_size = max(float(voxel_size) * C.LEAF_DIM, 1.0e-8)
+    return int(math.ceil(travel / leaf_world_size)) + 1
+
+
 # ---------------------------------------------------------------------------
 # Small helper kernels owned by the orchestrator
 # ---------------------------------------------------------------------------
@@ -474,6 +486,7 @@ class SolverSettings:
     surface_leaf_capacity_scale: float = 8.0
     surface_max_dense_dim: int = 512
     surface_update_cadence: int = int(SurfaceUpdateCadence.FRAME)
+    live_surface_publish_cadence: int = 4
     surface_build_lowres_sdf: bool = True
     surface_filter_type: int = int(SdfFilterType.BOX)
     surface_filter_iterations: int = 0
@@ -780,7 +793,7 @@ class FluidSolver:
 
     # -- topology ------------------------------------------------------------
 
-    def _rebuild_topology(self):
+    def _rebuild_topology(self, expand=None):
         g = self.grid
         s = self.settings
         wp.copy(self.old_leaf_table, g.leaf_table)
@@ -804,7 +817,7 @@ class FluidSolver:
         if s.whitewater_enabled:
             g.mark_points(self.whitewater.position, self.whitewater.count,
                           self._nww_dim())
-        g.expand(s.topology_expand)
+        g.expand(s.topology_expand if expand is None else max(0, int(expand)))
         # One 4-byte readback per rebuild: the fresh active leaf count bounds
         # every subsequent per-voxel launch this substep, which shrinks
         # dispatch from allocation capacity (possibly millions of voxels) to
@@ -825,18 +838,22 @@ class FluidSolver:
 
     # -- per-substep phases ----------------------------------------------------
 
-    def _clear_grid_fields(self):
+    def _clear_grid_fields(self, clear_collision=True):
         # Clear only the active slot range: the topology rebuild that
         # precedes this call defines [0, nvox) as the only region any kernel
         # reads or writes this substep (all launches are bounded by nvox and
         # guarded by num_leaves on device).
         nv = self._nvox
-        for a in (*self.vel.arrays(), self.voxel_type.data,
+        arrays = (*self.vel.arrays(), self.voxel_type.data,
                   self.voxel_counts.data, self.temperature.data,
-                  self.viscosity_field.data, self.density.data,
-                  self.collision_vel, self.collision_friction,
-                  self.collision_restitution):
+                  self.viscosity_field.data, self.density.data)
+        if clear_collision:
+            arrays += (self.collision_vel, self.collision_friction,
+                       self.collision_restitution)
+        for a in arrays:
             a[:nv].zero_()
+        if not clear_collision:
+            return
         wp.launch(k_fill_float, dim=nv,
                   inputs=[self.collision_sdf.data, 1.0e6], device=self.device)
         s = self.settings
@@ -1422,17 +1439,12 @@ class FluidSolver:
                     s.ww_life_min, s.ww_life_max,
                     self._emit_seed, ww.capacity],
             outputs=[ww.position, ww.velocity, ww.age, ww.life,
-                     ww.alive, ww.count],
+                     ww.alive, ww.count, ww.free_slots, ww.free_count],
             device=self.device,
         )
-        # Refresh the whitewater bound after device-side emission so the
-        # advect/deposit launches cover new particles without dispatching
-        # full capacity (one readback per substep, whitewater only). Live
-        # playback needs an explicit stream barrier here: otherwise the
-        # device-to-host count copy can race the high-volume atomic emission.
-        wp.synchronize_device(self.device)
-        ww.refresh_host_count()
-        nww = self._nww_dim()
+        # Kernels guard on the device-resident count, avoiding a stream barrier
+        # and scalar readback between substeps.
+        nww = ww.capacity
         wp.launch(
             k_advect_whitewater, dim=nww,
             inputs=[ww.position, ww.velocity, ww.age, ww.life,
@@ -1444,18 +1456,26 @@ class FluidSolver:
                     g.origin, s.voxel_size, dt, wp.vec3(*s.gravity),
                     s.ww_foam_band * s.voxel_size, s.ww_bubble_drag,
                     s.ww_spray_drag,
-                    wp.vec3(*s.domain_min), wp.vec3(*s.domain_max)],
+                    wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
+                    ww.capacity, ww.free_slots, ww.free_count],
             device=self.device,
         )
+
+    def _finalize_whitewater(self):
+        """Compact and publish whitewater density once per display frame."""
+        if not self.settings.whitewater_enabled:
+            return
+        g = self.grid
+        ww = self.whitewater
+        ww.compact()
         self.ww_density.data[:self._nvox].zero_()
         wp.launch(
-            k_whitewater_set_grid_data, dim=nww,
+            k_whitewater_set_grid_data, dim=ww.capacity,
             inputs=[ww.position, ww.alive, ww.count,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, s.voxel_size],
+                    g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
-        ww.compact(count_hint=nww)
 
     # -- CFL ----------------------------------------------------------------
 
@@ -1484,6 +1504,22 @@ class FluidSolver:
         n = int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6)))
         return max(min_substeps, min(max_substeps, n))
 
+    def _whitewater_topology_expand(self, frame_dt):
+        """Return a leaf radius covering existing whitewater for one frame."""
+        s = self.settings
+        ww = self.whitewater
+        if not s.whitewater_enabled or ww.host_count <= 0:
+            return 0
+        self.max_speed_dev.zero_()
+        wp.launch(
+            k_max_vec3_magnitude, dim=ww.host_count,
+            inputs=[ww.velocity, ww.count],
+            outputs=[self.max_speed_dev], device=self.device,
+        )
+        vmax = max(0.0, float(self.max_speed_dev.numpy()[0]))
+        gmag = math.sqrt(sum(x * x for x in s.gravity))
+        return _motion_leaf_radius(vmax, frame_dt, gmag, s.voxel_size)
+
     # -- main entry -----------------------------------------------------------
 
     def step_frame(self):
@@ -1503,13 +1539,23 @@ class FluidSolver:
             "time_scale": s.time_scale, "substeps": substeps,
         }
 
-        for _ in range(substeps):
+        rebuild_each_substep = self.snippets.has_any()
+        frame_topology_expand = max(
+            int(s.topology_expand),
+            int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
+            self._whitewater_topology_expand(frame_dt),
+        )
+        for substep_index in range(substeps):
             self.snippets.run(CustomKernelOrder.FIRST_STEP, self, time_ctx)
+            rebuild = substep_index == 0 or rebuild_each_substep
             with self._phase("misc"):
-                self._rebuild_topology()
-                self._clear_grid_fields()
+                if rebuild:
+                    self._rebuild_topology(
+                        frame_topology_expand if not rebuild_each_substep else None)
+                self._clear_grid_fields(clear_collision=rebuild)
             with self._phase("collision"):
-                self._apply_collisions()
+                if rebuild:
+                    self._apply_collisions()
             self.snippets.run(CustomKernelOrder.BEFORE_SOURCING, self, time_ctx)
             with self._phase("indexing"):
                 self._index_particles()
@@ -1555,6 +1601,8 @@ class FluidSolver:
 
         self.frame += 1
         self._host_frame_cache = None
+        with self._phase("whitewater"):
+            self._finalize_whitewater()
         self.surface.after_frame()
 
         wp.synchronize_device(self.device)

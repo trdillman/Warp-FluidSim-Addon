@@ -381,6 +381,7 @@ _DIRECT_SETTING_FIELDS = (
     "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_multiplier", "surface_voxel_size",
     "surface_leaf_capacity_scale", "surface_max_dense_dim",
+    "live_surface_publish_cadence",
     "surface_build_lowres_sdf", "surface_filter_iterations",
     "surface_filter_strength", "surface_dilate_iterations",
     "surface_dilate_strength", "surface_erode_iterations",
@@ -403,6 +404,7 @@ _SURFACE_SETTING_FIELDS = frozenset({
     "surface_resolution_mode", "surface_resolution_multiplier",
     "surface_voxel_size", "surface_leaf_capacity_scale",
     "surface_max_dense_dim", "surface_update_cadence",
+    "live_surface_publish_cadence",
     "surface_build_lowres_sdf", "surface_filter_type",
     "surface_filter_iterations", "surface_filter_strength",
     "surface_dilate_iterations", "surface_dilate_strength",
@@ -683,12 +685,12 @@ def request_scene_update(scene, action: str, reason: str = ""):
         sync_scene_to_solver(scene, sess)
     elif action == "SURFACE":
         _apply_realtime_surface_settings(scene, sess)
-        viewport.update_outputs(scene, sess)
+        viewport.update_outputs(scene, sess, force_surface=True)
     elif action == "WHITEWATER":
         _apply_realtime_whitewater_settings(scene, sess)
         viewport.update_outputs(scene, sess)
     elif action == "OUTPUT":
-        viewport.update_outputs(scene, sess)
+        viewport.update_outputs(scene, sess, force_surface=True)
     else:
         scene.fluidsim.status = reason or "Settings changed"
     _tag_view3d_redraw()

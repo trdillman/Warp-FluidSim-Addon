@@ -483,7 +483,8 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     spacetime_phase_eta: FloatProperty(
         name="Phase Eta", default=0.5, min=0.01, soft_max=2.0, update=_request_reset)
     spacetime_phase_threshold: FloatProperty(
-        name="Phase Threshold", default=0.5, min=0.0, max=1.0, update=_request_reset)
+        name="Phase Threshold", default=0.5, min=0.0, max=1.0,
+        update=_request_reset)
     spacetime_reference_mass: FloatProperty(
         name="Reference Mass", default=0.0, min=0.0, soft_max=64.0,
         update=_request_reset)
@@ -571,6 +572,11 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     surface_update_cadence: EnumProperty(
         name="Update Cadence", items=_items(SurfaceUpdateCadence),
         default="FRAME", update=_request_surface_refresh)
+    live_surface_publish_cadence: IntProperty(
+        name="Live Surface Every", default=4, min=1, max=8,
+        update=_request_surface_refresh,
+        description=("Publish the Blender viewport surface every N live frames; "
+                     "physics, cache writes, and exports still evaluate every frame"))
     surface_build_lowres_sdf: BoolProperty(
         name="Keep Sim Surface Field", default=True,
         update=_request_surface_refresh)

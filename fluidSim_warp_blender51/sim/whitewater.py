@@ -139,6 +139,8 @@ def k_emit_whitewater(
     ww_life: wp.array(dtype=float),
     ww_alive: wp.array(dtype=wp.int32),
     ww_count: wp.array(dtype=wp.int32),
+    ww_free_slots: wp.array(dtype=wp.int32),
+    ww_free_count: wp.array(dtype=wp.int32),
 ):
     """Emit whitewater from liquid particles that are near the surface,
     in churny regions and moving fast enough. Emission probability is
@@ -172,10 +174,16 @@ def k_emit_whitewater(
     if wp.randf(state) > prob:
         return
 
-    slot = wp.atomic_add(ww_count, 0, 1)
-    if slot >= ww_capacity:
-        wp.atomic_sub(ww_count, 0, 1)
-        return
+    free_before = wp.atomic_sub(ww_free_count, 0, 1)
+    slot = -1
+    if free_before > 0:
+        slot = ww_free_slots[free_before - 1]
+    else:
+        wp.atomic_add(ww_free_count, 0, 1)
+        slot = wp.atomic_add(ww_count, 0, 1)
+        if slot >= ww_capacity:
+            wp.atomic_sub(ww_count, 0, 1)
+            return
     jitter = wp.vec3(
         (wp.randf(state) - 0.5) * voxel_size,
         (wp.randf(state) - 0.5) * voxel_size,
@@ -225,6 +233,9 @@ def k_advect_whitewater(
     spray_drag: float,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
+    ww_capacity: int,
+    ww_free_slots: wp.array(dtype=wp.int32),
+    ww_free_count: wp.array(dtype=wp.int32),
 ):
     """Advect whitewater by regime:
       - inside liquid (sdf < -band): bubble -> dragged to fluid velocity + buoyancy
@@ -285,13 +296,20 @@ def k_advect_whitewater(
     # Age / lifespan.
     age = ww_age[tid] + dt
     ww_age[tid] = age
-    if age >= ww_life[tid]:
-        ww_alive[tid] = 0
+    dead = age >= ww_life[tid]
 
     # Domain containment.
     for axis in range(3):
         if p[axis] < domain_min[axis] or p[axis] > domain_max[axis]:
-            ww_alive[tid] = 0
+            dead = True
+
+    if dead:
+        ww_alive[tid] = 0
+        free_slot = wp.atomic_add(ww_free_count, 0, 1)
+        if free_slot < ww_capacity:
+            ww_free_slots[free_slot] = tid
+        else:
+            wp.atomic_sub(ww_free_count, 0, 1)
 
     ww_positions[tid] = p
     ww_velocities[tid] = vel
@@ -353,6 +371,8 @@ class WhitewaterSystem:
         self.life = wp.zeros(self.capacity, dtype=float, device=device)
         self.alive = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
+        self.free_slots = wp.zeros(self.capacity, dtype=wp.int32, device=device)
+        self.free_count = wp.zeros(1, dtype=wp.int32, device=device)
         self.host_count = 0
         # Compaction double buffers.
         self._position2 = wp.zeros_like(self.position)
@@ -365,6 +385,7 @@ class WhitewaterSystem:
     def clear(self):
         self.count.zero_()
         self.alive.zero_()
+        self.free_count.zero_()
         self.host_count = 0
 
     def clamp_count(self):
@@ -437,6 +458,7 @@ class WhitewaterSystem:
             outputs=[self.alive],
             device=self.device,
         )
+        self.free_count.zero_()
 
 
 @wp.kernel

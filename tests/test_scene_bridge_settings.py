@@ -94,6 +94,7 @@ def _scene():
         viscosity_iterations=20,
         viscosity_tolerance=1.0e-5,
         surface_enabled=True,
+        live_surface_publish_cadence=4,
         particle_radius_scale=1.2,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
@@ -140,6 +141,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "pressure_iterations", "pressure_tolerance", "pressure_threshold",
         "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
         "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
+        "live_surface_publish_cadence",
         "particle_radius_scale", "surface_filter_iterations",
         "surface_filter_strength", "surface_dilate_iterations",
         "surface_dilate_strength", "surface_erode_iterations",
@@ -222,3 +224,11 @@ def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
     assert "_surface_mesh_cache" not in source
     assert "_surface_mesh_key" not in source
     assert "._surface()" not in source
+
+
+def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+
+    source = inspect.getsource(scene_bridge.request_scene_update)
+
+    assert source.count("force_surface=True") == 2

@@ -70,6 +70,17 @@ def test_new_host_frame_rereads_requested_outputs():
     assert calls == {"positions": 2}
 
 
+def test_host_frame_owns_live_surface_publication_cadence():
+    solver = _solver({})
+
+    assert HostFrame(solver).should_publish_surface(4)
+    solver.frame = 5
+    assert not HostFrame(solver).should_publish_surface(4)
+    solver.frame = 8
+    assert HostFrame(solver).should_publish_surface(4)
+    assert HostFrame(solver).should_publish_surface(1)
+
+
 def test_solver_reset_invalidates_frame_zero_host_snapshot():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 

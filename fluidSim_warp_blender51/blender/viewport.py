@@ -205,20 +205,23 @@ def _swap_mesh(obj, verts, tris, colors=None):
         mesh.clear_geometry()
     else:
         mesh = bpy.data.meshes.new(obj.name)
+    verts = np.ascontiguousarray(verts, dtype=np.float32)
+    tris = np.ascontiguousarray(tris, dtype=np.int32)
     nv = len(verts)
     nt = len(tris)
+    if nt and (tris.min() < 0 or tris.max() >= nv):
+        raise ValueError("surface triangle index is outside the vertex range")
     if nv:
         mesh.vertices.add(nv)
-        mesh.vertices.foreach_set("co", np.asarray(verts, dtype=np.float32).ravel())
+        mesh.vertices.foreach_set("co", verts.ravel())
     if nt:
         mesh.loops.add(nt * 3)
         mesh.loops.foreach_set("vertex_index",
-                               np.asarray(tris, dtype=np.int32).ravel())
+                               tris.ravel())
         mesh.polygons.add(nt)
         mesh.polygons.foreach_set("loop_start",
                                    np.arange(0, nt * 3, 3, dtype=np.int32))
         mesh.polygons.foreach_set("loop_total", np.full(nt, 3, dtype=np.int32))
-        mesh.validate()
         mesh.shade_smooth()
     if nv:
         _write_mesh_colors(mesh, tris, colors)
@@ -373,6 +376,7 @@ def _cache_array(frame_data, name, shape):
 @dataclass(frozen=True)
 class _ViewportFrame:
     voxel_size: float
+    publish_surface: bool
     surface_verts: np.ndarray
     surface_tris: np.ndarray
     surface_attributes: dict[str, np.ndarray]
@@ -386,7 +390,7 @@ def _attribute_map(mode, values):
     return {} if values is None else {mode: np.asarray(values)}
 
 
-def _solver_frame(scene, solver):
+def _solver_frame(scene, solver, publish_surface=True):
     from ..sim.frame_output import HostFrame
 
     fs = scene.fluidsim
@@ -402,7 +406,7 @@ def _solver_frame(scene, solver):
     whitewater_values = (_whitewater_values(
         solver, fs.whitewater_attribute_mode, whitewater, host=host)
         if fs.show_whitewater and fs.whitewater_enabled else None)
-    if fs.show_surface and fs.surface_enabled:
+    if publish_surface and fs.show_surface and fs.surface_enabled:
         verts, tris = host.surface_mesh
         surface_values = _surface_values(
             solver, fs.surface_attribute_mode, verts, host=host)
@@ -412,6 +416,7 @@ def _solver_frame(scene, solver):
         surface_values = None
     return _ViewportFrame(
         voxel_size=float(solver.settings.voxel_size),
+        publish_surface=publish_surface,
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
         surface_attributes=_attribute_map(
@@ -471,6 +476,7 @@ def _cached_frame(scene, frame_data):
     )
     return _ViewportFrame(
         voxel_size=voxel_size,
+        publish_surface=True,
         surface_verts=verts,
         surface_tris=tris,
         surface_attributes=_attribute_map(
@@ -489,12 +495,13 @@ def _render_outputs(scene, frame):
 
     fs = scene.fluidsim
     if fs.show_surface and fs.surface_enabled:
-        values = frame.surface_attributes.get(fs.surface_attribute_mode)
-        colors = _values_to_colors(values) if values is not None else None
-        obj = _ensure_object(
-            scene, SURFACE_NAME, lambda: bpy.data.meshes.new(SURFACE_NAME))
-        _swap_mesh(obj, frame.surface_verts, frame.surface_tris, colors)
-        materials.ensure_surface_material(scene, obj)
+        if frame.publish_surface:
+            values = frame.surface_attributes.get(fs.surface_attribute_mode)
+            colors = _values_to_colors(values) if values is not None else None
+            obj = _ensure_object(
+                scene, SURFACE_NAME, lambda: bpy.data.meshes.new(SURFACE_NAME))
+            _swap_mesh(obj, frame.surface_verts, frame.surface_tris, colors)
+            materials.ensure_surface_material(scene, obj)
     else:
         obj = bpy.data.objects.get(SURFACE_NAME)
         if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
@@ -598,11 +605,27 @@ def refresh_existing_output_settings(scene):
             materials.ensure_whitewater_material(scene, whitewater)
 
 
-def update_outputs(scene, sess):
+def update_outputs(scene, sess, *, force_surface=False):
     """Write current solver outputs into Blender datablocks."""
     if not sess.active:
         return
-    _render_outputs(scene, _solver_frame(scene, sess.solver))
+    fs = scene.fluidsim
+    surface = bpy.data.objects.get(SURFACE_NAME)
+    has_surface = (surface is not None and surface.type == "MESH" and
+                   len(surface.data.vertices) > 0)
+    solver = sess.solver
+    if hasattr(solver, "host_frame"):
+        host = solver.host_frame()
+    else:
+        from ..sim.frame_output import HostFrame
+        host = HostFrame(solver)
+    publish_surface = (
+        force_surface or not has_surface or
+        host.should_publish_surface(
+            getattr(fs, "live_surface_publish_cadence", 4))
+    )
+    _render_outputs(
+        scene, _solver_frame(scene, solver, publish_surface=publish_surface))
 
 
 def update_outputs_from_cache_frame(scene, frame_data):

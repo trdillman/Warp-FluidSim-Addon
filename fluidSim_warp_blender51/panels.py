@@ -413,6 +413,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         row.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
         row.prop(fs, "surface_max_dense_dim", text="Dense Max")
         sub.prop(fs, "surface_update_cadence")
+        sub.prop(fs, "live_surface_publish_cadence")
         sub.prop(fs, "surface_build_lowres_sdf")
         sub.separator()
         sub.prop(fs, "surface_filter_type")

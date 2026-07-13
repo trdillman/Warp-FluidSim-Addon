@@ -5,12 +5,19 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from fluidSim_warp_blender51.sim.memory_safety import (
+    SIM_BYTES_PER_VOXEL,
+    WHITEWATER_BYTES,
     assess_configuration,
     estimate_solver_bytes,
     is_memory_capacity_error,
     recommend_safe_settings,
     safe_memory_budget,
 )
+
+
+def test_memory_estimate_includes_compact_pcg_and_whitewater_free_list():
+    assert SIM_BYTES_PER_VOXEL == 356
+    assert WHITEWATER_BYTES == 76
 
 
 def _risky_settings():

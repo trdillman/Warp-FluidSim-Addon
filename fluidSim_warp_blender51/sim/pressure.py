@@ -166,6 +166,39 @@ def neighbor_flat(
 
 
 @wp.kernel
+def k_mark_pressure_unknowns(
+    voxel_type: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+    flags: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    flags[tid] = 0
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    vt = voxel_type[tid]
+    if (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0:
+        flags[tid] = 1
+
+
+@wp.kernel
+def k_scatter_pressure_unknowns(
+    flags: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    size: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    if tid >= size:
+        return
+    flag = flags[tid]
+    if flag != 0:
+        indices[offsets[tid]] = tid
+    if tid == size - 1:
+        count[0] = offsets[tid] + flag
+
+
+@wp.kernel
 def k_compute_divergence(
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
     voxel_type: wp.array(dtype=wp.int32),
@@ -296,6 +329,8 @@ def k_compute_inverse_diagonal(
 @wp.kernel
 def k_apply_matrix(
     x: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
     voxel_type: wp.array(dtype=wp.int32),
     inv_diag: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
@@ -304,15 +339,24 @@ def k_apply_matrix(
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
     ax: wp.array(dtype=float),
+    compact_x: wp.array(dtype=float),
+    compact_ax: wp.array(dtype=float),
 ):
     """fluidSimProjectNonDivergentApplyMatrix8/16/32: Ax for the 7-point
     Poisson stencil restricted to fluid voxels."""
-    tid = wp.tid()
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        compact_x[work_tid] = 0.0
+        compact_ax[work_tid] = 0.0
+        return
+    tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
     if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
         ax[tid] = 0.0
+        compact_x[work_tid] = 0.0
+        compact_ax[work_tid] = 0.0
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     diag = 1.0 / inv_diag[tid]
@@ -325,6 +369,8 @@ def k_apply_matrix(
                 if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
                     acc -= x[n]
     ax[tid] = acc
+    compact_x[work_tid] = x[tid]
+    compact_ax[work_tid] = acc
 
 
 @wp.kernel
@@ -520,16 +566,28 @@ def k_initialize_pcg(
     rhs: wp.array(dtype=float),
     x0: wp.array(dtype=float),
     inv_diag: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
+    use_index: int,
     num_leaves: wp.array(dtype=wp.int32),
     x: wp.array(dtype=float),
     r: wp.array(dtype=float),
     z: wp.array(dtype=float),
     p: wp.array(dtype=float),
+    compact_r: wp.array(dtype=float),
+    compact_z: wp.array(dtype=float),
 ):
     """fluidSimProjectNonDivergentInitializePcg: x=x0, r=b-Ax0 (x0 usually 0
     so r=b here; when a coarse initial guess is used the caller pre-applies
     the matrix), z=Minv r, p=z."""
-    tid = wp.tid()
+    work_tid = wp.tid()
+    tid = work_tid
+    if use_index != 0:
+        if work_tid >= pressure_count[0]:
+            compact_r[work_tid] = 0.0
+            compact_z[work_tid] = 0.0
+            return
+        tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     x[tid] = x0[tid]
@@ -538,19 +596,31 @@ def k_initialize_pcg(
     zi = ri * inv_diag[tid]
     z[tid] = zi
     p[tid] = zi
+    if use_index != 0:
+        compact_r[work_tid] = ri
+        compact_z[work_tid] = zi
 
 
 @wp.kernel
 def k_subtract_ax_from_r(
     ax: wp.array(dtype=float),
     inv_diag: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
     num_leaves: wp.array(dtype=wp.int32),
     r: wp.array(dtype=float),
     z: wp.array(dtype=float),
     p: wp.array(dtype=float),
+    compact_r: wp.array(dtype=float),
+    compact_z: wp.array(dtype=float),
 ):
     """Complete r = b - A x0 for a nonzero initial guess, refresh z and p."""
-    tid = wp.tid()
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        compact_r[work_tid] = 0.0
+        compact_z[work_tid] = 0.0
+        return
+    tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     ri = r[tid] - ax[tid]
@@ -558,6 +628,8 @@ def k_subtract_ax_from_r(
     zi = ri * inv_diag[tid]
     z[tid] = zi
     p[tid] = zi
+    compact_r[work_tid] = ri
+    compact_z[work_tid] = zi
 
 
 @wp.kernel
@@ -612,13 +684,22 @@ def k_update_xr_preconditioned(
     ap: wp.array(dtype=float),
     alpha: wp.array(dtype=float),
     inv_diag: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
     num_leaves: wp.array(dtype=wp.int32),
     x: wp.array(dtype=float),
     r: wp.array(dtype=float),
     z: wp.array(dtype=float),
+    compact_r: wp.array(dtype=float),
+    compact_z: wp.array(dtype=float),
 ):
     """Update PCG state and apply the Jacobi preconditioner in one pass."""
-    tid = wp.tid()
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        compact_r[work_tid] = 0.0
+        compact_z[work_tid] = 0.0
+        return
+    tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     a = alpha[0]
@@ -626,6 +707,8 @@ def k_update_xr_preconditioned(
     ri = r[tid] - a * ap[tid]
     r[tid] = ri
     z[tid] = ri * inv_diag[tid]
+    compact_r[work_tid] = ri
+    compact_z[work_tid] = z[tid]
 
 
 @wp.kernel
@@ -662,8 +745,27 @@ def k_update_p(
     num_leaves: wp.array(dtype=wp.int32),
     p: wp.array(dtype=float),
 ):
-    """fluidSimProjectNonDivergentUpdateP."""
+    """Shared full-grid PCG direction update (also used by viscosity)."""
     tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    p[tid] = z[tid] + beta[0] * p[tid]
+
+
+@wp.kernel
+def k_update_p_indexed(
+    z: wp.array(dtype=float),
+    beta: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+    p: wp.array(dtype=float),
+):
+    """Compact pressure-only PCG direction update."""
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        return
+    tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     p[tid] = z[tid] + beta[0] * p[tid]
@@ -1100,7 +1202,7 @@ register_fn(k_compute_alpha, "fluidSimProjectNonDivergentComputeAlpha")
 register_fn(k_update_xr, "fluidSimProjectNonDivergentUpdateXR")
 register_fn(k_apply_preconditioner, "fluidSimProjectNonDivergentApplyPreConditioner")
 register_fn(k_compute_beta, "fluidSimProjectNonDivergentComputeBeta")
-register_fn(k_update_p, "fluidSimProjectNonDivergentUpdateP")
+register_fn(k_update_p_indexed, "fluidSimProjectNonDivergentUpdateP")
 register_fn(k_build_leaf_aggregates,
             "fluidSimProjectNonDivergentElectrostaticBuildLeafAggregates8",
             "fluidSimProjectNonDivergentElectrostaticBuildLeafAggregates16",
@@ -1144,6 +1246,15 @@ class PressureSolver:
         self.p_dir = wp.zeros(n, dtype=float, device=device)
         self.ap = wp.zeros(n, dtype=float, device=device)
         self.x0 = wp.zeros(n, dtype=float, device=device)
+        self._pressure_flags = wp.zeros(n, dtype=wp.int32, device=device)
+        self._pressure_offsets = wp.zeros(n, dtype=wp.int32, device=device)
+        self.pressure_indices = wp.zeros(n, dtype=wp.int32, device=device)
+        self._pressure_count = wp.zeros(1, dtype=wp.int32, device=device)
+        self.pressure_count = 0
+        self._pcg_compact_p = wp.zeros(n, dtype=float, device=device)
+        self._pcg_compact_ap = wp.zeros(n, dtype=float, device=device)
+        self._pcg_compact_r = wp.zeros(n, dtype=float, device=device)
+        self._pcg_compact_z = wp.zeros(n, dtype=float, device=device)
         # coarse (leaf) level
         self.leaf_rhs = wp.zeros(grid.capacity, dtype=float, device=device)
         self.leaf_fluid = wp.zeros(grid.capacity, dtype=wp.int32, device=device)
@@ -1192,27 +1303,49 @@ class PressureSolver:
         g = self.grid
         return [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim, g.num_leaves]
 
-    def _launch_pcg_batch(self, n, batch):
+    def _build_pressure_index(self, voxel_type):
+        n = self._dim()
+        wp.launch(
+            k_mark_pressure_unknowns, dim=n,
+            inputs=[voxel_type, self.grid.num_leaves, self._pressure_flags],
+            device=self.device,
+        )
+        wp.utils.array_scan(
+            self._pressure_flags[:n], self._pressure_offsets[:n], inclusive=False)
+        wp.launch(
+            k_scatter_pressure_unknowns, dim=n,
+            inputs=[self._pressure_flags, self._pressure_offsets, n,
+                    self.pressure_indices, self._pressure_count],
+            device=self.device,
+        )
+        self.pressure_count = int(self._pressure_count.numpy()[0])
+        return self.pressure_count
+
+    def _launch_pcg_batch(self, work_n, batch):
         """Launch an unchanged fixed-coefficient PCG batch as one CUDA graph."""
         start_parity = 0 if self.rz is self._pcg_rz_a else 1
-        key = (n, batch, start_parity)
+        key = (work_n, batch, start_parity)
         graph = self._pcg_graphs.get(key)
         if graph is None:
             if len(self._pcg_graphs) >= 8:
                 self._pcg_graphs.clear()
-            self._pcg_apply_cmd.set_dim(n)
-            self._pcg_update_cmd.set_dim(n)
-            self._pcg_update_p_cmd.set_dim(n)
+            self._pcg_apply_cmd.set_dim(work_n)
+            self._pcg_update_cmd.set_dim(work_n)
+            self._pcg_update_p_cmd.set_dim(work_n)
             wp.synchronize_device(self.device)
             with wp.ScopedCapture(device=self.device) as capture:
                 parity = start_parity
                 for _ in range(batch):
                     self._pcg_apply_cmd.launch()
-                    wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
+                    wp.utils.array_inner(
+                        self._pcg_compact_p, self._pcg_compact_ap,
+                        out=self.p_ap, count=work_n)
                     self._pcg_alpha_cmds[parity].launch()
                     self._pcg_update_cmd.launch()
                     rz_out = self._pcg_rz_b if parity == 0 else self._pcg_rz_a
-                    wp.utils.array_inner(self.r, self.z, out=rz_out, count=n)
+                    wp.utils.array_inner(
+                        self._pcg_compact_r, self._pcg_compact_z,
+                        out=rz_out, count=work_n)
                     self._pcg_beta_cmds[parity].launch()
                     self._pcg_update_p_cmd.launch()
                     parity ^= 1
@@ -1229,19 +1362,24 @@ class PressureSolver:
         self._pcg_voxel_type = voxel_type
         self._pcg_apply_cmd = wp.launch(
             k_apply_matrix, dim=n,
-            inputs=[self.p_dir, voxel_type, self.inv_diag,
-                    *self._stencil_args(), self.ap],
+            inputs=[self.p_dir, self.pressure_indices, self._pressure_count,
+                    voxel_type, self.inv_diag,
+                    *self._stencil_args(), self.ap,
+                    self._pcg_compact_p, self._pcg_compact_ap],
             device=self.device, record_cmd=True,
         )
         self._pcg_update_cmd = wp.launch(
             k_update_xr_preconditioned, dim=n,
             inputs=[self.p_dir, self.ap, self.alpha, self.inv_diag,
-                    g.num_leaves, x, self.r, self.z],
+                    self.pressure_indices, self._pressure_count,
+                    g.num_leaves, x, self.r, self.z,
+                    self._pcg_compact_r, self._pcg_compact_z],
             device=self.device, record_cmd=True,
         )
         self._pcg_update_p_cmd = wp.launch(
-            k_update_p, dim=n,
-            inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
+            k_update_p_indexed, dim=n,
+            inputs=[self.z, self.beta, self.pressure_indices,
+                    self._pressure_count, g.num_leaves, self.p_dir],
             device=self.device, record_cmd=True,
         )
         self._pcg_alpha_cmds = (
@@ -1374,8 +1512,11 @@ class PressureSolver:
         self.x0[:n].zero_()
         wp.launch(
             k_initialize_pcg, dim=n,
-            inputs=[self.rhs, self.x0, self.inv_diag, g.num_leaves,
-                    x, self.r, self.z, self.p_dir],
+            inputs=[self.rhs, self.x0, self.inv_diag,
+                    self.pressure_indices, self._pressure_count, 0,
+                    g.num_leaves,
+                    x, self.r, self.z, self.p_dir,
+                    self._pcg_compact_r, self._pcg_compact_z],
             device=self.device,
         )
         check_every = max(1, int(check_every))
@@ -1525,39 +1666,76 @@ class PressureSolver:
     def solve_pcg(self, voxel_type, max_iterations, tolerance, use_coarse_guess=False,
                   check_every=25):
         g = self.grid
-        n = self._dim()
+        full_n = self._dim()
+        pressure_count = self._build_pressure_index(voxel_type)
         x = self.pressure
-        self._prepare_pcg_commands(n, voxel_type, x)
+        if pressure_count <= 0:
+            x[:full_n].zero_()
+            wp.utils.array_inner(
+                self.rhs, self.rhs, out=self.residual, count=full_n)
+            res_sq = float(self.residual.numpy()[0])
+            self.last_iterations = 0
+            self.last_residual_squared = res_sq
+            self.last_residual = (
+                math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf)
+            tol_sq = tolerance * tolerance * max(1, full_n)
+            if not math.isfinite(res_sq):
+                self._set_pressure_status(
+                    PRESSURE_STATUS_INVALID, "non_finite_residual", False)
+            elif res_sq < tol_sq:
+                self._set_pressure_status(
+                    PRESSURE_STATUS_CONVERGED, PRESSURE_STATUS_CONVERGED, True)
+            else:
+                self._set_pressure_status(
+                    PRESSURE_STATUS_SINGULAR, "singular_system", False)
+            return self.last_status
+        work_n = min(full_n, 1 << (pressure_count - 1).bit_length())
+        self._prepare_pcg_commands(work_n, voxel_type, x)
         if use_coarse_guess:
             self.coarse_initial_guess(voxel_type)
         else:
-            self.x0[:n].zero_()
+            self.x0[:full_n].zero_()
+        for array in (x, self.r, self.z, self.p_dir, self.ap):
+            array[:full_n].zero_()
         wp.launch(
-            k_initialize_pcg, dim=n,
-            inputs=[self.rhs, self.x0, self.inv_diag, g.num_leaves,
-                    x, self.r, self.z, self.p_dir],
+            k_initialize_pcg, dim=work_n,
+            inputs=[self.rhs, self.x0, self.inv_diag, self.pressure_indices,
+                    self._pressure_count, 1,
+                    g.num_leaves,
+                    x, self.r, self.z, self.p_dir,
+                    self._pcg_compact_r, self._pcg_compact_z],
             device=self.device,
         )
-        self.ap[:n].zero_()
+        self.ap[:full_n].zero_()
         if use_coarse_guess:
             wp.launch(
-                k_apply_matrix, dim=n,
-                inputs=[x, voxel_type, self.inv_diag, *self._stencil_args(), self.ap],
+                k_apply_matrix, dim=work_n,
+                inputs=[x, self.pressure_indices, self._pressure_count,
+                        voxel_type, self.inv_diag,
+                        *self._stencil_args(), self.ap,
+                        self._pcg_compact_p, self._pcg_compact_ap],
                 device=self.device,
             )
             wp.launch(
-                k_subtract_ax_from_r, dim=n,
-                inputs=[self.ap, self.inv_diag, g.num_leaves,
-                        self.r, self.z, self.p_dir],
+                k_subtract_ax_from_r, dim=work_n,
+                inputs=[self.ap, self.inv_diag, self.pressure_indices,
+                        self._pressure_count,
+                        g.num_leaves,
+                        self.r, self.z, self.p_dir,
+                        self._pcg_compact_r, self._pcg_compact_z],
                 device=self.device,
             )
         check_every = max(1, int(check_every))
-        tol_sq = tolerance * tolerance * max(1, n)
+        tol_sq = tolerance * tolerance * max(1, full_n)
         status = PRESSURE_STATUS_MAX_ITERATIONS
         failure = "max_iterations"
         pressure_valid = False
-        wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
-        wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
+        wp.utils.array_inner(
+            self._pcg_compact_r, self._pcg_compact_z,
+            out=self.rz, count=work_n)
+        wp.utils.array_inner(
+            self._pcg_compact_r, self._pcg_compact_r,
+            out=self.residual, count=work_n)
         last_checked_res = float(self.residual.numpy()[0])
         res_sq = last_checked_res
         it = 0
@@ -1575,10 +1753,12 @@ class PressureSolver:
         # instead of three host syncs per iteration.
         while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
             batch = min(check_every, max_iterations - it)
-            self._launch_pcg_batch(n, batch)
+            self._launch_pcg_batch(work_n, batch)
             it += batch
             # single checkpoint readback: [residual^2, r.z, p.Ap]
-            wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
+            wp.utils.array_inner(
+                self._pcg_compact_r, self._pcg_compact_r,
+                out=self.residual, count=work_n)
             parity = 0 if self.rz is self._pcg_rz_a else 1
             self._pcg_pack_cmds[parity].launch()
             stats = self.pcg_stats.numpy()
@@ -1610,7 +1790,7 @@ class PressureSolver:
         self.last_residual_squared = res_sq
         self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
         if status != PRESSURE_STATUS_CONVERGED:
-            self.pressure[:n].zero_()
+            self.pressure[:full_n].zero_()
         self._set_pressure_status(status, failure, pressure_valid)
         return self.last_status
 
@@ -1621,13 +1801,19 @@ class PressureSolver:
         """
         import numpy as _np
 
-        wp.launch(
-            k_apply_matrix, dim=self._dim(),
-            inputs=[self.pressure, voxel_type, self.inv_diag,
-                    *self._stencil_args(), self.ap],
-            device=self.device,
-        )
-        r = self.rhs.numpy() - self.ap.numpy()
+        full_n = self._dim()
+        work_n = self._build_pressure_index(voxel_type)
+        self.ap[:full_n].zero_()
+        if work_n:
+            wp.launch(
+                k_apply_matrix, dim=work_n,
+                inputs=[self.pressure, self.pressure_indices,
+                        self._pressure_count, voxel_type, self.inv_diag,
+                        *self._stencil_args(), self.ap,
+                        self._pcg_compact_p, self._pcg_compact_ap],
+                device=self.device,
+            )
+        r = self.rhs[:full_n].numpy() - self.ap[:full_n].numpy()
         return float(_np.linalg.norm(r))
 
     def apply_threshold(self, relative_threshold):
