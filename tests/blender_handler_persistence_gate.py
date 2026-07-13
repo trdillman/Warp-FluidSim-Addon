@@ -32,10 +32,48 @@ try:
     if not before:
         raise RuntimeError("add-on frame handler was not registered")
 
+    mesh = bpy.data.meshes.new("Persistence Seed")
+    mesh.from_pydata(
+        [(0.1, 0.1, 0.1), (0.2, 0.1, 0.1),
+         (0.1, 0.2, 0.1), (0.1, 0.1, 0.2)],
+        [],
+        [],
+    )
+    seed = bpy.data.objects.new("Persistence Seed", mesh)
+    bpy.context.scene.collection.objects.link(seed)
+    seed.fluidsim.auto_inject_seed = True
+    bpy.context.scene.fluidsim.domain_sdf_walls = True
+    bpy.context.scene.fluidsim.live = True
+
     with tempfile.TemporaryDirectory(prefix="fluidsim-handler-gate-") as temp_dir:
         blend_path = os.path.join(temp_dir, "handler-persistence.blend")
         bpy.ops.wm.save_as_mainfile(filepath=blend_path, check_existing=False)
         bpy.ops.wm.open_mainfile(filepath=blend_path)
+
+        scene = bpy.context.scene
+        scene.frame_set(scene.frame_start + 1)
+
+        from fluidSim_warp_blender51.blender.scene_bridge import session
+
+        sess = session()
+        if not sess.active:
+            raise RuntimeError("solver did not initialize after reopening")
+        if not str(sess.solver.device).startswith("cuda"):
+            raise RuntimeError(f"solver is not CUDA-backed: {sess.solver.device}")
+        if not sess.solver.settings.domain_sdf_walls:
+            raise RuntimeError("closed domain collision walls were not restored")
+        count = sess.solver.particles.refresh_host_count()
+        if count != 4:
+            raise RuntimeError(f"reopened seed count is {count}, expected 4")
+
+        for _ in range(2):
+            scene.frame_set(scene.frame_start)
+            count = sess.solver.particles.refresh_host_count()
+            if count != 4:
+                raise RuntimeError(
+                    f"reset seed count is {count}, expected exactly 4"
+                )
+            scene.frame_set(scene.frame_start + 1)
 
     after = addon_frame_handlers()
     if not after:

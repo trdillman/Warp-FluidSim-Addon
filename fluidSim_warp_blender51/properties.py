@@ -434,6 +434,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Open Boundaries", default=False,
         update=_request_reset,
         description="Kill particles leaving the domain instead of clamping")
+    domain_sdf_walls: BoolProperty(
+        name="Domain Collision Walls", default=False,
+        update=_request_reset,
+        description="Build collision SDF walls around the domain bounds")
 
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(

@@ -88,6 +88,7 @@ class Session:
         """(Re)create the solver from current scene state."""
         from ..diagnostics.profiler import Profiler
         from ..sim.solver import FluidSolver
+        from . import sources
 
         self.release(scene)
         try:
@@ -114,6 +115,7 @@ class Session:
             self.profiler = profiler
             self.start_frame = scene.frame_start
             self.sync_scene(scene)
+            sources.inject_auto_seeds(scene, self)
             errors = self.solver.set_custom_snippets(build_snippets(scene))
             for name, error in errors:
                 for pg in fs.snippets:
@@ -221,7 +223,7 @@ class Session:
         return frame_data
 
     def reset(self, scene):
-        from . import viewport
+        from . import sources, viewport
 
         if not self.active:
             return
@@ -234,6 +236,7 @@ class Session:
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
         self.sync_scene(scene)
+        sources.inject_auto_seeds(scene, self)
         viewport.update_outputs(scene, self)
         scene.fluidsim.status = "Simulation reset"
 
@@ -362,6 +365,7 @@ def _domain_bounds(scene) -> tuple:
 
 _DIRECT_SETTING_FIELDS = (
     "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
+    "domain_sdf_walls",
     "max_particles", "max_whitewater", "time_scale", "cfl",
     "min_substeps", "max_substeps", "flip_ratio", "max_speed",
     "limit_percent", "particles_per_voxel", "count_stiffness",

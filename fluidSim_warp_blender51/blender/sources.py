@@ -156,3 +156,13 @@ def inject_object_particles(scene, obj, sess, velocity=(0.0, 0.0, 0.0)):
         use_lifespan=pg.use_lifespan,
     )
     return len(pts)
+
+
+def inject_auto_seeds(scene, sess):
+    """Restore enabled particle seeds after solver initialize/reset."""
+    total = 0
+    for obj in scene.objects:
+        pg = getattr(obj, "fluidsim", None)
+        if pg is not None and pg.enabled and pg.auto_inject_seed:
+            total += inject_object_particles(scene, obj, sess)
+    return total
