@@ -10,7 +10,7 @@ user-kernel extensibility.
 bl_info = {
     "name": "FluidSim Warp",
     "author": "FluidSim port (synthesized reference)",
-    "version": (1, 0, 240),
+    "version": (1, 0, 241),
     "blender": (5, 1, 0),
     "location": "3D Viewport > Sidebar > FluidSim",
     "description": "Interactive GPU liquid simulation with beta ST-FLIP",
