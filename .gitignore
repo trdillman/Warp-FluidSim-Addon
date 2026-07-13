@@ -1,9 +1,23 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
 *.blend1
 *.blend2
 *.tmp
 *.log
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # Local tool/runtime state
 /.codex/*
@@ -11,17 +25,17 @@ __pycache__/
 /.codex/context/*
 !/.codex/context/liquid-review-fixes-loop.md
 /blender/
+/.serena/
+/tmp/
 
 # Generated simulation/demo outputs
 /artifacts/
 /_quarantine/
 /review_output/
 /fluidsim_warp_snippets/
+/fluidSim_warp_blender51/demo_outputs/
+/demos/
 *.npz
-/demos/*/series.json
-/demos/*/frame_*.npz
-/demos/fluidsim_report.json
-/demos/moses_split_snippet_demo.blend
 /fluidsim_report.json
 /fluidsim_test_*.obj
 /fluidsim_test_*.ply
