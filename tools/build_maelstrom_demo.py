@@ -10,6 +10,8 @@ from pathlib import Path
 
 import bpy
 
+from tools.repo_addon_loader import enable_repo_addon
+
 
 REPO = Path(__file__).resolve().parents[1]
 DEMOS = REPO / "demos"
@@ -87,6 +89,7 @@ def _create_placeholder_scene(output: Path, meta: dict) -> None:
 
 def build(args):
     """Ensure the demo blend exists and return its metadata."""
+    enable_repo_addon(REPO, default_set=True, persistent=True)
     output = Path(args.output)
     backup = output.with_suffix(output.suffix + "1")
     meta = dict(DEFAULT_META)
@@ -98,6 +101,19 @@ def build(args):
         shutil.copy2(backup, output)
     if not output.exists():
         _create_placeholder_scene(output, meta)
+    bpy.ops.wm.open_mainfile(filepath=str(output))
+    scene = bpy.context.scene
+    scene.fluidsim.live = False
+    scene.fluidsim.domain_sdf_walls = True
+    scene.frame_set(scene.frame_start)
+    seed = bpy.data.objects.get(meta["seed_object"])
+    if seed is None:
+        raise RuntimeError(f"missing maelstrom seed object: {meta['seed_object']}")
+    seed.fluidsim.enabled = True
+    seed.fluidsim.auto_inject_seed = True
+    scene.fluidsim.live = True
+    bpy.ops.wm.save_as_mainfile(filepath=str(output), check_existing=False)
+    bpy.ops.fluidsim.release()
     _write_meta(meta)
     return {"output": str(output), "meta": meta}
 

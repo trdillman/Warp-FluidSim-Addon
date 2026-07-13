@@ -97,6 +97,7 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "leaf_capacity")
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
+        col.prop(fs, "domain_sdf_walls")
         from .blender.scene_bridge import _domain_bounds, session
 
         lo, hi = _domain_bounds(context.scene)

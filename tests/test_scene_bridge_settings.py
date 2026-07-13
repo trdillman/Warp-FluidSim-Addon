@@ -63,6 +63,7 @@ def _scene():
         leaf_capacity=64,
         topology_expand=1,
         open_boundaries=False,
+        domain_sdf_walls=True,
         max_particles=1000,
         max_whitewater=0,
         time_scale=1.0,
@@ -133,6 +134,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
 
     direct_fields = (
         "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
+        "domain_sdf_walls",
         "max_particles", "max_whitewater", "time_scale", "cfl",
         "min_substeps", "max_substeps", "flip_ratio", "max_speed",
         "limit_percent", "particles_per_voxel", "count_stiffness",
@@ -164,6 +166,16 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     }
     for target, source in enum_fields.items():
         assert getattr(settings, target).name == getattr(scene.fluidsim, source)
+
+
+def test_domain_collision_wall_setting_is_persisted(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+
+    assert scene_bridge.build_settings(scene).domain_sdf_walls is True
+
+    scene.fluidsim.domain_sdf_walls = False
+    assert scene_bridge.build_settings(scene).domain_sdf_walls is False
 
 
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):

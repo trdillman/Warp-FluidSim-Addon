@@ -78,6 +78,7 @@ def fresh_scene():
     scene = bpy.context.scene
     scene.render.fps = 24
     scene.render.fps_base = 1.0
+    scene.fluidsim.domain_sdf_walls = False
     return scene
 
 
@@ -345,8 +346,9 @@ def build_dam_break():
         "playable_live_setup": True,
     }
     with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",
-              encoding="utf-8") as fh:
+              encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
+        fh.write("\n")
     bpy.ops.fluidsim.release()
 
 
@@ -399,8 +401,9 @@ def build_crown_splash():
         "total_particles": int(n_all),
     }
     with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
-              encoding="utf-8") as fh:
+              encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
+        fh.write("\n")
     bpy.ops.fluidsim.release()
 
 
@@ -423,20 +426,28 @@ def build_slosh_tank():
     fs.profiling_enabled = False
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
-    bpy.ops.fluidsim.initialize()
-    sess = session()
-    sess.solver.settings.domain_sdf_walls = True
+    fs.domain_sdf_walls = True
+    fs.live = False
+    scene.frame_start = 1
+    scene.frame_end = 144
+    scene.frame_set(1)
     # First-mode initial surface: z(x) = h + A*cos(pi*x/L) with h = 0.25,
     # A = 0.06 (gentle, near-linear). Analytic first-mode period:
     # omega = sqrt(g * k * tanh(k*h)), k = pi/L  ->  T = 1.40 s.
     pts = lattice((0.0, 0.0, 0.0), (1.0, 0.3, 0.32), 0.01)
     surface = 0.25 + 0.06 * np.cos(math.pi * pts[:, 0] / 1.0)
     pts = pts[pts[:, 2] < surface]
-    n = sess.solver.inject_particles(pts)
+    seed = make_particle_seed(scene, pts, "Slosh Initial Particle Seed")
+    seed.fluidsim.auto_inject_seed = True
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    n = sess.solver.particles.refresh_host_count()
     log(f"slosh_tank: injected {n:,} particles (h=0.25, A=0.06 first mode)")
     add_camera_light(scene, (0.5, -1.7, 0.5), (1.35, 0.0, 0.0))
     run_scene("slosh_tank", 144)
     save_scene("slosh_tank")
+    fs.live = True
+    save_scene("slosh_tank", preview=False)
     meta = {
         "scene": "slosh_tank",
         "gravity": 9.81,
@@ -448,8 +459,9 @@ def build_slosh_tank():
         "injected": int(n),
     }
     with open(os.path.join(DEMOS, "slosh_tank", "meta.json"), "w",
-              encoding="utf-8") as fh:
+              encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
+        fh.write("\n")
     bpy.ops.fluidsim.release()
 
 
@@ -480,6 +492,7 @@ def build_tidal_lock():
     fs.show_surface = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
+    fs.domain_sdf_walls = True
     fs.live = False
     scene.frame_start = 1
     scene.frame_end = 96
@@ -514,21 +527,20 @@ def build_tidal_lock():
         "TidalLock South Gate",
     )
 
-    bpy.ops.fluidsim.initialize()
-    sess = session()
-    sess.solver.settings.domain_sdf_walls = True
     left = lattice((0.08, 0.08, 0.0), (0.62, 0.36, 0.32), 0.012)
     right = lattice((1.78, 0.44, 0.0), (2.32, 0.72, 0.32), 0.012)
-    n_left = sess.solver.inject_particles(
-        left,
-        velocity=(2.2, 0.55, 0.0),
-        temperature=0.2,
-    )
-    n_total = sess.solver.inject_particles(
-        right,
-        velocity=(-2.2, -0.55, 0.0),
-        temperature=0.8,
-    )
+    west_seed = make_particle_seed(scene, left, "TidalLock West Particle Seed")
+    west_seed.fluidsim.initial_velocity = (2.2, 0.55, 0.0)
+    west_seed.fluidsim.temperature = 0.2
+    west_seed.fluidsim.auto_inject_seed = True
+    east_seed = make_particle_seed(scene, right, "TidalLock East Particle Seed")
+    east_seed.fluidsim.initial_velocity = (-2.2, -0.55, 0.0)
+    east_seed.fluidsim.temperature = 0.8
+    east_seed.fluidsim.auto_inject_seed = True
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    n_left = len(left)
+    n_total = sess.solver.particles.refresh_host_count()
     log(f"tidal_lock: west {n_left:,} + east {n_total - n_left:,} particles")
     add_camera_light(scene, (1.2, -2.55, 0.95), (1.25, 0.0, 0.0))
     run_scene("tidal_lock", 72)
@@ -556,6 +568,8 @@ def build_tidal_lock():
         "the scene and can be enabled for live replay after Initialize Solver.\n",
     )
     save_scene("tidal_lock")
+    fs.live = True
+    save_scene("tidal_lock", preview=False)
     os.makedirs(os.path.join(DEMOS, "tidal_lock"), exist_ok=True)
     meta = {
         "scene": "tidal_lock",
@@ -573,8 +587,9 @@ def build_tidal_lock():
         "initial_height": 0.32,
     }
     with open(os.path.join(DEMOS, "tidal_lock", "meta.json"), "w",
-              encoding="utf-8") as fh:
+              encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
+        fh.write("\n")
     bpy.ops.fluidsim.release()
 
 
@@ -763,8 +778,9 @@ def build_material_response():
         "playable_live_setup": True,
     }
     with open(os.path.join(DEMOS, "material_response", "meta.json"), "w",
-              encoding="utf-8") as fh:
+              encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
+        fh.write("\n")
     bpy.ops.fluidsim.release()
 
 
