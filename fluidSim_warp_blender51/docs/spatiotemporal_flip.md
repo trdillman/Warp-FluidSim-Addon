@@ -53,7 +53,7 @@ Additional headless acceptance tests are included:
 
 ```bash
 blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6
-blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --scene demos/dam_break.blend
+blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py
 ```
 
-The benchmark writes `artifacts/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `artifacts/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.
+The benchmark writes `fluidSim_warp_blender51/demo_outputs/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `fluidSim_warp_blender51/demo_outputs/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.

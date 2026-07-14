@@ -70,10 +70,10 @@ def _initial_particles(particle_count: int = 500_000, speed: float = 22.0, seed:
 def main(argv: list[str] | None = None) -> int:
     package_dir = _ensure_package_on_path()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scene", required=True)
+    parser.add_argument("--scene", default=str(package_dir.parent / "demos" / "dam_break.blend"))
     parser.add_argument("--frames", type=int, default=24)
     parser.add_argument("--particles", type=int, default=500_000)
-    parser.add_argument("--output", default=str(package_dir.parent / "artifacts" / "stflip_timeline_viewport_acceptance.json"))
+    parser.add_argument("--output", default=str(package_dir / "demo_outputs" / "stflip_timeline_viewport_acceptance.json"))
     args, _ = parser.parse_known_args(argv)
 
     scene_path = pathlib.Path(args.scene)
@@ -88,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.live = True
+    fs.spacetime_enabled = True
     fs.cache_playback_enabled = False
     scene_bridge.register_handlers()
 

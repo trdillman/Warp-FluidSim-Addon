@@ -76,5 +76,5 @@ Regression tests:
 ```powershell
 blender --background --factory-startup --python tests/headless_spatiotemporal_validation.py -- --device cuda:0
 blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 24 --particles 500000
-blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --scene demos/dam_break.blend --frames 24 --particles 500000
+blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --frames 24 --particles 500000
 ```

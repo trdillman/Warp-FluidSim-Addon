@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--particles", type=int, default=500_000)
     parser.add_argument("--frames", type=int, default=24)
-    parser.add_argument("--output", default=str(package_dir.parent / "artifacts" / "surface_resolution_pipeline.json"))
+    parser.add_argument("--output", default=str(package_dir / "demo_outputs" / "surface_resolution_pipeline.json"))
     args, _ = parser.parse_known_args(argv)
 
     particles = max(500_000, int(args.particles))
