@@ -4,10 +4,11 @@ Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements onl
 
 ## Verified workflows
 
-- From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
+- From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
 - For interactive playback performance changes, run `FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py` or the focused `blender --background --factory-startup --python tools/profile_user_path.py -- --frames 6 --voxel-size 0.08 --max-particles 200000 --collider-subdiv 2 --json-out artifacts/user_path_profile.json` profile.
 - Run the full Python regression suite with `python -m pytest -q`; use the production gate for Blender/CUDA/runtime changes because it invokes Blender 5.1's bundled Python and acceptance lanes.
 - For GPU solver timing changes, run `"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe" tools/profile_gpu_solver.py --device cuda:0 --frames 8 --warmup 2 --json-out artifacts/gpu_solver_profile.json`.
-- For standalone runtime regression checks, run `blender --background --factory-startup --python tests/blender_handler_persistence_gate.py` and `blender --background --factory-startup --python tests/blender_viewport_2frame_gate.py`.
+- For standalone runtime regression checks, run `blender --background --factory-startup --python tests/blender_cache_export_pipeline.py`, `blender --background --factory-startup --python tests/blender_memory_safety_gate.py`, `blender --background --factory-startup --python tests/blender_handler_persistence_gate.py`, and `blender --background --factory-startup --python tests/blender_viewport_2frame_gate.py`.
+- For focused ST-FLIP and surface validation, run `blender --background --factory-startup --python tests/headless_spatiotemporal_validation.py -- --device cuda:0`, `blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6`, and `blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --scene demos/dam_break.blend`.
 - Build demos with `blender --background --python tools/build_demo_scenes.py`; use `-- --list-scenes`, `-- --standard-cache-scenes`, or `-- dam_break crown_splash` to select targets.
 - Verify saved demo files with `blender --background --python tools/check_demo_blends.py`, then analyze outputs with `python tools/analyze_demos.py`.
