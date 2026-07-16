@@ -1495,11 +1495,8 @@ def k_particles_relax(
                 limit = num
                 if limit > DEFAULT_RELAX_BIN_SAMPLE_LIMIT:
                     limit = DEFAULT_RELAX_BIN_SAMPLE_LIMIT
-                stride = 1
-                if num > limit:
-                    stride = (num + limit - 1) // limit
                 for sample in range(limit):
-                    j = bin_indices[start + sample * stride]
+                    j = bin_indices[start + (sample * num) // limit]
                     if j == tid:
                         continue
                     d = p - positions[j]

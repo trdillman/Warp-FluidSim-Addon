@@ -119,6 +119,8 @@ def test_relax_kernel_caps_per_bin_particle_scan():
     assert C.DEFAULT_RELAX_BIN_SAMPLE_LIMIT == 32
     assert "DEFAULT_RELAX_BIN_SAMPLE_LIMIT" in source
     assert "range(limit)" in source
+    assert "start + (sample * num) // limit" in source
+    assert "sample * stride" not in source
 
 
 def test_compaction_accepts_active_count_hint():
