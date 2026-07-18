@@ -27,6 +27,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from .constants import LEAF_VOLUME, VOXEL_COLLISION, VOXEL_FLUID
+from .enums import ProjectNonDivergentSolver
 from .fields import (
     voxel_coord_of_flat,
     voxel_flat_index,
@@ -1432,6 +1433,64 @@ class PressureSolver:
     def should_project_pressure(self):
         """True when the current pressure field is safe to project."""
         return self.last_pressure_valid
+
+    def project_frame(self, velocity, voxel_type, collision_velocity,
+                      voxel_counts, settings, *, max_gradient,
+                      reference_mass=None):
+        """Build, solve, and safely apply one pressure projection."""
+        self.build_rhs(
+            velocity, voxel_type, collision_velocity, voxel_counts,
+            rest_count=settings.particles_per_voxel,
+            count_stiffness=settings.count_stiffness,
+        )
+        st_projection = bool(
+            settings.spacetime_enabled
+            and settings.spacetime_variable_projection)
+        if reference_mass is None:
+            configured_mass = float(settings.spacetime_reference_mass)
+            reference_mass = (
+                configured_mass
+                if configured_mass > 0.0 and math.isfinite(configured_mass)
+                else max(1.0, float(settings.particles_per_voxel)))
+        st_args = {
+            "reference_mass": reference_mass,
+            "eta_phi": settings.spacetime_phase_eta,
+            "rho_liquid": settings.spacetime_liquid_density,
+            "rho_gas": settings.spacetime_gas_density,
+            "eps_rho": settings.spacetime_min_density,
+        }
+        if st_projection:
+            self.build_preconditioner_st(voxel_type, velocity, **st_args)
+        else:
+            self.build_preconditioner(voxel_type)
+        if int(settings.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
+            if st_projection:
+                self.solve_jacobi_st(
+                    voxel_type, settings.pressure_iterations, velocity,
+                    **st_args)
+            else:
+                self.solve_jacobi(voxel_type, settings.pressure_iterations)
+        elif st_projection:
+            self.solve_pcg_st(
+                voxel_type, settings.pressure_iterations,
+                settings.pressure_tolerance, velocity, **st_args)
+        else:
+            self.solve_pcg(
+                voxel_type, settings.pressure_iterations,
+                settings.pressure_tolerance)
+        if not self.should_project_pressure():
+            return self.last_status
+        if settings.pressure_threshold > 0.0:
+            self.apply_threshold(settings.pressure_threshold)
+        if st_projection:
+            self.project_st(
+                velocity, voxel_type, collision_velocity,
+                max_gradient=max_gradient, **st_args)
+        else:
+            self.project(
+                velocity, voxel_type, collision_velocity,
+                max_gradient=max_gradient)
+        return self.last_status
 
     def build_rhs(self, vel, voxel_type, collision_vel, voxel_counts,
                   rest_count=8.0, count_stiffness=0.0):

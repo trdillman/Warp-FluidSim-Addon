@@ -965,3 +965,72 @@ def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
     solver.inject_particles([(0.1, 0.1, 0.1)], velocity=(100.0, 0.0, 0.0))
 
     assert solver._compute_substeps(1.0 / 24.0) == 4
+
+
+def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch):
+    solver = object.__new__(PressureSolver)
+    calls = []
+
+    def record(name, status=None):
+        def call(*args, **kwargs):
+            calls.append((name, args, kwargs))
+            if status is not None:
+                solver.last_status = status
+                solver.last_pressure_valid = status["project_velocity"]
+                return status
+        return call
+
+    valid = {
+        "converged": True,
+        "iterations": 4,
+        "reason": "jacobi",
+        "residual": -1.0,
+        "project_velocity": True,
+    }
+    invalid = {
+        "converged": False,
+        "iterations": 2,
+        "reason": "non_finite_residual",
+        "residual": math.inf,
+        "project_velocity": False,
+    }
+    for name in (
+            "build_rhs", "build_preconditioner", "build_preconditioner_st",
+            "solve_pcg", "solve_pcg_st", "apply_threshold", "project",
+            "project_st"):
+        monkeypatch.setattr(solver, name, record(name))
+    monkeypatch.setattr(solver, "solve_jacobi", record("solve_jacobi", valid))
+    monkeypatch.setattr(
+        solver, "solve_jacobi_st", record("solve_jacobi_st", valid))
+
+    settings = SolverSettings(
+        pressure_solver=0,
+        pressure_iterations=4,
+        pressure_threshold=0.25,
+        spacetime_enabled=False,
+    )
+    result = solver.project_frame(
+        "velocity", "voxel_type", "collision_velocity", "voxel_counts",
+        settings, max_gradient=3.0)
+
+    assert result is valid
+    assert [call[0] for call in calls] == [
+        "build_rhs", "build_preconditioner", "solve_jacobi",
+        "apply_threshold", "project",
+    ]
+    assert calls[-1][2] == {"max_gradient": 3.0}
+
+    calls.clear()
+    monkeypatch.setattr(solver, "solve_pcg_st", record("solve_pcg_st", invalid))
+    settings.pressure_solver = 1
+    settings.spacetime_enabled = True
+    settings.spacetime_variable_projection = True
+    result = solver.project_frame(
+        "velocity", "voxel_type", "collision_velocity", "voxel_counts",
+        settings, max_gradient=2.0, reference_mass=7.0)
+
+    assert result is invalid
+    assert [call[0] for call in calls] == [
+        "build_rhs", "build_preconditioner_st", "solve_pcg_st",
+    ]
+    assert calls[1][2]["reference_mass"] == 7.0
