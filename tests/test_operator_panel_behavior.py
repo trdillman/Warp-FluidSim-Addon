@@ -434,13 +434,12 @@ def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
 def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
+    from fluidSim_warp_blender51.blender.scene_bridge import SceneUpdate
 
     calls = []
     scene = SimpleNamespace()
     fake_bridge = SimpleNamespace(
-        request_scene_update=lambda scene, action, reason: calls.append(
-            (scene, action, reason)
-        )
+        request_scene_update=lambda scene, action: calls.append((scene, action))
     )
     import fluidSim_warp_blender51.blender as blender_pkg
 
@@ -450,8 +449,8 @@ def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypat
     properties._request_output_refresh(None, SimpleNamespace(scene=scene))
 
     assert calls == [
-        (scene, "SURFACE", "Surface display settings changed"),
-        (scene, "OUTPUT", "Viewport display settings changed"),
+        (scene, SceneUpdate.SURFACE),
+        (scene, SceneUpdate.OUTPUT),
     ]
 
 
@@ -635,7 +634,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     )
     scene = SimpleNamespace(fluidsim=fs)
 
-    scene_bridge.request_scene_update(scene, "SURFACE", "Surface changed")
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.SURFACE)
 
     assert solver.settings.surface_enabled is False
     assert solver.settings.particle_radius_scale == 2.0
@@ -668,7 +667,7 @@ def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):
         fluidsim=SimpleNamespace(whitewater_enabled=False, status="")
     )
 
-    scene_bridge.request_scene_update(scene, "WHITEWATER", "Whitewater changed")
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.WHITEWATER)
 
     assert solver.settings.whitewater_enabled is False
     assert output_calls == [(scene, sess)]
@@ -692,7 +691,7 @@ def test_output_refresh_updates_existing_outputs_without_active_solver(monkeypat
     scene_bridge.session().solver = None
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
 
-    scene_bridge.request_scene_update(scene, "OUTPUT", "Viewport display settings changed")
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.OUTPUT)
 
     assert refresh_calls == [scene]
     assert scene.fluidsim.status == "Viewport display settings changed"

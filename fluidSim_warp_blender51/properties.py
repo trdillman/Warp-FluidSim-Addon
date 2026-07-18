@@ -120,14 +120,14 @@ def _sync_liquid_view_mode(self, context):
     _request_output_refresh(self, context)
 
 
-def _request_scene_update(context, action: str, reason: str):
+def _request_scene_update(context, action):
     scene = getattr(context, "scene", None) if context is not None else None
     if scene is None:
         return
     try:
         from .blender import scene_bridge
 
-        scene_bridge.request_scene_update(scene, action, reason)
+        scene_bridge.request_scene_update(scene, action)
     except Exception as exc:  # noqa: BLE001 - property callbacks must be safe
         try:
             scene.fluidsim.status = f"Settings changed; auto-update failed: {exc}"
@@ -136,27 +136,39 @@ def _request_scene_update(context, action: str, reason: str):
 
 
 def _request_rebuild(self, context):
-    _request_scene_update(context, "REBUILD", "Solver allocation changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.REBUILD)
 
 
 def _request_reset(self, context):
-    _request_scene_update(context, "RESET", "Simulation settings changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.RESET)
 
 
 def _request_sync(self, context):
-    _request_scene_update(context, "SYNC", "Scene source settings changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.SYNC)
 
 
 def _request_output_refresh(self, context):
-    _request_scene_update(context, "OUTPUT", "Viewport display settings changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.OUTPUT)
 
 
 def _request_surface_refresh(self, context):
-    _request_scene_update(context, "SURFACE", "Surface display settings changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.SURFACE)
 
 
 def _request_whitewater_refresh(self, context):
-    _request_scene_update(context, "WHITEWATER", "Whitewater display settings changed")
+    from .blender.scene_bridge import SceneUpdate
+
+    _request_scene_update(context, SceneUpdate.WHITEWATER)
 
 
 def _on_live_changed(self, context):

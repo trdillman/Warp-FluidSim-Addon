@@ -7,6 +7,7 @@ simulation during playback via frame-change handlers.
 
 from __future__ import annotations
 
+from enum import Enum
 import traceback
 
 import bpy
@@ -361,6 +362,27 @@ def _domain_bounds(scene) -> tuple:
     return (-2.0, -2.0, 0.0), (2.0, 2.0, 4.0)
 
 
+class SceneUpdate(str, Enum):
+    """Kinds of scene edits that can affect an active solver session."""
+
+    REBUILD = "REBUILD"
+    RESET = "RESET"
+    SYNC = "SYNC"
+    OUTPUT = "OUTPUT"
+    SURFACE = "SURFACE"
+    WHITEWATER = "WHITEWATER"
+
+
+_SCENE_UPDATE_REASONS = {
+    SceneUpdate.REBUILD: "Solver allocation changed",
+    SceneUpdate.RESET: "Simulation settings changed",
+    SceneUpdate.SYNC: "Scene source settings changed",
+    SceneUpdate.OUTPUT: "Viewport display settings changed",
+    SceneUpdate.SURFACE: "Surface display settings changed",
+    SceneUpdate.WHITEWATER: "Whitewater display settings changed",
+}
+
+
 _DIRECT_SETTING_FIELDS = (
     "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
     "domain_sdf_walls",
@@ -659,40 +681,44 @@ def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     return True
 
 
-def request_scene_update(scene, action: str, reason: str = ""):
+def request_scene_update(scene, action: SceneUpdate):
     """Apply property changes immediately where the live session allows it."""
     from . import viewport
 
     sess = session()
-    action = str(action or "").upper()
+    if not isinstance(action, SceneUpdate):
+        action = SceneUpdate(action)
+    reason = _SCENE_UPDATE_REASONS[action]
     if not sess.active:
         try:
-            if action in {"OUTPUT", "SURFACE", "WHITEWATER"}:
+            if action in {
+                SceneUpdate.OUTPUT,
+                SceneUpdate.SURFACE,
+                SceneUpdate.WHITEWATER,
+            }:
                 # Cache/export playback leaves Blender output objects behind
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.
                 viewport.refresh_existing_output_settings(scene)
-            scene.fluidsim.status = reason or "Settings changed"
+            scene.fluidsim.status = reason
         finally:
             _tag_view3d_redraw()
         return
 
-    if action == "REBUILD":
+    if action is SceneUpdate.REBUILD:
         initialize_session(scene)
-    elif action == "RESET":
+    elif action is SceneUpdate.RESET:
         reset_simulation(scene)
-    elif action == "SYNC":
+    elif action is SceneUpdate.SYNC:
         sync_scene_to_solver(scene, sess)
-    elif action == "SURFACE":
+    elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
         viewport.update_outputs(scene, sess, force_surface=True)
-    elif action == "WHITEWATER":
+    elif action is SceneUpdate.WHITEWATER:
         _apply_realtime_whitewater_settings(scene, sess)
         viewport.update_outputs(scene, sess)
-    elif action == "OUTPUT":
+    elif action is SceneUpdate.OUTPUT:
         viewport.update_outputs(scene, sess, force_surface=True)
-    else:
-        scene.fluidsim.status = reason or "Settings changed"
     _tag_view3d_redraw()
 
 
