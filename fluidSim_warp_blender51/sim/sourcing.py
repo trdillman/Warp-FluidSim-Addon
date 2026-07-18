@@ -26,6 +26,9 @@ the coreSourceOpenVDB* names map to the same wp.Volume sampling kernels.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import numpy as np
 import warp as wp
 
 wp.set_module_options({"enable_backward": False})
@@ -110,6 +113,97 @@ class SourceShape:
     life_min: wp.float32
     life_max: wp.float32
     use_lifespan: wp.int32
+
+
+@dataclass
+class SourceShapeDesc:
+    """Host description for one analytic source shape."""
+
+    enabled: bool = True
+    shape: int = 0
+    stype: int = 0
+    mode: int = 1
+    position: tuple = (0.0, 0.0, 0.0)
+    rotation: tuple = (0.0, 0.0, 0.0, 1.0)
+    half_extents: tuple = (0.5, 0.5, 0.5)
+    radius: float = 0.5
+    height: float = 0.5
+    feather: float = 0.0
+    velocity: tuple = (0.0, 0.0, 0.0)
+    linear_velocity: tuple = (0.0, 0.0, 0.0)
+    angular_velocity: tuple = (0.0, 0.0, 0.0)
+    blend_mode: int = 1
+    blend_amount: float = 1.0
+    force_type: int = 0
+    force_strength: float = 0.0
+    force_dir: tuple = (0.0, 0.0, 1.0)
+    emit_rate: float = 8.0
+    temperature: float = 0.0
+    viscosity: float = 0.0
+    density: float = 1.0
+    life_min: float = 1.0e30
+    life_max: float = 1.0e30
+    use_lifespan: bool = False
+
+    def aabb(self):
+        """Return a conservative world AABB for topology marking."""
+        radius = max(
+            self.radius,
+            self.height,
+            self.half_extents[0],
+            self.half_extents[1],
+            self.half_extents[2],
+        ) + max(self.feather, 0.0)
+        x, y, z = self.position
+        return ((x - radius, y - radius, z - radius),
+                (x + radius, y + radius, z + radius))
+
+    def to_struct(self):
+        shape = SourceShape()
+        shape.enabled = 1 if self.enabled else 0
+        shape.shape = int(self.shape)
+        shape.stype = int(self.stype)
+        shape.mode = int(self.mode)
+        rotation = wp.quat(*[float(value) for value in self.rotation])
+        shape.xform = wp.transform(
+            wp.vec3(*[float(value) for value in self.position]), rotation)
+        shape.inv_xform = wp.transform_inverse(shape.xform)
+        shape.half_extents = wp.vec3(
+            *[float(value) for value in self.half_extents])
+        shape.radius = float(self.radius)
+        shape.height = float(self.height)
+        shape.feather = float(self.feather)
+        shape.velocity = wp.vec3(*[float(value) for value in self.velocity])
+        shape.linear_velocity = wp.vec3(
+            *[float(value) for value in self.linear_velocity])
+        shape.angular_velocity = wp.vec3(
+            *[float(value) for value in self.angular_velocity])
+        shape.blend_mode = int(self.blend_mode)
+        shape.blend_amount = float(self.blend_amount)
+        shape.force_type = int(self.force_type)
+        shape.force_strength = float(self.force_strength)
+        shape.force_dir = wp.vec3(*[float(value) for value in self.force_dir])
+        shape.emit_rate = float(self.emit_rate)
+        shape.temperature = float(self.temperature)
+        shape.viscosity = float(self.viscosity)
+        shape.density = float(self.density)
+        shape.life_min = float(self.life_min)
+        shape.life_max = float(self.life_max)
+        shape.use_lifespan = 1 if self.use_lifespan else 0
+        return shape
+
+
+@dataclass
+class HeightSourceDesc:
+    """Host description for the optional height-field source."""
+
+    enabled: bool = False
+    base_height: float = 0.0
+    back_mode: int = 1
+    velocity: tuple = (0.0, 0.0, 0.0)
+    profile: object = None
+    emit_particles: bool = True
+    emit_rate: float = 8.0
 
 
 @wp.func
@@ -1023,3 +1117,204 @@ def k_source_volume_mask_sdf(
 
 register_fn(k_source_volume_mask_sdf, "coreSourceNanoVDBMaskSDF",
             notes="SDF volume inside test -> voxel-type mask bit.")
+
+
+class SourcePipeline:
+    """Own source state and the complete source-launch transaction."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.device = owner.device
+        self.sources: list[SourceShapeDesc] = []
+        self.height_source = HeightSourceDesc()
+        self._shape_array = None
+        self._emit_shape_array = None
+        self._emit_shape_key = None
+        self._height_profile = wp.zeros(
+            (2, 2), dtype=float, device=self.device)
+        self._height_profile_res = (2, 2)
+        self._emit_seed = 12345
+        self._first_slot_dev = wp.zeros(
+            1, dtype=wp.int32, device=self.device)
+
+    def set_sources(self, sources):
+        self.sources = list(sources)
+        self._shape_array = None
+        self._emit_shape_array = None
+        self._emit_shape_key = None
+
+    def set_height_source(self, desc):
+        desc = HeightSourceDesc() if desc is None else desc
+        self.height_source = desc
+        self._emit_shape_array = None
+        self._emit_shape_key = None
+        if desc.profile is not None:
+            profile = np.ascontiguousarray(desc.profile, dtype=np.float32)
+            self._height_profile = wp.array(
+                profile, dtype=float, device=self.device)
+            self._height_profile_res = profile.shape
+        else:
+            self._height_profile_res = (2, 2)
+
+    def _shapes(self):
+        if self._shape_array is None:
+            structs = [source.to_struct() for source in self.sources]
+            if not structs:
+                structs = [SourceShapeDesc(enabled=False).to_struct()]
+            self._shape_array = wp.array(
+                structs, dtype=SourceShape, device=self.device)
+        return self._shape_array
+
+    def apply(self, dt):
+        owner = self.owner
+        grid = owner.grid
+        settings = owner.settings
+        shapes = self._shapes()
+        shape_count = len(self.sources)
+
+        if shape_count:
+            wp.launch(
+                k_source_shapes, dim=owner._nvox,
+                inputs=[shapes, shape_count, grid.leaf_coords, grid.num_leaves,
+                        grid.origin, settings.voxel_size, dt],
+                outputs=[owner.voxel_type.data, owner.collision_sdf.data,
+                         owner.collision_vel, owner.vel.u, owner.vel.v,
+                         owner.vel.w, owner.temperature.data,
+                         owner.viscosity_field.data],
+                device=self.device,
+            )
+
+        height = self.height_source
+        if height.enabled:
+            profile_res = wp.vec2i(
+                int(self._height_profile_res[0]),
+                int(self._height_profile_res[1]),
+            )
+            wp.launch(
+                k_source_height, dim=owner._nvox,
+                inputs=[grid.leaf_coords, grid.num_leaves, grid.origin,
+                        settings.voxel_size, height.base_height,
+                        int(height.back_mode), self._height_profile, profile_res,
+                        wp.vec3(*settings.domain_min),
+                        wp.vec3(*settings.domain_max),
+                        wp.vec3(*height.velocity)],
+                outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v,
+                         owner.vel.w],
+                device=self.device,
+            )
+
+        wp.launch(
+            k_source_resolve_type, dim=owner._nvox,
+            inputs=[owner.voxel_type.data, grid.num_leaves],
+            device=self.device,
+        )
+
+        self._emit_seed = (
+            self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+        emit_shapes = shape_count > 0 and any(
+            source.enabled and source.stype == 0 and source.mode == 1
+            for source in self.sources
+        )
+        emit_height = height.enabled and height.emit_particles
+        particles = owner.particles
+        if ((emit_shapes or emit_height)
+                and particles.host_count < particles.capacity):
+            emit_count = shape_count
+            if emit_height:
+                domain_min = settings.domain_min
+                domain_max = settings.domain_max
+                key = (
+                    shape_count,
+                    height.base_height,
+                    tuple(height.velocity),
+                    height.emit_rate,
+                    tuple(domain_min),
+                    tuple(domain_max),
+                )
+                if (self._emit_shape_array is None
+                        or self._emit_shape_key != key):
+                    center_z = (domain_min[2] + height.base_height) * 0.5
+                    half_z = max(
+                        (height.base_height - domain_min[2]) * 0.5, 0.0)
+                    emit_sources = list(self.sources)
+                    emit_sources.append(SourceShapeDesc(
+                        enabled=True,
+                        shape=2,
+                        stype=0,
+                        mode=1,
+                        position=(
+                            (domain_min[0] + domain_max[0]) * 0.5,
+                            (domain_min[1] + domain_max[1]) * 0.5,
+                            center_z,
+                        ),
+                        half_extents=(
+                            (domain_max[0] - domain_min[0]) * 0.5,
+                            (domain_max[1] - domain_min[1]) * 0.5,
+                            half_z,
+                        ),
+                        velocity=tuple(height.velocity),
+                        emit_rate=height.emit_rate,
+                    ))
+                    self._emit_shape_array = wp.array(
+                        [source.to_struct() for source in emit_sources],
+                        dtype=SourceShape,
+                        device=self.device,
+                    )
+                    self._emit_shape_key = key
+                shapes = self._emit_shape_array
+                emit_count = shape_count + 1
+
+            wp.launch(
+                k_source_shapes_particles, dim=owner._nvox,
+                inputs=[shapes, emit_count, grid.leaf_coords, grid.num_leaves,
+                        grid.origin, settings.voxel_size,
+                        owner.voxel_counts.data, self._emit_seed,
+                        particles.capacity],
+                outputs=[particles.position, particles.velocity,
+                         particles.attr("age"), particles.attr("life"),
+                         particles.attr("temperature"),
+                         particles.attr("viscosity"),
+                         particles.attr("density"), particles.time_offset,
+                         particles.alive, particles.count],
+                device=self.device,
+            )
+            particles.refresh_host_count()
+            return True
+        return False
+
+    def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
+                         velocities=None, temperature=0.0, viscosity=0.0,
+                         density=1.0, life=0.0, use_lifespan=False):
+        """Append external world-space points as liquid particles."""
+        points = np.ascontiguousarray(positions, dtype=np.float32)
+        count = len(points)
+        if count == 0:
+            return 0
+
+        source_positions = wp.array(
+            points, dtype=wp.vec3, device=self.device)
+        if velocities is None:
+            velocities = np.tile(
+                np.asarray(velocity, dtype=np.float32), (count, 1))
+        else:
+            velocities = np.ascontiguousarray(
+                velocities, dtype=np.float32)
+        source_velocities = wp.array(
+            velocities, dtype=wp.vec3, device=self.device)
+
+        particles = self.owner.particles
+        wp.launch(
+            k_source_particles, dim=count,
+            inputs=[source_positions, source_velocities, count, float(life),
+                    1 if use_lifespan else 0, float(temperature),
+                    float(viscosity), float(density), particles.capacity,
+                    particles.position, particles.velocity,
+                    particles.attr("age"), particles.attr("life"),
+                    particles.attr("temperature"),
+                    particles.attr("viscosity"), particles.attr("density"),
+                    particles.time_offset, particles.alive, particles.count,
+                    self._first_slot_dev],
+            device=self.device,
+        )
+        self.owner._host_frame_cache = None
+        return particles.refresh_host_count()
