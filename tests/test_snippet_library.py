@@ -1,8 +1,7 @@
 """Unit tests for the snippet library: presets, validation, auto-fix,
 shortcuts, and user-preset persistence.
 
-Pure-python module tests (no bpy, no warp) plus a small warp-optional
-section covering the sim-side frame gating.
+Bpy-free lifecycle tests plus runtime compilation and launch checks.
 """
 
 import os
@@ -14,7 +13,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from fluidSim_warp_blender51.sim import snippet_library as lib  # noqa: E402
+from fluidSim_warp_blender51.sim import custom as lib  # noqa: E402
 
 
 def _preset_arg_names(preset):
@@ -22,6 +21,13 @@ def _preset_arg_names(preset):
     for arg in preset.arguments:
         names.append(arg["field"] if arg["mode"] == "FIELD" else arg["name"])
     return names
+
+
+def test_legacy_module_reexports_consolidated_lifecycle():
+    from fluidSim_warp_blender51.sim import snippet_library as legacy
+
+    assert legacy.validate_snippet is lib.validate_snippet
+    assert legacy.SnippetManager is lib.SnippetManager
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +312,9 @@ def test_snippet_manager_rejects_invalid_before_compile():
         kernel_name="bad_import", code="import os",
         order=CustomKernelOrder.FINAL_STEP,
         run_over=CustomKernelRunOver.PARTICLES)
+    issues = lib.validate_snippet(
+        bad.code, bad.run_over.name, bad.argument_names())
+    assert any(issue.level == "ERROR" for issue in issues)
     good = CustomSnippet(
         kernel_name="good_damp",
         code="particle_velocity[particle_index] = velocity * 0.5",
