@@ -35,17 +35,17 @@ fluidSim_warp_blender51/
 │   ├── enums.py             IntEnum mirrors of synthesized tables
 │   ├── fields.py            SparseGrid / ScalarField / MacVelocityField
 │   ├── particles.py         ParticleSystem / ParticleBins
-│   ├── pressure.py          PressureSolver (Jacobi / PCG)
+│   ├── pressure.py          PressureSolver frame projection transaction
 │   ├── viscosity.py         ViscositySolver
 │   ├── surface.py           SDF build / smoothing / marching cubes
 │   ├── whitewater.py        churn / emit / advect whitewater kernels
-│   ├── sourcing.py          source shapes, height source, particle inject
+│   ├── sourcing.py          SourcePipeline state + launch transaction
 │   ├── kernels_core.py      core kernels (registered)
 │   ├── kernels_fluid.py     fluid kernels (registered)
 │   ├── solver.py            FluidSolver + SolverSettings orchestration
 │   ├── validation.py        15-test GPU validation suite
 │   ├── registry.py          KERNEL_REGISTRY dispatch contract
-│   └── custom.py            custom Warp snippet manager
+│   └── custom.py            complete custom Warp snippet lifecycle
 ├── diagnostics/             bpy-free
 │   ├── profiler.py          fluidSim_profiler::1.0
 │   ├── benchmark.py         deterministic benchmark + comparison
@@ -122,6 +122,11 @@ Per display frame, substeps are chosen by CFL
 | — | whitewater (12) | churn, emit, advect, grid density |
 | — | `FINAL_STEP` custom hook | snippet run |
 
+`SourcePipeline.apply(dt)` owns the sourcing phase's state, cached Warp
+arrays, launch order, emission seed, and post-growth particle-count refresh.
+`FluidSolver` retains its public source setters and injection entry point as
+thin delegation to that Module.
+
 After substeps: `wp.synchronize_device`, `frame += 1`, `FrameStats` populated
 from host-read counts; profiler timers collected.
 
@@ -130,6 +135,9 @@ from host-read counts; profiler timers collected.
 ## 4. Pressure & Viscosity Solvers
 
 ### Pressure (`sim/pressure.py`, `PressureSolver`)
+- **`project_frame` is the authoritative Interface** for RHS construction,
+  Jacobi/PCG and space-time selection, convergence handling, thresholding,
+  safe projection, and the status returned to `FluidSolver`.
 - **RHS build** from MAC divergence, with collision velocities and an optional
   `count_stiffness` anti-clumping term (rest count = `particles_per_voxel`).
 - **Preconditioner** built from the voxel-type mask.
@@ -203,6 +211,9 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 
 Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
 
+- **One lifecycle Module:** validation, conservative autofix, presets,
+  shortcuts, persistence, compilation, runtime grouping, and launch all live
+  in `sim/custom.py`; Blender callers use that Interface directly.
 - **Five order slots** (`CustomKernelOrder`): `FIRST_STEP`, `BEFORE_SOURCING`,
   `BEFORE_FORCES`, `BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION`, `FINAL_STEP`.
   All snippets in a slot run in declaration order (the original tool stopped
@@ -244,7 +255,9 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   colors and material diffuse colors are also written for Solid viewport
   legibility without changing the user's global viewport shading mode.
 - **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
-  bridge for realtime UI edits. Surface radius/dilate/erode/smooth changes
+  bridge for realtime UI edits. Its `SceneUpdate` enum owns the supported
+  actions and default status reasons, so property callbacks do not exchange
+  raw dispatcher strings. Surface radius/dilate/erode/smooth changes
   push into the active solver, rebuild the current-frame surface SDF, invalidate
   the cached mesh, and refresh output datablocks without advancing playback.
   Inactive output/cache objects receive visibility/material refreshes only;

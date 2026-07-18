@@ -622,7 +622,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
 
     def execute(self, context):
         from .properties import user_snippet_dir
-        from .sim import snippet_library
+        from .sim import custom
 
         fs = context.scene.fluidsim
         selection = fs.snippet_library_selection
@@ -631,11 +631,11 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
             return {"CANCELLED"}
 
         if selection.startswith("EX:"):
-            preset = snippet_library.preset_by_id(selection[3:])
+            preset = custom.preset_by_id(selection[3:])
             if preset is None:
                 self.report({"ERROR"}, f"Unknown preset '{selection}'")
                 return {"CANCELLED"}
-            data = snippet_library.preset_to_dict(
+            data = custom.preset_to_dict(
                 preset.label, preset.description, preset.order,
                 preset.run_over, preset.code, preset.arguments,
                 preset.frame_start, preset.frame_end, preset.frame_step)
@@ -645,7 +645,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
 
             path = os.path.join(user_snippet_dir(), selection[4:])
             found = [d for d in
-                     snippet_library.load_user_presets(user_snippet_dir())
+                     custom.load_user_presets(user_snippet_dir())
                      if d.get("_path") == path]
             if not found:
                 self.report({"ERROR"}, "Saved snippet not found on disk")
@@ -661,7 +661,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
         pg.frame_start = int(data.get("frame_start", 0))
         pg.frame_end = int(data.get("frame_end", 0))
         pg.frame_step = int(data.get("frame_step", 1))
-        for arg in data.get("arguments", ()):  # dicts from snippet_library
+        for arg in data.get("arguments", ()):  # serialized snippet arguments
             apg = pg.arguments.add()
             if arg.get("mode") == "CONSTANT":
                 apg.mode = "CONSTANT"
@@ -716,14 +716,14 @@ class FLUIDSIM_OT_snippet_autofix(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        from .sim import snippet_library
+        from .sim import custom
 
         pg = _active_snippet(context)
         if pg is None:
             self.report({"ERROR"}, "No active snippet")
             return {"CANCELLED"}
         code = _snippet_code(pg)
-        fixed, fixes = snippet_library.autofix_snippet(code)
+        fixed, fixes = custom.autofix_snippet(code)
         if fixed != code:
             _set_snippet_code(pg, fixed)
         bridge = _bridge()
@@ -786,7 +786,7 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
 
     def execute(self, context):
         from .properties import user_snippet_dir
-        from .sim import snippet_library
+        from .sim import custom
 
         pg = _active_snippet(context)
         if pg is None:
@@ -800,13 +800,12 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
                              "value": apg.constant_value})
             else:
                 args.append({"mode": "FIELD", "field": apg.field})
-        data = snippet_library.preset_to_dict(
+        data = custom.preset_to_dict(
             self.preset_name or pg.kernel_name,
             pg.description or "User snippet",
             pg.order, pg.run_over, _snippet_code(pg), args,
             pg.frame_start, pg.frame_end, pg.frame_step)
-        path = snippet_library.save_user_preset(user_snippet_dir(create=True),
-                                                data)
+        path = custom.save_user_preset(user_snippet_dir(create=True), data)
         self.report({"INFO"}, f"Saved: {path}")
         return {"FINISHED"}
 
@@ -821,13 +820,13 @@ class FLUIDSIM_OT_snippet_insert_shortcut(bpy.types.Operator):
     shortcut_id: StringProperty()
 
     def execute(self, context):
-        from .sim import snippet_library
+        from .sim import custom
 
         pg = _active_snippet(context)
         if pg is None:
             self.report({"ERROR"}, "No active snippet")
             return {"CANCELLED"}
-        shortcut = snippet_library.shortcut_by_id(self.shortcut_id)
+        shortcut = custom.shortcut_by_id(self.shortcut_id)
         if shortcut is None:
             self.report({"ERROR"}, f"Unknown shortcut '{self.shortcut_id}'")
             return {"CANCELLED"}

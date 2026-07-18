@@ -17,10 +17,6 @@ import re
 import textwrap
 from dataclasses import dataclass, field as dc_field
 
-import warp as wp
-
-wp.set_module_options({"enable_backward": False})
-
 from . import constants as C
 from .enums import (
     CustomKernelOrder,
@@ -955,6 +951,8 @@ class CompiledSnippet:
     def launch(self, solver, time_ctx):
         if self.kernel is None:
             return
+        import warp as wp
+
         sn = self.snippet
         extra_inputs = []
         for kind, binder in self._binders:

@@ -2,7 +2,7 @@
 
 Scene-level settings drive the solver; object-level settings tag scene
 objects as sources / colliders / sinks. Property definitions import only
-``sim.enums`` (pure python) so registration never touches Warp/CUDA.
+pure enum and snippet metadata so registration never touches Warp/CUDA.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from bpy.props import (
     StringProperty,
 )
 
-from .sim import snippet_library
+from .sim import custom
 from .sim.enums import (
     BlendMode,
     CustomKernelConstantType,
@@ -227,7 +227,7 @@ def _snippet_library_items(self, context):
 
     items = []
     by_cat = {}
-    for preset in snippet_library.EXAMPLE_PRESETS:
+    for preset in custom.EXAMPLE_PRESETS:
         by_cat.setdefault(preset.category, []).append(preset)
     for cat in _LIBRARY_CATEGORY_ORDER:
         presets = by_cat.pop(cat, None)
@@ -240,7 +240,7 @@ def _snippet_library_items(self, context):
         items.append(("", cat, ""))
         for p in by_cat[cat]:
             items.append((f"EX:{p.preset_id}", p.label, p.description))
-    user_presets = snippet_library.load_user_presets(user_snippet_dir())
+    user_presets = custom.load_user_presets(user_snippet_dir())
     if user_presets:
         items.append(("", "My Snippets", ""))
         for data in user_presets:
@@ -252,7 +252,7 @@ def _snippet_library_items(self, context):
 
 
 _SHORTCUT_FIELD_ITEMS = [
-    (name, name, f"Solver field '{name}'") for name in snippet_library.KNOWN_FIELDS
+    (name, name, f"Solver field '{name}'") for name in custom.KNOWN_FIELDS
 ]
 
 

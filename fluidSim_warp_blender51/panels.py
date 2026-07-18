@@ -445,10 +445,10 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
 
 def _snippet_state_icon(snip):
     """Icon reflecting validation state of a snippet's current source."""
-    from .sim import snippet_library
+    from .sim import custom
 
     code = snip.text_block.as_string() if snip.text_block else ""
-    if snip.validated_hash != snippet_library.code_hash(code):
+    if snip.validated_hash != custom.code_hash(code):
         return "QUESTION"          # edited since last validation
     return "CHECKMARK" if snip.is_valid else "ERROR"
 
@@ -575,7 +575,7 @@ class FLUIDSIM_PT_snippet_shortcuts(FluidSimPanel, bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        from .sim import snippet_library
+        from .sim import custom
 
         layout = self.layout
         fs = context.scene.fluidsim
@@ -597,7 +597,7 @@ class FLUIDSIM_PT_snippet_shortcuts(FluidSimPanel, bpy.types.Panel):
 
         # One-click code shortcuts grouped by category.
         grouped = {}
-        for shortcut in snippet_library.shortcuts_for(snip.run_over):
+        for shortcut in custom.shortcuts_for(snip.run_over):
             grouped.setdefault(shortcut.category, []).append(shortcut)
         for category in ("Context", "Time", "Math", "Constants"):
             shortcuts = grouped.pop(category, None)

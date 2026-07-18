@@ -518,14 +518,14 @@ def validate_snippet_pg(pg):
     Updates ``is_valid`` / ``validated_hash`` / ``validation_report`` /
     ``last_error`` on the property group and returns the list of issues.
     """
-    from ..sim import snippet_library
+    from ..sim import custom
 
     code = pg.text_block.as_string() if pg.text_block else ""
-    issues = snippet_library.validate_snippet(
+    issues = custom.validate_snippet(
         code, pg.run_over, snippet_argument_names(pg))
     errors = [i for i in issues if i.level == "ERROR"]
     pg.is_valid = not errors
-    pg.validated_hash = snippet_library.code_hash(code)
+    pg.validated_hash = custom.code_hash(code)
     pg.validation_report = "\n".join(str(i) for i in issues)[:1024]
     if errors:
         pg.last_error = str(errors[0])[:256]

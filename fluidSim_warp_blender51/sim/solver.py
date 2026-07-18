@@ -56,13 +56,7 @@ from .surface import (
     k_expand_shift_axis_velocity_in_collider,
     SurfacePipeline,
 )
-from .sourcing import (
-    SourceShape,
-    k_source_shapes,
-    k_source_shapes_particles,
-    k_source_height,
-    k_source_resolve_type,
-)
+from .sourcing import HeightSourceDesc, SourcePipeline, SourceShapeDesc
 from .kernels_core import (
     k_particle_to_grid_collect,
     k_particle_to_grid_average,
@@ -326,73 +320,6 @@ def k_sanitize_particles(
 
 
 @dataclass
-class SourceShapeDesc:
-    enabled: bool = True
-    shape: int = 0            # SourceShapeShape
-    stype: int = 0            # SourceShapeType
-    mode: int = 1             # SourceShapeSourceMode (default Particles)
-    position: tuple = (0.0, 0.0, 0.0)
-    rotation: tuple = (0.0, 0.0, 0.0, 1.0)   # quaternion xyzw
-    half_extents: tuple = (0.5, 0.5, 0.5)
-    radius: float = 0.5
-    height: float = 0.5
-    feather: float = 0.0
-    velocity: tuple = (0.0, 0.0, 0.0)
-    linear_velocity: tuple = (0.0, 0.0, 0.0)
-    angular_velocity: tuple = (0.0, 0.0, 0.0)
-    blend_mode: int = 1
-    blend_amount: float = 1.0
-    force_type: int = 0
-    force_strength: float = 0.0
-    force_dir: tuple = (0.0, 0.0, 1.0)
-    emit_rate: float = 8.0
-    temperature: float = 0.0
-    viscosity: float = 0.0
-    density: float = 1.0
-    life_min: float = 1.0e30
-    life_max: float = 1.0e30
-    use_lifespan: bool = False
-
-    def aabb(self):
-        """Conservative world AABB used for topology marking."""
-        r = max(self.radius, self.height,
-                self.half_extents[0], self.half_extents[1], self.half_extents[2])
-        r = r + max(self.feather, 0.0)
-        p = self.position
-        return ((p[0] - r, p[1] - r, p[2] - r), (p[0] + r, p[1] + r, p[2] + r))
-
-    def to_struct(self):
-        s = SourceShape()
-        s.enabled = 1 if self.enabled else 0
-        s.shape = int(self.shape)
-        s.stype = int(self.stype)
-        s.mode = int(self.mode)
-        q = wp.quat(*[float(x) for x in self.rotation])
-        s.xform = wp.transform(wp.vec3(*[float(x) for x in self.position]), q)
-        s.inv_xform = wp.transform_inverse(s.xform)
-        s.half_extents = wp.vec3(*[float(x) for x in self.half_extents])
-        s.radius = float(self.radius)
-        s.height = float(self.height)
-        s.feather = float(self.feather)
-        s.velocity = wp.vec3(*[float(x) for x in self.velocity])
-        s.linear_velocity = wp.vec3(*[float(x) for x in self.linear_velocity])
-        s.angular_velocity = wp.vec3(*[float(x) for x in self.angular_velocity])
-        s.blend_mode = int(self.blend_mode)
-        s.blend_amount = float(self.blend_amount)
-        s.force_type = int(self.force_type)
-        s.force_strength = float(self.force_strength)
-        s.force_dir = wp.vec3(*[float(x) for x in self.force_dir])
-        s.emit_rate = float(self.emit_rate)
-        s.temperature = float(self.temperature)
-        s.viscosity = float(self.viscosity)
-        s.density = float(self.density)
-        s.life_min = float(self.life_min)
-        s.life_max = float(self.life_max)
-        s.use_lifespan = 1 if self.use_lifespan else 0
-        return s
-
-
-@dataclass
 class ColliderDesc:
     mesh: object = None            # wp.Mesh with world-space points
     linear_velocity: tuple = (0.0, 0.0, 0.0)
@@ -402,17 +329,6 @@ class ColliderDesc:
     aabb_max: tuple = (0.0, 0.0, 0.0)
     friction: float = 0.0
     restitution: float = 0.0
-
-
-@dataclass
-class HeightSourceDesc:
-    enabled: bool = False
-    base_height: float = 0.0
-    back_mode: int = 1             # SourceHeightBackMode
-    velocity: tuple = (0.0, 0.0, 0.0)
-    profile: object = None         # optional 2D numpy array
-    emit_particles: bool = True
-    emit_rate: float = 8.0
 
 
 @dataclass
@@ -618,29 +534,19 @@ class FluidSolver:
 
         self.pressure_solver = PressureSolver(g, self.device)
         self.viscosity_solver = ViscositySolver(g, self.device)
+        self.sourcing = SourcePipeline(self)
         self.surface = SurfacePipeline(self)
         self._host_frame_cache = None
         self.snippets = SnippetManager()
 
-        self.sources: list[SourceShapeDesc] = []
         self.colliders: list[ColliderDesc] = []
-        self.height_source = HeightSourceDesc()
-        self._shape_array = None
-        # Cached particle-emission shape array (sources + derived height box).
-        # Rebuilt only when sources/height/domain change instead of once per
-        # substep (host alloc + H2D upload).
-        self._emit_shape_array = None
-        self._emit_shape_key = None
-        self._height_profile = wp.zeros((2, 2), dtype=float, device=self.device)
-        self._height_profile_res = (2, 2)
 
         self.max_speed_dev = wp.zeros(1, dtype=float, device=self.device)
-        self.first_slot_dev = wp.zeros(1, dtype=wp.int32, device=self.device)
 
         self.frame = 0
         self.sim_time = 0.0
         self.stats = FrameStats()
-        self._emit_seed = 12345
+        self._whitewater_emit_seed = 12345
         self._st_step_seed = int(settings.spacetime_seed) & 0x7FFFFFFF
         self._st_previous_dt = 0.0
         reference_mass = float(getattr(settings, "spacetime_reference_mass", 0.0))
@@ -659,24 +565,21 @@ class FluidSolver:
     # -- host configuration -------------------------------------------------
 
     def set_sources(self, sources):
-        self.sources = list(sources)
-        self._shape_array = None
-        self._emit_shape_array = None
+        self.sourcing.set_sources(sources)
 
     def set_colliders(self, colliders):
         self.colliders = list(colliders)
 
     def set_height_source(self, desc):
-        if desc is None:
-            desc = HeightSourceDesc()  # disabled by default
-        self.height_source = desc
-        self._emit_shape_array = None
-        if desc.profile is not None:
-            arr = np.ascontiguousarray(desc.profile, dtype=np.float32)
-            self._height_profile = wp.array(arr, dtype=float, device=self.device)
-            self._height_profile_res = arr.shape
-        else:
-            self._height_profile_res = (2, 2)
+        self.sourcing.set_height_source(desc)
+
+    @property
+    def sources(self):
+        return self.sourcing.sources
+
+    @property
+    def height_source(self):
+        return self.sourcing.height_source
 
     def set_custom_snippets(self, snippets):
         self.snippets.set_snippets(snippets)
@@ -719,6 +622,11 @@ class FluidSolver:
                 surface.render_extractor.reset_buffers()
             surface.solver = None
         self.surface = None
+
+        sourcing = getattr(self, "sourcing", None)
+        if sourcing is not None:
+            sourcing.owner = None
+        self.sourcing = None
 
     # -- active-work launch bounds -------------------------------------------
 
@@ -776,12 +684,6 @@ class FluidSolver:
             )
             return p._position2
         return p.position
-
-    def _shapes(self):
-        if self._shape_array is None:
-            structs = [s.to_struct() for s in self.sources] or [SourceShapeDesc(enabled=False).to_struct()]
-            self._shape_array = wp.array(structs, dtype=SourceShape, device=self.device)
-        return self._shape_array
 
     # -- profiling helper ----------------------------------------------------
 
@@ -914,91 +816,7 @@ class FluidSolver:
         )
 
     def _source(self, dt):
-        g = self.grid
-        s = self.settings
-        shapes = self._shapes()
-        n_shapes = len(self.sources) if self.sources else 0
-
-        if n_shapes:
-            wp.launch(
-                k_source_shapes, dim=self._nvox,
-                inputs=[shapes, n_shapes, g.leaf_coords, g.num_leaves,
-                        g.origin, s.voxel_size, dt],
-                outputs=[self.voxel_type.data, self.collision_sdf.data,
-                         self.collision_vel, self.vel.u, self.vel.v, self.vel.w,
-                         self.temperature.data, self.viscosity_field.data],
-                device=self.device,
-            )
-
-        hs = self.height_source
-        if hs.enabled:
-            prof_res = wp.vec2i(int(self._height_profile_res[0]),
-                                int(self._height_profile_res[1]))
-            wp.launch(
-                k_source_height, dim=self._nvox,
-                inputs=[g.leaf_coords, g.num_leaves, g.origin, s.voxel_size,
-                        hs.base_height, int(hs.back_mode),
-                        self._height_profile, prof_res,
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                        wp.vec3(*hs.velocity)],
-                outputs=[self.voxel_type.data, self.vel.u, self.vel.v, self.vel.w],
-                device=self.device,
-            )
-
-        wp.launch(
-            k_source_resolve_type, dim=self._nvox,
-            inputs=[self.voxel_type.data, g.num_leaves], device=self.device,
-        )
-
-        # Particle emission (top-up to emit_rate per voxel inside shapes).
-        self._emit_seed = (self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
-        emit_shapes = n_shapes > 0 and any(
-            src.enabled and src.stype == 0 and src.mode == 1 for src in self.sources
-        )
-        height_particles = hs.enabled and hs.emit_particles
-        p = self.particles
-        if (emit_shapes or height_particles) and p.host_count < p.capacity:
-            n_emit = n_shapes
-            if height_particles:
-                dmin = s.domain_min
-                dmax = s.domain_max
-                key = (n_shapes, hs.base_height, tuple(hs.velocity),
-                       hs.emit_rate, tuple(dmin), tuple(dmax))
-                if self._emit_shape_array is None or self._emit_shape_key != key:
-                    cz = (dmin[2] + hs.base_height) * 0.5
-                    hz = max((hs.base_height - dmin[2]) * 0.5, 0.0)
-                    all_shapes = list(self.sources)
-                    all_shapes.append(SourceShapeDesc(
-                        enabled=True, shape=2, stype=0, mode=1,
-                        position=((dmin[0] + dmax[0]) * 0.5,
-                                  (dmin[1] + dmax[1]) * 0.5, cz),
-                        half_extents=((dmax[0] - dmin[0]) * 0.5,
-                                      (dmax[1] - dmin[1]) * 0.5, hz),
-                        velocity=tuple(hs.velocity), emit_rate=hs.emit_rate,
-                    ))
-                    self._emit_shape_array = wp.array(
-                        [sh.to_struct() for sh in all_shapes],
-                        dtype=SourceShape, device=self.device)
-                    self._emit_shape_key = key
-                shapes = self._emit_shape_array
-                n_emit = n_shapes + 1
-            wp.launch(
-                k_source_shapes_particles, dim=self._nvox,
-                inputs=[shapes, n_emit, g.leaf_coords, g.num_leaves,
-                        g.origin, s.voxel_size, self.voxel_counts.data,
-                        self._emit_seed, p.capacity],
-                outputs=[p.position, p.velocity, p.attr("age"), p.attr("life"),
-                         p.attr("temperature"), p.attr("viscosity"),
-                         p.attr("density"), p.time_offset, p.alive, p.count],
-                device=self.device,
-            )
-            # Refresh the host-side particle bound after device-side growth
-            # (one 4-byte readback per emitting substep) so subsequent
-            # particle launches cover the newly emitted range without
-            # dispatching the full allocation capacity.
-            p.refresh_host_count()
-            return True
-        return False
+        return self.sourcing.apply(dt)
 
     def _calibrate_st_reference_mass(self):
         """Monte Carlo estimate of the ST phase reference mass m0.
@@ -1213,71 +1031,20 @@ class FluidSolver:
 
     def _pressure(self, dt):
         s = self.settings
-        ps = self.pressure_solver
-        ps.build_rhs(self.vel, self.voxel_type.data, self.collision_vel,
-                     self.voxel_counts.data,
-                     rest_count=s.particles_per_voxel,
-                     count_stiffness=s.count_stiffness)
         st_projection = bool(s.spacetime_enabled and s.spacetime_variable_projection)
-        if st_projection:
-            ps.build_preconditioner_st(
-                self.voxel_type.data, self.vel,
-                reference_mass=self._st_reference_mass(),
-                eta_phi=s.spacetime_phase_eta,
-                rho_liquid=s.spacetime_liquid_density,
-                rho_gas=s.spacetime_gas_density,
-                eps_rho=s.spacetime_min_density,
-            )
-        else:
-            ps.build_preconditioner(self.voxel_type.data)
-        if int(s.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
-            if st_projection:
-                ps.solve_jacobi_st(
-                    self.voxel_type.data, s.pressure_iterations, self.vel,
-                    reference_mass=self._st_reference_mass(),
-                    eta_phi=s.spacetime_phase_eta,
-                    rho_liquid=s.spacetime_liquid_density,
-                    rho_gas=s.spacetime_gas_density,
-                    eps_rho=s.spacetime_min_density,
-                )
-            else:
-                ps.solve_jacobi(self.voxel_type.data, s.pressure_iterations)
-        else:
-            if st_projection:
-                ps.solve_pcg_st(
-                    self.voxel_type.data, s.pressure_iterations,
-                    s.pressure_tolerance, self.vel,
-                    reference_mass=self._st_reference_mass(),
-                    eta_phi=s.spacetime_phase_eta,
-                    rho_liquid=s.spacetime_liquid_density,
-                    rho_gas=s.spacetime_gas_density,
-                    eps_rho=s.spacetime_min_density,
-                )
-            else:
-                ps.solve_pcg(self.voxel_type.data, s.pressure_iterations,
-                             s.pressure_tolerance)
-        if not ps.should_project_pressure():
-            self.stats.pressure_iterations = ps.last_iterations
-            self.stats.pressure_residual = ps.last_residual
-            return False
-        if s.pressure_threshold > 0.0:
-            ps.apply_threshold(s.pressure_threshold)
-        if st_projection:
-            ps.project_st(
-                self.vel, self.voxel_type.data, self.collision_vel,
-                max_gradient=self._cfl_speed_limit(dt),
-                reference_mass=self._st_reference_mass(),
-                eta_phi=s.spacetime_phase_eta,
-                rho_liquid=s.spacetime_liquid_density,
-                rho_gas=s.spacetime_gas_density,
-                eps_rho=s.spacetime_min_density,
-            )
-        else:
-            ps.project(self.vel, self.voxel_type.data, self.collision_vel,
-                       max_gradient=self._cfl_speed_limit(dt))
-        self.stats.pressure_iterations = ps.last_iterations
-        self.stats.pressure_residual = ps.last_residual
-        return True
+        status = self.pressure_solver.project_frame(
+            self.vel,
+            self.voxel_type.data,
+            self.collision_vel,
+            self.voxel_counts.data,
+            s,
+            max_gradient=self._cfl_speed_limit(dt),
+            reference_mass=(self._st_reference_mass()
+                            if st_projection else None),
+        )
+        self.stats.pressure_iterations = status["iterations"]
+        self.stats.pressure_residual = status["residual"]
+        return bool(status["project_velocity"])
 
     def _collider_material_response(self):
         g = self.grid
@@ -1427,7 +1194,9 @@ class FluidSolver:
                     g.num_leaves, s.voxel_size, dt, s.churn_decay, s.churn_gain],
             outputs=[self.churn.data], device=self.device,
         )
-        self._emit_seed = (self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+        self._whitewater_emit_seed = (
+            self._whitewater_emit_seed * 1664525 + 1013904223
+        ) & 0x7FFFFFFF
         wp.launch(
             k_emit_whitewater, dim=self._np_dim(),
             inputs=[p.position, p.velocity, p.count,
@@ -1437,7 +1206,7 @@ class FluidSolver:
                     s.ww_churn_threshold, s.ww_emission_rate,
                     s.ww_surface_band * s.voxel_size, s.ww_min_speed,
                     s.ww_life_min, s.ww_life_max,
-                    self._emit_seed, ww.capacity],
+                    self._whitewater_emit_seed, ww.capacity],
             outputs=[ww.position, ww.velocity, ww.age, ww.life,
                      ww.alive, ww.count, ww.free_slots, ww.free_count],
             device=self.device,
@@ -1635,31 +1404,16 @@ class FluidSolver:
         ``positions``: (N,3) array-like. Optional per-particle ``velocities``
         override the constant ``velocity``. Uses fluidSimSourceParticles.
         """
-        from .sourcing import k_source_particles
-
-        pts = np.ascontiguousarray(positions, dtype=np.float32)
-        n = len(pts)
-        if n == 0:
-            return 0
-        src_pos = wp.array(pts, dtype=wp.vec3, device=self.device)
-        if velocities is not None:
-            vels = np.ascontiguousarray(velocities, dtype=np.float32)
-        else:
-            vels = np.tile(np.asarray(velocity, dtype=np.float32), (n, 1))
-        src_vel = wp.array(vels, dtype=wp.vec3, device=self.device)
-        p = self.particles
-        wp.launch(
-            k_source_particles, dim=n,
-            inputs=[src_pos, src_vel, n, float(life),
-                    1 if use_lifespan else 0, float(temperature),
-                    float(viscosity), float(density), p.capacity,
-                    p.position, p.velocity, p.attr("age"), p.attr("life"),
-                    p.attr("temperature"), p.attr("viscosity"),
-                    p.attr("density"), p.time_offset, p.alive, p.count, self.first_slot_dev],
-            device=self.device,
+        return self.sourcing.inject_particles(
+            positions,
+            velocity=velocity,
+            velocities=velocities,
+            temperature=temperature,
+            viscosity=viscosity,
+            density=density,
+            life=life,
+            use_lifespan=use_lifespan,
         )
-        self._host_frame_cache = None
-        return p.refresh_host_count()
 
     # -- output ---------------------------------------------------------------
 

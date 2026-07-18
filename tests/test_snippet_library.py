@@ -23,13 +23,6 @@ def _preset_arg_names(preset):
     return names
 
 
-def test_legacy_module_reexports_consolidated_lifecycle():
-    from fluidSim_warp_blender51.sim import snippet_library as legacy
-
-    assert legacy.validate_snippet is lib.validate_snippet
-    assert legacy.SnippetManager is lib.SnippetManager
-
-
 # ---------------------------------------------------------------------------
 # Example presets
 # ---------------------------------------------------------------------------
@@ -368,8 +361,7 @@ def _compiled_launch_probe(run_over):
 
 
 def test_particle_snippet_launch_uses_active_particle_dimension(monkeypatch):
-    pytest.importorskip("warp")
-    from fluidSim_warp_blender51.sim import custom
+    warp = pytest.importorskip("warp")
 
     seen = {}
 
@@ -377,7 +369,7 @@ def test_particle_snippet_launch_uses_active_particle_dimension(monkeypatch):
         seen["dim"] = dim
         seen["device"] = device
 
-    monkeypatch.setattr(custom.wp, "launch", fake_launch)
+    monkeypatch.setattr(warp, "launch", fake_launch)
     compiled = _compiled_launch_probe("PARTICLES")
     compiled.launch(
         _fake_solver_for_snippet_launch(),
@@ -389,8 +381,7 @@ def test_particle_snippet_launch_uses_active_particle_dimension(monkeypatch):
 
 
 def test_voxel_snippet_launch_uses_active_voxel_dimension(monkeypatch):
-    pytest.importorskip("warp")
-    from fluidSim_warp_blender51.sim import custom
+    warp = pytest.importorskip("warp")
 
     seen = {}
 
@@ -398,7 +389,7 @@ def test_voxel_snippet_launch_uses_active_voxel_dimension(monkeypatch):
         seen["dim"] = dim
         seen["device"] = device
 
-    monkeypatch.setattr(custom.wp, "launch", fake_launch)
+    monkeypatch.setattr(warp, "launch", fake_launch)
     compiled = _compiled_launch_probe("VOXEL_LINEAR")
     compiled.launch(
         _fake_solver_for_snippet_launch(),

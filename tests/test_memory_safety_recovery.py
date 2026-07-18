@@ -195,14 +195,18 @@ def test_solver_release_breaks_gpu_owning_backreferences():
     surface = SimpleNamespace(
         solver=solver, extractor=extractor, render_extractor=extractor)
     host_frame = SimpleNamespace(solver=solver)
+    sourcing = SimpleNamespace(owner=solver)
     solver.surface = surface
+    solver.sourcing = sourcing
     solver._host_frame_cache = host_frame
 
     solver.release()
 
     assert surface.solver is None
+    assert sourcing.owner is None
     assert host_frame.solver is None
     assert solver.surface is None
+    assert solver.sourcing is None
     assert solver._host_frame_cache is None
 
 

@@ -22,6 +22,7 @@ from fluidSim_warp_blender51.sim.solver import (
     _motion_leaf_radius,
 )
 from fluidSim_warp_blender51.sim.sourcing import (
+    SourcePipeline,
     SourceShape,
     k_source_shapes_particles,
 )
@@ -79,8 +80,6 @@ def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch)
     solver = SimpleNamespace(
         grid=SimpleNamespace(leaf_coords=None, num_leaves=None, origin=wp.vec3(0.0)),
         settings=SimpleNamespace(voxel_size=0.1),
-        sources=[SimpleNamespace(enabled=True, stype=0, mode=1)],
-        height_source=SimpleNamespace(enabled=False, emit_particles=False),
         particles=particles,
         voxel_type=SimpleNamespace(data=None),
         collision_sdf=SimpleNamespace(data=None),
@@ -90,11 +89,17 @@ def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch)
         viscosity_field=SimpleNamespace(data=None),
         device=None,
         _nvox=1,
+    )
+    pipeline = SimpleNamespace(
+        owner=solver,
+        device=None,
+        sources=[SimpleNamespace(enabled=True, stype=0, mode=1)],
+        height_source=SimpleNamespace(enabled=False, emit_particles=False),
         _shapes=lambda: None,
         _emit_seed=1,
     )
 
-    emitted = FluidSolver._source(solver, 1.0 / 24.0)
+    emitted = SourcePipeline.apply(pipeline, 1.0 / 24.0)
 
     assert emitted is False
     assert len(launches) == 2  # source field + source type resolve only
