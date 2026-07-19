@@ -5,6 +5,7 @@ Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements onl
 ## Verified workflows
 
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
+- To isolate the GUI lane, run `blender --factory-startup --python tests/blender_gui_acceptance.py`; validate a generated saved-demo playback report with `python tools/validate_gui_playback_report.py artifacts/gui_playback_probe.json`. These are non-background checks; the full gate wires the playback probe to `demos/dam_break.blend`.
 - For interactive playback performance changes, run `FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py` or the focused `blender --background --factory-startup --python tools/profile_user_path.py -- --frames 6 --voxel-size 0.08 --max-particles 200000 --collider-subdiv 2 --json-out artifacts/user_path_profile.json` profile.
 - Run the full Python regression suite with `python -m pytest -q`; use the production gate for Blender/CUDA/runtime changes because it invokes Blender 5.1's bundled Python and acceptance lanes.
 - For deep-module refactor or ownership changes, run `python -m pytest -q tests/test_sourcing_pipeline.py tests/test_pressure_projection_regressions.py tests/test_memory_safety_recovery.py tests/test_performance_hotpath_contracts.py tests/test_snippet_library.py` for the focused non-Blender contract lane.
