@@ -35,6 +35,8 @@ DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 FPS = 24
 STANDARD_CACHE_SCENES = ("dam_break", "crown_splash")
+DAM_BREAK_RELEASE_VELOCITY = (0.7, 0.0, 0.0)
+DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
 
 
 def log(msg):
@@ -224,6 +226,7 @@ def build_dam_break():
     fs.min_substeps = 1
     fs.max_substeps = 16
     fs.whitewater_enabled = True
+    fs.ww_churn_gain = DAM_BREAK_WHITEWATER_CHURN_GAIN
     fs.profiling_enabled = False
     fs.show_particles = True
     fs.show_surface = True
@@ -245,6 +248,7 @@ def build_dam_break():
     )
     src.location = (0.47105896, 0.0, 1.06185913)
     src.scale = (0.73273778, 1.70176971, 0.99442428)
+    src.fluidsim.initial_velocity = DAM_BREAK_RELEASE_VELOCITY
     src.display_type = "WIRE"
     src.hide_render = True
     bpy.ops.mesh.primitive_uv_sphere_add(
@@ -257,8 +261,11 @@ def build_dam_break():
     src.fluidsim.enabled = False  # preview bake uses direct particle injection
     bpy.ops.fluidsim.initialize()
     sess = session()
-    n = sess.solver.inject_particles(pts)
-    log(f"dam_break: injected {n:,} particles (H=1.2, a=0.6)")
+    n = sess.solver.inject_particles(pts, velocity=DAM_BREAK_RELEASE_VELOCITY)
+    log(
+        f"dam_break: injected {n:,} particles (H=1.2, a=0.6, "
+        f"release vx={DAM_BREAK_RELEASE_VELOCITY[0]:.1f})"
+    )
     add_camera_light(scene, (1.6, -4.4, 1.9), (1.30, 0.0, 0.0))
     run_scene("dam_break", 72)
     src.fluidsim.enabled = True
@@ -287,6 +294,8 @@ def build_dam_break():
         "fps": FPS,
         "spacing": 0.015,
         "injected": int(n),
+        "release_velocity": list(DAM_BREAK_RELEASE_VELOCITY),
+        "whitewater_churn_gain": DAM_BREAK_WHITEWATER_CHURN_GAIN,
         "source_object": src.name,
         "source_location": list(src.location),
         "source_scale": list(src.scale),
