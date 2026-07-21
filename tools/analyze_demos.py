@@ -35,6 +35,7 @@ CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 ANALYSIS_OUT = os.path.join(REPO, "artifacts", "demo_analysis")
 
 CHECKS = []
+MARTIN_MOSES_FRONT_POSITION_RANGE = (2.5, 4.0)
 
 
 def check(scene, name, passed, detail):
@@ -142,9 +143,11 @@ def analyze_dam_break():
     Z = fronts / a
     if (T >= 2).any():
         z_at_2 = float(np.interp(2.0, T, Z))
+        front_position_min, front_position_max = MARTIN_MOSES_FRONT_POSITION_RANGE
         check(name, "Martin-Moses front position at T=2",
-              2.0 <= z_at_2 <= 4.5,
-              f"Z(T=2) = {z_at_2:.2f} (experimental 2.5-4.0)")
+              front_position_min <= z_at_2 <= front_position_max,
+              f"Z(T=2) = {z_at_2:.2f} "
+              f"(experimental {front_position_min:.1f}-{front_position_max:.1f})")
     else:
         check(name, "Martin-Moses front position at T=2", False,
               "front never reached T=2")
