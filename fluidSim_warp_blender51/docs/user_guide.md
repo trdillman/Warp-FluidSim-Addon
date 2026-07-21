@@ -70,16 +70,28 @@ resolution and active/total leaves.
 (anti-clumping).
 
 ### Sources
-**Tag Source** / **Clear**, **Inject Object Particles** (inject the active
-object's points/vertices as liquid). Per-source settings: enabled, shape,
+**Tag Source** / **Clear**, **Inject Mesh Vertices Once** (one-shot injection
+of the active object's vertices). Per-source settings: enabled, geometry, shape,
 mode, emit rate, initial velocity, object-velocity inheritance, temperature,
 viscosity, lifespan. **Height Fill** (base height, back mode, velocity,
 particle emission). Lists all tagged sources/sinks/forces.
 
+The six analytic shapes remain available under **Geometry: Analytic**. Cone
+and Pyramid use their exact Euclidean boundary distance. **Geometry: Mesh**
+uses the tagged object's evaluated triangle mesh, or an optional referenced
+mesh object. Mesh sources emit from the triangle surface; **First Sim Frame**
+retains the evaluated snapshot until reset and **Every Sim Frame** refreshes
+animation, transforms, modifiers, and topology before each simulated frame.
+**Surface Band** controls the field/sink shell width; zero uses the bounded
+voxel-resolution shell. **Inject Mesh Vertices Once** is a separate one-shot
+compatibility utility and is not mesh emission.
+
 ### Colliders / Sinks
 **Tag Collider** / **Tag Sink**. Each collider owns its friction, restitution,
 and velocity-transfer settings; collision response uses the values stored on
-the collider whose SDF is hit. Lists colliders.
+the collider whose SDF is hit. Mesh sinks default to **Solid**, which requires a watertight
+mesh; **Surface** accepts open meshes and removes particles only in the shell.
+Lists colliders.
 
 ### Forces / Attraction
 Per-object force regions (tag a Source as a force). Force type

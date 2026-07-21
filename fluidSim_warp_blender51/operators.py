@@ -197,8 +197,8 @@ class FLUIDSIM_OT_step(bpy.types.Operator):
                 self.report({"ERROR"}, f"Solver initialization failed: {exc}")
                 return {"CANCELLED"}
         try:
-            bridge.sync_scene_to_solver(scene, sess)
             for _ in range(self.frames):
+                bridge.sync_scene_to_solver(scene, sess)
                 bridge.step_frame(scene, sess)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Step failed: {exc}")
@@ -337,10 +337,10 @@ class FLUIDSIM_OT_tag_object(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
-    """Inject the active object's points/vertices as liquid particles now"""
+    """Inject the active mesh's vertices once as a compatibility utility"""
 
     bl_idname = "fluidsim.inject_particles"
-    bl_label = "Inject Object Particles"
+    bl_label = "Inject Mesh Vertices Once"
 
     def execute(self, context):
         bridge = _bridge()

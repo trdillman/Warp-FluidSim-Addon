@@ -316,6 +316,10 @@ class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
 # ---------------------------------------------------------------------------
 
 
+def _mesh_object_poll(_settings, obj):
+    return getattr(obj, "type", None) == "MESH"
+
+
 class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     role: EnumProperty(
         name="Role",
@@ -333,11 +337,59 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     shape: EnumProperty(
         name="Shape", items=_items(SourceShapeShape), default="BOX",
         update=_request_sync,
-        description="Analytic emission shape (object transform applies)")
+        description=(
+            "Analytic emission shape with exact local Euclidean distance "
+            "and the object transform applied"
+        ))
     use_mesh_shape: BoolProperty(
         name="Use Mesh", default=False,
         update=_request_sync,
-        description="Sample the object's mesh volume (SDF) instead of an analytic shape")
+        description="Legacy compatibility flag; use Geometry = Mesh")
+    geometry_mode: EnumProperty(
+        name="Geometry",
+        items=[
+            ("ANALYTIC", "Analytic", "Use one of the six analytic source shapes"),
+            ("MESH", "Mesh", "Use evaluated triangle geometry"),
+        ],
+        default="ANALYTIC",
+        update=_request_sync,
+    )
+    mesh_object: PointerProperty(
+        name="Mesh Object",
+        type=bpy.types.Object,
+        poll=_mesh_object_poll,
+        update=_request_sync,
+        description="Optional mesh object; empty uses this tagged object's mesh",
+    )
+    mesh_evaluation_mode: EnumProperty(
+        name="Mesh Evaluation",
+        items=[
+            ("FIRST_SIM_FRAME", "First Sim Frame",
+             "Capture evaluated geometry on the first simulated frame and retain it until reset"),
+            ("EVERY_SIM_FRAME", "Every Sim Frame",
+             "Reevaluate modifiers, transforms, animation, and topology before every simulation frame"),
+        ],
+        default="FIRST_SIM_FRAME",
+        update=_request_reset,
+    )
+    mesh_surface_thickness: FloatProperty(
+        name="Surface Band",
+        default=0.0,
+        min=0.0,
+        subtype="DISTANCE",
+        update=_request_sync,
+        description="Triangle shell half-width; zero uses the voxel-resolution bound",
+    )
+    sink_region_mode: EnumProperty(
+        name="Sink Region",
+        items=[
+            ("SOLID", "Solid", "Remove particles inside a validated watertight mesh"),
+            ("SURFACE", "Surface", "Remove particles only in the triangle shell"),
+        ],
+        default="SOLID",
+        update=_request_sync,
+    )
+    mesh_error: StringProperty(name="Mesh Error", default="")
     source_mode: EnumProperty(
         name="Mode", items=_items(SourceShapeSourceMode), default="PARTICLES",
         update=_request_sync)

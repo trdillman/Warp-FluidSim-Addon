@@ -116,7 +116,7 @@ class Session:
             self.solver = FluidSolver(settings, profiler=profiler)
             self.profiler = profiler
             self.start_frame = scene.frame_start
-            self.sync_scene(scene)
+            self.sync_scene(scene, capture_first_mesh=False)
             sources.inject_auto_seeds(scene, self)
             errors = self.solver.set_custom_snippets(build_snippets(scene))
             for name, error in errors:
@@ -154,11 +154,13 @@ class Session:
         elif getattr(fs, "live", False):
             self.set_live_enabled(scene, True)
 
-    def sync_scene(self, scene, depsgraph=None):
+    def sync_scene(self, scene, depsgraph=None, *, capture_first_mesh=True):
         if not self.active:
             return
         self.scene_inputs.device = self.solver.device
-        self.solver.set_sources(self.scene_inputs.gather_sources(scene))
+        self.solver.set_sources(
+            self.scene_inputs.gather_sources(
+                scene, depsgraph, capture_first_mesh=capture_first_mesh))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(scene, depsgraph))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
@@ -234,7 +236,7 @@ class Session:
         self.frame_stats = []
         self.clear_error(scene)
         self.scene_inputs.clear()
-        self.sync_scene(scene)
+        self.sync_scene(scene, capture_first_mesh=False)
         sources.inject_auto_seeds(scene, self)
         viewport.update_outputs(scene, self)
         scene.fluidsim.status = "Simulation reset"

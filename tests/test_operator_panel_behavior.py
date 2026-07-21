@@ -109,6 +109,30 @@ def test_validation_operator_uses_configured_device(monkeypatch):
     assert seen["device"] == "cuda:3"
 
 
+def test_multi_frame_step_resyncs_scene_before_every_simulated_frame(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene = SimpleNamespace()
+    sess = SimpleNamespace(active=True, error="")
+    calls = []
+    fake_bridge = SimpleNamespace(
+        session=lambda: sess,
+        sync_scene_to_solver=lambda actual_scene, actual_sess: calls.append(
+            ("sync", actual_scene, actual_sess)),
+        step_frame=lambda actual_scene, actual_sess: calls.append(
+            ("step", actual_scene, actual_sess)),
+    )
+    monkeypatch.setattr(operators, "_bridge", lambda: fake_bridge)
+    operator = operators.FLUIDSIM_OT_step()
+    operator.frames = 3
+
+    assert operator.execute(SimpleNamespace(scene=scene)) == {"FINISHED"}
+    assert [kind for kind, _scene, _sess in calls] == [
+        "sync", "step", "sync", "step", "sync", "step"]
+    assert all(actual_scene is scene and actual_sess is sess
+               for _kind, actual_scene, actual_sess in calls)
+
+
 def test_export_frame_invoke_opens_file_selector(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")

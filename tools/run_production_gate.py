@@ -43,6 +43,7 @@ BLENDER_FAILURE_MARKERS = (
     "VIEWPORT-GATE-FAIL",
     "BACKGROUND-ACCEPTANCE-FAIL",
     "ATTRIBUTE-VIZ-ACCEPTANCE-FAIL",
+    "MESH-SOURCE-ACCEPTANCE-FAIL",
     "GUI-ACCEPTANCE-FAIL",
     "DEMO-BLEND-CHECK-FAIL",
 )
@@ -168,6 +169,7 @@ def main(argv=None):
         "tools/validate_gui_playback_report.py",
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",
+        "tests/blender_mesh_source_acceptance.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
     ])
@@ -204,6 +206,7 @@ def main(argv=None):
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_background_acceptance.py",
         "tests/blender_attribute_viz_acceptance.py",
+        "tests/blender_mesh_source_acceptance.py",
     ):
         _run(script, [blender_exe, "--background", "--factory-startup", "--python", script],
              reject_output=True)

@@ -549,7 +549,10 @@ def k_sdf_to_axis_collision(
     solid_c = c < threshold
     if solid_c:
         vt |= C.VOXEL_COLLISION
-        vt &= ~C.VOXEL_FLUID
+        vt &= ~(
+            C.VOXEL_FLUID | C.VOXEL_SINK |
+            C.VOXEL_SOURCE_REGION_TRACKING
+        )
 
     for axis in range(3):
         n = wp.vec3i(ijk[0], ijk[1], ijk[2])

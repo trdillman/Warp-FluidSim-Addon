@@ -23,9 +23,10 @@ def tag_sink(obj, shape="BOX"):
     return obj
 
 
-def gather_sources(scene, session):
+def gather_sources(scene, session, depsgraph=None, *, capture_first_mesh=True):
     """Compatibility wrapper for the SceneInputs owner."""
-    return getattr(session, "scene_inputs", session).gather_sources(scene)
+    return getattr(session, "scene_inputs", session).gather_sources(
+        scene, depsgraph, capture_first_mesh=capture_first_mesh)
 
 
 def gather_height_source(scene):

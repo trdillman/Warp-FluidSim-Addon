@@ -185,7 +185,11 @@ class FLUIDSIM_PT_sources(FluidSimPanel, bpy.types.Panel):
         op.role = "SOURCE"
         op = row.operator("fluidsim.tag_object", text="Clear", icon="X")
         op.role = "NONE"
-        layout.operator("fluidsim.inject_particles", icon="PARTICLES")
+        layout.operator(
+            "fluidsim.inject_particles",
+            text="Inject Mesh Vertices Once",
+            icon="PARTICLES",
+        )
 
         # Active object source settings.
         obj = context.active_object
@@ -195,7 +199,20 @@ class FLUIDSIM_PT_sources(FluidSimPanel, bpy.types.Panel):
             box.label(text=f"{obj.name} ({pg.role.title()})", icon="OBJECT_DATA")
             col = box.column(align=True)
             col.prop(pg, "enabled")
-            col.prop(pg, "shape")
+            if pg.role in {"SOURCE", "SINK"}:
+                col.prop(pg, "geometry_mode")
+            if pg.geometry_mode == "MESH" and pg.role in {"SOURCE", "SINK"}:
+                col.prop(pg, "mesh_object")
+                col.prop(pg, "mesh_evaluation_mode")
+                col.prop(pg, "mesh_surface_thickness")
+                if pg.role == "SINK":
+                    col.prop(pg, "sink_region_mode")
+                if pg.mesh_error:
+                    error_box = col.box()
+                    error_box.alert = True
+                    error_box.label(text=pg.mesh_error, icon="ERROR")
+            else:
+                col.prop(pg, "shape")
             col.prop(pg, "source_mode")
             if pg.role == "SOURCE":
                 col.prop(pg, "emit_rate")

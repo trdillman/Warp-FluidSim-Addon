@@ -115,6 +115,31 @@ class SourceShape:
     use_lifespan: wp.int32
 
 
+@wp.struct
+class MeshSource:
+    """GPU attributes for one mesh source or sink.
+
+    The mesh handle remains a separate kernel argument so this contract does
+    not alter the analytic ``SourceShape`` ABI.
+    """
+
+    enabled: wp.int32
+    stype: wp.int32
+    mode: wp.int32
+    surface_thickness: wp.float32
+    sink_region_mode: wp.int32
+    velocity: wp.vec3
+    blend_mode: wp.int32
+    blend_amount: wp.float32
+    emit_rate: wp.float32
+    temperature: wp.float32
+    viscosity: wp.float32
+    density: wp.float32
+    life_min: wp.float32
+    life_max: wp.float32
+    use_lifespan: wp.int32
+
+
 @dataclass
 class SourceShapeDesc:
     """Host description for one analytic source shape."""
@@ -194,6 +219,73 @@ class SourceShapeDesc:
 
 
 @dataclass
+class MeshSourceDesc:
+    """Host description for evaluated-mesh surface sourcing and sinks."""
+
+    enabled: bool = True
+    stype: int = 0
+    mode: int = 1
+    mesh: object = None
+    aabb_min: tuple = (0.0, 0.0, 0.0)
+    aabb_max: tuple = (0.0, 0.0, 0.0)
+    surface_thickness: float = 0.0
+    sink_region_mode: int = 0  # 0 Solid, 1 Surface
+    velocity: tuple = (0.0, 0.0, 0.0)
+    blend_mode: int = 1
+    blend_amount: float = 1.0
+    emit_rate: float = 8.0
+    temperature: float = 0.0
+    viscosity: float = 0.0
+    density: float = 1.0
+    life_min: float = 1.0e30
+    life_max: float = 1.0e30
+    use_lifespan: bool = False
+
+    @property
+    def role(self):
+        """Semantic source role, exposed separately from the analytic ABI."""
+        return self.stype
+
+    @role.setter
+    def role(self, value):
+        self.stype = int(value)
+
+    def aabb(self):
+        band = max(float(self.surface_thickness), 0.0)
+        return (
+            tuple(float(value) - band for value in self.aabb_min),
+            tuple(float(value) + band for value in self.aabb_max),
+        )
+
+    def query_radius(self):
+        extent = tuple(
+            float(self.aabb_max[i]) - float(self.aabb_min[i])
+            for i in range(3)
+        )
+        return max(1.0e-6, float(np.linalg.norm(extent)) +
+                   max(float(self.surface_thickness), 0.0))
+
+    def to_struct(self):
+        source = MeshSource()
+        source.enabled = 1 if self.enabled else 0
+        source.stype = int(self.stype)
+        source.mode = int(self.mode)
+        source.surface_thickness = float(self.surface_thickness)
+        source.sink_region_mode = int(self.sink_region_mode)
+        source.velocity = wp.vec3(*[float(value) for value in self.velocity])
+        source.blend_mode = int(self.blend_mode)
+        source.blend_amount = float(self.blend_amount)
+        source.emit_rate = float(self.emit_rate)
+        source.temperature = float(self.temperature)
+        source.viscosity = float(self.viscosity)
+        source.density = float(self.density)
+        source.life_min = float(self.life_min)
+        source.life_max = float(self.life_max)
+        source.use_lifespan = 1 if self.use_lifespan else 0
+        return source
+
+
+@dataclass
 class HeightSourceDesc:
     """Host description for the optional height-field source."""
 
@@ -207,9 +299,105 @@ class HeightSourceDesc:
 
 
 @wp.func
+def _point_triangle_distance_sq(p: wp.vec3, a: wp.vec3, b: wp.vec3,
+                                c: wp.vec3):
+    """Squared Euclidean distance from a point to a non-degenerate triangle."""
+    ab = b - a
+    ac = c - a
+    ap = p - a
+    d1 = wp.dot(ab, ap)
+    d2 = wp.dot(ac, ap)
+    if d1 <= 0.0 and d2 <= 0.0:
+        return wp.length_sq(ap)
+    bp = p - b
+    d3 = wp.dot(ab, bp)
+    d4 = wp.dot(ac, bp)
+    if d3 >= 0.0 and d4 <= d3:
+        return wp.length_sq(bp)
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+        v = d1 / (d1 - d3)
+        return wp.length_sq(p - (a + v * ab))
+    cp = p - c
+    d5 = wp.dot(ab, cp)
+    d6 = wp.dot(ac, cp)
+    if d6 >= 0.0 and d5 <= d6:
+        return wp.length_sq(cp)
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+        w = d2 / (d2 - d6)
+        return wp.length_sq(p - (a + w * ac))
+    va = d3 * d6 - d5 * d4
+    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return wp.length_sq(p - (b + w * (c - b)))
+    denom = 1.0 / (va + vb + vc)
+    v = vb * denom
+    w = vc * denom
+    return wp.length_sq(p - (a + ab * v + ac * w))
+
+
+@wp.func
+def _segment_distance(p: wp.vec3, half_height: float):
+    dz = wp.max(wp.abs(p[2]) - half_height, 0.0)
+    return wp.sqrt(p[0] * p[0] + p[1] * p[1] + dz * dz)
+
+
+@wp.func
+def _cone_sdf(p: wp.vec3, radius: float, half_height: float):
+    if half_height <= 1.0e-8:
+        radial = wp.sqrt(p[0] * p[0] + p[1] * p[1])
+        dr = wp.max(radial - wp.max(radius, 0.0), 0.0)
+        return wp.sqrt(dr * dr + p[2] * p[2])
+    if radius <= 1.0e-8:
+        return _segment_distance(p, half_height)
+    q = wp.vec2(wp.sqrt(p[0] * p[0] + p[1] * p[1]), p[2])
+    k1 = wp.vec2(0.0, half_height)
+    k2 = wp.vec2(-radius, 2.0 * half_height)
+    cap_radius = wp.where(q[1] < 0.0, radius, 0.0)
+    ca = wp.vec2(q[0] - wp.min(q[0], cap_radius),
+                 wp.abs(q[1]) - half_height)
+    t = wp.clamp(wp.dot(k1 - q, k2) / wp.dot(k2, k2), 0.0, 1.0)
+    cb = q - k1 + k2 * t
+    sign = 1.0
+    if cb[0] < 0.0 and ca[1] < 0.0:
+        sign = -1.0
+    return sign * wp.sqrt(wp.min(wp.dot(ca, ca), wp.dot(cb, cb)))
+
+
+@wp.func
+def _pyramid_sdf(p: wp.vec3, radius: float, half_height: float):
+    if half_height <= 1.0e-8:
+        dx = wp.max(wp.abs(p[0]) - wp.max(radius, 0.0), 0.0)
+        dy = wp.max(wp.abs(p[1]) - wp.max(radius, 0.0), 0.0)
+        return wp.sqrt(dx * dx + dy * dy + p[2] * p[2])
+    if radius <= 1.0e-8:
+        return _segment_distance(p, half_height)
+    z0 = -half_height
+    apex = wp.vec3(0.0, 0.0, half_height)
+    v0 = wp.vec3(-radius, -radius, z0)
+    v1 = wp.vec3(radius, -radius, z0)
+    v2 = wp.vec3(radius, radius, z0)
+    v3 = wp.vec3(-radius, radius, z0)
+    distance_sq = _point_triangle_distance_sq(p, v0, v1, apex)
+    distance_sq = wp.min(distance_sq, _point_triangle_distance_sq(p, v1, v2, apex))
+    distance_sq = wp.min(distance_sq, _point_triangle_distance_sq(p, v2, v3, apex))
+    distance_sq = wp.min(distance_sq, _point_triangle_distance_sq(p, v3, v0, apex))
+    distance_sq = wp.min(distance_sq, _point_triangle_distance_sq(p, v0, v2, v1))
+    distance_sq = wp.min(distance_sq, _point_triangle_distance_sq(p, v0, v3, v2))
+    distance = wp.sqrt(distance_sq)
+    cross_radius = radius * (half_height - p[2]) / (2.0 * half_height)
+    if (p[2] >= -half_height and p[2] <= half_height
+            and wp.abs(p[0]) <= cross_radius
+            and wp.abs(p[1]) <= cross_radius):
+        return -distance
+    return distance
+
+
+@wp.func
 def shape_local_sdf(shape: int, p: wp.vec3, half_extents: wp.vec3,
                     radius: float, height: float):
-    """Signed distance in shape-local space (approximate for cone/pyramid)."""
+    """Exact Euclidean signed distance in shape-local space."""
     if shape == 0:  # Sphere
         return wp.length(p) - radius
     if shape == 1:  # Cylinder (axis z)
@@ -225,20 +413,9 @@ def shape_local_sdf(shape: int, p: wp.vec3, half_extents: wp.vec3,
         inside = wp.min(wp.max(q[0], wp.max(q[1], q[2])), 0.0)
         return wp.length(outside) + inside
     if shape == 3:  # Pyramid (square base at z=-height, apex at z=+height)
-        # Scale-normalized approximation: treat as cone with square section.
-        z3 = p[2]
-        t3 = wp.clamp((z3 + height) / (2.0 * height), 0.0, 1.0)
-        r3 = radius * (1.0 - t3)
-        side3 = wp.max(wp.abs(p[0]), wp.abs(p[1])) - r3
-        dz3 = wp.abs(z3) - height
-        return wp.max(side3, dz3)
+        return _pyramid_sdf(p, radius, height)
     if shape == 4:  # Cone (base at z=-height radius, apex z=+height)
-        z4 = p[2]
-        t4 = wp.clamp((z4 + height) / (2.0 * height), 0.0, 1.0)
-        r4 = radius * (1.0 - t4)
-        side4 = wp.length(wp.vec3(p[0], p[1], 0.0)) - r4
-        dz4 = wp.abs(z4) - height
-        return wp.max(side4, dz4)
+        return _cone_sdf(p, radius, height)
     # Plane: half space z < 0.
     return p[2]
 
@@ -446,6 +623,165 @@ def k_source_shapes_particles(
 
 register_fn(k_source_shapes_particles, "fluidSimSourceShapesParticlesAttributes",
             notes="Particle-mode emission with per-voxel top-up to emit_rate.")
+
+
+# ---------------------------------------------------------------------------
+# Evaluated-mesh surface sources and solid/surface sinks
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def k_mesh_source_field(
+    mesh_id: wp.uint64,
+    source: MeshSource,
+    query_radius: float,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_type: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+):
+    """Stamp a triangle shell source or a solid/surface mesh sink."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    p = voxel_center_world(ijk, origin, voxel_size)
+    half_diagonal = 0.8660254037844386 * voxel_size
+    shell = wp.max(source.surface_thickness, 0.0) + half_diagonal
+    member = 0
+
+    if source.stype == 2 and source.sink_region_mode == 0:
+        query = wp.mesh_query_point_sign_winding_number(
+            mesh_id, p, query_radius, 2.0, 0.5)
+        if query.result and query.sign < 0.0:
+            member = 1
+    else:
+        query = wp.mesh_query_point_no_sign(mesh_id, p, shell)
+        if query.result:
+            closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+            if wp.length(p - closest) <= shell:
+                member = 1
+
+    if member == 0:
+        return
+    vt = voxel_type[tid]
+    if source.stype == 2:
+        voxel_type[tid] = vt | C.VOXEL_SINK
+    elif source.stype == 0 and source.mode == 0:
+        voxel_type[tid] = (
+            vt | C.VOXEL_FLUID | C.VOXEL_ACTIVE |
+            C.VOXEL_SOURCE_REGION_TRACKING
+        )
+        old_velocity = wp.vec3(u[tid], v[tid], w[tid])
+        new_velocity = blend_vec(
+            old_velocity, source.velocity,
+            source.blend_mode, source.blend_amount)
+        u[tid] = new_velocity[0]
+        v[tid] = new_velocity[1]
+        w[tid] = new_velocity[2]
+        temperature[tid] = blend_scalar(
+            temperature[tid], source.temperature,
+            source.blend_mode, source.blend_amount)
+        viscosity[tid] = blend_scalar(
+            viscosity[tid], source.viscosity,
+            source.blend_mode, source.blend_amount)
+
+
+register_fn(
+    k_mesh_source_field,
+    "fluidSimMeshSourceField",
+    notes="Evaluated-triangle shell sourcing and winding-number mesh sinks.",
+)
+
+
+@wp.kernel
+def k_mesh_source_particles(
+    mesh_id: wp.uint64,
+    source: MeshSource,
+    query_radius: float,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    seed: int,
+    capacity: int,
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    age: wp.array(dtype=float),
+    life: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    time_offset: wp.array(dtype=float),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+):
+    """Top up intersecting voxels and project every spawn onto a triangle."""
+    tid = wp.tid()
+    if (tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0
+            or source.stype != 0 or source.mode != 1):
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    center = voxel_center_world(ijk, origin, voxel_size)
+    half_diagonal = 0.8660254037844386 * voxel_size
+    shell = wp.max(source.surface_thickness, 0.0) + half_diagonal
+    projection_radius = wp.max(
+        query_radius, shell + half_diagonal)
+    center_query = wp.mesh_query_point_no_sign(mesh_id, center, shell)
+    if not center_query.result:
+        return
+    center_closest = wp.mesh_eval_position(
+        mesh_id, center_query.face, center_query.u, center_query.v)
+    if wp.length(center - center_closest) > shell:
+        return
+
+    have = voxel_counts[tid]
+    want = int(source.emit_rate)
+    if want <= have:
+        return
+    state = wp.rand_init(seed, tid * 31)
+    for emit_index in range(want - have):
+        jitter = wp.vec3(
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+        )
+        query = wp.mesh_query_point_no_sign(
+            mesh_id, center + jitter, projection_radius)
+        if not query.result:
+            continue
+        slot = wp.atomic_add(count, 0, 1)
+        if slot >= capacity:
+            wp.atomic_sub(count, 0, 1)
+            return
+        positions[slot] = wp.mesh_eval_position(
+            mesh_id, query.face, query.u, query.v)
+        velocities[slot] = source.velocity
+        age[slot] = 0.0
+        if source.use_lifespan != 0:
+            life[slot] = source.life_min + wp.randf(state) * (
+                source.life_max - source.life_min)
+        else:
+            life[slot] = 1.0e30
+        temperature[slot] = source.temperature
+        viscosity[slot] = source.viscosity
+        density[slot] = source.density
+        time_offset[slot] = 0.0
+        alive[slot] = 1
+
+
+register_fn(
+    k_mesh_source_particles,
+    "fluidSimMeshSourceParticles",
+    notes="Triangle-projected mesh emission with per-voxel top-up.",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1461,9 @@ class SourcePipeline:
     def __init__(self, owner):
         self.owner = owner
         self.device = owner.device
-        self.sources: list[SourceShapeDesc] = []
+        self.sources: list[SourceShapeDesc | MeshSourceDesc] = []
+        self.analytic_sources: list[SourceShapeDesc] = []
+        self.mesh_sources: list[MeshSourceDesc] = []
         self.height_source = HeightSourceDesc()
         self._shape_array = None
         self._emit_shape_array = None
@@ -1139,6 +1477,14 @@ class SourcePipeline:
 
     def set_sources(self, sources):
         self.sources = list(sources)
+        self.analytic_sources = [
+            source for source in self.sources
+            if isinstance(source, SourceShapeDesc)
+        ]
+        self.mesh_sources = [
+            source for source in self.sources
+            if isinstance(source, MeshSourceDesc)
+        ]
         self._shape_array = None
         self._emit_shape_array = None
         self._emit_shape_key = None
@@ -1158,7 +1504,7 @@ class SourcePipeline:
 
     def _shapes(self):
         if self._shape_array is None:
-            structs = [source.to_struct() for source in self.sources]
+            structs = [source.to_struct() for source in self.analytic_sources]
             if not structs:
                 structs = [SourceShapeDesc(enabled=False).to_struct()]
             self._shape_array = wp.array(
@@ -1170,7 +1516,9 @@ class SourcePipeline:
         grid = owner.grid
         settings = owner.settings
         shapes = self._shapes()
-        shape_count = len(self.sources)
+        analytic_sources = getattr(self, "analytic_sources", self.sources)
+        mesh_sources = getattr(self, "mesh_sources", ())
+        shape_count = len(analytic_sources)
 
         if shape_count:
             wp.launch(
@@ -1179,6 +1527,20 @@ class SourcePipeline:
                         grid.origin, settings.voxel_size, dt],
                 outputs=[owner.voxel_type.data, owner.collision_sdf.data,
                          owner.collision_vel, owner.vel.u, owner.vel.v,
+                         owner.vel.w, owner.temperature.data,
+                         owner.viscosity_field.data],
+                device=self.device,
+            )
+
+        for source in mesh_sources:
+            if not source.enabled or source.mesh is None:
+                continue
+            wp.launch(
+                k_mesh_source_field, dim=owner._nvox,
+                inputs=[source.mesh.id, source.to_struct(),
+                        source.query_radius(), grid.leaf_coords,
+                        grid.num_leaves, grid.origin, settings.voxel_size],
+                outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v,
                          owner.vel.w, owner.temperature.data,
                          owner.viscosity_field.data],
                 device=self.device,
@@ -1213,11 +1575,16 @@ class SourcePipeline:
             self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
         emit_shapes = shape_count > 0 and any(
             source.enabled and source.stype == 0 and source.mode == 1
-            for source in self.sources
+            for source in analytic_sources
+        )
+        emit_mesh = any(
+            source.enabled and source.mesh is not None
+            and source.stype == 0 and source.mode == 1
+            for source in mesh_sources
         )
         emit_height = height.enabled and height.emit_particles
         particles = owner.particles
-        if ((emit_shapes or emit_height)
+        if ((emit_shapes or emit_mesh or emit_height)
                 and particles.host_count < particles.capacity):
             emit_count = shape_count
             if emit_height:
@@ -1236,7 +1603,7 @@ class SourcePipeline:
                     center_z = (domain_min[2] + height.base_height) * 0.5
                     half_z = max(
                         (height.base_height - domain_min[2]) * 0.5, 0.0)
-                    emit_sources = list(self.sources)
+                    emit_sources = list(analytic_sources)
                     emit_sources.append(SourceShapeDesc(
                         enabled=True,
                         shape=2,
@@ -1278,6 +1645,26 @@ class SourcePipeline:
                          particles.alive, particles.count],
                 device=self.device,
             )
+            for mesh_index, source in enumerate(mesh_sources):
+                if (not source.enabled or source.mesh is None
+                        or source.stype != 0 or source.mode != 1):
+                    continue
+                wp.launch(
+                    k_mesh_source_particles, dim=owner._nvox,
+                    inputs=[source.mesh.id, source.to_struct(),
+                            source.query_radius(), grid.leaf_coords,
+                            grid.num_leaves, grid.origin, settings.voxel_size,
+                            owner.voxel_counts.data,
+                            self._emit_seed + mesh_index + 1,
+                            particles.capacity],
+                    outputs=[particles.position, particles.velocity,
+                             particles.attr("age"), particles.attr("life"),
+                             particles.attr("temperature"),
+                             particles.attr("viscosity"),
+                             particles.attr("density"), particles.time_offset,
+                             particles.alive, particles.count],
+                    device=self.device,
+                )
             particles.refresh_host_count()
             return True
         return False

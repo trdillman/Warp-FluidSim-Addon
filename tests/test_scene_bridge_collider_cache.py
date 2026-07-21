@@ -135,7 +135,7 @@ class _FakeObject:
         return self._eval
 
     def as_pointer(self):
-        return 42
+        return id(self)
 
 
 def _install_scene_bridge_stubs(monkeypatch):
@@ -171,11 +171,15 @@ def _install_scene_bridge_stubs(monkeypatch):
     class _SourceShapeDesc:
         pass
 
+    class _MeshSourceDesc:
+        pass
+
     class _HeightSourceDesc:
         pass
 
     fake_solver.ColliderDesc = _ColliderDesc
     fake_solver.SourceShapeDesc = _SourceShapeDesc
+    fake_solver.MeshSourceDesc = _MeshSourceDesc
     fake_solver.HeightSourceDesc = _HeightSourceDesc
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
@@ -196,6 +200,55 @@ def _triangle_mesh(extra_vert=False):
         verts.append((0.0, 0.0, 1.0))
         tris.append((0, 2, 3))
     return _FakeMesh(verts, tris)
+
+
+def _cube_mesh():
+    verts = [
+        (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0),
+        (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0),
+        (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+    ]
+    tris = [
+        (0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7),
+        (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+        (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7),
+    ]
+    return _FakeMesh(verts, tris)
+
+
+def _mesh_source_settings(role="SOURCE", **overrides):
+    values = dict(
+        role=role,
+        enabled=True,
+        geometry_mode="MESH",
+        mesh_object=None,
+        mesh_evaluation_mode="FIRST_SIM_FRAME",
+        mesh_surface_thickness=0.05,
+        sink_region_mode="SOLID",
+        mesh_error="",
+        shape="BOX",
+        source_mode="PARTICLES",
+        feather=0.0,
+        initial_velocity=(1.0, 2.0, 3.0),
+        use_object_velocity=False,
+        blend_mode="REPLACE",
+        emit_rate=3.0,
+        temperature=4.0,
+        viscosity=5.0,
+        density=6.0,
+        use_lifespan=True,
+        life_min=2.0,
+        life_max=7.0,
+        force_type="OFF",
+        force_strength=0.0,
+        force_direction=(0.0, 0.0, 1.0),
+        transfer_velocity=False,
+        collider_friction=0.0,
+        collider_restitution=0.0,
+    )
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def test_scene_input_state_is_owned_outside_session(monkeypatch):
@@ -383,6 +436,160 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
     assert len(descriptors) == 1
     assert descriptors[0].velocity == (25.0, 0.0, 0.0)
     assert descriptors[0].half_extents == (1.0, 2.0, 3.0)
+
+
+def test_mesh_source_uses_own_or_referenced_evaluated_mesh(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    tagged = _FakeObject(_triangle_mesh())
+    tagged.name = "source"
+    tagged.fluidsim = _mesh_source_settings()
+    referenced = _FakeObject(_triangle_mesh(extra_vert=True))
+    referenced.name = "referenced"
+    referenced.fluidsim.role = "NONE"
+    scene = SimpleNamespace(
+        objects=[tagged, referenced], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    own = sess.scene_inputs.gather_sources(scene, depsgraph=object())
+    assert len(own) == 1
+    assert own[0].mesh is not None
+    assert tagged.to_mesh_count == 1
+    assert own[0].velocity == (1.0, 2.0, 3.0)
+    assert own[0].emit_rate == 3.0
+
+    sess.scene_inputs.clear()
+    tagged.fluidsim.mesh_object = referenced
+    selected = sess.scene_inputs.gather_sources(scene, depsgraph=object())
+    assert len(selected) == 1
+    assert referenced.to_mesh_count == 1
+    assert selected[0].aabb_max == (1.0, 1.0, 1.0)
+
+
+def test_first_frame_mesh_snapshot_is_immutable_until_clear(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.name = "source"
+    obj.fluidsim = _mesh_source_settings()
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    first = sess.scene_inputs.gather_sources(scene, depsgraph=object())[0]
+    obj.evaluated_matrix_world = _FakeMatrix(tx=4.0)
+    scene.frame_current = 2
+    second = sess.scene_inputs.gather_sources(scene, depsgraph=object())[0]
+
+    assert obj.to_mesh_count == 1
+    assert second.mesh is first.mesh
+    assert second.aabb_min == first.aabb_min
+    sess.scene_inputs.clear()
+    third = sess.scene_inputs.gather_sources(scene, depsgraph=object())[0]
+    assert obj.to_mesh_count == 2
+    assert third.aabb_min[0] == pytest.approx(4.0)
+
+
+def test_first_frame_snapshot_defers_until_simulation_capture(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.name = "source"
+    obj.fluidsim = _mesh_source_settings()
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    pending = sess.scene_inputs.gather_sources(
+        scene, depsgraph=object(), capture_first_mesh=False)
+    assert pending == []
+    assert obj.to_mesh_count == 0
+
+    obj.evaluated_matrix_world = _FakeMatrix(tx=3.0)
+    scene.frame_current = 8
+    captured = sess.scene_inputs.gather_sources(
+        scene, depsgraph=object(), capture_first_mesh=True)
+    assert len(captured) == 1
+    assert captured[0].aabb_min[0] == pytest.approx(3.0)
+
+
+def test_every_frame_mesh_source_refreshes_transform_and_topology(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.name = "source"
+    obj.fluidsim = _mesh_source_settings(
+        mesh_evaluation_mode="EVERY_SIM_FRAME")
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    first = sess.scene_inputs.gather_sources(scene, depsgraph=object())[0]
+    obj.mesh = _triangle_mesh(extra_vert=True)
+    obj.evaluated_matrix_world = _FakeMatrix(tx=2.0)
+    scene.frame_current = 2
+    second = sess.scene_inputs.gather_sources(scene, depsgraph=object())[0]
+
+    assert obj.to_mesh_count == 2
+    assert second.mesh is not first.mesh
+    assert second.aabb_min[0] == pytest.approx(2.0)
+    assert second.aabb_max == (3.0, 1.0, 1.0)
+
+
+def test_mesh_sink_validation_is_visible_and_never_falls_back(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.name = "sink"
+    obj.fluidsim = _mesh_source_settings(role="SINK")
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
+    assert obj.fluidsim.mesh_error == "Solid mesh sink requires a watertight mesh"
+
+    obj.fluidsim.sink_region_mode = "SURFACE"
+    surface = sess.scene_inputs.gather_sources(scene, depsgraph=object())
+    assert len(surface) == 1
+    assert surface[0].sink_region_mode == 1
+    assert obj.fluidsim.mesh_error == ""
+
+    sess.scene_inputs.clear()
+    obj.mesh = _cube_mesh()
+    obj.fluidsim.sink_region_mode = "SOLID"
+    solid = sess.scene_inputs.gather_sources(scene, depsgraph=object())
+    assert len(solid) == 1
+    assert solid[0].sink_region_mode == 0
+
+
+def test_mesh_source_cache_drops_deleted_objects_and_degenerate_meshes(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.name = "source"
+    obj.fluidsim = _mesh_source_settings()
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+    assert len(sess.scene_inputs.gather_sources(scene, depsgraph=object())) == 1
+    assert sess.scene_inputs._collider_mesh_cache
+
+    scene.objects = []
+    assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
+    assert sess.scene_inputs._collider_mesh_cache == {}
+
+    obj.mesh = _FakeMesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
+        [(0, 1, 2)])
+    scene.objects = [obj]
+    assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
+    assert "degenerate" in obj.fluidsim.mesh_error
+
+    sess.scene_inputs.clear()
+    obj.mesh = _FakeMesh([], [])
+    assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
+    assert "no triangles" in obj.fluidsim.mesh_error
 
 
 def test_height_source_translation_preserves_scene_settings(monkeypatch):

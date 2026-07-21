@@ -3,10 +3,12 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim import sourcing
 from fluidSim_warp_blender51.sim.sourcing import (
     HeightSourceDesc,
+    MeshSourceDesc,
     SourcePipeline,
     SourceShapeDesc,
 )
@@ -26,6 +28,143 @@ def _sample_shape_local_field(
         1.0,
         1.0,
     )
+
+
+@sourcing.wp.kernel
+def _sample_shape_world_field(
+    shape: sourcing.SourceShape,
+    points: sourcing.wp.array(dtype=sourcing.wp.vec3),
+    values: sourcing.wp.array(dtype=float),
+):
+    tid = sourcing.wp.tid()
+    values[tid] = sourcing.shape_sdf_world(shape, points[tid])
+
+
+@sourcing.wp.kernel
+def _sample_degenerate_shape_field(
+    shape: int,
+    radius: float,
+    height: float,
+    points: sourcing.wp.array(dtype=sourcing.wp.vec3),
+    values: sourcing.wp.array(dtype=float),
+):
+    tid = sourcing.wp.tid()
+    values[tid] = sourcing.shape_local_sdf(
+        shape, points[tid], sourcing.wp.vec3(1.0, 1.0, 1.0),
+        radius, height)
+
+
+@pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
+def test_cone_and_pyramid_exact_surface_sign_and_feature_distances(shape):
+    side_point = (0.0, 0.5, 0.0) if shape == 3 else (0.5, 0.0, 0.0)
+    points = np.asarray(
+        [
+            (0.0, 0.0, 1.0),   # apex
+            (0.0, 0.0, -1.0),  # base
+            side_point,         # sloped face
+            (0.0, 0.0, 0.0),    # interior
+            (0.0, 0.0, -1.25), # below base
+            (0.0, 0.0, -0.75), # inside above base
+            (1.0, 1.0, -1.0) if shape == 3 else (1.0, 0.0, -1.0),
+        ],
+        dtype=np.float32,
+    )
+    device = sourcing.wp.get_preferred_device()
+    values = sourcing.wp.empty(len(points), dtype=float, device=device)
+    sourcing.wp.launch(
+        _sample_shape_local_field,
+        dim=len(points),
+        inputs=[shape, sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device), values],
+        device=device,
+    )
+
+    sampled = values.numpy()
+    np.testing.assert_allclose(sampled[:3], 0.0, atol=1.0e-6)
+    assert sampled[3] < 0.0
+    np.testing.assert_allclose(sampled[4], 0.25, atol=1.0e-6)
+    np.testing.assert_allclose(sampled[5], -0.25, atol=1.0e-6)
+    np.testing.assert_allclose(sampled[6], 0.0, atol=1.0e-6)
+
+
+@pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
+@pytest.mark.parametrize("voxel_size", (0.25, 0.1, 0.04))
+def test_cone_and_pyramid_resolution_offsets_follow_euclidean_side_distance(
+    shape, voxel_size,
+):
+    boundary = np.array(
+        (0.0, 0.5, 0.0) if shape == 3 else (0.5, 0.0, 0.0),
+        dtype=np.float32,
+    )
+    axis = 1 if shape == 3 else 0
+    inward, outward = boundary.copy(), boundary.copy()
+    inward[axis] -= voxel_size * 0.5
+    outward[axis] += voxel_size * 0.5
+    points = np.asarray([inward, outward], dtype=np.float32)
+    device = sourcing.wp.get_preferred_device()
+    values = sourcing.wp.empty(2, dtype=float, device=device)
+    sourcing.wp.launch(
+        _sample_shape_local_field, dim=2,
+        inputs=[shape, sourcing.wp.array(
+            points, dtype=sourcing.wp.vec3, device=device), values],
+        device=device)
+    expected = voxel_size / np.sqrt(5.0)
+    np.testing.assert_allclose(values.numpy(), (-expected, expected), atol=2.0e-6)
+
+
+@pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
+def test_cone_and_pyramid_world_transform_preserves_exact_distance(shape):
+    desc = SourceShapeDesc(
+        shape=shape,
+        position=(2.0, 3.0, 4.0),
+        rotation=(0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)),
+        radius=1.0,
+        height=1.0,
+    )
+    local = np.asarray([(0.0, 0.5, 0.0), (0.0, 0.75, 0.0)], dtype=np.float32)
+    world = np.column_stack((-local[:, 1], local[:, 0], local[:, 2]))
+    world += np.asarray(desc.position, dtype=np.float32)
+    device = sourcing.wp.get_preferred_device()
+    values = sourcing.wp.empty(2, dtype=float, device=device)
+    sourcing.wp.launch(
+        _sample_shape_world_field, dim=2,
+        inputs=[desc.to_struct(), sourcing.wp.array(
+            world, dtype=sourcing.wp.vec3, device=device), values],
+        device=device)
+    assert abs(values.numpy()[0]) < 1.0e-6
+    assert values.numpy()[1] > 0.0
+
+
+@pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
+@pytest.mark.parametrize(("radius", "height"), ((0.0, 1.0), (1.0, 0.0), (0.0, 0.0)))
+def test_cone_and_pyramid_degenerate_dimensions_are_finite_and_nonnegative(
+    shape, radius, height,
+):
+    points = np.asarray(
+        [(0.0, 0.0, 0.0), (0.25, 0.5, -0.75), (2.0, -1.0, 3.0)],
+        dtype=np.float32)
+    device = sourcing.wp.get_preferred_device()
+    values = sourcing.wp.empty(len(points), dtype=float, device=device)
+    sourcing.wp.launch(
+        _sample_degenerate_shape_field, dim=len(points),
+        inputs=[shape, radius, height, sourcing.wp.array(
+            points, dtype=sourcing.wp.vec3, device=device), values],
+        device=device)
+    sampled = values.numpy()
+    assert np.isfinite(sampled).all()
+    assert (sampled >= 0.0).all()
+
+
+def test_cone_and_pyramid_exact_distance_is_explicit_in_product_copy():
+    sourcing_text = (sourcing.__file__ and open(sourcing.__file__, encoding="utf-8").read())
+    properties_text = open(
+        "fluidSim_warp_blender51/properties.py", encoding="utf-8"
+    ).read()
+    guide_text = open("fluidSim_warp_blender51/docs/user_guide.md", encoding="utf-8").read()
+
+    assert "Exact Euclidean signed distance" in sourcing_text
+    assert "exact local Euclidean distance" in properties_text
+    assert "exact Euclidean boundary distance" in guide_text
+
 
 class _Particles:
     def __init__(self, host_count=0, capacity=8, refreshed_count=1):
