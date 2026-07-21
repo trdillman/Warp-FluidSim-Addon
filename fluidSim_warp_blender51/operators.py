@@ -149,6 +149,9 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
             if name == "surface_resolution_mode":
                 value = "SIMULATION"
             if hasattr(fs, name):
+                rna_property = fs.bl_rna.properties.get(name)
+                if rna_property is not None and rna_property.type == "INT":
+                    value = int(value)
                 setattr(fs, name, value)
                 changed.append(name)
 

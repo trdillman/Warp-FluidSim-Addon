@@ -46,6 +46,7 @@ assert "memory safeguard stopped initialization" in error.lower(), error
 result = bpy.ops.fluidsim.apply_safe_settings()
 assert result == {"FINISHED"}, result
 assert scene_bridge.session().active
+assert isinstance(fs.particles_per_voxel, int)
 assert fs.surface_resolution_mode == "SIMULATION"
 assert fs.surface_leaf_capacity_scale == 1.0
 assert fs.surface_max_dense_dim <= 256

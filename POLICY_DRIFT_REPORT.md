@@ -1,108 +1,127 @@
 ---
-status: completed
+status: fresh
 escalated: false
-generated_at: 2026-07-07T21:55:00Z
-audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
-branch: codex/execute-worktree-recommendations
+generated_at: 2026-07-21T20:06:18Z
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
+git_head: 231911d59d6083cd439ca9ca6039b05182198977
 ---
 
 # Policy Drift Report
 
-## Scope
+## Verdict
 
-Audit unit: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port`
+The safe-settings Blender RNA boundary is resolved. The direct assignment seam
+now uses the destination RNA type to normalize integer recommendations, and the
+full GUI-inclusive production lane passed on Blender 5.1 / `cuda:0`.
 
-Primary executable surface: `fluidSim_warp_blender51` Blender 5.1 add-on and its root production, acceptance, demo-analysis, and demo-blend lanes.
+PD-ROOT-002 remains open: checked-in demo evidence and the technical report
+still need synchronization from one current reproducible profile. That
+documentation task does not block the now-passing production lane.
 
-Nested output unit: `demos` has its own report at `demos/POLICY_DRIFT_REPORT.md`.
+## Audit units
 
-## Current Integration State
+- Root unit: this directory, containing the Blender 5.1 add-on and production
+  lane.
+- Nested unit: `demos`, with its own report and checked-in analysis artifacts.
 
-This branch integrated worktree recommendations after backing up `master` at `87971a7` and preserving `UNMERGED_WORKTREES_REPORT.md`.
+## Strongest live evidence
 
-Imported surfaces:
-
-- Quick Setup domain/source/collider layout from the dirty detached cherry-pick worktree; `review_2635080.blend` was not imported.
-- Slowdown lane behavior was already present through the existing `b5787a0` ancestor and master hardening; no duplicate empty slowdown commit is needed.
-- Audit-corrections code/docs/tests were ported without committing generated demo `.blend` or preview PNG artifacts.
-
-## Strongest Current Evidence
-
-- `python -m pytest -q` passed: 113 tests.
-- Direct viewport gate passed in Blender 5.1 on Warp 1.12.1 / CUDA `cuda:0`: `blender --background --factory-startup --python tests\blender_viewport_2frame_gate.py` ended in `VIEWPORT-2FRAME-GATE-PASS`.
-- Aggregate headless production gate passed: `python tools/run_production_gate.py` ended in `HEADLESS-GATE-PASS`.
-- The production gate explicitly did not run GUI acceptance; GUI-inclusive proof still requires `--include-gui` or `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`.
+- **PASS** `python tools/run_production_gate.py --include-gui`, started at
+  `2026-07-21T20:00:16.660750+00:00`, exit code `0`, ending in
+  `FULL-PRODUCTION-GATE-PASS`.
+- **PASS** the production lane's live recovery: it stopped the unsafe 24.4 GiB
+  allocation before CUDA allocation, then applied safe settings, initialized
+  the solver on `cuda:0`, and emitted `MEMORY-SAFETY-GATE-PASS`.
+- **PASS** GUI and saved-demo proof: `GUI-ACCEPTANCE-PASS (35/35)` and
+  `SAVED-DEMO-GUI-PLAYBACK-PASS`.
+- **PASS** the same run's CUDA and demo lanes: 44 focused regressions, 16/16
+  validation tests, kernel coverage, GPU profiler smoke, cache export/playback,
+  mesh-source acceptance, and demo analysis (18/18).
+- `artifacts/current_policy_drift_full_gate.log` remains historical and was
+  excluded from current authority.
 
 ## Findings
 
-### PD-001 - Sparse-octree claim is implemented as a flat sparse leaf table
+### PD-ROOT-001 — Safe-settings recovery violates Blender's integer property contract
 
-Type: documentation drift
+Status: resolved 2026-07-21
 
-Status: completed for current source wording
+Type: implementation drift, with validation coverage at the integration seam
 
-Authoritative evidence:
+Evidence:
 
-- Product, docs, UI, and validation wording use the sparse tiled leaf-grid contract.
-- The runtime contract remains fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
-- Contract wording guards exist in focused tests.
+- `fluidSim_warp_blender51/properties.py:513` declares
+  `particles_per_voxel` as a Blender `IntProperty`.
+- `fluidSim_warp_blender51/sim/memory_safety.py:235` stores the recommendation
+  as a float and `:256,262` scale it fractionally.
+- `fluidSim_warp_blender51/operators.py:148-155` now inspects the destination
+  RNA definition and applies `int(value)` before assigning an `INT` property.
+- `tests/blender_memory_safety_gate.py` verifies the recovered Blender RNA
+  property is an `int` after applying safe settings, then advances the solver.
+- The full GUI-inclusive production gate passes that recovery and every later
+  lane.
 
-Required corrective action:
+Required correction: completed.
 
-- Keep future product/docs/UI wording on "sparse tiled leaf grid" unless a real hierarchical sparse octree implementation and validation suite are added.
+### PD-ROOT-002 — Technical report preserves stale demo metrics
 
-### PD-002 - Active-work scaling repair
+Type: documentation drift and validation drift
 
-Type: implementation drift
+Evidence:
 
-Status: completed for current integration branch
+- `fluidSim_warp_blender51/docs/technical_report.md` still reports the demo
+  front speed as approximately `0.94*sqrt(gH)` and preserves stale validation
+  counts.
+- The current generated artifact reports dam-break
+  `front_speed_over_c0=0.975812558470745`, `z_at_T2=2.589575260779174`, and
+  `column_height_end=0.09686404466629028`.
+- Checked-in `demos/analysis_report.json` and `demos/ANALYSIS.md` still report
+  `0.9370464662808852`, `2.4854085941125073`, and `0.234130859375` from their
+  2026-07-13 run.
 
-Authoritative evidence:
+Required correction: regenerate and synchronize the checked-in demo evidence
+and technical report from one current reproducible profile.
 
-- Particle and whitewater launch/compaction paths use active-count bounds where available.
-- Pressure and viscosity grid phases use active voxel/leaf bounds for launches, reductions, and active copies where available.
-- Custom snippet dispatch launches over active particle/voxel work dimensions.
-- Focused regressions cover active-work bounds for pressure, viscosity, snippets, and compaction signatures.
+## Scope assessment
 
-Required corrective action:
+- The current CUDA stages exercised real Warp modules and registered kernels;
+  no additional shallow-backend or fabricated-fallback finding was opened from
+  lexical markers alone.
+- The prior approximate Cone/Pyramid and capacity-sized whitewater findings
+  were not reopened: current dirty source and focused coverage contain the
+  corresponding repairs, and the current full lane did not contradict them
+  during the full production gate.
+- The former stale full-gate authority claims were repaired in the reports;
+  their report-hygiene cards are marked completed. The root production lane is
+  now authoritative; the remaining follow-up is checked-in evidence sync.
 
-- Keep future benchmark/report wording tied to tested evidence.
-- Run GUI-inclusive production proof only when GUI acceptance is required.
+## Worktree preservation
 
-### PD-003 - Viewport gate failure must fail closed
+The pre-existing dirty solver and performance-test edits, generated demo
+binaries/previews and metadata, untracked `.agents/`, and existing audit cards
+remain preserved. This repair adds the RNA-seam change, its focused Blender
+regression, this root report update, and the TASK-005 status update; the
+requested production gate refreshed its normal demo outputs.
 
-Type: validation drift
+## Machine-readable audit footer
 
-Status: completed for current integration branch
-
-Authoritative evidence:
-
-- `tools/run_production_gate.py` rejects Blender traceback/fail markers even when Blender exits 0.
-- `tests/blender_viewport_2frame_gate.py` catches unexpected exceptions and emits `VIEWPORT-2FRAME-GATE-FAIL` before exiting nonzero.
-- The production gate now has explicit headless versus GUI-inclusive proof semantics; GUI proof requires `--include-gui` or `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`.
-
-Required corrective action:
-
-- Keep default headless output distinct from GUI-inclusive full production proof.
-- Do not claim GUI acceptance unless the GUI lane is explicitly run.
-
-## Machine-Readable Summary
-
-generated_at: 2026-07-07T21:55:00Z
-audit_unit: C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port
-branch: codex/execute-worktree-recommendations
-freshness: integration-branch
-status: completed
-blocking_criticality: low
+generated_at: 2026-07-21T20:06:18Z
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
+git_head: 231911d59d6083cd439ca9ca6039b05182198977
+freshness: fresh
+status: fresh
+blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification:
-  - python -m pytest -q (113 passed)
-  - blender --background --factory-startup --python tests\blender_viewport_2frame_gate.py (VIEWPORT-2FRAME-GATE-PASS)
-  - python tools/run_production_gate.py (HEADLESS-GATE-PASS; GUI not run)
-files_that_need_correction: []
+  - 'PASS: python tools/run_production_gate.py --include-gui; exit 0; FULL-PRODUCTION-GATE-PASS'
+  - 'PASS: MEMORY-SAFETY-GATE-PASS; unsafe allocation stopped, safe retry initialized on cuda:0'
+  - 'PASS: GUI-ACCEPTANCE-PASS (35/35); SAVED-DEMO-GUI-PLAYBACK-PASS'
+files_that_need_correction:
+  - 'fluidSim_warp_blender51/docs/technical_report.md'
+  - 'demos/analysis_report.json'
+  - 'demos/ANALYSIS.md'
 active_backlog_tasks:
-  - none
+  - 'backlog/tasks/TASK-POLICY-DRIFT-006-DEMO-EVIDENCE-SYNC.md'
 repair_checklist:
-  - master backup preserved before integration
-  - generated binary demo artifacts excluded from commits
-  - focused, broad pytest, direct viewport, and headless production gates passed
+  - 'Regenerate and synchronize checked-in demo analysis and technical-report metrics.'
+  - 'Refresh the remaining demo-evidence report from current runtime proof.'
