@@ -158,10 +158,13 @@ class Session:
         if not self.active:
             return
         self.scene_inputs.device = self.solver.device
+        sync_generation = self.scene_inputs.begin_sync()
         self.solver.set_sources(
             self.scene_inputs.gather_sources(
-                scene, depsgraph, capture_first_mesh=capture_first_mesh))
-        self.solver.set_colliders(self.scene_inputs.gather_colliders(scene, depsgraph))
+                scene, depsgraph, capture_first_mesh=capture_first_mesh,
+                sync_generation=sync_generation))
+        self.solver.set_colliders(self.scene_inputs.gather_colliders(
+            scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
     def step(self, scene, *, write_cache=True):

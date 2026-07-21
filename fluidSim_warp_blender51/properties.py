@@ -26,6 +26,8 @@ from .sim.enums import (
     CustomKernelOrder,
     CustomKernelRunOver,
     LimitBehavior,
+    MeshEvaluationMode,
+    MeshSinkRegionMode,
     ParticleSampleType,
     ProjectNonDivergentSolver,
     RelaxMode,
@@ -33,6 +35,7 @@ from .sim.enums import (
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
     SourceHeightBackMode,
+    SourceGeometryMode,
     SourceShapeForceType,
     SourceShapeShape,
     SourceShapeSourceMode,
@@ -43,8 +46,8 @@ from .sim.enums import (
 )
 
 
-def _items(enum_cls):
-    return enum_items(enum_cls)
+def _items(enum_cls, descriptions=None):
+    return enum_items(enum_cls, descriptions)
 
 
 LIQUID_VIEW_ITEMS = (
@@ -347,11 +350,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         description="Legacy compatibility flag; use Geometry = Mesh")
     geometry_mode: EnumProperty(
         name="Geometry",
-        items=[
-            ("ANALYTIC", "Analytic", "Use one of the six analytic source shapes"),
-            ("MESH", "Mesh", "Use evaluated triangle geometry"),
-        ],
-        default="ANALYTIC",
+        items=_items(SourceGeometryMode, {
+            "ANALYTIC": "Use one of the six analytic source shapes",
+            "MESH": "Use evaluated triangle geometry",
+        }),
+        default=SourceGeometryMode.ANALYTIC.name,
         update=_request_sync,
     )
     mesh_object: PointerProperty(
@@ -363,13 +366,13 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     )
     mesh_evaluation_mode: EnumProperty(
         name="Mesh Evaluation",
-        items=[
-            ("FIRST_SIM_FRAME", "First Sim Frame",
-             "Capture evaluated geometry on the first simulated frame and retain it until reset"),
-            ("EVERY_SIM_FRAME", "Every Sim Frame",
-             "Reevaluate modifiers, transforms, animation, and topology before every simulation frame"),
-        ],
-        default="FIRST_SIM_FRAME",
+        items=_items(MeshEvaluationMode, {
+            "FIRST_SIM_FRAME": (
+                "Capture evaluated geometry on the first simulated frame and retain it until reset"),
+            "EVERY_SIM_FRAME": (
+                "Reevaluate modifiers, transforms, animation, and topology before every simulation frame"),
+        }),
+        default=MeshEvaluationMode.FIRST_SIM_FRAME.name,
         update=_request_reset,
     )
     mesh_surface_thickness: FloatProperty(
@@ -382,11 +385,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     )
     sink_region_mode: EnumProperty(
         name="Sink Region",
-        items=[
-            ("SOLID", "Solid", "Remove particles inside a validated watertight mesh"),
-            ("SURFACE", "Surface", "Remove particles only in the triangle shell"),
-        ],
-        default="SOLID",
+        items=_items(MeshSinkRegionMode, {
+            "SOLID": "Remove particles inside a validated watertight mesh",
+            "SURFACE": "Remove particles only in the triangle shell",
+        }),
+        default=MeshSinkRegionMode.SOLID.name,
         update=_request_sync,
     )
     mesh_error: StringProperty(name="Mesh Error", default="")

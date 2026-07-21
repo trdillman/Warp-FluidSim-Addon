@@ -209,6 +209,24 @@ class SourceShapeSourceMode(IntEnum):
     PARTICLES = 1
 
 
+class SourceGeometryMode(IntEnum):
+    """Blender source geometry contract."""
+    ANALYTIC = 0
+    MESH = 1
+
+
+class MeshEvaluationMode(IntEnum):
+    """Evaluated-mesh capture cadence."""
+    FIRST_SIM_FRAME = 0
+    EVERY_SIM_FRAME = 1
+
+
+class MeshSinkRegionMode(IntEnum):
+    """Mesh sink membership policy."""
+    SOLID = 0
+    SURFACE = 1
+
+
 class SourceShapeShape(IntEnum):
     """Enum_Core_SourceShape_Shape"""
     SPHERE = 0

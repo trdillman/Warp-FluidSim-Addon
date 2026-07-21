@@ -54,6 +54,19 @@ def _sample_degenerate_shape_field(
         radius, height)
 
 
+@sourcing.wp.kernel
+def _sample_watertight_mesh_inside(
+    mesh_id: sourcing.wp.uint64,
+    points: sourcing.wp.array(dtype=sourcing.wp.vec3),
+    values: sourcing.wp.array(dtype=sourcing.wp.int32),
+):
+    tid = sourcing.wp.tid()
+    if sourcing._watertight_mesh_contains(mesh_id, points[tid], 10.0):
+        values[tid] = 1
+    else:
+        values[tid] = 0
+
+
 @pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
 def test_cone_and_pyramid_exact_surface_sign_and_feature_distances(shape):
     side_point = (0.0, 0.5, 0.0) if shape == 3 else (0.5, 0.0, 0.0)
@@ -164,6 +177,47 @@ def test_cone_and_pyramid_exact_distance_is_explicit_in_product_copy():
     assert "Exact Euclidean signed distance" in sourcing_text
     assert "exact local Euclidean distance" in properties_text
     assert "exact Euclidean boundary distance" in guide_text
+
+
+@pytest.mark.parametrize("reverse_winding", (False, True))
+def test_watertight_mesh_inside_is_independent_of_triangle_winding(reverse_winding):
+    vertices = np.asarray(
+        [
+            (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+        ],
+        dtype=np.float32,
+    )
+    triangles = np.asarray(
+        [
+            (0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7),
+            (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+            (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7),
+        ],
+        dtype=np.int32,
+    )
+    if reverse_winding:
+        triangles = triangles[:, (0, 2, 1)]
+    device = sourcing.wp.get_preferred_device()
+    mesh = sourcing.wp.Mesh(
+        points=sourcing.wp.array(vertices, dtype=sourcing.wp.vec3, device=device),
+        indices=sourcing.wp.array(triangles.reshape(-1), dtype=int, device=device),
+    )
+    points = sourcing.wp.array(
+        np.asarray(((0.0, 0.0, 0.0), (2.0, 0.0, 0.0)), dtype=np.float32),
+        dtype=sourcing.wp.vec3,
+        device=device,
+    )
+    values = sourcing.wp.empty(2, dtype=sourcing.wp.int32, device=device)
+    sourcing.wp.launch(
+        _sample_watertight_mesh_inside,
+        dim=2,
+        inputs=[mesh.id, points, values],
+        device=device,
+    )
+    np.testing.assert_array_equal(values.numpy(), (1, 0))
 
 
 class _Particles:

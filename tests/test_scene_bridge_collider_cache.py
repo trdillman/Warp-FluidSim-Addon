@@ -181,11 +181,14 @@ def _install_scene_bridge_stubs(monkeypatch):
     fake_solver.SourceShapeDesc = _SourceShapeDesc
     fake_solver.MeshSourceDesc = _MeshSourceDesc
     fake_solver.HeightSourceDesc = _HeightSourceDesc
+    fake_sourcing = types.ModuleType("fluidSim_warp_blender51.sim.sourcing")
+    fake_sourcing.MeshSourceDesc = _MeshSourceDesc
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
     monkeypatch.setitem(sys.modules, "warp", fake_warp)
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.solver", fake_solver)
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.sourcing", fake_sourcing)
     sys.modules.pop("fluidSim_warp_blender51.blender.colliders", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
     scene_bridge = importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
@@ -466,6 +469,55 @@ def test_mesh_source_uses_own_or_referenced_evaluated_mesh(monkeypatch):
     assert selected[0].aabb_max == (1.0, 1.0, 1.0)
 
 
+def test_mesh_sources_share_one_evaluated_reference_upload(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    referenced = _FakeObject(_triangle_mesh(extra_vert=True))
+    referenced.name = "referenced"
+    referenced.fluidsim.role = "NONE"
+    owners = []
+    for name in ("source-a", "source-b"):
+        owner = _FakeObject(_triangle_mesh())
+        owner.name = name
+        owner.fluidsim = _mesh_source_settings(mesh_object=referenced)
+        owners.append(owner)
+    scene = SimpleNamespace(
+        objects=[*owners, referenced], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    descriptors = sess.scene_inputs.gather_sources(scene, depsgraph=object())
+
+    assert len(descriptors) == 2
+    assert referenced.to_mesh_count == 1
+    assert descriptors[0].mesh is descriptors[1].mesh
+
+
+def test_dynamic_mesh_source_and_collider_share_one_upload(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    collider = _FakeObject(_cube_mesh())
+    collider.name = "collider"
+    owner = _FakeObject(_triangle_mesh())
+    owner.name = "source"
+    owner.fluidsim = _mesh_source_settings(
+        mesh_object=collider, mesh_evaluation_mode="EVERY_SIM_FRAME")
+    scene = SimpleNamespace(
+        objects=[owner, collider], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+
+    depsgraph = SimpleNamespace(updates=[SimpleNamespace(
+        id=SimpleNamespace(original=collider))])
+    sync_generation = sess.scene_inputs.begin_sync()
+    sources = sess.scene_inputs.gather_sources(
+        scene, depsgraph=depsgraph, sync_generation=sync_generation)
+    colliders = sess.scene_inputs.gather_colliders(
+        scene, depsgraph=depsgraph, sync_generation=sync_generation)
+
+    assert len(sources) == len(colliders) == 1
+    assert collider.to_mesh_count == 1
+    assert sources[0].mesh is colliders[0].mesh
+
+
 def test_first_frame_mesh_snapshot_is_immutable_until_clear(monkeypatch):
     scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sess = scene_bridge.Session()
@@ -583,6 +635,13 @@ def test_mesh_source_cache_drops_deleted_objects_and_degenerate_meshes(monkeypat
         [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)],
         [(0, 1, 2)])
     scene.objects = [obj]
+    assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
+    assert "degenerate" in obj.fluidsim.mesh_error
+
+    sess.scene_inputs.clear()
+    obj.mesh = _FakeMesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        [(0, 1, 2), (0, 0, 1)])
     assert sess.scene_inputs.gather_sources(scene, depsgraph=object()) == []
     assert "degenerate" in obj.fluidsim.mesh_error
 

@@ -41,6 +41,8 @@ from .fields import (
     world_to_voxel,
     sample_scalar_trilinear,
 )
+from .enums import (BlendMode, MeshSinkRegionMode, SourceShapeForceType,
+                    SourceShapeShape, SourceShapeSourceMode, SourceShapeType)
 from .registry import register_fn
 
 
@@ -145,9 +147,9 @@ class SourceShapeDesc:
     """Host description for one analytic source shape."""
 
     enabled: bool = True
-    shape: int = 0
-    stype: int = 0
-    mode: int = 1
+    shape: int = SourceShapeShape.SPHERE
+    stype: int = SourceShapeType.SOURCE
+    mode: int = SourceShapeSourceMode.PARTICLES
     position: tuple = (0.0, 0.0, 0.0)
     rotation: tuple = (0.0, 0.0, 0.0, 1.0)
     half_extents: tuple = (0.5, 0.5, 0.5)
@@ -157,9 +159,9 @@ class SourceShapeDesc:
     velocity: tuple = (0.0, 0.0, 0.0)
     linear_velocity: tuple = (0.0, 0.0, 0.0)
     angular_velocity: tuple = (0.0, 0.0, 0.0)
-    blend_mode: int = 1
+    blend_mode: int = BlendMode.REPLACE
     blend_amount: float = 1.0
-    force_type: int = 0
+    force_type: int = SourceShapeForceType.OFF
     force_strength: float = 0.0
     force_dir: tuple = (0.0, 0.0, 1.0)
     emit_rate: float = 8.0
@@ -223,15 +225,15 @@ class MeshSourceDesc:
     """Host description for evaluated-mesh surface sourcing and sinks."""
 
     enabled: bool = True
-    stype: int = 0
-    mode: int = 1
+    stype: int = SourceShapeType.SOURCE
+    mode: int = SourceShapeSourceMode.PARTICLES
     mesh: object = None
     aabb_min: tuple = (0.0, 0.0, 0.0)
     aabb_max: tuple = (0.0, 0.0, 0.0)
     surface_thickness: float = 0.0
-    sink_region_mode: int = 0  # 0 Solid, 1 Surface
+    sink_region_mode: int = MeshSinkRegionMode.SOLID
     velocity: tuple = (0.0, 0.0, 0.0)
-    blend_mode: int = 1
+    blend_mode: int = BlendMode.REPLACE
     blend_amount: float = 1.0
     emit_rate: float = 8.0
     temperature: float = 0.0
@@ -630,6 +632,15 @@ register_fn(k_source_shapes_particles, "fluidSimSourceShapesParticlesAttributes"
 # ---------------------------------------------------------------------------
 
 
+@wp.func
+def _watertight_mesh_contains(mesh_id: wp.uint64, point: wp.vec3,
+                              query_radius: float):
+    """Orientation-independent inside test for validated watertight meshes."""
+    query = wp.mesh_query_point_sign_parity(
+        mesh_id, point, query_radius, 3, 0.1)
+    return query.result and query.sign < 0.0
+
+
 @wp.kernel
 def k_mesh_source_field(
     mesh_id: wp.uint64,
@@ -657,9 +668,7 @@ def k_mesh_source_field(
     member = 0
 
     if source.stype == 2 and source.sink_region_mode == 0:
-        query = wp.mesh_query_point_sign_winding_number(
-            mesh_id, p, query_radius, 2.0, 0.5)
-        if query.result and query.sign < 0.0:
+        if _watertight_mesh_contains(mesh_id, p, query_radius):
             member = 1
     else:
         query = wp.mesh_query_point_no_sign(mesh_id, p, shell)
@@ -1574,12 +1583,15 @@ class SourcePipeline:
         self._emit_seed = (
             self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
         emit_shapes = shape_count > 0 and any(
-            source.enabled and source.stype == 0 and source.mode == 1
+            source.enabled
+            and source.stype == SourceShapeType.SOURCE
+            and source.mode == SourceShapeSourceMode.PARTICLES
             for source in analytic_sources
         )
         emit_mesh = any(
             source.enabled and source.mesh is not None
-            and source.stype == 0 and source.mode == 1
+            and source.stype == SourceShapeType.SOURCE
+            and source.mode == SourceShapeSourceMode.PARTICLES
             for source in mesh_sources
         )
         emit_height = height.enabled and height.emit_particles

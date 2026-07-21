@@ -12,6 +12,7 @@ from __future__ import annotations
 import bpy
 
 from .sim.constants import TIMER_PHASE_SLOTS
+from .sim.enums import SourceGeometryMode
 
 
 class FluidSimPanel:
@@ -201,7 +202,8 @@ class FLUIDSIM_PT_sources(FluidSimPanel, bpy.types.Panel):
             col.prop(pg, "enabled")
             if pg.role in {"SOURCE", "SINK"}:
                 col.prop(pg, "geometry_mode")
-            if pg.geometry_mode == "MESH" and pg.role in {"SOURCE", "SINK"}:
+            if (pg.geometry_mode == SourceGeometryMode.MESH.name
+                    and pg.role in {"SOURCE", "SINK"}):
                 col.prop(pg, "mesh_object")
                 col.prop(pg, "mesh_evaluation_mode")
                 col.prop(pg, "mesh_surface_thickness")

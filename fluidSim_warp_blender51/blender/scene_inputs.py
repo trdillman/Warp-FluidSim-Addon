@@ -69,12 +69,27 @@ class SceneInputs:
         self._collider_prev = {}
         self._collider_rotation_prev = {}
         self._evaluated_mesh_cache = {}
+        self._source_mesh_cache_keys = set()
+        self._collider_mesh_cache_keys = set()
+        self._sync_generation = 0
         # Compatibility alias for older diagnostics/tests.
         self._collider_mesh_cache = self._evaluated_mesh_cache
         self.evaluated_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
         self.collider_mesh_cache_stats = self.evaluated_mesh_cache_stats
 
-    def _evaluated_mesh(self, obj, depsgraph, cache_key, *, force_refresh=False):
+    def begin_sync(self):
+        """Return a token that deduplicates extraction within one scene sync."""
+        self._sync_generation += 1
+        return self._sync_generation
+
+    def _prune_evaluated_mesh_cache(self):
+        active = self._source_mesh_cache_keys | self._collider_mesh_cache_keys
+        for cache_key in list(self._evaluated_mesh_cache):
+            if cache_key not in active:
+                del self._evaluated_mesh_cache[cache_key]
+
+    def _evaluated_mesh(self, obj, depsgraph, cache_key, *, force_refresh=False,
+                        sync_generation=None):
         """Return one validated, triangulated world-space Warp mesh cache entry."""
         import warp as wp
 
@@ -89,7 +104,8 @@ class SceneInputs:
                 and entry["device"] == self.device
                 and entry["data_id"] == data_id
                 and entry["matrix_signature"] == matrix_signature
-                and object_id not in updated_ids and data_id not in updated_ids):
+                and (entry.get("sync_generation") == sync_generation
+                     or (object_id not in updated_ids and data_id not in updated_ids))):
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
@@ -121,9 +137,9 @@ class SceneInputs:
             edges_b = world_verts[tris[:, 2]] - world_verts[tris[:, 0]]
             area2 = np.linalg.norm(np.cross(edges_a, edges_b), axis=1)
             valid = area2 > (1.0e-12 * max(1.0, diagonal * diagonal))
-            tris = np.ascontiguousarray(tris[valid], dtype=np.int32)
-            if len(tris) == 0:
-                return None, "evaluated mesh contains only degenerate triangles"
+            if not np.all(valid):
+                return None, "evaluated mesh contains degenerate triangles"
+            tris = np.ascontiguousarray(tris, dtype=np.int32)
             triangle_points = world_verts[np.unique(tris)]
         finally:
             evaluated.to_mesh_clear()
@@ -131,25 +147,20 @@ class SceneInputs:
         signature = _cache_signature(
             object_id, self.device, verts, tris, matrix)
         if entry is not None and entry["signature"] == signature:
+            entry["sync_generation"] = sync_generation
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
         points = wp.array(world_verts, dtype=wp.vec3, device=self.device)
         indices = wp.array(
             tris.reshape(-1), dtype=wp.int32, device=self.device)
-        try:
-            warp_mesh = wp.Mesh(
-                points=points,
-                indices=indices,
-                support_winding_number=True,
-            )
-        except TypeError:  # lightweight test doubles and older Warp builds
-            warp_mesh = wp.Mesh(points=points, indices=indices)
+        warp_mesh = wp.Mesh(points=points, indices=indices)
         entry = {
             "signature": signature,
             "device": self.device,
             "data_id": data_id,
             "matrix_signature": matrix_signature,
+            "sync_generation": sync_generation,
             "mesh": warp_mesh,
             "aabb_min": triangle_points.min(axis=0),
             "aabb_max": triangle_points.max(axis=0),
@@ -186,21 +197,26 @@ class SceneInputs:
         axis = delta.axis
         return (float(axis.x) * scale, float(axis.y) * scale, float(axis.z) * scale)
 
-    def gather_sources(self, scene, depsgraph=None, *, capture_first_mesh=True):
+    def gather_sources(self, scene, depsgraph=None, *, capture_first_mesh=True,
+                       sync_generation=None):
         import bpy
-        from ..sim.enums import (BlendMode, SourceShapeForceType,
-                                 SourceShapeShape, SourceShapeSourceMode,
-                                 SourceShapeType)
+        from ..sim.enums import (BlendMode, MeshEvaluationMode,
+                                 MeshSinkRegionMode, SourceGeometryMode,
+                                 SourceShapeForceType, SourceShapeShape,
+                                 SourceShapeSourceMode, SourceShapeType)
         from ..sim.solver import SourceShapeDesc
 
+        sync_generation = sync_generation or self.begin_sync()
         descriptors, source_cache_keys = [], set()
         for obj in scene.objects:
             pg = getattr(obj, "fluidsim", None)
             if (pg is None or pg.role not in {"SOURCE", "SINK", "FORCE"}
                     or not pg.enabled or obj.hide_viewport):
                 continue
-            geometry_mode = getattr(pg, "geometry_mode", "ANALYTIC")
-            use_mesh = geometry_mode == "MESH" and pg.role in {"SOURCE", "SINK"}
+            geometry_mode = getattr(
+                pg, "geometry_mode", SourceGeometryMode.ANALYTIC.name)
+            use_mesh = (geometry_mode == SourceGeometryMode.MESH.name
+                        and pg.role in {"SOURCE", "SINK"})
             if use_mesh:
                 from ..sim.sourcing import MeshSourceDesc
                 desc = MeshSourceDesc()
@@ -244,21 +260,27 @@ class SceneInputs:
                         pg, "Mesh geometry requires a mesh object in this scene")
                     continue
                 evaluation_mode = getattr(
-                    pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
+                    pg, "mesh_evaluation_mode",
+                    MeshEvaluationMode.FIRST_SIM_FRAME.name)
                 cache_key = (
-                    "SOURCE", _object_identity(obj), _object_identity(mesh_obj),
-                    evaluation_mode,
-                )
+                    "EVALUATED_MESH", _object_identity(mesh_obj), evaluation_mode)
                 source_cache_keys.add(cache_key)
                 entry = self._evaluated_mesh_cache.get(cache_key)
-                if (entry is None and evaluation_mode == "FIRST_SIM_FRAME"
+                if (entry is None
+                        and evaluation_mode == MeshEvaluationMode.FIRST_SIM_FRAME.name
                         and not capture_first_mesh):
                     _set_mesh_error(pg, "")
                     continue
-                if entry is None or evaluation_mode == "EVERY_SIM_FRAME":
+                if (entry is None
+                        or evaluation_mode == MeshEvaluationMode.EVERY_SIM_FRAME.name):
+                    force_refresh = (
+                        evaluation_mode == MeshEvaluationMode.EVERY_SIM_FRAME.name
+                        and (entry is None
+                             or entry.get("sync_generation") != sync_generation))
                     entry, error = self._evaluated_mesh(
                         mesh_obj, depsgraph, cache_key,
-                        force_refresh=evaluation_mode == "EVERY_SIM_FRAME")
+                        force_refresh=force_refresh,
+                        sync_generation=sync_generation)
                     if entry is None:
                         self._evaluated_mesh_cache.pop(cache_key, None)
                         _set_mesh_error(pg, error)
@@ -269,10 +291,13 @@ class SceneInputs:
                 desc.surface_thickness = float(getattr(
                     pg, "mesh_surface_thickness", 0.0))
                 desc.sink_region_mode = (
-                    1 if getattr(pg, "sink_region_mode", "SOLID") == "SURFACE"
-                    else 0
+                    int(MeshSinkRegionMode.SURFACE)
+                    if getattr(pg, "sink_region_mode", MeshSinkRegionMode.SOLID.name)
+                    == MeshSinkRegionMode.SURFACE.name
+                    else int(MeshSinkRegionMode.SOLID)
                 )
-                if (pg.role == "SINK" and desc.sink_region_mode == 0
+                if (pg.role == "SINK"
+                        and desc.sink_region_mode == MeshSinkRegionMode.SOLID
                         and not entry["watertight"]):
                     _set_mesh_error(
                         pg, "Solid mesh sink requires a watertight mesh")
@@ -287,32 +312,33 @@ class SceneInputs:
             desc.force_strength = pg.force_strength
             desc.force_dir = tuple(pg.force_direction)
             descriptors.append(desc)
-        stale_source_keys = [
-            key for key in self._evaluated_mesh_cache
-            if isinstance(key, tuple) and key and key[0] == "SOURCE"
-            and key not in source_cache_keys
-        ]
-        for cache_key in stale_source_keys:
-            del self._evaluated_mesh_cache[cache_key]
+        self._source_mesh_cache_keys = source_cache_keys
+        self._prune_evaluated_mesh_cache()
         return descriptors
 
-    def gather_colliders(self, scene, depsgraph=None):
+    def gather_colliders(self, scene, depsgraph=None, *, sync_generation=None):
         import bpy
+        from ..sim.enums import MeshEvaluationMode
         from ..sim.solver import ColliderDesc
 
         depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
-        descriptors, seen = [], set()
+        sync_generation = sync_generation or self.begin_sync()
+        descriptors, collider_cache_keys = [], set()
         objects = (o for o in scene.objects if getattr(o, "fluidsim", None)
                    and o.fluidsim.role == "COLLIDER" and o.fluidsim.enabled)
         for obj in objects:
             if obj.type != "MESH" or obj.hide_viewport:
                 continue
             object_id = _object_identity(obj)
-            seen.add(object_id)
+            cache_key = (
+                "EVALUATED_MESH", object_id,
+                MeshEvaluationMode.EVERY_SIM_FRAME.name)
+            collider_cache_keys.add(cache_key)
             entry, _error = self._evaluated_mesh(
-                obj, depsgraph, object_id, force_refresh=False)
+                obj, depsgraph, cache_key, force_refresh=False,
+                sync_generation=sync_generation)
             if entry is None:
-                self._evaluated_mesh_cache.pop(object_id, None)
+                self._evaluated_mesh_cache.pop(cache_key, None)
                 continue
             warp_mesh = entry["mesh"]
             aabb_min, aabb_max = entry["aabb_min"], entry["aabb_max"]
@@ -328,9 +354,8 @@ class SceneInputs:
                 desc.linear_velocity = self.object_velocity(evaluated, scene)
                 desc.angular_velocity = self.object_angular_velocity(evaluated, scene)
             descriptors.append(desc)
-        for cache_key in list(self._evaluated_mesh_cache):
-            if isinstance(cache_key, int) and cache_key not in seen:
-                del self._evaluated_mesh_cache[cache_key]
+        self._collider_mesh_cache_keys = collider_cache_keys
+        self._prune_evaluated_mesh_cache()
         return descriptors
 
     def gather_height_source(self, scene):

@@ -90,7 +90,9 @@ compatibility utility and is not mesh emission.
 **Tag Collider** / **Tag Sink**. Each collider owns its friction, restitution,
 and velocity-transfer settings; collision response uses the values stored on
 the collider whose SDF is hit. Mesh sinks default to **Solid**, which requires a watertight
-mesh; **Surface** accepts open meshes and removes particles only in the shell.
+mesh and classifies its interior independently of triangle winding; **Surface** accepts open
+meshes and removes particles only in the shell. Empty or degenerate evaluated meshes are
+rejected with an error on the tagged source or sink instead of silently falling back.
 Lists colliders.
 
 ### Forces / Attraction
