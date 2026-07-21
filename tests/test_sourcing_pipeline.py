@@ -12,6 +12,21 @@ from fluidSim_warp_blender51.sim.sourcing import (
 )
 
 
+@sourcing.wp.kernel
+def _sample_shape_local_field(
+    shape: int,
+    points: sourcing.wp.array(dtype=sourcing.wp.vec3),
+    values: sourcing.wp.array(dtype=float),
+):
+    tid = sourcing.wp.tid()
+    values[tid] = sourcing.shape_local_sdf(
+        shape,
+        points[tid],
+        sourcing.wp.vec3(1.0, 1.0, 1.0),
+        1.0,
+        1.0,
+    )
+
 class _Particles:
     def __init__(self, host_count=0, capacity=8, refreshed_count=1):
         self.host_count = host_count
