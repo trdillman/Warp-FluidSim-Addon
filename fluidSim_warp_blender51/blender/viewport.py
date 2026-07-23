@@ -8,8 +8,8 @@ renders without any caching step.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 
-import bpy
 import numpy as np
 
 try:
@@ -25,6 +25,25 @@ WHITEWATER_NAME = "FluidSim Whitewater"
 COLOR_ATTR = "display_color"
 
 _OVERLAY_HANDLE = None
+bpy = sys.modules.get("bpy")
+
+
+def _require_bpy():
+    """Load Blender's API only for datablock and overlay operations."""
+    global bpy
+    if bpy is None:
+        try:
+            import bpy as blender_api
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Viewport datablock operations require Blender's Python runtime"
+            ) from exc
+        if not hasattr(blender_api, "data"):
+            raise RuntimeError(
+                "Viewport datablock operations require Blender's bpy module"
+            )
+        bpy = blender_api
+    return bpy
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +510,7 @@ def _cached_frame(scene, frame_data):
 
 
 def _render_outputs(scene, frame):
+    _require_bpy()
     from . import materials
 
     fs = scene.fluidsim
@@ -567,6 +587,7 @@ def _render_outputs(scene, frame):
 
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
+    _require_bpy()
     from . import materials
 
     # This is intentionally metadata-only. Without an active solver we cannot
@@ -607,6 +628,7 @@ def refresh_existing_output_settings(scene):
 
 def update_outputs(scene, sess, *, force_surface=False):
     """Write current solver outputs into Blender datablocks."""
+    _require_bpy()
     if not sess.active:
         return
     fs = scene.fluidsim
@@ -630,6 +652,7 @@ def update_outputs(scene, sess, *, force_surface=False):
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
+    _require_bpy()
     _render_outputs(scene, _cached_frame(scene, frame_data))
 
 
@@ -644,6 +667,7 @@ def _clear_points(name):
 
 
 def remove_outputs(scene=None):
+    _require_bpy()
     for name in (SURFACE_NAME, PARTICLES_NAME, WHITEWATER_NAME):
         obj = bpy.data.objects.get(name)
         if obj is not None:
@@ -663,6 +687,7 @@ def remove_outputs(scene=None):
 
 
 def _draw_overlay():
+    _require_bpy()
     import blf
 
     context = bpy.context
@@ -714,6 +739,7 @@ def _draw_overlay():
 
 def register_overlay():
     global _OVERLAY_HANDLE
+    _require_bpy()
     unregister_overlay()
     _OVERLAY_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
         _draw_overlay, (), "WINDOW", "POST_PIXEL")
@@ -721,6 +747,9 @@ def register_overlay():
 
 def unregister_overlay():
     global _OVERLAY_HANDLE
+    if _OVERLAY_HANDLE is None:
+        return
+    _require_bpy()
     if _OVERLAY_HANDLE is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_OVERLAY_HANDLE, "WINDOW")

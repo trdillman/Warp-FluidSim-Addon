@@ -128,6 +128,8 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
     monkeypatch.setitem(sys.modules, fake_materials.__name__, fake_materials)
     monkeypatch.setattr(blender, "materials", fake_materials, raising=False)
 
+    fake_bpy = types.ModuleType("bpy")
+    monkeypatch.setattr(viewport, "bpy", fake_bpy)
     existing = SimpleNamespace(type="MESH", data=SimpleNamespace(vertices=[1]))
     monkeypatch.setattr(
         viewport.bpy, "data",

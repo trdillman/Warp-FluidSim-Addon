@@ -106,6 +106,25 @@ def test_solver_reset_invalidates_frame_zero_host_snapshot():
     assert calls["positions"] == 2
 
 
+def test_viewport_frame_module_does_not_require_blender_runtime(monkeypatch):
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def import_without_bpy(name, *args, **kwargs):
+        if name == "bpy":
+            raise ModuleNotFoundError("blocked by host-Python boundary test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_bpy)
+    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
+    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+
+    assert viewport._solver_frame.__name__ == "_solver_frame"
+
+
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
     import sys
     from fluidSim_warp_blender51.blender import viewport
