@@ -1,0 +1,245 @@
+Paradigm 1.0.226 - Kernel <-> Enqueue Mapping (Completeness Verification)
+==============================================================================
+
+LAYERS
+  Layer A - fluidSim.cl   : __kernel source (188 total)
+  Layer B - DSO host code : paradigm1.0.226_*.dll - calls OpenCL dispatch API
+  Layer C - Add-on Python : houdini/scripts/python/PARADIGM_1_0/core.py
+
+DISPATCH FLOW
+  1. clBuildProgram         - compile fluidSim.cl
+  2. clCreateKernel         - name -> cl_kernel handle
+  3. clSetKernelArg         - bind __global / __constant
+  4. clEnqueueNDRangeKernel - enqueue
+  5. clEnqueueReadBuffer / clEnqueueWriteBuffer - sync
+  6. clFinish / clFlush     - drain
+
+==============================================================================
+VERIFICATION RESULTS
+==============================================================================
+
+A -> B (fluidSim.cl __kernel -> DSO host wrapper):
+  PASS    188 /  188  kernels have DSO host wrapper
+  FAIL      0 /  188  kernels lack DSO host wrapper
+
+B -> A (DSO symbol -> fluidSim.cl __kernel):
+  NOTE      9  DSO symbols have no direct CL def match
+         - coreGetVoxelIndexAtCoordin
+         - coreReduceScalarFieldDotPartialLinear
+         - coreReduceSum
+         - coreReduceVectorFieldDotPartialLinear
+         - paradigmProjectNonDivergentJacobi16_
+         - paradigmProjectNonDivergentJacobi2_
+         - paradigmProjectNonDivergentJacobi32_
+         - paradigmProjectNonDivergentJacobi4_
+         - paradigmProjectNonDivergentJacobi8_
+
+A -> C (fluidSim.cl __kernel -> Python ref):
+  4 kernels referenced by name in add-on Python (helpers only).
+  Other 184 dispatched from compiled C++ in DSO; Python only manages
+  the user-customizable kernel injection surface.
+
+==============================================================================
+PER-KERNEL MAPPING TABLE (Layer A -> Layer B)
+==============================================================================
+
+   #  Kernel                                                  CL line  In DSO
+------------------------------------------------------------------------------
+   1  coreClearScalarInt32                                       5475     yes
+   2  coreClearCoupleInt32                                       5487     yes
+   3  coreClearScalarInt16                                       5501     yes
+   4  coreClearScalarInt8                                        5513     yes
+   5  coreClearScalarVoxelType                                   5525     yes
+   6  coreClearScalarFloat32                                     5537     yes
+   7  coreClearScalarField                                       5549     yes
+   8  coreClearVectorField                                       5561     yes
+   9  coreComputeMaxActiveValue                                  5579     yes
+  10  coreConvertFieldVectorToMagnitude                          5624     yes
+  11  coreConvertFieldStaggeredVectorToMagnitude                 5647     yes
+  12  coreResetScaleField                                        5686     yes
+  13  coreRampToScaleFieldVolume                                 5700     yes
+  14  coreRampToScaleFieldParticle                               5764     yes
+  15  coreSyncScalarInt32                                        5822     yes
+  16  coreSyncScalarInt16                                        5835     yes
+  17  coreSyncScalarVoxelType                                    5848     yes
+  18  coreSyncScalarFloat32                                      5861     yes
+  19  coreSyncScalarFloat16                                      5874     yes
+  20  coreSyncScalarField                                        5889     yes
+  21  coreSyncCoupleInt32                                        5902     yes
+  22  coreSyncVectorFloat32                                      5921     yes
+  23  coreSyncCoupleField                                        5944     yes
+  24  coreSyncVectorField                                        5963     yes
+  25  coreReduceScalarFieldDotPartialLinear128                   5988     yes
+  26  coreReduceScalarFieldDotPartialLinear256                   6066     yes
+  27  coreReduceScalarFieldDotPartialLinear512                   6144     yes
+  28  coreReduceScalarFieldDotPartialLinear1024                  6222     yes
+  29  coreReduceVectorFieldDotPartialLinear128                   6301     yes
+  30  coreReduceVectorFieldDotPartialLinear256                   6399     yes
+  31  coreReduceVectorFieldDotPartialLinear512                   6497     yes
+  32  coreReduceVectorFieldDotPartialLinear1024                  6595     yes
+  33  coreReduceSum128                                           6694     yes
+  34  coreReduceSum256                                           6763     yes
+  35  coreReduceSum512                                           6832     yes
+  36  coreReduceSum1024                                          6901     yes
+  37  coreCreateSDFAxisX                                         6973     yes
+  38  coreCreateSDFAxisY                                         7041     yes
+  39  coreCreateSDFAxisZ                                         7128     yes
+  40  coreSmoothSDF                                              7219     yes
+  41  coreRenormalizeSdfFastSweep                                7312     yes
+  42  coreRecomputeCollisionBitFromSdf                           7447     yes
+  43  coreSDFToGradient                                          7474     yes
+  44  coreConvertFloat32ToFloat16                                7596     yes
+  45  coreConvertFloat16ToFloat32                                7617     yes
+  46  coreConvertInt32ToInt16                                    7638     yes
+  47  coreConvertInt16ToInt32                                    7651     yes
+  48  coreClampScalarField                                       7666     yes
+  49  coreRemapScalarField                                       7685     yes
+  50  coreSortScalarInt32                                        7704     yes
+  51  coreSortScalarInt16                                        7718     yes
+  52  coreSortScalarVoxelType                                    7732     yes
+  53  coreSortScalarFloat16                                      7746     yes
+  54  coreSortScalarFloat32                                      7762     yes
+  55  coreSortVectorFloat32                                      7776     yes
+  56  coreSortScalarField                                        7802     yes
+  57  coreSortCoupleField                                        7816     yes
+  58  coreSortVectorField                                        7838     yes
+  59  coreGridToParticleFieldAttribute                           7866     yes
+  60  coreParticleToGridCollect                                  7925     yes
+  61  coreGridExpand                                             8012     yes
+  62  coreParticleToGridAverage                                  8072     yes
+  63  coreSourceNanoVDBTypeFog                                   8130     yes
+  64  coreSourceNanoVDBTypeFogWithTemperature                    8239     yes
+  65  coreSourceNanoVDBTypeSDF                                   8351     yes
+  66  coreSourceNanoVDBTypeSDFWithTemperature                    8460     yes
+  67  coreSourceNanoVDBMaskFog                                   8572     yes
+  68  coreSourceNanoVDBMaskSDF                                   8663     yes
+  69  coreSourceNanoVDBFloat                                     8754     yes
+  70  coreSourceNanoVDBVector                                    8856     yes
+  71  coreSourceOpenVDBMask                                      8955     yes
+  72  coreSourceOpenVDBType                                      8989     yes
+  73  coreSourceOpenVDBTypeWithTemperature                       9037     yes
+  74  coreSourceOpenVDBFloat                                     9088     yes
+  75  coreSourceOpenVDBVectorComponent                           9129     yes
+  76  coreSourceFloat                                            9155     yes
+  77  coreSourceVector                                           9210     yes
+  78  coreSourceStaggeredVector                                  9306     yes
+  79  coreSourceFloatParticleAttribute                           9405     yes
+  80  coreSourceVectorParticleAttribute                          9503     yes
+  81  paradigmParticleToVoxelCountAndUpdateVoxelIndex            9645     yes
+  82  paradigmVoxelCountToVoxelParticleArrayStart                9714     yes
+  83  paradigmParticleToVoxelParticleArray                       9758     yes
+  84  paradigmVoxelParticleArraySort                             9803     yes
+  85  paradigmAdvectParticles                                   10243     yes
+  86  paradigmAdvectWhiteWater                                  10690     yes
+  87  paradigmSourceShapes                                      11184     yes
+  88  paradigmSourceShapesParticlesAttributes                   11849     yes
+  89  paradigmSourceHeight                                      12293     yes
+  90  paradigmSourceResolveType                                 12385     yes
+  91  paradigmSourceParticles                                   12413     yes
+  92  paradigmSourceParticleVectorFieldAttribute                12482     yes
+  93  paradigmSourceParticleScalarFieldAttribute                12516     yes
+  94  paradigmSourceParticleScalarIntegerAttribute              12540     yes
+  95  paradigmSourceParticleScalarFloatAttribute                12562     yes
+  96  paradigmSourceParticleScalarHalfAttribute                 12586     yes
+  97  paradigmForcesGravity                                     12614     yes
+  98  paradigmForcesDirectionalForce                            12643     yes
+  99  paradigmForcesOmnidirectionalForce                        12669     yes
+ 100  paradigmForcesSpeedLimit                                  12706     yes
+ 101  paradigmForcesDiffusion                                   12748     yes
+ 102  paradigmForcesDissipateParticleAttribute                  12855     yes
+ 103  paradigmAttractMaskToField                                12883     yes
+ 104  paradigmAttractSmoothField                                12906     yes
+ 105  paradigmAttractDirection                                  12981     yes
+ 106  paradigmAttractSdfGradientDirection                       13101     yes
+ 107  paradigmProjectNonDivergentCollisionPreConditionerNew     13262     yes
+ 108  paradigmProjectNonDivergentComputeDivergence_old          13310     yes
+ 109  paradigmProjectNonDivergentComputeDivergence              13475     yes
+ 110  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates8   13676     yes
+ 111  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates16   13760     yes
+ 112  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates32   13844     yes
+ 113  paradigmProjectNonDivergentElectrostaticSolvePotential8   13929     yes
+ 114  paradigmProjectNonDivergentElectrostaticSolvePotential16   14114     yes
+ 115  paradigmProjectNonDivergentElectrostaticSolvePotential32   14299     yes
+ 116  paradigmProjectNonDivergentProject                        14485     yes
+ 117  paradigmProjectNonDivergentExpandVelocityIntoCollision    14601     yes
+ 118  paradigmProjectNonDivergentJacobi2_original               14730     yes
+ 119  paradigmProjectNonDivergentJacobi4_original               14840     yes
+ 120  paradigmProjectNonDivergentJacobi8_original               14950     yes
+ 121  paradigmProjectNonDivergentJacobi16_original              15060     yes
+ 122  paradigmProjectNonDivergentJacobi32_original              15170     yes
+ 123  paradigmProjectNonDivergentJacobi2_optimizedUnroll        15281     yes
+ 124  paradigmProjectNonDivergentJacobi4_optimizedUnroll        15529     yes
+ 125  paradigmProjectNonDivergentJacobi8_optimizedUnroll        15777     yes
+ 126  paradigmProjectNonDivergentJacobi16_optimizedUnroll       16025     yes
+ 127  paradigmProjectNonDivergentJacobi32_optimizedUnroll       16273     yes
+ 128  paradigmProjectNonDivergentSampleDown                     16522     yes
+ 129  paradigmProjectNonDivergentSampleUp                       16594     yes
+ 130  paradigmProjectNonDivergentComputeInverseDiagonal8        16665     yes
+ 131  paradigmProjectNonDivergentComputeInverseDiagonal16       16748     yes
+ 132  paradigmProjectNonDivergentComputeInverseDiagonal32       16831     yes
+ 133  paradigmProjectNonDivergentInitializePcg                  16915     yes
+ 134  paradigmProjectNonDivergentApplyMatrix8                   16955     yes
+ 135  paradigmProjectNonDivergentApplyMatrix16                  17125     yes
+ 136  paradigmProjectNonDivergentApplyMatrix32                  17295     yes
+ 137  paradigmProjectNonDivergentComputeAlpha                   17466     yes
+ 138  paradigmProjectNonDivergentUpdateXR                       17484     yes
+ 139  paradigmProjectNonDivergentApplyPreConditioner            17511     yes
+ 140  paradigmProjectNonDivergentComputeBeta                    17542     yes
+ 141  paradigmProjectNonDivergentUpdateP                        17562     yes
+ 142  paradigmComputeMaxActiveValue                             17593     yes
+ 143  paradigmParticlesRelax                                    17646     yes
+ 144  paradigmUpdateParticleVoxelIndex                          17768     yes
+ 145  paradigmClearJustInitializedVoxelTypeTracked              17793     yes
+ 146  paradigmLeafSortVoxelTypeTracked                          17821     yes
+ 147  paradigmResetSourceShapeTrackedVoxelType                  17855     yes
+ 148  paradigmParticleAge                                       17874     yes
+ 149  paradigmParticleLifespan                                  17893     yes
+ 150  paradigmComputeChurn                                      17918     yes
+ 151  paradigmExpandFluidMask                                   18047     yes
+ 152  paradigmEmitWhiteWater                                    18107     yes
+ 153  paradigmParticleInSinkCheck                               18271     yes
+ 154  paradigmSortParticlesRandomMutex                          18334     yes
+ 155  paradigmParticleToLeafCount                               18366     yes
+ 156  paradigmParticleLeafCountToLeafArrayStart                 18411     yes
+ 157  paradigmSortParticlesLeafArrayMutex                       18455     yes
+ 158  paradigmParticleSetGridData                               18530     yes
+ 159  paradigmWhiteWaterSetGridData                             18572     yes
+ 160  paradigmParticleToCount                                   18608     yes
+ 161  paradigmParticleToCountPressure                           18675     yes
+ 162  paradigmParticleCountToPressure                           18750     yes
+ 163  paradigmPressureThresholdCompute                          18796     yes
+ 164  paradigmPressureThresholdApply                            18816     yes
+ 165  paradigmPressureScale                                     18833     yes
+ 166  paradigmStaggeredVectorFieldToParticle                    18900     yes
+ 167  paradigmParticleToGridActive                              18987     yes
+ 168  paradigmBuildSurfaceSdf                                   19068     yes
+ 169  paradigmSmoothSurfaceSdfDialate                           19174     yes
+ 170  paradigmSmoothSurfaceSdfErode                             19189     yes
+ 171  paradigmSmoothSurfaceSdfBox                               19204     yes
+ 172  paradigmSmoothSurfaceSdfMeanCurvatureFlow                 19265     yes
+ 173  paradigmForceViscositySmooth                              19448     yes
+ 174  paradigmForceViscosityCounterIncrement                    19747     yes
+ 175  paradigmForceViscosityBuildRhs                            19759     yes
+ 176  paradigmForceViscosityComputeInverseDiagonal              19923     yes
+ 177  paradigmForceViscosityApplyMatrix                         20016     yes
+ 178  paradigmForceViscosityInitializePcg                       20199     yes
+ 179  paradigmForceViscosityFinalizeInitialResidual             20226     yes
+ 180  paradigmForceViscosityInitializeDirectionFromPreconditioned   20265     yes
+ 181  paradigmForceViscosityComputeAlpha                        20288     yes
+ 182  paradigmForceViscosityUpdateXR                            20307     yes
+ 183  paradigmForceViscosityApplyPreConditioner                 20339     yes
+ 184  paradigmForceViscosityComputeBeta                         20368     yes
+ 185  paradigmForceViscosityUpdateP                             20389     yes
+ 186  paradigmForceViscosityApplyCollision                      20419     yes
+ 187  paradigmSdfToAxisCollision                                20460     yes
+ 188  paradigmExpandAndShiftAxisVelocityInColliderAxis          20537     yes
+
+==============================================================================
+VERDICT
+==============================================================================
+
+  A -> B : PASS  (188/188 kernels have host wrappers)
+  B -> enqueue : PASS (full clEnqueueNDRangeKernel + clCreateKernel + clSetKernelArg)
+  C -> B : PASS (computeCustomOpenCl* feed same pipeline)
+
+  No orphans. No phantoms. Dispatch coverage COMPLETE.

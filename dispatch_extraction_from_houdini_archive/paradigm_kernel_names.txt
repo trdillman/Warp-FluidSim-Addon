@@ -1,0 +1,489 @@
+Paradigm 1.0.226 - Kernel Name References (add-on archive + fluidSim.cl)
+==============================================================================
+
+SCOPE
+  * houdini/scripts/python/PARADIGM_1_0/*.py
+  * houdini*/dso/*.dll  (DSO string table)
+  * houdini_functional/otls/paradigm.hda, houdini_fallback/otls/paradigm.hda (no kernel refs)
+  * compute/openCL/fluidSim.cl
+  * Excluded: paradigm_fluidsim_blender/, rest of compute/
+
+==============================================================================
+SECTION 1 - OpenCL kernel definitions in fluidSim.cl (188 total)
+==============================================================================
+
+   #  Name                                                      Line  Signature
+------------------------------------------------------------------------------
+   1  coreClearScalarInt32                                      5475  __kernel void coreClearScalarInt32(
+   2  coreClearCoupleInt32                                      5487  __kernel void coreClearCoupleInt32(
+   3  coreClearScalarInt16                                      5501  __kernel void coreClearScalarInt16(
+   4  coreClearScalarInt8                                       5513  __kernel void coreClearScalarInt8(
+   5  coreClearScalarVoxelType                                  5525  __kernel void coreClearScalarVoxelType(
+   6  coreClearScalarFloat32                                    5537  __kernel void coreClearScalarFloat32(
+   7  coreClearScalarField                                      5549  __kernel void coreClearScalarField(
+   8  coreClearVectorField                                      5561  __kernel void coreClearVectorField(
+   9  coreComputeMaxActiveValue                                 5579  __kernel void coreComputeMaxActiveValue(
+  10  coreConvertFieldVectorToMagnitude                         5624  __kernel void coreConvertFieldVectorToMagnitude(
+  11  coreConvertFieldStaggeredVectorToMagnitude                5647  __kernel void coreConvertFieldStaggeredVectorToMagnitude(
+  12  coreResetScaleField                                       5686  __kernel void coreResetScaleField(
+  13  coreRampToScaleFieldVolume                                5700  __kernel void coreRampToScaleFieldVolume(
+  14  coreRampToScaleFieldParticle                              5764  __kernel void coreRampToScaleFieldParticle(
+  15  coreSyncScalarInt32                                       5822  __kernel void coreSyncScalarInt32(
+  16  coreSyncScalarInt16                                       5835  __kernel void coreSyncScalarInt16(
+  17  coreSyncScalarVoxelType                                   5848  __kernel void coreSyncScalarVoxelType(
+  18  coreSyncScalarFloat32                                     5861  __kernel void coreSyncScalarFloat32(
+  19  coreSyncScalarFloat16                                     5874  __kernel void coreSyncScalarFloat16(
+  20  coreSyncScalarField                                       5889  __kernel void coreSyncScalarField(
+  21  coreSyncCoupleInt32                                       5902  __kernel void coreSyncCoupleInt32(
+  22  coreSyncVectorFloat32                                     5921  __kernel void coreSyncVectorFloat32(
+  23  coreSyncCoupleField                                       5944  __kernel void coreSyncCoupleField(
+  24  coreSyncVectorField                                       5963  __kernel void coreSyncVectorField(
+  25  coreReduceScalarFieldDotPartialLinear128                  5988  __kernel void coreReduceScalarFieldDotPartialLinear128(
+  26  coreReduceScalarFieldDotPartialLinear256                  6066  __kernel void coreReduceScalarFieldDotPartialLinear256(
+  27  coreReduceScalarFieldDotPartialLinear512                  6144  __kernel void coreReduceScalarFieldDotPartialLinear512(
+  28  coreReduceScalarFieldDotPartialLinear1024                 6222  __kernel void coreReduceScalarFieldDotPartialLinear1024(
+  29  coreReduceVectorFieldDotPartialLinear128                  6301  __kernel void coreReduceVectorFieldDotPartialLinear128(
+  30  coreReduceVectorFieldDotPartialLinear256                  6399  __kernel void coreReduceVectorFieldDotPartialLinear256(
+  31  coreReduceVectorFieldDotPartialLinear512                  6497  __kernel void coreReduceVectorFieldDotPartialLinear512(
+  32  coreReduceVectorFieldDotPartialLinear1024                 6595  __kernel void coreReduceVectorFieldDotPartialLinear1024(
+  33  coreReduceSum128                                          6694  __kernel void coreReduceSum128(
+  34  coreReduceSum256                                          6763  __kernel void coreReduceSum256(
+  35  coreReduceSum512                                          6832  __kernel void coreReduceSum512(
+  36  coreReduceSum1024                                         6901  __kernel void coreReduceSum1024(
+  37  coreCreateSDFAxisX                                        6973  __kernel void coreCreateSDFAxisX(
+  38  coreCreateSDFAxisY                                        7041  __kernel void coreCreateSDFAxisY(
+  39  coreCreateSDFAxisZ                                        7128  __kernel void coreCreateSDFAxisZ(
+  40  coreSmoothSDF                                             7219  __kernel void coreSmoothSDF(
+  41  coreRenormalizeSdfFastSweep                               7312  __kernel void coreRenormalizeSdfFastSweep(
+  42  coreRecomputeCollisionBitFromSdf                          7447  __kernel void coreRecomputeCollisionBitFromSdf(
+  43  coreSDFToGradient                                         7474  __kernel void coreSDFToGradient(
+  44  coreConvertFloat32ToFloat16                               7596  __kernel void coreConvertFloat32ToFloat16(
+  45  coreConvertFloat16ToFloat32                               7617  __kernel void coreConvertFloat16ToFloat32(
+  46  coreConvertInt32ToInt16                                   7638  __kernel void coreConvertInt32ToInt16(
+  47  coreConvertInt16ToInt32                                   7651  __kernel void coreConvertInt16ToInt32(
+  48  coreClampScalarField                                      7666  __kernel void coreClampScalarField(
+  49  coreRemapScalarField                                      7685  __kernel void coreRemapScalarField(
+  50  coreSortScalarInt32                                       7704  __kernel void coreSortScalarInt32(
+  51  coreSortScalarInt16                                       7718  __kernel void coreSortScalarInt16(
+  52  coreSortScalarVoxelType                                   7732  __kernel void coreSortScalarVoxelType(
+  53  coreSortScalarFloat16                                     7746  __kernel void coreSortScalarFloat16(
+  54  coreSortScalarFloat32                                     7762  __kernel void coreSortScalarFloat32(
+  55  coreSortVectorFloat32                                     7776  __kernel void coreSortVectorFloat32(
+  56  coreSortScalarField                                       7802  __kernel void coreSortScalarField(
+  57  coreSortCoupleField                                       7816  __kernel void coreSortCoupleField(
+  58  coreSortVectorField                                       7838  __kernel void coreSortVectorField(
+  59  coreGridToParticleFieldAttribute                          7866  __kernel void coreGridToParticleFieldAttribute(
+  60  coreParticleToGridCollect                                 7925  __kernel void coreParticleToGridCollect(
+  61  coreGridExpand                                            8012  __kernel void coreGridExpand(
+  62  coreParticleToGridAverage                                 8072  __kernel void coreParticleToGridAverage(
+  63  coreSourceNanoVDBTypeFog                                  8130  __kernel void coreSourceNanoVDBTypeFog(
+  64  coreSourceNanoVDBTypeFogWithTemperature                   8239  __kernel void coreSourceNanoVDBTypeFogWithTemperature(
+  65  coreSourceNanoVDBTypeSDF                                  8351  __kernel void coreSourceNanoVDBTypeSDF(
+  66  coreSourceNanoVDBTypeSDFWithTemperature                   8460  __kernel void coreSourceNanoVDBTypeSDFWithTemperature(
+  67  coreSourceNanoVDBMaskFog                                  8572  __kernel void coreSourceNanoVDBMaskFog(
+  68  coreSourceNanoVDBMaskSDF                                  8663  __kernel void coreSourceNanoVDBMaskSDF(
+  69  coreSourceNanoVDBFloat                                    8754  __kernel void coreSourceNanoVDBFloat(
+  70  coreSourceNanoVDBVector                                   8856  __kernel void coreSourceNanoVDBVector(
+  71  coreSourceOpenVDBMask                                     8955  __kernel void coreSourceOpenVDBMask(
+  72  coreSourceOpenVDBType                                     8989  __kernel void coreSourceOpenVDBType(
+  73  coreSourceOpenVDBTypeWithTemperature                      9037  __kernel void coreSourceOpenVDBTypeWithTemperature(
+  74  coreSourceOpenVDBFloat                                    9088  __kernel void coreSourceOpenVDBFloat(
+  75  coreSourceOpenVDBVectorComponent                          9129  __kernel void coreSourceOpenVDBVectorComponent(
+  76  coreSourceFloat                                           9155  __kernel void coreSourceFloat(
+  77  coreSourceVector                                          9210  __kernel void coreSourceVector(
+  78  coreSourceStaggeredVector                                 9306  __kernel void coreSourceStaggeredVector(
+  79  coreSourceFloatParticleAttribute                          9405  __kernel void coreSourceFloatParticleAttribute(
+  80  coreSourceVectorParticleAttribute                         9503  __kernel void coreSourceVectorParticleAttribute(
+  81  paradigmParticleToVoxelCountAndUpdateVoxelIndex           9645  __kernel void paradigmParticleToVoxelCountAndUpdateVoxelIndex(
+  82  paradigmVoxelCountToVoxelParticleArrayStart               9714  __kernel void paradigmVoxelCountToVoxelParticleArrayStart(
+  83  paradigmParticleToVoxelParticleArray                      9758  __kernel void paradigmParticleToVoxelParticleArray(
+  84  paradigmVoxelParticleArraySort                            9803  __kernel void paradigmVoxelParticleArraySort(
+  85  paradigmAdvectParticles                                  10243  __kernel void paradigmAdvectParticles(
+  86  paradigmAdvectWhiteWater                                 10690  __kernel void paradigmAdvectWhiteWater(
+  87  paradigmSourceShapes                                     11184  __kernel void paradigmSourceShapes(
+  88  paradigmSourceShapesParticlesAttributes                  11849  __kernel void paradigmSourceShapesParticlesAttributes(
+  89  paradigmSourceHeight                                     12293  __kernel void paradigmSourceHeight(
+  90  paradigmSourceResolveType                                12385  __kernel void paradigmSourceResolveType(
+  91  paradigmSourceParticles                                  12413  __kernel void paradigmSourceParticles(
+  92  paradigmSourceParticleVectorFieldAttribute               12482  __kernel void paradigmSourceParticleVectorFieldAttribute(
+  93  paradigmSourceParticleScalarFieldAttribute               12516  __kernel void paradigmSourceParticleScalarFieldAttribute(
+  94  paradigmSourceParticleScalarIntegerAttribute             12540  __kernel void paradigmSourceParticleScalarIntegerAttribute(
+  95  paradigmSourceParticleScalarFloatAttribute               12562  __kernel void paradigmSourceParticleScalarFloatAttribute(
+  96  paradigmSourceParticleScalarHalfAttribute                12586  __kernel void paradigmSourceParticleScalarHalfAttribute(
+  97  paradigmForcesGravity                                    12614  __kernel void paradigmForcesGravity(
+  98  paradigmForcesDirectionalForce                           12643  __kernel void paradigmForcesDirectionalForce(
+  99  paradigmForcesOmnidirectionalForce                       12669  __kernel void paradigmForcesOmnidirectionalForce(
+ 100  paradigmForcesSpeedLimit                                 12706  __kernel void paradigmForcesSpeedLimit(
+ 101  paradigmForcesDiffusion                                  12748  __kernel void paradigmForcesDiffusion(
+ 102  paradigmForcesDissipateParticleAttribute                 12855  __kernel void paradigmForcesDissipateParticleAttribute(
+ 103  paradigmAttractMaskToField                               12883  __kernel void paradigmAttractMaskToField(
+ 104  paradigmAttractSmoothField                               12906  __kernel void paradigmAttractSmoothField(
+ 105  paradigmAttractDirection                                 12981  __kernel void paradigmAttractDirection(
+ 106  paradigmAttractSdfGradientDirection                      13101  __kernel void paradigmAttractSdfGradientDirection(
+ 107  paradigmProjectNonDivergentCollisionPreConditionerNew    13262  __kernel void paradigmProjectNonDivergentCollisionPreConditionerNew(
+ 108  paradigmProjectNonDivergentComputeDivergence_old         13310  __kernel void paradigmProjectNonDivergentComputeDivergence_old(
+ 109  paradigmProjectNonDivergentComputeDivergence             13475  __kernel void paradigmProjectNonDivergentComputeDivergence(
+ 110  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates8  13676  __kernel void paradigmProjectNonDivergentElectrostaticBuildLeafAggregates8(
+ 111  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates16  13760  __kernel void paradigmProjectNonDivergentElectrostaticBuildLeafAggregates16(
+ 112  paradigmProjectNonDivergentElectrostaticBuildLeafAggregates32  13844  __kernel void paradigmProjectNonDivergentElectrostaticBuildLeafAggregates32(
+ 113  paradigmProjectNonDivergentElectrostaticSolvePotential8  13929  __kernel void paradigmProjectNonDivergentElectrostaticSolvePotential8(
+ 114  paradigmProjectNonDivergentElectrostaticSolvePotential16  14114  __kernel void paradigmProjectNonDivergentElectrostaticSolvePotential16(
+ 115  paradigmProjectNonDivergentElectrostaticSolvePotential32  14299  __kernel void paradigmProjectNonDivergentElectrostaticSolvePotential32(
+ 116  paradigmProjectNonDivergentProject                       14485  __kernel void paradigmProjectNonDivergentProject(
+ 117  paradigmProjectNonDivergentExpandVelocityIntoCollision   14601  __kernel void paradigmProjectNonDivergentExpandVelocityIntoCollision(
+ 118  paradigmProjectNonDivergentJacobi2_original              14730  __kernel void paradigmProjectNonDivergentJacobi2_original(
+ 119  paradigmProjectNonDivergentJacobi4_original              14840  __kernel void paradigmProjectNonDivergentJacobi4_original(
+ 120  paradigmProjectNonDivergentJacobi8_original              14950  __kernel void paradigmProjectNonDivergentJacobi8_original(
+ 121  paradigmProjectNonDivergentJacobi16_original             15060  __kernel void paradigmProjectNonDivergentJacobi16_original(
+ 122  paradigmProjectNonDivergentJacobi32_original             15170  __kernel void paradigmProjectNonDivergentJacobi32_original(
+ 123  paradigmProjectNonDivergentJacobi2_optimizedUnroll       15281  __kernel void paradigmProjectNonDivergentJacobi2_optimizedUnroll(
+ 124  paradigmProjectNonDivergentJacobi4_optimizedUnroll       15529  __kernel void paradigmProjectNonDivergentJacobi4_optimizedUnroll(
+ 125  paradigmProjectNonDivergentJacobi8_optimizedUnroll       15777  __kernel void paradigmProjectNonDivergentJacobi8_optimizedUnroll(
+ 126  paradigmProjectNonDivergentJacobi16_optimizedUnroll      16025  __kernel void paradigmProjectNonDivergentJacobi16_optimizedUnroll(
+ 127  paradigmProjectNonDivergentJacobi32_optimizedUnroll      16273  __kernel void paradigmProjectNonDivergentJacobi32_optimizedUnroll(
+ 128  paradigmProjectNonDivergentSampleDown                    16522  __kernel void paradigmProjectNonDivergentSampleDown(
+ 129  paradigmProjectNonDivergentSampleUp                      16594  __kernel void paradigmProjectNonDivergentSampleUp(
+ 130  paradigmProjectNonDivergentComputeInverseDiagonal8       16665  __kernel void paradigmProjectNonDivergentComputeInverseDiagonal8(
+ 131  paradigmProjectNonDivergentComputeInverseDiagonal16      16748  __kernel void paradigmProjectNonDivergentComputeInverseDiagonal16(
+ 132  paradigmProjectNonDivergentComputeInverseDiagonal32      16831  __kernel void paradigmProjectNonDivergentComputeInverseDiagonal32(
+ 133  paradigmProjectNonDivergentInitializePcg                 16915  __kernel void paradigmProjectNonDivergentInitializePcg(
+ 134  paradigmProjectNonDivergentApplyMatrix8                  16955  __kernel void paradigmProjectNonDivergentApplyMatrix8(
+ 135  paradigmProjectNonDivergentApplyMatrix16                 17125  __kernel void paradigmProjectNonDivergentApplyMatrix16(
+ 136  paradigmProjectNonDivergentApplyMatrix32                 17295  __kernel void paradigmProjectNonDivergentApplyMatrix32(
+ 137  paradigmProjectNonDivergentComputeAlpha                  17466  __kernel void paradigmProjectNonDivergentComputeAlpha(
+ 138  paradigmProjectNonDivergentUpdateXR                      17484  __kernel void paradigmProjectNonDivergentUpdateXR(
+ 139  paradigmProjectNonDivergentApplyPreConditioner           17511  __kernel void paradigmProjectNonDivergentApplyPreConditioner(
+ 140  paradigmProjectNonDivergentComputeBeta                   17542  __kernel void paradigmProjectNonDivergentComputeBeta(
+ 141  paradigmProjectNonDivergentUpdateP                       17562  __kernel void paradigmProjectNonDivergentUpdateP(
+ 142  paradigmComputeMaxActiveValue                            17593  __kernel void paradigmComputeMaxActiveValue(
+ 143  paradigmParticlesRelax                                   17646  __kernel void paradigmParticlesRelax(
+ 144  paradigmUpdateParticleVoxelIndex                         17768  __kernel void paradigmUpdateParticleVoxelIndex(
+ 145  paradigmClearJustInitializedVoxelTypeTracked             17793  __kernel void paradigmClearJustInitializedVoxelTypeTracked(
+ 146  paradigmLeafSortVoxelTypeTracked                         17821  __kernel void paradigmLeafSortVoxelTypeTracked(
+ 147  paradigmResetSourceShapeTrackedVoxelType                 17855  __kernel void paradigmResetSourceShapeTrackedVoxelType(
+ 148  paradigmParticleAge                                      17874  __kernel void paradigmParticleAge(
+ 149  paradigmParticleLifespan                                 17893  __kernel void paradigmParticleLifespan(
+ 150  paradigmComputeChurn                                     17918  __kernel void paradigmComputeChurn(
+ 151  paradigmExpandFluidMask                                  18047  __kernel void paradigmExpandFluidMask(
+ 152  paradigmEmitWhiteWater                                   18107  __kernel void paradigmEmitWhiteWater(
+ 153  paradigmParticleInSinkCheck                              18271  __kernel void paradigmParticleInSinkCheck(
+ 154  paradigmSortParticlesRandomMutex                         18334  __kernel void paradigmSortParticlesRandomMutex(
+ 155  paradigmParticleToLeafCount                              18366  __kernel void paradigmParticleToLeafCount(
+ 156  paradigmParticleLeafCountToLeafArrayStart                18411  __kernel void paradigmParticleLeafCountToLeafArrayStart(
+ 157  paradigmSortParticlesLeafArrayMutex                      18455  __kernel void paradigmSortParticlesLeafArrayMutex(
+ 158  paradigmParticleSetGridData                              18530  __kernel void paradigmParticleSetGridData(
+ 159  paradigmWhiteWaterSetGridData                            18572  __kernel void paradigmWhiteWaterSetGridData(
+ 160  paradigmParticleToCount                                  18608  __kernel void paradigmParticleToCount(
+ 161  paradigmParticleToCountPressure                          18675  __kernel void paradigmParticleToCountPressure(
+ 162  paradigmParticleCountToPressure                          18750  __kernel void paradigmParticleCountToPressure(
+ 163  paradigmPressureThresholdCompute                         18796  __kernel void paradigmPressureThresholdCompute(
+ 164  paradigmPressureThresholdApply                           18816  __kernel void paradigmPressureThresholdApply(
+ 165  paradigmPressureScale                                    18833  __kernel void paradigmPressureScale(
+ 166  paradigmStaggeredVectorFieldToParticle                   18900  __kernel void paradigmStaggeredVectorFieldToParticle(
+ 167  paradigmParticleToGridActive                             18987  __kernel void paradigmParticleToGridActive(
+ 168  paradigmBuildSurfaceSdf                                  19068  __kernel void paradigmBuildSurfaceSdf(
+ 169  paradigmSmoothSurfaceSdfDialate                          19174  __kernel void paradigmSmoothSurfaceSdfDialate(
+ 170  paradigmSmoothSurfaceSdfErode                            19189  __kernel void paradigmSmoothSurfaceSdfErode(
+ 171  paradigmSmoothSurfaceSdfBox                              19204  __kernel void paradigmSmoothSurfaceSdfBox(
+ 172  paradigmSmoothSurfaceSdfMeanCurvatureFlow                19265  __kernel void paradigmSmoothSurfaceSdfMeanCurvatureFlow(
+ 173  paradigmForceViscositySmooth                             19448  __kernel void paradigmForceViscositySmooth(
+ 174  paradigmForceViscosityCounterIncrement                   19747  __kernel void paradigmForceViscosityCounterIncrement(
+ 175  paradigmForceViscosityBuildRhs                           19759  __kernel void paradigmForceViscosityBuildRhs(
+ 176  paradigmForceViscosityComputeInverseDiagonal             19923  __kernel void paradigmForceViscosityComputeInverseDiagonal(
+ 177  paradigmForceViscosityApplyMatrix                        20016  __kernel void paradigmForceViscosityApplyMatrix(
+ 178  paradigmForceViscosityInitializePcg                      20199  __kernel void paradigmForceViscosityInitializePcg(
+ 179  paradigmForceViscosityFinalizeInitialResidual            20226  __kernel void paradigmForceViscosityFinalizeInitialResidual(
+ 180  paradigmForceViscosityInitializeDirectionFromPreconditioned  20265  __kernel void paradigmForceViscosityInitializeDirectionFromPreconditioned(
+ 181  paradigmForceViscosityComputeAlpha                       20288  __kernel void paradigmForceViscosityComputeAlpha(
+ 182  paradigmForceViscosityUpdateXR                           20307  __kernel void paradigmForceViscosityUpdateXR(
+ 183  paradigmForceViscosityApplyPreConditioner                20339  __kernel void paradigmForceViscosityApplyPreConditioner(
+ 184  paradigmForceViscosityComputeBeta                        20368  __kernel void paradigmForceViscosityComputeBeta(
+ 185  paradigmForceViscosityUpdateP                            20389  __kernel void paradigmForceViscosityUpdateP(
+ 186  paradigmForceViscosityApplyCollision                     20419  __kernel void paradigmForceViscosityApplyCollision(
+ 187  paradigmSdfToAxisCollision                               20460  __kernel void paradigmSdfToAxisCollision(
+ 188  paradigmExpandAndShiftAxisVelocityInColliderAxis         20537  __kernel void paradigmExpandAndShiftAxisVelocityInColliderAxis(
+
+==============================================================================
+SECTION 2 - Host-side kernel references in DSO (paradigm1.0.226_*.dll)
+==============================================================================
+
+Distinct bare kernel names recoverable: 197
+
+   #  Name
+------------------------------------------------------------------------------
+   1.  *coreClampScalarField
+   2.  *coreClearCoupleInt32
+   3.  *coreClearScalarField
+   4.  *coreClearScalarFloat32
+   5.  *coreClearScalarInt16
+   6.  *coreClearScalarInt32
+   7.  *coreClearScalarInt8
+   8.  *coreClearScalarVoxelType
+   9.  *coreClearVectorField
+  10.  *coreComputeMaxActiveValue
+  11.  *coreConvertFieldStaggeredVectorToMagnitude
+  12.  *coreConvertFieldVectorToMagnitude
+  13.  *coreConvertFloat16ToFloat32
+  14.  *coreConvertFloat32ToFloat16
+  15.  *coreConvertInt16ToInt32
+  16.  *coreConvertInt32ToInt16
+  17.  *coreCreateSDFAxisX
+  18.  *coreCreateSDFAxisY
+  19.  *coreCreateSDFAxisZ
+  20.   coreGetVoxelIndexAtCoordin
+  21.  *coreGridExpand
+  22.  *coreGridToParticleFieldAttribute
+  23.  *coreParticleToGridAverage
+  24.  *coreParticleToGridCollect
+  25.  *coreRampToScaleFieldParticle
+  26.  *coreRampToScaleFieldVolume
+  27.  *coreRecomputeCollisionBitFromSdf
+  28.   coreReduceScalarFieldDotPartialLinear
+  29.  *coreReduceScalarFieldDotPartialLinear1024
+  30.  *coreReduceScalarFieldDotPartialLinear128
+  31.  *coreReduceScalarFieldDotPartialLinear256
+  32.  *coreReduceScalarFieldDotPartialLinear512
+  33.   coreReduceSum
+  34.  *coreReduceSum1024
+  35.  *coreReduceSum128
+  36.  *coreReduceSum256
+  37.  *coreReduceSum512
+  38.   coreReduceVectorFieldDotPartialLinear
+  39.  *coreReduceVectorFieldDotPartialLinear1024
+  40.  *coreReduceVectorFieldDotPartialLinear128
+  41.  *coreReduceVectorFieldDotPartialLinear256
+  42.  *coreReduceVectorFieldDotPartialLinear512
+  43.  *coreRemapScalarField
+  44.  *coreRenormalizeSdfFastSweep
+  45.  *coreResetScaleField
+  46.  *coreSDFToGradient
+  47.  *coreSmoothSDF
+  48.  *coreSortCoupleField
+  49.  *coreSortScalarField
+  50.  *coreSortScalarFloat16
+  51.  *coreSortScalarFloat32
+  52.  *coreSortScalarInt16
+  53.  *coreSortScalarInt32
+  54.  *coreSortScalarVoxelType
+  55.  *coreSortVectorField
+  56.  *coreSortVectorFloat32
+  57.  *coreSourceFloat
+  58.  *coreSourceFloatParticleAttribute
+  59.  *coreSourceNanoVDBFloat
+  60.  *coreSourceNanoVDBMaskFog
+  61.  *coreSourceNanoVDBMaskSDF
+  62.  *coreSourceNanoVDBTypeFog
+  63.  *coreSourceNanoVDBTypeFogWithTemperature
+  64.  *coreSourceNanoVDBTypeSDF
+  65.  *coreSourceNanoVDBTypeSDFWithTemperature
+  66.  *coreSourceNanoVDBVector
+  67.  *coreSourceOpenVDBFloat
+  68.  *coreSourceOpenVDBMask
+  69.  *coreSourceOpenVDBType
+  70.  *coreSourceOpenVDBTypeWithTemperature
+  71.  *coreSourceOpenVDBVectorComponent
+  72.  *coreSourceStaggeredVector
+  73.  *coreSourceVector
+  74.  *coreSourceVectorParticleAttribute
+  75.  *coreSyncCoupleField
+  76.  *coreSyncCoupleInt32
+  77.  *coreSyncScalarField
+  78.  *coreSyncScalarFloat16
+  79.  *coreSyncScalarFloat32
+  80.  *coreSyncScalarInt16
+  81.  *coreSyncScalarInt32
+  82.  *coreSyncScalarVoxelType
+  83.  *coreSyncVectorField
+  84.  *coreSyncVectorFloat32
+  85.  *paradigmAdvectParticles
+  86.  *paradigmAdvectWhiteWater
+  87.  *paradigmAttractDirection
+  88.  *paradigmAttractMaskToField
+  89.  *paradigmAttractSdfGradientDirection
+  90.  *paradigmAttractSmoothField
+  91.  *paradigmBuildSurfaceSdf
+  92.  *paradigmClearJustInitializedVoxelTypeTracked
+  93.  *paradigmComputeChurn
+  94.  *paradigmComputeMaxActiveValue
+  95.  *paradigmEmitWhiteWater
+  96.  *paradigmExpandAndShiftAxisVelocityInColliderAxis
+  97.  *paradigmExpandFluidMask
+  98.  *paradigmForceViscosityApplyCollision
+  99.  *paradigmForceViscosityApplyMatrix
+ 100.  *paradigmForceViscosityApplyPreConditioner
+ 101.  *paradigmForceViscosityBuildRhs
+ 102.  *paradigmForceViscosityComputeAlpha
+ 103.  *paradigmForceViscosityComputeBeta
+ 104.  *paradigmForceViscosityComputeInverseDiagonal
+ 105.  *paradigmForceViscosityCounterIncrement
+ 106.  *paradigmForceViscosityFinalizeInitialResidual
+ 107.  *paradigmForceViscosityInitializeDirectionFromPreconditioned
+ 108.  *paradigmForceViscosityInitializePcg
+ 109.  *paradigmForceViscositySmooth
+ 110.  *paradigmForceViscosityUpdateP
+ 111.  *paradigmForceViscosityUpdateXR
+ 112.  *paradigmForcesDiffusion
+ 113.  *paradigmForcesDirectionalForce
+ 114.  *paradigmForcesDissipateParticleAttribute
+ 115.  *paradigmForcesGravity
+ 116.  *paradigmForcesOmnidirectionalForce
+ 117.  *paradigmForcesSpeedLimit
+ 118.  *paradigmLeafSortVoxelTypeTracked
+ 119.  *paradigmParticleAge
+ 120.  *paradigmParticleCountToPressure
+ 121.  *paradigmParticleInSinkCheck
+ 122.  *paradigmParticleLeafCountToLeafArrayStart
+ 123.  *paradigmParticleLifespan
+ 124.  *paradigmParticleSetGridData
+ 125.  *paradigmParticleToCount
+ 126.  *paradigmParticleToCountPressure
+ 127.  *paradigmParticleToGridActive
+ 128.  *paradigmParticleToLeafCount
+ 129.  *paradigmParticleToVoxelCountAndUpdateVoxelIndex
+ 130.  *paradigmParticleToVoxelParticleArray
+ 131.  *paradigmParticlesRelax
+ 132.  *paradigmPressureScale
+ 133.  *paradigmPressureThresholdApply
+ 134.  *paradigmPressureThresholdCompute
+ 135.  *paradigmProjectNonDivergentApplyMatrix16
+ 136.  *paradigmProjectNonDivergentApplyMatrix32
+ 137.  *paradigmProjectNonDivergentApplyMatrix8
+ 138.  *paradigmProjectNonDivergentApplyPreConditioner
+ 139.  *paradigmProjectNonDivergentCollisionPreConditionerNew
+ 140.  *paradigmProjectNonDivergentComputeAlpha
+ 141.  *paradigmProjectNonDivergentComputeBeta
+ 142.  *paradigmProjectNonDivergentComputeDivergence
+ 143.  *paradigmProjectNonDivergentComputeDivergence_old
+ 144.  *paradigmProjectNonDivergentComputeInverseDiagonal16
+ 145.  *paradigmProjectNonDivergentComputeInverseDiagonal32
+ 146.  *paradigmProjectNonDivergentComputeInverseDiagonal8
+ 147.  *paradigmProjectNonDivergentElectrostaticBuildLeafAggregates16
+ 148.  *paradigmProjectNonDivergentElectrostaticBuildLeafAggregates32
+ 149.  *paradigmProjectNonDivergentElectrostaticBuildLeafAggregates8
+ 150.  *paradigmProjectNonDivergentElectrostaticSolvePotential16
+ 151.  *paradigmProjectNonDivergentElectrostaticSolvePotential32
+ 152.  *paradigmProjectNonDivergentElectrostaticSolvePotential8
+ 153.  *paradigmProjectNonDivergentExpandVelocityIntoCollision
+ 154.  *paradigmProjectNonDivergentInitializePcg
+ 155.   paradigmProjectNonDivergentJacobi16_
+ 156.  *paradigmProjectNonDivergentJacobi16_optimizedUnroll
+ 157.  *paradigmProjectNonDivergentJacobi16_original
+ 158.   paradigmProjectNonDivergentJacobi2_
+ 159.  *paradigmProjectNonDivergentJacobi2_optimizedUnroll
+ 160.  *paradigmProjectNonDivergentJacobi2_original
+ 161.   paradigmProjectNonDivergentJacobi32_
+ 162.  *paradigmProjectNonDivergentJacobi32_optimizedUnroll
+ 163.  *paradigmProjectNonDivergentJacobi32_original
+ 164.   paradigmProjectNonDivergentJacobi4_
+ 165.  *paradigmProjectNonDivergentJacobi4_optimizedUnroll
+ 166.  *paradigmProjectNonDivergentJacobi4_original
+ 167.   paradigmProjectNonDivergentJacobi8_
+ 168.  *paradigmProjectNonDivergentJacobi8_optimizedUnroll
+ 169.  *paradigmProjectNonDivergentJacobi8_original
+ 170.  *paradigmProjectNonDivergentProject
+ 171.  *paradigmProjectNonDivergentSampleDown
+ 172.  *paradigmProjectNonDivergentSampleUp
+ 173.  *paradigmProjectNonDivergentUpdateP
+ 174.  *paradigmProjectNonDivergentUpdateXR
+ 175.  *paradigmResetSourceShapeTrackedVoxelType
+ 176.  *paradigmSdfToAxisCollision
+ 177.  *paradigmSmoothSurfaceSdfBox
+ 178.  *paradigmSmoothSurfaceSdfDialate
+ 179.  *paradigmSmoothSurfaceSdfErode
+ 180.  *paradigmSmoothSurfaceSdfMeanCurvatureFlow
+ 181.  *paradigmSortParticlesLeafArrayMutex
+ 182.  *paradigmSortParticlesRandomMutex
+ 183.  *paradigmSourceHeight
+ 184.  *paradigmSourceParticleScalarFieldAttribute
+ 185.  *paradigmSourceParticleScalarFloatAttribute
+ 186.  *paradigmSourceParticleScalarHalfAttribute
+ 187.  *paradigmSourceParticleScalarIntegerAttribute
+ 188.  *paradigmSourceParticleVectorFieldAttribute
+ 189.  *paradigmSourceParticles
+ 190.  *paradigmSourceResolveType
+ 191.  *paradigmSourceShapes
+ 192.  *paradigmSourceShapesParticlesAttributes
+ 193.  *paradigmStaggeredVectorFieldToParticle
+ 194.  *paradigmUpdateParticleVoxelIndex
+ 195.  *paradigmVoxelCountToVoxelParticleArrayStart
+ 196.  *paradigmVoxelParticleArraySort
+ 197.  *paradigmWhiteWaterSetGridData
+        (* = also __kernel in fluidSim.cl)
+
+DSO OpenCL dispatch API imports:
+  - clBuildProgram
+  - clCreateKernel
+  - clEnqueueNDRangeKernel
+  - clEnqueueReadBuffer
+  - clEnqueueWriteBuffer
+  - clFinish
+  - clFlush
+  - clSetKernelArg
+
+DSO dispatch diagnostic strings:
+  - - Dispatch Wait For Command Queue:
+  - - Dispatch Work
+  - - Wait For Command Queue:
+  - COMPUTE::Manager::createCommandQueue() -> A command queue is already created, to create a new command queue you must reset!
+  - Create Command Queue
+  - Enqueue Compute Kernel -
+  - Enqueue Copy To Buffer -
+  - Enqueue Copy To Host -
+  - Failed to create command queue!
+  - Failed to set device when creating the command queue.
+  - Invalid command queue.
+  - Invalid kernel name.
+  - Kernel Buffer Sync
+  - Kernel Name:
+  - Set Kernel Buffer Argument
+  - Set Kernel Buffer Argument -
+  - clEnqueueMapBuffer
+  - clEnqueueNDRangeKernel
+  - clEnqueueReadBuffer
+  - clEnqueueUnmapMemObject
+  - clEnqueueWriteBuffer
+  - could not be used because it threw an error when initializing the compute command queues.
+  - total threads dispatched.
+
+==============================================================================
+SECTION 3 - Kernel-name refs in add-on Python (PARADIGM_1_0/*.py)
+==============================================================================
+
+--- core.py (4 hits) ---
+  L  930: coreGetVoxelIndexLocal                   | l_output += l_tabString + "index_t l_index = coreGetVoxelIndexLocal(l_leafIndex, l_x, l_y, l_z);"
+  L  942: coreGetStartVectorL0                     | l_output += l_tabString + "coreGetStartVectorL0(l_leafIndex, &l_start_x, &l_start_y, &l_start_z, a_sparseOctreeStart);"
+  L  990: coreReadFieldValue                       | l_output += l_tabString + "//float l_fieldValue = coreReadFieldValue(l_index, a_fieldArgument);"
+  L  993: coreWriteFieldValue                      | l_output += l_tabString + "//coreWriteFieldValue(l_fieldValue, l_index, a_fieldArgument);"
+
+Dynamic dispatch parameters carry kernel names at runtime:
+  - computeCustomOpenClSnippets / computeCustomOpenClKernelName<N>
+  - computeCustomOpenClCode<N> / Type<N> / Order<N> / RunOver<N> / Arguments<N>
+
+==============================================================================
+SECTION 4 - Cross-reference: fluidSim.cl vs DSO host symbols
+==============================================================================
+
+  In BOTH (CL source AND DSO symbol)        :  188
+  In fluidSim.cl ONLY (no DSO host wrapper) :    0
+  In DSO ONLY (no CL source def)            :    9
+
+fluidSim.cl kernels NOT in DSO symbols:
+  (none - all 188 have host wrappers)
+
+DSO symbols not in fluidSim.cl (overload/template/truncation):
+  - coreGetVoxelIndexAtCoordin
+  - coreReduceScalarFieldDotPartialLinear
+  - coreReduceSum
+  - coreReduceVectorFieldDotPartialLinear
+  - paradigmProjectNonDivergentJacobi16_
+  - paradigmProjectNonDivergentJacobi2_
+  - paradigmProjectNonDivergentJacobi32_
+  - paradigmProjectNonDivergentJacobi4_
+  - paradigmProjectNonDivergentJacobi8_
+
+==============================================================================
+SECTION 5 - Add-on Python dispatch methods
+==============================================================================
+
+  - computeCustomOpenClParametersToDictonary  (core.py:607-760, 154 lines)
+  - computeCustomOpenClCreateKernel  (core.py:761-1000, 240 lines)
