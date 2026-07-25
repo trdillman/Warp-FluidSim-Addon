@@ -1,127 +1,121 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-07-21T20:06:18Z
+generated_at: 2026-07-25T16:53:31Z
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 231911d59d6083cd439ca9ca6039b05182198977
+git_head: a6965e679ac3fd276c0c81cbfc1ee67257585739
 ---
 
 # Policy Drift Report
 
+## Truth contract
+
+This parent unit claims a real Blender 5.1 FluidSim add-on with GPU-resident
+Warp simulation, interactive viewport playback, evaluated mesh sources, sparse
+8x8x8 leaf-grid storage, and truthful production gates. The `demos` directory
+is a nested review unit; its files are outputs of this runtime, not substitutes
+for it.
+
 ## Verdict
 
-The safe-settings Blender RNA boundary is resolved. The direct assignment seam
-now uses the destination RNA type to normalize integer recommendations, and the
-full GUI-inclusive production lane passed on Blender 5.1 / `cuda:0`.
+The current runtime is real within the exercised acceptance boundary. The
+current Blender/CUDA full lane and the independent host regression suite pass.
+The live lane exercised registered Warp kernels, CUDA solver steps, mesh-source
+acceptance, GUI redraw/render output, saved-demo playback, and generated demo
+analysis. No current runtime artifact establishes a fabricated fallback,
+shallow backend, or heuristic substitute for the solver.
 
-PD-ROOT-002 remains open: checked-in demo evidence and the technical report
-still need synchronization from one current reproducible profile. That
-documentation task does not block the now-passing production lane.
-
-## Audit units
-
-- Root unit: this directory, containing the Blender 5.1 add-on and production
-  lane.
-- Nested unit: `demos`, with its own report and checked-in analysis artifacts.
+The prior current drift was evidence authority: the checked-in demo evidence
+and both policy reports were stale or overstated their freshness relative to
+the current rerun. The checked-in demo JSON/Markdown now match the generated
+artifact's 18/18 result and metrics from the same bounded source run.
 
 ## Strongest live evidence
 
-- **PASS** `python tools/run_production_gate.py --include-gui`, started at
-  `2026-07-21T20:00:16.660750+00:00`, exit code `0`, ending in
-  `FULL-PRODUCTION-GATE-PASS`.
-- **PASS** the production lane's live recovery: it stopped the unsafe 24.4 GiB
-  allocation before CUDA allocation, then applied safe settings, initialized
-  the solver on `cuda:0`, and emitted `MEMORY-SAFETY-GATE-PASS`.
-- **PASS** GUI and saved-demo proof: `GUI-ACCEPTANCE-PASS (35/35)` and
-  `SAVED-DEMO-GUI-PLAYBACK-PASS`.
-- **PASS** the same run's CUDA and demo lanes: 44 focused regressions, 16/16
-  validation tests, kernel coverage, GPU profiler smoke, cache export/playback,
-  mesh-source acceptance, and demo analysis (18/18).
-- `artifacts/current_policy_drift_full_gate.log` remains historical and was
-  excluded from current authority.
+- **PASS** `python tools/run_production_gate.py --include-gui`: current HEAD
+  `a6965e679ac3`, `FULL-PRODUCTION-GATE-PASS`, GUI acceptance `35/35`,
+  `MEMORY-SAFETY-GATE-PASS`, mesh-source acceptance, demo blend checks, and
+  saved-demo GUI playback pass.
+- **PASS** `python -m pytest -q`: `256 passed in 4.59s`.
+- **PASS** `artifacts/demo_analysis/analysis_report.json`: result `pass`,
+  `18/18`; current dam-break metrics are front-speed ratio `0.9758126`,
+  `Z(T=2)=2.5895753`, and end column height `0.0814825 m`.
+- **PASS** `artifacts/gui_playback_probe.json`: `passed=true`, `live=true`,
+  `device=cuda:0`, solver frame `5`, viewport changed, and status reports
+  `600,000` particles.
+
+## Claim matrix
+
+| Claim | Current result | Boundary |
+|---|---|---|
+| CUDA solver and registered Warp kernels are real | PASS | Full gate smoke, solver, mesh-source acceptance, and GUI lane |
+| Interactive playback produces changing visible output | PASS | GUI acceptance and saved-demo playback artifact |
+| Demo metrics are current and reviewable | PASS | Generated artifact and checked-in JSON/Markdown match |
+| Arbitrary scale, convergence, and long-run physical fidelity | UNPROVEN | Current lane does not certify those broader claims |
 
 ## Findings
 
-### PD-ROOT-001 — Safe-settings recovery violates Blender's integer property contract
-
-Status: resolved 2026-07-21
-
-Type: implementation drift, with validation coverage at the integration seam
-
-Evidence:
-
-- `fluidSim_warp_blender51/properties.py:513` declares
-  `particles_per_voxel` as a Blender `IntProperty`.
-- `fluidSim_warp_blender51/sim/memory_safety.py:235` stores the recommendation
-  as a float and `:256,262` scale it fractionally.
-- `fluidSim_warp_blender51/operators.py:148-155` now inspects the destination
-  RNA definition and applies `int(value)` before assigning an `INT` property.
-- `tests/blender_memory_safety_gate.py` verifies the recovered Blender RNA
-  property is an `int` after applying safe settings, then advances the solver.
-- The full GUI-inclusive production gate passes that recovery and every later
-  lane.
-
-Required correction: completed.
-
-### PD-ROOT-002 — Technical report preserves stale demo metrics
+### PD-ROOT-001 — Stale report authority and active-task footer
 
 Type: documentation drift and validation drift
+Status: corrected in this report and completed in
+`backlog/tasks/TASK-POLICY-DRIFT-009-REPORT-FRESHNESS.md`.
 
-Evidence:
+The prior root report was generated at `2026-07-24T15:13:41Z` and bound to
+HEAD `7fc3f522...`, while this audit ran at HEAD `a6965e679ac3`. Its footer also
+listed no active tasks even though the root freshness card and nested freshness
+card were `ready-for-agent`. This report is rebound to the current run and
+its footer now records the completed freshness cards instead of promoting the
+old completion claim.
 
-- `fluidSim_warp_blender51/docs/technical_report.md` still reports the demo
-  front speed as approximately `0.94*sqrt(gH)` and preserves stale validation
-  counts.
-- The current generated artifact reports dam-break
-  `front_speed_over_c0=0.975812558470745`, `z_at_T2=2.589575260779174`, and
-  `column_height_end=0.09686404466629028`.
-- Checked-in `demos/analysis_report.json` and `demos/ANALYSIS.md` still report
-  `0.9370464662808852`, `2.4854085941125073`, and `0.234130859375` from their
-  2026-07-13 run.
+### PD-ROOT-002 — Current generated demo evidence disagrees with checked-in evidence
 
-Required correction: regenerate and synchronize the checked-in demo evidence
-and technical report from one current reproducible profile.
+Type: validation drift and documentation drift
+Status: corrected by
+`backlog/tasks/TASK-POLICY-DRIFT-006-DEMO-EVIDENCE-SYNC.md` and the nested
+`demos/backlog/tasks/TASK-POLICY-DRIFT-002-CHECKED-IN-EVIDENCE.md`.
 
-## Scope assessment
+The current full lane and standalone analyzer wrote
+`artifacts/demo_analysis/analysis_report.json` with dam-break values
+`0.9758126`, `2.5895753`, and `0.0814825 m`. The checked-in
+`demos/analysis_report.json` and `demos/ANALYSIS.md` now carry the same 18/18
+result and rounded metrics, and the technical report records the same run and
+bounded source profiles.
 
-- The current CUDA stages exercised real Warp modules and registered kernels;
-  no additional shallow-backend or fabricated-fallback finding was opened from
-  lexical markers alone.
-- The prior approximate Cone/Pyramid and capacity-sized whitewater findings
-  were not reopened: current dirty source and focused coverage contain the
-  corresponding repairs, and the current full lane did not contradict them
-  during the full production gate.
-- The former stale full-gate authority claims were repaired in the reports;
-  their report-hygiene cards are marked completed. The root production lane is
-  now authoritative; the remaining follow-up is checked-in evidence sync.
+## Heuristic-implementation assessment
+
+Static leads were checked but not promoted to implementation drift because the
+current full lane exercised the real CUDA path, registered kernels, mesh
+sourcing, GUI playback, and generated outputs. Analytic shape SDFs, display
+proxies, input sanitization, and test doubles are explicit mechanisms in their
+respective contracts, not evidence of a solver replacement. The current scale
+boundary remains limited to the exercised capacities and frame windows; claims
+beyond those bounds need new scale/convergence evidence.
 
 ## Worktree preservation
 
-The pre-existing dirty solver and performance-test edits, generated demo
-binaries/previews and metadata, untracked `.agents/`, and existing audit cards
-remain preserved. This repair adds the RNA-seam change, its focused Blender
-regression, this root report update, and the TASK-005 status update; the
-requested production gate refreshed its normal demo outputs.
+The worktree was already dirty. The full gate regenerated demo artifacts; no
+reset, cleanup, restore, or unrelated implementation repair was performed.
+This audit deliberately changed only the two policy reports and the matching
+local task-card authority/state surfaces.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-07-21T20:06:18Z
+generated_at: 2026-07-25T16:53:31Z
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 231911d59d6083cd439ca9ca6039b05182198977
+git_head: a6965e679ac3fd276c0c81cbfc1ee67257585739
 freshness: fresh
 status: fresh
-blocking_criticality: medium
+blocking_criticality: low
 human_decision_required: false
 strongest_live_verification:
-  - 'PASS: python tools/run_production_gate.py --include-gui; exit 0; FULL-PRODUCTION-GATE-PASS'
-  - 'PASS: MEMORY-SAFETY-GATE-PASS; unsafe allocation stopped, safe retry initialized on cuda:0'
-  - 'PASS: GUI-ACCEPTANCE-PASS (35/35); SAVED-DEMO-GUI-PLAYBACK-PASS'
-files_that_need_correction:
-  - 'fluidSim_warp_blender51/docs/technical_report.md'
-  - 'demos/analysis_report.json'
-  - 'demos/ANALYSIS.md'
-active_backlog_tasks:
-  - 'backlog/tasks/TASK-POLICY-DRIFT-006-DEMO-EVIDENCE-SYNC.md'
+  - 'PASS: python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS; GUI-ACCEPTANCE-PASS (35/35); SAVED-DEMO-GUI-PLAYBACK-PASS.'
+  - 'PASS: python -m pytest -q; 256 passed in 4.59s.'
+  - 'PASS: artifacts/demo_analysis/analysis_report.json and demos/analysis_report.json; result=pass; 18/18; metrics synchronized.'
+  - 'PASS: artifacts/gui_playback_probe.json; live=true; device=cuda:0; solver_frame=5; viewport_changed=true.'
+files_that_need_correction: []
+active_backlog_tasks: []
 repair_checklist:
-  - 'Regenerate and synchronize checked-in demo analysis and technical-report metrics.'
-  - 'Refresh the remaining demo-evidence report from current runtime proof.'
+  - '[x] Regenerate checked-in demo JSON and Markdown from the current full-lane artifact.'
+  - '[x] Update the technical report to the same run, metrics, and source profile.'
+  - '[x] Rerun the full gate and pytest, then verify all authority surfaces share one HEAD and timestamp.'
