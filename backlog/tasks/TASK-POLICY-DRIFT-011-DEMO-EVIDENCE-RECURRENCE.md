@@ -21,13 +21,12 @@ demos evidence card establishes the current checked-in JSON and Markdown.
 ## Evidence
 
 - Root report: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\POLICY_DRIFT_REPORT.md`.
-- Generated source: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\artifacts\demo_analysis\analysis_report.json`;
-  final dam-break column height is `0.0952136219 m` and crown height is
-  `0.4082177579 m`, with `DEMO-ANALYSIS-PASS (18/18)`.
-- The technical report records the full-gate run at `2026-07-26T16:45:03Z`,
-  HEAD `566a4276a4f3e7ba599519091a8a5c20b108da4b`, the 72/48-frame bounded
-  profiles, and separate GUI review evidence. The prior metric delta is
-  documented as run variance; stale values are not called synchronized.
+- The selected generated source artifact reports dam-break front ratio
+  `1.0117893136`, column height `0.0798046589 m`, crown height `0.3577636480 m`,
+  and `DEMO-ANALYSIS-PASS (18/18)`.
+- The technical report now records that artifact, the gate run
+  `2026-07-27T16:39:08Z`, HEAD `77a4931fb6d16f749628141b5f25aa33017cde5f`, the
+  bounded scene/frame profiles, and separate GUI review evidence.
 
 ## Scope and relationship
 
@@ -41,5 +40,6 @@ technical-report integration and must follow that card.
 
 ## Blocked by
 
-None - the demos evidence card is complete, the technical report matches the
-final generated artifact, and the full production gate plus pytest pass.
+`demos/backlog/tasks/TASK-POLICY-DRIFT-005-CHECKED-IN-EVIDENCE-RECURRENCE.md`
+completed first and established the synchronized source artifact. No human
+decision is required.

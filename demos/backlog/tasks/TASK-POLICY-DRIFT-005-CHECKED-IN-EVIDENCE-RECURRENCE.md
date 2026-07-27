@@ -7,7 +7,7 @@ completed
 ## What to build
 
 Own only the checked-in demo JSON and Markdown. Regenerate them from the
-current parent analysis artifact after the metric delta is classified; the
+current parent analysis artifact and preserve that run's provenance; the
 dependent technical-report wording belongs to the root integration card.
 
 ## Acceptance criteria
@@ -24,13 +24,11 @@ dependent technical-report wording belongs to the root integration card.
 ## Evidence
 
 - Demos report: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos\POLICY_DRIFT_REPORT.md`.
-- Final generated source dam-break column height is `0.0952136219 m` and
-  crown height is `0.4082177579 m`; checked-in JSON and Markdown match the
-  generated artifact exactly.
-- The full gate rerun under the same checked-in profiles changed the derived
-  values between runs while preserving `DEMO-ANALYSIS-PASS (18/18)`, so the
-  earlier delta is classified as runtime variance rather than a source-profile
-  change.
+- Selected generated source evidence reports dam-break front ratio
+  `1.0117893136`, column height `0.0798046589 m`, and crown height
+  `0.3577636480 m`; checked-in JSON and Markdown now match the artifact.
+- The current gate's demo-analysis lane reports `DEMO-ANALYSIS-PASS (18/18)`
+  under HEAD `77a4931fb6d16f749628141b5f25aa33017cde5f`.
 
 ## Scope and relationship
 
@@ -40,6 +38,6 @@ dependent `fluidSim_warp_blender51\docs\technical_report.md` integration.
 
 ## Blocked by
 
-None - the delta was classified as run variance, the checked-in
-JSON now exactly matches the generated artifact, and the Markdown records the
-bounded source and separate review evidence.
+None - the selected generated artifact, checked-in JSON, and Markdown now
+match for all 18 checks and record the same bounded-run provenance. No human
+decision is required.

@@ -337,31 +337,30 @@ never crash the suite.
 | Pressure projection regressions | **5 / 5** passing (`pytest tests/test_pressure_projection_regressions.py`) |
 | Blender background acceptance | **34 / 34** checks (`BACKGROUND-ACCEPTANCE-PASS`) |
 | Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |
-| Demo `dam_break` | **9 / 9** (mass, containment, front speed 0.98·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0952 m`, peak whitewater `4,280`) |
-| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `408 mm`, Worthington jet height `177 mm`, azimuthal symmetry CV 0.007) |
+| Demo `dam_break` | **9 / 9** (mass, containment, front speed 1.01·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0798 m`, peak whitewater `3,551`) |
+| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `358 mm`, Worthington jet height `178 mm`, azimuthal symmetry CV 0.007) |
 
 The current generated source evidence comes from
-`artifacts/demo_analysis/analysis_report.json`, produced by the real
-`python tools/run_production_gate.py --include-gui` run and bound by the root
-policy report to audit run `2026-07-26T16:45:03Z`, HEAD
-`566a4276a4f3e7ba599519091a8a5c20b108da4b`, using the checked-in
+`artifacts/demo_analysis/analysis_report.json`, produced by the headless/demo
+portion of the real `python tools/run_production_gate.py --include-gui` run
+and bound to audit run `2026-07-27T16:39:08Z`, HEAD
+`77a4931fb6d16f749628141b5f25aa33017cde5f`, using the checked-in
 `demos/dam_break/meta.json` and `demos/crown_splash/meta.json` profiles. The
 bounded profiles are 128,000 particles over 72 frames for `dam_break` and
 259,112 particles over 48 frames for `crown_splash`. The checked-in demo JSON
 and Markdown now match this artifact exactly: the standalone demo-analysis
-lane passes **18 / 18** with column height `0.0952136219 m`, crown height
-`0.4082177579 m`, peak whitewater `4,280`, and Worthington jet height
-`177 mm`. The change from the prior checked-in run is runtime variance under
-the same bounded source profiles, not a replacement of source evidence with
-review-only values.
+lane passes **18 / 18** with front-speed ratio `1.0117893136`, column height
+`0.0798046589 m`, crown-radius correlation `0.9715359144`, crown height
+`0.3577636480 m`, peak whitewater `3,551`, and Worthington jet height
+`178 mm`. These are bounded generated-run metrics, not arbitrary-scale claims.
 
 Generated source evidence is separate from review evidence:
 `artifacts/gui_playback_probe.json` records live CUDA playback on `cuda:0`
-through solver frame 5 with 600,000 particles, a changed viewport, and
-`passed=true`; the full production lane separately reports
-`FULL-PRODUCTION-GATE-PASS`. Review evidence validates runtime execution and
-playback but does not replace the generated demo metrics or call stale prior
-values synchronized.
+through solver frame 5 with 128,000 particles, a changed viewport, and
+`passed=true`; its validator reports `SAVED-DEMO-GUI-PLAYBACK-PASS`. The
+interactive GUI lane reports `GUI-ACCEPTANCE-PASS (35/35)`. Review evidence
+validates runtime execution and playback but does not replace the generated
+demo metrics or call stale prior values synchronized.
 
 ---
 

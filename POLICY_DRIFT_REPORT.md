@@ -1,102 +1,91 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-07-26T16:45:03Z
+generated_at: 2026-07-27T16:43:42Z
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 566a4276a4f3e7ba599519091a8a5c20b108da4b
+git_head: 77a4931fb6d16f749628141b5f25aa33017cde5f
 ---
 
-# Policy Drift Report
+# Policy Drift Report — root unit
 
 ## Truth contract
 
-The requested unit is a real Blender 5.1 FluidSim/Warp runtime: GPU-resident
-simulation, interactive playback, real source/collider/force paths, bounded
-active work, and review evidence that remains traceable to the run that made
-it. Demo screenshots, labels, mocked unit tests, and stale checked-in metrics
-are evidence surfaces, not substitutes for runtime truth.
+This unit claims a real Blender 5.1 FluidSim/Warp runtime: CUDA-resident
+simulation, live viewport playback, real source/collider/force paths, and
+review evidence bound to the run that produced it. A passing bounded lane is
+not evidence of arbitrary-scale physical validity, and checked-in summaries
+must not outrank current generated artifacts.
 
 ## Strongest live evidence
 
-- **PASS** `rtk python tools/run_production_gate.py --include-gui`: current root
-  lane reached `FULL-PRODUCTION-GATE-PASS`, GUI acceptance, saved-demo playback,
-  CUDA, mesh-source, memory-safety, and demo-analysis lanes.
-- **PASS** `rtk python -m pytest -q`: `295 passed in 11.74s`.
-- **PASS** `artifacts/demo_analysis/analysis_report.json`: current generated
-  `pass`, `18/18`; dam-break front-speed ratio `0.9758125585`,
-  `Z(T=2)=2.5895752608`, column height `0.0952136219 m`; crown height
-  `0.4082177579 m`; peak whitewater `4,280`; jet height `177 mm`.
-- **PASS** direct saved-demo probe plus validator: `GUI-PLAYBACK-PROBE-PASS`
-  and `SAVED-DEMO-GUI-PLAYBACK-PASS`; the current
-  `artifacts/gui_playback_probe.json` reports `live=true`, `device=cuda:0`,
-  solver frame `5`, `600,000` particles, viewport changed, and
-  `passed=true`.
+- **PASS** the headless/demo portion of `rtk python
+  tools/run_production_gate.py --include-gui` at HEAD
+  `77a4931fb6d16f749628141b5f25aa33017cde5f`: real CUDA solver, mesh-source,
+  force-region, memory-safety, viewport, source-UI, demo-build, demo-analysis,
+  and demo-blend lanes passed; `DEMO-ANALYSIS-PASS (18/18)`.
+- **PASS** interactive GUI acceptance: `GUI-ACCEPTANCE-PASS (35/35)`.
+- **PASS** saved-demo GUI probe and validator: `GUI-PLAYBACK-PROBE-PASS` and
+  `SAVED-DEMO-GUI-PLAYBACK-PASS`.
+- **PASS** `rtk python -m pytest -q`: `343 passed in 9.90s`.
+- **PASS** current `artifacts/demo_analysis/analysis_report.json`: `18/18`.
+  Selected generated values are dam-break front ratio `1.0117893136`, column
+  height `0.0798046589 m`, and crown height `0.3577636480 m`.
+- **PASS** `artifacts/gui_playback_probe.json`: `live=true`, `device=cuda:0`,
+  `solver_frame=5`, `particle_count=128000`, `viewport_changed=true`.
 
 ## Claim matrix
 
 | Claim | Current evidence | Verdict | Gap |
 |---|---|---|---|
-| Real GPU FluidSim runtime | Full gate and direct Blender probe load real Warp modules on `cuda:0` and advance a saved demo | conformant for the executed lanes | Bounded to the tested scenes, frame windows, and capacities |
-| Demo analysis is generated runtime evidence | Current artifact is `pass`, `18/18`, with current cache-derived metrics | conformant as bounded evidence | Do not generalize the profile to arbitrary scale |
-| Checked-in demo evidence is authoritative | Checked-in JSON/Markdown exactly match the current generated artifact | conformant for this profile | Bounded to the executed scenes, frame windows, and current run |
-| Policy reports describe this audit | Both reports bind to the current gate run and completed evidence cards | conformant | Documentation remains tied to this runtime artifact |
-| Nested worktree is a complete production unit | Separate nested lane fails during `py_compile` because required scripts are absent | missing in that unit | See the nested-unit report and card |
+| The root runtime is a real GPU-backed FluidSim path | Headless production lanes plus separate GUI acceptance and saved-demo playback reached CUDA, GUI, mesh, force, and playback paths | conformant as bounded runtime evidence | Do not generalize to untested scale or convergence |
+| Current generated demo analysis passes | `artifacts/demo_analysis/analysis_report.json`, `18/18` | conformant as bounded evidence | Do not generalize to arbitrary scale |
+| Checked-in demo/technical evidence describes the selected run | JSON, Markdown, and technical report match the selected artifact and provenance | conformant as bounded evidence | Run variance remains possible between bounded executions |
 
 ## Findings
 
-### PD-ROOT-001 — Report authority is stale against the live checkout
+### PD-ROOT-001 — Resolved: generated demo evidence is synchronized
 
-Type: documentation drift and validation drift. Blocking criticality: low.
+Type: validation drift and documentation drift. Blocking criticality: medium.
 
-Before this refresh, the root and nested reports named an older run and hid the
-evidence-sync backlog. The current full gate and pytest were rerun under HEAD
-`566a4276a4f3e7ba599519091a8a5c20b108da4b`; both reports now bind to that run
-and expose no unresolved implementation cards.
+The selected generated artifact passes `18/18`, and the checked-in demo JSON,
+Markdown, and technical report now match its metrics and provenance: gate run
+`2026-07-27T16:39:08Z`, HEAD `77a4931fb6d16f749628141b5f25aa33017cde5f`, and
+the bounded `128,000/72` and `259,112/48` scene profiles. The two broad cards
+were superseded; the narrower nested evidence and technical-report cards are
+completed.
 
-Card: `backlog/tasks/TASK-POLICY-DRIFT-010-REPORT-AUTHORITY-RECURRENCE.md`.
-
-### PD-ROOT-002 — Generated demo evidence disagrees with checked-in evidence
-
-Type: validation drift and documentation drift. Blocking criticality: low.
-
-The final generated artifact reports dam-break column height `0.0952136219 m`
-and crown height `0.4082177579 m`; checked-in JSON/Markdown and the technical
-report now match those values and the 18/18 result. The earlier discrepancy is
-classified as run variance under the same bounded source profiles, not as a
-heuristic backend or a source-evidence replacement. The nested evidence card
-and this dependent integration card are complete.
-
-Card: `backlog/tasks/TASK-POLICY-DRIFT-011-DEMO-EVIDENCE-RECURRENCE.md`.
+Cards completed: `backlog/tasks/TASK-POLICY-DRIFT-011-DEMO-EVIDENCE-RECURRENCE.md`
+and `demos/backlog/tasks/TASK-POLICY-DRIFT-005-CHECKED-IN-EVIDENCE-RECURRENCE.md`.
 
 ## Guarded leads not promoted to findings
 
-- `fluidSim_warp_blender51/sim/sourcing.py:374-446` implements cone and
-  pyramid signed-distance paths, including triangle-distance handling for the
-  pyramid; the current code does not support the older approximate-SDF claim.
-- `fluidSim_warp_blender51/sim/whitewater.py:402-460` and
-  `fluidSim_warp_blender51/sim/solver.py:1433-1450` pass an active-count hint
-  through compaction and grid scatter. The older capacity-sized-work finding
-  is not current source truth.
-- Mocked `run_production_gate` unit tests prove gate semantics only; they were
-  not used as proof of runtime execution.
+- `fluidSim_warp_blender51/sim/sourcing.py` contains implemented cone and
+  pyramid signed-distance paths, including triangle-distance handling; the
+  older approximate-SDF claim is not current source truth.
+- `fluidSim_warp_blender51/sim/whitewater.py` and `sim/solver.py` pass active
+  count hints through compaction and scatter; the older capacity-only work
+  claim is not current source truth.
+- The current gate exercised real Warp CUDA and Blender paths. Mocked gate
+  tests and synthetic panel-validation rows were not used as runtime proof.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-07-26T16:45:03Z
+generated_at: 2026-07-27T16:43:42Z
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 566a4276a4f3e7ba599519091a8a5c20b108da4b
+git_head: 77a4931fb6d16f749628141b5f25aa33017cde5f
 freshness: fresh
 status: fresh
 blocking_criticality: low
 human_decision_required: false
 strongest_live_verification:
-  - 'PASS: rtk python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS.'
-  - 'PASS: rtk python -m pytest -q; 295 passed in 9.21s.'
-  - 'PASS: artifacts/demo_analysis/analysis_report.json; result=pass; 18/18; current metrics recorded above.'
-  - 'PASS: artifacts/gui_playback_probe.json; direct live CUDA probe; solver_frame=5; particle_count=600000; viewport_changed=true.'
+  - 'PASS: current gate headless/demo lanes; DEMO-ANALYSIS-PASS (18/18); HEAD 77a4931fb6d16f749628141b5f25aa33017cde5f.'
+  - 'PASS: GUI-ACCEPTANCE-PASS (35/35); GUI-PLAYBACK-PROBE-PASS; SAVED-DEMO-GUI-PLAYBACK-PASS.'
+  - 'PASS: rtk python -m pytest -q; 343 passed in 9.90s.'
+  - 'PASS: artifacts/demo_analysis/analysis_report.json; result=pass; 18/18; selected metrics above.'
+  - 'PASS: artifacts/gui_playback_probe.json; live CUDA; solver_frame=5; viewport_changed=true.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:
-  - '[x] Determine whether the metric delta is expected nondeterminism or a changed source profile.'
-  - '[x] Regenerate checked-in JSON/Markdown/technical wording from one documented current run.'
-  - '[x] Rerun the full gate, pytest, and direct GUI probe, then refresh all report authority fields.'
+  - '[x] Select and record one current generated run as the review authority.'
+  - '[x] Synchronize checked-in JSON, Markdown, and technical-report metrics/provenance.'
+  - '[x] Rerun the required production lanes and verify all evidence surfaces agree.'
