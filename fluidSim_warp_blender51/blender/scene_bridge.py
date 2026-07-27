@@ -41,6 +41,9 @@ class Session:
         self.device = None
         self.memory_assessment = {}
         self.scene_inputs = SceneInputs()
+        # Identity of the scene this session bakes from; stamped into every
+        # cache frame and into the sequence metadata.
+        self.scene_key = ""
 
     @property
     def active(self):
@@ -65,6 +68,7 @@ class Session:
         self.frame_stats = []
         self.scene_inputs.clear()
         self.device = None
+        self.scene_key = ""
         del solver
         from ..sim.memory_safety import release_cuda_memory
         release_cuda_memory(device)
@@ -119,6 +123,9 @@ class Session:
                     device=settings.device, sync=fs.profiling_sync)
             self.solver = FluidSolver(settings, profiler=profiler)
             self.profiler = profiler
+            from ..io import cache
+
+            self.scene_key = cache.scene_key(scene)
             self.start_frame = scene.frame_start
             self.sync_scene(scene, capture_first_mesh=False)
             sources.inject_auto_seeds(scene, self)
@@ -218,6 +225,7 @@ class Session:
                     self.cache_written_start,
                     self.cache_written_end,
                     source="live_simulation",
+                    scene_key_value=self.scene_key,
                 )
             except Exception as exc:  # noqa: BLE001 - cache is supplemental
                 print(f"fluidSim cache write failed: {exc!r}")
@@ -245,6 +253,7 @@ class Session:
         if frame_data is None:
             raise FileNotFoundError(
                 f"Cache frame {frame} is missing or corrupt in {base}")
+        _check_cache_scene_key(scene, base, frame_data)
         viewport.update_outputs_from_cache_frame(scene, frame_data)
         fs.stat_particles = len(frame_data.get("positions", ()))
         fs.stat_whitewater = len(frame_data.get("whitewater", ()))
@@ -293,7 +302,9 @@ class Session:
                 self.step(scene, write_cache=False)
                 self.solver.frame = timeline_frame
                 cache.write_frame(scene, self)
-            cache.write_sequence_metadata(base, start, end, source="simulation")
+            cache.write_sequence_metadata(
+                base, start, end, source="simulation",
+                scene_key_value=self.scene_key)
         finally:
             if frame_set is not None:
                 try:
@@ -353,6 +364,39 @@ ERROR_SCENE_KEY = "fluidsim_last_error"
 
 def session() -> Session:
     return _SESSION
+
+
+_CACHE_SCENE_KEY_MESSAGE = (
+    "Cache frame {frame} was baked from different scene settings "
+    "(cache {baked}, scene {current}). Re-bake the cache, or restore the "
+    "settings it was baked with."
+)
+
+
+def _check_cache_scene_key(scene, base, frame_data):
+    """Refuse to play a cache baked from a materially different scene.
+
+    Caches written before this check carry no key; they still play, so an
+    existing bake is not invalidated by upgrading. Both the sequence metadata
+    and the frame's own stamp are checked, so a frame file moved out of its
+    sequence is caught too.
+    """
+    import numpy as np
+
+    from ..io import cache
+
+    frame = int(frame_data.get("frame", -1))
+    metadata_key = str((cache.read_sequence_metadata(base) or {}).get("scene_key", ""))
+    frame_key = (str(np.asarray(frame_data["scene_key"]).item())
+                 if "scene_key" in frame_data else "")
+    baked = metadata_key or frame_key
+    if not baked:
+        return
+    current = cache.scene_key(scene)
+    for candidate in (metadata_key, frame_key):
+        if candidate and candidate != current:
+            raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
+                frame=frame, baked=candidate[:12], current=current[:12]))
 
 
 def _scene_get(scene, key: str, default=""):

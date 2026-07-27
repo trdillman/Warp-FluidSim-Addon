@@ -7,6 +7,8 @@ stored as compressed .npz files.
 
 from __future__ import annotations
 
+from enum import Enum
+import hashlib
 import json
 import io
 import os
@@ -18,6 +20,77 @@ import numpy as np
 
 CACHE_FORMAT_VERSION = 1
 CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
+
+SCENE_KEY_VERSION = "v1"
+# Settings that say where the solve runs, not what it computes: a cache baked
+# on cuda:0 replays correctly on cuda:1.
+_SCENE_KEY_IGNORED_SETTINGS = frozenset({"device"})
+# RNA property types with a stable value repr. POINTER/COLLECTION reprs embed
+# addresses and would change the key every session.
+_HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
+
+
+def _digest(h, value):
+    """Feed one setting value into the running hash."""
+    if isinstance(value, np.ndarray):
+        h.update(np.ascontiguousarray(value).tobytes())
+    elif isinstance(value, Enum):
+        h.update(repr(value.value).encode())
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _digest(h, item)
+    else:
+        h.update(repr(value).encode())
+    h.update(b"|")
+
+
+def _digest_rna(h, group):
+    for name, prop in sorted(group.bl_rna.properties.items()):
+        if name == "rna_type" or prop.type not in _HASHABLE_RNA_TYPES:
+            continue
+        value = getattr(group, name)
+        h.update(f"{name}=".encode())
+        _digest(h, tuple(value) if getattr(prop, "is_array", False) else value)
+
+
+def scene_key(scene) -> str:
+    """Content hash of every scene input that changes what the solver computes.
+
+    This is the identity of a baked cache. Playback refuses a sequence whose key
+    does not match the current scene rather than replaying a stale result as if
+    it were a correct answer.
+
+    ``build_settings`` is hashed rather than a hand-listed field set so the key
+    stays correct by construction as settings are added -- a hand-maintained
+    list going stale is the exact failure being fixed here.
+
+    ponytail: a tagged object contributes its transform and vertex count, not
+    its vertex positions. Hashing evaluated geometry needs a depsgraph pass and
+    would duplicate what SceneInputs already does every frame. Editing vertices
+    in place, without changing the count or the transform, is the known blind
+    spot; hash ``obj.evaluated_get(depsgraph).to_mesh()`` here if it bites.
+    """
+    from ..blender.scene_bridge import build_settings
+
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"{SCENE_KEY_VERSION}|settings|".encode())
+    settings = build_settings(scene)
+    fields = getattr(type(settings), "__dataclass_fields__", None) or vars(settings)
+    for name in sorted(fields):
+        if name in _SCENE_KEY_IGNORED_SETTINGS:
+            continue
+        h.update(f"{name}=".encode())
+        _digest(h, getattr(settings, name))
+    h.update(b"roster|")
+    for obj in sorted(scene.objects, key=lambda value: value.name):
+        group = getattr(obj, "fluidsim", None)
+        if group is None or group.role == "NONE":
+            continue
+        h.update(f"{obj.name}|".encode())
+        _digest_rna(h, group)
+        _digest(h, tuple(tuple(row) for row in obj.matrix_world))
+        _digest(h, len(getattr(getattr(obj, "data", None), "vertices", ())))
+    return h.hexdigest()
 
 
 def _savez_fast_compressed(path, payload):
@@ -38,7 +111,7 @@ def _metadata_path(base_dir: str) -> str:
     return os.path.join(base_dir, CACHE_SEQUENCE_METADATA)
 
 
-def _frame_payload(solver):
+def _frame_payload(solver, scene_key_value: str = ""):
     """Build the version-1 cache payload from the shared lazy host frame."""
     from ..sim.frame_output import HostFrame
 
@@ -51,6 +124,7 @@ def _frame_payload(solver):
         "voxel_size": getattr(solver.settings, "voxel_size", 0.05)})
     return {
         "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
+        "scene_key": np.array(str(scene_key_value)),
         "positions": host.positions,
         "velocities": host.velocities,
         "whitewater": host.whitewater,
@@ -98,7 +172,8 @@ def write_sequence_metadata(
         frame_start: int,
         frame_end: int,
         *,
-        source: str = "simulation") -> str:
+        source: str = "simulation",
+        scene_key_value: str = "") -> str:
     """Write sequence-level cache metadata next to per-frame .npz files."""
     os.makedirs(base_dir, exist_ok=True)
     start = int(frame_start)
@@ -111,6 +186,7 @@ def write_sequence_metadata(
         "frame_end": end,
         "frame_count": end - start + 1,
         "source": str(source),
+        "scene_key": str(scene_key_value),
     }
     path = _metadata_path(base_dir)
     fd, tmp_path = tempfile.mkstemp(
@@ -170,7 +246,9 @@ def write_frame(scene, sess, frame=None) -> str:
     )
     os.close(fd)
     try:
-        _savez_fast_compressed(tmp_path, _frame_payload(solver))
+        _savez_fast_compressed(
+            tmp_path,
+            _frame_payload(solver, getattr(sess, "scene_key", "")))
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):

@@ -73,6 +73,7 @@ def _scene(frame=7, *, playback=True):
         frame_current=frame,
         frame_start=1,
         frame_end=10,
+        objects=(),
         fluidsim=SimpleNamespace(
             live=True,
             cache_playback_enabled=playback,
@@ -150,6 +151,7 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
         "whitewater": np.zeros((1, 3), dtype=np.float32),
     }
     fake_cache.resolve_frame_range = lambda *args, **kwargs: (1, 10)
+    fake_cache.read_sequence_metadata = lambda base: None
     _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
 
     solver = SimpleNamespace(step_frame=lambda: (_ for _ in ()).throw(
@@ -191,6 +193,51 @@ def test_enabling_cache_playback_releases_live_solver(monkeypatch):
 
     assert not scene_bridge.session().active
     assert scene.fluidsim.status == "Cache playback enabled - press play"
+
+
+def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
+        monkeypatch, tmp_path):
+    """A cache is only an answer to the scene it was baked from.
+
+    ``format_version`` alone cannot catch this: the file is perfectly well
+    formed, it just answers a different question. Playback must refuse rather
+    than draw a stale result as if it were current.
+    """
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.io import cache
+
+    base = str(tmp_path)
+    scene = _scene()
+    scene.fluidsim.cache_path = base
+
+    voxel_size = [0.1]
+    monkeypatch.setattr(
+        scene_bridge, "build_settings",
+        lambda _scene: SimpleNamespace(device="cuda:0", voxel_size=voxel_size[0]))
+
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    drawn = []
+    fake_viewport.update_outputs_from_cache_frame = (
+        lambda _scene, data: drawn.append(int(data["frame"])))
+    _install_cache_playback_modules(monkeypatch, cache, fake_viewport)
+
+    baked = cache.scene_key(scene)
+    cache.write_sequence_metadata(base, 1, 10, scene_key_value=baked)
+    cache._savez_fast_compressed(cache._frame_path(base, 7), {
+        "format_version": np.array(cache.CACHE_FORMAT_VERSION, dtype=np.int32),
+        "scene_key": np.array(baked),
+        "frame": np.array(7, dtype=np.int32),
+        "positions": np.zeros((2, 3), dtype=np.float32),
+        "whitewater": np.zeros((1, 3), dtype=np.float32),
+    })
+
+    scene_bridge.session().play_cache_frame(scene, 7)
+    assert drawn == [7]
+
+    voxel_size[0] = 0.2
+    with pytest.raises(ValueError, match="different scene settings"):
+        scene_bridge.session().play_cache_frame(scene, 7)
+    assert drawn == [7]
 
 
 def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monkeypatch):
