@@ -23,7 +23,7 @@ from fluidSim_warp_blender51.sim.enums import (
 )
 from fluidSim_warp_blender51.sim.sourcing import SourcePipeline, SourceShapeDesc
 from fluidSim_warp_blender51.sim.source_regions import (
-    PayloadPlan, PointRegionPlan, SourceKey, SourcePlan,
+    AnalyticRegionPlan, PayloadPlan, PointRegionPlan, SourceKey, SourcePlan,
 )
 from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
@@ -251,6 +251,66 @@ def test_direct_point_append_is_once_per_runtime_and_rearms_on_reset():
     solver.set_source_plans((plan,))
     _step(solver)
     assert solver.particles.refresh_host_count() == 2
+    solver.release()
+
+
+def test_zero_count_direct_append_does_not_mask_an_earlier_emission():
+    """A later empty source must not erase an earlier source's emission.
+
+    ``apply_compiled`` only refreshes the host particle count when something
+    emitted. If a zero-count source overwrites that flag, the emitted particles
+    are live on the device but never re-indexed for the substep, and the
+    reported emission count is 0.
+    """
+    solver = FluidSolver(_settings(max_substeps=1))
+    filled = SourcePlan(
+        SourceKey("direct-filled"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.array(((-0.1, 0.0, 0.7), (0.1, 0.0, 0.7)), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    empty = SourcePlan(
+        SourceKey("direct-empty"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.zeros((0, 3), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    solver.set_source_plans((filled, empty))
+    _step(solver)
+    assert solver.particles.refresh_host_count() == 2
+    assert solver.sourcing.last_apply_result["emitted"] == 2
+    solver.release()
+
+
+def test_capacity_gated_liquid_source_stays_armed():
+    """A source gated out by a full particle pool must not be marked fired.
+
+    The gate reads ``particles.host_count``, which ``apply_compiled`` refreshes
+    only at the end of the loop. A direct-append source earlier in the same
+    batch fills the pool, so the box source must observe the pool as full, skip
+    its emit, and stay armed for a later substep instead of being consumed.
+    """
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 2
+    solver = FluidSolver(settings)
+    assert solver.particles.capacity == 2
+    direct = SourcePlan(
+        SourceKey("direct-fill"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.array(((-0.1, 0.0, 0.7), (0.1, 0.0, 0.7)), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    box = SourcePlan(
+        SourceKey("once-box"), SourceOperation.LIQUID,
+        SourceLifecycle.ONCE, SourceEvaluationCadence.STATIC,
+        AnalyticRegionPlan(
+            shape=SourceShapeShape.BOX, position=(0.0, 0.0, 0.75),
+            half_extents=(0.3, 0.3, 0.25)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    solver.set_source_plans((direct, box))
+    _step(solver)
+    assert str(box.stable_id) not in solver.sourcing._initial_fired
     solver.release()
 
 

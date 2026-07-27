@@ -2087,6 +2087,7 @@ class SourcePipeline:
         requested_direct = 0
         self._compiled_result.zero_()
         emitted_any = False
+        count_dirty = False
         order = {
             SourceOperation.COLLISION: 0,
             SourceOperation.SINK: 1,
@@ -2176,10 +2177,28 @@ class SourcePipeline:
                     device=self.device,
                 )
                 requested_direct += count
-                emitted_any = count > 0
-            elif (plan.operation == SourceOperation.LIQUID
-                    and region.leaf_count
-                    and particles.host_count < particles.capacity):
+                # Accumulate: a later zero-count source in the same batch must
+                # not erase an earlier successful emission, or the end-of-loop
+                # refresh_host_count() is skipped and the emitted particles are
+                # left unbinned for the substep.
+                emitted_any = emitted_any or count > 0
+                count_dirty = count_dirty or count > 0
+            elif plan.operation == SourceOperation.LIQUID:
+                # host_count is only refreshed at the end of the loop, so several
+                # liquid sources in one batch would otherwise all test the same
+                # pre-loop value and each launch a full-size emit against a
+                # capacity that is already gone. Re-read, but only once another
+                # source in this batch has actually added particles: the common
+                # single-source case still costs no extra device sync.
+                if count_dirty:
+                    particles.refresh_host_count()
+                    count_dirty = False
+                if not (region.leaf_count
+                        and particles.host_count < particles.capacity):
+                    # Skip the _initial_fired bookkeeping below: a source that
+                    # was gated out never emitted, so marking it fired would
+                    # silence it for the rest of the run.
+                    continue
                 wp.launch(
                     k_emit_compiled_source_particles,
                     dim=region.leaf_count * C.LEAF_VOLUME,
