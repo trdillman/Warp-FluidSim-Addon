@@ -40,11 +40,15 @@ DEFAULT_PYTEST_PATH = ""
 BLENDER_FAILURE_MARKERS = (
     "Traceback (most recent call last):",
     "CACHE-EXPORT-PIPELINE-FAIL",
-    "VIEWPORT-GATE-FAIL",
+    "MEMORY-SAFETY-GATE-FAIL",
+    "HANDLER-PERSISTENCE-GATE-FAIL",
+    "VIEWPORT-2FRAME-GATE-FAIL",
     "BACKGROUND-ACCEPTANCE-FAIL",
     "ATTRIBUTE-VIZ-ACCEPTANCE-FAIL",
     "MESH-SOURCE-ACCEPTANCE-FAIL",
+    "FORCE-REGION-ACCEPTANCE-FAIL",
     "GUI-ACCEPTANCE-FAIL",
+    "GUI-PLAYBACK-PROBE-FAIL",
     "DEMO-BLEND-CHECK-FAIL",
 )
 CANONICAL_DEMO_SCENES = (
@@ -62,10 +66,18 @@ def _env():
     return env
 
 
-def _run(label, command, env=None, reject_output=False):
+def _run(label, command, env=None, reject_output=False, expect_marker=None):
+    """Run a gate lane, optionally requiring positive proof in stdout.
+
+    Blender can return process exit code 0 when a Python script did not finish
+    or raised inside a UI callback. A zero exit and absence of known failure
+    text is therefore insufficient: every Blender lane must emit its explicit
+    success marker.
+    """
     print(f"\n== {label} ==")
     print(" ".join(str(x) for x in command))
-    if not reject_output:
+    capture = reject_output or expect_marker is not None
+    if not capture:
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         return
     result = subprocess.run(
@@ -76,13 +88,18 @@ def _run(label, command, env=None, reject_output=False):
         stderr=subprocess.STDOUT,
         text=True,
     )
-    if result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    output = result.stdout or ""
+    if output:
+        print(output, end="" if output.endswith("\n") else "\n")
     if result.returncode:
         raise subprocess.CalledProcessError(result.returncode, command)
     for marker in BLENDER_FAILURE_MARKERS:
-        if marker in result.stdout:
+        if marker in output:
             raise subprocess.CalledProcessError(1, command)
+    if expect_marker is not None and expect_marker not in output:
+        print(
+            f"Missing required success marker {expect_marker!r} from {label}")
+        raise subprocess.CalledProcessError(1, command)
 
 
 def _check_no_tracked_npz():
@@ -170,6 +187,9 @@ def main(argv=None):
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",
         "tests/blender_mesh_source_acceptance.py",
+        "tests/blender_force_region_acceptance.py",
+        "tests/blender_phase3_source_ui_acceptance.py",
+        "tests/blender_phase3_profile_safe_review.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
     ])
@@ -199,17 +219,28 @@ def main(argv=None):
         "--max-whitewater", "50000",
         "--no-surface",
     ])
-    for script in (
-        "tests/blender_cache_export_pipeline.py",
-        "tests/blender_memory_safety_gate.py",
-        "tests/blender_handler_persistence_gate.py",
-        "tests/blender_viewport_2frame_gate.py",
-        "tests/blender_background_acceptance.py",
-        "tests/blender_attribute_viz_acceptance.py",
-        "tests/blender_mesh_source_acceptance.py",
+    for script, success_marker in (
+        ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
+        ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
+        ("tests/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
+        ("tests/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
+        ("tests/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
+        ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
+        ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
+        ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
     ):
-        _run(script, [blender_exe, "--background", "--factory-startup", "--python", script],
-             reject_output=True)
+        _run(
+            script,
+            [blender_exe, "--background", "--factory-startup", "--python", script],
+            reject_output=True,
+            expect_marker=success_marker,
+        )
+    _run(
+        "Phase 3 source UI acceptance",
+        [blender_exe, "--background", "--factory-startup", "--python",
+         "tests/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
+         os.path.abspath("artifacts/phase3_source_ui_acceptance.json")],
+        reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
     for scene_name in CANONICAL_DEMO_SCENES:
         _run(f"demo cache build {scene_name}", [
             blender_exe,
@@ -219,23 +250,31 @@ def main(argv=None):
             "tools/build_demo_scenes.py",
             "--",
             scene_name,
-        ], reject_output=True)
-    _run("demo analysis", [blender_py, "tools/analyze_demos.py"], env=env)
+        ], reject_output=True, expect_marker="DEMO-BUILD-PASS")
+    _run(
+        "demo analysis", [blender_py, "tools/analyze_demos.py"], env=env,
+        expect_marker="DEMO-ANALYSIS-PASS (18/18)")
     _run("demo blend checks", [
         blender_exe,
         "--background",
         "--factory-startup",
         "--python",
         "tools/check_demo_blends.py",
-    ], reject_output=True)
+    ], reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
     if include_gui:
         _run("interactive GUI acceptance", [
             blender_exe,
             "--factory-startup",
             "--python",
             "tests/blender_gui_acceptance.py",
-        ], reject_output=True)
+        ], reject_output=True, expect_marker="GUI-ACCEPTANCE-PASS")
         playback_report = os.path.abspath("artifacts/gui_playback_probe.json")
+        # A stale passing artifact must never validate a probe that exited 0
+        # without writing a new report.
+        try:
+            os.remove(playback_report)
+        except FileNotFoundError:
+            pass
         playback_env = env.copy()
         playback_env.update({
             "FLUIDSIM_PLAYBACK_BLEND": os.path.abspath("demos/dam_break.blend"),
@@ -246,12 +285,15 @@ def main(argv=None):
             "--factory-startup",
             "--python",
             "tests/blender_gui_playback_probe.py",
-        ], env=playback_env, reject_output=True)
+        ], env=playback_env, reject_output=True,
+           expect_marker="GUI-PLAYBACK-PROBE-PASS")
         _run("saved-demo GUI playback report", [
             blender_py,
             "tools/validate_gui_playback_report.py",
             playback_report,
-        ])
+            "--expected-blend",
+            playback_env["FLUIDSIM_PLAYBACK_BLEND"],
+        ], expect_marker="SAVED-DEMO-GUI-PLAYBACK-PASS")
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", [
             blender_exe,

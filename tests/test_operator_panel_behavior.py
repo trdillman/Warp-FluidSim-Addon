@@ -17,6 +17,12 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy = types.ModuleType("bpy")
 
     class _Operator:
+        _poll_message = ""
+
+        @classmethod
+        def poll_message_set(cls, message):
+            cls._poll_message = message
+
         def report(self, *_args, **_kwargs):
             return None
 
@@ -48,6 +54,7 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy.types.Text = object
     fake_bpy.types.Object = object
     fake_bpy.types.Material = object
+    fake_bpy.types.Image = object
     fake_bpy.path = SimpleNamespace(abspath=lambda value: value)
     fake_bpy.context = SimpleNamespace(
         preferences=SimpleNamespace(
@@ -180,6 +187,8 @@ class _Layout:
         self.labels = []
         self.operators = []
         self.props = []
+        self.prop_calls = []
+        self.prop_enum_calls = []
         self.enabled = True
 
     def column(self, align=False):
@@ -194,9 +203,15 @@ class _Layout:
     def separator(self):
         return None
 
-    def prop(self, *args, **_kwargs):
+    def prop(self, *args, **kwargs):
         if len(args) >= 2:
             self.props.append(args[1])
+            self.prop_calls.append({"name": args[1], **kwargs})
+        return None
+
+    def prop_enum(self, _data, name, value, **kwargs):
+        self.props.append(name)
+        self.prop_enum_calls.append({"name": name, "value": value, **kwargs})
         return None
 
     def label(self, text="", icon="NONE"):
@@ -571,6 +586,28 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
     assert scene.fluidsim.status == "Solver error: boom"
 
 
+def test_preferences_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    preferences = _reload_module("fluidSim_warp_blender51.preferences")
+    calls = []
+    fake_warp = SimpleNamespace(
+        init=lambda: calls.append("init"),
+        is_cuda_available=lambda: True,
+        get_device=lambda _name: SimpleNamespace(name="Test GPU"),
+        config=SimpleNamespace(version="test"),
+    )
+    monkeypatch.setitem(sys.modules, "warp", fake_warp)
+    preferences._WARP_PROBE_RESULT = None
+
+    first = preferences._probe_warp()
+    second = preferences._probe_warp()
+    assert first == second == (True, "Warp test - Test GPU")
+    assert calls == ["init"]
+
+    preferences._probe_warp(force=True)
+    assert calls == ["init", "init"]
+
+
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     fake_bpy = _install_bpy_stub(monkeypatch)
     fake_bpy.app = SimpleNamespace(
@@ -777,3 +814,232 @@ def test_output_panel_exposes_cache_sequence_and_playback_controls(monkeypatch):
     assert "cache_frame_start" in layout.props
     assert "cache_frame_end" in layout.props
     assert any(op["id"] == "fluidsim.export_cache_sequence" for op in layout.operators)
+
+
+def _phase1_object(role, **overrides):
+    values = dict(
+        role=role,
+        enabled=True,
+        geometry_mode="ANALYTIC",
+        shape="BOX",
+        mesh_object=None,
+        mesh_evaluation_mode="FIRST_SIM_FRAME",
+        mesh_surface_thickness=0.0,
+        sink_region_mode="SOLID",
+        mesh_error="",
+        emission_mode="CONTINUOUS_INFLOW",
+        emit_rate=8.0,
+        initial_velocity=(0.0, 0.0, 0.0),
+        use_object_velocity=True,
+        temperature=0.0,
+        viscosity=0.0,
+        density=1.0,
+        use_lifespan=False,
+        life_min=2.0,
+        life_max=4.0,
+        force_type="OFF",
+        force_strength=1.0,
+        force_direction=(0.0, 0.0, 1.0),
+        collider_friction=0.0,
+        collider_restitution=0.0,
+        transfer_velocity=True,
+    )
+    values.update(overrides)
+    return SimpleNamespace(
+        name=f"{role.title()} Object", type="MESH",
+        fluidsim=SimpleNamespace(**values), display_type="TEXTURED",
+        hide_render=False,
+    )
+
+
+def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = _phase1_object("SOURCE")
+    fs = SimpleNamespace(
+        height_enabled=True, height_base=0.3,
+        height_velocity=(0.0, 0.0, 0.0), height_emit_particles=True,
+    )
+    scene = SimpleNamespace(fluidsim=fs, objects=[source])
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_liquid_emitters()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=scene, active_object=source))
+
+    assert {"emission_mode", "emit_rate", "geometry_mode"}.issubset(layout.props)
+    assert {
+        ("ANALYTIC", "Analytic Volume"),
+        ("MESH", "Mesh Surface Shell"),
+    }.issubset({(call["value"], call["text"])
+                for call in layout.prop_enum_calls})
+    assert "source_mode" not in layout.props
+    assert "height_back_mode" not in layout.props
+    assert any(call == {"name": "emit_rate", "text": "Target Particles / Voxel"}
+               for call in layout.prop_calls)
+    assert any(op["id"] == "fluidsim.tag_liquid_emitter"
+               for op in layout.operators)
+    assert not any(op["id"] == "fluidsim.inject_particles"
+                   for op in layout.operators)
+
+
+def test_phase1_particle_attributes_are_source_only_and_collapsed(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = _phase1_object("SOURCE", use_lifespan=True)
+    context = SimpleNamespace(active_object=source)
+    assert panels.FLUIDSIM_PT_liquid_emitter_attributes.poll(context)
+    assert "DEFAULT_CLOSED" in panels.FLUIDSIM_PT_liquid_emitter_attributes.bl_options
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_liquid_emitter_attributes()
+    panel.layout = layout
+    panel.draw(context)
+    assert {"temperature", "viscosity", "density", "use_lifespan",
+            "life_min", "life_max"}.issubset(layout.props)
+    assert any(call == {"name": "density", "text": "Density Attribute"}
+               for call in layout.prop_calls)
+    assert not panels.FLUIDSIM_PT_liquid_emitter_attributes.poll(
+        SimpleNamespace(active_object=_phase1_object("SINK")))
+
+
+def test_phase1_sink_uses_shared_region_editor_in_sink_workflow(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    sink = _phase1_object(
+        "SINK", geometry_mode="MESH", mesh_error="Mesh must be watertight")
+    scene = SimpleNamespace(objects=[sink], fluidsim=SimpleNamespace())
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_liquid_sinks()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=scene, active_object=sink))
+
+    assert {"geometry_mode", "mesh_object", "mesh_evaluation_mode",
+            "sink_region_mode"}.issubset(layout.props)
+    assert "mesh_surface_thickness" not in layout.props
+    assert {
+        ("ANALYTIC", "Analytic Volume"), ("MESH", "Mesh")
+    }.issubset({(call["value"], call["text"])
+                for call in layout.prop_enum_calls})
+    assert {"text": "Mesh must be watertight", "icon": "ERROR"} in layout.labels
+    assert any(op["id"] == "fluidsim.tag_liquid_sink"
+               for op in layout.operators)
+
+
+def test_phase1_force_editor_requires_force_role_and_tag_action(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    fs = SimpleNamespace(
+        directional_force=(0.0, 0.0, 0.0),
+        omnidirectional_force_strength=0.0,
+        omnidirectional_force_center=(0.0, 0.0, 0.0),
+        omnidirectional_force_radius=1.0,
+        force_diffusion=0.0,
+        dissipation_enabled=False,
+        dissipation_attribute="TEMPERATURE",
+        dissipation_rate=0.0,
+        dissipation_target=0.0,
+        attraction_enabled=False,
+        attraction_strength=0.0,
+        attraction_max_distance=1.0,
+    )
+    scene = SimpleNamespace(fluidsim=fs)
+
+    force_layout = _Layout()
+    panel = panels.FLUIDSIM_PT_forces()
+    panel.layout = force_layout
+    panel.draw(SimpleNamespace(scene=scene, active_object=_phase1_object("FORCE")))
+    assert {"enabled", "shape", "force_type"}.issubset(force_layout.props)
+    assert any(op["id"] == "fluidsim.tag_force_region"
+               for op in force_layout.operators)
+
+    source_layout = _Layout()
+    panel.layout = source_layout
+    panel.draw(SimpleNamespace(scene=scene, active_object=_phase1_object("SOURCE")))
+    assert "force_type" not in source_layout.props
+    assert any("Select a tagged Force Region" in label["text"]
+               for label in source_layout.labels)
+
+
+def test_phase1_tag_operator_supports_force_and_has_disabled_state(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    obj = _phase1_object("NONE")
+    op = operators.FLUIDSIM_OT_tag_object()
+    op.role = "FORCE"
+    context = SimpleNamespace(selected_objects=[obj])
+
+    assert operators.FLUIDSIM_OT_tag_object.poll(context)
+    assert op.execute(context) == {"FINISHED"}
+    assert obj.fluidsim.role == "FORCE"
+    assert obj.display_type == "WIRE"
+    assert obj.hide_render is True
+    assert not operators.FLUIDSIM_OT_tag_object.poll(
+        SimpleNamespace(selected_objects=[]))
+    assert "Select at least one object" in operators.FLUIDSIM_OT_tag_object._poll_message
+
+
+def test_phase3_field_volume_input_is_drawn_once_when_region_and_payload_use_volume(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    field = _phase1_object(
+        "FIELD", source_mode="FIELD", field_operation="SCALAR",
+        field_region_kind="VOLUME_GRID", field_value_source="VOLUME_GRID",
+        volume_input_object=None, volume_scalar_grid="temperature",
+        volume_vector_grid="", volume_vector_x_grid="",
+        volume_vector_y_grid="", volume_vector_z_grid="",
+        blend_mode="REPLACE", field_amount=1.0,
+        source_status_message="", source_status_severity="",
+        source_status_code="", source_status_capacity_limited=False)
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_advanced_field_sources(); panel.layout = layout
+    panel.draw(SimpleNamespace(
+        scene=SimpleNamespace(objects=[field], fluidsim=SimpleNamespace()),
+        active_object=field))
+    assert [call["name"] for call in layout.prop_calls].count(
+        "volume_input_object") == 1
+
+
+def test_phase3_aggregate_emission_is_not_broadcast_as_per_source_truth():
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+
+    def obj(pointer):
+        pg = SimpleNamespace(
+            role="SOURCE", source_mode="PARTICLES", enabled=True,
+            source_status_code="", source_status_message="",
+            source_status_severity="", source_status_emitted=0,
+            source_status_capacity_limited=False)
+        return SimpleNamespace(fluidsim=pg, as_pointer=lambda: pointer)
+
+    first, second = obj(1), obj(2)
+    inputs = SceneInputs()
+    inputs.update_source_status(
+        SimpleNamespace(objects=[first, second]), (),
+        {"emitted": 12, "capacity_limited": True})
+    assert first.fluidsim.source_status_emitted == 0
+    assert second.fluidsim.source_status_emitted == 0
+    second.fluidsim.enabled = False
+    inputs.update_source_status(
+        SimpleNamespace(objects=[first, second]), (),
+        {"emitted": 12, "capacity_limited": True})
+    assert first.fluidsim.source_status_emitted == 12
+    assert first.fluidsim.source_status_capacity_limited is True
+
+
+def test_phase1_point_injection_poll_is_truthful(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    sess = SimpleNamespace(active=True)
+    monkeypatch.setattr(operators, "_bridge", lambda: SimpleNamespace(session=lambda: sess))
+
+    mesh = SimpleNamespace(type="MESH", particle_systems=[])
+    assert operators.FLUIDSIM_OT_inject_particles.poll(
+        SimpleNamespace(active_object=mesh))
+    unsupported = SimpleNamespace(type="LIGHT", particle_systems=[])
+    assert not operators.FLUIDSIM_OT_inject_particles.poll(
+        SimpleNamespace(active_object=unsupported))
+    assert "mesh vertices" in operators.FLUIDSIM_OT_inject_particles._poll_message
+    sess.active = False
+    assert not operators.FLUIDSIM_OT_inject_particles.poll(
+        SimpleNamespace(active_object=mesh))
+    assert "Initialize the solver" in operators.FLUIDSIM_OT_inject_particles._poll_message

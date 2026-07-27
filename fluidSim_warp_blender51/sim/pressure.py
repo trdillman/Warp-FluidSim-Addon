@@ -11,8 +11,15 @@ Paths preserved from the original kernel inventory:
 - Jacobi iterations (all unroll-width variants collapse to one kernel)
 - PCG: inverse-diagonal preconditioner, apply-matrix, alpha/beta/x/r/p updates
   with device-resident reductions
-- electrostatic leaf aggregates: coarse per-leaf potential solve used as the
-  long-range initial guess (multigrid Off/VCycle/HalfVCycle)
+- electrostatic leaf aggregates: a single-level coarse per-leaf potential
+  solve (``coarse_initial_guess``) that can seed the PCG initial guess via
+  ``solve_pcg(..., use_coarse_guess=True)``. This is real, reachable code,
+  but ``project_frame`` (the only production caller) never passes
+  ``use_coarse_guess=True``, so it is currently exercised only by tests, not
+  by the shipped pipeline. There is no restriction/prolongation V-cycle: the
+  registered ``fluidSimProjectNonDivergentSampleDown``/
+  ``fluidSimProjectNonDivergentExpandVelocityIntoCollision`` kernels have no
+  call sites anywhere in this module and do not implement one.
 - pressure threshold + scale, velocity expansion into collision
 
 No bpy imports allowed here.
@@ -1215,11 +1222,14 @@ register_fn(k_solve_leaf_potential_jacobi,
             "fluidSimProjectNonDivergentElectrostaticSolvePotential32",
             strategy="tiled")
 register_fn(k_sample_up_leaf_potential, "fluidSimProjectNonDivergentSampleUp")
-register_fn(k_sample_down_residual, "fluidSimProjectNonDivergentSampleDown")
+register_fn(k_sample_down_residual, "fluidSimProjectNonDivergentSampleDown",
+            notes="No call sites; no restriction/prolongation V-cycle is "
+                  "wired into this module despite the kernel name.")
 register_fn(k_project, "fluidSimProjectNonDivergentProject")
 register_fn(k_project_st, "fluidSimProjectNonDivergentProjectSpatiotemporal")
 register_fn(k_expand_velocity_into_collision,
-            "fluidSimProjectNonDivergentExpandVelocityIntoCollision")
+            "fluidSimProjectNonDivergentExpandVelocityIntoCollision",
+            notes="No call sites in this module.")
 register_fn(k_pressure_threshold_compute, "fluidSimPressureThresholdCompute")
 register_fn(k_pressure_threshold_apply, "fluidSimPressureThresholdApply")
 register_fn(k_pressure_scale, "fluidSimPressureScale")
@@ -1411,13 +1421,19 @@ class PressureSolver:
         )
         self._pcg_graphs.clear()
 
-    def _make_status(self, converged, reason, residual, iterations):
+    def _make_status(
+        self, converged, reason, residual, iterations,
+        project_velocity=None,
+    ):
+        """Build status with convergence and projection safety separated."""
+        if project_velocity is None:
+            project_velocity = converged
         return {
             "converged": bool(converged),
             "iterations": int(iterations),
             "reason": reason,
             "residual": float(residual),
-            "project_velocity": bool(converged),
+            "project_velocity": bool(project_velocity),
         }
 
     def _set_pressure_status(self, status, failure="", pressure_valid=False):
@@ -1426,9 +1442,13 @@ class PressureSolver:
             status, PRESSURE_STATUS_CODES[PRESSURE_STATUS_INVALID])
         self.last_pcg_failure = failure
         self.last_pressure_valid = pressure_valid
+        converged = status in (
+            PRESSURE_STATUS_CONVERGED,
+            PRESSURE_STATUS_JACOBI,
+        )
         self.last_status = self._make_status(
-            pressure_valid, failure or status, self.last_residual,
-            self.last_iterations)
+            converged, failure or status, self.last_residual,
+            self.last_iterations, project_velocity=pressure_valid)
 
     def should_project_pressure(self):
         """True when the current pressure field is safe to project."""
@@ -1436,7 +1456,7 @@ class PressureSolver:
 
     def project_frame(self, velocity, voxel_type, collision_velocity,
                       voxel_counts, settings, *, max_gradient,
-                      reference_mass=None):
+                      reference_mass=None, pressure_source=None):
         """Build, solve, and safely apply one pressure projection."""
         self.build_rhs(
             velocity, voxel_type, collision_velocity, voxel_counts,
@@ -1478,6 +1498,11 @@ class PressureSolver:
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
                 settings.pressure_tolerance)
+        # Original FIELD semantics blend into the existing pressure field.
+        # The callback is deliberately after solve (which initializes pressure)
+        # and before threshold/projection (which consumes it).
+        if pressure_source is not None:
+            pressure_source()
         if not self.should_project_pressure():
             return self.last_status
         if settings.pressure_threshold > 0.0:
@@ -1666,7 +1691,17 @@ class PressureSolver:
             res_sq = math.inf
         self.last_residual_squared = res_sq
         self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
-        if status != PRESSURE_STATUS_CONVERGED:
+        # A finite stalled/iteration-limited solution is useful best effort:
+        # projecting it reduces divergence. The previous fail-open path
+        # discarded all progress, zeroed pressure, and advected the completely
+        # unprojected velocity field. Singular/non-finite systems remain
+        # fail-closed because their pressure field is not trustworthy.
+        pressure_valid = pressure_valid or (
+            math.isfinite(res_sq)
+            and status in (PRESSURE_STATUS_MAX_ITERATIONS,
+                           PRESSURE_STATUS_STALLED)
+        )
+        if not pressure_valid:
             self.pressure[:n].zero_()
         self._set_pressure_status(status, failure, pressure_valid)
         return self.last_status
@@ -1716,8 +1751,18 @@ class PressureSolver:
         if src is not self.pressure:
             wp.copy(self.pressure, src, count=n)
         self.last_iterations = iterations
-        self.last_residual = -1.0
-        self.last_residual_squared = -1.0
+        # Jacobi always runs its fixed iteration budget and always projects
+        # the result (unlike PCG's adaptive stop/fail-closed logic, there is
+        # no separate "give up early" path to guard here). But the previous
+        # hardcoded last_residual = -1.0 actively hid whether that fixed
+        # budget was actually enough: diagnostics/UI/validation could not
+        # distinguish a well-converged Jacobi solve from a wildly divergent
+        # one. Compute the real residual via the same operator PCG/validation
+        # already use (one host readback, matching measure_residual()).
+        residual = self.measure_residual(voxel_type)
+        self.last_residual = residual if math.isfinite(residual) else math.inf
+        self.last_residual_squared = (
+            residual * residual if math.isfinite(residual) else math.inf)
         self._set_pressure_status(
             PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
         return self.last_status
@@ -1848,7 +1893,12 @@ class PressureSolver:
             res_sq = math.inf
         self.last_residual_squared = res_sq
         self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
-        if status != PRESSURE_STATUS_CONVERGED:
+        pressure_valid = pressure_valid or (
+            math.isfinite(res_sq)
+            and status in (PRESSURE_STATUS_MAX_ITERATIONS,
+                           PRESSURE_STATUS_STALLED)
+        )
+        if not pressure_valid:
             self.pressure[:full_n].zero_()
         self._set_pressure_status(status, failure, pressure_valid)
         return self.last_status

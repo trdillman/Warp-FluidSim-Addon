@@ -302,6 +302,41 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _execute_role_tag(operator, context, role):
+    from .blender import colliders as _colliders
+    from .blender import sources as _sources
+
+    count = 0
+    skipped = 0
+    for obj in context.selected_objects:
+        if role == "SOURCE":
+            _sources.tag_source(obj)
+        elif role == "SINK":
+            _sources.tag_sink(obj)
+        elif role == "FORCE":
+            _sources.tag_force(obj)
+        elif role == "FIELD":
+            _sources.tag_field(obj)
+        elif role == "COLLIDER":
+            if obj.type != "MESH":
+                skipped += 1
+                continue
+            _colliders.tag_collider(obj)
+        else:
+            obj.fluidsim.role = "NONE"
+            obj.display_type = "TEXTURED"
+            obj.hide_render = False
+        count += 1
+    if count == 0:
+        message = ("Colliders require a selected mesh object"
+                   if role == "COLLIDER" else "No supported selected objects")
+        operator.report({"WARNING"}, message)
+        return {"CANCELLED"}
+    detail = f"; skipped {skipped} non-mesh object(s)" if skipped else ""
+    operator.report({"INFO"}, f"Tagged {count} object(s) as {role}{detail}")
+    return {"FINISHED"}
+
+
 class FLUIDSIM_OT_tag_object(bpy.types.Operator):
     """Tag the selected objects with a simulation role"""
 
@@ -311,39 +346,119 @@ class FLUIDSIM_OT_tag_object(bpy.types.Operator):
 
     role: EnumProperty(
         name="Role",
-        items=[("SOURCE", "Source", ""), ("COLLIDER", "Collider", ""),
-               ("SINK", "Sink", ""), ("NONE", "Clear", "")],
+        items=[
+            ("SOURCE", "Liquid Emitter", "Emit liquid"),
+            ("COLLIDER", "Collider", "Collide with liquid"),
+            ("SINK", "Liquid Sink", "Remove liquid"),
+            ("FORCE", "Force Region", "Apply an analytic force to liquid"),
+            ("FIELD", "Advanced Field Source", "Source non-liquid fields"),
+            ("NONE", "Clear", "Remove the FluidSim role"),
+        ],
         default="SOURCE",
     )
 
-    def execute(self, context):
-        from .blender import colliders as _colliders
-        from .blender import sources as _sources
+    @classmethod
+    def poll(cls, context):
+        if not getattr(context, "selected_objects", None):
+            cls.poll_message_set("Select at least one object to tag")
+            return False
+        return True
 
-        count = 0
-        for obj in context.selected_objects:
-            if self.role == "SOURCE":
-                _sources.tag_source(obj)
-            elif self.role == "SINK":
-                _sources.tag_sink(obj)
-            elif self.role == "COLLIDER":
-                if obj.type != "MESH":
-                    continue
-                _colliders.tag_collider(obj)
-            else:
-                obj.fluidsim.role = "NONE"
-                obj.display_type = "TEXTURED"
-                obj.hide_render = False
-            count += 1
-        self.report({"INFO"}, f"Tagged {count} object(s) as {self.role}")
-        return {"FINISHED"}
+    def execute(self, context):
+        return _execute_role_tag(self, context, self.role)
+
+
+class _FLUIDSIM_OT_role_tag_base:
+    role = "NONE"
+
+    @classmethod
+    def poll(cls, context):
+        selected = getattr(context, "selected_objects", None) or ()
+        if not selected:
+            cls.poll_message_set("Select at least one object to tag")
+            return False
+        if cls.role == "COLLIDER" and not any(
+                getattr(obj, "type", None) == "MESH" for obj in selected):
+            cls.poll_message_set("Select at least one mesh object for a collider")
+            return False
+        return True
+
+    def execute(self, context):
+        return _execute_role_tag(self, context, self.role)
+
+
+class FLUIDSIM_OT_tag_liquid_emitter(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.tag_liquid_emitter"
+    bl_label = "Tag Liquid Emitter"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "SOURCE"
+
+
+class FLUIDSIM_OT_tag_liquid_sink(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.tag_liquid_sink"
+    bl_label = "Tag Liquid Sink"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "SINK"
+
+
+class FLUIDSIM_OT_tag_collider(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.tag_collider"
+    bl_label = "Tag Collider"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "COLLIDER"
+
+
+class FLUIDSIM_OT_tag_force_region(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.tag_force_region"
+    bl_label = "Tag Force Region"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "FORCE"
+
+
+class FLUIDSIM_OT_tag_field_source(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.tag_field_source"
+    bl_label = "Tag Advanced Field Source"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "FIELD"
+
+
+class FLUIDSIM_OT_clear_object_role(_FLUIDSIM_OT_role_tag_base, bpy.types.Operator):
+    bl_idname = "fluidsim.clear_object_role"
+    bl_label = "Clear FluidSim Role"
+    bl_options = {"REGISTER", "UNDO"}
+    role = "NONE"
+
+    @classmethod
+    def poll(cls, context):
+        selected = getattr(context, "selected_objects", None) or ()
+        if not selected:
+            cls.poll_message_set("Select at least one tagged object")
+            return False
+        return any(getattr(getattr(obj, "fluidsim", None), "role", "NONE") != "NONE"
+                   for obj in selected)
 
 
 class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
-    """Inject the active mesh's vertices once as a compatibility utility"""
+    """Inject active-object points once as a compatibility utility"""
 
     bl_idname = "fluidsim.inject_particles"
-    bl_label = "Inject Mesh Vertices Once"
+    bl_label = "Inject Active Object Points Once"
+
+    @classmethod
+    def poll(cls, context):
+        if not _bridge().session().active:
+            cls.poll_message_set("Initialize the solver before injecting points")
+            return False
+        obj = getattr(context, "active_object", None)
+        if obj is None:
+            cls.poll_message_set("Select an active mesh, point cloud, or particle-system object")
+            return False
+        if (getattr(obj, "type", None) not in {"MESH", "POINTCLOUD"}
+                and not getattr(obj, "particle_systems", None)):
+            cls.poll_message_set(
+                "Active object must provide mesh vertices, point-cloud points, or a particle system")
+            return False
+        return True
 
     def execute(self, context):
         bridge = _bridge()
@@ -629,7 +744,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
 
         fs = context.scene.fluidsim
         selection = fs.snippet_library_selection
-        if not selection:
+        if not selection or selection == "NONE":
             self.report({"ERROR"}, "No library snippet selected")
             return {"CANCELLED"}
 
@@ -1052,6 +1167,12 @@ CLASSES = (
     FLUIDSIM_OT_toggle_live,
     FLUIDSIM_OT_setup_scene,
     FLUIDSIM_OT_tag_object,
+    FLUIDSIM_OT_tag_liquid_emitter,
+    FLUIDSIM_OT_tag_liquid_sink,
+    FLUIDSIM_OT_tag_collider,
+    FLUIDSIM_OT_tag_force_region,
+    FLUIDSIM_OT_tag_field_source,
+    FLUIDSIM_OT_clear_object_role,
     FLUIDSIM_OT_inject_particles,
     FLUIDSIM_OT_run_validation,
     FLUIDSIM_OT_run_benchmark,

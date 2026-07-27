@@ -144,15 +144,18 @@ def k_particle_to_grid_active(
     num_leaves: wp.array(dtype=wp.int32),
     voxel_type: wp.array(dtype=wp.int32),
 ):
-    """fluidSimParticleToGridActive: mark fluid voxels from occupancy."""
+    """Mark occupied voxels fluid/active without clearing existing bits.
+
+    Additive like the original ``paradigmParticleToGridActive``. Grid state is
+    reset once per substep by ``FluidSolver._clear_grid_fields``; this kernel
+    must not erase bits established by another phase.
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
     if voxel_counts[tid] > 0 and (vt & VOXEL_COLLISION) == 0:
         voxel_type[tid] = vt | VOXEL_FLUID | VOXEL_ACTIVE
-    else:
-        voxel_type[tid] = vt & (~VOXEL_FLUID)
 
 
 
@@ -933,6 +936,251 @@ register_fn(k_resync_particle_positions_spacetime, "fluidSimResyncParticlePositi
 # ---------------------------------------------------------------------------
 
 
+@wp.struct
+class ForceFieldProxy:
+    force_type: int
+    shape: int
+    texture_mode: int
+    flags: int
+    seed: int
+    center: wp.vec3
+    direction: wp.vec3
+    source_velocity: wp.vec3
+    guide_p0: wp.vec3
+    guide_p1: wp.vec3
+    guide_p2: wp.vec3
+    guide_p3: wp.vec3
+    guide_count: int
+    strength: float
+    min_distance: float
+    max_distance: float
+    falloff_power: float
+    flow: float
+    noise: float
+    size: float
+    rest_length: float
+    damping: float
+    linear_drag: float
+    quadratic_drag: float
+    guide_minimum: float
+    guide_free: float
+    guide_clump: float
+
+
+@wp.func
+def force_proxy_noise(point: wp.vec3, size: float, seed: int, time: float):
+    """Small deterministic vector field used by turbulence/texture proxies."""
+    scale = 1.0 / wp.max(wp.abs(size), 1.0e-3)
+    phase = float(seed) * 0.173 + time * 0.37
+    p = point * scale + wp.vec3(phase, phase * 1.37, phase * 1.91)
+    return wp.vec3(
+        wp.sin(p[1] * 1.7 + p[2] * 0.6) * wp.cos(p[0] * 0.7),
+        wp.sin(p[2] * 1.5 + p[0] * 0.5) * wp.cos(p[1] * 0.9),
+        wp.sin(p[0] * 1.3 + p[1] * 0.8) * wp.cos(p[2] * 1.1),
+    )
+
+
+@wp.func
+def force_proxy_attenuation(
+    distance: float, min_distance: float, max_distance: float, power: float,
+):
+    if max_distance > 0.0 and distance > max_distance:
+        return 0.0
+    if power <= 0.0 or distance <= min_distance:
+        return 1.0
+    return wp.pow(1.0 + distance - min_distance, -power)
+
+
+@wp.func
+def force_field_proxy_acceleration(
+    field: ForceFieldProxy, point: wp.vec3, velocity: wp.vec3, time: float,
+):
+    rel_center = point - field.center
+    rel = rel_center
+    axial = wp.dot(rel_center, field.direction)
+    if ((field.force_type == 3 or field.force_type == 4)
+            and field.shape != 0):
+        rel = rel_center - field.direction * axial
+    elif field.shape == 1:  # Line
+        rel = rel_center - field.direction * axial
+    elif field.shape == 2:  # Plane
+        rel = field.direction * axial
+    distance = wp.length(rel)
+    attenuation = force_proxy_attenuation(
+        distance, field.min_distance, field.max_distance,
+        field.falloff_power)
+    if attenuation <= 0.0:
+        return wp.vec3(0.0)
+    magnitude = field.strength * attenuation
+    if field.noise > 0.0:
+        magnitude += field.noise * attenuation * force_proxy_noise(
+            point, wp.max(field.size, 1.0), field.seed, time)[0]
+
+    if field.force_type == 1:  # Blender Wind
+        force = field.direction * magnitude
+    elif field.force_type == 2 or field.force_type == 6:  # Force / Charge
+        force = wp.vec3(0.0)
+        if distance > 1.0e-8:
+            force = rel * (magnitude / distance)
+    elif field.force_type == 3:  # Vortex
+        tangent = wp.cross(field.direction, rel)
+        tangent_length = wp.length(tangent)
+        force = wp.vec3(0.0)
+        if tangent_length > 1.0e-8:
+            force = tangent * (magnitude / tangent_length)
+    elif field.force_type == 4:  # Magnetic: q(v x B), unit fluid charge
+        magnetic = field.direction
+        if field.shape == 0 or field.shape == 1:
+            magnetic = wp.cross(field.direction, rel)
+        magnetic_length = wp.length(magnetic)
+        force = wp.vec3(0.0)
+        if magnetic_length > 1.0e-8:
+            force = wp.cross(
+                velocity, magnetic * (magnitude / magnetic_length))
+    elif field.force_type == 5:  # Harmonic spring
+        force = -velocity * (
+            field.damping * 2.0 * wp.sqrt(wp.abs(field.strength)) * attenuation)
+        if distance > 1.0e-8:
+            force += rel * (
+                -field.strength * (distance - field.rest_length)
+                * attenuation / distance)
+    elif field.force_type == 7:  # Lennard-Jones fluid-scale analogue
+        force = wp.vec3(0.0)
+        if distance > 1.0e-6:
+            ratio = field.size / distance
+            ratio2 = ratio * ratio
+            ratio6 = ratio2 * ratio2 * ratio2
+            factor = wp.clamp(
+                -ratio6 * (1.0 - ratio6) / distance, -2.0, 2.0)
+            force = rel * (field.strength * factor * attenuation)
+    elif field.force_type == 8:  # Texture: procedural GPU vector/grad/curl proxy
+        coordinate = point
+        if (field.flags & 1) == 0:
+            coordinate = point - field.center
+        p = coordinate / wp.max(wp.abs(field.size), 1.0e-3)
+        if field.texture_mode == 1:  # Gradient
+            phase = float(field.seed) * 0.173
+            force = wp.vec3(
+                wp.cos(p[0] + phase) * wp.cos(p[1]) * wp.sin(p[2]),
+                -wp.sin(p[0] + phase) * wp.sin(p[1]) * wp.sin(p[2]),
+                wp.sin(p[0] + phase) * wp.cos(p[1]) * wp.cos(p[2]),
+            ) * magnitude
+        elif field.texture_mode == 2:  # Curl-like divergence-free field
+            force = wp.vec3(
+                wp.cos(p[1]) - wp.sin(p[2] + float(field.seed)),
+                wp.cos(p[2]) - wp.sin(p[0] + float(field.seed)),
+                wp.cos(p[0]) - wp.sin(p[1] + float(field.seed)),
+            ) * magnitude
+        else:
+            force = force_proxy_noise(p, 1.0, field.seed, 0.0) * magnitude
+    elif field.force_type == 9:  # Curve Guide, four-point polyline proxy
+        closest = field.guide_p0
+        tangent = field.direction
+        best_distance_sq = wp.dot(point - closest, point - closest)
+
+        ab = field.guide_p1 - field.guide_p0
+        denom = wp.dot(ab, ab)
+        if field.guide_count > 1 and denom > 1.0e-10:
+            t = wp.clamp(wp.dot(point - field.guide_p0, ab) / denom, 0.0, 1.0)
+            candidate = field.guide_p0 + ab * t
+            candidate_distance_sq = wp.dot(point - candidate, point - candidate)
+            if candidate_distance_sq < best_distance_sq:
+                closest = candidate
+                tangent = wp.normalize(ab)
+                best_distance_sq = candidate_distance_sq
+
+        ab = field.guide_p2 - field.guide_p1
+        denom = wp.dot(ab, ab)
+        if field.guide_count > 2 and denom > 1.0e-10:
+            t = wp.clamp(wp.dot(point - field.guide_p1, ab) / denom, 0.0, 1.0)
+            candidate = field.guide_p1 + ab * t
+            candidate_distance_sq = wp.dot(point - candidate, point - candidate)
+            if candidate_distance_sq < best_distance_sq:
+                closest = candidate
+                tangent = wp.normalize(ab)
+                best_distance_sq = candidate_distance_sq
+
+        ab = field.guide_p3 - field.guide_p2
+        denom = wp.dot(ab, ab)
+        if field.guide_count > 3 and denom > 1.0e-10:
+            t = wp.clamp(wp.dot(point - field.guide_p2, ab) / denom, 0.0, 1.0)
+            candidate = field.guide_p2 + ab * t
+            candidate_distance_sq = wp.dot(point - candidate, point - candidate)
+            if candidate_distance_sq < best_distance_sq:
+                closest = candidate
+                tangent = wp.normalize(ab)
+
+        guide_speed = wp.max(wp.abs(field.strength), field.guide_minimum)
+        if field.strength < 0.0:
+            guide_speed = -guide_speed
+        coupling = wp.clamp(1.0 - field.guide_free, 0.0, 1.0)
+        force = ((tangent * guide_speed - velocity) * coupling
+                 + (closest - point) * wp.abs(field.strength)
+                 * (1.0 + field.guide_clump)) * attenuation
+    elif field.force_type == 10:  # Boid goal proxy for state-less fluid
+        force = wp.vec3(0.0)
+        if distance > 1.0e-8:
+            force = -rel * (magnitude / distance)
+    elif field.force_type == 11:  # Turbulence
+        coordinate = point
+        if (field.flags & 1) == 0:
+            coordinate = point - field.center
+        force = force_proxy_noise(
+            coordinate, wp.max(field.size, 1.0e-3), field.seed, 0.0,
+        ) * magnitude
+    elif field.force_type == 12:  # Linear + quadratic drag
+        speed = wp.length(velocity)
+        force = -velocity * attenuation * (
+            field.linear_drag + field.quadratic_drag * speed)
+    elif field.force_type == 13:  # Fluid-flow target velocity proxy
+        force = (field.source_velocity * field.strength
+                 - velocity * field.flow) * attenuation
+    else:
+        force = wp.vec3(0.0)
+
+    if (field.force_type != 5 and field.force_type != 12
+            and field.force_type != 13 and field.flow != 0.0):
+        force -= velocity * (field.flow * attenuation)
+    return force
+
+
+@wp.kernel
+def k_forces_proxy_fields(
+    fields: wp.array(dtype=ForceFieldProxy),
+    num_fields: int,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    time: float,
+    dt: float,
+):
+    """Apply native Blender force-field proxies to valid staggered faces."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    velocity = wp.vec3(u[tid], v[tid], w[tid])
+    for axis in range(3):
+        point = origin + wp.vec3(
+            (float(ijk[0]) + wp.where(axis == 0, 0.0, 0.5)) * voxel_size,
+            (float(ijk[1]) + wp.where(axis == 1, 0.0, 0.5)) * voxel_size,
+            (float(ijk[2]) + wp.where(axis == 2, 0.0, 0.5)) * voxel_size,
+        )
+        acceleration = wp.vec3(0.0)
+        for field_index in range(num_fields):
+            acceleration += force_field_proxy_acceleration(
+                fields[field_index], point, velocity, time)
+        if axis == 0 and wu[tid] > 0.0:
+            u[tid] = u[tid] + acceleration[0] * dt
+        elif axis == 1 and wv[tid] > 0.0:
+            v[tid] = v[tid] + acceleration[1] * dt
+        elif axis == 2 and ww[tid] > 0.0:
+            w[tid] = w[tid] + acceleration[2] * dt
+
+
 @wp.kernel
 def k_forces_gravity(
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
@@ -1024,11 +1272,23 @@ def k_forces_speed_limit(
     limit_behavior: wp.int32,  # LimitBehavior: 0 Maintain(clamp) 1 Percent 2 Acceleration
     percent: float,
     dt: float,
+    u_out: wp.array(dtype=float), v_out: wp.array(dtype=float), w_out: wp.array(dtype=float),
 ):
-    """fluidSimForcesSpeedLimit with LimitBehavior semantics."""
+    """fluidSimForcesSpeedLimit with LimitBehavior semantics.
+
+    Reads +x/+y/+z neighbor faces to estimate cell-centered speed, so it must
+    write scaled results to separate output buffers rather than in place:
+    scaling ``u[tid]`` while a neighboring thread still needs to read the
+    original ``u[tid]`` as its own ``u[xp]`` is a data race whose outcome
+    depends on launch scheduling (every other velocity-mutating kernel in
+    this module double-buffers for the same reason, e.g. ``k_forces_diffusion``).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
+    u_out[tid] = u[tid]
+    v_out[tid] = v[tid]
+    w_out[tid] = w[tid]
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     xp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
     yp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
@@ -1049,11 +1309,11 @@ def k_forces_speed_limit(
         target = wp.max(max_speed, speed - percent * dt)
         scale = target / speed
     if wu[tid] > 0.0:
-        u[tid] = u[tid] * scale
+        u_out[tid] = u[tid] * scale
     if wv[tid] > 0.0:
-        v[tid] = v[tid] * scale
+        v_out[tid] = v[tid] * scale
     if ww[tid] > 0.0:
-        w[tid] = w[tid] * scale
+        w_out[tid] = w[tid] * scale
 
 
 @wp.kernel
@@ -1120,6 +1380,7 @@ def k_dissipate_particle_attribute(
 
 
 register_fn(k_forces_gravity, "fluidSimForcesGravity")
+register_fn(k_forces_proxy_fields, "fluidSimForcesBlenderFieldProxies")
 register_fn(k_forces_directional, "fluidSimForcesDirectionalForce")
 register_fn(k_forces_omnidirectional, "fluidSimForcesOmnidirectionalForce")
 register_fn(k_forces_speed_limit, "fluidSimForcesSpeedLimit")

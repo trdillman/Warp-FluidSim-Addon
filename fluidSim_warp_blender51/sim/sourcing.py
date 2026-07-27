@@ -41,8 +41,11 @@ from .fields import (
     world_to_voxel,
     sample_scalar_trilinear,
 )
-from .enums import (BlendMode, MeshSinkRegionMode, SourceShapeForceType,
-                    SourceShapeShape, SourceShapeSourceMode, SourceShapeType)
+from .enums import (BlendMode, MeshSinkRegionMode, MeshSourceRegion,
+                    SourceEmissionMode, SourceEvaluationCadence,
+                    SourceLifecycle, SourceOperation, SourcePayloadKind,
+                    SourceShapeForceType, SourceShapeShape,
+                    SourceShapeSourceMode, SourceShapeType)
 from .registry import register_fn
 
 
@@ -115,6 +118,8 @@ class SourceShape:
     life_min: wp.float32
     life_max: wp.float32
     use_lifespan: wp.int32
+    emission_mode: wp.int32   # SourceEmissionMode: 0 Initial Fill, 1 Continuous Inflow
+    armed: wp.int32           # 1 = may emit initial fill; host disarms after first fire
 
 
 @wp.struct
@@ -131,6 +136,10 @@ class MeshSource:
     surface_thickness: wp.float32
     sink_region_mode: wp.int32
     velocity: wp.vec3
+    force_type: wp.int32   # 0 Off 1 Directional 2 Omnidirectional 3 Spin 4 Radial
+    force_strength: wp.float32
+    force_dir: wp.vec3
+    force_center: wp.vec3
     blend_mode: wp.int32
     blend_amount: wp.float32
     emit_rate: wp.float32
@@ -140,6 +149,8 @@ class MeshSource:
     life_min: wp.float32
     life_max: wp.float32
     use_lifespan: wp.int32
+    emission_mode: wp.int32   # SourceEmissionMode: 0 Initial Fill, 1 Continuous Inflow
+    armed: wp.int32           # 1 = may emit initial fill; host disarms after first fire
 
 
 @dataclass
@@ -171,6 +182,9 @@ class SourceShapeDesc:
     life_min: float = 1.0e30
     life_max: float = 1.0e30
     use_lifespan: bool = False
+    emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
+    source_id: str = ""
+    runtime_source_key: str = ""
 
     def aabb(self):
         """Return a conservative world AABB for topology marking."""
@@ -217,6 +231,8 @@ class SourceShapeDesc:
         shape.life_min = float(self.life_min)
         shape.life_max = float(self.life_max)
         shape.use_lifespan = 1 if self.use_lifespan else 0
+        shape.emission_mode = int(self.emission_mode)
+        shape.armed = 1
         return shape
 
 
@@ -233,6 +249,10 @@ class MeshSourceDesc:
     surface_thickness: float = 0.0
     sink_region_mode: int = MeshSinkRegionMode.SOLID
     velocity: tuple = (0.0, 0.0, 0.0)
+    force_type: int = SourceShapeForceType.OFF
+    force_strength: float = 0.0
+    force_dir: tuple = (0.0, 0.0, 1.0)
+    force_center: tuple = (0.0, 0.0, 0.0)
     blend_mode: int = BlendMode.REPLACE
     blend_amount: float = 1.0
     emit_rate: float = 8.0
@@ -242,6 +262,13 @@ class MeshSourceDesc:
     life_min: float = 1.0e30
     life_max: float = 1.0e30
     use_lifespan: bool = False
+    emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
+    source_id: str = ""
+    runtime_source_key: str = ""
+    source_region: int = MeshSourceRegion.SURFACE_SHELL
+    evaluation_cadence: int = SourceEvaluationCadence.FIRST_SIM_FRAME
+    vertices: object = None
+    triangles: object = None
 
     @property
     def role(self):
@@ -275,6 +302,11 @@ class MeshSourceDesc:
         source.surface_thickness = float(self.surface_thickness)
         source.sink_region_mode = int(self.sink_region_mode)
         source.velocity = wp.vec3(*[float(value) for value in self.velocity])
+        source.force_type = int(self.force_type)
+        source.force_strength = float(self.force_strength)
+        source.force_dir = wp.vec3(*[float(value) for value in self.force_dir])
+        source.force_center = wp.vec3(
+            *[float(value) for value in self.force_center])
         source.blend_mode = int(self.blend_mode)
         source.blend_amount = float(self.blend_amount)
         source.emit_rate = float(self.emit_rate)
@@ -284,6 +316,8 @@ class MeshSourceDesc:
         source.life_min = float(self.life_min)
         source.life_max = float(self.life_max)
         source.use_lifespan = 1 if self.use_lifespan else 0
+        source.emission_mode = int(self.emission_mode)
+        source.armed = 1
         return source
 
 
@@ -298,6 +332,8 @@ class HeightSourceDesc:
     profile: object = None
     emit_particles: bool = True
     emit_rate: float = 8.0
+    emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
+    source_id: str = "builtin:height"
 
 
 @wp.func
@@ -462,8 +498,130 @@ def shape_force_velocity(s: SourceShape, pw: wp.vec3):
     return s.velocity
 
 
+@wp.func
+def shape_force_acceleration(s: SourceShape, pw: wp.vec3):
+    """Acceleration from an analytic FORCE region at world point ``pw``.
+
+    Unlike ``shape_force_velocity`` (particle-emission initial velocity), this
+    deliberately excludes ``s.velocity`` and is integrated as acceleration in
+    the solver's forces phase, after P2G has established valid face weights.
+    """
+    center = wp.transform_get_translation(s.xform)
+    rel = pw - center
+    if s.force_type == 1:  # Directional
+        return s.force_dir * s.force_strength
+    if s.force_type == 2:  # Omnidirectional (outward)
+        length = wp.length(rel)
+        if length > 1.0e-8:
+            return rel * (s.force_strength / length)
+        return wp.vec3(0.0)
+    if s.force_type == 3:  # Spin around force_dir axis
+        axis = s.force_dir
+        if wp.length(axis) < 1.0e-8:
+            axis = wp.vec3(0.0, 0.0, 1.0)
+        return wp.cross(wp.normalize(axis), rel) * s.force_strength
+    if s.force_type == 4:  # Radial (inward)
+        length = wp.length(rel)
+        if length > 1.0e-8:
+            return -rel * (s.force_strength / length)
+    return wp.vec3(0.0)
+
+
+@wp.func
+def mesh_source_force_velocity(source: MeshSource, pw: wp.vec3):
+    """Emission/force velocity contribution for an evaluated mesh source."""
+    if source.force_type == 0:
+        return source.velocity
+    rel = pw - source.force_center
+    if source.force_type == 1:  # Directional
+        return source.velocity + source.force_dir * source.force_strength
+    if source.force_type == 2:  # Omnidirectional (outward)
+        length = wp.length(rel)
+        if length > 1.0e-8:
+            return source.velocity + rel * (source.force_strength / length)
+        return source.velocity
+    if source.force_type == 3:  # Spin around force_dir axis
+        axis = source.force_dir
+        if wp.length(axis) < 1.0e-8:
+            axis = wp.vec3(0.0, 0.0, 1.0)
+        return (source.velocity + wp.cross(wp.normalize(axis), rel)
+                * source.force_strength)
+    # Radial (inward)
+    length = wp.length(rel)
+    if length > 1.0e-8:
+        return source.velocity - rel * (source.force_strength / length)
+    return source.velocity
+
+
 # ---------------------------------------------------------------------------
-# fluidSimSourceShapes: field-mode application of all shapes to the grid
+# Analytic FORCE regions: force-stage application to valid MAC faces
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def k_source_shape_forces(
+    shapes: wp.array(dtype=SourceShape),
+    num_shapes: int,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+    dt: float,
+):
+    """Apply analytic FORCE objects after P2G, only to valid MAC faces.
+
+    Scene FORCE objects are represented as source shapes with ``mode=FIELD``
+    and ``emit_rate=0`` for ABI compatibility, but their velocity influence
+    belongs to the forces phase. Applying it here avoids the old ordering bug
+    where sourcing wrote unweighted MAC values that P2G subsequently divided
+    or ignored.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+
+    for axis in range(3):
+        valid = wp.where(axis == 0, wu[tid], wp.where(axis == 1, wv[tid], ww[tid]))
+        if valid <= 0.0:
+            continue
+        point = origin + wp.vec3(
+            (float(ijk[0]) + wp.where(axis == 0, 0.0, 0.5)) * voxel_size,
+            (float(ijk[1]) + wp.where(axis == 1, 0.0, 0.5)) * voxel_size,
+            (float(ijk[2]) + wp.where(axis == 2, 0.0, 0.5)) * voxel_size,
+        )
+        acceleration = wp.vec3(0.0)
+        for si in range(num_shapes):
+            shape = shapes[si]
+            if (shape.enabled == 0 or shape.stype != 0 or shape.mode != 0
+                    or shape.force_type == 0):
+                continue
+            if shape_sdf_world(shape, point) > shape.feather:
+                continue
+            acceleration += shape_force_acceleration(shape, point)
+        if axis == 0:
+            u[tid] = u[tid] + acceleration[0] * dt
+        elif axis == 1:
+            v[tid] = v[tid] + acceleration[1] * dt
+        else:
+            w[tid] = w[tid] + acceleration[2] * dt
+
+
+register_fn(
+    k_source_shape_forces,
+    "fluidSimSourceShapeForces",
+    notes="Port-internal: apply analytic FORCE regions after P2G.",
+)
+
+
+# ---------------------------------------------------------------------------
+# fluidSimSourceShapes: collisions, sinks, activation, and FIELD compatibility
 # ---------------------------------------------------------------------------
 
 
@@ -485,11 +643,17 @@ def k_source_shapes(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
 ):
-    """Apply field-mode source shapes to voxels:
-      Source: mark FLUID + SOURCE_REGION_TRACKING, blend velocity/attributes.
-      Collision: min into collision SDF + write collider velocity.
-      Sink: set SINK bit.
-      Activation: set ACTIVE bit.
+    """Apply source-shape grid roles other than liquid emission.
+
+    The original FIELD branch blends source pressure only; this port does not
+    yet expose/source that pressure field. Therefore FIELD sources are a
+    compatibility no-op here: they do not create liquid, set tracking bits, or
+    write MAC velocity/temperature/viscosity. Analytic FORCE objects use
+    ``k_source_shape_forces`` later in the forces phase.
+
+    Collision: min into collision SDF + write collider velocity.
+    Sink: set SINK bit.
+    Activation/CameraFrustum: set ACTIVE bit.
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
@@ -521,16 +685,11 @@ def k_source_shapes(
         if d > s.feather:
             continue
         if s.stype == 0 and s.mode == 0:
-            # Field-mode fluid source.
-            vt |= C.VOXEL_FLUID | C.VOXEL_ACTIVE | C.VOXEL_SOURCE_REGION_TRACKING
-            ev = shape_force_velocity(s, pw)
-            new_v = blend_vec(wp.vec3(vel_u, vel_v, vel_w), ev,
-                              s.blend_mode, s.blend_amount)
-            vel_u = new_v[0]
-            vel_v = new_v[1]
-            vel_w = new_v[2]
-            temp = blend_scalar(temp, s.temperature, s.blend_mode, s.blend_amount)
-            visc = blend_scalar(visc, s.viscosity, s.blend_mode, s.blend_amount)
+            # Original semantics: FIELD mode does not create liquid. The only
+            # original grid write is source pressure, which is not exposed by
+            # this port yet (docs/source_shape_spec.md). FORCE-role velocity
+            # influence is applied after P2G by k_source_shape_forces.
+            continue
         elif s.stype == 2:
             vt |= C.VOXEL_SINK
         elif s.stype == 3 or s.stype == 4:
@@ -547,7 +706,7 @@ def k_source_shapes(
 
 
 register_fn(k_source_shapes, "fluidSimSourceShapes",
-            notes="Field-mode analytic shape sourcing/collision/sink/activation.")
+            notes="Analytic collision/sink/activation; FIELD pressure deferred.")
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +747,10 @@ def k_source_shapes_particles(
     for si in range(num_shapes):
         s = shapes[si]
         if s.enabled == 0 or s.stype != 0 or s.mode != 1:
+            continue
+        # Initial-fill sources emit only while armed; the host disarms them
+        # after the firing substep so the region fills exactly once per run.
+        if s.emission_mode == 0 and s.armed == 0:
             continue
         d = shape_sdf_world(s, pw)
         if d > 0.0:
@@ -683,23 +846,10 @@ def k_mesh_source_field(
     if source.stype == 2:
         voxel_type[tid] = vt | C.VOXEL_SINK
     elif source.stype == 0 and source.mode == 0:
-        voxel_type[tid] = (
-            vt | C.VOXEL_FLUID | C.VOXEL_ACTIVE |
-            C.VOXEL_SOURCE_REGION_TRACKING
-        )
-        old_velocity = wp.vec3(u[tid], v[tid], w[tid])
-        new_velocity = blend_vec(
-            old_velocity, source.velocity,
-            source.blend_mode, source.blend_amount)
-        u[tid] = new_velocity[0]
-        v[tid] = new_velocity[1]
-        w[tid] = new_velocity[2]
-        temperature[tid] = blend_scalar(
-            temperature[tid], source.temperature,
-            source.blend_mode, source.blend_amount)
-        viscosity[tid] = blend_scalar(
-            viscosity[tid], source.viscosity,
-            source.blend_mode, source.blend_amount)
+        # Compatibility no-op. Original FIELD mode is pressure-only and does
+        # not create liquid or write MAC/attributes. Mesh FIELD sourcing has
+        # no original counterpart and is not exposed in the normal UI.
+        return
 
 
 register_fn(
@@ -735,7 +885,8 @@ def k_mesh_source_particles(
     """Top up intersecting voxels and project every spawn onto a triangle."""
     tid = wp.tid()
     if (tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0
-            or source.stype != 0 or source.mode != 1):
+            or source.stype != 0 or source.mode != 1
+            or (source.emission_mode == 0 and source.armed == 0)):
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     center = voxel_center_world(ijk, origin, voxel_size)
@@ -770,9 +921,9 @@ def k_mesh_source_particles(
         if slot >= capacity:
             wp.atomic_sub(count, 0, 1)
             return
-        positions[slot] = wp.mesh_eval_position(
-            mesh_id, query.face, query.u, query.v)
-        velocities[slot] = source.velocity
+        position = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        positions[slot] = position
+        velocities[slot] = mesh_source_force_velocity(source, position)
         age[slot] = 0.0
         if source.use_lifespan != 0:
             life[slot] = source.life_min + wp.randf(state) * (
@@ -941,6 +1092,72 @@ def k_source_particles(
 
 register_fn(k_source_particles, "fluidSimSourceParticles",
             notes="Append external particle list (point cloud / particle system).")
+
+
+@wp.kernel
+def k_source_owned_points(
+    src_positions: wp.array(dtype=wp.vec3),
+    src_velocities: wp.array(dtype=wp.vec3),
+    src_temperature: wp.array(dtype=float),
+    src_viscosity: wp.array(dtype=float),
+    src_density: wp.array(dtype=float),
+    src_lifespan: wp.array(dtype=float),
+    src_count: int,
+    has_velocity: int,
+    has_temperature: int,
+    has_viscosity: int,
+    has_density: int,
+    has_lifespan: int,
+    default_velocity: wp.vec3,
+    default_temperature: float,
+    default_viscosity: float,
+    default_density: float,
+    default_lifespan: float,
+    use_lifespan: int,
+    capacity: int,
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    age: wp.array(dtype=float),
+    life: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    time_offset: wp.array(dtype=float),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    result: wp.array(dtype=wp.int32),
+):
+    """Direct point append preserving every owned per-point attribute."""
+    tid = wp.tid()
+    if tid >= src_count:
+        return
+    slot = wp.atomic_add(count, 0, 1)
+    if slot >= capacity:
+        wp.atomic_sub(count, 0, 1)
+        result[1] = 1
+        return
+    positions[slot] = src_positions[tid]
+    velocities[slot] = default_velocity
+    if has_velocity != 0:
+        velocities[slot] = src_velocities[tid]
+    age[slot] = 0.0
+    life[slot] = 1.0e30
+    if use_lifespan != 0:
+        life[slot] = default_lifespan
+    if has_lifespan != 0:
+        life[slot] = src_lifespan[tid]
+    temperature[slot] = default_temperature
+    if has_temperature != 0:
+        temperature[slot] = src_temperature[tid]
+    viscosity[slot] = default_viscosity
+    if has_viscosity != 0:
+        viscosity[slot] = src_viscosity[tid]
+    density[slot] = default_density
+    if has_density != 0:
+        density[slot] = src_density[tid]
+    time_offset[slot] = 0.0
+    alive[slot] = 1
+    wp.atomic_add(result, 0, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1464,6 +1681,219 @@ register_fn(k_source_volume_mask_sdf, "coreSourceNanoVDBMaskSDF",
             notes="SDF volume inside test -> voxel-type mask bit.")
 
 
+@wp.kernel
+def k_apply_compiled_source(
+    operation: int,
+    coverage: wp.array(dtype=float),
+    scalar_values: wp.array(dtype=float),
+    vector_values: wp.array(dtype=wp.vec3),
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    constant_scalar: float,
+    constant_vector: wp.vec3,
+    blend_mode: int,
+    blend_amount: float,
+    dt: float,
+    voxel_type: wp.array(dtype=wp.int32),
+    pressure: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+):
+    """Apply one compiled flat-leaf source without geometry branching."""
+    tid = wp.tid()
+    if tid >= source_leaf_count * C.LEAF_VOLUME:
+        return
+    cov = coverage[tid]
+    if cov <= 0.0:
+        return
+    source_slot = tid // C.LEAF_VOLUME
+    local = tid - source_slot * C.LEAF_VOLUME
+    lc = source_leaf_coords[source_slot]
+    ijk = wp.vec3i(
+        (lc[0] << C.LEAF_SHIFT) + (local & C.LEAF_MASK),
+        (lc[1] << C.LEAF_SHIFT) + ((local >> C.LEAF_SHIFT) & C.LEAF_MASK),
+        (lc[2] << C.LEAF_SHIFT) + ((local >> (2 * C.LEAF_SHIFT)) & C.LEAF_MASK),
+    )
+    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+    if flat < 0:
+        return
+    vt = voxel_type[flat]
+    if operation == 3:  # COLLISION, highest precedence
+        voxel_type[flat] = ((vt | C.VOXEL_COLLISION)
+                            & ~(C.VOXEL_SINK | C.VOXEL_FLUID
+                                | C.VOXEL_SOURCE_REGION_TRACKING))
+        return
+    if (vt & C.VOXEL_COLLISION) != 0:
+        return
+    if operation == 1:  # SINK
+        voxel_type[flat] = ((vt | C.VOXEL_SINK)
+                            & ~(C.VOXEL_FLUID | C.VOXEL_SOURCE_REGION_TRACKING))
+        return
+    if operation == 4:  # ACTIVATION
+        voxel_type[flat] = vt | C.VOXEL_ACTIVE
+        return
+    if (vt & C.VOXEL_SINK) != 0:
+        return
+    if operation == 0:  # LIQUID region field; particles are appended separately
+        voxel_type[flat] = (vt | C.VOXEL_FLUID | C.VOXEL_ACTIVE
+                            | C.VOXEL_SOURCE_REGION_TRACKING)
+        u[flat] = constant_vector[0]
+        v[flat] = constant_vector[1]
+        w[flat] = constant_vector[2]
+        return
+    source_scalar = constant_scalar
+    if scalar_values.shape[0] > tid:
+        source_scalar = scalar_values[tid]
+    source_vector = constant_vector
+    if vector_values.shape[0] > tid:
+        source_vector = vector_values[tid]
+    amount = blend_amount * cov
+    if operation == 5:  # PRESSURE: FIELD's only original write
+        pressure[flat] = blend_scalar(
+            pressure[flat], source_scalar, blend_mode,
+            wp.where(blend_mode == 0, amount * dt, amount))
+    elif operation == 6:  # SCALAR_FIELD defaults to temperature
+        temperature[flat] = blend_scalar(
+            temperature[flat], source_scalar, blend_mode,
+            wp.where(blend_mode == 0, amount * dt, amount))
+    elif operation == 7 or operation == 8:  # vector/staggered velocity
+        old = wp.vec3(u[flat], v[flat], w[flat])
+        value = blend_vec(old, source_vector, blend_mode,
+                          wp.where(blend_mode == 0, amount * dt, amount))
+        u[flat] = value[0]
+        v[flat] = value[1]
+        w[flat] = value[2]
+
+
+@wp.kernel
+def k_apply_compiled_staggered_source(
+    coverage: wp.array(dtype=float),
+    source_u: wp.array(dtype=float),
+    source_v: wp.array(dtype=float),
+    source_w: wp.array(dtype=float),
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    constant_vector: wp.vec3,
+    use_face_values: int,
+    blend_mode: int,
+    blend_amount: float,
+    dt: float,
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+):
+    """Apply independently sampled x/y/z face values to the MAC fields."""
+    tid = wp.tid()
+    if tid >= source_leaf_count * C.LEAF_VOLUME:
+        return
+    cov = coverage[tid]
+    if cov <= 0.0:
+        return
+    source_slot = tid // C.LEAF_VOLUME
+    local = tid - source_slot * C.LEAF_VOLUME
+    lc = source_leaf_coords[source_slot]
+    ijk = wp.vec3i(
+        (lc[0] << C.LEAF_SHIFT) + (local & C.LEAF_MASK),
+        (lc[1] << C.LEAF_SHIFT) + ((local >> C.LEAF_SHIFT) & C.LEAF_MASK),
+        (lc[2] << C.LEAF_SHIFT) + ((local >> (2 * C.LEAF_SHIFT)) & C.LEAF_MASK),
+    )
+    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+    if flat < 0:
+        return
+    value_u = constant_vector[0]
+    value_v = constant_vector[1]
+    value_w = constant_vector[2]
+    if use_face_values != 0:
+        value_u = source_u[tid]
+        value_v = source_v[tid]
+        value_w = source_w[tid]
+    amount = blend_amount * cov
+    if blend_mode == 0:
+        amount = amount * dt
+    u[flat] = blend_scalar(u[flat], value_u, blend_mode, amount)
+    v[flat] = blend_scalar(v[flat], value_v, blend_mode, amount)
+    w[flat] = blend_scalar(w[flat], value_w, blend_mode, amount)
+
+
+@wp.kernel
+def k_emit_compiled_source_particles(
+    coverage: wp.array(dtype=float),
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    target_per_voxel: int,
+    emission_velocity: wp.vec3,
+    temperature_value: float,
+    viscosity_value: float,
+    density_value: float,
+    life_value: float,
+    use_lifespan: int,
+    capacity: int,
+    voxel_counts: wp.array(dtype=wp.int32),
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    age: wp.array(dtype=float),
+    life: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    time_offset: wp.array(dtype=float),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    result: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    if tid >= source_leaf_count * C.LEAF_VOLUME or coverage[tid] <= 0.0:
+        return
+    source_slot = tid // C.LEAF_VOLUME
+    local = tid - source_slot * C.LEAF_VOLUME
+    lc = source_leaf_coords[source_slot]
+    ijk = wp.vec3i(
+        (lc[0] << C.LEAF_SHIFT) + (local & C.LEAF_MASK),
+        (lc[1] << C.LEAF_SHIFT) + ((local >> C.LEAF_SHIFT) & C.LEAF_MASK),
+        (lc[2] << C.LEAF_SHIFT) + ((local >> (2 * C.LEAF_SHIFT)) & C.LEAF_MASK),
+    )
+    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+    if flat < 0:
+        return
+    desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
+    missing = wp.max(0, desired - voxel_counts[flat])
+    center = voxel_center_world(ijk, origin, voxel_size)
+    for sample in range(64):
+        if sample >= missing:
+            break
+        slot = wp.atomic_add(count, 0, 1)
+        if slot >= capacity:
+            wp.atomic_sub(count, 0, 1)
+            result[1] = 1
+            break
+        positions[slot] = center
+        velocities[slot] = emission_velocity
+        age[slot] = 0.0
+        life[slot] = wp.where(use_lifespan != 0, life_value, 1.0e30)
+        temperature[slot] = temperature_value
+        viscosity[slot] = viscosity_value
+        density[slot] = density_value
+        time_offset[slot] = 0.0
+        alive[slot] = 1
+        wp.atomic_add(voxel_counts, flat, 1)
+        wp.atomic_add(result, 0, 1)
+
+
 class SourcePipeline:
     """Own source state and the complete source-launch transaction."""
 
@@ -1483,20 +1913,103 @@ class SourcePipeline:
         self._emit_seed = 12345
         self._first_slot_dev = wp.zeros(
             1, dtype=wp.int32, device=self.device)
+        self._compiled_result = wp.zeros(
+            2, dtype=wp.int32, device=self.device)
+        self._compiled_empty_scalar = None
+        self._compiled_empty_vector = None
+        self.last_apply_result = {"emitted": 0, "capacity_limited": False}
+        self.last_pressure_apply_count = 0
+        self.last_post_p2g_apply_count = 0
+        # Per-source initial-fill armed state, keyed by the stable descriptor
+        # ``source_id`` (Blender object name). Persists across per-frame
+        # ``set_sources`` calls; cleared by ``reset`` (Initialize/Reset).
+        self._initial_fired: set[str] = set()
+        from .source_regions import SourceCompiler
+        self.compiler = SourceCompiler()
+        self.plans = ()
+        self._compiled_batch = None
+        self._session_generation = 0
+        self.last_diagnostics = ()
 
-    def set_sources(self, sources):
-        self.sources = list(sources)
-        self.analytic_sources = [
-            source for source in self.sources
-            if isinstance(source, SourceShapeDesc)
-        ]
-        self.mesh_sources = [
-            source for source in self.sources
-            if isinstance(source, MeshSourceDesc)
-        ]
+    def reset(self):
+        """Re-arm sources and release compiler-owned device/cache state."""
+        self._initial_fired = set()
         self._shape_array = None
         self._emit_shape_array = None
         self._emit_shape_key = None
+        self._session_generation = getattr(self, "_session_generation", 0) + 1
+        compiler = getattr(self, "compiler", None)
+        if compiler is not None:
+            compiler.release()
+        self._compiled_batch = None
+        self.last_diagnostics = ()
+        self.last_pressure_apply_count = 0
+        self.last_post_p2g_apply_count = 0
+
+    def release(self):
+        """Release all compiler-owned GPU values on solver teardown/failure."""
+        self.reset()
+        self.owner = None
+
+    def set_plans(self, plans):
+        """Set immutable Phase 2 plans; tests and Blender share this seam."""
+        from .source_regions import SourcePlan
+        values = tuple(plans)
+        if not all(isinstance(plan, SourcePlan) for plan in values):
+            raise TypeError("set_plans accepts SourcePlan values only")
+        self.plans = values
+        self._compiled_batch = None
+
+    def set_sources(self, sources):
+        from .source_compat import descriptors_to_plans
+        from .source_regions import SourcePlan
+        values = list(sources)
+        if values and all(isinstance(value, SourcePlan) for value in values):
+            self.sources = []
+            self.analytic_sources = []
+            self.mesh_sources = []
+            self.set_plans(values)
+        else:
+            self.sources = values
+            self.analytic_sources = [
+                source for source in self.sources
+                if isinstance(source, SourceShapeDesc)
+            ]
+            self.mesh_sources = [
+                source for source in self.sources
+                if isinstance(source, MeshSourceDesc)
+            ]
+            self.plans = descriptors_to_plans(
+                self.sources, session_generation=self._session_generation)
+            self._compiled_batch = None
+        self._shape_array = None
+        self._emit_shape_array = None
+        self._emit_shape_key = None
+
+    def required_leaf_boxes(self):
+        """World-space plan bounds used by solver topology marking."""
+        for plan in self.plans:
+            bounds = getattr(plan.region, "bounds", None)
+            if bounds is not None and plan.activation.enabled:
+                yield bounds()
+
+    def compile(self, frame=0, substep=0, *, upload=True):
+        """Compile current plans for the owner's sparse-grid context."""
+        from .source_regions import CompileContext
+        owner, settings = self.owner, self.owner.settings
+        context = CompileContext(
+            frame=int(frame), substep=int(substep),
+            session_generation=self._session_generation,
+            device=self.device, origin=tuple(float(v) for v in owner.grid.origin),
+            voxel_size=float(settings.voxel_size),
+            domain_min=tuple(float(v) for v in settings.domain_min),
+            domain_max=tuple(float(v) for v in settings.domain_max),
+            leaf_capacity=int(getattr(owner.grid, "capacity", C.DEFAULT_LEAF_CAPACITY)),
+            particle_capacity=int(owner.particles.capacity), upload=upload,
+        )
+        self._compiled_batch = self.compiler.compile(self.plans, context)
+        self.last_diagnostics = self._compiled_batch.diagnostics
+        return self._compiled_batch
 
     def set_height_source(self, desc):
         desc = HeightSourceDesc() if desc is None else desc
@@ -1511,16 +2024,328 @@ class SourcePipeline:
         else:
             self._height_profile_res = (2, 2)
 
+    def _bake_struct(self, source):
+        """Build the GPU struct with initial-fill armed state applied.
+
+        Continuous sources are always armed (emit every substep). An initial-
+        fill source is armed only until it has fired once this run.
+        """
+        struct = source.to_struct()
+        if (int(getattr(source, "emission_mode",
+                        SourceEmissionMode.CONTINUOUS_INFLOW))
+                == SourceEmissionMode.INITIAL_FILL
+                and getattr(source, "source_id", "") in self._initial_fired):
+            struct.armed = 0
+        return struct
+
     def _shapes(self):
         if self._shape_array is None:
-            structs = [source.to_struct() for source in self.analytic_sources]
+            structs = [self._bake_struct(source)
+                       for source in self.analytic_sources]
             if not structs:
                 structs = [SourceShapeDesc(enabled=False).to_struct()]
             self._shape_array = wp.array(
                 structs, dtype=SourceShape, device=self.device)
         return self._shape_array
 
+    def apply_forces(self, dt):
+        """Apply analytic FORCE-role shapes in the solver forces phase."""
+        analytic_sources = getattr(self, "analytic_sources", self.sources)
+        if not any(
+            source.enabled
+            and source.stype == SourceShapeType.SOURCE
+            and source.mode == SourceShapeSourceMode.FIELD
+            and source.force_type != SourceShapeForceType.OFF
+            for source in analytic_sources
+        ):
+            return
+        owner = self.owner
+        grid = owner.grid
+        wp.launch(
+            k_source_shape_forces, dim=owner._nvox,
+            inputs=[self._shapes(), len(analytic_sources),
+                    grid.leaf_coords, grid.num_leaves,
+                    grid.origin, owner.settings.voxel_size,
+                    owner.vel.u, owner.vel.v, owner.vel.w,
+                    owner.vel.wu, owner.vel.wv, owner.vel.ww, dt],
+            device=self.device,
+        )
+
+    def apply_compiled(self, batch, dt):
+        """Apply compiled operations in fixed precedence/semantic order."""
+        owner, grid = self.owner, self.owner.grid
+        if self._compiled_empty_scalar is None:
+            self._compiled_empty_scalar = wp.empty(
+                0, dtype=float, device=self.device)
+            self._compiled_empty_vector = wp.empty(
+                0, dtype=wp.vec3, device=self.device)
+        empty_scalar = self._compiled_empty_scalar
+        empty_vector = self._compiled_empty_vector
+        pressure = owner.pressure_solver.pressure
+        particles = owner.particles
+        initial_particle_count = int(particles.host_count)
+        requested_direct = 0
+        self._compiled_result.zero_()
+        emitted_any = False
+        order = {
+            SourceOperation.COLLISION: 0,
+            SourceOperation.SINK: 1,
+            SourceOperation.ACTIVATION: 2,
+            SourceOperation.LIQUID: 3,
+            SourceOperation.PRESSURE: 4,
+            SourceOperation.SCALAR_FIELD: 5,
+            SourceOperation.VECTOR_FIELD: 6,
+            SourceOperation.STAGGERED_VELOCITY: 7,
+            SourceOperation.FORCE: 8,
+        }
+        for compiled in sorted(batch.sources,
+                               key=lambda value: order[value.plan.operation]):
+            plan, region = compiled.plan, compiled.region
+            if any(item.severity == "ERROR" for item in region.diagnostics):
+                continue
+            stable_id = str(plan.stable_id)
+            if (plan.lifecycle in {SourceLifecycle.ONCE,
+                                   SourceLifecycle.DIRECT_APPEND}
+                    and stable_id in self._initial_fired):
+                continue
+            payload = plan.payload
+            # Liquid coverage is materialized by the particle kernel and the
+            # immediate re-index/P2G path. Avoid a redundant field-stamp launch;
+            # particle indexing truthfully owns Fluid/Active classification.
+            if plan.operation in {
+                    SourceOperation.COLLISION, SourceOperation.SINK,
+                    SourceOperation.ACTIVATION}:
+                wp.launch(
+                    k_apply_compiled_source,
+                    dim=max(1, region.leaf_count * C.LEAF_VOLUME),
+                    inputs=[
+                        int(plan.operation), region.device_coverage,
+                        (region.device_scalar if region.device_scalar is not None
+                         else empty_scalar),
+                        (region.device_vector if region.device_vector is not None
+                         else empty_vector),
+                        region.device_leaf_coords, region.leaf_count,
+                        grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                        float(payload.pressure if plan.operation == SourceOperation.PRESSURE
+                              else payload.scalar),
+                        wp.vec3(*(payload.vector if plan.operation in {
+                            SourceOperation.VECTOR_FIELD,
+                            SourceOperation.STAGGERED_VELOCITY} else payload.velocity)),
+                        int(plan.blend.mode), float(plan.blend.amount), float(dt),
+                    ],
+                    outputs=[owner.voxel_type.data, pressure,
+                             owner.temperature.data, owner.viscosity_field.data,
+                             owner.density.data, owner.vel.u, owner.vel.v, owner.vel.w],
+                    device=self.device,
+                )
+            if (plan.operation == SourceOperation.LIQUID
+                    and region.points is not None
+                    and plan.lifecycle == SourceLifecycle.DIRECT_APPEND):
+                point_values = region.points
+                count = len(point_values.positions)
+                wp.launch(
+                    k_source_owned_points, dim=max(1, count),
+                    inputs=[
+                        point_values.device_positions,
+                        (point_values.device_velocities
+                         if point_values.device_velocities is not None else empty_vector),
+                        (point_values.device_temperature
+                         if point_values.device_temperature is not None else empty_scalar),
+                        (point_values.device_viscosity
+                         if point_values.device_viscosity is not None else empty_scalar),
+                        (point_values.device_density
+                         if point_values.device_density is not None else empty_scalar),
+                        (point_values.device_lifespan
+                         if point_values.device_lifespan is not None else empty_scalar),
+                        count,
+                        1 if point_values.device_velocities is not None else 0,
+                        1 if point_values.device_temperature is not None else 0,
+                        1 if point_values.device_viscosity is not None else 0,
+                        1 if point_values.device_density is not None else 0,
+                        1 if point_values.device_lifespan is not None else 0,
+                        wp.vec3(*payload.velocity), payload.temperature,
+                        payload.viscosity, payload.density, payload.lifespan,
+                        1 if payload.use_lifespan else 0, particles.capacity,
+                    ],
+                    outputs=[particles.position, particles.velocity,
+                             particles.attr("age"), particles.attr("life"),
+                             particles.attr("temperature"),
+                             particles.attr("viscosity"), particles.attr("density"),
+                             particles.time_offset, particles.alive,
+                             particles.count, self._compiled_result],
+                    device=self.device,
+                )
+                requested_direct += count
+                emitted_any = count > 0
+            elif (plan.operation == SourceOperation.LIQUID
+                    and region.leaf_count
+                    and particles.host_count < particles.capacity):
+                wp.launch(
+                    k_emit_compiled_source_particles,
+                    dim=region.leaf_count * C.LEAF_VOLUME,
+                    inputs=[
+                        region.device_coverage, region.device_leaf_coords,
+                        region.leaf_count, grid.leaf_table, grid.voxels_dim,
+                        grid.leaves_dim, grid.origin,
+                        self.owner.settings.voxel_size,
+                        max(1, min(64, int(round(payload.target_particles_per_voxel)))),
+                        wp.vec3(*payload.velocity), payload.temperature,
+                        payload.viscosity, payload.density, payload.lifespan,
+                        1 if payload.use_lifespan else 0, particles.capacity,
+                        owner.voxel_counts.data,
+                    ],
+                    outputs=[particles.position, particles.velocity,
+                             particles.attr("age"), particles.attr("life"),
+                             particles.attr("temperature"),
+                             particles.attr("viscosity"), particles.attr("density"),
+                             particles.time_offset, particles.alive,
+                             particles.count, self._compiled_result],
+                    device=self.device,
+                )
+                emitted_any = True
+            if (plan.lifecycle in {SourceLifecycle.ONCE,
+                                   SourceLifecycle.DIRECT_APPEND}
+                    and plan.operation not in {
+                        SourceOperation.PRESSURE, SourceOperation.SCALAR_FIELD,
+                        SourceOperation.VECTOR_FIELD,
+                        SourceOperation.STAGGERED_VELOCITY}):
+                self._initial_fired.add(stable_id)
+        final_particle_count = initial_particle_count
+        if emitted_any:
+            final_particle_count = int(particles.refresh_host_count())
+        emitted_count = max(0, final_particle_count - initial_particle_count)
+        result_values = (self._compiled_result.numpy()
+                         if emitted_any else np.zeros(2, dtype=np.int32))
+        self.last_apply_result = {
+            "emitted": emitted_count,
+            "capacity_limited": bool(
+                int(result_values[1]) != 0
+                or requested_direct > emitted_count),
+        }
+        return emitted_any
+
+    def apply_post_p2g_fields(self, dt):
+        """Apply scalar/vector/staggered fields after P2G so they persist."""
+        batch = self._compiled_batch
+        self.last_post_p2g_apply_count = 0
+        if batch is None:
+            return 0
+        owner, grid = self.owner, self.owner.grid
+        empty_scalar = self._compiled_empty_scalar
+        empty_vector = self._compiled_empty_vector
+        operations = {
+            SourceOperation.SCALAR_FIELD, SourceOperation.VECTOR_FIELD,
+            SourceOperation.STAGGERED_VELOCITY,
+        }
+        for compiled in batch.sources:
+            plan, region = compiled.plan, compiled.region
+            if plan.operation not in operations:
+                continue
+            stable_id = str(plan.stable_id)
+            if (plan.lifecycle == SourceLifecycle.ONCE
+                    and stable_id in self._initial_fired):
+                continue
+            if any(item.severity == "ERROR" for item in region.diagnostics):
+                continue
+            payload = plan.payload
+            if plan.operation == SourceOperation.STAGGERED_VELOCITY:
+                has_faces = all(value is not None for value in (
+                    region.device_staggered_u, region.device_staggered_v,
+                    region.device_staggered_w))
+                wp.launch(
+                    k_apply_compiled_staggered_source,
+                    dim=max(1, region.leaf_count * C.LEAF_VOLUME),
+                    inputs=[
+                        region.device_coverage,
+                        (region.device_staggered_u if has_faces else empty_scalar),
+                        (region.device_staggered_v if has_faces else empty_scalar),
+                        (region.device_staggered_w if has_faces else empty_scalar),
+                        region.device_leaf_coords, region.leaf_count,
+                        grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                        wp.vec3(*payload.vector), 1 if has_faces else 0,
+                        int(plan.blend.mode), float(plan.blend.amount), float(dt),
+                    ],
+                    outputs=[owner.vel.u, owner.vel.v, owner.vel.w],
+                    device=self.device,
+                )
+            else:
+                wp.launch(
+                    k_apply_compiled_source,
+                    dim=max(1, region.leaf_count * C.LEAF_VOLUME),
+                    inputs=[
+                        int(plan.operation), region.device_coverage,
+                        (region.device_scalar if region.device_scalar is not None
+                         else empty_scalar),
+                        (region.device_vector if region.device_vector is not None
+                         else empty_vector),
+                        region.device_leaf_coords, region.leaf_count,
+                        grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                        float(payload.scalar), wp.vec3(*payload.vector),
+                        int(plan.blend.mode), float(plan.blend.amount), float(dt),
+                    ],
+                    outputs=[owner.voxel_type.data, owner.pressure_solver.pressure,
+                             owner.temperature.data, owner.viscosity_field.data,
+                             owner.density.data, owner.vel.u, owner.vel.v, owner.vel.w],
+                    device=self.device,
+                )
+            self.last_post_p2g_apply_count += int(region.covered_voxel_count)
+            if plan.lifecycle == SourceLifecycle.ONCE:
+                self._initial_fired.add(stable_id)
+        return self.last_post_p2g_apply_count
+
+    def apply_pressure_sources(self, dt):
+        """Blend FIELD pressure after the solve and immediately before project."""
+        batch = self._compiled_batch
+        self.last_pressure_apply_count = 0
+        if batch is None:
+            return 0
+        owner, grid = self.owner, self.owner.grid
+        empty_scalar = self._compiled_empty_scalar
+        empty_vector = self._compiled_empty_vector
+        for compiled in batch.sources:
+            plan, region = compiled.plan, compiled.region
+            if plan.operation != SourceOperation.PRESSURE:
+                continue
+            stable_id = str(plan.stable_id)
+            if (plan.lifecycle == SourceLifecycle.ONCE
+                    and stable_id in self._initial_fired):
+                continue
+            if any(item.severity == "ERROR" for item in region.diagnostics):
+                continue
+            payload = plan.payload
+            wp.launch(
+                k_apply_compiled_source,
+                dim=max(1, region.leaf_count * C.LEAF_VOLUME),
+                inputs=[
+                    int(SourceOperation.PRESSURE), region.device_coverage,
+                    (region.device_scalar if region.device_scalar is not None
+                     else empty_scalar), empty_vector,
+                    region.device_leaf_coords, region.leaf_count,
+                    grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                    float(payload.pressure), wp.vec3(0.0, 0.0, 0.0),
+                    int(plan.blend.mode), float(plan.blend.amount), float(dt),
+                ],
+                outputs=[owner.voxel_type.data, owner.pressure_solver.pressure,
+                         owner.temperature.data, owner.viscosity_field.data,
+                         owner.density.data, owner.vel.u, owner.vel.v, owner.vel.w],
+                device=self.device,
+            )
+            self.last_pressure_apply_count += int(region.covered_voxel_count)
+            if plan.lifecycle == SourceLifecycle.ONCE:
+                self._initial_fired.add(stable_id)
+        return self.last_pressure_apply_count
+
     def apply(self, dt):
+        # SourcePlan callers use the compiled operation path. Legacy descriptors
+        # retain their accepted kernels through the compatibility seam.
+        if getattr(self, "plans", ()) and not self.sources:
+            dynamic = any(plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
+                          for plan in self.plans)
+            batch = getattr(self, "_compiled_batch", None)
+            if batch is None or dynamic:
+                batch = self.compile(
+                    frame=int(getattr(self.owner, "frame", 0)), substep=0)
+            return self.apply_compiled(batch, dt)
         owner = self.owner
         grid = owner.grid
         settings = owner.settings
@@ -1635,7 +2460,7 @@ class SourcePipeline:
                         emit_rate=height.emit_rate,
                     ))
                     self._emit_shape_array = wp.array(
-                        [source.to_struct() for source in emit_sources],
+                        [self._bake_struct(source) for source in emit_sources],
                         dtype=SourceShape,
                         device=self.device,
                     )
@@ -1663,7 +2488,7 @@ class SourcePipeline:
                     continue
                 wp.launch(
                     k_mesh_source_particles, dim=owner._nvox,
-                    inputs=[source.mesh.id, source.to_struct(),
+                    inputs=[source.mesh.id, self._bake_struct(source),
                             source.query_radius(), grid.leaf_coords,
                             grid.num_leaves, grid.origin, settings.voxel_size,
                             owner.voxel_counts.data,
@@ -1677,6 +2502,33 @@ class SourcePipeline:
                              particles.alive, particles.count],
                     device=self.device,
                 )
+            # Disarm initial-fill sources that fired on this substep so they
+            # emit exactly once per run (re-armed only by Initialize/Reset).
+            fired_now: set[str] = set()
+            for _src in analytic_sources:
+                if (_src.enabled and _src.stype == SourceShapeType.SOURCE
+                        and _src.mode == SourceShapeSourceMode.PARTICLES
+                        and int(getattr(_src, "emission_mode",
+                                SourceEmissionMode.CONTINUOUS_INFLOW))
+                        == SourceEmissionMode.INITIAL_FILL
+                        and getattr(_src, "source_id", "")
+                        and _src.source_id not in self._initial_fired):
+                    fired_now.add(_src.source_id)
+            for _src in mesh_sources:
+                if (_src.enabled and _src.mesh is not None
+                        and _src.stype == SourceShapeType.SOURCE
+                        and _src.mode == SourceShapeSourceMode.PARTICLES
+                        and int(getattr(_src, "emission_mode",
+                                SourceEmissionMode.CONTINUOUS_INFLOW))
+                        == SourceEmissionMode.INITIAL_FILL
+                        and getattr(_src, "source_id", "")
+                        and _src.source_id not in self._initial_fired):
+                    fired_now.add(_src.source_id)
+            if fired_now:
+                self._initial_fired |= fired_now
+                self._shape_array = None
+                self._emit_shape_array = None
+                self._emit_shape_key = None
             particles.refresh_host_count()
             return True
         return False

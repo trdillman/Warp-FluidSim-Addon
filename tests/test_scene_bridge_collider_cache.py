@@ -177,10 +177,15 @@ def _install_scene_bridge_stubs(monkeypatch):
     class _HeightSourceDesc:
         pass
 
+    class _ForceFieldDesc:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
     fake_solver.ColliderDesc = _ColliderDesc
     fake_solver.SourceShapeDesc = _SourceShapeDesc
     fake_solver.MeshSourceDesc = _MeshSourceDesc
     fake_solver.HeightSourceDesc = _HeightSourceDesc
+    fake_solver.ForceFieldDesc = _ForceFieldDesc
     fake_sourcing = types.ModuleType("fluidSim_warp_blender51.sim.sourcing")
     fake_sourcing.MeshSourceDesc = _MeshSourceDesc
 
@@ -237,6 +242,7 @@ def _mesh_source_settings(role="SOURCE", **overrides):
         use_object_velocity=False,
         blend_mode="REPLACE",
         emit_rate=3.0,
+        emission_mode="CONTINUOUS_INFLOW",
         temperature=4.0,
         viscosity=5.0,
         density=6.0,
@@ -252,6 +258,72 @@ def _mesh_source_settings(role="SOURCE", **overrides):
     )
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_native_blender_force_fields_translate_to_gpu_proxies(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+
+    def proxy(field_type, **overrides):
+        obj = _FakeObject(_triangle_mesh())
+        values = dict(
+            type=field_type, strength=1.0, falloff_power=0.0,
+            use_min_distance=False, distance_min=0.0,
+            use_max_distance=False, distance_max=0.0,
+            apply_to_location=True, shape="POINT", flow=0.0, noise=0.0,
+            seed=17, size=1.0, rest_length=0.0,
+            harmonic_damping=0.0, linear_drag=0.0, quadratic_drag=0.0,
+            guide_minimum=0.0, guide_free=0.0, guide_clump_amount=0.0,
+            texture=None, texture_mode="RGB", use_global_coords=False,
+            use_smoke_density=False, source_object=None,
+        )
+        values.update(overrides)
+        obj.field = SimpleNamespace(**values)
+        return obj
+
+    force = proxy(
+        "FORCE", strength=-3.0, falloff_power=2.0,
+        use_min_distance=True, distance_min=0.5,
+        use_max_distance=True, distance_max=4.0)
+    force.matrix_world = _FakeMatrix(tx=2.0)
+    wind = proxy("WIND", strength=5.0)
+    wind.matrix_world._array[:3, 2] = (0.0, 2.0, 0.0)
+    remaining = [
+        proxy("VORTEX"), proxy("MAGNET"),
+        proxy("HARMONIC", rest_length=0.75, harmonic_damping=0.4),
+        proxy("CHARGE"),
+        proxy("LENNARDJ", use_min_distance=True, distance_min=0.3),
+        proxy("TEXTURE", texture=SimpleNamespace(name="Cloud Proxy"),
+              texture_mode="CURL", use_global_coords=True),
+        proxy("GUIDE", guide_minimum=0.6, guide_clump_amount=0.2),
+        proxy("BOID"), proxy("TURBULENCE", size=0.8, seed=23),
+        proxy("DRAG", linear_drag=0.4, quadratic_drag=0.2),
+        proxy("FLUID_FLOW", flow=0.7),
+    ]
+
+    fields = sess.scene_inputs.gather_force_fields(
+        SimpleNamespace(objects=[force, wind, *remaining]))
+
+    assert [field.force_type.name for field in fields] == [
+        "FORCE", "WIND", "VORTEX", "MAGNETIC", "HARMONIC", "CHARGE",
+        "LENNARD_JONES", "TEXTURE", "CURVE_GUIDE", "BOID",
+        "TURBULENCE", "DRAG", "FLUID_FLOW"]
+    assert fields[0].center == (2.0, 0.0, 0.0)
+    assert fields[0].strength == -3.0
+    assert fields[0].min_distance == 0.5
+    assert fields[0].max_distance == 4.0
+    assert fields[0].falloff_power == 2.0
+    assert fields[1].direction == (0.0, 1.0, 0.0)
+    assert fields[4].rest_length == 0.75
+    assert fields[4].damping == 0.4
+    assert fields[6].size == 0.3
+    assert fields[7].texture_mode.name == "CURL"
+    assert fields[7].flags & 1
+    assert len(fields[8].guide_points) == 2
+    assert fields[10].seed == 23
+    assert fields[11].linear_drag == 0.4
+    assert fields[11].quadratic_drag == 0.2
+    assert fields[12].flow == 0.7
 
 
 def test_scene_input_state_is_owned_outside_session(monkeypatch):
@@ -404,6 +476,7 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
         use_object_velocity=True,
         blend_mode="ADD",
         emit_rate=2.0,
+        emission_mode="CONTINUOUS_INFLOW",
         temperature=0.0,
         viscosity=0.0,
         density=1.0,
@@ -431,7 +504,10 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
         render=SimpleNamespace(fps=24, fps_base=1),
     )
 
-    assert sources.gather_sources(scene, sess)[0].velocity == (1.0, 0.0, 0.0)
+    descriptor = sources.gather_sources(scene, sess)[0]
+    assert descriptor.velocity == (1.0, 0.0, 0.0)
+    assert descriptor.emission_mode.name == "CONTINUOUS_INFLOW"
+    source_id = descriptor.source_id
     scene.frame_current = 2
     obj.matrix_world = _FakeMatrix(tx=1.0)
     descriptors = sources.gather_sources(scene, sess)
@@ -440,13 +516,20 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
     assert descriptors[0].velocity == (25.0, 0.0, 0.0)
     assert descriptors[0].half_extents == (1.0, 2.0, 3.0)
 
+    obj.name = "renamed source"
+    scene.frame_current = 3
+    renamed = sources.gather_sources(scene, sess)
+    assert renamed[0].source_id == source_id
+
 
 def test_mesh_source_uses_own_or_referenced_evaluated_mesh(monkeypatch):
     scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sess = scene_bridge.Session()
     tagged = _FakeObject(_triangle_mesh())
     tagged.name = "source"
-    tagged.fluidsim = _mesh_source_settings()
+    tagged.fluidsim = _mesh_source_settings(
+        force_type="SPIN", force_strength=2.5,
+        force_direction=(0.0, 1.0, 0.0))
     referenced = _FakeObject(_triangle_mesh(extra_vert=True))
     referenced.name = "referenced"
     referenced.fluidsim.role = "NONE"
@@ -460,13 +543,19 @@ def test_mesh_source_uses_own_or_referenced_evaluated_mesh(monkeypatch):
     assert tagged.to_mesh_count == 1
     assert own[0].velocity == (1.0, 2.0, 3.0)
     assert own[0].emit_rate == 3.0
+    assert own[0].force_type.name == "SPIN"
+    assert own[0].force_strength == 2.5
+    assert own[0].force_dir == (0.0, 1.0, 0.0)
+    assert own[0].force_center == (0.0, 0.0, 0.0)
 
     sess.scene_inputs.clear()
     tagged.fluidsim.mesh_object = referenced
+    referenced.evaluated_matrix_world = _FakeMatrix(tx=4.0)
     selected = sess.scene_inputs.gather_sources(scene, depsgraph=object())
     assert len(selected) == 1
     assert referenced.to_mesh_count == 1
-    assert selected[0].aabb_max == (1.0, 1.0, 1.0)
+    assert selected[0].aabb_max == (5.0, 1.0, 1.0)
+    assert selected[0].force_center == (4.0, 0.0, 0.0)
 
 
 def test_mesh_sources_share_one_evaluated_reference_upload(monkeypatch):
@@ -671,3 +760,62 @@ def test_height_source_translation_preserves_scene_settings(monkeypatch):
     assert desc.velocity == (1.0, 2.0, 3.0)
     assert desc.emit_particles is True
     assert desc.emit_rate == 8.0
+
+
+def test_watertight_check_is_deferred_to_solid_sink_consumers(monkeypatch):
+    """Watertight edge analysis must not run on the collider/source hot path.
+
+    Measured before this contract: a plain COLLIDER with 122,880 evaluated
+    triangles paid ~450 ms of pure-Python edge counting twice per playback
+    frame, although the result is only ever read for a SOLID mesh sink.
+    """
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import scene_inputs as si
+
+    calls = []
+    original = si._watertight_triangles
+
+    def counting(tris):
+        calls.append(len(tris))
+        return original(tris)
+
+    monkeypatch.setattr(si, "_watertight_triangles", counting)
+
+    sess = scene_bridge.Session()
+    collider = _FakeObject(_cube_mesh())
+    collider.name = "collider"
+    scene = SimpleNamespace(objects=[collider])
+    assert sess.scene_inputs.gather_colliders(scene, depsgraph=object())
+    assert calls == [], (
+        f"watertight ran {len(calls)} time(s) for a non-sink collider")
+
+    # A SOLID mesh sink is the only consumer, so it must still be evaluated.
+    sess2 = scene_bridge.Session()
+    sink = _FakeObject(_triangle_mesh())
+    sink.name = "sink"
+    sink.fluidsim = _mesh_source_settings(role="SINK")
+    sink_scene = SimpleNamespace(
+        objects=[sink], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1))
+    assert sess2.scene_inputs.gather_sources(sink_scene, depsgraph=object()) == []
+    assert sink.fluidsim.mesh_error == "Solid mesh sink requires a watertight mesh"
+    assert calls, "watertight must still be evaluated for a SOLID mesh sink"
+
+
+@pytest.mark.parametrize("mesh_tris,expected", [
+    ([], False),
+    ([(0, 1, 2)], False),
+    ([(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7),
+      (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
+      (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)], True),
+    # Two coincident triangles give every edge a count of 2, so the existing
+    # edge-manifold criterion reports True. Recorded as-is: the vectorized
+    # rewrite must preserve current semantics, not "improve" them.
+    ([(0, 1, 2), (0, 1, 2)], True),
+])
+def test_watertight_triangles_semantics(mesh_tris, expected):
+    """Guards the vectorized rewrite against the original scalar semantics."""
+    from fluidSim_warp_blender51.blender import scene_inputs as si
+
+    tris = np.asarray(mesh_tris, dtype=np.int32).reshape(-1, 3)
+    assert si._watertight_triangles(tris) is expected

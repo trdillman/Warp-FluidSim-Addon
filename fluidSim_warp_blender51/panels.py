@@ -171,101 +171,198 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
         sub.prop(fs, "spacetime_seed")
 
 
-class FLUIDSIM_PT_sources(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Sources"
-    bl_idname = "FLUIDSIM_PT_sources"
+def _presentation_role(pg):
+    if (getattr(pg, "role", "NONE") == "SOURCE"
+            and getattr(pg, "source_mode", "PARTICLES") == "FIELD"):
+        return "FIELD"
+    return getattr(pg, "role", "NONE")
+
+
+def _draw_role_actions(layout, tag_operator):
+    row = layout.row(align=True)
+    row.operator(tag_operator, icon="ADD")
+    row.operator("fluidsim.clear_object_role", text="Clear", icon="X")
+
+
+def _draw_source_status(layout, pg):
+    message = getattr(pg, "source_status_message", "")
+    if not message:
+        return
+    box = layout.box()
+    severity = getattr(pg, "source_status_severity", "")
+    box.alert = severity == "ERROR"
+    icon = "ERROR" if severity == "ERROR" else "INFO"
+    code = getattr(pg, "source_status_code", "")
+    box.label(text=f"{code}: {message}" if code else message, icon=icon)
+    if getattr(pg, "source_status_capacity_limited", False):
+        box.label(text="Particle capacity limited the last source application", icon="ERROR")
+
+
+def _draw_mesh_input(col, pg, *, solid, shell):
+    col.prop(pg, "mesh_object")
+    col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
+    if shell:
+        col.prop(pg, "mesh_surface_thickness", text="Shell Half-width")
+    if getattr(pg, "mesh_error", ""):
+        error = col.box()
+        error.alert = True
+        error.label(text=pg.mesh_error, icon="ERROR")
+    elif solid:
+        col.label(text="Solid Volume requires a watertight mesh", icon="INFO")
+
+
+def _draw_volume_input(col, pg, *, fields=False):
+    col.prop(pg, "volume_input_object")
+    if not fields:
+        col.prop(pg, "volume_grid_type")
+        if getattr(pg, "volume_grid_type", "FOG") == "SDF":
+            col.prop(pg, "volume_sdf_grid")
+        else:
+            col.prop(pg, "volume_mask_grid")
+            col.prop(pg, "volume_fog_threshold")
+
+
+class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Liquid Emitters"
+    bl_idname = "FLUIDSIM_PT_liquid_emitters"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
-        fs = context.scene.fluidsim
-        scene = context.scene
-
-        row = layout.row(align=True)
-        op = row.operator("fluidsim.tag_object", text="Tag Source", icon="ADD")
-        op.role = "SOURCE"
-        op = row.operator("fluidsim.tag_object", text="Clear", icon="X")
-        op.role = "NONE"
-        layout.operator(
-            "fluidsim.inject_particles",
-            text="Inject Mesh Vertices Once",
-            icon="PARTICLES",
-        )
-
-        # Active object source settings.
+        _draw_role_actions(layout, "fluidsim.tag_liquid_emitter")
         obj = context.active_object
-        if obj is not None and obj.fluidsim.role in {"SOURCE", "SINK", "FORCE"}:
+        if obj is not None and _presentation_role(obj.fluidsim) == "SOURCE":
             pg = obj.fluidsim
             box = layout.box()
-            box.label(text=f"{obj.name} ({pg.role.title()})", icon="OBJECT_DATA")
+            box.label(text=f"{obj.name} (Liquid Emitter)", icon="OBJECT_DATA")
             col = box.column(align=True)
             col.prop(pg, "enabled")
-            if pg.role in {"SOURCE", "SINK"}:
-                col.prop(pg, "geometry_mode")
-            if (pg.geometry_mode == SourceGeometryMode.MESH.name
-                    and pg.role in {"SOURCE", "SINK"}):
-                col.prop(pg, "mesh_object")
-                col.prop(pg, "mesh_evaluation_mode")
-                col.prop(pg, "mesh_surface_thickness")
-                if pg.role == "SINK":
-                    col.prop(pg, "sink_region_mode")
-                if pg.mesh_error:
-                    error_box = col.box()
-                    error_box.alert = True
-                    error_box.label(text=pg.mesh_error, icon="ERROR")
+            col.prop(pg, "emission_mode", text="Emission Behavior")
+            legacy = int(getattr(pg, "source_ui_schema_version", 0) or 0) < 3
+            if legacy:
+                col.label(text="Legacy source region (saved behavior preserved)", icon="INFO")
+                region = col.row(align=True)
+                region.prop_enum(pg, "geometry_mode", "ANALYTIC", text="Analytic Volume")
+                region.prop_enum(pg, "geometry_mode", "MESH", text="Mesh Surface Shell")
+                kind = ("MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
+                        else "ANALYTIC")
             else:
+                region = col.row(align=True)
+                region.prop_enum(pg, "source_region_kind", "ANALYTIC", text="Analytic Volume")
+                region.prop_enum(pg, "source_region_kind", "MESH_SOLID", text="Mesh Solid Volume")
+                region.prop_enum(pg, "source_region_kind", "MESH_SHELL", text="Mesh Surface Shell")
+                region = col.row(align=True)
+                region.prop_enum(pg, "source_region_kind", "POINTS", text="Points / Particles")
+                region.prop_enum(pg, "source_region_kind", "VOLUME_GRID", text="Volume Grid")
+                kind = getattr(pg, "source_region_kind", "ANALYTIC")
+            if kind == "ANALYTIC":
                 col.prop(pg, "shape")
-            col.prop(pg, "source_mode")
-            if pg.role == "SOURCE":
-                col.prop(pg, "emit_rate")
-                col.prop(pg, "initial_velocity")
-                col.prop(pg, "use_object_velocity")
-                col.prop(pg, "temperature")
-                col.prop(pg, "viscosity")
-                col.prop(pg, "use_lifespan")
-                if pg.use_lifespan:
-                    row = col.row(align=True)
-                    row.prop(pg, "life_min")
-                    row.prop(pg, "life_max")
-
-        # Height source.
-        box = layout.box()
-        box.prop(fs, "height_enabled")
-        if fs.height_enabled:
-            col = box.column(align=True)
-            col.prop(fs, "height_base")
-            col.prop(fs, "height_back_mode")
-            col.prop(fs, "height_velocity")
-            col.prop(fs, "height_emit_particles")
-
-        # List of tagged sources.
-        tagged = [o for o in scene.objects
-                  if o.fluidsim.role in {"SOURCE", "SINK", "FORCE"}]
+            elif kind in {"MESH_SOLID", "MESH_SHELL"}:
+                _draw_mesh_input(col, pg, solid=kind == "MESH_SOLID",
+                                 shell=kind == "MESH_SHELL")
+            elif kind == "POINTS":
+                col.prop(pg, "point_input_object")
+                col.prop(pg, "point_source_representation")
+                if pg.point_source_representation == "RASTERIZED_REGION":
+                    col.prop(pg, "point_rasterize_radius")
+                    col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
+                else:
+                    col.label(text="Direct Append adds owned points once; it is not volume fill", icon="INFO")
+            elif kind == "VOLUME_GRID":
+                _draw_volume_input(col, pg)
+                col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
+            if kind != "POINTS" or pg.point_source_representation == "RASTERIZED_REGION":
+                col.prop(pg, "emit_rate", text="Target Particles / Voxel")
+            col.prop(pg, "initial_velocity")
+            col.prop(pg, "use_object_velocity", text="Add Animated Object Velocity")
+            _draw_source_status(box, pg)
+        else:
+            layout.label(text="Select a tagged Liquid Emitter", icon="INFO")
+        tagged = [o for o in context.scene.objects
+                  if _presentation_role(o.fluidsim) == "SOURCE"]
         if tagged:
             box = layout.box()
-            for o in tagged:
-                row = box.row()
-                row.label(text=o.name,
-                          icon="OUTLINER_OB_MESH" if o.type == "MESH"
-                          else "OBJECT_DATA")
-                row.label(text=o.fluidsim.role.title())
+            box.label(text="Scene Emitters")
+            for item in tagged:
+                box.label(text=item.name, icon="OBJECT_DATA")
+
+
+class FLUIDSIM_PT_liquid_emitter_attributes(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Particle Attributes"
+    bl_idname = "FLUIDSIM_PT_liquid_emitter_attributes"
+    bl_parent_id = "FLUIDSIM_PT_liquid_emitters"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and _presentation_role(obj.fluidsim) == "SOURCE"
+
+    def draw(self, context):
+        pg = context.active_object.fluidsim
+        col = self.layout.column(align=True)
+        col.prop(pg, "temperature")
+        col.prop(pg, "viscosity")
+        col.prop(pg, "density", text="Density Attribute")
+        col.prop(pg, "use_lifespan")
+        if pg.use_lifespan:
+            row = col.row(align=True)
+            row.prop(pg, "life_min")
+            row.prop(pg, "life_max")
+
+
+class FLUIDSIM_PT_liquid_sinks(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Liquid Sinks"
+    bl_idname = "FLUIDSIM_PT_liquid_sinks"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        _draw_role_actions(layout, "fluidsim.tag_liquid_sink")
+        obj = context.active_object
+        if obj is not None and _presentation_role(obj.fluidsim) == "SINK":
+            pg = obj.fluidsim
+            box = layout.box()
+            box.label(text=f"{obj.name} (Liquid Sink)", icon="MOD_FLUIDSIM")
+            col = box.column(align=True)
+            col.prop(pg, "enabled")
+            legacy = int(getattr(pg, "source_ui_schema_version", 0) or 0) < 3
+            if legacy:
+                region = col.row(align=True)
+                region.prop_enum(pg, "geometry_mode", "ANALYTIC", text="Analytic Volume")
+                region.prop_enum(pg, "geometry_mode", "MESH", text="Mesh")
+                kind = ("ANALYTIC" if pg.geometry_mode == "ANALYTIC" else
+                        ("MESH_SHELL" if pg.sink_region_mode == "SURFACE" else "MESH_SOLID"))
+                if pg.geometry_mode == "MESH":
+                    col.prop(pg, "sink_region_mode")
+            else:
+                region = col.row(align=True)
+                region.prop_enum(pg, "sink_region_kind", "ANALYTIC", text="Analytic Volume")
+                region.prop_enum(pg, "sink_region_kind", "MESH_SOLID", text="Mesh Solid Interior")
+                region.prop_enum(pg, "sink_region_kind", "MESH_SHELL", text="Mesh Surface Shell")
+                region.prop_enum(pg, "sink_region_kind", "VOLUME_GRID", text="Volume Grid Mask")
+                kind = pg.sink_region_kind
+            if kind == "ANALYTIC":
+                col.prop(pg, "shape")
+            elif kind in {"MESH_SOLID", "MESH_SHELL"}:
+                _draw_mesh_input(col, pg, solid=kind == "MESH_SOLID", shell=kind == "MESH_SHELL")
+            elif kind == "VOLUME_GRID":
+                _draw_volume_input(col, pg)
+            _draw_source_status(box, pg)
+        else:
+            layout.label(text="Select a tagged Liquid Sink", icon="INFO")
 
 
 class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Colliders / Sinks"
+    bl_label = "Colliders"
     bl_idname = "FLUIDSIM_PT_colliders"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
-        row = layout.row(align=True)
-        op = row.operator("fluidsim.tag_object", text="Tag Collider", icon="ADD")
-        op.role = "COLLIDER"
-        op = row.operator("fluidsim.tag_object", text="Tag Sink", icon="ADD")
-        op.role = "SINK"
-
+        _draw_role_actions(layout, "fluidsim.tag_collider")
         obj = context.active_object
-        if obj is not None and obj.fluidsim.role == "COLLIDER":
+        if obj is not None and _presentation_role(obj.fluidsim) == "COLLIDER":
             pg = obj.fluidsim
             box = layout.box()
             box.label(text=obj.name, icon="MOD_PHYSICS")
@@ -273,38 +370,155 @@ class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
             col.prop(pg, "enabled")
             col.prop(pg, "collider_friction")
             col.prop(pg, "collider_restitution")
-            col.prop(pg, "transfer_velocity")
-
-        tagged = [o for o in context.scene.objects
-                  if o.fluidsim.role == "COLLIDER"]
-        if tagged:
-            box = layout.box()
-            for o in tagged:
-                box.label(text=o.name, icon="MESH_ICOSPHERE")
+            col.prop(pg, "transfer_velocity", text="Transfer Animated Velocity")
+            if pg.mesh_error:
+                error = col.box()
+                error.alert = True
+                error.label(text=pg.mesh_error, icon="ERROR")
+        else:
+            layout.label(text="Select a tagged mesh Collider", icon="INFO")
 
 
 class FLUIDSIM_PT_forces(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Forces / Attraction"
+    bl_label = "Forces"
     bl_idname = "FLUIDSIM_PT_forces"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
-        layout.label(text="Per-object force regions (tag as Source):")
-        if obj is not None and obj.fluidsim.role in {"SOURCE", "FORCE"}:
+        fs = context.scene.fluidsim
+        global_box = layout.box()
+        global_box.label(text="Global Grid Forces", icon="FORCE_FORCE")
+        global_box.prop(fs, "directional_force")
+        global_box.prop(fs, "omnidirectional_force_strength")
+        radial = global_box.column(align=True)
+        radial.enabled = fs.omnidirectional_force_strength != 0.0
+        radial.prop(fs, "omnidirectional_force_center")
+        radial.prop(fs, "omnidirectional_force_radius")
+        global_box.prop(fs, "force_diffusion")
+        global_box.prop(fs, "dissipation_enabled")
+        dissipation = global_box.column(align=True)
+        dissipation.enabled = fs.dissipation_enabled
+        dissipation.prop(fs, "dissipation_attribute")
+        dissipation.prop(fs, "dissipation_rate")
+        dissipation.prop(fs, "dissipation_target")
+        global_box.prop(fs, "attraction_enabled")
+        attraction = global_box.column(align=True)
+        attraction.enabled = fs.attraction_enabled
+        attraction.label(text="Targets colliders and closed domain walls")
+        attraction.prop(fs, "attraction_strength")
+        attraction.prop(fs, "attraction_max_distance")
+        physics = layout.box()
+        physics.label(text="Blender Force Fields", icon="PHYSICS")
+        physics.label(text="Configure these in Blender Physics properties")
+        _draw_role_actions(layout, "fluidsim.tag_force_region")
+        if obj is not None and _presentation_role(obj.fluidsim) == "FORCE":
             pg = obj.fluidsim
             box = layout.box()
             box.label(text=obj.name, icon="FORCE_FORCE")
             col = box.column(align=True)
+            col.prop(pg, "enabled")
+            col.prop(pg, "shape")
             col.prop(pg, "force_type")
             sub = col.column(align=True)
             sub.enabled = pg.force_type != "OFF"
             sub.prop(pg, "force_strength")
             if pg.force_type == "DIRECTIONAL":
                 sub.prop(pg, "force_direction")
+            elif pg.force_type == "SPIN":
+                sub.prop(pg, "force_direction", text="Spin Axis")
         else:
-            layout.label(text="Select a tagged source object", icon="INFO")
+            layout.label(text="Select a tagged Force Region object", icon="INFO")
+
+
+class FLUIDSIM_PT_domain_height_fill(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Domain Height Fill"
+    bl_idname = "FLUIDSIM_PT_domain_height_fill"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        fs = context.scene.fluidsim
+        layout = self.layout
+        layout.prop(fs, "height_enabled", text="Enable Domain Height Fill")
+        if not fs.height_enabled:
+            return
+        col = layout.column(align=True)
+        col.prop(fs, "height_base", text="Fill Level")
+        row = col.row(align=True)
+        row.prop_enum(fs, "height_back_mode", "FLAT", text="Flat")
+        row.prop_enum(fs, "height_back_mode", "PROFILE", text="Profile Image")
+        if fs.height_back_mode == "PROFILE":
+            col.prop(fs, "height_profile_image")
+            col.prop(fs, "height_profile_scale")
+        col.prop(fs, "height_emission_mode", text="Fill Lifecycle")
+        col.prop(fs, "height_velocity", text="Initial Velocity")
+        col.prop(fs, "height_emit_particles")
+        col.prop(fs, "particles_per_voxel")
+        if getattr(fs, "height_error", ""):
+            error = col.box()
+            error.alert = True
+            error.label(text=fs.height_error, icon="ERROR")
+
+
+class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Point / Particle Injection"
+    bl_idname = "FLUIDSIM_PT_point_particle_injection"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("fluidsim.inject_particles", text="Inject Active Object Points Once", icon="PARTICLES")
+        layout.label(text="Mesh vertices, PointCloud points, or the first particle system", icon="INFO")
+        layout.label(text="Compatibility direct append; this is not volume fill", icon="INFO")
+        obj = context.active_object
+        if obj is not None:
+            layout.prop(obj.fluidsim, "auto_inject_seed", text="Reinject on Initialize / Reset")
+
+
+class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Advanced Field Sources"
+    bl_idname = "FLUIDSIM_PT_advanced_field_sources"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        _draw_role_actions(layout, "fluidsim.tag_field_source")
+        obj = context.active_object
+        if obj is None or _presentation_role(obj.fluidsim) != "FIELD":
+            layout.label(text="Select a tagged Advanced Field Source", icon="INFO")
+            return
+        pg = obj.fluidsim
+        box = layout.box()
+        box.label(text=f"{obj.name} (Non-liquid)", icon="FORCE_FORCE")
+        col = box.column(align=True)
+        col.prop(pg, "enabled")
+        col.prop(pg, "field_operation")
+        col.prop(pg, "field_region_kind")
+        if pg.field_region_kind == "ANALYTIC":
+            col.prop(pg, "shape")
+        else:
+            _draw_volume_input(col, pg, fields=True)
+        col.prop(pg, "field_value_source")
+        if pg.field_value_source == "VOLUME_GRID":
+            if pg.field_region_kind != "VOLUME_GRID":
+                _draw_volume_input(col, pg, fields=True)
+            if pg.field_operation in {"PRESSURE", "SCALAR"}:
+                col.prop(pg, "volume_scalar_grid")
+            else:
+                col.prop(pg, "volume_vector_grid")
+                if not pg.volume_vector_grid:
+                    col.prop(pg, "volume_vector_x_grid")
+                    col.prop(pg, "volume_vector_y_grid")
+                    col.prop(pg, "volume_vector_z_grid")
+        elif pg.field_operation in {"PRESSURE", "SCALAR"}:
+            col.prop(pg, "field_scalar_value")
+        else:
+            col.prop(pg, "field_vector_value")
+        col.prop(pg, "blend_mode", text="Blend")
+        col.prop(pg, "field_amount")
+        col.label(text="FIELD operations never emit liquid", icon="INFO")
+        _draw_source_status(box, pg)
 
 
 class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
@@ -486,8 +700,10 @@ class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
         box.label(text="Snippet Library", icon="PRESET")
         row = box.row(align=True)
         row.prop(fs, "snippet_library_selection", text="")
-        row.operator("fluidsim.snippet_load_preset", text="Load",
-                     icon="IMPORT")
+        load_row = row.row(align=True)
+        load_row.enabled = fs.snippet_library_selection not in {"", "NONE"}
+        load_row.operator("fluidsim.snippet_load_preset", text="Load",
+                          icon="IMPORT")
 
         # -- Snippet stack (layer multiple snippets, reorder by slot) -------
         row = layout.row(align=True)
@@ -711,9 +927,14 @@ CLASSES = (
     FLUIDSIM_PT_simulation,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,
-    FLUIDSIM_PT_sources,
+    FLUIDSIM_PT_liquid_emitters,
+    FLUIDSIM_PT_liquid_emitter_attributes,
+    FLUIDSIM_PT_liquid_sinks,
     FLUIDSIM_PT_colliders,
     FLUIDSIM_PT_forces,
+    FLUIDSIM_PT_domain_height_fill,
+    FLUIDSIM_PT_point_particle_injection,
+    FLUIDSIM_PT_advanced_field_sources,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
     FLUIDSIM_PT_surface,

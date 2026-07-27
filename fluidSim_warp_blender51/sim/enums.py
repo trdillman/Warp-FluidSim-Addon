@@ -209,6 +209,19 @@ class SourceShapeSourceMode(IntEnum):
     PARTICLES = 1
 
 
+class SourceEmissionMode(IntEnum):
+    """User-facing emission lifecycle, separate from the solver-representation
+    SourceShapeSourceMode (FIELD/PARTICLES).
+
+    INITIAL_FILL: emit the source region once on the first enabled solver
+        step after Initialize or Reset, then re-arm only on Initialize/Reset.
+    CONTINUOUS_INFLOW: replenish the source region to its target particle
+        occupancy every solver substep while Enabled.
+    """
+    INITIAL_FILL = 0
+    CONTINUOUS_INFLOW = 1
+
+
 class SourceGeometryMode(IntEnum):
     """Blender source geometry contract."""
     ANALYTIC = 0
@@ -225,6 +238,61 @@ class MeshSinkRegionMode(IntEnum):
     """Mesh sink membership policy."""
     SOLID = 0
     SURFACE = 1
+
+
+class SourceOperation(IntEnum):
+    """Operation performed by a normalized Phase 2 source plan."""
+    LIQUID = 0
+    SINK = 1
+    FORCE = 2
+    COLLISION = 3
+    ACTIVATION = 4
+    PRESSURE = 5
+    SCALAR_FIELD = 6
+    VECTOR_FIELD = 7
+    STAGGERED_VELOCITY = 8
+
+
+class SourceRegionKind(IntEnum):
+    """Geometry/input representation, independent of source operation."""
+    ANALYTIC_SDF = 0
+    MESH_SOLID = 1
+    MESH_SHELL = 2
+    POINTS = 3
+    VOLUME_GRID = 4
+    HEIGHT = 5
+
+
+class SourceLifecycle(IntEnum):
+    """Runtime source lifecycle."""
+    ONCE = 0
+    TOP_UP = 1
+    DIRECT_APPEND = 2
+    EVERY_FRAME = 3
+
+
+class SourceEvaluationCadence(IntEnum):
+    """Geometry/payload capture cadence."""
+    STATIC = 0
+    FIRST_SIM_FRAME = 1
+    EVERY_SIM_FRAME = 2
+
+
+class SourcePayloadKind(IntEnum):
+    """Payload transported by a normalized source plan."""
+    NONE = 0
+    LIQUID_ATTRIBUTES = 1
+    PRESSURE = 2
+    SCALAR = 3
+    VECTOR = 4
+    STAGGERED_VECTOR = 5
+    MASK = 6
+
+
+class MeshSourceRegion(IntEnum):
+    """Truthful mesh-emitter region; never silently falls back."""
+    SOLID_VOLUME = 0
+    SURFACE_SHELL = 1
 
 
 class SourceShapeShape(IntEnum):
@@ -244,6 +312,38 @@ class SourceShapeForceType(IntEnum):
     OMNIDIRECTIONAL = 2
     SPIN = 3
     RADIAL = 4
+
+
+class BlenderForceFieldType(IntEnum):
+    """Native Blender field kinds understood by the GPU proxy kernel."""
+
+    WIND = 1
+    FORCE = 2
+    VORTEX = 3
+    MAGNETIC = 4
+    HARMONIC = 5
+    CHARGE = 6
+    LENNARD_JONES = 7
+    TEXTURE = 8
+    CURVE_GUIDE = 9
+    BOID = 10
+    TURBULENCE = 11
+    DRAG = 12
+    FLUID_FLOW = 13
+
+
+class BlenderForceFieldShape(IntEnum):
+    POINT = 0
+    LINE = 1
+    PLANE = 2
+    SURFACE = 3
+    EVERY_POINT = 4
+
+
+class BlenderTextureForceMode(IntEnum):
+    RGB = 0
+    GRADIENT = 1
+    CURL = 2
 
 
 class SourceShapeNoiseSpace(IntEnum):

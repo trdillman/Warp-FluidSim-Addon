@@ -27,6 +27,7 @@ from .enums import (
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
     CustomKernelOrder,
+    SourceEvaluationCadence,
 )
 from .fields import (
     SparseGrid,
@@ -63,6 +64,7 @@ from .kernels_core import (
     k_max_vec3_magnitude,
 )
 from .kernels_fluid import (
+    ForceFieldProxy,
     k_particle_set_grid_data,
     k_particle_set_grid_data_spacetime,
     k_spacetime_weights_to_phase_active,
@@ -75,6 +77,12 @@ from .kernels_fluid import (
     k_advect_particles_spacetime,
     k_resync_particle_positions_spacetime,
     k_forces_gravity,
+    k_forces_proxy_fields,
+    k_forces_directional,
+    k_forces_omnidirectional,
+    k_forces_diffusion,
+    k_dissipate_particle_attribute,
+    k_attract_sdf_gradient_direction,
     k_forces_speed_limit,
     k_particle_to_voxel_count_and_update_index,
     voxel_count_to_starts,
@@ -332,6 +340,69 @@ class ColliderDesc:
 
 
 @dataclass
+class ForceFieldDesc:
+    """GPU force driven by a native Blender force-field object."""
+
+    force_type: int = 0
+    shape: int = 0
+    texture_mode: int = 0
+    flags: int = 0
+    seed: int = 0
+    center: tuple = (0.0, 0.0, 0.0)
+    direction: tuple = (0.0, 0.0, 1.0)
+    source_velocity: tuple = (0.0, 0.0, 1.0)
+    guide_points: tuple = ()
+    strength: float = 0.0
+    min_distance: float = 0.0
+    max_distance: float = 0.0
+    falloff_power: float = 0.0
+    flow: float = 0.0
+    noise: float = 0.0
+    size: float = 1.0
+    rest_length: float = 0.0
+    damping: float = 0.0
+    linear_drag: float = 0.0
+    quadratic_drag: float = 0.0
+    guide_minimum: float = 0.0
+    guide_free: float = 0.0
+    guide_clump: float = 0.0
+
+    def to_struct(self):
+        field = ForceFieldProxy()
+        field.force_type = int(self.force_type)
+        field.shape = int(self.shape)
+        field.texture_mode = int(self.texture_mode)
+        field.flags = int(self.flags)
+        field.seed = int(self.seed)
+        field.center = wp.vec3(*[float(value) for value in self.center])
+        field.direction = wp.vec3(*[float(value) for value in self.direction])
+        field.source_velocity = wp.vec3(
+            *[float(value) for value in self.source_velocity])
+        guide_points = list(self.guide_points[:4])
+        guide_points.extend([(0.0, 0.0, 0.0)] * (4 - len(guide_points)))
+        field.guide_p0 = wp.vec3(*guide_points[0])
+        field.guide_p1 = wp.vec3(*guide_points[1])
+        field.guide_p2 = wp.vec3(*guide_points[2])
+        field.guide_p3 = wp.vec3(*guide_points[3])
+        field.guide_count = min(len(self.guide_points), 4)
+        field.strength = float(self.strength)
+        field.min_distance = float(self.min_distance)
+        field.max_distance = float(self.max_distance)
+        field.falloff_power = float(self.falloff_power)
+        field.flow = float(self.flow)
+        field.noise = float(self.noise)
+        field.size = float(self.size)
+        field.rest_length = float(self.rest_length)
+        field.damping = float(self.damping)
+        field.linear_drag = float(self.linear_drag)
+        field.quadratic_drag = float(self.quadratic_drag)
+        field.guide_minimum = float(self.guide_minimum)
+        field.guide_free = float(self.guide_free)
+        field.guide_clump = float(self.guide_clump)
+        return field
+
+
+@dataclass
 class SolverSettings:
     domain_min: tuple = (-2.0, -2.0, 0.0)
     domain_max: tuple = (2.0, 2.0, 4.0)
@@ -353,6 +424,18 @@ class SolverSettings:
     max_speed: float = 0.0                    # 0 disables the speed limit
     speed_limit_behavior: int = 0
     speed_limit_percent: float = 0.1
+    directional_force: tuple = (0.0, 0.0, 0.0)
+    omnidirectional_force_center: tuple = (0.0, 0.0, 0.0)
+    omnidirectional_force_strength: float = 0.0
+    omnidirectional_force_radius: float = 1.0
+    force_diffusion: float = 0.0
+    dissipation_enabled: bool = False
+    dissipation_attribute: str = "temperature"
+    dissipation_rate: float = 0.0
+    dissipation_target: float = 0.0
+    attraction_enabled: bool = False
+    attraction_strength: float = 0.0
+    attraction_max_distance: float = 1.0
 
     particles_per_voxel: float = float(C.DEFAULT_PARTICLES_PER_VOXEL)
     count_stiffness: float = 0.0
@@ -377,7 +460,11 @@ class SolverSettings:
     relax_strength: float = 0.5
     relax_mode: int = int(RelaxMode.LOCAL_VOXEL)
     open_boundaries: bool = False
-    domain_sdf_walls: bool = False
+    # Closed domains (open_boundaries=False) need actual collision-SDF walls
+    # or the pressure solve treats sparse-grid padding beyond the domain box
+    # as open space (see k_mark_domain_walls docstring). Default True so a
+    # fresh closed-domain scene is not silently unbounded.
+    domain_sdf_walls: bool = True
     pressure_solver: int = int(ProjectNonDivergentSolver.PCG)
     pressure_iterations: int = C.DEFAULT_PRESSURE_ITERATIONS
     pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
@@ -488,6 +575,28 @@ class FluidSolver:
         self.settings = settings
         self.device = settings.device
         self.profiler = profiler
+        # The PCG pressure path (the default; see SolverSettings.pressure_solver)
+        # unconditionally captures a CUDA graph (_launch_pcg_batch ->
+        # wp.ScopedCapture) with no CPU fallback, and this add-on is GPU-only
+        # by design (AGENTS.md: "Keep simulation GPU-resident"). A bad/CPU
+        # device string previously surfaced as a bare
+        # "RuntimeError: Must be a CUDA device" from deep inside the first
+        # pressure solve. Fail fast with an actionable message instead.
+        try:
+            resolved_device = wp.get_device(self.device)
+            is_cuda = bool(resolved_device.is_cuda)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"FluidSim: invalid Warp device {self.device!r} "
+                f"({exc}). Set a valid CUDA device (e.g. 'cuda:0') in "
+                "Add-on Preferences."
+            ) from exc
+        if not is_cuda:
+            raise RuntimeError(
+                f"FluidSim requires a CUDA device; got {self.device!r}. "
+                "This solver has no CPU-resident pressure-projection path. "
+                "Set a valid CUDA device (e.g. 'cuda:0') in Add-on Preferences."
+            )
 
         dmin = settings.domain_min
         dmax = settings.domain_max
@@ -540,6 +649,8 @@ class FluidSolver:
         self.snippets = SnippetManager()
 
         self.colliders: list[ColliderDesc] = []
+        self.force_fields: list[ForceFieldDesc] = []
+        self._force_fields_dev = None
 
         self.max_speed_dev = wp.zeros(1, dtype=float, device=self.device)
 
@@ -567,8 +678,23 @@ class FluidSolver:
     def set_sources(self, sources):
         self.sourcing.set_sources(sources)
 
+    def set_source_plans(self, plans):
+        """Set immutable Phase 2 source plans through the public seam."""
+        self.sourcing.set_plans(plans)
+
     def set_colliders(self, colliders):
         self.colliders = list(colliders)
+
+    def set_force_fields(self, force_fields):
+        self.force_fields = list(force_fields)
+        self._force_fields_dev = None
+
+    def _force_field_data(self):
+        if self._force_fields_dev is None:
+            self._force_fields_dev = wp.array(
+                [field.to_struct() for field in self.force_fields],
+                dtype=ForceFieldProxy, device=self.device)
+        return self._force_fields_dev
 
     def set_height_source(self, desc):
         self.sourcing.set_height_source(desc)
@@ -587,6 +713,9 @@ class FluidSolver:
 
     def reset(self):
         self._host_frame_cache = None
+        sourcing = getattr(self, "sourcing", None)
+        if sourcing is not None:
+            sourcing.reset()
         self.particles.clear()
         self.whitewater.clear()
         self.churn.zero()
@@ -625,8 +754,14 @@ class FluidSolver:
 
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
-            sourcing.owner = None
+            release = getattr(sourcing, "release", None)
+            if release is not None:
+                release()
+            else:
+                sourcing.owner = None
         self.sourcing = None
+        self.force_fields = []
+        self._force_fields_dev = None
 
     # -- active-work launch bounds -------------------------------------------
 
@@ -707,6 +842,22 @@ class FluidSolver:
                 continue
             lo, hi = src.aabb()
             g.mark_world_box(lo, hi)
+        if not self.sources and self.sourcing.plans:
+            # Compile before topology so imported-volume active leaves and all
+            # other normalized regions allocate through the same flat table.
+            dynamic_sources = any(
+                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
+                for plan in self.sourcing.plans)
+            batch = self.sourcing._compiled_batch
+            if batch is None or dynamic_sources:
+                batch = self.sourcing.compile(frame=self.frame, substep=0)
+            leaf_world = C.LEAF_DIM * s.voxel_size
+            origin = s.domain_min
+            for coord in batch.required_leaf_coords:
+                lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
+                           for axis in range(3))
+                hi = tuple(value + leaf_world for value in lo)
+                g.mark_world_box(lo, hi)
         for col in self.colliders:
             g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
@@ -964,6 +1115,11 @@ class FluidSolver:
     def _forces(self, dt):
         g = self.grid
         s = self.settings
+        # Advanced field sources must follow P2G; applying them in the sourcing
+        # phase would be overwritten by particle transfer.
+        post_p2g = getattr(self.sourcing, "apply_post_p2g_fields", None)
+        if post_p2g is not None:
+            post_p2g(dt)
         wp.launch(
             k_forces_gravity, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
@@ -971,6 +1127,76 @@ class FluidSolver:
                     g.num_leaves, wp.vec3(*s.gravity), dt],
             device=self.device,
         )
+        # Analytic objects with role=FORCE are source-shape ABI descriptors,
+        # but their influence belongs here, after P2G established valid MAC
+        # face weights. They must never source liquid or write unweighted MAC
+        # values in SourcePipeline.apply().
+        self.sourcing.apply_forces(dt)
+        if any(component != 0.0 for component in s.directional_force):
+            wp.launch(
+                k_forces_directional, dim=self._nvox,
+                inputs=[self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        g.num_leaves, wp.vec3(*s.directional_force), dt],
+                device=self.device,
+            )
+        if (s.omnidirectional_force_strength != 0.0
+                and s.omnidirectional_force_radius > 0.0):
+            wp.launch(
+                k_forces_omnidirectional, dim=self._nvox,
+                inputs=[g.leaf_coords, g.num_leaves,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        g.origin, g.voxel_size,
+                        wp.vec3(*s.omnidirectional_force_center),
+                        s.omnidirectional_force_strength,
+                        s.omnidirectional_force_radius, dt],
+                device=self.device,
+            )
+        if self.force_fields:
+            wp.launch(
+                k_forces_proxy_fields, dim=self._nvox,
+                inputs=[self._force_field_data(), len(self.force_fields),
+                        g.leaf_coords, g.num_leaves, g.origin, g.voxel_size,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.sim_time, dt],
+                device=self.device,
+            )
+        diffusion_amount = max(0.0, min(float(s.force_diffusion), 1.0))
+        if diffusion_amount > 0.0:
+            wp.launch(
+                k_forces_diffusion, dim=self._nvox,
+                inputs=[self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        g.leaf_table, g.leaf_coords, g.voxels_dim,
+                        g.leaves_dim, g.num_leaves, diffusion_amount],
+                outputs=[self.tmp_u, self.tmp_v, self.tmp_w],
+                device=self.device,
+            )
+            self.vel.u, self.tmp_u = self.tmp_u, self.vel.u
+            self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
+            self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
+        if s.dissipation_enabled and s.dissipation_rate > 0.0:
+            wp.launch(
+                k_dissipate_particle_attribute, dim=self._np_dim(),
+                inputs=[self.particles.attr(s.dissipation_attribute),
+                        self.particles.count, s.dissipation_rate,
+                        s.dissipation_target, dt],
+                device=self.device,
+            )
+        if (s.attraction_enabled and s.attraction_strength != 0.0
+                and s.attraction_max_distance > 0.0):
+            wp.launch(
+                k_attract_sdf_gradient_direction, dim=self._nvox,
+                inputs=[self.collision_sdf.data, g.leaf_table, g.leaf_coords,
+                        g.voxels_dim, g.leaves_dim, g.num_leaves,
+                        g.voxel_size, s.attraction_strength,
+                        s.attraction_max_distance, dt,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww],
+                device=self.device,
+            )
         if s.max_speed > 0.0:
             wp.launch(
                 k_forces_speed_limit, dim=self._nvox,
@@ -980,8 +1206,12 @@ class FluidSolver:
                         g.leaves_dim, g.num_leaves,
                         s.max_speed, int(s.speed_limit_behavior),
                         s.speed_limit_percent, dt],
+                outputs=[self.tmp_u, self.tmp_v, self.tmp_w],
                 device=self.device,
             )
+            self.vel.u, self.tmp_u = self.tmp_u, self.vel.u
+            self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
+            self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
 
     def _viscosity(self, dt):
         s = self.settings
@@ -1041,6 +1271,7 @@ class FluidSolver:
             max_gradient=self._cfl_speed_limit(dt),
             reference_mass=(self._st_reference_mass()
                             if st_projection else None),
+            pressure_source=lambda: self.sourcing.apply_pressure_sources(dt),
         )
         self.stats.pressure_iterations = status["iterations"]
         self.stats.pressure_residual = status["residual"]
@@ -1231,20 +1462,24 @@ class FluidSolver:
         )
 
     def _finalize_whitewater(self):
-        """Compact and publish whitewater density once per display frame."""
-        if not self.settings.whitewater_enabled:
-            return
-        g = self.grid
+        """Compact, publish, and return the live whitewater count per frame."""
         ww = self.whitewater
-        ww.compact()
+        active_whitewater = ww.refresh_host_count()
+        if not self.settings.whitewater_enabled:
+            return active_whitewater
+
+        g = self.grid
+        ww.compact(active_whitewater)
+        active_whitewater = ww.refresh_host_count()
         self.ww_density.data[:self._nvox].zero_()
         wp.launch(
-            k_whitewater_set_grid_data, dim=ww.capacity,
+            k_whitewater_set_grid_data, dim=max(1, active_whitewater),
             inputs=[ww.position, ww.alive, ww.count,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
+        return active_whitewater
 
     # -- CFL ----------------------------------------------------------------
 
@@ -1342,9 +1577,9 @@ class FluidSolver:
                 self._forces(dt)
             with self._phase("viscosity"):
                 self._viscosity(dt)
-            wp.copy(self.collision_impact_u, self.vel.u)
-            wp.copy(self.collision_impact_v, self.vel.v)
-            wp.copy(self.collision_impact_w, self.vel.w)
+            wp.copy(self.collision_impact_u, self.vel.u, count=self._nvox)
+            wp.copy(self.collision_impact_v, self.vel.v, count=self._nvox)
+            wp.copy(self.collision_impact_w, self.vel.w, count=self._nvox)
             with self._phase("collision"):
                 self._collision_faces()
             self.snippets.run(
@@ -1371,7 +1606,7 @@ class FluidSolver:
         self.frame += 1
         self._host_frame_cache = None
         with self._phase("whitewater"):
-            self._finalize_whitewater()
+            whitewater_particles = self._finalize_whitewater()
         self.surface.after_frame()
 
         wp.synchronize_device(self.device)
@@ -1385,7 +1620,7 @@ class FluidSolver:
         st.total_voxels = self.grid.total_voxels()
         st.active_particles = self.particles.refresh_host_count()
         st.total_particles = self.particles.capacity
-        st.whitewater_particles = self.whitewater.refresh_host_count()
+        st.whitewater_particles = whitewater_particles
         surface_metadata = self.surface.metadata()
         st.surface_voxel_size = float(surface_metadata["voxel_size"])
         st.surface_active_leaves = surface_metadata["active_leaves"]

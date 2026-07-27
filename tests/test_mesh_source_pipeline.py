@@ -167,6 +167,47 @@ def test_mesh_particles_are_projected_to_actual_triangles_with_attributes(geomet
             & (outputs["life"].numpy()[:count] <= 7.0)).all()
 
 
+def test_mesh_source_force_velocity_reaches_emitted_particles():
+    device = sourcing.wp.get_preferred_device()
+    points, triangles = _triangle_geometry()
+    mesh = _mesh(points, triangles, device)
+    leaves, num_leaves = _grid_arrays(device)
+    outputs = _particle_outputs(1024, device)
+    desc = MeshSourceDesc(
+        mesh=mesh,
+        aabb_min=tuple(np.min(points, axis=0)),
+        aabb_max=tuple(np.max(points, axis=0)),
+        mode=1,
+        stype=0,
+        emit_rate=1.0,
+        velocity=(1.0, 2.0, 3.0),
+        force_type=1,
+        force_strength=4.0,
+        force_dir=(0.0, 1.0, 0.0),
+        force_center=(0.0, 0.0, 0.0),
+    )
+    sourcing.wp.launch(
+        sourcing.k_mesh_source_particles,
+        dim=C.LEAF_VOLUME,
+        inputs=[
+            mesh.id, desc.to_struct(), desc.query_radius(), leaves,
+            num_leaves, sourcing.wp.vec3(0.0, 0.0, 0.0), 0.25,
+            sourcing.wp.zeros(C.LEAF_VOLUME, dtype=sourcing.wp.int32,
+                             device=device),
+            9876, 1024,
+        ],
+        outputs=list(outputs.values()),
+        device=device,
+    )
+    count = int(outputs["count"].numpy()[0])
+
+    assert count > 0
+    np.testing.assert_allclose(
+        outputs["velocity"].numpy()[:count],
+        np.tile((1.0, 6.0, 3.0), (count, 1)),
+    )
+
+
 def test_mesh_particle_emission_respects_existing_voxel_top_up_counts():
     device = sourcing.wp.get_preferred_device()
     points, triangles = _triangle_geometry()
@@ -262,7 +303,12 @@ def _launch_mesh_field(desc, device, voxel_size=0.25):
     return {name: value.numpy() for name, value in arrays.items()}
 
 
-def test_mesh_field_source_stamps_only_resolution_bounded_triangle_shell():
+def test_mesh_field_compatibility_mode_does_not_create_liquid_or_mutate_fields():
+    """Mesh FIELD was a port-only proxy with no fluidSim.cl counterpart.
+
+    Keep the ABI value loadable for saved files, but never manufacture liquid
+    or write unweighted MAC/attributes from the sourcing phase.
+    """
     device = sourcing.wp.get_preferred_device()
     points, triangles = _triangle_geometry()
     desc = MeshSourceDesc(
@@ -272,48 +318,16 @@ def test_mesh_field_source_stamps_only_resolution_bounded_triangle_shell():
         stype=0,
         mode=0,
         velocity=(1.0, 2.0, 3.0),
+        force_type=1,
+        force_strength=4.0,
+        force_dir=(0.0, 1.0, 0.0),
         temperature=4.0,
         viscosity=5.0,
     )
     result = _launch_mesh_field(desc, device)
-    near_triangle = 1 + 1 * 8 + 1 * 64
-    far_aabb_corner = 7 + 7 * 8 + 1 * 64
-    assert result["voxel_type"][near_triangle] & C.VOXEL_FLUID
-    assert not result["voxel_type"][far_aabb_corner] & C.VOXEL_FLUID
-    assert result["u"][near_triangle] == pytest.approx(1.0)
-    assert result["temperature"][near_triangle] == pytest.approx(4.0)
-    assert result["viscosity"][near_triangle] == pytest.approx(5.0)
-
-
-@pytest.mark.parametrize("voxel_size", (0.25, 0.2))
-def test_oriented_mesh_field_coverage_stays_within_voxel_bound(voxel_size):
-    device = sourcing.wp.get_preferred_device()
-    points = [(0.35, 0.4, 0.45), (1.35, 0.55, 0.85), (0.65, 1.35, 1.2)]
-    triangles = [(0, 1, 2)]
-    desc = MeshSourceDesc(
-        mesh=_mesh(points, triangles, device),
-        aabb_min=tuple(np.min(points, axis=0)),
-        aabb_max=tuple(np.max(points, axis=0)),
-        stype=0,
-        mode=0,
-    )
-    voxel_type = _launch_mesh_field(
-        desc, device, voxel_size=voxel_size)["voxel_type"]
-    marked = np.flatnonzero((voxel_type & C.VOXEL_FLUID) != 0)
-    assert len(marked) > 0
-    centers = np.asarray([
-        (
-            ((index & 7) + 0.5) * voxel_size,
-            (((index >> 3) & 7) + 0.5) * voxel_size,
-            (((index >> 6) & 7) + 0.5) * voxel_size,
-        )
-        for index in marked
-    ])
-    distances = [
-        _point_triangle_distance(center, *points) for center in centers
-    ]
-    documented_bound = np.sqrt(3.0) * 0.5 * voxel_size
-    assert max(distances) <= documented_bound + 2.0e-6
+    assert np.count_nonzero(result["voxel_type"]) == 0
+    for name in ("u", "v", "w", "temperature", "viscosity"):
+        np.testing.assert_allclose(result[name], 0.0)
 
 
 def test_mesh_sink_solid_and_surface_regions_are_distinct():

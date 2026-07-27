@@ -76,6 +76,18 @@ def _scene():
         max_speed=0.0,
         limit_behavior="MAINTAIN",
         limit_percent=0.1,
+        directional_force=(1.0, 2.0, 3.0),
+        omnidirectional_force_center=(4.0, 5.0, 6.0),
+        omnidirectional_force_strength=-7.0,
+        omnidirectional_force_radius=8.0,
+        force_diffusion=0.25,
+        dissipation_enabled=True,
+        dissipation_attribute="viscosity",
+        dissipation_rate=0.75,
+        dissipation_target=0.5,
+        attraction_enabled=True,
+        attraction_strength=9.0,
+        attraction_max_distance=10.0,
         particles_per_voxel=8.0,
         count_stiffness=0.0,
         relax_enabled=True,
@@ -136,6 +148,11 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "domain_sdf_walls",
         "max_particles", "max_whitewater", "time_scale", "cfl",
         "min_substeps", "max_substeps", "flip_ratio", "max_speed",
+        "directional_force", "omnidirectional_force_center",
+        "omnidirectional_force_strength", "omnidirectional_force_radius",
+        "force_diffusion", "dissipation_enabled", "dissipation_attribute",
+        "dissipation_rate", "dissipation_target", "attraction_enabled",
+        "attraction_strength", "attraction_max_distance",
         "particles_per_voxel", "count_stiffness",
         "relax_enabled", "relax_strength",
         "pressure_iterations", "pressure_tolerance", "pressure_threshold",
@@ -173,6 +190,35 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     }
     for target, source in enum_fields.items():
         assert getattr(settings, target).name == getattr(scene.fluidsim, source)
+
+
+def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+
+    class InvalidatableVector:
+        def __init__(self, values):
+            self.values = values
+            self.valid = True
+
+        def __iter__(self):
+            if not self.valid:
+                raise ReferenceError("RNA vector owner was invalidated")
+            return iter(self.values)
+
+    directional = InvalidatableVector((1.0, 2.0, 3.0))
+    center = InvalidatableVector((4.0, 5.0, 6.0))
+    scene.fluidsim.directional_force = directional
+    scene.fluidsim.omnidirectional_force_center = center
+
+    settings = scene_bridge.build_settings(scene)
+    directional.valid = False
+    center.valid = False
+
+    assert settings.directional_force == (1.0, 2.0, 3.0)
+    assert settings.omnidirectional_force_center == (4.0, 5.0, 6.0)
+    assert isinstance(settings.directional_force, tuple)
+    assert isinstance(settings.omnidirectional_force_center, tuple)
 
 
 def test_domain_collision_wall_setting_is_persisted(monkeypatch):

@@ -31,6 +31,8 @@ class Session:
         self.profiler = None
         self.last_frame = -1
         self.start_frame = 1
+        self.cache_written_start = None
+        self.cache_written_end = None
         self.frame_stats = []
         self.validation_results = []
         self.benchmark_result = None
@@ -57,6 +59,8 @@ class Session:
                 solver.release()
         self.profiler = None
         self.start_frame = 1
+        self.cache_written_start = None
+        self.cache_written_end = None
         self.last_frame = -1
         self.frame_stats = []
         self.scene_inputs.clear()
@@ -163,8 +167,14 @@ class Session:
             self.scene_inputs.gather_sources(
                 scene, depsgraph, capture_first_mesh=capture_first_mesh,
                 sync_generation=sync_generation))
+        extra_plans = self.scene_inputs.gather_source_plans(scene, depsgraph)
+        if extra_plans:
+            self.solver.set_source_plans(
+                tuple(self.solver.sourcing.plans) + tuple(extra_plans))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
+        self.solver.set_force_fields(
+            self.scene_inputs.gather_force_fields(scene))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
     def step(self, scene, *, write_cache=True):
@@ -174,6 +184,10 @@ class Session:
             return None
         fs = scene.fluidsim
         stats = self.solver.step_frame()
+        sourcing = getattr(self.solver, "sourcing", None)
+        if sourcing is not None:
+            self.scene_inputs.update_source_status(
+                scene, sourcing.last_diagnostics, sourcing.last_apply_result)
         self.frame_stats.append(stats.as_dict())
         if len(self.frame_stats) > 1000:
             self.frame_stats.pop(0)
@@ -191,7 +205,20 @@ class Session:
             from ..io import cache
 
             try:
-                cache.write_frame(scene, self)
+                timeline_frame = int(scene.frame_current)
+                cache.write_frame(scene, self, timeline_frame)
+                self.cache_written_start = (
+                    timeline_frame if self.cache_written_start is None
+                    else min(self.cache_written_start, timeline_frame))
+                self.cache_written_end = (
+                    timeline_frame if self.cache_written_end is None
+                    else max(self.cache_written_end, timeline_frame))
+                cache.write_sequence_metadata(
+                    bpy.path.abspath(fs.cache_path),
+                    self.cache_written_start,
+                    self.cache_written_end,
+                    source="live_simulation",
+                )
             except Exception as exc:  # noqa: BLE001 - cache is supplemental
                 print(f"fluidSim cache write failed: {exc!r}")
         return stats
@@ -235,6 +262,8 @@ class Session:
             return
         self.solver.reset()
         self.start_frame = scene.frame_start
+        self.cache_written_start = None
+        self.cache_written_end = None
         self.last_frame = -1
         self.frame_stats = []
         self.clear_error(scene)
@@ -308,8 +337,12 @@ class Session:
             self.step(scene)
         except Exception as exc:  # noqa: BLE001 - never break playback
             self.set_error(scene, repr(exc))
-            fs.status = f"Solver error: {exc}"
+            # Toggling live invokes the property callback, which writes
+            # "Live simulation disabled". Do that first, then restore the
+            # actual error so the user sees the cause rather than a generic
+            # lifecycle message.
             fs.live = False
+            fs.status = f"Solver error: {exc}"
             self.release(preserve_error=True)
             print(f"fluidSim step failed: {exc!r}")
 
@@ -393,7 +426,12 @@ _DIRECT_SETTING_FIELDS = (
     "domain_sdf_walls",
     "max_particles", "max_whitewater", "time_scale", "cfl",
     "min_substeps", "max_substeps", "flip_ratio", "max_speed",
-    "limit_percent", "particles_per_voxel", "count_stiffness",
+    "limit_percent", "directional_force", "omnidirectional_force_center",
+    "omnidirectional_force_strength", "omnidirectional_force_radius",
+    "force_diffusion", "dissipation_enabled", "dissipation_attribute",
+    "dissipation_rate", "dissipation_target", "attraction_enabled",
+    "attraction_strength", "attraction_max_distance",
+    "particles_per_voxel", "count_stiffness",
     "spacetime_enabled", "spacetime_jitter_strength",
     "spacetime_adaptive_jitter", "spacetime_phase_eta",
     "spacetime_phase_threshold", "spacetime_reference_mass",
@@ -418,6 +456,11 @@ _DIRECT_SETTING_FIELDS = (
     "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
     "ww_spray_drag",
 )
+
+_VECTOR_SETTING_FIELDS = frozenset({
+    "directional_force",
+    "omnidirectional_force_center",
+})
 
 _SETTING_ALIASES = {
     "limit_percent": "speed_limit_percent",
@@ -478,7 +521,13 @@ def _apply_scene_settings(fs, settings, fields=None):
     for source in _DIRECT_SETTING_FIELDS:
         target = _SETTING_ALIASES.get(source, source)
         if (selected is None or source in selected) and hasattr(fs, source):
-            setattr(settings, target, getattr(fs, source))
+            value = getattr(fs, source)
+            if source in _VECTOR_SETTING_FIELDS:
+                # FloatVectorProperty returns a live RNA/mathutils proxy whose
+                # IDProperty owner can be invalidated by later scene edits.
+                # SolverSettings must own plain host values across frames.
+                value = tuple(float(component) for component in value)
+            setattr(settings, target, value)
     for target, (source, enum_type) in enum_fields.items():
         declared_target = _SETTING_ALIASES.get(target, target)
         if (selected is None or source in selected) and hasattr(fs, source):
@@ -686,6 +735,73 @@ def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     return True
 
 
+# REBUILD (full GPU solver reallocation) and RESET (full simulation-state
+# discard) are the two expensive request_scene_update actions: a live UI
+# slider drag emits one property-update callback per drag tick, and applying
+# either action synchronously on every tick measured 174-191ms/tick for
+# REBUILD (voxel_size) in a real GUI session with a live solver -- a
+# multi-second freeze over a normal drag gesture. Coalesce them onto a single
+# one-shot bpy.app.timers callback instead of a bpy.app.timers import at
+# module scope, so plain unit tests that stub bpy without app.timers still
+# import this module.
+_PENDING_REBUILD_RANK = {
+    SceneUpdate.RESET: 1,
+    SceneUpdate.REBUILD: 2,
+}
+_pending_rebuild_action = None
+_rebuild_flush_scheduled = False
+
+
+def _flush_pending_rebuild():
+    """One-shot timer callback: apply the highest-priority coalesced action."""
+    global _pending_rebuild_action, _rebuild_flush_scheduled
+    action = _pending_rebuild_action
+    _pending_rebuild_action = None
+    _rebuild_flush_scheduled = False
+    if action is None:
+        return None
+    scene = getattr(bpy.context, "scene", None)
+    if scene is None:
+        return None
+    sess = session()
+    if not sess.active:
+        return None
+    try:
+        if action is SceneUpdate.REBUILD:
+            initialize_session(scene)
+        else:
+            reset_simulation(scene)
+    except Exception as exc:  # noqa: BLE001 - a deferred timer must not raise
+        set_error(scene, repr(exc))
+        try:
+            scene.fluidsim.status = f"Deferred update failed: {exc}"
+        except Exception:  # noqa: BLE001
+            pass
+    _tag_view3d_redraw()
+    return None
+
+
+def _schedule_rebuild(scene, action):
+    """Coalesce REBUILD/RESET onto one deferred flush; keep the worst action."""
+    global _pending_rebuild_action, _rebuild_flush_scheduled
+    current_rank = (
+        _PENDING_REBUILD_RANK[_pending_rebuild_action]
+        if _pending_rebuild_action is not None else -1)
+    if _PENDING_REBUILD_RANK[action] >= current_rank:
+        _pending_rebuild_action = action
+    scene.fluidsim.status = _SCENE_UPDATE_REASONS[action]
+    timers = getattr(getattr(bpy, "app", None), "timers", None)
+    if timers is None or not hasattr(timers, "register"):
+        # No real Blender timer API available (e.g. a bare unit-test stub):
+        # fall back to the previous synchronous behavior rather than lose
+        # the update entirely.
+        _flush_pending_rebuild()
+        return
+    if not _rebuild_flush_scheduled:
+        _rebuild_flush_scheduled = True
+        timers.register(_flush_pending_rebuild, first_interval=0.05)
+
+
 def request_scene_update(scene, action: SceneUpdate):
     """Apply property changes immediately where the live session allows it."""
     from . import viewport
@@ -710,11 +826,10 @@ def request_scene_update(scene, action: SceneUpdate):
             _tag_view3d_redraw()
         return
 
-    if action is SceneUpdate.REBUILD:
-        initialize_session(scene)
-    elif action is SceneUpdate.RESET:
-        reset_simulation(scene)
-    elif action is SceneUpdate.SYNC:
+    if action in _PENDING_REBUILD_RANK:
+        _schedule_rebuild(scene, action)
+        return
+    if action is SceneUpdate.SYNC:
         sync_scene_to_solver(scene, sess)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)

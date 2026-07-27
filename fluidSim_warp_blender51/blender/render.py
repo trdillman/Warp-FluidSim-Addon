@@ -12,6 +12,9 @@ import bpy
 
 from . import viewport
 
+_handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+persistent = getattr(_handlers, "persistent", lambda fn: fn)
+
 
 def ensure_render_visibility(scene):
     """Make simulation outputs render-visible and source/collider helpers not."""
@@ -21,7 +24,7 @@ def ensure_render_visibility(scene):
         (viewport.PARTICLES_NAME, fs.show_particles),
         (viewport.WHITEWATER_NAME, fs.show_whitewater),
     ):
-        obj = bpy.data.objects.get(name)
+        obj = viewport.output_object(scene, name)
         if obj is not None:
             obj.hide_render = not show
     for obj in scene.objects:
@@ -33,14 +36,18 @@ def ensure_render_visibility(scene):
 def configure_cycles_points(scene):
     """Ensure point clouds render as spheres in Cycles."""
     for name in (viewport.PARTICLES_NAME, viewport.WHITEWATER_NAME):
-        obj = bpy.data.objects.get(name)
+        obj = viewport.output_object(scene, name)
         if obj is None or obj.type != "POINTCLOUD":
             continue
         # Cycles renders point clouds natively; nothing more needed.
         # EEVEE ignores point clouds without geometry nodes as of 5.1.
 
 
+@persistent
 def _on_render_init(scene, *_args):
+    # Must be @persistent: Blender frees non-persistent app handlers on file
+    # load, so without it render visibility silently stops being enforced
+    # after the user opens any .blend while the add-on stays enabled.
     ensure_render_visibility(scene)
 
 

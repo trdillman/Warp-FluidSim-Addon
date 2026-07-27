@@ -148,14 +148,21 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
     return data
 
 
-def write_frame(scene, sess) -> str:
+def write_frame(scene, sess, frame=None) -> str:
+    """Atomically write one cache frame at an explicit timeline index.
+
+    ``frame=None`` preserves the low-level solver-frame API for standalone
+    callers. Live/timeline callers must pass ``scene.frame_current`` so cache
+    names and playback use the same indexing basis.
+    """
     import bpy
 
     fs = scene.fluidsim
     base = bpy.path.abspath(fs.cache_path)
     os.makedirs(base, exist_ok=True)
     solver = sess.solver
-    path = _frame_path(base, solver.frame)
+    frame = int(solver.frame if frame is None else frame)
+    path = _frame_path(base, frame)
     fd, tmp_path = tempfile.mkstemp(
         prefix=f"{os.path.basename(path)}.",
         suffix=".tmp.npz",

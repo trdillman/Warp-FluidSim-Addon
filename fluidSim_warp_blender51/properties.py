@@ -39,6 +39,7 @@ from .sim.enums import (
     SourceShapeForceType,
     SourceShapeShape,
     SourceShapeSourceMode,
+    SourceEmissionMode,
     SourceShapeType,
     TraceMode,
     ViscositySolver,
@@ -228,7 +229,10 @@ def _snippet_library_items(self, context):
     global _SNIPPET_LIBRARY_ITEMS
     import os
 
-    items = []
+    # Dynamic EnumProperty defaults to item index 0. A separator/header cannot
+    # occupy that slot: Blender then resolves the fresh-scene value to "" and
+    # logs an RNA warning. Keep an explicit non-action item first.
+    items = [("NONE", "Select a snippet...", "Choose a snippet to load")]
     by_cat = {}
     for preset in custom.EXAMPLE_PRESETS:
         by_cat.setdefault(preset.category, []).append(preset)
@@ -323,15 +327,26 @@ def _mesh_object_poll(_settings, obj):
     return getattr(obj, "type", None) == "MESH"
 
 
+def _point_input_poll(_settings, obj):
+    return (getattr(obj, "type", None) in {"MESH", "POINTCLOUD"}
+            or bool(getattr(obj, "particle_systems", None)))
+
+
+def _volume_input_poll(_settings, obj):
+    return getattr(obj, "type", None) == "VOLUME"
+
+
 class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     role: EnumProperty(
         name="Role",
         items=[
             ("NONE", "None", "Not part of the simulation"),
-            ("SOURCE", "Source", "Emit liquid"),
+            ("SOURCE", "Liquid Emitter", "Emit liquid"),
             ("COLLIDER", "Collider", "Obstacle (mesh SDF)"),
-            ("SINK", "Sink", "Remove liquid"),
-            ("FORCE", "Force", "Force region"),
+            ("SINK", "Liquid Sink", "Remove liquid"),
+            ("FORCE", "Force Region", "Apply an analytic force to liquid"),
+            ("FIELD", "Advanced Field Source",
+             "Source pressure, scalar, vector, or staggered velocity fields without emitting liquid"),
         ],
         default="NONE",
         update=_request_reset,
@@ -348,12 +363,99 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Use Mesh", default=False,
         update=_request_sync,
         description="Legacy compatibility flag; use Geometry = Mesh")
+    source_ui_schema_version: IntProperty(
+        name="Source UI Schema", default=0, min=0,
+        description="Non-destructive presentation schema marker")
+    source_region_kind: EnumProperty(
+        name="Emission Region",
+        items=[
+            ("ANALYTIC", "Analytic Volume", "Use an analytic signed-distance region"),
+            ("MESH_SOLID", "Mesh Solid Volume", "Fill a validated watertight mesh interior"),
+            ("MESH_SHELL", "Mesh Surface Shell", "Emit from an explicit triangle shell"),
+            ("POINTS", "Points / Particles", "Use owned point or particle input"),
+            ("VOLUME_GRID", "Volume Grid", "Import named OpenVDB grids from a Blender Volume"),
+        ],
+        default="ANALYTIC", update=_request_sync)
+    sink_region_kind: EnumProperty(
+        name="Removal Region",
+        items=[
+            ("ANALYTIC", "Analytic Volume", "Remove liquid in an analytic region"),
+            ("MESH_SOLID", "Mesh Solid Interior", "Remove liquid inside a watertight mesh"),
+            ("MESH_SHELL", "Mesh Surface Shell", "Remove liquid in a mesh shell"),
+            ("VOLUME_GRID", "Volume Grid Mask", "Remove liquid using an imported mask or SDF"),
+        ],
+        default="ANALYTIC", update=_request_sync)
+    point_source_representation: EnumProperty(
+        name="Point Representation",
+        items=[
+            ("DIRECT_APPEND", "Direct Append Once", "Append the owned input points once; not a volume fill"),
+            ("RASTERIZED_REGION", "Rasterized Region", "Rasterize points into source leaves and top up occupancy"),
+        ],
+        default="DIRECT_APPEND", update=_request_reset)
+    point_input_object: PointerProperty(
+        name="Point Input", type=bpy.types.Object, poll=_point_input_poll,
+        update=_request_sync)
+    point_rasterize_radius: FloatProperty(
+        name="Rasterize Radius", default=0.1, min=0.0, subtype="DISTANCE",
+        update=_request_sync)
+    volume_input_object: PointerProperty(
+        name="Volume Input", type=bpy.types.Object, poll=_volume_input_poll,
+        update=_request_sync)
+    volume_grid_type: EnumProperty(
+        name="Volume Region", items=[
+            ("FOG", "Fog / Mask", "Use a fog grid above the threshold"),
+            ("SDF", "Signed Distance", "Use the inside of an SDF grid"),
+        ], default="FOG", update=_request_sync)
+    volume_mask_grid: StringProperty(
+        name="Fog / Mask Grid", default="density", update=_request_sync)
+    volume_sdf_grid: StringProperty(
+        name="SDF Grid", default="surface", update=_request_sync)
+    volume_scalar_grid: StringProperty(
+        name="Scalar Grid", default="", update=_request_sync)
+    volume_vector_grid: StringProperty(
+        name="Vector Grid", default="", update=_request_sync)
+    volume_vector_x_grid: StringProperty(
+        name="Vector X Grid", default="", update=_request_sync)
+    volume_vector_y_grid: StringProperty(
+        name="Vector Y Grid", default="", update=_request_sync)
+    volume_vector_z_grid: StringProperty(
+        name="Vector Z Grid", default="", update=_request_sync)
+    volume_fog_threshold: FloatProperty(
+        name="Fog Threshold", default=0.0, update=_request_sync)
+    field_operation: EnumProperty(
+        name="Target Field", items=[
+            ("PRESSURE", "Pressure", "Source pressure before projection"),
+            ("SCALAR", "Scalar / Temperature", "Source a scalar field after P2G"),
+            ("VECTOR", "Vector Velocity", "Source a centered vector field after P2G"),
+            ("STAGGERED_VELOCITY", "Staggered Velocity", "Source independent MAC face components"),
+        ], default="PRESSURE", update=_request_sync)
+    field_region_kind: EnumProperty(
+        name="Field Region", items=[
+            ("ANALYTIC", "Analytic Region", "Use this object's analytic region"),
+            ("VOLUME_GRID", "Volume Grid", "Use named values from a Blender Volume"),
+        ], default="ANALYTIC", update=_request_sync)
+    field_value_source: EnumProperty(
+        name="Payload Source", items=[
+            ("CONSTANT", "Constant", "Use the constant value below"),
+            ("VOLUME_GRID", "Volume Grid", "Sample the named scalar or vector grid"),
+        ], default="CONSTANT", update=_request_sync)
+    field_scalar_value: FloatProperty(
+        name="Field Value", default=1.0, update=_request_sync)
+    field_vector_value: FloatVectorProperty(
+        name="Field Vector", size=3, default=(0.0, 0.0, 0.0),
+        subtype="VELOCITY", update=_request_sync)
+    field_amount: FloatProperty(
+        name="Blend Amount", default=1.0, min=0.0, update=_request_sync)
     geometry_mode: EnumProperty(
-        name="Geometry",
-        items=_items(SourceGeometryMode, {
-            "ANALYTIC": "Use one of the six analytic source shapes",
-            "MESH": "Use evaluated triangle geometry",
-        }),
+        name="Region",
+        items=[
+            ("ANALYTIC", "Analytic",
+             "Use one of the six analytic shapes",
+             SourceGeometryMode.ANALYTIC.value),
+            ("MESH", "Mesh",
+             "Use evaluated mesh triangles",
+             SourceGeometryMode.MESH.value),
+        ],
         default=SourceGeometryMode.ANALYTIC.name,
         update=_request_sync,
     )
@@ -385,21 +487,43 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     )
     sink_region_mode: EnumProperty(
         name="Sink Region",
-        items=_items(MeshSinkRegionMode, {
-            "SOLID": "Remove particles inside a validated watertight mesh",
-            "SURFACE": "Remove particles only in the triangle shell",
-        }),
+        items=[
+            ("SOLID", "Mesh Solid Interior",
+             "Remove particles inside a validated watertight mesh",
+             MeshSinkRegionMode.SOLID.value),
+            ("SURFACE", "Mesh Surface Shell",
+             "Remove particles only in the triangle shell",
+             MeshSinkRegionMode.SURFACE.value),
+        ],
         default=MeshSinkRegionMode.SOLID.name,
         update=_request_sync,
     )
     mesh_error: StringProperty(name="Mesh Error", default="")
     source_mode: EnumProperty(
         name="Mode", items=_items(SourceShapeSourceMode), default="PARTICLES",
-        update=_request_sync)
-    emit_rate: FloatProperty(
-        name="Emit Rate", default=8.0, min=0.0, soft_max=32.0,
         update=_request_sync,
-        description="Target particles per voxel inside the source")
+        description=(
+            "Compatibility solver representation. PARTICLES emits liquid; "
+            "FIELD is the original pressure-influence mode and does not "
+            "create liquid (pressure sourcing is not yet exposed in this port)"))
+    emit_rate: FloatProperty(
+        name="Target Particles / Voxel", default=8.0, min=0.0, soft_max=32.0,
+        update=_request_sync,
+        description=(
+            "Target particle occupancy in each source voxel; this is not a "
+            "volume-per-second emission rate"))
+    emission_mode: EnumProperty(
+        name="Emission",
+        items=_items(SourceEmissionMode, {
+            "INITIAL_FILL": (
+                "Fill the source region once on the first enabled step "
+                "after Initialize/Reset"),
+            "CONTINUOUS_INFLOW": (
+                "Replenish the source region every substep while Enabled"),
+        }),
+        default=SourceEmissionMode.CONTINUOUS_INFLOW.name,
+        update=_request_reset,
+        description="Source emission lifecycle")
     initial_velocity: FloatVectorProperty(
         name="Initial Velocity", size=3, default=(0.0, 0.0, 0.0), subtype="VELOCITY",
         update=_request_sync)
@@ -415,8 +539,10 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
                                update=_request_sync)
     viscosity: FloatProperty(name="Viscosity", default=0.0, min=0.0,
                              update=_request_sync)
-    density: FloatProperty(name="Density", default=1.0, min=0.0,
-                           update=_request_sync)
+    density: FloatProperty(
+        name="Density Attribute", default=1.0, min=0.0,
+        description="Particle density attribute; not physical liquid mass",
+        update=_request_sync)
     use_lifespan: BoolProperty(name="Use Lifespan", default=False,
                                update=_request_sync)
     life_min: FloatProperty(name="Life Min", default=2.0, min=0.0,
@@ -445,6 +571,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         update=_request_sync,
         description="Push liquid with animated collider motion")
     enabled: BoolProperty(name="Enabled", default=True, update=_request_sync)
+    source_status_severity: StringProperty(name="Source Status Severity", default="")
+    source_status_code: StringProperty(name="Source Status Code", default="")
+    source_status_message: StringProperty(name="Source Status", default="")
+    source_status_emitted: IntProperty(name="Last Emitted", default=0, min=0)
+    source_status_capacity_limited: BoolProperty(name="Capacity Limited", default=False)
     auto_inject_seed: BoolProperty(
         name="Auto Inject Seed",
         default=False,
@@ -502,9 +633,12 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Kill particles leaving the domain instead of clamping")
     domain_sdf_walls: BoolProperty(
-        name="Domain Collision Walls", default=False,
+        name="Domain Collision Walls", default=True,
         update=_request_reset,
-        description="Build collision SDF walls around the domain bounds")
+        description="Build collision SDF walls around the domain bounds "
+                     "(recommended for closed domains; without this the "
+                     "pressure solve treats sparse-grid padding beyond the "
+                     "domain box as open space)")
 
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(
@@ -534,6 +668,54 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_reset)
     limit_percent: FloatProperty(name="Limit Percent", default=0.5, min=0.0, max=1.0,
                                  update=_request_reset)
+    # -- Global forces ---------------------------------------------------------
+    directional_force: FloatVectorProperty(
+        name="Directional Acceleration", size=3, default=(0.0, 0.0, 0.0),
+        subtype="ACCELERATION", update=_request_reset,
+        description="Constant acceleration applied to every valid velocity face")
+    omnidirectional_force_center: FloatVectorProperty(
+        name="Center", size=3, default=(0.0, 0.0, 0.0),
+        update=_request_reset,
+        description="World-space center of the radial global force")
+    omnidirectional_force_strength: FloatProperty(
+        name="Radial Acceleration", default=0.0, update=_request_reset,
+        description="Positive repels; negative attracts")
+    omnidirectional_force_radius: FloatProperty(
+        name="Radius", default=1.0, min=0.001, subtype="DISTANCE",
+        update=_request_reset,
+        description="Falloff radius of the radial global force")
+    force_diffusion: FloatProperty(
+        name="Velocity Diffusion", default=0.0, min=0.0, max=1.0,
+        update=_request_reset,
+        description="Blend the MAC velocity toward its six-neighbour average")
+    dissipation_enabled: BoolProperty(
+        name="Dissipate Particle Attribute", default=False,
+        update=_request_reset)
+    dissipation_attribute: EnumProperty(
+        name="Attribute",
+        items=[
+            ("temperature", "Temperature", "Dissipate particle temperature"),
+            ("viscosity", "Viscosity", "Dissipate particle viscosity"),
+            ("density", "Density", "Dissipate particle density"),
+        ],
+        default="temperature", update=_request_reset)
+    dissipation_rate: FloatProperty(
+        name="Rate", default=0.0, min=0.0, subtype="FACTOR",
+        update=_request_reset,
+        description="Exponential decay rate per second")
+    dissipation_target: FloatProperty(
+        name="Target", default=0.0, update=_request_reset,
+        description="Value approached by the selected particle attribute")
+    attraction_enabled: BoolProperty(
+        name="Attract to Collision SDF", default=False,
+        update=_request_reset,
+        description="Accelerate liquid toward colliders and closed domain walls")
+    attraction_strength: FloatProperty(
+        name="Attraction Strength", default=0.0, update=_request_reset)
+    attraction_max_distance: FloatProperty(
+        name="Attraction Distance", default=1.0, min=0.001,
+        subtype="DISTANCE", update=_request_reset,
+        description="Maximum distance from collision SDF surfaces affected by attraction")
     count_stiffness: FloatProperty(
         name="Count Stiffness", default=0.0, min=0.0, soft_max=4.0,
         update=_request_reset,
@@ -713,6 +895,16 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     height_back_mode: EnumProperty(
         name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT",
         update=_request_reset)
+    height_profile_image: PointerProperty(
+        name="Height Profile", type=bpy.types.Image, update=_request_reset,
+        description="Grayscale image sampled across the domain as height offset")
+    height_profile_scale: FloatProperty(
+        name="Profile Scale", default=1.0, update=_request_reset)
+    height_emission_mode: EnumProperty(
+        name="Fill Lifecycle", items=_items(SourceEmissionMode),
+        default=SourceEmissionMode.CONTINUOUS_INFLOW.name,
+        update=_request_reset)
+    height_error: StringProperty(name="Height Fill Error", default="")
     height_velocity: FloatVectorProperty(name="Velocity", size=3,
                                          default=(0.0, 0.0, 0.0),
                                          update=_request_reset)
@@ -870,7 +1062,14 @@ def register():
 
 
 def unregister():
-    del bpy.types.Object.fluidsim
-    del bpy.types.Scene.fluidsim
+    if hasattr(bpy.types.Object, "fluidsim"):
+        del bpy.types.Object.fluidsim
+    if hasattr(bpy.types.Scene, "fluidsim"):
+        del bpy.types.Scene.fluidsim
     for cls in reversed(CLASSES):
-        bpy.utils.unregister_class(cls)
+        try:
+            bpy.utils.unregister_class(cls)
+        except (RuntimeError, ValueError):
+            # Already unregistered (e.g. a partially-rolled-back register()):
+            # unregister() must remain safe to call on a partial state.
+            pass

@@ -12,10 +12,9 @@ import sys
 
 import numpy as np
 
-try:
-    from mathutils.kdtree import KDTree as _KDTree
-except ImportError:  # Blender-free unit tests.
-    _KDTree = None
+# Retained as a compatibility hook for Blender-free tests. Nearest-value
+# lookup now always uses the batched NumPy grid path below.
+_KDTree = None
 
 from ..sim.constants import TIMER_PHASE_SLOTS
 
@@ -52,7 +51,8 @@ def _require_bpy():
 
 
 def _output_collection(scene):
-    name = scene.fluidsim.output_collection_name or "FluidSim Output"
+    name = (getattr(scene.fluidsim, "output_collection_name", "")
+            or "FluidSim Output")
     coll = bpy.data.collections.get(name)
     if coll is None:
         coll = bpy.data.collections.new(name)
@@ -64,19 +64,56 @@ def _output_collection(scene):
     return coll
 
 
-def _ensure_object(scene, name, data_factory):
-    """Get-or-create an output object linked to the output collection."""
-    obj = bpy.data.objects.get(name)
+OUTPUT_TAG = "fluidsim_output_kind"
+
+
+def output_object(scene, kind):
+    """Resolve an add-on-owned output by tag inside its output collection.
+
+    Never claim a global object merely because its name matches. Saved files
+    from older versions are adopted only when the exact legacy-named object is
+    already linked to the configured output collection.
+    """
+    coll = _output_collection(scene)
+    for obj in coll.objects:
+        try:
+            if obj.get(OUTPUT_TAG) == kind:
+                return obj
+        except AttributeError:
+            pass
+    legacy = bpy.data.objects.get(kind)
+    if legacy is not None and legacy.name in {obj.name for obj in coll.objects}:
+        try:
+            legacy[OUTPUT_TAG] = kind
+        except (AttributeError, TypeError):
+            pass
+        return legacy
+    return None
+
+
+def _remove_output_object(obj):
+    data = getattr(obj, "data", None)
+    bpy.data.objects.remove(obj, do_unlink=True)
+    if data is not None and data.users == 0:
+        if isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        elif (hasattr(bpy.data, "pointclouds")
+              and isinstance(data, bpy.types.PointCloud)):
+            bpy.data.pointclouds.remove(data)
+
+
+def _ensure_object(scene, name, data_factory, expected_type):
+    """Get/create one tagged, correctly-typed add-on output object."""
+    obj = output_object(scene, name)
+    if obj is not None and obj.type != expected_type:
+        # Tagged/adopted objects are add-on owned, so a type mismatch is safe
+        # to recreate. Untagged same-named user objects are never selected.
+        _remove_output_object(obj)
+        obj = None
     if obj is None:
         obj = bpy.data.objects.new(name, data_factory())
+        obj[OUTPUT_TAG] = name
         _output_collection(scene).objects.link(obj)
-    else:
-        coll = _output_collection(scene)
-        if obj.name not in {o.name for o in coll.objects}:
-            try:
-                coll.objects.link(obj)
-            except RuntimeError:
-                pass
     return obj
 
 
@@ -88,8 +125,11 @@ def _values_to_colors(values):
     if not finite.any():
         t = np.zeros(len(values), dtype=np.float32)
     else:
-        lo = float(np.percentile(values[finite], 5.0))
-        hi = float(np.percentile(values[finite], 95.0))
+        finite_values = values[finite]
+        step = max(1, int(np.ceil(len(finite_values) / 50_000)))
+        range_sample = finite_values[::step]
+        lo = float(np.percentile(range_sample, 5.0))
+        hi = float(np.percentile(range_sample, 95.0))
         if hi <= lo + 1.0e-8:
             t = np.full(len(values), 0.5, dtype=np.float32)
         else:
@@ -122,40 +162,91 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
         step = int(np.ceil(len(sample_points) / max_samples))
         sample_points = sample_points[::step]
         sample_values = sample_values[::step]
-    if _KDTree is not None:
-        tree = _KDTree(len(sample_points))
-        for index, point in enumerate(sample_points):
-            tree.insert(tuple(point), index)
-        tree.balance()
-        return np.asarray([
-            sample_values[tree.find(tuple(point))[1]] for point in points
-        ], dtype=np.float32)
+
+    # Sort sample cells once. Collision-free linear int64 keys make the
+    # batched searchsorted lookup substantially faster than structured rows.
     cell_size = max(float(cell_size), 1.0e-5)
-    keys = np.floor(sample_points / cell_size).astype(np.int32)
-    buckets = {}
-    for i, key in enumerate(map(tuple, keys)):
-        buckets.setdefault(key, []).append(i)
+    sample_keys = np.floor(sample_points / cell_size).astype(np.int64)
+    point_keys = np.floor(points / cell_size).astype(np.int64)
+    key_min = np.minimum(
+        sample_keys.min(axis=0), point_keys.min(axis=0) - 1)
+    key_max = np.maximum(
+        sample_keys.max(axis=0), point_keys.max(axis=0) + 1)
+    key_dims = key_max - key_min + 1
+    stride_y = int(key_dims[2])
+    stride_x = int(key_dims[1]) * stride_y
+    if int(key_dims[0]) * stride_x > np.iinfo(np.int64).max:
+        raise ValueError("attribute lookup grid coordinate range is too large")
+
+    def linear_keys(keys):
+        shifted = keys - key_min
+        return (shifted[..., 0] * stride_x
+                + shifted[..., 1] * stride_y + shifted[..., 2])
+
+    sample_linear = linear_keys(sample_keys)
+    sample_order = np.argsort(sample_linear, kind="stable")
+    unique_keys, sample_starts, sample_counts = np.unique(
+        sample_linear[sample_order], return_index=True, return_counts=True)
+
     default = float(np.nanmean(sample_values)) if len(sample_values) else 0.0
     out = np.full(len(points), default, dtype=np.float32)
-    point_keys = np.floor(points / cell_size).astype(np.int32)
-    offsets = [(dx, dy, dz) for dx in range(-1, 2)
-               for dy in range(-1, 2) for dz in range(-1, 2)]
-    for pi, key in enumerate(point_keys):
-        best_i = -1
-        best_d2 = 1.0e30
-        k0 = tuple(int(v) for v in key)
-        for dx, dy, dz in offsets:
-            inds = buckets.get((k0[0] + dx, k0[1] + dy, k0[2] + dz))
-            if not inds:
-                continue
-            pts = sample_points[inds]
-            d2 = np.sum((pts - points[pi]) ** 2, axis=1)
-            j = int(np.argmin(d2))
-            if d2[j] < best_d2:
-                best_d2 = float(d2[j])
-                best_i = inds[j]
-        if best_i >= 0:
-            out[pi] = sample_values[best_i]
+    offsets = np.asarray([
+        (dx, dy, dz) for dx in range(-1, 2)
+        for dy in range(-1, 2) for dz in range(-1, 2)
+    ], dtype=np.int64)
+    max_distance_pairs = 2_000_000
+    query_start = 0
+    query_batch = 4096
+    while query_start < len(points):
+        query_end = min(query_start + query_batch, len(points))
+        target_keys = (
+            point_keys[query_start:query_end, None, :] + offsets[None, :, :]
+        ).reshape(-1, 3)
+        target_linear = linear_keys(target_keys)
+        bucket_ids = np.searchsorted(unique_keys, target_linear)
+        valid = bucket_ids < len(unique_keys)
+        valid_indices = np.flatnonzero(valid)
+        valid[valid_indices] = (
+            unique_keys[bucket_ids[valid_indices]]
+            == target_linear[valid_indices])
+        if not valid.any():
+            query_start = query_end
+            query_batch = 4096
+            continue
+
+        bucket_ids = bucket_ids[valid]
+        target_queries = np.repeat(
+            np.arange(query_end - query_start, dtype=np.intp), len(offsets)
+        )[valid]
+        target_counts = sample_counts[bucket_ids].astype(np.intp, copy=False)
+        pair_count = int(target_counts.sum())
+        if pair_count > max_distance_pairs and query_end - query_start > 1:
+            query_batch = max(1, int(
+                (query_end - query_start) * max_distance_pairs / pair_count))
+            continue
+
+        target_offsets = np.cumsum(target_counts) - target_counts
+        repeated_targets = np.repeat(
+            np.arange(len(bucket_ids), dtype=np.intp), target_counts)
+        within_bucket = (
+            np.arange(pair_count, dtype=np.intp)
+            - np.repeat(target_offsets, target_counts))
+        candidate_sorted = (
+            sample_starts[bucket_ids[repeated_targets]] + within_bucket)
+        candidate_indices = sample_order[candidate_sorted]
+        query_indices = np.repeat(target_queries, target_counts)
+        delta = (
+            points[query_start + query_indices]
+            - sample_points[candidate_indices])
+        distances = np.einsum("ij,ij->i", delta, delta)
+        best_distances = np.full(
+            query_end - query_start, np.inf, dtype=np.float32)
+        np.minimum.at(best_distances, query_indices, distances)
+        winners = distances == best_distances[query_indices]
+        out[query_start + query_indices[winners]] = sample_values[
+            candidate_indices[winners]]
+        query_start = query_end
+        query_batch = 4096
     return out
 
 
@@ -212,7 +303,8 @@ def _set_point_radius(data, radius):
 
 def _swap_mesh(obj, verts, tris, colors=None):
     """Replace an object's mesh with new geometry (fast bulk transfer)."""
-    old = obj.data if obj.type == "MESH" else None
+    previous = getattr(obj, "data", None)
+    old = previous if obj.type == "MESH" else None
     reuse = (old is not None and getattr(old, "users", 1) == 1
              and hasattr(old, "clear_geometry"))
     if reuse:
@@ -246,24 +338,49 @@ def _swap_mesh(obj, verts, tris, colors=None):
         _write_mesh_colors(mesh, tris, colors)
     mesh.update()
     if not reuse:
-        mats = [m for m in (old.materials if old else [])]
+        mats = [m for m in getattr(previous, "materials", ())]
         obj.data = mesh
         for m in mats:
             obj.data.materials.append(m)
-        if old is not None and old.users == 0:
-            bpy.data.meshes.remove(old)
+        if previous is not None and previous.users == 0:
+            if isinstance(previous, bpy.types.Mesh):
+                bpy.data.meshes.remove(previous)
+            elif (hasattr(bpy.data, "pointclouds")
+                  and isinstance(previous, bpy.types.PointCloud)):
+                bpy.data.pointclouds.remove(previous)
 
 
 def _supports_pointcloud():
     return hasattr(bpy.data, "pointclouds")
 
 
-def _swap_points(obj, positions, radius, colors=None):
-    """Replace a point cloud object's points (bulk attribute transfer)."""
-    pc_old = obj.data
-    pc = bpy.data.pointclouds.new(obj.name)
+def _can_reuse_pointcloud(pc, point_count, wants_color):
+    """Return whether an attached Blender point cloud is safe to overwrite."""
+    if (pc is None or getattr(pc, "users", 1) != 1
+            or not hasattr(pc, "resize")):
+        return False
+    current_count = len(pc.points)
+    has_color = pc.attributes.get(COLOR_ATTR) is not None
+    return current_count == point_count and has_color == wants_color
+
+
+def _swap_points(obj, positions, radius, colors=None, *, reuse_datablock=True):
+    """Replace a point cloud object's points (bulk attribute transfer).
+
+    Blender 5.1 can corrupt native point-cloud state when an attached cloud is
+    resized with custom attributes or when an attribute is removed/recreated
+    repeatedly. Reuse is therefore limited to stable point count and attribute
+    schema; all structural changes use atomic datablock replacement.
+    """
+    previous = getattr(obj, "data", None)
+    pc_old = previous if obj.type == "POINTCLOUD" else None
     n = len(positions)
-    pc.resize(n)
+    wants_color = colors is not None and len(colors) != 0
+    reuse = (reuse_datablock
+             and _can_reuse_pointcloud(pc_old, n, wants_color))
+    pc = pc_old if reuse else bpy.data.pointclouds.new(obj.name)
+    if not reuse:
+        pc.resize(n)
     if n:
         pos_attr = pc.attributes.get("position")
         if pos_attr is None:
@@ -277,12 +394,17 @@ def _swap_points(obj, positions, radius, colors=None):
             "value", np.full(n, radius, dtype=np.float32))
         _write_point_colors(pc, colors)
     pc.update_tag()
-    mats = [m for m in (pc_old.materials if pc_old else [])]
-    obj.data = pc
-    for m in mats:
-        obj.data.materials.append(m)
-    if pc_old is not None and pc_old.users == 0:
-        bpy.data.pointclouds.remove(pc_old)
+    if not reuse:
+        mats = [m for m in getattr(previous, "materials", ())]
+        obj.data = pc
+        for m in mats:
+            obj.data.materials.append(m)
+        if previous is not None and previous.users == 0:
+            if isinstance(previous, bpy.types.Mesh):
+                bpy.data.meshes.remove(previous)
+            elif (hasattr(bpy.data, "pointclouds")
+                  and isinstance(previous, bpy.types.PointCloud)):
+                bpy.data.pointclouds.remove(previous)
 
 
 def _swap_vertex_cloud(obj, positions, colors=None):
@@ -414,6 +536,9 @@ def _solver_frame(scene, solver, publish_surface=True):
 
     fs = scene.fluidsim
     host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
+    # TODO(sim/frame_output.py): accept a display stride in HostFrame.positions
+    # and apply it to the device slice before .numpy(); decimating later in
+    # _render_outputs still transfers every live particle across PCIe.
     positions = (host.positions if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
@@ -519,11 +644,12 @@ def _render_outputs(scene, frame):
             values = frame.surface_attributes.get(fs.surface_attribute_mode)
             colors = _values_to_colors(values) if values is not None else None
             obj = _ensure_object(
-                scene, SURFACE_NAME, lambda: bpy.data.meshes.new(SURFACE_NAME))
+                scene, SURFACE_NAME,
+                lambda: bpy.data.meshes.new(SURFACE_NAME), "MESH")
             _swap_mesh(obj, frame.surface_verts, frame.surface_tris, colors)
             materials.ensure_surface_material(scene, obj)
     else:
-        obj = bpy.data.objects.get(SURFACE_NAME)
+        obj = output_object(scene, SURFACE_NAME)
         if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
             _swap_mesh(
                 obj,
@@ -548,6 +674,7 @@ def _render_outputs(scene, frame):
                 scene,
                 PARTICLES_NAME,
                 lambda: bpy.data.pointclouds.new(PARTICLES_NAME),
+                "POINTCLOUD",
             )
             _swap_points(obj, positions, radius, colors)
         else:
@@ -555,11 +682,12 @@ def _render_outputs(scene, frame):
                 scene,
                 PARTICLES_NAME,
                 lambda: bpy.data.meshes.new(PARTICLES_NAME),
+                "MESH",
             )
             _swap_vertex_cloud(obj, positions, colors)
         materials.ensure_particle_material(scene, obj)
     else:
-        _clear_points(PARTICLES_NAME)
+        _clear_points(scene, PARTICLES_NAME)
 
     if fs.show_whitewater and fs.whitewater_enabled:
         values = frame.whitewater_attributes.get(fs.whitewater_attribute_mode)
@@ -571,18 +699,24 @@ def _render_outputs(scene, frame):
                 scene,
                 WHITEWATER_NAME,
                 lambda: bpy.data.pointclouds.new(WHITEWATER_NAME),
+                "POINTCLOUD",
             )
-            _swap_points(obj, frame.whitewater, radius, colors)
+            # Dynamic whitewater counts make in-place PointCloud.resize plus
+            # attribute replacement unsafe in Blender 5.1 (native crash after
+            # repeated playback frames). Use an atomic datablock swap here.
+            _swap_points(
+                obj, frame.whitewater, radius, colors, reuse_datablock=False)
         else:
             obj = _ensure_object(
                 scene,
                 WHITEWATER_NAME,
                 lambda: bpy.data.meshes.new(WHITEWATER_NAME),
+                "MESH",
             )
             _swap_vertex_cloud(obj, frame.whitewater, colors)
         materials.ensure_whitewater_material(scene, obj)
     else:
-        _clear_points(WHITEWATER_NAME)
+        _clear_points(scene, WHITEWATER_NAME)
 
 
 def refresh_existing_output_settings(scene):
@@ -594,7 +728,7 @@ def refresh_existing_output_settings(scene):
     # recompute attributes or surfaces, but cache/current-output objects should
     # still respond to visibility and material picker changes.
     fs = scene.fluidsim
-    surface = bpy.data.objects.get(SURFACE_NAME)
+    surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
         visible = fs.show_surface and fs.surface_enabled
         surface.hide_viewport = not visible
@@ -602,7 +736,7 @@ def refresh_existing_output_settings(scene):
         if visible:
             materials.ensure_surface_material(scene, surface)
 
-    particles = bpy.data.objects.get(PARTICLES_NAME)
+    particles = output_object(scene, PARTICLES_NAME)
     if particles is not None:
         particles.hide_viewport = not fs.show_particles
         particles.hide_render = not fs.show_particles
@@ -613,7 +747,7 @@ def refresh_existing_output_settings(scene):
                 _set_point_radius(particles.data, radius)
             materials.ensure_particle_material(scene, particles)
 
-    whitewater = bpy.data.objects.get(WHITEWATER_NAME)
+    whitewater = output_object(scene, WHITEWATER_NAME)
     if whitewater is not None:
         visible = fs.show_whitewater and fs.whitewater_enabled
         whitewater.hide_viewport = not visible
@@ -632,7 +766,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     if not sess.active:
         return
     fs = scene.fluidsim
-    surface = bpy.data.objects.get(SURFACE_NAME)
+    surface = output_object(scene, SURFACE_NAME)
     has_surface = (surface is not None and surface.type == "MESH" and
                    len(surface.data.vertices) > 0)
     solver = sess.solver
@@ -656,8 +790,8 @@ def update_outputs_from_cache_frame(scene, frame_data):
     _render_outputs(scene, _cached_frame(scene, frame_data))
 
 
-def _clear_points(name):
-    obj = bpy.data.objects.get(name)
+def _clear_points(scene, name):
+    obj = output_object(scene, name)
     if obj is None:
         return
     if obj.type == "POINTCLOUD" and len(obj.data.points):
@@ -668,17 +802,20 @@ def _clear_points(name):
 
 def remove_outputs(scene=None):
     _require_bpy()
-    for name in (SURFACE_NAME, PARTICLES_NAME, WHITEWATER_NAME):
-        obj = bpy.data.objects.get(name)
+    if scene is not None:
+        objects = [
+            output_object(scene, name)
+            for name in (SURFACE_NAME, PARTICLES_NAME, WHITEWATER_NAME)
+        ]
+    else:
+        objects = [
+            obj for obj in list(bpy.data.objects)
+            if getattr(obj, "get", lambda *_args: None)(OUTPUT_TAG)
+            in {SURFACE_NAME, PARTICLES_NAME, WHITEWATER_NAME}
+        ]
+    for obj in objects:
         if obj is not None:
-            data = obj.data
-            bpy.data.objects.remove(obj)
-            if data is not None and data.users == 0:
-                if isinstance(data, bpy.types.Mesh):
-                    bpy.data.meshes.remove(data)
-                elif hasattr(bpy.data, "pointclouds") and isinstance(
-                        data, bpy.types.PointCloud):
-                    bpy.data.pointclouds.remove(data)
+            _remove_output_object(obj)
 
 
 # ---------------------------------------------------------------------------

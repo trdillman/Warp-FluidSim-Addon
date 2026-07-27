@@ -39,10 +39,12 @@ If you prefer to build the scene yourself instead of using Quick Setup:
 
 1. Create a **domain** object (any mesh) sized to your simulation volume.
    In **Simulation**, assign it to **Domain**.
-2. Create a **source** mesh, select it, and in **Sources** click
-   **Tag Source**. Adjust its shape, emit rate, and initial velocity.
-3. Create collider meshes, select them, and in **Colliders / Sinks** click
-   **Tag Collider** (mesh SDF) or **Tag Sink** (removes liquid).
+2. Create an emitter object, select it, and in **Sources** click
+   **Tag Liquid Emitter**. Choose **Initial Fill** or **Continuous Inflow**, an
+   **Analytic Volume** or **Mesh Surface Shell**, its target particles per voxel,
+   and initial velocity.
+3. Create collider or sink objects, select them, and in **Colliders / Sinks**
+   click **Tag Collider** (mesh SDF) or **Tag Liquid Sink** (removes liquid).
 4. Set **Voxel Size** and **Leaf Capacity** in **Domain / Sparse Grid**.
 5. Click **Initialize Solver**, then **Live: Off** to start, then Play.
 
@@ -69,35 +71,95 @@ resolution and active/total leaves.
 (**Max Speed** + Limit Behavior + Percent), and **Count Stiffness**
 (anti-clumping).
 
-### Sources
-**Tag Source** / **Clear**, **Inject Mesh Vertices Once** (one-shot injection
-of the active object's vertices). Per-source settings: enabled, geometry, shape,
-mode, emit rate, initial velocity, object-velocity inheritance, temperature,
-viscosity, lifespan. **Height Fill** (base height, back mode, velocity,
-particle emission). Lists all tagged sources/sinks/forces.
+### Liquid Emitters
+Use **Tag Liquid Emitter** to create a role-owned workflow. New Phase 3 emitters
+start as **Initial Fill** without changing the saved default of older files.
+Initial Fill acts once after Initialize/Reset; **Continuous Inflow** replenishes
+while Enabled. **Target Particles / Voxel** is occupancy, never volume/second.
 
-The six analytic shapes remain available under **Geometry: Analytic**. Cone
-and Pyramid use their exact Euclidean boundary distance. **Geometry: Mesh**
-uses the tagged object's evaluated triangle mesh, or an optional referenced
-mesh object. Mesh sources emit from the triangle surface; **First Sim Frame**
-retains the evaluated snapshot until reset and **Every Sim Frame** refreshes
-animation, transforms, modifiers, and topology before each simulated frame.
-**Surface Band** controls the field/sink shell width; zero uses the bounded
-voxel-resolution shell. **Inject Mesh Vertices Once** is a separate one-shot
-compatibility utility and is not mesh emission.
+Accepted emission regions are:
 
-### Colliders / Sinks
-**Tag Collider** / **Tag Sink**. Each collider owns its friction, restitution,
-and velocity-transfer settings; collision response uses the values stored on
-the collider whose SDF is hit. Mesh sinks default to **Solid**, which requires a watertight
-mesh and classifies its interior independently of triangle winding; **Surface** accepts open
-meshes and removes particles only in the shell. Empty or degenerate evaluated meshes are
-rejected with an error on the tagged source or sink instead of silently falling back.
-Lists colliders.
+- **Analytic Volume** — the six analytic signed-distance shapes; Cone and
+  Pyramid preserve their exact Euclidean boundary distance.
+- **Mesh Solid Volume** — the interior of a validated watertight mesh. Invalid
+  solid input stops that emitter and never falls back to a shell.
+- **Mesh Surface Shell** — an explicit narrow band around open or closed mesh
+  triangles. The effective half-width is at least half a voxel and is reported.
+- **Points / Particles** — either **Direct Append Once** (not a volume fill) or a
+  **Rasterized Region** that participates in occupancy top-up.
+- **Volume Grid** — an explicit fog/mask or SDF grid from a Blender Volume. The
+  grid's authored transform is composed with the object transform before values
+  are flattened into live 8x8x8 source leaves.
 
-### Forces / Attraction
-Per-object force regions (tag a Source as a force). Force type
-(Off / Directional / Omnidirectional / Spin / Radial), strength, direction.
+**First Sim Frame** retains source geometry until reset. **Every Sim Frame**
+updates animated input, but complex meshes are bounded by the measured
+interactive budget and may require First Sim Frame or lower source resolution.
+Errors for watertightness, missing grids, capacity, memory, or dynamic work are
+shown beside the input that caused them.
+
+Spawn Motion owns Initial Velocity and Add Animated Object Velocity. The
+collapsed **Particle Attributes** panel owns Temperature, Viscosity, **Density
+Attribute** (not physical mass), and optional Lifespan.
+
+### Liquid Sinks
+Sinks have a separate workflow and no emitter lifecycle, occupancy, spawn
+motion, or particle payload controls. Regions are Analytic Volume, Mesh Solid
+Interior, Mesh Surface Shell, or an accepted Volume Grid mask. Watertight status
+appears only for Solid; shell width appears only for Surface Shell. Collision,
+sink, and liquid precedence remains collision > sink > liquid.
+
+### Colliders
+Colliders are mesh obstacles with per-object Friction, Restitution, and Transfer
+Animated Velocity. Collider gathering never performs source/sink watertight
+analysis.
+
+### Domain Height Fill
+Height Fill supports **Flat** and **Profile Image**. Profile samples a real
+grayscale Blender Image across the domain and scales its height offset. It has
+an explicit Initial Fill or Continuous lifecycle, initial velocity, and sampling
+controls. **Infinite** is unsupported and intentionally absent; an old saved
+Infinite value remains unapplied with an actionable compatibility error.
+
+### Point / Particle Injection
+**Inject Active Object Points Once** remains a collapsed compatibility utility
+for mesh vertices, PointCloud points, or the first particle system. It requires
+an initialized solver and never claims volume emission. Reinject on
+Initialize/Reset is labeled as compatibility behavior, not an emitter lifecycle.
+
+### Advanced Field Sources
+Advanced Field Sources are explicitly non-liquid. Accepted targets are Pressure,
+Scalar/Temperature, Vector Velocity, and face-specific Staggered Velocity.
+Analytic constant regions and named Volume grids are shown only for combinations
+that construct a valid frozen SourcePlan. Blend and amount apply only to the
+selected field operation. The legacy `source_mode` is never presented as a
+liquid choice; old FIELD sources are classified as pressure-field compatibility
+inputs.
+
+### Forces
+**Global Grid Forces** provide directional acceleration, a radial force
+(positive repels, negative attracts), velocity diffusion, and exponential
+dissipation of particle temperature, viscosity, or density. **Attract to
+Collision SDF** pulls liquid toward colliders and closed domain walls within a
+chosen distance. Use **Tag Force Region** for an independent analytic region;
+only FORCE-role objects appear in its editor. Regions support Off / Directional /
+Omnidirectional / Spin / Radial; Spin exposes its axis and force regions never
+source liquid.
+All 13 native Blender force-field object types are read automatically as GPU
+proxies, including animated transforms, field shape, strength, flow/noise,
+distance limits, and falloff. Type-specific controls are also bridged: Harmonic
+rest length/damping, Drag coefficients, Texture mode/size/coordinates, Curve
+Guide speed/free/clump controls, Turbulence size/seed, and Fluid Flow source
+direction.
+
+The proxy behavior is intentionally fluid-oriented. Magnetic uses the grid
+velocity, Harmonic is a damped spring, Lennard-Jones uses the minimum distance
+as its fluid interaction scale, and Drag applies linear plus quadratic drag.
+Fluid cells do not have Blender particle charge or boid state, so Charge assumes
+a unit charge and Boid acts as a goal field. Texture is a deterministic GPU
+vector/gradient/curl field seeded by the assigned texture datablock rather than
+a CPU evaluation of arbitrary texture nodes. Curve Guide samples up to four
+curve controls. Fluid Flow uses the source object's local Z direction as its
+target velocity; it does not copy a Mantaflow domain velocity grid.
 
 ### Pressure Projection
 **Solver** (Jacobi / **PCG**), **Iterations**, **Tolerance**, **Threshold**

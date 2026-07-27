@@ -49,6 +49,11 @@ def main():
           hasattr(bpy.data.objects.new("probe", None), "fluidsim"))
 
     fs = scene.fluidsim
+    check(
+        "snippet library fresh-scene default is valid",
+        fs.snippet_library_selection == "NONE",
+        repr(fs.snippet_library_selection),
+    )
     fs.liquid_view_mode = "PARTICLES"
     check("liquid view mode sets particles",
           (fs.show_surface, fs.show_particles) == (False, True),
@@ -72,6 +77,18 @@ def main():
     fs.whitewater_enabled = True
     fs.profiling_enabled = True
     fs.show_particles = True
+    fs.directional_force = (0.0, 0.0, 0.1)
+    fs.omnidirectional_force_center = (0.0, 0.0, 1.0)
+    fs.omnidirectional_force_strength = 0.05
+    fs.omnidirectional_force_radius = 1.0
+    fs.force_diffusion = 0.05
+    fs.dissipation_enabled = True
+    fs.dissipation_attribute = "density"
+    fs.dissipation_rate = 0.1
+    fs.dissipation_target = 1.0
+    fs.attraction_enabled = True
+    fs.attraction_strength = 0.05
+    fs.attraction_max_distance = 0.5
 
     # -- quick setup ----------------------------------------------------------
     result = bpy.ops.fluidsim.setup_scene()
@@ -79,8 +96,28 @@ def main():
     check("domain object assigned", fs.domain_object is not None)
     src = bpy.data.objects.get("FluidSim Source")
     check("source tagged", src is not None and src.fluidsim.role == "SOURCE")
+    if src is not None:
+        src.fluidsim.force_type = "SPIN"
+        src.fluidsim.force_strength = 0.05
+        src.fluidsim.force_direction = (0.0, 0.0, 1.0)
     col = bpy.data.objects.get("FluidSim Collider")
     check("collider tagged", col is not None and col.fluidsim.role == "COLLIDER")
+
+    force_specs = (
+        ("FORCE", -0.03), ("WIND", 0.02), ("VORTEX", 0.01),
+        ("MAGNET", 0.01), ("HARMONIC", 0.01), ("CHARGE", 0.01),
+        ("LENNARDJ", 0.01), ("TEXTURE", 0.01), ("GUIDE", 0.01),
+        ("BOID", 0.01), ("TURBULENCE", 0.01), ("DRAG", 0.01),
+        ("FLUID", 0.01),
+    )
+    for field_type, strength in force_specs:
+        bpy.ops.object.effector_add(type=field_type, location=(0.0, 0.0, 1.0))
+        field = bpy.context.object.field
+        field.strength = strength
+        field.use_max_distance = True
+        field.distance_max = 2.0
+        if field.type == "TEXTURE":
+            field.texture = bpy.data.textures.new("Acceptance Texture", type="CLOUDS")
 
     # -- initialize solver -----------------------------------------------------
     result = bpy.ops.fluidsim.initialize()
@@ -92,6 +129,18 @@ def main():
     check("session active", sess.active)
     check("CUDA device", str(sess.solver.device).startswith("cuda"),
           str(sess.solver.device))
+    check("global force settings bridged",
+          all(abs(actual - expected) < 1.0e-6 for actual, expected in zip(
+              sess.solver.settings.directional_force, (0.0, 0.0, 0.1)))
+          and sess.solver.settings.dissipation_attribute == "density"
+          and sess.solver.settings.attraction_enabled,
+          str(sess.solver.settings))
+    check("native Blender force fields bridged",
+          [field.force_type.name for field in sess.solver.force_fields]
+          == ["FORCE", "WIND", "VORTEX", "MAGNETIC", "HARMONIC",
+              "CHARGE", "LENNARD_JONES", "TEXTURE", "CURVE_GUIDE",
+              "BOID", "TURBULENCE", "DRAG", "FLUID_FLOW"],
+          str(sess.solver.force_fields))
 
     # -- step frames -----------------------------------------------------------
     result = bpy.ops.fluidsim.step(frames=6)
@@ -313,17 +362,21 @@ def main():
     # -- panels draw headlessly? (registration check) ------------------------------
     panel_ids = [
         "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
-        "FLUIDSIM_PT_sources", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-        "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
-        "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets",
-        "FLUIDSIM_PT_snippet_editor", "FLUIDSIM_PT_snippet_shortcuts",
-        "FLUIDSIM_PT_diagnostics", "FLUIDSIM_PT_validation",
+        "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
+        "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
+        "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
+        "FLUIDSIM_PT_advanced_field_sources", "FLUIDSIM_PT_pressure",
+        "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface", "FLUIDSIM_PT_realtime_display",
+        "FLUIDSIM_PT_output", "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_snippet_editor",
+        "FLUIDSIM_PT_snippet_shortcuts", "FLUIDSIM_PT_diagnostics", "FLUIDSIM_PT_validation",
     ]
     missing = [p for p in panel_ids if not hasattr(bpy.types, p)]
-    check("all 16 panels registered", not missing, str(missing))
+    check("all Phase 3 panels registered", not missing, str(missing))
 
     ops = ["initialize", "release", "reset", "step", "toggle_live",
-           "setup_scene", "tag_object", "inject_particles", "run_validation",
+           "setup_scene", "tag_object", "tag_liquid_emitter", "tag_liquid_sink",
+           "tag_collider", "tag_force_region", "tag_field_source", "clear_object_role",
+           "inject_particles", "run_validation",
            "run_benchmark", "write_report", "snippet_add", "snippet_remove",
            "snippet_apply", "snippet_load_preset", "snippet_validate",
            "snippet_autofix", "snippet_test", "snippet_save_preset",

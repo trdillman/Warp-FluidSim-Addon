@@ -13,13 +13,12 @@ Make memory-safety recommendations compatible with the Blender property types us
 - [x] Fractional recommendation math is normalized to the destination property type before assignment.
 - [x] `blender --background --factory-startup --python tests/blender_memory_safety_gate.py` passes through safe-settings application and retry initialization.
 - [x] A regression test covers the Blender RNA assignment boundary and prevents float assignment to `particles_per_voxel`.
-- [x] `python tools/run_production_gate.py --include-gui` reaches and passes the memory-safety lane.
+- [x] The 2026-07-22 `python tools/run_production_gate.py --include-gui` run reaches and passes the memory-safety lane.
 
 ## Evidence
 
-- `fluidSim_warp_blender51/operators.py` normalizes values for destination RNA `INT` properties at the direct assignment seam.
-- `blender --background --factory-startup --python tests/blender_memory_safety_gate.py` emitted `MEMORY-SAFETY-GATE-PASS` on Blender 5.1 / `cuda:0`.
-- `python tools/run_production_gate.py --include-gui` started at `2026-07-21T20:00:16.660750+00:00`, exited `0`, and emitted `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (35/35)`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
+- `POLICY_DRIFT_REPORT.md:103-108` records that the Blender RNA safe-settings boundary is resolved, with integer `particles_per_voxel` recovery and solver advancement verified.
+- `POLICY_DRIFT_REPORT.md:30-39` records the 2026-07-22 Blender 5.1 / `cuda:0` production-lane verification, including `MEMORY-SAFETY-GATE-PASS`, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (35/35)`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 
 ## Blocked by
 

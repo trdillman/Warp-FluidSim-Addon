@@ -1,8 +1,17 @@
-# Synchronize technical demo evidence
+# Superseded: synchronize technical demo evidence
 
 ## State
 
-completed
+superseded
+
+## Superseded by
+
+This combined slice is superseded by
+`backlog/tasks/TASK-POLICY-DRIFT-011-DEMO-EVIDENCE-RECURRENCE.md` for the
+technical report and
+`demos/backlog/tasks/TASK-POLICY-DRIFT-005-CHECKED-IN-EVIDENCE-RECURRENCE.md`
+for the checked-in demo JSON and Markdown. Do not execute this card in
+parallel with those narrower owners.
 
 ## What to build
 
@@ -13,24 +22,23 @@ current generated artifacts and checked-in review evidence.
 
 ## Acceptance criteria
 
-- [x] `demos/analysis_report.json` matches the current generated analysis artifact.
-- [x] `demos/ANALYSIS.md` reports the same metrics, source run, and 18/18 result.
-- [x] `fluidSim_warp_blender51/docs/technical_report.md` uses the same metrics and run provenance.
-- [x] The parent and nested policy reports cite the synchronized source artifact and remain bounded to its executed scale.
+- [ ] `demos/analysis_report.json` matches the current generated analysis artifact.
+- [ ] `demos/ANALYSIS.md` reports the same metrics, source run, and 18/18 result.
+- [ ] `fluidSim_warp_blender51/docs/technical_report.md` uses the same metrics and run provenance.
+- [ ] The parent and nested policy reports cite the synchronized source artifact and remain bounded to its executed scale.
 
 ## Evidence
 
-- Current full lane: `python tools/run_production_gate.py --include-gui` passed at
-  `2026-07-25T16:37:34Z`, HEAD `a6965e679ac3fd276c0c81cbfc1ee67257585739`,
-  with `FULL-PRODUCTION-GATE-PASS` and `DEMO-ANALYSIS-PASS (18/18)`.
-- Current generated artifact: `artifacts/demo_analysis/analysis_report.json`
-  has dam-break values `0.9758126`, `2.5895753`, and `0.0814825 m`.
-- Checked-in `demos/analysis_report.json` and `demos/ANALYSIS.md` now match the
-  generated artifact's metrics and 18/18 result; the technical report records
-  the same source profiles and run provenance.
-- Current `python -m pytest -q` passed `256` tests; synchronization corrected
-  evidence/documentation drift without changing the solver lane.
+- Current full lane: `rtk python tools/run_production_gate.py --include-gui`
+  passed at HEAD `695fad96072e5f00d34cf2c33c132c2a1a896092` with
+  `FULL-PRODUCTION-GATE-PASS` and `DEMO-ANALYSIS-PASS (18/18)`.
+- Current generated artifact has dam-break front ratio `1.0121877903`, column
+  height `0.0852106214 m`, and crown height `0.2748437524 m`.
+- Checked-in JSON/Markdown/technical report still have front ratio
+  `0.9758125585`, column height `0.0952136219 m`, and crown height
+  `0.4082177579 m`; synchronization is unresolved.
+- Current `rtk python -m pytest -q` passed `343` tests.
 
 ## Blocked by
 
-None - can start immediately
+Superseded; use the two narrower cards above.

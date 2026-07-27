@@ -6,18 +6,40 @@ import bpy
 from bpy.props import BoolProperty, StringProperty
 
 
-def _probe_warp():
-    """Report Warp/CUDA availability without initializing a solver."""
+_WARP_PROBE_RESULT = None
+
+
+def _probe_warp(*, force=False):
+    """Report Warp/CUDA availability, cached across preference redraws."""
+    global _WARP_PROBE_RESULT
+    if _WARP_PROBE_RESULT is not None and not force:
+        return _WARP_PROBE_RESULT
     try:
         import warp as wp
 
         wp.init()
         if wp.is_cuda_available():
             dev = wp.get_device("cuda:0")
-            return True, f"Warp {wp.config.version} - {dev.name}"
-        return False, f"Warp {wp.config.version} - no CUDA device"
+            result = (True, f"Warp {wp.config.version} - {dev.name}")
+        else:
+            result = (False, f"Warp {wp.config.version} - no CUDA device")
     except Exception as exc:  # noqa: BLE001
-        return False, f"Warp unavailable: {exc}"
+        result = (False, f"Warp unavailable: {exc}")
+    _WARP_PROBE_RESULT = result
+    return result
+
+
+class FLUIDSIM_OT_redetect_device(bpy.types.Operator):
+    """Explicitly refresh the cached Warp/CUDA device status."""
+
+    bl_idname = "fluidsim.redetect_device"
+    bl_label = "Re-detect Device"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        ok, message = _probe_warp(force=True)
+        self.report({"INFO" if ok else "WARNING"}, message)
+        return {"FINISHED"}
 
 
 class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
@@ -35,15 +57,22 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         layout.prop(self, "device")
         layout.prop(self, "verbose")
         ok, msg = _probe_warp()
-        layout.label(text=msg, icon="CHECKMARK" if ok else "ERROR")
+        row = layout.row(align=True)
+        row.label(text=msg, icon="CHECKMARK" if ok else "ERROR")
+        row.operator("fluidsim.redetect_device", text="", icon="FILE_REFRESH")
         layout.label(
             text="Solver runs GPU-only through NVIDIA Warp/CUDA; "
                  "first initialization compiles kernels (cached afterwards).")
 
 
+CLASSES = (FLUIDSIM_OT_redetect_device, FLUIDSIM_AP_preferences)
+
+
 def register():
-    bpy.utils.register_class(FLUIDSIM_AP_preferences)
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
 
 
 def unregister():
-    bpy.utils.unregister_class(FLUIDSIM_AP_preferences)
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)

@@ -7,9 +7,13 @@ import numpy as np
 
 
 def tag_source(obj, shape="BOX", mode="PARTICLES"):
+    """Create a new P3 liquid emitter without rewriting legacy RNA defaults."""
     obj.fluidsim.role = "SOURCE"
     obj.fluidsim.shape = shape
     obj.fluidsim.source_mode = mode
+    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.source_region_kind = "ANALYTIC"
+    obj.fluidsim.emission_mode = "INITIAL_FILL"
     obj.display_type = "WIRE"
     obj.hide_render = True
     return obj
@@ -17,6 +21,30 @@ def tag_source(obj, shape="BOX", mode="PARTICLES"):
 
 def tag_sink(obj, shape="BOX"):
     obj.fluidsim.role = "SINK"
+    obj.fluidsim.shape = shape
+    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.sink_region_kind = "ANALYTIC"
+    obj.display_type = "WIRE"
+    obj.hide_render = True
+    return obj
+
+
+def tag_field(obj, shape="BOX"):
+    """Tag a non-liquid Advanced Field Source."""
+    obj.fluidsim.role = "FIELD"
+    obj.fluidsim.shape = shape
+    obj.fluidsim.source_mode = "FIELD"
+    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.field_operation = "PRESSURE"
+    obj.fluidsim.field_region_kind = "ANALYTIC"
+    obj.display_type = "WIRE"
+    obj.hide_render = True
+    return obj
+
+
+def tag_force(obj, shape="BOX"):
+    """Tag an object as an analytic force region without sourcing liquid."""
+    obj.fluidsim.role = "FORCE"
     obj.fluidsim.shape = shape
     obj.display_type = "WIRE"
     obj.hide_render = True

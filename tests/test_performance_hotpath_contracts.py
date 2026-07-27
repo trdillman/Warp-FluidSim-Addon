@@ -137,7 +137,7 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
         raising=False)
     swaps = []
     monkeypatch.setattr(viewport, "_swap_mesh", lambda *args: swaps.append(args))
-    monkeypatch.setattr(viewport, "_clear_points", lambda _name: None)
+    monkeypatch.setattr(viewport, "_clear_points", lambda _scene, _name: None)
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
         show_surface=True, surface_enabled=True, surface_attribute_mode="NONE",
         show_particles=False, show_whitewater=False, whitewater_enabled=False))
@@ -157,8 +157,66 @@ def test_whitewater_compaction_is_frame_batched_without_substep_readback():
     assert "ww.compact()" not in substep_source
     assert "ww.free_slots" in substep_source
     assert "ww.free_count" in substep_source
-    assert "ww.compact()" in finalize_source
-    assert "self._finalize_whitewater()" in frame_source
+    assert "ww.compact(active_whitewater)" in finalize_source
+    assert "dim=max(1, active_whitewater)" in finalize_source
+    assert "whitewater_particles = self._finalize_whitewater()" in frame_source
+
+
+def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkeypatch):
+    """Compaction and density scatter must not grow with allocated capacity."""
+    launches = []
+    monkeypatch.setattr(
+        wp, "launch",
+        lambda _kernel, **kwargs: launches.append(kwargs["dim"]),
+    )
+
+    class Density:
+        data = None
+
+        def __init__(self):
+            self.data = self
+
+        def __getitem__(self, _key):
+            return self
+
+        def zero_(self):
+            pass
+
+    class Whitewater:
+        def __init__(self, capacity, before_compaction, after_compaction):
+            self.capacity = capacity
+            self.position = object()
+            self.alive = object()
+            self.count = object()
+            self._counts = iter((before_compaction, after_compaction))
+            self.compact_hints = []
+
+        def refresh_host_count(self):
+            return next(self._counts)
+
+        def compact(self, count_hint):
+            self.compact_hints.append(count_hint)
+
+    results = []
+    for capacity in (128, 131_072):
+        launches.clear()
+        ww = Whitewater(capacity, before_compaction=19, after_compaction=11)
+        solver = SimpleNamespace(
+            settings=SimpleNamespace(whitewater_enabled=True, voxel_size=0.1),
+            whitewater=ww,
+            grid=SimpleNamespace(
+                leaf_table=object(), voxels_dim=object(), leaves_dim=object(),
+                origin=object(),
+            ),
+            ww_density=Density(),
+            _nvox=1,
+            device="cuda:0",
+        )
+
+        active_count = FluidSolver._finalize_whitewater(solver)
+        results.append((active_count, ww.compact_hints, launches.copy()))
+
+    assert results == [(11, [19], [11]), (11, [19], [11])]
 
 
 def test_whitewater_topology_budget_covers_ballistic_motion():
