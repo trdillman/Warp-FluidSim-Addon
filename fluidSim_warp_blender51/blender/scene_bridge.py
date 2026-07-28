@@ -27,6 +27,10 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 # try/finally reset.
 _IN_FRAME_HANDLER = False
 
+# Frame Blender will restore once a render job ends; armed by render.py so the
+# handler can ignore that one frame change. See arm_render_frame_restore.
+_RENDER_RESTORE_FRAME = None
+
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
@@ -1546,9 +1550,31 @@ def _on_playback_pre(scene, *_args):
 # handler here would be silently removed depending on registration order.
 
 
+def arm_render_frame_restore(frame):
+    """Ignore the frame change Blender fires to restore the pre-render frame.
+
+    Blender jumps back to the frame the render started from once the job ends.
+    That frame change is Blender's own bookkeeping, not a user gesture, but it
+    reaches the frame handler like any other: after a 1-4 animation render from
+    frame 5 it stepped the solver one more time and wrote that state into the
+    cache at index 5 -- a frame the user never simulated. One-shot and matched
+    on the exact frame, so a user scrub that happens to come next is untouched.
+    """
+    global _RENDER_RESTORE_FRAME
+    _RENDER_RESTORE_FRAME = int(frame)
+
+
 @persistent
 def _on_frame_change(scene, depsgraph):
     global _IN_FRAME_HANDLER
+    global _RENDER_RESTORE_FRAME
+    restore_frame, _RENDER_RESTORE_FRAME = _RENDER_RESTORE_FRAME, None
+    if (restore_frame is not None and scene is not None
+            and scene.frame_current == restore_frame):
+        # Keep the bookkeeping level with the timeline so the next real frame
+        # change steps once per frame instead of catching up over the render.
+        session().last_frame = restore_frame
+        return
     if _IN_FRAME_HANDLER:
         # A nested frame change (scene.frame_set from inside the handler, or
         # another add-on's handler driving the timeline) would step the solver
