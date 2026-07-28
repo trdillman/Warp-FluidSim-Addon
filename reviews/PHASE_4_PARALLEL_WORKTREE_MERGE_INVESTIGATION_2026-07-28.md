@@ -7,7 +7,7 @@
 
 > **Post-investigation update:** The empty landing branch described below was subsequently populated and committed as `phase4/live-interaction-merge-20260728`. Master commits `239f80a` and `af4136e` were merged into it, all integration gates passed, and the branch finished 0 commits behind master.
 >
-> **Classification correction:** `…_port_native_interop_main_20260715` and `…_port_native_interop` are archived **branched experiments, not genuine worktree candidates**. They must be excluded from merge-readiness recommendations. Conflict data below is retained only as historical forensic evidence and must not be interpreted as an integration plan.
+> **Classification correction:** `…_port_native_interop_main_20260715`, `…_port_native_interop`, and `.claude/worktrees/particle-surface-rendering-apis-f62356` are archived **branched experiments, not genuine worktree candidates**. They must be excluded from merge-readiness recommendations. Conflict data below is retained only as historical forensic evidence and must not be interpreted as an integration plan.
 
 ---
 
@@ -37,10 +37,10 @@
 | 10 | `.codex/worktrees/arch-deepen/…` | `codex/deepen-fluidsim-architecture-seams` `57afa59` | 0 / 56 | clean | none | **Prune** — fully in master |
 | 11 | `.codex/worktrees/e9bf/…` | detached `6bc8916` | 0 / 38 | clean | none | Prune |
 | 12 | `.codex/worktrees/merge-architecture-main/…` | `codex/integrate-master-architecture-20260713` `e80ea01` | 0 / 43 | clean | none | **Prune** — architecture integration already in master |
-| 13 | `…_port/.claude/worktrees/particle-surface-rendering-apis-f62356` | `claude/particle-surface-rendering-apis-f62356` `697fe6e` | 1 / 16 | dirty 5 (docs + `?? backlogs/`) | `697fe6e docs(policy-drift): re-audit the nested worktree` (docs only) | Docs-only; mergeable anytime |
+| 13 | `…_port/.claude/worktrees/particle-surface-rendering-apis-f62356` | `claude/particle-surface-rendering-apis-f62356` `697fe6e` | 1 / 16 | dirty 5 (docs + `?? backlogs/`) | `697fe6e docs(policy-drift): re-audit the nested worktree` (docs only) | **EXPERIMENT — NOT A MERGE CANDIDATE** |
 | 14 | `…_port_cherry_pick_merge` | detached `2635080` | 0 / 102 | dirty 4 (`D CLAUDE.md`, `D sim/__init__.py`, `?? review_2635080.blend`) | none | **Prune** — 102 behind, deletions look accidental |
 
-Historical `git merge-tree` preview for the two branches with unique commits. The native-interop result is forensic only; it does **not** make that experiment a merge candidate:
+Historical `git merge-tree` preview for the two branches with unique commits. Both results are forensic only; neither experiment is a merge candidate:
 
 ```
 codex/native-gpu-interop            -> CONFLICT AGENTS.md
@@ -141,7 +141,7 @@ The Phase-4 worktree is at `695fad9`, *before* `246fa90` tracked the test suite.
 
 **Step 6 — Exclude native GPU interop.** Both `…_native_interop_main_20260715` and `codex/native-gpu-interop` are archived branched experiments, not integration candidates. Do not rebase, merge, cherry-pick, or extract from them without an explicit user request to reactivate the experiment under a new implementation and validation plan. Historical overlap in `viewport.py`, `scene_bridge.py`, and `pressure.py` is collision evidence only—not future work.
 
-**Step 7 — `claude/particle-surface-rendering-apis-f62356`** (docs only, 2 `POLICY_DRIFT_REPORT.md` conflicts). Merge anytime. Note it is a *nested* worktree living inside master's checkout at `.claude/worktrees/…` — a nested-checkout hazard for any recursive tooling.
+**Step 7 — Exclude rendering APIs.** `claude/particle-surface-rendering-apis-f62356` is an archived branched experiment, not a docs-only merge candidate. Do not merge its commit, policy reports, or backlog files without an explicit user request to reactivate the experiment. It is also a nested checkout inside master at `.claude/worktrees/…`, so recursive tooling must avoid traversing it.
 
 **Step 8 — Prune** `arch-deepen`, `merge-architecture-main`, `54d6`, `e9bf`, `orbit-gpu-pcg-baseline`, `cherry_pick_merge` (all fully contained in master, 0 unique commits, 29–102 behind).
 
