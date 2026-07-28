@@ -28,6 +28,7 @@ No bpy imports allowed here.
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 
 import warp as wp
 
@@ -1243,6 +1244,9 @@ register_fn(k_pressure_scale, "fluidSimPressureScale")
 class PressureSolver:
     """Owns pressure work buffers and runs Jacobi or PCG projections."""
 
+    # Captured CUDA graphs kept alive at once, evicted least-recently-used.
+    _PCG_GRAPH_CAPACITY = 8
+
     def __init__(self, grid, device):
         self.grid = grid
         self.device = device
@@ -1291,7 +1295,7 @@ class PressureSolver:
         self._pcg_alpha_cmds = None
         self._pcg_beta_cmds = None
         self._pcg_pack_cmds = None
-        self._pcg_graphs = {}
+        self._pcg_graphs = OrderedDict()
         self.last_iterations = 0
         self.last_residual = 0.0
         self.last_residual_squared = 0.0
@@ -1332,14 +1336,31 @@ class PressureSolver:
         self.pressure_count = int(self._pressure_count.numpy()[0])
         return self.pressure_count
 
+    def _zero_pcg_vectors(self, n, x):
+        """Clear the PCG working set over the launch range [0, n).
+
+        Both PCG solvers launch and reduce over ``n`` derived from the host
+        leaf mirror, while the kernels themselves are guarded by the
+        device-side ``num_leaves``. Any slot the device guard skips is never
+        written by the initializer, so without this it would carry the
+        previous frame's values straight into the r.z / p.Ap reductions.
+        """
+        for array in (x, self.r, self.z, self.p_dir, self.ap):
+            array[:n].zero_()
+
     def _launch_pcg_batch(self, work_n, batch):
         """Launch an unchanged fixed-coefficient PCG batch as one CUDA graph."""
         start_parity = 0 if self.rz is self._pcg_rz_a else 1
         key = (work_n, batch, start_parity)
         graph = self._pcg_graphs.get(key)
-        if graph is None:
-            if len(self._pcg_graphs) >= 8:
-                self._pcg_graphs.clear()
+        if graph is not None:
+            self._pcg_graphs.move_to_end(key)
+        else:
+            # Evict one LRU entry. Flushing the whole map instead forced every
+            # surviving key to re-capture (and re-pay the synchronize below)
+            # every time the tail-iteration batch minted a fresh key.
+            if len(self._pcg_graphs) >= self._PCG_GRAPH_CAPACITY:
+                self._pcg_graphs.popitem(last=False)
             self._pcg_apply_cmd.set_dim(work_n)
             self._pcg_update_cmd.set_dim(work_n)
             self._pcg_update_p_cmd.set_dim(work_n)
@@ -1594,6 +1615,7 @@ class PressureSolver:
         n = self._dim()
         x = self.pressure
         self.x0[:n].zero_()
+        self._zero_pcg_vectors(n, x)
         wp.launch(
             k_initialize_pcg, dim=n,
             inputs=[self.rhs, self.x0, self.inv_diag,
@@ -1799,8 +1821,7 @@ class PressureSolver:
             self.coarse_initial_guess(voxel_type)
         else:
             self.x0[:full_n].zero_()
-        for array in (x, self.r, self.z, self.p_dir, self.ap):
-            array[:full_n].zero_()
+        self._zero_pcg_vectors(full_n, x)
         wp.launch(
             k_initialize_pcg, dim=work_n,
             inputs=[self.rhs, self.x0, self.inv_diag, self.pressure_indices,
