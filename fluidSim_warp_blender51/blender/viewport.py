@@ -354,6 +354,15 @@ def _supports_pointcloud():
     return hasattr(bpy.data, "pointclouds")
 
 
+def _ensure_point_object(scene, name):
+    """Get/create a point output object, native point cloud where available."""
+    if _supports_pointcloud():
+        return _ensure_object(
+            scene, name, lambda: bpy.data.pointclouds.new(name), "POINTCLOUD")
+    return _ensure_object(
+        scene, name, lambda: bpy.data.meshes.new(name), "MESH")
+
+
 def _can_reuse_pointcloud(pc, point_count, wants_color):
     """Return whether an attached Blender point cloud is safe to overwrite."""
     if (pc is None or getattr(pc, "users", 1) != 1
@@ -646,6 +655,31 @@ def _cached_frame(scene, frame_data):
     )
 
 
+def ensure_outputs(scene):
+    """Create the output collection, objects and materials up front.
+
+    Everything here allocates Blender IDs and, for the collection, changes
+    depsgraph relations. _render_outputs would otherwise do it on the first
+    live frame -- i.e. from inside frame_change_post, while the depsgraph the
+    handler was handed is still being evaluated. Doing it at initialize time
+    leaves the handler writing geometry into IDs that already exist.
+    """
+    _require_bpy()
+    from . import materials
+
+    fs = scene.fluidsim
+    if fs.show_surface and fs.surface_enabled:
+        materials.ensure_surface_material(scene, _ensure_object(
+            scene, SURFACE_NAME,
+            lambda: bpy.data.meshes.new(SURFACE_NAME), "MESH"))
+    if fs.show_particles:
+        materials.ensure_particle_material(
+            scene, _ensure_point_object(scene, PARTICLES_NAME))
+    if fs.show_whitewater and fs.whitewater_enabled:
+        materials.ensure_whitewater_material(
+            scene, _ensure_point_object(scene, WHITEWATER_NAME))
+
+
 def _render_outputs(scene, frame):
     _require_bpy()
     from . import materials
@@ -682,21 +716,10 @@ def _render_outputs(scene, frame):
         colors = _values_to_colors(values) if values is not None else None
         radius = (frame.voxel_size * 0.25 *
                   getattr(fs, "particle_display_scale", 1.0))
+        obj = _ensure_point_object(scene, PARTICLES_NAME)
         if _supports_pointcloud():
-            obj = _ensure_object(
-                scene,
-                PARTICLES_NAME,
-                lambda: bpy.data.pointclouds.new(PARTICLES_NAME),
-                "POINTCLOUD",
-            )
             _swap_points(obj, positions, radius, colors)
         else:
-            obj = _ensure_object(
-                scene,
-                PARTICLES_NAME,
-                lambda: bpy.data.meshes.new(PARTICLES_NAME),
-                "MESH",
-            )
             _swap_vertex_cloud(obj, positions, colors)
         materials.ensure_particle_material(scene, obj)
     else:
@@ -707,25 +730,14 @@ def _render_outputs(scene, frame):
         colors = _values_to_colors(values) if values is not None else None
         radius = (frame.voxel_size * 0.15 *
                   getattr(fs, "whitewater_display_scale", 1.0))
+        obj = _ensure_point_object(scene, WHITEWATER_NAME)
         if _supports_pointcloud():
-            obj = _ensure_object(
-                scene,
-                WHITEWATER_NAME,
-                lambda: bpy.data.pointclouds.new(WHITEWATER_NAME),
-                "POINTCLOUD",
-            )
             # Dynamic whitewater counts make in-place PointCloud.resize plus
             # attribute replacement unsafe in Blender 5.1 (native crash after
             # repeated playback frames). Use an atomic datablock swap here.
             _swap_points(
                 obj, frame.whitewater, radius, colors, reuse_datablock=False)
         else:
-            obj = _ensure_object(
-                scene,
-                WHITEWATER_NAME,
-                lambda: bpy.data.meshes.new(WHITEWATER_NAME),
-                "MESH",
-            )
             _swap_vertex_cloud(obj, frame.whitewater, colors)
         materials.ensure_whitewater_material(scene, obj)
     else:

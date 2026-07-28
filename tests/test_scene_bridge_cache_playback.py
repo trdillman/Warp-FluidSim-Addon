@@ -497,6 +497,76 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     )
 
 
+def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
+    """``initialize()`` must create the output IDs, not the first live frame.
+
+    ``_ensure_object`` allocates objects and links a collection -- a depsgraph
+    relations change. Leaving that to ``_render_outputs`` means it happens
+    inside ``frame_change_post``, against a depsgraph still being evaluated.
+    """
+    _install_scene_bridge_stubs(monkeypatch)
+    import bpy
+
+    bpy.data = SimpleNamespace(
+        objects=SimpleNamespace(get=lambda _name: None),
+        meshes=SimpleNamespace(new=lambda name: SimpleNamespace(name=name)),
+        pointclouds=SimpleNamespace(new=lambda name: SimpleNamespace(name=name)),
+        collections=_FakeCollectionsStore(),
+    )
+    fake_materials = types.ModuleType("fluidSim_warp_blender51.blender.materials")
+    calls = []
+    for kind in ("surface", "particle", "whitewater"):
+        setattr(
+            fake_materials, f"ensure_{kind}_material",
+            lambda _scene, obj, kind=kind: calls.append(("material", kind)))
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials
+    )
+    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
+    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+
+    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(
+        viewport, "_ensure_object",
+        lambda _scene, name, _factory, *_a, **_k: (
+            calls.append(("object", name)) or SimpleNamespace(name=name)),
+    )
+    for name in ("_swap_mesh", "_swap_points", "_swap_vertex_cloud",
+                 "_clear_points"):
+        monkeypatch.setattr(viewport, name, _no_geometry_write(name))
+
+    fs = SimpleNamespace(
+        show_surface=True, surface_enabled=True,
+        show_particles=True,
+        show_whitewater=True, whitewater_enabled=True,
+    )
+    scene = SimpleNamespace(fluidsim=fs, collection=_fake_scene_collection())
+
+    viewport.ensure_outputs(scene)
+
+    assert calls == [
+        ("object", viewport.SURFACE_NAME), ("material", "surface"),
+        ("object", viewport.PARTICLES_NAME), ("material", "particle"),
+        ("object", viewport.WHITEWATER_NAME), ("material", "whitewater"),
+    ]
+
+    # Disabled outputs stay unallocated -- toggling one on later goes through
+    # request_scene_update, which runs outside the handler.
+    calls.clear()
+    fs.surface_enabled = False
+    fs.show_whitewater = False
+    viewport.ensure_outputs(scene)
+
+    assert calls == [("object", viewport.PARTICLES_NAME),
+                     ("material", "particle")]
+
+
+def _no_geometry_write(name):
+    def _fail(*_args, **_kwargs):
+        raise AssertionError(f"ensure_outputs must not call {name}")
+    return _fail
+
+
 def test_pointcloud_reuse_requires_stable_count_and_color_schema(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     from fluidSim_warp_blender51.blender import viewport

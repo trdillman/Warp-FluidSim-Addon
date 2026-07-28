@@ -18,6 +18,14 @@ from .scene_inputs import SceneInputs
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
+# True while _on_frame_change is on the stack. The handler runs inside the
+# depsgraph evaluation it was handed, so anything it writes to scene.fluidsim
+# can fire an RNA update callback that re-enters this module from inside that
+# window -- fs.live = False on the error path is the standing example.
+# Same idiom as properties._LIQUID_VIEW_SYNCING: module bool, early return,
+# try/finally reset.
+_IN_FRAME_HANDLER = False
+
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
@@ -138,6 +146,11 @@ class Session:
                 for pg in fs.snippets:
                     if pg.kernel_name == name:
                         pg.last_error = str(error)[:256]
+            # Allocate the output objects/materials here rather than letting
+            # the first live frame create them from inside frame_change_post.
+            from . import viewport
+
+            viewport.ensure_outputs(scene)
             fs.status = "Solver ready"
             self.memory_assessment = {}
             return self
@@ -148,6 +161,13 @@ class Session:
             raise
 
     def set_live_enabled(self, scene, enabled):
+        if _IN_FRAME_HANDLER:
+            # Reached from the frame-change handler writing fs.live, which
+            # fires properties._on_live_changed synchronously. The handler
+            # owns its own teardown; re-entering here would run initialize()
+            # -- a full GPU allocation -- or touch Blender IDs while the
+            # depsgraph the handler was handed is still mid-evaluation.
+            return
         fs = scene.fluidsim
         if enabled:
             if getattr(fs, "cache_playback_enabled", False):
@@ -381,10 +401,9 @@ class Session:
                 self.step(scene, timeline_frame=frame - offset)
         except Exception as exc:  # noqa: BLE001 - never break playback
             self.set_error(scene, repr(exc))
-            # Toggling live invokes the property callback, which writes
-            # "Live simulation disabled". Do that first, then restore the
-            # actual error so the user sees the cause rather than a generic
-            # lifecycle message.
+            # The property callback this fires is suppressed while the handler
+            # is on the stack (see set_live_enabled), so the status written
+            # below is the one the user sees.
             fs.live = False
             fs.status = f"Solver error: {exc}"
             self.release(preserve_error=True)
@@ -923,7 +942,17 @@ def request_scene_update(scene, action: SceneUpdate):
 
 @persistent
 def _on_frame_change(scene, depsgraph):
-    session().handle_frame_change(scene, depsgraph)
+    global _IN_FRAME_HANDLER
+    if _IN_FRAME_HANDLER:
+        # A nested frame change (scene.frame_set from inside the handler, or
+        # another add-on's handler driving the timeline) would step the solver
+        # recursively against a depsgraph the outer call still owns.
+        return
+    _IN_FRAME_HANDLER = True
+    try:
+        session().handle_frame_change(scene, depsgraph)
+    finally:
+        _IN_FRAME_HANDLER = False
 
 
 @persistent

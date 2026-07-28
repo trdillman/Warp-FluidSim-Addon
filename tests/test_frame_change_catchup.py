@@ -201,6 +201,85 @@ def test_unregister_handlers_releases_the_session(monkeypatch):
     assert released == [True]
 
 
+def test_a_nested_frame_change_takes_no_second_pass(monkeypatch):
+    """``scene.frame_set`` from inside the handler re-enters it synchronously.
+
+    The bake loop already does exactly that. A nested pass would step the
+    solver again against a depsgraph the outer call still owns, so the
+    handler refuses re-entry rather than relying on every caller to
+    suppress it.
+    """
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    seen = []
+
+    def _handle(self, scn, depsgraph):
+        seen.append(scn.frame_current)
+        if len(seen) == 1:
+            scene_bridge._on_frame_change(_scene(6), depsgraph)
+
+    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+
+    scene_bridge._on_frame_change(_scene(5), None)
+
+    assert seen == [5]
+    # The guard resets, so the next real frame change is served normally.
+    scene_bridge._on_frame_change(_scene(7), None)
+    assert seen == [5, 7]
+
+
+def test_the_guard_resets_when_the_handler_raises(monkeypatch):
+    """A one-shot failure must not wedge playback for the rest of the session."""
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    calls = []
+
+    def _handle(self, scn, depsgraph):
+        calls.append(scn.frame_current)
+        if len(calls) == 1:
+            raise RuntimeError("handler exploded")
+
+    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+
+    with pytest.raises(RuntimeError):
+        scene_bridge._on_frame_change(_scene(5), None)
+    scene_bridge._on_frame_change(_scene(6), None)
+
+    assert calls == [5, 6]
+
+
+def test_a_live_write_from_inside_the_handler_cannot_re_enter_the_session(
+        monkeypatch):
+    """``fs.live = False`` on the error path runs ``_on_live_changed`` inline.
+
+    Blender fires the RNA update callback synchronously on assignment, so
+    the handler's teardown lands back in ``set_live_enabled`` while the
+    depsgraph it was handed is still mid-evaluation. Re-entering there can
+    allocate a whole GPU solver from inside ``frame_change_post``.
+    """
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    initialized = []
+    monkeypatch.setattr(
+        scene_bridge.Session, "initialize",
+        lambda self, scn, **kwargs: initialized.append(True))
+    scene = _scene(5)
+
+    def _handle(self, scn, depsgraph):
+        # Stands in for properties._on_live_changed, which Blender runs
+        # inline on the fs.live assignment at the end of the error path.
+        scene_bridge.set_live_enabled(scn, True)
+        scene_bridge.set_live_enabled(scn, False)
+
+    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+
+    scene_bridge._on_frame_change(scene, None)
+
+    assert initialized == []
+    assert scene.fluidsim.status == ""
+
+    # Outside the handler the same call does its normal work.
+    scene_bridge.set_live_enabled(scene, False)
+    assert scene.fluidsim.status == "Live simulation disabled"
+
+
 def test_vram_snapshot_costs_no_sleep_and_no_subprocess(monkeypatch):
     """The capacity check sits on the frame-change path; telemetry must not.
 
