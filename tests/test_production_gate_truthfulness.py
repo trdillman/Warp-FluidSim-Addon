@@ -17,6 +17,8 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(
         run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda: None)
     monkeypatch.setenv("BLENDER_EXE", "blender")
     monkeypatch.setenv("BLENDER_PY", "python")
     monkeypatch.delenv("FLUIDSIM_USER_PATH_PROFILE", raising=False)
@@ -50,6 +52,8 @@ def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypa
     monkeypatch.setattr(run_production_gate, "_run", fake_run)
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda: None)
     monkeypatch.setenv("BLENDER_EXE", "blender")
     monkeypatch.setenv("BLENDER_PY", "python")
 

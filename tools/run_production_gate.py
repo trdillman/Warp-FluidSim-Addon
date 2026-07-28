@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -55,6 +57,7 @@ CANONICAL_DEMO_SCENES = (
     "dam_break",
     "crown_splash",
 )
+GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 
 
 def _env():
@@ -150,6 +153,31 @@ def _print_gate_metadata(blender_exe, blender_py, include_gui):
     print(f"gui_acceptance: {'included' if include_gui else 'not-run-headless-gate'}")
 
 
+def _clear_gate_manifest():
+    try:
+        GATE_MANIFEST.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _write_gate_manifest():
+    artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
+    if not artifact.is_file():
+        raise RuntimeError(f"missing generated demo artifact: {artifact}")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    manifest = {
+        "gate_run_at": _dt.datetime.now(_dt.UTC).isoformat(),
+        "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
+        "git_head": _git_text("rev-parse", "HEAD"),
+        "include_gui": True,
+        "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
+        "demo_artifact_sha256": digest,
+    }
+    GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
+                             encoding="utf-8")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run FluidSim verification gates with explicit GUI semantics.",
@@ -171,6 +199,7 @@ def main(argv=None):
     include_gui = args.include_gui or os.environ.get("FLUIDSIM_FULL_GUI_ACCEPTANCE") == "1"
     env = _env()
 
+    _clear_gate_manifest()
     _print_gate_metadata(blender_exe, blender_py, include_gui)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
@@ -318,6 +347,7 @@ def main(argv=None):
             "artifacts/user_path_profile.json",
         ])
     if include_gui:
+        _write_gate_manifest()
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
         print("\nHEADLESS-GATE-PASS")
