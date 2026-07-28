@@ -744,13 +744,18 @@ class FluidSolver:
             host_frame.solver = None
         self._host_frame_cache = None
 
-        surface = self.surface
+        surface = getattr(self, "surface", None)
         if surface is not None:
             surface.extractor.reset_buffers()
             if surface.render_extractor is not surface.extractor:
                 surface.render_extractor.reset_buffers()
             surface.solver = None
-        self.surface = None
+        # Drop the attribute rather than nulling it: _render_surface_voxel_size
+        # and io.cache._frame_payload both gate on hasattr(..., "surface"), and
+        # a None left in place turns that guard into an AttributeError that
+        # masks the solver error being handled.
+        if hasattr(self, "surface"):
+            del self.surface
 
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:

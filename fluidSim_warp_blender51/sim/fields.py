@@ -479,6 +479,14 @@ class SparseGrid:
         h = self.voxel_size
         lo = [int(np.floor((lo_world[i] - self.origin[i]) / h)) for i in range(3)]
         hi = [int(np.floor((hi_world[i] - self.origin[i]) / h)) for i in range(3)]
+        # A box with no domain overlap must be rejected, not clamped: clamping
+        # glues it to the domain boundary corner and marks leaves there, so an
+        # out-of-domain source appears to work from the wrong place. A box that
+        # only partly overlaps is still clamped to the overlapping part.
+        if any(hi[i] < 0 or lo[i] > int(self.voxels_dim[i]) - 1 for i in range(3)):
+            raise ValueError(
+                f"world box {tuple(lo_world)} .. {tuple(hi_world)} lies entirely "
+                f"outside the simulation domain")
         lo = [max(0, min(int(self.voxels_dim[i]) - 1, lo[i])) for i in range(3)]
         hi = [max(0, min(int(self.voxels_dim[i]) - 1, hi[i])) for i in range(3)]
         n_leaves = 1

@@ -104,15 +104,20 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "domain_sdf_walls")
         from .blender.scene_bridge import _domain_bounds, session
 
-        lo, hi = _domain_bounds(context.scene)
-        dims = tuple(hi[i] - lo[i] for i in range(3))
-        vox = tuple(int(d / max(fs.voxel_size, 1e-6)) for d in dims)
         box = layout.box()
-        box.label(text=f"Resolution: {vox[0]} x {vox[1]} x {vox[2]}")
-        sess = session()
-        if sess.active:
-            g = sess.solver.grid
-            box.label(text=f"Leaves: {g.active_leaf_count}/{g.capacity}")
+        # A draw callback runs on every redraw and an exception here takes the
+        # whole sidebar down, so report the failure in the panel instead.
+        try:
+            lo, hi = _domain_bounds(context.scene)
+            dims = tuple(hi[i] - lo[i] for i in range(3))
+            vox = tuple(int(d / max(fs.voxel_size, 1e-6)) for d in dims)
+            box.label(text=f"Resolution: {vox[0]} x {vox[1]} x {vox[2]}")
+            sess = session()
+            if sess.active:
+                g = sess.solver.grid
+                box.label(text=f"Leaves: {g.active_leaf_count}/{g.capacity}")
+        except Exception as exc:  # noqa: BLE001 - draw must never raise
+            box.label(text=f"Domain unavailable: {exc}"[:120], icon="ERROR")
 
 
 class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):

@@ -26,6 +26,17 @@ def _configured_device():
     return "cuda:0"
 
 
+class _FLUIDSIM_OT_session_base:
+    """Grey out operators that cannot do anything without a live solver."""
+
+    @classmethod
+    def poll(cls, context):
+        if not _bridge().session().active:
+            cls.poll_message_set("Initialize the solver first")
+            return False
+        return True
+
+
 class FLUIDSIM_OT_initialize(bpy.types.Operator):
     """Create (or recreate) the GPU solver from current scene settings"""
 
@@ -64,7 +75,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_release(bpy.types.Operator):
+class FLUIDSIM_OT_release(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Release the GPU solver and free device memory"""
 
     bl_idname = "fluidsim.release"
@@ -109,9 +120,17 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
         bridge = _bridge()
         scene = context.scene
         fs = scene.fluidsim
-        settings = bridge.build_settings(scene)
-        resources = resource_snapshot(settings.device)
-        assessment = assess_configuration(settings, resources)
+        # Deliberately no set_error here: this operator is the recovery path
+        # for the error already on screen, and clobbering it would hide the
+        # failure the user is trying to recover from.
+        try:
+            settings = bridge.build_settings(scene)
+            resources = resource_snapshot(settings.device)
+            assessment = assess_configuration(settings, resources)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Safe Settings inspection failed: {exc}")
+            fs.status = f"Safe settings failed: {exc}"
+            return {"CANCELLED"}
         budget = assessment["budget_bytes"]
         recommended = dict(assessment["recommended"])
 
@@ -166,7 +185,7 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_reset(bpy.types.Operator):
+class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Reset the simulation to an empty state"""
 
     bl_idname = "fluidsim.reset"
@@ -181,7 +200,7 @@ class FLUIDSIM_OT_reset(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_step(bpy.types.Operator):
+class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Advance the simulation by a number of frames"""
 
     bl_idname = "fluidsim.step"
@@ -434,8 +453,11 @@ class FLUIDSIM_OT_clear_object_role(_FLUIDSIM_OT_role_tag_base, bpy.types.Operat
         if not selected:
             cls.poll_message_set("Select at least one tagged object")
             return False
-        return any(getattr(getattr(obj, "fluidsim", None), "role", "NONE") != "NONE"
-                   for obj in selected)
+        if not any(getattr(getattr(obj, "fluidsim", None), "role", "NONE") != "NONE"
+                   for obj in selected):
+            cls.poll_message_set("Select at least one object with a FluidSim role")
+            return False
+        return True
 
 
 class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
@@ -471,16 +493,22 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
             self.report({"ERROR"}, "No active object")
             return {"CANCELLED"}
         from .blender import sources as _sources
-
-        n = _sources.inject_object_particles(context.scene, obj, sess)
         from .blender import viewport
 
-        viewport.update_outputs(context.scene, sess)
+        scene = context.scene
+        try:
+            n = _sources.inject_object_particles(scene, obj, sess)
+            viewport.update_outputs(scene, sess)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Particle injection failed: {exc}")
+            bridge.set_error(scene, f"Particle injection failed: {exc}")
+            scene.fluidsim.status = f"Injection failed: {exc}"
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Injected {n:,} particles from {obj.name}")
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_run_validation(bpy.types.Operator):
+class FLUIDSIM_OT_run_validation(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Run the 13-test GPU validation suite (may take ~30s)"""
 
     bl_idname = "fluidsim.run_validation"
@@ -508,7 +536,7 @@ class FLUIDSIM_OT_run_validation(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_run_benchmark(bpy.types.Operator):
+class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Run the deterministic benchmark scenario and store results"""
 
     bl_idname = "fluidsim.run_benchmark"
@@ -556,7 +584,7 @@ class FLUIDSIM_OT_run_benchmark(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_write_report(bpy.types.Operator):
+class FLUIDSIM_OT_write_report(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Write profiling / validation / benchmark data to a JSON report"""
 
     bl_idname = "fluidsim.write_report"
@@ -569,16 +597,22 @@ class FLUIDSIM_OT_write_report(bpy.types.Operator):
         sess = bridge.session()
         from .diagnostics import report as report_mod
 
-        rep = report_mod.build_report(
-            profiler=sess.profiler,
-            frame_stats=sess.frame_stats,
-            benchmark=sess.benchmark_result,
-            validation=sess.validation_results,
-            extra={"benchmark_comparison": sess.benchmark_compare}
-            if sess.benchmark_compare else None,
-        )
         path = bpy.path.abspath(fs.report_path)
-        report_mod.write_report(path, rep)
+        try:
+            rep = report_mod.build_report(
+                profiler=sess.profiler,
+                frame_stats=sess.frame_stats,
+                benchmark=sess.benchmark_result,
+                validation=sess.validation_results,
+                extra={"benchmark_comparison": sess.benchmark_compare}
+                if sess.benchmark_compare else None,
+            )
+            report_mod.write_report(path, rep)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Report write failed: {exc}")
+            bridge.set_error(scene, f"Report write failed: {exc}")
+            fs.status = f"Report write failed: {exc}"
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Report written: {path}")
         return {"FINISHED"}
 
@@ -652,7 +686,7 @@ class FLUIDSIM_OT_snippet_argument_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_snippet_apply(bpy.types.Operator):
+class FLUIDSIM_OT_snippet_apply(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Compile custom snippets and attach them to the running solver"""
 
     bl_idname = "fluidsim.snippet_apply"
@@ -1094,7 +1128,7 @@ class FLUIDSIM_OT_snippet_line_delete(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_export_frame(bpy.types.Operator):
+class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Export the current simulation frame (surface + particles) to disk"""
 
     bl_idname = "fluidsim.export_frame"
@@ -1114,8 +1148,15 @@ class FLUIDSIM_OT_export_frame(bpy.types.Operator):
             return {"CANCELLED"}
         from .io import export as export_mod
 
+        scene = context.scene
         base = bpy.path.abspath(self.filepath)
-        paths = export_mod.export_frame(sess.solver, base)
+        try:
+            paths = export_mod.export_frame(sess.solver, base)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Frame export failed: {exc}")
+            bridge.set_error(scene, f"Frame export failed: {exc}")
+            scene.fluidsim.status = f"Frame export failed: {exc}"
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Exported: {', '.join(paths)}")
         return {"FINISHED"}
 

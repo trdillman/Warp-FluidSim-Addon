@@ -212,7 +212,10 @@ def test_solver_release_breaks_gpu_owning_backreferences():
     assert surface.solver is None
     assert sourcing.owner is None
     assert host_frame.solver is None
-    assert solver.surface is None
+    # Dropped, not nulled: _render_surface_voxel_size (solver.py:795) and
+    # io.cache._frame_payload (cache.py:123) both gate on hasattr, so a None
+    # left in place turns the released-state guard into an AttributeError.
+    assert not hasattr(solver, "surface")
     assert solver.sourcing is None
     assert solver._host_frame_cache is None
 
