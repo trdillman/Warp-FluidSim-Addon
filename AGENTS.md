@@ -2,6 +2,15 @@
 
 Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements only. Keep simulation GPU-resident, support interactive viewport playback, preserve the listed FluidSim features, and use the synthesized Python modules for enums, kernel inventory, dispatch/custom-kernel contracts, UI behavior, profiling, and validation targets. The live field-storage contract is a sparse tiled leaf grid: fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
 
+## Branched experiments are not merge candidates
+
+The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex/native-gpu-interop-main-20260715`) and `…_port_native_interop` (`codex/native-gpu-interop`) are archived **branched experiments**, not genuine worktree candidates, pending features, or merge-ready implementations. Their staged, unstaged, committed, benchmark, and evidence files are experimental records only.
+
+- Do not recommend, schedule, rebase, merge, cherry-pick, or extract changes from either interop experiment merely because the worktree or branch exists.
+- Exclude both from merge-readiness lists and conflict-driven integration plans. If inventorying worktrees, label them `EXPERIMENT — NOT A MERGE CANDIDATE`.
+- Do not describe their overlap with active code as a future merge requirement. It is only historical collision information.
+- Reuse requires an explicit user request to reactivate the experiment plus a new implementation and validation plan; ordinary cleanup or integration work is not authorization.
+
 ## Verified workflows
 
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.

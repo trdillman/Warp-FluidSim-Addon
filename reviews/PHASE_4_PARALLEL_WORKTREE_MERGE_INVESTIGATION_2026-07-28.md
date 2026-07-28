@@ -5,7 +5,9 @@
 - Investigation date basis: worktree state as observed; **nothing was modified, staged, checked out, merged, or rebased**
 - Method: `git worktree list`, per-worktree `status --porcelain`, `rev-list --left-right --count`, `merge-tree --write-tree`, and offline 3-way `git merge-file --diff3` simulations into `$TMPDIR` (CRLF-normalized, since this repo has mixed line endings and raw diffs otherwise report whole-file churn).
 
-> **Post-investigation update:** The empty landing branch described below was subsequently populated and committed as `phase4/live-interaction-merge-20260728`. Master commits `239f80a` and `af4136e` were merged into it, all integration gates passed, and the branch finished 0 commits behind master. Conflict forecasts for the remaining parallel worktrees are still applicable.
+> **Post-investigation update:** The empty landing branch described below was subsequently populated and committed as `phase4/live-interaction-merge-20260728`. Master commits `239f80a` and `af4136e` were merged into it, all integration gates passed, and the branch finished 0 commits behind master.
+>
+> **Classification correction:** `…_port_native_interop_main_20260715` and `…_port_native_interop` are archived **branched experiments, not genuine worktree candidates**. They must be excluded from merge-readiness recommendations. Conflict data below is retained only as historical forensic evidence and must not be interpreted as an integration plan.
 
 ---
 
@@ -26,8 +28,8 @@
 | 1 | `…/liquid_warp_blender51_port` (main) | `master` `0df90d4` | 0 / 0 | **dirty**: 10 (incl. `scene_bridge.py +55`, `render.py +7`, `test_scene_bridge_cache_playback.py +111`, `blender_handler_persistence_gate.py +1`, `demos/*.blend`), 0 staged, `?? .agents/` | — | **Commit first** (§4 step 0) |
 | 2 | `…/liquid_warp_blender51_phase4_interaction` | `phase4/live-property-interaction` `695fad9` | 0 / 14 | **dirty**: 130 entries (32 tracked-modified, 98 untracked), **0 staged** | none (payload uncommitted) | **Primary integration target** |
 | 3 | `…/liquid_warp_blender51_phase4_commit` | `phase4/live-interaction-merge-20260728` `0df90d4` | 0 / 0 | clean | none — equals master | Empty landing branch; ready to receive |
-| 4 | `…_port_native_interop_main_20260715` | `codex/native-gpu-interop-main-20260715` `c182d3a` | 0 / 41 | **20 STAGED + 24 unstaged + 7 untracked** | none committed | Not soon — large, unrebased, staged-in-flight |
-| 5 | `…_port_native_interop` | `codex/native-gpu-interop` `3135f8b` | 1 / 68 | dirty 55 | `3135f8b feat(viewport): add native CUDA Vulkan particle interop` | **Superseded by #4** — do not merge as-is |
+| 4 | `…_port_native_interop_main_20260715` | `codex/native-gpu-interop-main-20260715` `c182d3a` | 0 / 41 | **20 STAGED + 24 unstaged + 7 untracked** | none committed | **EXPERIMENT — NOT A MERGE CANDIDATE** |
+| 5 | `…_port_native_interop` | `codex/native-gpu-interop` `3135f8b` | 1 / 68 | dirty 55 | `3135f8b feat(viewport): add native CUDA Vulkan particle interop` | **EXPERIMENT — NOT A MERGE CANDIDATE** |
 | 6 | `.codex/worktrees/orbit-gpu-pcg-conditional-loop-addon` | `orbit-gpu-pcg-conditional-loop` `c182d3a` | 0 / 41 | dirty 14 — only real delta is `sim/pressure.py +336` and new `sim/cuda_reduction.py`; the other 12 are CRLF-only | none | Small, extractable |
 | 7 | `.codex/worktrees/orbit-gpu-pcg-baseline` | detached `c182d3a` | 0 / 41 | clean | none | Prune |
 | 8 | `.codex/worktrees/34f4/…` | `codex/fix-cone-pyramid-distances` `01a5437` | 0 / 29 | dirty 27 — only real delta is `sim/sourcing.py +85` + 9 new policy-drift backlog cards; rest CRLF-only | none | Small, extractable |
@@ -38,7 +40,7 @@
 | 13 | `…_port/.claude/worktrees/particle-surface-rendering-apis-f62356` | `claude/particle-surface-rendering-apis-f62356` `697fe6e` | 1 / 16 | dirty 5 (docs + `?? backlogs/`) | `697fe6e docs(policy-drift): re-audit the nested worktree` (docs only) | Docs-only; mergeable anytime |
 | 14 | `…_port_cherry_pick_merge` | detached `2635080` | 0 / 102 | dirty 4 (`D CLAUDE.md`, `D sim/__init__.py`, `?? review_2635080.blend`) | none | **Prune** — 102 behind, deletions look accidental |
 
-`git merge-tree` conflict preview for the only two branches with unique commits:
+Historical `git merge-tree` preview for the two branches with unique commits. The native-interop result is forensic only; it does **not** make that experiment a merge candidate:
 
 ```
 codex/native-gpu-interop            -> CONFLICT AGENTS.md
@@ -135,9 +137,9 @@ The Phase-4 worktree is at `695fad9`, *before* `246fa90` tracked the test suite.
 
 **Step 4 — `codex/fix-cone-pyramid-distances` worktree**: cherry-pick the isolated `sim/sourcing.py +85` (2 conflicts vs master's `1ce25b4`) and the 9 new policy-drift backlog cards. Everything else there is CRLF noise.
 
-**Step 5 — Pressure/PCG work (dedupe first)**: `sim/pressure.py +336` + new `sim/cuda_reduction.py` exists **identically** in both `orbit-gpu-pcg-conditional-loop-addon` and `…_native_interop_main_20260715`. Land it once, from one worktree, as its own commit (4 conflicts against master's `f2cbd84`). Phase 4 does not conflict with `pressure.py`, so this can also go before step 2.
+**Step 5 — Pressure/PCG work (dedupe first)**: `sim/pressure.py +336` + new `sim/cuda_reduction.py` also appears in the archived native-interop experiment, but that does not authorize sourcing it there. If the separate `orbit-gpu-pcg-conditional-loop-addon` work is independently approved, evaluate and land it from that non-interop worktree only.
 
-**Step 6 — Native GPU interop, last.** Use `…_native_interop_main_20260715` (20 staged + 24 unstaged at `c182d3a`, 41 behind) — **not** `codex/native-gpu-interop`, which is 68 behind and conflicts on `AGENTS.md` + `PROJECT_MANIFEST.md` (modify/delete) as well as `scene_bridge`/`viewport`. The interop working tree's real deltas and conflicts vs master today: `viewport.py +187 (7 conflicts)`, `pressure.py +336 (4)`, `scene_bridge.py +48 (2)`, `panels.py +19 (0)`, `properties.py +9 (0)`, `user_guide.md +46 (0)`, `test_operator_panel_behavior.py +114 (0)`, `test_pressure_projection_regressions.py +216 (0)`. After Phase 4 lands, `viewport.py`/`scene_bridge.py` conflicts will grow (Phase 4 adds +335/+778 in those same files) — this is a **triple-collision** file pair and must be rebased onto post-Phase-4 master and re-validated, not merged blind.
+**Step 6 — Exclude native GPU interop.** Both `…_native_interop_main_20260715` and `codex/native-gpu-interop` are archived branched experiments, not integration candidates. Do not rebase, merge, cherry-pick, or extract from them without an explicit user request to reactivate the experiment under a new implementation and validation plan. Historical overlap in `viewport.py`, `scene_bridge.py`, and `pressure.py` is collision evidence only—not future work.
 
 **Step 7 — `claude/particle-surface-rendering-apis-f62356`** (docs only, 2 `POLICY_DRIFT_REPORT.md` conflicts). Merge anytime. Note it is a *nested* worktree living inside master's checkout at `.claude/worktrees/…` — a nested-checkout hazard for any recursive tooling.
 
@@ -180,7 +182,7 @@ The Phase-4 worktree is at `695fad9`, *before* `246fa90` tracked the test suite.
 - **Hygiene:** `.agents/` (main worktree), `.pi-subagents/` (Phase-4 worktree), `dist/` + `docs/evidence/native_interop/*` (interop worktree), `review_2635080.blend` (cherry-pick worktree), `backlogs/swarm-review-*.md` (nested claude worktree) are untracked agent/scratch/evidence output. They should be covered by `.gitignore` and left untracked — not committed with Phase 4.
 - **CRLF trap:** the repo has mixed line endings. Raw `diff`/`git merge-file` without `tr -d '\r'` reports whole-file conflicts on nearly every file. Any scripted merge tooling must normalize, and resolution must preserve each file's existing endings.
 - **Blend-file churn:** `demos/*.blend` and `*_preview.png` are modified in 5 different worktrees with no textual merge possible. Decide a single authoritative demo-rebake worktree (Phase-4's, which also carries the `demos/*/meta.json` evidence) and take theirs wholesale; then re-run `blender --background --python tools/check_demo_blends.py` and `python tools/analyze_demos.py` (expect `DEMO-ANALYSIS-PASS (18/18)`).
-- **`codex/native-gpu-interop-main-20260715` has 20 staged files** — an unfinished `git add`. Anyone touching that worktree should treat the index as in-flight authored state, not a merge artifact.
+- **`codex/native-gpu-interop-main-20260715` has 20 staged files**, but the checkout is an archived branched experiment. Preserve it as experimental evidence; do not treat its index as queued integration work.
 - **`…_port_cherry_pick_merge`** carries `D CLAUDE.md` and `D fluidSim_warp_blender51/sim/__init__.py` in a 102-behind detached checkout. Those deletions must never be merged forward.
 - I did not run any test lane; all conflict figures come from offline 3-way simulations in a temp dir. Actual `git merge` output may differ slightly in hunk granularity but the missing-marker findings in §3.2 are direct content evidence and are not merge-strategy dependent.
 

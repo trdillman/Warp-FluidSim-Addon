@@ -58,4 +58,4 @@ FULL-PRODUCTION-GATE-PASS
 
 Master's playback/session-handler work (`239f80a`) and post-render frame suppression (`af4136e`) were merged into this branch. The handler, Phase-4 CUDA, full Python, and GUI-inclusive production gates were rerun afterward and passed. The branch is currently based on all committed master work with no behind commits.
 
-Parallel-worktree conflict requirements are documented separately at `C:\Users\Tyler\.pi\agent\subagent-outputs\phase4-parallel-worktree-merge-investigation.md`. Native interop remains the largest future collision surface (`scene_bridge.py` and `viewport.py`) and should rebase onto Phase 4 after this branch lands.
+Parallel-worktree findings are documented in `reviews/PHASE_4_PARALLEL_WORKTREE_MERGE_INVESTIGATION_2026-07-28.md`. The native-interop checkouts named there are archived branched experiments—not genuine worktree candidates or future merge requirements. Their `scene_bridge.py` and `viewport.py` overlap is historical evidence only; agents must not recommend rebasing or integrating them without an explicit user request to reactivate the experiment.
