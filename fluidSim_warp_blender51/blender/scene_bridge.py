@@ -1502,6 +1502,50 @@ def request_scene_update(scene, action: SceneUpdate):
 # ---------------------------------------------------------------------------
 
 
+def ensure_session_before_frames(scene, reason):
+    """Build the solver before the first frame change of a playback or render.
+
+    Without this the first live frame reaches Session.initialize() from inside
+    frame_change_post -- a full CUDA allocation plus object/collection creation
+    against a depsgraph that is still being evaluated. animation_playback_pre
+    and render_init both fire once, ahead of that frame change, and outside the
+    frame-evaluation cycle.
+
+    Deliberately a no-op on a bare timeline scrub: nothing fires ahead of
+    frame_change_pre there, so the lazy-init path in handle_frame_change stays
+    the fallback and keeps working exactly as before.
+    """
+    fs = getattr(scene, "fluidsim", None) if scene is not None else None
+    if fs is None or not getattr(fs, "live", False):
+        # Not live -- must not allocate VRAM just because playback started.
+        return
+    if getattr(fs, "cache_playback_enabled", False):
+        # Cache playback never builds a solver; handle_frame_change returns
+        # ahead of the lazy-init path for it too.
+        return
+    sess = session()
+    if sess.active:
+        return
+    try:
+        sess.initialize(scene)
+    except Exception as exc:  # noqa: BLE001 - never break playback or a render
+        # Same wording as the lazy-init path below: panels.py string-matches the
+        # message to offer the memory-safeguard recovery buttons.
+        set_error(scene, repr(exc))
+        fs.status = f"Solver initialization error: {exc}"
+        print(f"FluidSim {reason} initialization failed: {exc!r}")
+
+
+@persistent
+def _on_playback_pre(scene, *_args):
+    ensure_session_before_frames(scene, "playback")
+
+
+# The render-side call lives in render._on_render_init: that module clears every
+# add-on callback off bpy.app.handlers.render_init when it registers, so a second
+# handler here would be silently removed depending on registration order.
+
+
 @persistent
 def _on_frame_change(scene, depsgraph):
     global _IN_FRAME_HANDLER
@@ -1545,11 +1589,19 @@ def register_handlers():
         bpy.app.handlers.undo_post.append(_on_interaction_state_update)
     if hasattr(bpy.app.handlers, "load_pre"):
         bpy.app.handlers.load_pre.append(_on_load_pre)
+    # Build the solver ahead of the first frame change instead of from inside
+    # frame_change_post. The render side is handled in render._on_render_init.
+    if hasattr(bpy.app.handlers, "animation_playback_pre"):
+        bpy.app.handlers.animation_playback_pre.append(_on_playback_pre)
 
 
 def _remove_handlers():
     handler_lists = [bpy.app.handlers.frame_change_post]
-    for name in ("depsgraph_update_post", "undo_post", "load_pre"):
+    # render_init is deliberately absent: render.py owns that list, and clearing
+    # it here would drop render._on_render_init depending on register order.
+    for name in (
+            "depsgraph_update_post", "undo_post", "load_pre",
+            "animation_playback_pre"):
         if hasattr(bpy.app.handlers, name):
             handler_lists.append(getattr(bpy.app.handlers, name))
     for handlers in handler_lists:

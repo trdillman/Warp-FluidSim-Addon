@@ -33,6 +33,7 @@ HANDLER_LISTS = (
     "undo_post",
     "save_pre",
     "load_post",
+    "animation_playback_pre",
 )
 
 

@@ -961,6 +961,117 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
     assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
 
 
+def _count_initialize(monkeypatch, sess):
+    """Record initialize() calls and mark the session active, as the real one does."""
+    calls = []
+
+    def initialize(scene_arg):
+        calls.append(scene_arg)
+        sess.solver = SimpleNamespace(frame=0)
+        sess.start_frame = scene_arg.frame_start
+        return sess
+
+    monkeypatch.setattr(sess, "initialize", initialize)
+    return calls
+
+
+def test_playback_pre_initializes_before_any_frame_change(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge._on_playback_pre(scene)
+
+    assert len(calls) == 1
+    assert sess.active
+
+
+def test_playback_pre_is_idempotent_once_the_session_is_active(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge._on_playback_pre(scene)
+    scene_bridge._on_playback_pre(scene)
+    scene_bridge.ensure_session_before_frames(scene, "render")
+
+    assert len(calls) == 1
+
+
+def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    scene.fluidsim.live = False
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge._on_playback_pre(scene)
+    scene_bridge.ensure_session_before_frames(scene, "render")
+
+    # Pressing play on a non-live scene must not build a GPU solver.
+    assert calls == []
+
+
+def test_playback_pre_does_not_allocate_for_cache_playback(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=True)
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge._on_playback_pre(scene)
+
+    assert calls == []
+
+
+def test_playback_pre_reports_init_failure_without_breaking_playback(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+
+    def initialize(_scene_arg):
+        raise RuntimeError("no CUDA device")
+
+    monkeypatch.setattr(sess, "initialize", initialize)
+
+    scene_bridge._on_playback_pre(scene)
+
+    assert "no CUDA device" in scene_bridge.current_error(scene)
+    assert "Solver initialization error" in scene.fluidsim.status
+    # Flipping live off here would fire the property callback outside the frame
+    # handler, where _IN_FRAME_HANDLER cannot suppress it.
+    assert scene.fluidsim.live is True
+
+
+def test_frame_change_after_playback_pre_does_not_reinitialize(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    calls = []
+
+    def initialize(scene_arg):
+        calls.append(("initialize", scene_arg.frame_current))
+        sess.solver = SimpleNamespace(frame=0)
+        sess.start_frame = scene_arg.frame_start
+        return sess
+
+    monkeypatch.setattr(sess, "initialize", initialize)
+    monkeypatch.setattr(
+        sess, "sync_scene", lambda *_args: calls.append(("sync", scene.frame_current)))
+    monkeypatch.setattr(
+        sess, "step",
+        lambda _scene, **kwargs: calls.append(
+            ("step", kwargs.get("timeline_frame", scene.frame_current))))
+
+    scene_bridge._on_playback_pre(scene)
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    # The inverse of the lazy-init test above: the solver already exists, so the
+    # handler never reaches initialize() with the depsgraph mid-evaluation.
+    assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
+
+
 def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)
