@@ -115,10 +115,36 @@ def _windows_system_pressure() -> tuple[float, float]:
     return max(0.0, min(cpu, 100.0)), float(memory.memory_load)
 
 
-def resource_snapshot(device_name: str) -> dict:
-    """Sample live VRAM, GPU utilization, CPU load, and system RAM pressure."""
+def vram_snapshot(device_name: str) -> dict:
+    """Sample VRAM only: no subprocess, no sleep.
+
+    ``assess_configuration`` reads ``gpu_total_bytes`` and ``gpu_free_bytes``
+    and nothing else, so the capacity decision needs none of the telemetry that
+    costs a 50 ms sleep plus an nvidia-smi launch. Callers reachable from a
+    frame-change handler use this; the panel's telemetry readout, which the
+    user asked for and can wait for, uses ``resource_snapshot``.
+    """
     import warp as wp
 
+    device = wp.get_device(device_name)
+    return {
+        "gpu_total_bytes": int(getattr(device, "total_memory", 0)),
+        "gpu_free_bytes": int(getattr(device, "free_memory", 0)),
+        "gpu_utilization": 0.0,
+        "cpu_utilization": 0.0,
+        "ram_utilization": 0.0,
+    }
+
+
+def resource_snapshot(device_name: str) -> dict:
+    """Sample live VRAM, GPU utilization, CPU load, and system RAM pressure.
+
+    Blocks for at least 50 ms and launches nvidia-smi with a 2 s timeout, so it
+    must not sit on the frame-change handler path -- use ``vram_snapshot``.
+    """
+    import warp as wp
+
+    snapshot = vram_snapshot(device_name)
     device = wp.get_device(device_name)
     gpu_utilization = 0.0
     if device.is_cuda:
@@ -139,13 +165,10 @@ def resource_snapshot(device_name: str) -> dict:
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):
             pass
     cpu, ram = _windows_system_pressure()
-    return {
-        "gpu_total_bytes": int(getattr(device, "total_memory", 0)),
-        "gpu_free_bytes": int(getattr(device, "free_memory", 0)),
-        "gpu_utilization": gpu_utilization,
-        "cpu_utilization": cpu,
-        "ram_utilization": ram,
-    }
+    snapshot["gpu_utilization"] = gpu_utilization
+    snapshot["cpu_utilization"] = cpu
+    snapshot["ram_utilization"] = ram
+    return snapshot
 
 
 def _value(settings, name, default):

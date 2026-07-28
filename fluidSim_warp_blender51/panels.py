@@ -47,6 +47,10 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         row.operator("fluidsim.release", text="", icon="X")
 
         row = layout.row(align=True)
+        row.enabled = sess.active and fs.live
+        row.prop(fs, "max_frame_catchup", text="Catch-up")
+
+        row = layout.row(align=True)
         row.enabled = sess.active
         op = row.operator("fluidsim.step", text="Step 1")
         op.frames = 1

@@ -104,10 +104,14 @@ class Session:
             fs = scene.fluidsim
             settings = build_settings(scene)
             self.device = settings.device
-            from ..sim.memory_safety import assess_configuration, resource_snapshot
+            from ..sim.memory_safety import assess_configuration, vram_snapshot
 
+            # vram_snapshot, not resource_snapshot: initialize() is reachable
+            # from the frame-change handler, and the telemetry fields cost a
+            # 50 ms sleep plus an nvidia-smi launch that the capacity decision
+            # never reads.
             self.memory_assessment = assess_configuration(
-                settings, resource_snapshot(settings.device)
+                settings, vram_snapshot(settings.device)
             )
             if not self.memory_assessment["safe"] and not ignore_memory_safeguard:
                 estimate_gib = self.memory_assessment["estimated_bytes"] / 1024**3
@@ -184,7 +188,7 @@ class Session:
             self.scene_inputs.gather_force_fields(scene))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
-    def step(self, scene, *, write_cache=True):
+    def step(self, scene, *, write_cache=True, timeline_frame=None):
         from . import viewport
 
         if not self.active:
@@ -203,6 +207,7 @@ class Session:
         fs.stat_whitewater = stats.whitewater_particles
         fs.stat_step_ms = stats.step_time * 1000.0
         fs.stat_substeps = stats.substeps
+        fs.stat_cfl_clamped = stats.cfl_substeps_clamped
         fs.status = (
             f"Frame {self.solver.frame}: {stats.active_particles:,} particles, "
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
@@ -212,7 +217,13 @@ class Session:
             from ..io import cache
 
             try:
-                timeline_frame = int(scene.frame_current)
+                # Catch-up steps several solver frames inside one frame change,
+                # so the caller names the timeline index each one belongs at;
+                # keying them all on scene.frame_current would overwrite one
+                # index and leave the skipped ones as holes.
+                timeline_frame = int(
+                    scene.frame_current if timeline_frame is None
+                    else timeline_frame)
                 cache.write_frame(scene, self, timeline_frame)
                 self.cache_written_start = (
                     timeline_frame if self.cache_written_start is None
@@ -260,6 +271,9 @@ class Session:
         fs.stat_voxels = 0
         fs.stat_step_ms = 0.0
         fs.stat_substeps = 0
+        # Cached frames carry no substep record, so a stale True here would
+        # report a CFL violation against a frame this session never integrated.
+        fs.stat_cfl_clamped = False
         fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
         self.clear_error(scene)
         return frame_data
@@ -342,10 +356,29 @@ class Session:
             self.reset(scene)
             self.last_frame = frame
             return
+        # Blender drops frames during playback, so a forward jump larger than
+        # one is normal rather than exceptional. Taking a single step per frame
+        # change ran the solver in slow motion against the timeline and left
+        # holes in the cache. Step the whole gap instead -- but only up to a
+        # bound, so a long scrub reports a desync instead of hanging Blender
+        # inside a frame-change handler.
+        gap = (frame - self.last_frame
+               if self.last_frame >= self.start_frame else 1)
+        bound = max(1, int(getattr(fs, "max_frame_catchup", 8)))
+        if gap > bound:
+            self.last_frame = frame
+            message = (
+                f"Timeline jumped {gap} frames, past the {bound}-frame catch-up "
+                f"bound. The solver would be out of sync with the timeline. "
+                f"Rewind to restart, or raise Max Frame Catch-up.")
+            self.set_error(scene, message)
+            fs.status = f"Solver desync: {message}"
+            return
         self.last_frame = frame
         try:
-            self.sync_scene(scene, depsgraph)
-            self.step(scene)
+            for offset in range(gap - 1, -1, -1):
+                self.sync_scene(scene, depsgraph)
+                self.step(scene, timeline_frame=frame - offset)
         except Exception as exc:  # noqa: BLE001 - never break playback
             self.set_error(scene, repr(exc))
             # Toggling live invokes the property callback, which writes
@@ -902,13 +935,14 @@ def _on_load_pre(_filepath):
 
 
 def register_handlers():
-    unregister_handlers()
+    # Deduplicate only -- registering must not release a live session.
+    _remove_handlers()
     bpy.app.handlers.frame_change_post.append(_on_frame_change)
     if hasattr(bpy.app.handlers, "load_pre"):
         bpy.app.handlers.load_pre.append(_on_load_pre)
 
 
-def unregister_handlers():
+def _remove_handlers():
     handler_lists = [bpy.app.handlers.frame_change_post]
     if hasattr(bpy.app.handlers, "load_pre"):
         handler_lists.append(bpy.app.handlers.load_pre)
@@ -916,3 +950,13 @@ def unregister_handlers():
         for fn in list(handlers):
             if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
                 handlers.remove(fn)
+
+
+def unregister_handlers():
+    # Reload Scripts reaches this without going through unregister(), so
+    # without the release the whole GPU allocation is orphaned with no owner
+    # left to free it short of restarting Blender. Handlers come off first:
+    # releasing while _on_frame_change is still registered would let a frame
+    # change re-enter a half-torn-down session.
+    _remove_handlers()
+    session().release()

@@ -686,6 +686,7 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
         whitewater_particles=5,
         step_time=0.01,
         substeps=2,
+        cfl_substeps_clamped=False,
         as_dict=lambda: {"frame": 1001},
     )
     sess.solver = SimpleNamespace(frame=1001, step_frame=lambda: stats)
@@ -737,7 +738,9 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
     monkeypatch.setattr(
         sess, "sync_scene", lambda *_args: calls.append(("sync", scene.frame_current)))
     monkeypatch.setattr(
-        sess, "step", lambda *_args: calls.append(("step", scene.frame_current)))
+        sess, "step",
+        lambda _scene, **kwargs: calls.append(
+            ("step", kwargs.get("timeline_frame", scene.frame_current))))
 
     scene_bridge._on_frame_change(scene, depsgraph=object())
 

@@ -598,6 +598,14 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Live Simulation", default=False,
         update=_on_live_changed,
         description="Step the GPU solver during animation playback")
+    max_frame_catchup: IntProperty(
+        name="Max Frame Catch-up", default=8, min=1, max=120,
+        description=(
+            "Largest forward timeline jump the live solver will step through "
+            "during one frame change. Blender drops frames during playback, so "
+            "a single step per frame change would silently run the sim in slow "
+            "motion. Beyond this bound the solver reports a desync instead of "
+            "stalling Blender on a long scrub"))
     domain_object: PointerProperty(
         name="Domain", type=bpy.types.Object,
         update=_request_rebuild,
