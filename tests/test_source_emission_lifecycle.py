@@ -234,6 +234,59 @@ def test_initial_fill_emit_total_is_independent_of_substep_count():
         f"Initial Fill total depends on substep count: {counts}")
 
 
+def test_height_fill_initial_fill_stops_injecting_mass_and_momentum():
+    """Domain Height Fill honours its Fill Lifecycle.
+
+    The fill velocity carries the liquid out of the fill volume, which leaves
+    those voxels under-occupied. While the height source ignored its emission
+    mode it refilled them every substep at the fill velocity -- an endless mass
+    and momentum source that ran the particle count up until the sim blew up.
+    """
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    solver = FluidSolver(_settings(max_substeps=2))
+    solver.set_height_source(HeightSourceDesc(
+        enabled=True, base_height=0.4, back_mode=1, velocity=(2.0, 0.0, 0.0),
+        emit_particles=True, emission_mode=SourceEmissionMode.INITIAL_FILL))
+
+    _step(solver, frames=1)
+    filled = solver.particles.refresh_host_count()
+    assert filled > 0, "Height Fill emitted no particles"
+    assert solver.sourcing._initial_fired == {"builtin:height"}
+
+    _step(solver, frames=12)
+    assert solver.particles.refresh_host_count() == filled, (
+        "Initial Fill height source kept emitting after it fired")
+    solver.release()
+
+
+def test_height_fill_still_applies_alongside_compiled_plan_sources():
+    """The domain Height Fill is not a scene object and compiles to no plan.
+
+    ``apply`` routes to the compiled path whenever plans exist and no legacy
+    descriptors do, so a single plan-based source used to take the height fill
+    down with it -- the domain came up empty with no diagnostic.
+    """
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    solver = FluidSolver(_settings(max_substeps=1))
+    solver.set_height_source(HeightSourceDesc(
+        enabled=True, base_height=0.4, back_mode=1,
+        emit_particles=True, emission_mode=SourceEmissionMode.INITIAL_FILL))
+    solver.set_source_plans((SourcePlan(
+        SourceKey("direct-points"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.array(((-0.1, 0.0, 0.7),), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    ),))
+
+    _step(solver, frames=1)
+    assert solver.particles.refresh_host_count() > 1, (
+        "compiled plan path dropped the Height Fill")
+    assert solver.sourcing._initial_fired >= {"builtin:height"}
+    solver.release()
+
+
 def test_direct_point_append_is_once_per_runtime_and_rearms_on_reset():
     solver = FluidSolver(_settings(max_substeps=1))
     plan = SourcePlan(
