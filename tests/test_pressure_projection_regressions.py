@@ -982,7 +982,9 @@ def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device
             raise AssertionError("fixed substeps should not read max speed")
 
     solver.max_speed_dev = _NoCflReduction()
-    assert solver._compute_substeps(1.0 / 24.0) == 3
+    # Nothing was computed, so nothing was clamped: a fixed-substep scene must
+    # not report a CFL violation it never tested for.
+    assert solver._compute_substeps(1.0 / 24.0) == (3, False)
 
 
 def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
@@ -1001,7 +1003,11 @@ def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
     solver = FluidSolver(settings)
     solver.inject_particles([(0.1, 0.1, 0.1)], velocity=(100.0, 0.0, 0.0))
 
-    assert solver._compute_substeps(1.0 / 24.0) == 4
+    # One particle at 100 m/s across a 0.1 m voxel demands far more than four
+    # substeps, so this frame integrates at a timestep that violates CFL. The
+    # second value is that fact; discarding it is what made the resulting
+    # artefact unexplainable.
+    assert solver._compute_substeps(1.0 / 24.0) == (4, True)
 
 
 def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch):

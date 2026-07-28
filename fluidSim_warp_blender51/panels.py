@@ -78,6 +78,10 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
             col.label(text=f"Active voxels: {fs.stat_voxels:,}")
             col.label(text=f"Step: {fs.stat_step_ms:.1f} ms "
                            f"({fs.stat_substeps} substeps)")
+            if fs.stat_cfl_clamped:
+                warn = col.row()
+                warn.alert = True
+                warn.label(text="CFL clamped by Max substeps", icon="ERROR")
 
         col = layout.column(align=True)
         col.prop(fs, "time_scale")

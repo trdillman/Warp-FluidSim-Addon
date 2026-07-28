@@ -1052,6 +1052,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     stat_whitewater: IntProperty(default=0)
     stat_step_ms: FloatProperty(default=0.0)
     stat_substeps: IntProperty(default=0)
+    stat_cfl_clamped: BoolProperty(default=False)
 
 
 CLASSES = (

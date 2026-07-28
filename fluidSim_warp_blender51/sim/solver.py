@@ -534,6 +534,10 @@ class FrameStats:
         self.surface_active_voxels = 0
         self.surface_active_leaves = 0
         self.substeps = 0
+        # True when CFL asked for more substeps than max_substeps allows, so
+        # this frame integrated at a timestep known to violate the condition.
+        # FrameStats outlives the frame -- assign every frame or it latches.
+        self.cfl_substeps_clamped = False
         self.pressure_iterations = 0
         self.pressure_residual = 0.0
         self.timers = {}
@@ -553,6 +557,7 @@ class FrameStats:
             "surfaceActiveVoxels": self.surface_active_voxels,
             "surfaceActiveLeaves": self.surface_active_leaves,
             "substeps": self.substeps,
+            "cflSubstepsClamped": self.cfl_substeps_clamped,
             "pressureIterations": self.pressure_iterations,
             "pressureResidual": self.pressure_residual,
             "voxelsPerSecond": vps,
@@ -1489,15 +1494,24 @@ class FluidSolver:
     # -- CFL ----------------------------------------------------------------
 
     def _compute_substeps(self, frame_dt):
+        """Return (substeps, cfl_clamped) for one frame.
+
+        The second value is the fact the old ``min(max_substeps, n)`` threw
+        away: the CFL condition asked for more substeps than the cap allows,
+        so this frame integrates at a timestep known to violate it. Silently
+        discarding that is how a stability violation becomes an unexplained
+        artefact. The early returns never compute ``n``, so nothing is clamped
+        on those paths.
+        """
         s = self.settings
         min_substeps = max(1, int(s.min_substeps))
         max_substeps = max(min_substeps, int(s.max_substeps))
         # host_count is kept current by end-of-frame stats, inject_particles
         # and clear(); avoid an extra device sync here.
         if self.particles.host_count == 0:
-            return min_substeps
+            return min_substeps, False
         if min_substeps == max_substeps:
-            return min_substeps
+            return min_substeps, False
         self.max_speed_dev.zero_()
         wp.launch(
             k_max_vec3_magnitude, dim=self.particles.host_count,
@@ -1508,10 +1522,10 @@ class FluidSolver:
         gmag = math.sqrt(sum(x * x for x in s.gravity))
         vmax = vmax + gmag * frame_dt
         if vmax < 1.0e-6:
-            return min_substeps
+            return min_substeps, False
         dt_cfl = s.cfl * s.voxel_size / vmax
         n = int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6)))
-        return max(min_substeps, min(max_substeps, n))
+        return max(min_substeps, min(max_substeps, n)), n > max_substeps
 
     def _whitewater_topology_expand(self, frame_dt):
         """Return a leaf radius covering existing whitewater for one frame."""
@@ -1539,7 +1553,7 @@ class FluidSolver:
         if self.profiler is not None:
             self.profiler.begin_frame()
 
-        substeps = self._compute_substeps(frame_dt)
+        substeps, cfl_clamped = self._compute_substeps(frame_dt)
         dt = frame_dt / substeps
 
         time_ctx = {
@@ -1620,6 +1634,7 @@ class FluidSolver:
         st = self.stats
         st.step_time = _time.perf_counter() - t_start
         st.substeps = substeps
+        st.cfl_substeps_clamped = cfl_clamped
         st.active_voxels = self.grid.active_voxel_count
         st.initialized_voxels = self.grid.voxel_capacity
         st.total_voxels = self.grid.total_voxels()
