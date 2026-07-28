@@ -6,7 +6,8 @@ Phase 4 was integrated in the clean worktree:
 
 - Worktree: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_phase4_commit`
 - Branch: `phase4/live-interaction-merge-20260728`
-- Base: master `0df90d4`
+- Initial base: master `0df90d4`
+- Latest integrated master: `af4136e` (including pre-frame initialization and post-render frame suppression)
 
 This is a parent-authored integration record, not a replacement for the independent Gate-A/Gate-B reviews.
 
@@ -32,7 +33,7 @@ This is a parent-authored integration record, not a replacement for the independ
 
 ```text
 python -m pytest -q
-410 passed
+419 passed
 
 blender --background --factory-startup --python tests/blender_phase4_live_interaction_acceptance.py
 PHASE4-LIVE-INTERACTION-PASS
@@ -53,6 +54,8 @@ SAVED-DEMO-GUI-PLAYBACK-PASS
 FULL-PRODUCTION-GATE-PASS
 ```
 
-## Outstanding merge requirement
+## Merge status
 
-The main `master` worktree contains separate uncommitted playback/session-handler changes (`ensure_session_before_frames` / `_on_playback_pre` and tests). They are not part of committed master and therefore are not included in this branch. Preserve and commit that work before merging this Phase-4 branch into master, then reconcile it with the integrated `scene_bridge.py` and rerun the handler and full production gates.
+Master's playback/session-handler work (`239f80a`) and post-render frame suppression (`af4136e`) were merged into this branch. The handler, Phase-4 CUDA, full Python, and GUI-inclusive production gates were rerun afterward and passed. The branch is currently based on all committed master work with no behind commits.
+
+Parallel-worktree conflict requirements are documented separately at `C:\Users\Tyler\.pi\agent\subagent-outputs\phase4-parallel-worktree-merge-investigation.md`. Native interop remains the largest future collision surface (`scene_bridge.py` and `viewport.py`) and should rebase onto Phase 4 after this branch lands.
