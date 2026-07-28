@@ -70,12 +70,11 @@ def finish():
     particle_count = (
         sess.solver.particles.refresh_host_count() if sess.active else 0
     )
-    particle_output = bpy.data.objects.get("FluidSim Particles")
-    viewport_particle_count = (
-        len(particle_output.data.points)
-        if particle_output is not None and particle_output.type == "POINTCLOUD"
-        else 0
-    )
+    from fluidSim_warp_blender51.blender import viewport
+
+    # Output clouds carry spare capacity, so len(data.points) is not the count.
+    viewport_particle_count = viewport.live_point_count(
+        bpy.data.objects.get("FluidSim Particles"))
     report.update({
         "generated_at_unix": time.time(),
         "timed_out": bool(report.get("timed_out", False)),

@@ -32,14 +32,10 @@ def check(name, cond, detail=""):
 
 
 def point_count(obj):
-    if obj is None:
-        return 0
-    if obj.type == "POINTCLOUD":
-        attr = obj.data.attributes.get("position")
-        return len(attr.data) if attr is not None else 0
-    if obj.type == "MESH":
-        return len(obj.data.vertices)
-    return 0
+    # Output clouds carry spare capacity, so len(data.points) is not the count.
+    from fluidSim_warp_blender51.blender import viewport
+
+    return viewport.live_point_count(obj)
 
 
 def point_sample(obj, limit=32):
@@ -49,12 +45,13 @@ def point_sample(obj, limit=32):
     n = min(count, limit)
     if obj.type == "POINTCLOUD":
         attr = obj.data.attributes.get("position")
-        values = np.empty(count * 3, dtype=np.float32)
+        values = np.empty(len(attr.data) * 3, dtype=np.float32)
         attr.data.foreach_get("vector", values)
-        return values.reshape(count, 3)[:n].copy()
-    values = np.empty(count * 3, dtype=np.float32)
-    obj.data.vertices.foreach_get("co", values)
-    return values.reshape(count, 3)[:n].copy()
+    else:
+        values = np.empty(len(obj.data.vertices) * 3, dtype=np.float32)
+        obj.data.vertices.foreach_get("co", values)
+    # Live points occupy the head of the buffer; the tail is padding.
+    return values.reshape(-1, 3)[:n].copy()
 
 
 def main():

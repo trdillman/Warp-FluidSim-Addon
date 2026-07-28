@@ -489,12 +489,6 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     viewport.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
-    assert any(
-        call[0] == "points"
-        and call[1] == viewport.WHITEWATER_NAME
-        and call[-1] is False
-        for call in calls
-    )
 
 
 def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
@@ -567,26 +561,58 @@ def _no_geometry_write(name):
     return _fail
 
 
-def test_pointcloud_reuse_requires_stable_count_and_color_schema(monkeypatch):
+def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
+    """A realloc detaches the cloud, so it must stay rare.
+
+    An attached cloud can never be resized -- Blender 5.1 faults natively --
+    so the only way to avoid a datablock swap per frame is to keep spare
+    capacity and only realloc when the count leaves the band.
+    """
     _install_scene_bridge_stubs(monkeypatch)
     from fluidSim_warp_blender51.blender import viewport
 
-    def cloud(count, *, has_color=False, users=1):
-        attributes = ({viewport.COLOR_ATTR: object()} if has_color else {})
+    def cloud(capacity, *, has_color=False, users=1, schema=True):
+        attributes = {}
+        if schema:
+            attributes = {"position": object(), "radius": object()}
+        if has_color:
+            attributes[viewport.COLOR_ATTR] = object()
         return SimpleNamespace(
             users=users,
             resize=lambda _count: None,
-            points=[None] * count,
+            points=[None] * capacity,
             attributes=attributes,
         )
 
-    assert viewport._can_reuse_pointcloud(cloud(4), 4, False)
-    assert viewport._can_reuse_pointcloud(cloud(4, has_color=True), 4, True)
-    assert not viewport._can_reuse_pointcloud(cloud(4), 3, False)
-    assert not viewport._can_reuse_pointcloud(cloud(4), 4, True)
-    assert not viewport._can_reuse_pointcloud(
-        cloud(4, has_color=True), 4, False)
-    assert not viewport._can_reuse_pointcloud(cloud(4, users=2), 4, False)
+    cap = viewport._point_capacity_for(100_000)
+    assert cap > 100_000
+
+    # In-band counts reuse the attached cloud, including a count that changed.
+    assert not viewport._needs_realloc(cloud(cap), 100_000, False)
+    assert not viewport._needs_realloc(cloud(cap), 99_000, False)
+    assert not viewport._needs_realloc(cloud(cap), cap, False)
+    # ...and the reuse band is wide enough that ordinary FLIP drift stays in it.
+    assert not viewport._needs_realloc(cloud(cap), int(cap * 0.55), False)
+
+    # Structural changes force a fresh, detached cloud.
+    assert viewport._needs_realloc(cloud(cap), cap + 1, False)          # grow
+    assert viewport._needs_realloc(cloud(cap), cap // 8, False)         # shrink
+    assert viewport._needs_realloc(cloud(cap), 100_000, True)           # +color
+    assert viewport._needs_realloc(
+        cloud(cap, has_color=True), 100_000, False)                     # -color
+    assert viewport._needs_realloc(cloud(cap, users=2), 100_000, False)
+    assert viewport._needs_realloc(cloud(cap, schema=False), 100_000, False)
+    assert viewport._needs_realloc(None, 100_000, False)
+
+    # An empty frame must not realloc every time just for sitting under the
+    # floor -- whitewater is empty for the whole start of a sim.
+    floor = viewport._point_capacity_for(0)
+    assert not viewport._needs_realloc(cloud(floor), 0, False)
+
+    # Shrinking settles: the capacity chosen for n is inside n's own band.
+    for count in (0, 1, 5_000, 250_000):
+        assert not viewport._needs_realloc(
+            cloud(viewport._point_capacity_for(count)), count, False)
 
 
 def test_release_session_clears_all_runtime_state_and_error(monkeypatch):

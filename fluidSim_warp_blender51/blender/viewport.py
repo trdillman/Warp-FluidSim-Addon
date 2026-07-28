@@ -22,6 +22,12 @@ SURFACE_NAME = "FluidSim Surface"
 PARTICLES_NAME = "FluidSim Particles"
 WHITEWATER_NAME = "FluidSim Whitewater"
 COLOR_ATTR = "display_color"
+# Live point count of a padded output cloud; see _swap_points.
+POINT_COUNT_TAG = "fluidsim_live_point_count"
+# Headroom keeps steady-state waste near 15% of ~32 B/point.
+_POINT_CAPACITY_HEADROOM = 1.15
+_POINT_CAPACITY_PAD = 256
+_MIN_POINT_CAPACITY = 1024
 
 _OVERLAY_HANDLE = None
 bpy = sys.modules.get("bpy")
@@ -274,31 +280,23 @@ def _write_mesh_colors(mesh, tris, vertex_colors):
         pass
 
 
-def _write_point_colors(data, colors):
-    if colors is None or len(colors) == 0:
+def _set_point_radius(obj, radius):
+    """Set the display radius on the live points, leaving padding parked."""
+    data = getattr(obj, "data", None)
+    attributes = getattr(data, "attributes", None)
+    if attributes is None:
         return
-    attr = data.attributes.get(COLOR_ATTR)
-    if attr is None:
-        attr = data.attributes.new(COLOR_ATTR, "FLOAT_COLOR", "POINT")
-    attr.data.foreach_set("color", np.asarray(colors, dtype=np.float32).ravel())
-    try:
-        data.attributes.active = attr
-    except Exception:
-        pass
-
-
-def _set_point_radius(data, radius):
-    attr = getattr(data, "attributes", None)
-    if attr is None:
-        return
-    rad_attr = attr.get("radius")
+    rad_attr = attributes.get("radius")
     if rad_attr is None:
         return
-    n = len(rad_attr.data)
-    if n:
-        rad_attr.data.foreach_set("value", np.full(n, radius, dtype=np.float32))
-        if hasattr(data, "update_tag"):
-            data.update_tag()
+    capacity = len(rad_attr.data)
+    if not capacity:
+        return
+    values = np.zeros(capacity, dtype=np.float32)
+    values[:live_point_count(obj)] = radius
+    rad_attr.data.foreach_set("value", values)
+    if hasattr(data, "update_tag"):
+        data.update_tag()
 
 
 def _swap_mesh(obj, verts, tris, colors=None):
@@ -363,47 +361,115 @@ def _ensure_point_object(scene, name):
         scene, name, lambda: bpy.data.meshes.new(name), "MESH")
 
 
-def _can_reuse_pointcloud(pc, point_count, wants_color):
-    """Return whether an attached Blender point cloud is safe to overwrite."""
+def _point_capacity_for(point_count):
+    return max(_MIN_POINT_CAPACITY,
+               int(point_count * _POINT_CAPACITY_HEADROOM)
+               + _POINT_CAPACITY_PAD)
+
+
+def live_point_count(obj):
+    """Live point count of an output object.
+
+    Its datablock is padded (see ``_swap_points``), so ``len(data.points)``
+    is the capacity, not the count. Falls back to the datablock length for
+    mesh outputs and for clouds written before the tag existed.
+    """
+    if obj is None:
+        return 0
+    count = obj.get(POINT_COUNT_TAG) if hasattr(obj, "get") else None
+    if count is not None:
+        return int(count)
+    data = getattr(obj, "data", None)
+    for name in ("points", "vertices"):
+        elements = getattr(data, name, None)
+        if elements is not None:
+            return len(elements)
+    return 0
+
+
+def _needs_realloc(pc, point_count, wants_color):
+    """Whether this write needs a fresh, detached point cloud.
+
+    Blender 5.1 faults inside ``rna_AttributeGroupID_new`` when a cloud that
+    is currently assigned to an object is resized (bisected in
+    ``artifacts/live_review/``; resizing a detached cloud is proven safe). So
+    both kinds of structural change -- capacity and attribute schema -- force
+    a realloc, and an attached cloud only ever gets ``foreach_set``.
+    """
     if (pc is None or getattr(pc, "users", 1) != 1
             or not hasattr(pc, "resize")):
-        return False
-    current_count = len(pc.points)
-    has_color = pc.attributes.get(COLOR_ATTR) is not None
-    return current_count == point_count and has_color == wants_color
+        return True
+    if (pc.attributes.get("position") is None
+            or pc.attributes.get("radius") is None):
+        return True
+    if (pc.attributes.get(COLOR_ATTR) is not None) != wants_color:
+        return True
+    capacity = len(pc.points)
+    if point_count > capacity:
+        return True
+    # Shrink only when the count has more than halved *and* a fresh cloud
+    # would actually be smaller -- otherwise an empty frame would realloc
+    # every time it sat below the minimum capacity.
+    return (point_count * 2 < capacity
+            and _point_capacity_for(point_count) < capacity)
+
+
+def _ensure_point_attributes(pc, wants_color):
+    """Create the attribute schema. Detached clouds only -- see _needs_realloc."""
+    if pc.attributes.get("position") is None:
+        pc.attributes.new("position", "FLOAT_VECTOR", "POINT")
+    if pc.attributes.get("radius") is None:
+        pc.attributes.new("radius", "FLOAT", "POINT")
+    if wants_color and pc.attributes.get(COLOR_ATTR) is None:
+        attr = pc.attributes.new(COLOR_ATTR, "FLOAT_COLOR", "POINT")
+        try:
+            pc.attributes.active = attr
+        except Exception:
+            pass
 
 
 def _swap_points(obj, positions, radius, colors=None, *, reuse_datablock=True):
     """Replace a point cloud object's points (bulk attribute transfer).
 
-    Blender 5.1 can corrupt native point-cloud state when an attached cloud is
-    resized with custom attributes or when an attribute is removed/recreated
-    repeatedly. Reuse is therefore limited to stable point count and attribute
-    schema; all structural changes use atomic datablock replacement.
+    Invariant: an attached point cloud is never resized and never gains or
+    loses an attribute. Every structural change is built on a detached cloud
+    and attached in a single assignment.
+
+    Point counts vary every frame, so holding that invariant without
+    allocating a datablock per frame means the cloud carries
+    ``capacity >= n`` points, with the tail past the live count parked at the
+    origin at radius 0. ``live_point_count(obj)`` reads the real count;
+    ``len(pc.points)`` is the capacity.
     """
     previous = getattr(obj, "data", None)
     pc_old = previous if obj.type == "POINTCLOUD" else None
     n = len(positions)
     wants_color = colors is not None and len(colors) != 0
-    reuse = (reuse_datablock
-             and _can_reuse_pointcloud(pc_old, n, wants_color))
-    pc = pc_old if reuse else bpy.data.pointclouds.new(obj.name)
-    if not reuse:
-        pc.resize(n)
+    realloc = reuse_datablock is False or _needs_realloc(pc_old, n, wants_color)
+    if realloc:
+        pc = bpy.data.pointclouds.new(obj.name)
+        pc.resize(_point_capacity_for(n))
+        _ensure_point_attributes(pc, wants_color)
+    else:
+        pc = pc_old
+    capacity = len(pc.points)
+
+    coords = np.zeros((capacity, 3), dtype=np.float32)
+    radii = np.zeros(capacity, dtype=np.float32)
     if n:
-        pos_attr = pc.attributes.get("position")
-        if pos_attr is None:
-            pos_attr = pc.attributes.new("position", "FLOAT_VECTOR", "POINT")
-        pos_attr.data.foreach_set(
-            "vector", np.asarray(positions, dtype=np.float32).ravel())
-        rad_attr = pc.attributes.get("radius")
-        if rad_attr is None:
-            rad_attr = pc.attributes.new("radius", "FLOAT", "POINT")
-        rad_attr.data.foreach_set(
-            "value", np.full(n, radius, dtype=np.float32))
-        _write_point_colors(pc, colors)
+        coords[:n] = np.asarray(positions, dtype=np.float32)
+        radii[:n] = radius
+    pc.attributes["position"].data.foreach_set("vector", coords.ravel())
+    pc.attributes["radius"].data.foreach_set("value", radii)
+    color_attr = pc.attributes.get(COLOR_ATTR)
+    if color_attr is not None:
+        channels = np.zeros((capacity, 4), dtype=np.float32)
+        if wants_color:
+            channels[:n] = np.asarray(colors, dtype=np.float32)
+        color_attr.data.foreach_set("color", channels.ravel())
+    obj[POINT_COUNT_TAG] = n
     pc.update_tag()
-    if not reuse:
+    if realloc:
         mats = [m for m in getattr(previous, "materials", ())]
         obj.data = pc
         for m in mats:
@@ -732,11 +798,7 @@ def _render_outputs(scene, frame):
                   getattr(fs, "whitewater_display_scale", 1.0))
         obj = _ensure_point_object(scene, WHITEWATER_NAME)
         if _supports_pointcloud():
-            # Dynamic whitewater counts make in-place PointCloud.resize plus
-            # attribute replacement unsafe in Blender 5.1 (native crash after
-            # repeated playback frames). Use an atomic datablock swap here.
-            _swap_points(
-                obj, frame.whitewater, radius, colors, reuse_datablock=False)
+            _swap_points(obj, frame.whitewater, radius, colors)
         else:
             _swap_vertex_cloud(obj, frame.whitewater, colors)
         materials.ensure_whitewater_material(scene, obj)
@@ -766,10 +828,9 @@ def refresh_existing_output_settings(scene):
         particles.hide_viewport = not fs.show_particles
         particles.hide_render = not fs.show_particles
         if fs.show_particles:
-            if hasattr(particles.data, "attributes"):
-                radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
-                          getattr(fs, "particle_display_scale", 1.0))
-                _set_point_radius(particles.data, radius)
+            radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
+                      getattr(fs, "particle_display_scale", 1.0))
+            _set_point_radius(particles, radius)
             materials.ensure_particle_material(scene, particles)
 
     whitewater = output_object(scene, WHITEWATER_NAME)
@@ -778,10 +839,9 @@ def refresh_existing_output_settings(scene):
         whitewater.hide_viewport = not visible
         whitewater.hide_render = not visible
         if visible:
-            if hasattr(whitewater.data, "attributes"):
-                radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
-                          getattr(fs, "whitewater_display_scale", 1.0))
-                _set_point_radius(whitewater.data, radius)
+            radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
+                      getattr(fs, "whitewater_display_scale", 1.0))
+            _set_point_radius(whitewater, radius)
             materials.ensure_whitewater_material(scene, whitewater)
 
 
@@ -819,7 +879,7 @@ def _clear_points(scene, name):
     obj = output_object(scene, name)
     if obj is None:
         return
-    if obj.type == "POINTCLOUD" and len(obj.data.points):
+    if obj.type == "POINTCLOUD" and live_point_count(obj):
         _swap_points(obj, np.zeros((0, 3), dtype=np.float32), 0.01)
     elif obj.type == "MESH" and len(obj.data.vertices):
         _swap_vertex_cloud(obj, np.zeros((0, 3), dtype=np.float32))

@@ -27,13 +27,10 @@ SCENES = (
 
 
 def point_count(obj):
-    if obj is None:
-        return 0
-    if obj.type == "MESH":
-        return len(obj.data.vertices)
-    if obj.type == "POINTCLOUD":
-        return len(obj.data.points)
-    return 0
+    # Output clouds carry spare capacity, so len(data.points) is not the count.
+    from fluidSim_warp_blender51.blender import viewport
+
+    return viewport.live_point_count(obj)
 
 
 def check_scene(name):

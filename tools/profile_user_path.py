@@ -166,12 +166,11 @@ def _viewport_counts(bpy, particles_mode):
     surf = bpy.data.objects.get("FluidSim Surface")
     parts = bpy.data.objects.get("FluidSim Particles")
     surface_verts = len(surf.data.vertices) if surf and surf.type == "MESH" else 0
-    particle_points = 0
-    if parts is not None and hasattr(parts.data, "attributes"):
-        attr = parts.data.attributes.get("position")
-        particle_points = len(attr.data) if attr is not None else 0
-    elif parts is not None and hasattr(parts.data, "vertices"):
-        particle_points = len(parts.data.vertices)
+    # Output clouds carry spare capacity, so the attribute length is not the
+    # count -- profiling numbers would read as inflated by the padding.
+    from fluidSim_warp_blender51.blender import viewport
+
+    particle_points = viewport.live_point_count(parts)
     primary_count = particle_points if particles_mode else surface_verts
     return {
         "surface_verts": int(surface_verts),

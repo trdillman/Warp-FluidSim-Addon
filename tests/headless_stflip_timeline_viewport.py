@@ -37,15 +37,10 @@ def _enable_addon(package_dir: pathlib.Path) -> None:
 
 
 def _count_object(name: str) -> int:
-    obj = bpy.data.objects.get(name)
-    if obj is None:
-        return 0
-    data = obj.data
-    if hasattr(data, "vertices"):
-        return len(data.vertices)
-    if hasattr(data, "points"):
-        return len(data.points)
-    return 0
+    # Output clouds carry spare capacity, so len(data.points) is not the count.
+    from fluidSim_warp_blender51.blender import viewport
+
+    return viewport.live_point_count(bpy.data.objects.get(name))
 
 
 
