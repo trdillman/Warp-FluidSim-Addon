@@ -43,6 +43,11 @@ def configure_cycles_points(scene):
         # EEVEE ignores point clouds without geometry nodes as of 5.1.
 
 
+# Frame the render job started from. Blender restores it after the job, and
+# that restore must not reach the solver -- see _on_render_end.
+_PRE_RENDER_FRAME = None
+
+
 @persistent
 def _on_render_init(scene, *_args):
     # Must be @persistent: Blender frees non-persistent app handlers on file
@@ -54,17 +59,40 @@ def _on_render_init(scene, *_args):
     # rather than registering a second handler that this module would strip.
     from . import scene_bridge
 
+    global _PRE_RENDER_FRAME
+    _PRE_RENDER_FRAME = scene.frame_current
     scene_bridge.ensure_session_before_frames(scene, "render")
     ensure_render_visibility(scene)
+
+
+@persistent
+def _on_render_end(_scene, *_args):
+    # Arm here rather than in _on_render_init: during the job itself the render
+    # walks real frames, and one of them can equal the pre-render frame. Only
+    # the restore that lands after the job is Blender's bookkeeping.
+    from . import scene_bridge
+
+    if _PRE_RENDER_FRAME is not None:
+        scene_bridge.arm_render_frame_restore(_PRE_RENDER_FRAME)
+
+
+_HANDLER_LISTS = ("render_init", "render_complete", "render_cancel")
 
 
 def register_handlers():
     unregister_handlers()
     bpy.app.handlers.render_init.append(_on_render_init)
+    # Both endings restore the frame, so both have to arm.
+    for name in ("render_complete", "render_cancel"):
+        if hasattr(bpy.app.handlers, name):
+            getattr(bpy.app.handlers, name).append(_on_render_end)
 
 
 def unregister_handlers():
-    handlers = bpy.app.handlers.render_init
-    for fn in list(handlers):
-        if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
-            handlers.remove(fn)
+    for name in _HANDLER_LISTS:
+        handlers = getattr(bpy.app.handlers, name, None)
+        if handlers is None:
+            continue
+        for fn in list(handlers):
+            if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
+                handlers.remove(fn)

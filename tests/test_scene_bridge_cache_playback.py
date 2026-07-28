@@ -954,6 +954,68 @@ def test_frame_change_after_playback_pre_does_not_reinitialize(monkeypatch):
     assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
 
 
+def _record_solver_work(monkeypatch, scene, sess):
+    """Log sync/step/reset so a frame change's effect on the solver is visible."""
+    calls = []
+    sess.solver = SimpleNamespace(frame=3)
+    sess.start_frame = scene.frame_start
+    monkeypatch.setattr(
+        sess, "sync_scene", lambda *_args, **_kw: calls.append("sync"))
+    monkeypatch.setattr(
+        sess, "step",
+        lambda _scene, **kwargs: calls.append(
+            ("step", kwargs.get("timeline_frame", scene.frame_current))))
+    monkeypatch.setattr(sess, "reset", lambda _scene: calls.append("reset"))
+    return calls
+
+
+def test_render_frame_restore_does_not_touch_the_solver(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=5, playback=False)
+    sess = scene_bridge.session()
+    calls = _record_solver_work(monkeypatch, scene, sess)
+    sess.last_frame = 4
+
+    # Blender jumps back to the pre-render frame when the job ends; that step
+    # wrote a cache frame the user never simulated.
+    scene_bridge.arm_render_frame_restore(5)
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert calls == []
+    assert sess.last_frame == 5
+
+
+def test_render_frame_restore_is_one_shot(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=5, playback=False)
+    sess = scene_bridge.session()
+    calls = _record_solver_work(monkeypatch, scene, sess)
+    sess.last_frame = 4
+
+    scene_bridge.arm_render_frame_restore(5)
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene.frame_current = 6
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    # The frame after the restore is a real user frame again.
+    assert calls == ["sync", ("step", 6)]
+
+
+def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=6, playback=False)
+    sess = scene_bridge.session()
+    calls = _record_solver_work(monkeypatch, scene, sess)
+    sess.last_frame = 5
+
+    # Render ended at frame 5, but the user scrubbed elsewhere first: that is a
+    # real gesture and must still simulate.
+    scene_bridge.arm_render_frame_restore(5)
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert calls == ["sync", ("step", 6)]
+
+
 def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)

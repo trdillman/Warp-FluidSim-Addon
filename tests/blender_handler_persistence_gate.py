@@ -33,7 +33,22 @@ HANDLER_LISTS = (
     "save_pre",
     "load_post",
     "animation_playback_pre",
+    "render_complete",
+    "render_cancel",
 )
+
+# Every handler the add-on is supposed to register, by list. Checking only
+# "whatever is registered is @persistent" passes vacuously when a handler is
+# missing entirely -- which is exactly how a silently-stripped render_init
+# handler got through. Absence is the failure this catches.
+EXPECTED_HANDLERS = {
+    "frame_change_post": {"_on_frame_change"},
+    "load_pre": {"_on_load_pre"},
+    "animation_playback_pre": {"_on_playback_pre"},
+    "render_init": {"_on_render_init"},
+    "render_complete": {"_on_render_end"},
+    "render_cancel": {"_on_render_end"},
+}
 
 
 def addon_frame_handlers():
@@ -60,6 +75,21 @@ def addon_handlers():
     return found
 
 
+def assert_expected_handlers_registered(stage):
+    """Every handler in EXPECTED_HANDLERS must actually be on its list."""
+    found = {name: {getattr(fn, "__name__", "?") for fn in fns}
+             for name, fns in addon_handlers().items()}
+    missing = {
+        list_name: sorted(names - found.get(list_name, set()))
+        for list_name, names in EXPECTED_HANDLERS.items()
+        if names - found.get(list_name, set())
+    }
+    if missing:
+        raise RuntimeError(
+            f"[{stage}] add-on handlers missing: {missing}; "
+            f"registered: { {k: sorted(v) for k, v in found.items()} }")
+
+
 def assert_all_addon_handlers_persistent(stage):
     """Every add-on app handler must carry @persistent."""
     offenders = [
@@ -82,10 +112,7 @@ try:
         raise RuntimeError("add-on frame handler was not registered")
     registered_before = {k: [getattr(f, "__name__", "?") for f in v]
                          for k, v in addon_handlers().items()}
-    if "render_init" not in registered_before:
-        raise RuntimeError(
-            "render_init handler was not registered; "
-            f"registered lists: {sorted(registered_before)}")
+    assert_expected_handlers_registered("after register")
     assert_all_addon_handlers_persistent("after register")
 
     mesh = bpy.data.meshes.new("Persistence Seed")
@@ -146,6 +173,7 @@ try:
         raise RuntimeError(
             f"add-on handlers cleared by opening a .blend file: {lost}; "
             f"surviving: {registered_after}")
+    assert_expected_handlers_registered("after reopen")
     assert_all_addon_handlers_persistent("after reopen")
 except Exception as exc:
     print(f"HANDLER-PERSISTENCE-GATE-FAIL: {exc}")
