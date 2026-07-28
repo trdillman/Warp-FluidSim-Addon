@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+# Mirrors the legacy bl_info dict in __init__.py; keep the two in sync.
+id = "fluidSim_warp_blender51"
+name = "FluidSim Warp"
+version = "1.0.241"
+tagline = "Interactive GPU liquid simulation with beta ST-FLIP"
+maintainer = "FluidSim port (synthesized reference)"
+type = "add-on"
+
+blender_version_min = "5.1.0"
+
+# Blender extensions must ship a GPL-compatible license; the repository
+# carries no LICENSE file, so this is the Blender add-on default.
+license = ["SPDX:GPL-2.0-or-later"]
+
+tags = ["Physics"]
