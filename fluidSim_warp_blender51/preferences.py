@@ -9,6 +9,22 @@ from bpy.props import BoolProperty, StringProperty
 _WARP_PROBE_RESULT = None
 
 
+def configured_device():
+    """The device the user selected, or the CUDA default.
+
+    Sole owner of that lookup. Two callers previously open-coded it and a
+    third ignored it entirely, so the preferences panel could report a
+    different device than the solver was running on.
+    """
+    try:
+        prefs = bpy.context.preferences.addons[__package__].preferences
+        if prefs.device:
+            return prefs.device
+    except (KeyError, AttributeError):
+        pass
+    return "cuda:0"
+
+
 def _probe_warp(*, force=False):
     """Report Warp/CUDA availability, cached across preference redraws."""
     global _WARP_PROBE_RESULT
@@ -19,7 +35,9 @@ def _probe_warp(*, force=False):
 
         wp.init()
         if wp.is_cuda_available():
-            dev = wp.get_device("cuda:0")
+            # Probing cuda:0 while the solver runs on the selected device made
+            # this panel's checkmark report a card that was never in use.
+            dev = wp.get_device(configured_device())
             result = (True, f"Warp {wp.config.version} - {dev.name}")
         else:
             result = (False, f"Warp {wp.config.version} - no CUDA device")

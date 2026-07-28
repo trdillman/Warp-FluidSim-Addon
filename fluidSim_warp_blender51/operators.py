@@ -16,14 +16,9 @@ def _bridge():
 
 
 def _configured_device():
-    try:
-        prefs = bpy.context.preferences.addons[
-            "fluidSim_warp_blender51"].preferences
-        if prefs.device:
-            return prefs.device
-    except (KeyError, AttributeError):
-        pass
-    return "cuda:0"
+    from .preferences import configured_device
+
+    return configured_device()
 
 
 class _FLUIDSIM_OT_session_base:

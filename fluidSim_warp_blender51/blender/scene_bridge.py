@@ -617,12 +617,9 @@ def build_settings(scene):
 
     fs = scene.fluidsim
     s = SolverSettings()
-    try:
-        prefs = bpy.context.preferences.addons["fluidSim_warp_blender51"].preferences
-        if prefs.device:
-            s.device = prefs.device
-    except (KeyError, AttributeError):
-        pass
+    from ..preferences import configured_device
+
+    s.device = configured_device()
     lo, hi = _domain_bounds(scene)
     s.domain_min = lo
     s.domain_max = hi
