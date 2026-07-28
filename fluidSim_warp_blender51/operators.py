@@ -188,10 +188,107 @@ class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     def execute(self, context):
         sess = _bridge().session()
-        if not sess.active:
-            self.report({"WARNING"}, "Solver not initialized")
+        owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+        if not owns_scene(context.scene):
+            self.report({"WARNING"}, "Solver not initialized for this scene")
             return {"CANCELLED"}
         _bridge().reset_simulation(context.scene)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_apply_pending_reinitialize(bpy.types.Operator):
+    """Apply pending allocation/domain settings by rebuilding the solver"""
+
+    bl_idname = "fluidsim.apply_pending_reinitialize"
+    bl_label = "Apply Pending & Reinitialize"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        if getattr(scene, "fluidsim", None) is None:
+            return False
+        bridge = _bridge()
+        if bridge.pending_presentation(scene)["action"] == "NONE":
+            return False
+        sess = bridge.session()
+        return not sess.active or sess.owns_scene(scene)
+
+    def execute(self, context):
+        try:
+            changed = _bridge().apply_pending_reinitialize(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending reinitialize failed: {exc}")
+            return {"CANCELLED"}
+        if not changed:
+            self.report({"WARNING"}, "No pending settings to apply")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending settings applied")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_apply_pending_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
+    """Apply reset-tier pending settings without reallocating the solver"""
+
+    bl_idname = "fluidsim.apply_pending_reset"
+    bl_label = "Apply Pending & Reset"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        bridge = _bridge()
+        sess = bridge.session()
+        if not sess.active:
+            cls.poll_message_set("Initialize the solver first")
+            return False
+        scene = getattr(context, "scene", None)
+        if getattr(scene, "fluidsim", None) is None:
+            cls.poll_message_set("No FluidSim scene is active")
+            return False
+        if bridge.pending_presentation(scene)["action"] != "RESET_PENDING":
+            cls.poll_message_set("No reset-tier settings are pending")
+            return False
+        if not sess.owns_scene(scene):
+            cls.poll_message_set("The active solver belongs to another scene")
+            return False
+        return True
+
+    def execute(self, context):
+        try:
+            changed = _bridge().apply_pending_reset(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending reset failed: {exc}")
+            return {"CANCELLED"}
+        if not changed:
+            self.report({"WARNING"}, "No pending reset settings to apply")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending reset settings applied")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_revert_pending(bpy.types.Operator):
+    """Restore the last successfully applied restart/reinitialize values"""
+
+    bl_idname = "fluidsim.revert_pending"
+    bl_label = "Revert Pending Values"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        return (getattr(scene, "fluidsim", None) is not None
+                and _bridge().pending_presentation(scene)["count"] > 0)
+
+    def execute(self, context):
+        try:
+            reverted = _bridge().revert_pending_values(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending revert failed: {exc}")
+            return {"CANCELLED"}
+        if not reverted:
+            self.report({"WARNING"}, "No applied pending snapshot is available")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending values reverted")
         return {"FINISHED"}
 
 
@@ -207,7 +304,8 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         scene = context.scene
         bridge = _bridge()
         sess = bridge.session()
-        if not sess.active:
+        owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+        if not owns_scene(scene):
             try:
                 sess = bridge.initialize_session(scene)
             except Exception as exc:  # noqa: BLE001
@@ -235,7 +333,9 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
         fs = scene.fluidsim
         bridge = _bridge()
         if not fs.live:
-            if not bridge.session().active:
+            sess = bridge.session()
+            owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+            if not owns_scene(scene):
                 try:
                     bridge.initialize_session(scene)
                 except Exception as exc:  # noqa: BLE001
@@ -1199,6 +1299,9 @@ CLASSES = (
     FLUIDSIM_OT_clear_error,
     FLUIDSIM_OT_apply_safe_settings,
     FLUIDSIM_OT_reset,
+    FLUIDSIM_OT_apply_pending_reinitialize,
+    FLUIDSIM_OT_apply_pending_reset,
+    FLUIDSIM_OT_revert_pending,
     FLUIDSIM_OT_step,
     FLUIDSIM_OT_toggle_live,
     FLUIDSIM_OT_setup_scene,

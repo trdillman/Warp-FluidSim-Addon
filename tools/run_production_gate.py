@@ -47,6 +47,7 @@ BLENDER_FAILURE_MARKERS = (
     "ATTRIBUTE-VIZ-ACCEPTANCE-FAIL",
     "MESH-SOURCE-ACCEPTANCE-FAIL",
     "FORCE-REGION-ACCEPTANCE-FAIL",
+    "PHASE4-LIVE-INTERACTION-FAIL",
     "GUI-ACCEPTANCE-FAIL",
     "GUI-PLAYBACK-PROBE-FAIL",
     "DEMO-BLEND-CHECK-FAIL",
@@ -190,6 +191,7 @@ def main(argv=None):
         "tests/blender_force_region_acceptance.py",
         "tests/blender_phase3_source_ui_acceptance.py",
         "tests/blender_phase3_profile_safe_review.py",
+        "tests/blender_phase4_live_interaction_acceptance.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
     ])
@@ -228,6 +230,7 @@ def main(argv=None):
         ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
         ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
         ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
+        ("tests/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
     ):
         _run(
             script,

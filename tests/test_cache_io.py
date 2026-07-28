@@ -11,6 +11,7 @@ from fluidSim_warp_blender51.io.cache import (
     read_frame,
     read_sequence_metadata,
     resolve_frame_range,
+    settings_record,
     validate_contiguous_frames,
     write_frame,
     write_sequence_metadata,
@@ -67,6 +68,8 @@ def test_write_frame_stores_format_version_and_read_frame_loads_it(tmp_path, mon
 
     assert written == str(tmp_path / "fluidsim_00003.npz")
     assert int(loaded["format_version"]) == 1
+    assert str(loaded["settings_signature"]) == settings_record(
+        solver.settings)["signature"]
     np.testing.assert_array_equal(loaded["positions"], solver.particle_positions())
     with zipfile.ZipFile(written) as archive:
         assert archive.infolist()
@@ -191,6 +194,45 @@ def test_sequence_metadata_round_trips_frame_range(tmp_path):
     assert metadata["frame_end"] == 6
     assert metadata["frame_count"] == 3
     assert metadata["source"] == "simulation"
+
+
+def test_sequence_metadata_reports_mixed_settings_boundaries(tmp_path):
+    first = settings_record(SimpleNamespace(cfl=2.0, flip_ratio=0.95))
+    second = settings_record(SimpleNamespace(cfl=1.0, flip_ratio=0.5))
+
+    write_sequence_metadata(
+        str(tmp_path), 1, 4, source="simulation",
+        settings_records={1: first, 2: first, 3: second, 4: second})
+    metadata = read_sequence_metadata(str(tmp_path))
+
+    assert metadata["mixed_settings"] is True
+    assert metadata["settings_signature"] is None
+    assert metadata["settings_segments"] == [
+        {"frame_start": 1, "frame_end": 2, "signature": first["signature"]},
+        {"frame_start": 3, "frame_end": 4, "signature": second["signature"]},
+    ]
+    assert metadata["settings_baseline"] == {
+        "signature": first["signature"], "settings": first["settings"]}
+    assert "settings_snapshots" not in metadata
+    assert metadata["settings_changes"][second["signature"]] == {
+        "changed": {"cfl": 1.0, "flip_ratio": 0.5}, "removed": []}
+
+
+def test_settings_record_encodes_nonfinite_values_as_standard_json(tmp_path):
+    record = settings_record(SimpleNamespace(
+        finite=1.0, nan=float("nan"), positive=float("inf"),
+        negative=float("-inf")))
+
+    write_sequence_metadata(
+        str(tmp_path), 1, 1, settings_records={1: record})
+    metadata = read_sequence_metadata(str(tmp_path))
+
+    assert metadata["settings_baseline"]["settings"] == {
+        "finite": 1.0,
+        "nan": {"__fluidsim_nonfinite_float__": "NaN"},
+        "negative": {"__fluidsim_nonfinite_float__": "-Infinity"},
+        "positive": {"__fluidsim_nonfinite_float__": "Infinity"},
+    }
 
 
 def test_validate_contiguous_frames_reports_missing_frames(tmp_path):

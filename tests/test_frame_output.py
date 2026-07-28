@@ -150,7 +150,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
     export.export_frame(solver, str(tmp_path / "frame"))
 
     assert set(payload) == {
-        "format_version", "scene_key", "positions", "velocities", "whitewater",
+        "format_version", "scene_key", "settings_signature", "positions", "velocities", "whitewater",
+
         "surface_verts", "surface_tris", "frame", "voxel_size",
         "surface_voxel_size", "surface_resolution_multiplier",
         "surface_resolution_mode", "surface_update_cadence",

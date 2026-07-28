@@ -21,6 +21,77 @@ class FluidSimPanel:
     bl_category = "FluidSim"
 
 
+def _draw_pending_banner(layout, scene):
+    """Draw cached pending state only; never inspect geometry or mutate RNA."""
+    from .blender.scene_bridge import pending_presentation
+
+    pending = pending_presentation(scene)
+    if pending["action"] == "NONE":
+        return
+    box = layout.box()
+    box.alert = True
+    label = ("Reinitialize Required" if pending["action"] == "REINIT_PENDING"
+             else "Restart Required")
+    box.label(text=f"{label} ({pending['count']})", icon="ERROR")
+    for reason in pending["reasons"][:3]:
+        box.label(text=reason)
+    if pending["count"] > 3:
+        box.label(text=f"+ {pending['count'] - 3} more")
+    if pending["blocked_reason"]:
+        box.label(text=pending["blocked_reason"][:120], icon="CANCEL")
+    row = box.row(align=True)
+    if pending["action"] == "REINIT_PENDING":
+        row.operator("fluidsim.apply_pending_reinitialize", text="Apply", icon="FILE_REFRESH")
+    else:
+        row.operator("fluidsim.apply_pending_reset", text="Reset", icon="FILE_REFRESH")
+    row.operator("fluidsim.revert_pending", text="Revert", icon="LOOP_BACK")
+
+
+def _draw_interaction_tier(layout, text, icon="INFO"):
+    row = layout.row() if hasattr(layout, "row") else layout
+    row.alignment = "RIGHT"
+    row.label(text=text, icon=icon)
+
+
+def _draw_header_interaction(self, context):
+    scene = getattr(context, "scene", None)
+    if getattr(scene, "fluidsim", None) is None:
+        return
+    from .blender.scene_bridge import pending_presentation
+
+    pending = pending_presentation(scene)
+    icon = "ERROR" if pending["action"] != "NONE" else "MOD_FLUIDSIM"
+    text = str(pending["count"]) if pending["count"] else ""
+    self.layout.popover(panel="FLUIDSIM_PT_interaction_popover", text=text, icon=icon)
+
+
+class FLUIDSIM_PT_interaction_popover(bpy.types.Panel):
+    bl_label = "FluidSim Interaction"
+    bl_idname = "FLUIDSIM_PT_interaction_popover"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        fs = scene.fluidsim
+        from .blender.scene_bridge import pending_presentation, session
+
+        pending = pending_presentation(scene)
+        sess = session()
+        layout.label(text="Solver active" if sess.owns_scene(scene)
+                     else "Solver inactive", icon="PLAY" if sess.owns_scene(scene)
+                     else "PAUSE")
+        layout.prop(fs, "live", text="Live Playback")
+        if pending["action"] == "NONE":
+            layout.label(text="No pending settings", icon="CHECKMARK")
+        else:
+            _draw_pending_banner(layout, scene)
+        row = layout.row(align=True)
+        row.operator("fluidsim.reset", text="Reset", icon="FILE_REFRESH")
+        row.operator("fluidsim.release", text="Release", icon="X")
+
+
 class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
     bl_label = "Simulation"
     bl_idname = "FLUIDSIM_PT_simulation"
@@ -31,6 +102,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         from .blender.scene_bridge import current_error, session
 
         sess = session()
+        _draw_pending_banner(layout, context.scene)
 
         col = layout.column(align=True)
         col.operator("fluidsim.setup_scene", icon="MOD_FLUIDSIM")
@@ -84,6 +156,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
                 warn.label(text="CFL clamped by Max substeps", icon="ERROR")
 
         col = layout.column(align=True)
+        _draw_interaction_tier(col, "Live")
         col.prop(fs, "time_scale")
         col.prop(fs, "cfl")
         row = col.row(align=True)
@@ -103,10 +176,13 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_pending_banner(layout, context.scene)
+        _draw_interaction_tier(layout, "Reinitialize Required", "ERROR")
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "voxel_size")
         col.prop(fs, "leaf_capacity")
+        _draw_interaction_tier(col, "Restart Required", "FILE_REFRESH")
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
@@ -136,8 +212,11 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_pending_banner(layout, context.scene)
         col = layout.column(align=True)
+        _draw_interaction_tier(col, "Reinitialize Required", "ERROR")
         col.prop(fs, "max_particles")
+        _draw_interaction_tier(col, "Live / Targeted Refresh")
         col.prop(fs, "particles_per_voxel")
         col.prop(fs, "sample_type")
         sub = col.column(align=True)
@@ -161,6 +240,8 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
 
         box = layout.box()
         box.label(text="ST-FLIP (Beta)", icon="EXPERIMENTAL")
+        _draw_interaction_tier(box, "Enable/Reference/Seed: Restart Required",
+                               "FILE_REFRESH")
         box.prop(fs, "spacetime_enabled")
         sub = box.column(align=True)
         sub.enabled = fs.spacetime_enabled
@@ -542,6 +623,7 @@ class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_interaction_tier(layout, "Live")
         col = layout.column(align=True)
         col.prop(fs, "pressure_solver")
         col.prop(fs, "pressure_iterations")
@@ -560,6 +642,7 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_interaction_tier(layout, "Live")
         layout.enabled = fs.viscosity_enabled
         col = layout.column(align=True)
         col.prop(fs, "viscosity_solver")
@@ -580,9 +663,12 @@ class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_pending_banner(layout, context.scene)
         sub = layout.column(align=True)
         sub.enabled = fs.whitewater_enabled
+        _draw_interaction_tier(sub, "Reinitialize Required", "ERROR")
         sub.prop(fs, "max_whitewater")
+        _draw_interaction_tier(sub, "Live")
         sub.prop(fs, "ww_churn_gain")
         sub.prop(fs, "ww_churn_decay")
         sub.prop(fs, "ww_churn_threshold")
@@ -641,6 +727,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
 
+        _draw_interaction_tier(layout, "Live / Targeted Refresh")
         layout.prop(fs, "liquid_view_mode")
 
         box = layout.box()
@@ -937,6 +1024,7 @@ class FLUIDSIM_PT_validation(FluidSimPanel, bpy.types.Panel):
 
 
 CLASSES = (
+    FLUIDSIM_PT_interaction_popover,
     FLUIDSIM_PT_simulation,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,
@@ -964,8 +1052,21 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    header = getattr(bpy.types, "VIEW3D_HT_header", None)
+    if header is not None:
+        try:
+            header.remove(_draw_header_interaction)
+        except Exception:
+            pass
+        header.append(_draw_header_interaction)
 
 
 def unregister():
+    header = getattr(bpy.types, "VIEW3D_HT_header", None)
+    if header is not None:
+        try:
+            header.remove(_draw_header_interaction)
+        except Exception:
+            pass
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

@@ -40,6 +40,7 @@ PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_simulation"
 PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
 
 PANEL_IDS = [
+    "FLUIDSIM_PT_interaction_popover",
     "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
     "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
     "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
@@ -406,6 +407,11 @@ def _run_phase(phase, scene):
         force.fluidsim.force_strength = 0.0
         if _call_panel("FLUIDSIM_PT_forces") not in PANEL_CALL_SUCCESS:
             raise RuntimeError("configured Force Region panel did not draw")
+        # These objects exist only to exercise the role-specific UI. They are
+        # deliberately outside the simulation domain and must not enter the
+        # strict runtime gather path during the playback workload.
+        sink.fluidsim.enabled = False
+        force.fluidsim.enabled = False
         if src is not None:
             bpy.ops.object.select_all(action="DESELECT")
             src.select_set(True)
@@ -537,6 +543,23 @@ def _run_phase(phase, scene):
         check("property edits applied",
               abs(scene.fluidsim.flip_ratio - 0.9) < 1e-6
               and scene.fluidsim.pressure_iterations == 150)
+
+        # The fixed header popover remains callable independently of sidebar
+        # scroll position and renders the same cached pending state as panels.
+        from fluidSim_warp_blender51.blender import scene_bridge
+        sess = scene_bridge.session()
+        solver_before_pending = sess.solver
+        scene.fluidsim.voxel_size *= 0.9
+        pending = scene_bridge.pending_presentation(scene)
+        check("mid-run GUI edit is pending", pending["action"] == "REINIT_PENDING"
+              and sess.solver is solver_before_pending, pending)
+        popover_result = _call_panel("FLUIDSIM_PT_interaction_popover")
+        check("fixed header popover callable outside the sidebar region",
+              popover_result in PANEL_CALL_SUCCESS, popover_result)
+        revert_result = bpy.ops.fluidsim.revert_pending()
+        check("GUI pending revert action", revert_result == {"FINISHED"}
+              and scene_bridge.pending_presentation(scene)["action"] == "NONE",
+              revert_result)
 
         # Viewport screenshot (viewport-visible proof).
         try:

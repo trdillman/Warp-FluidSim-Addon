@@ -398,10 +398,47 @@ FluidSim Warp is interactive-first; these are supplemental:
 - **Export Current Frame** writes the surface as `*_surface.obj` and particles
   / whitewater as binary `*_particles.ply` / `*_whitewater.ply` (particles
   include velocity).
+- Every cached frame stores its applied settings signature. Sequence metadata
+  records contiguous signature boundaries and marks `mixed_settings: true`
+  when a bake contains more than one applied parameter set; it never presents
+  that sequence as homogeneous. `settings_baseline` stores the first complete
+  setting set and `settings_changes` stores only changed/removed fields for
+  later signatures, avoiding repeated full snapshots during animation.
+  Non-finite diagnostic floats use an explicit
+  `__fluidsim_nonfinite_float__` JSON tag rather than non-standard JSON values
+  or ambiguous ordinary strings.
 
 ---
 
-## 10. Tips
+## 10. Live interaction and pending changes
+
+FluidSim classifies every exposed simulation setting into one interaction tier:
+
+| Tier | Meaning | What happens while a run is advanced |
+|---|---|---|
+| **Live** | Safe bounded solver mutation | Applies before the next step without clearing particles or history. |
+| **Live / Targeted Refresh** | Live mutation with a bounded subsystem refresh | Applies without resetting; for example surface refresh or ST-FLIP density recalibration. |
+| **Restart Required** | Meaningful from simulation start | Remains pending until rewind, explicit Reset, or Revert. |
+| **Reinitialize Required** | Allocation, device, or domain construction change | Remains pending until rewind, explicit Reinitialize, or Revert. |
+| **Blocked** | Unsafe in the current context | Remains pending with an actionable reason; the active run is preserved. |
+
+Pending state belongs to each scene. Editing voxel size, capacity, domain, or a
+restart-only lifecycle value in the middle of a run does **not** silently erase
+that run. Rewind to the timeline start to apply it automatically, or use
+**Apply Pending & Reinitialize**, **Apply Pending & Reset**, or **Revert Pending
+Values**. A failed apply keeps the reasons pending and stops playback rather
+than advancing stale state from the rewound frame. Revert never changes or
+saves Blender add-on preferences; device changes must be selected explicitly.
+
+The FluidSim control in the fixed 3D Viewport header remains reachable while
+the sidebar is scrolled. Its popover shows solver state, pending reasons, Live,
+Apply/Reset/Revert, and Release controls. The viewport overlay is informational
+only. Blender does not support CSS-style sticky content inside a scrolling
+sidebar, so FluidSim does not claim that behavior.
+
+---
+
+## 11. Tips
 
 - **Start coarse.** Use a large Voxel Size (e.g. 0.08) while iterating, then
   refine. Resolution scales cubically.
@@ -432,7 +469,12 @@ phase-field activation, optional variable pressure, local trajectory
 substepping, and render-surface re-synchronization. It is beta because phase
 three still needs multi-scene reference-error and long-run conservation work.
 Keep the default feature disabled for production scenes until those results
-are acceptable for the scene type.
+are acceptable for the scene type. With automatic reference mass, the solver
+runs the Monte Carlo calibration for the current ST seed and then rescales that
+result linearly for live particles-per-voxel edits. This follows the estimator's
+linear mass expectation and avoids rerunning the expensive calibration on every
+slider or keyframe value; changes to the ST weighting kernels must revalidate
+that assumption.
 
 ## Safe Settings recovery
 
