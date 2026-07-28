@@ -2,7 +2,7 @@
 
 ## State
 
-blocked
+completed
 
 ## What to build
 
@@ -12,20 +12,31 @@ until the parent nested production lane has a complete executable input set.
 ## Acceptance criteria
 
 - [x] `audit_unit` is this worktree's `demos` directory, not the outer checkout.
-- [x] The report records the parent full-lane failure as the strongest current
-  evidence and does not promote the `96`-test lower-level pass.
-- [ ] A fresh nested demo artifact is generated only after the parent gate can
+- [x] The report records the current parent full-lane result as strongest
+  evidence and does not substitute a lower-level pytest pass.
+- [x] A fresh nested demo artifact is generated only after the parent gate can
   execute its complete lane.
 
 ## Evidence
 
 - Nested demos report: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\.claude\worktrees\particle-surface-rendering-apis-f62356\demos\POLICY_DRIFT_REPORT.md`.
 - Its `audit_unit` is the nested `demos` directory, generation is
-  `2026-07-26T15:22:19Z`, and HEAD is
-  `a2eaca7f45eb91368b082618e8759b028082ec87`.
-- The report records the nested parent gate's `py_compile` failure, the
-  subordinate `96 passed` result, and no nested demo or GUI artifacts.
+  `2026-07-28T22:44:16Z`, and HEAD is
+  `697fe6ef9b0861fafc1c9808176f108b03fe3b37`.
+- The parent gate reports `FULL-PRODUCTION-GATE-PASS`. The current analyzer
+  writes `artifacts/demo_analysis/analysis_report.json` as `pass`, `18/18`,
+  SHA-256
+  `034c45ee532ca4d61abe84e683858e161be6fdd9396cc013c501b8448c13c496`.
+- `artifacts/gui_playback_probe.json` records live passing playback through
+  solver frame 3, and the validator reports
+  `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 
 ## Blocked by
 
-- `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\.claude\worktrees\particle-surface-rendering-apis-f62356\backlog\tasks\TASK-POLICY-DRIFT-010-NESTED-FULL-LANE-MISSING-SCRIPTS.md`
+None - `TASK-POLICY-DRIFT-010` is completed and its full gate passes.
+
+## Verification
+
+- Parent nested gate: `FULL-PRODUCTION-GATE-PASS`.
+- Nested demo analysis: `DEMO-ANALYSIS-PASS (18/18)`.
+- Nested saved-demo playback: `SAVED-DEMO-GUI-PLAYBACK-PASS`.
