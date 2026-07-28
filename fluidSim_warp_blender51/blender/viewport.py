@@ -525,10 +525,18 @@ class _ViewportFrame:
     particle_attributes: dict[str, np.ndarray]
     whitewater: np.ndarray
     whitewater_attributes: dict[str, np.ndarray]
+    particles_decimated: bool = False
 
 
 def _attribute_map(mode, values):
     return {} if values is None else {mode: np.asarray(values)}
+
+
+def _display_stride(fs):
+    fraction = float(getattr(fs, "particle_display_fraction", 1.0))
+    if not 0.0 < fraction < 1.0:
+        return 1
+    return max(1, int(round(1.0 / fraction)))
 
 
 def _solver_frame(scene, solver, publish_surface=True):
@@ -536,14 +544,17 @@ def _solver_frame(scene, solver, publish_surface=True):
 
     fs = scene.fluidsim
     host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
-    # TODO(sim/frame_output.py): accept a display stride in HostFrame.positions
-    # and apply it to the device slice before .numpy(); decimating later in
-    # _render_outputs still transfers every live particle across PCIe.
-    positions = (host.positions if fs.show_particles else
+    # particle_display_fraction decimates on the device, so the particles the
+    # user asked not to display never cross PCIe. HostFrame keys the readback
+    # per stride, so cache/export still get the full-fidelity array from this
+    # same frame. Attribute values stride identically or colors misalign.
+    step = _display_stride(fs)
+    indices = slice(None, None, step) if step > 1 else None
+    positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions, host=host) if fs.show_particles
-        else None)
+        solver, fs.particle_attribute_mode, positions, indices=indices,
+        host=host) if fs.show_particles else None)
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
                   np.zeros((0, 3), dtype=np.float32))
@@ -571,6 +582,7 @@ def _solver_frame(scene, solver, publish_surface=True):
         whitewater=np.asarray(whitewater, dtype=np.float32),
         whitewater_attributes=_attribute_map(
             fs.whitewater_attribute_mode, whitewater_values),
+        particles_decimated=step > 1,
     )
 
 
@@ -660,9 +672,10 @@ def _render_outputs(scene, frame):
     if fs.show_particles:
         positions = frame.particles
         values = frame.particle_attributes.get(fs.particle_attribute_mode)
-        fraction = fs.particle_display_fraction
-        if fraction < 1.0 and len(positions):
-            step = max(1, int(round(1.0 / fraction)))
+        # The live path already decimated on the device; only cached frames
+        # (full-fidelity on disk) still need the host-side stride here.
+        step = 1 if frame.particles_decimated else _display_stride(fs)
+        if step > 1 and len(positions):
             positions = positions[::step]
             if values is not None:
                 values = values[::step]

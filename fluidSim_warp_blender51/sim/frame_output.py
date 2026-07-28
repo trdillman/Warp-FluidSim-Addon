@@ -27,13 +27,23 @@ class HostFrame:
 
     @property
     def positions(self):
+        return self.positions_strided(1)
+
+    def positions_strided(self, stride=1):
+        """Read back every `stride`-th live particle, decimating on device.
+
+        Keyed per stride so a decimated viewport read is never handed to the
+        cache/export consumers, which need every particle from the same frame.
+        """
+        stride = max(1, int(stride))
+
         def load():
             if not hasattr(self.solver, "particles"):
-                return self.solver.particle_positions()
+                return self.solver.particle_positions()[::stride]
             n = self.solver.particles.refresh_host_count()
-            return (self.solver.particles.position[:n].numpy() if n else
+            return (self.solver.particles.position[:n:stride].numpy() if n else
                     np.zeros((0, 3), dtype=np.float32))
-        return self._get("positions", load)
+        return self._get(("positions", stride), load)
 
     @property
     def velocities(self):

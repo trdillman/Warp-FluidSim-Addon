@@ -118,18 +118,19 @@ def ensure_warp_discoverable() -> str | None:
     if spec is not None:
         return spec.origin
 
-    for candidate in (
-        *_blender_module_candidates(),
-        *_python_site_candidates(),
-        *_path_python_candidates(),
-    ):
-        if not _contains_warp(candidate):
-            continue
-        value = str(candidate)
-        if value not in sys.path:
-            sys.path.insert(0, value)
-        importlib.invalidate_caches()
-        spec = _find_warp()
-        if spec is not None:
-            return spec.origin
+    # Evaluated one source at a time: _path_python_candidates spawns a
+    # subprocess per python.exe on PATH, so it must not run when a cheaper
+    # source already yields a usable Warp.
+    for source in (_blender_module_candidates, _python_site_candidates,
+                   _path_python_candidates):
+        for candidate in source():
+            if not _contains_warp(candidate):
+                continue
+            value = str(candidate)
+            if value not in sys.path:
+                sys.path.insert(0, value)
+            importlib.invalidate_caches()
+            spec = _find_warp()
+            if spec is not None:
+                return spec.origin
     return None
