@@ -48,6 +48,13 @@ def _on_render_init(scene, *_args):
     # Must be @persistent: Blender frees non-persistent app handlers on file
     # load, so without it render visibility silently stops being enforced
     # after the user opens any .blend while the add-on stays enabled.
+    #
+    # This module owns render_init outright -- unregister_handlers() below drops
+    # every add-on callback on that list -- so the solver hoist rides along here
+    # rather than registering a second handler that this module would strip.
+    from . import scene_bridge
+
+    scene_bridge.ensure_session_before_frames(scene, "render")
     ensure_render_visibility(scene)
 
 

@@ -32,6 +32,7 @@ HANDLER_LISTS = (
     "depsgraph_update_post",
     "save_pre",
     "load_post",
+    "animation_playback_pre",
 )
 
 
