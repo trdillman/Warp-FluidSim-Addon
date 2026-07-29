@@ -7,7 +7,7 @@
 
 > **Post-investigation update:** The empty landing branch described below was subsequently populated and committed as `phase4/live-interaction-merge-20260728`. Master commits `239f80a` and `af4136e` were merged into it, all integration gates passed, and the branch finished 0 commits behind master.
 >
-> **Classification correction:** `…_port_native_interop_main_20260715`, `…_port_native_interop`, and `.claude/worktrees/particle-surface-rendering-apis-f62356` are archived **branched experiments, not genuine worktree candidates**. They must be excluded from merge-readiness recommendations. Conflict data below is retained only as historical forensic evidence and must not be interpreted as an integration plan.
+> **Classification correction:** `…_port_native_interop_main_20260715`, `…_port_native_interop`, `.claude/worktrees/particle-surface-rendering-apis-f62356`, and the later-created `.claude/worktrees/stflip-implementation` are archived **branched experiments, not genuine worktree candidates**. They must be excluded from merge-readiness recommendations. Conflict data below is retained only as historical forensic evidence and must not be interpreted as an integration plan. The ST-FLIP experiment was not present in this original snapshot and must be ignored in future refreshes.
 
 ---
 

@@ -4,10 +4,10 @@ Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements onl
 
 ## Branched experiments are not merge candidates
 
-The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex/native-gpu-interop-main-20260715`) and `…_port_native_interop` (`codex/native-gpu-interop`), plus the nested rendering-APIs checkout `.claude/worktrees/particle-surface-rendering-apis-f62356` (`claude/particle-surface-rendering-apis-f62356`), are archived **branched experiments**, not genuine worktree candidates, pending features, or merge-ready implementations. Their staged, unstaged, committed, benchmark, documentation, backlog, and evidence files are experimental records only.
+The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex/native-gpu-interop-main-20260715`) and `…_port_native_interop` (`codex/native-gpu-interop`), the nested rendering-APIs checkout `.claude/worktrees/particle-surface-rendering-apis-f62356` (`claude/particle-surface-rendering-apis-f62356`), and the nested ST-FLIP checkout `.claude/worktrees/stflip-implementation` (`worktree-stflip-implementation`) are archived **branched experiments**, not genuine worktree candidates, pending features, or merge-ready implementations. Their staged, unstaged, committed, benchmark, documentation, backlog, and evidence files are experimental records only.
 
 - Do not recommend, schedule, rebase, merge, cherry-pick, or extract changes from these experiments merely because a worktree or branch exists.
-- Exclude all three from merge-readiness lists and conflict-driven integration plans. If inventorying worktrees, label them `EXPERIMENT — NOT A MERGE CANDIDATE`.
+- Exclude all four from merge-readiness lists and conflict-driven integration plans. If inventorying worktrees, label them `EXPERIMENT — NOT A MERGE CANDIDATE`.
 - Do not describe their overlap with active code or documentation as a future merge requirement. It is only historical collision information.
 - Reuse requires an explicit user request to reactivate the experiment plus a new implementation and validation plan; ordinary cleanup or integration work is not authorization.
 
