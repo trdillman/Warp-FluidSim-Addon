@@ -383,7 +383,7 @@ def _run_phase(phase, scene):
             src.fluidsim.use_lifespan = True
 
         # Exercise normal-user role tagging through the surfaced operator seam.
-        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(20.0, 20.0, 20.0))
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(4.0, 1.0, 1.0))
         sink = bpy.context.object
         sink.name = "FluidSim GUI Liquid Sink"
         sink_result = bpy.ops.fluidsim.tag_liquid_sink()
@@ -395,7 +395,7 @@ def _run_phase(phase, scene):
         sink.fluidsim.mesh_object = sink
         if _call_panel("FLUIDSIM_PT_liquid_sinks") not in PANEL_CALL_SUCCESS:
             raise RuntimeError("configured Liquid Sink panel did not draw")
-        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(20.0, -20.0, 20.0))
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(4.0, -1.0, 1.0))
         force = bpy.context.object
         force.name = "FluidSim GUI Force Region"
         force_result = bpy.ops.fluidsim.tag_force_region()

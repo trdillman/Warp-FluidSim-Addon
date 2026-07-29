@@ -332,7 +332,9 @@ class HeightSourceDesc:
     profile: object = None
     emit_particles: bool = True
     emit_rate: float = 8.0
-    emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
+    # A fill fills. Standing behaviour for a height fill is to establish the
+    # liquid volume once; continuous inflow is the opt-in pump.
+    emission_mode: int = SourceEmissionMode.INITIAL_FILL
     source_id: str = "builtin:height"
 
 
@@ -2357,6 +2359,7 @@ class SourcePipeline:
     def apply(self, dt):
         # SourcePlan callers use the compiled operation path. Legacy descriptors
         # retain their accepted kernels through the compatibility seam.
+        compiled_emitted = False
         if getattr(self, "plans", ()) and not self.sources:
             dynamic = any(plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
                           for plan in self.plans)
@@ -2364,7 +2367,15 @@ class SourcePipeline:
             if batch is None or dynamic:
                 batch = self.compile(
                     frame=int(getattr(self.owner, "frame", 0)), substep=0)
-            return self.apply_compiled(batch, dt)
+            compiled_emitted = self.apply_compiled(batch, dt)
+            # The Domain Height Fill is a domain property, not a scene object,
+            # so it never compiles into a plan of its own. Returning here would
+            # silently drop the fill from every scene that happens to hold one
+            # plan-based source. Fall through with no legacy descriptors: the
+            # shape/mesh launches below degenerate to no-ops and only the
+            # height stamp and its emitter run.
+            if not self.height_source.enabled:
+                return compiled_emitted
         owner = self.owner
         grid = owner.grid
         settings = owner.settings
@@ -2400,7 +2411,16 @@ class SourcePipeline:
             )
 
         height = self.height_source
-        if height.enabled:
+        # The height fill has an emission lifecycle like any other source, and
+        # it has to be resolved once for the whole substep: the grid stamp and
+        # the particle emitter below both consult it, and disarming between
+        # them would stamp the fill without ever emitting into it.
+        height_armed = (
+            int(getattr(height, "emission_mode",
+                        SourceEmissionMode.CONTINUOUS_INFLOW))
+            != SourceEmissionMode.INITIAL_FILL
+            or getattr(height, "source_id", "") not in self._initial_fired)
+        if height.enabled and height_armed:
             profile_res = wp.vec2i(
                 int(self._height_profile_res[0]),
                 int(self._height_profile_res[1]),
@@ -2438,7 +2458,7 @@ class SourcePipeline:
             and source.mode == SourceShapeSourceMode.PARTICLES
             for source in mesh_sources
         )
-        emit_height = height.enabled and height.emit_particles
+        emit_height = height.enabled and height.emit_particles and height_armed
         particles = owner.particles
         if ((emit_shapes or emit_mesh or emit_height)
                 and particles.host_count < particles.capacity):
@@ -2477,6 +2497,10 @@ class SourcePipeline:
                         ),
                         velocity=tuple(height.velocity),
                         emit_rate=height.emit_rate,
+                        emission_mode=int(getattr(
+                            height, "emission_mode",
+                            SourceEmissionMode.CONTINUOUS_INFLOW)),
+                        source_id=getattr(height, "source_id", ""),
                     ))
                     self._emit_shape_array = wp.array(
                         [self._bake_struct(source) for source in emit_sources],
@@ -2524,6 +2548,12 @@ class SourcePipeline:
             # Disarm initial-fill sources that fired on this substep so they
             # emit exactly once per run (re-armed only by Initialize/Reset).
             fired_now: set[str] = set()
+            if (emit_height
+                    and int(getattr(height, "emission_mode",
+                                    SourceEmissionMode.CONTINUOUS_INFLOW))
+                    == SourceEmissionMode.INITIAL_FILL
+                    and getattr(height, "source_id", "")):
+                fired_now.add(height.source_id)
             for _src in analytic_sources:
                 if (_src.enabled and _src.stype == SourceShapeType.SOURCE
                         and _src.mode == SourceShapeSourceMode.PARTICLES
@@ -2550,7 +2580,7 @@ class SourcePipeline:
                 self._emit_shape_key = None
             particles.refresh_host_count()
             return True
-        return False
+        return compiled_emitted
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,

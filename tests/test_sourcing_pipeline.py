@@ -9,6 +9,7 @@ from fluidSim_warp_blender51.sim import sourcing
 from fluidSim_warp_blender51.sim.sourcing import (
     HeightSourceDesc,
     MeshSourceDesc,
+    SourceEmissionMode,
     SourcePipeline,
     SourceShapeDesc,
 )
@@ -337,6 +338,9 @@ def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeyp
         velocity=(0.0, 0.0, 2.0),
         emit_particles=True,
         emit_rate=6.0,
+        # Cache reuse is only observable across repeated emissions, so this
+        # case needs the mode that emits every substep.
+        emission_mode=SourceEmissionMode.CONTINUOUS_INFLOW,
     ))
 
     assert pipeline.apply(0.01) is True

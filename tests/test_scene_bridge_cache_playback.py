@@ -1031,13 +1031,16 @@ def test_playback_pre_reports_init_failure_without_breaking_playback(monkeypatch
     sess = scene_bridge.session()
 
     def initialize(_scene_arg):
-        raise RuntimeError("no CUDA device")
+        raise ValueError(
+            "world box (19.5, 19.5, 19.5) .. (20.5, 20.5, 20.5) lies entirely "
+            "outside the simulation domain")
 
     monkeypatch.setattr(sess, "initialize", initialize)
 
     scene_bridge._on_playback_pre(scene)
 
-    assert "no CUDA device" in scene_bridge.current_error(scene)
+    assert "world box (19.5, 19.5, 19.5)" in scene_bridge.current_error(scene)
+    assert sess.solver is None
     assert "Solver initialization error" in scene.fluidsim.status
     # Flipping live off here would fire the property callback outside the frame
     # handler, where _IN_FRAME_HANDLER cannot suppress it.

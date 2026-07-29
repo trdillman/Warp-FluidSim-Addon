@@ -916,7 +916,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Profile Scale", default=1.0, update=_request_reset)
     height_emission_mode: EnumProperty(
         name="Fill Lifecycle", items=_items(SourceEmissionMode),
-        default=SourceEmissionMode.CONTINUOUS_INFLOW.name,
+        default=SourceEmissionMode.INITIAL_FILL.name,
         update=_request_reset)
     height_error: StringProperty(name="Height Fill Error", default="")
     height_velocity: FloatVectorProperty(name="Velocity", size=3,

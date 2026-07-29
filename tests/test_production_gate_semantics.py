@@ -26,6 +26,8 @@ def _stub_gate(monkeypatch):
         "_check_no_tracked_ignored_files",
         lambda: None,
     )
+    monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda: None)
     monkeypatch.setattr(run_production_gate, "_print_gate_metadata", lambda *_args: None)
     return labels
 
