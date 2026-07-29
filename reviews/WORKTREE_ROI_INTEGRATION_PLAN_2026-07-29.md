@@ -85,6 +85,18 @@ A current-master extraction was attempted and produced conflicts because master 
 - Decide which generated demo files are authoritative rather than merging binary churn from multiple worktrees.
 - Keep the rendering-APIs, ST-FLIP implementation, and both native-interop experiments untouched and excluded unless explicitly reactivated by the user.
 
+## Execution results
+
+- Main scratch ignores committed as `d786fa1`; authoritative demos were regenerated, passed `DEMO-BLEND-CHECK-PASS` and `DEMO-ANALYSIS-PASS (18/18)`, and were committed as `cfb8fb9`.
+- Phase 4 merged current master, passed 423 Python tests plus all exact CUDA/handler/viewport/cache/memory/GUI gates, and landed on master as `dcf4d27`.
+- The ST kernel corrections were extracted independently, gained focused regression tests, passed the 82-test sparse lane, real CUDA ST validation, ST benchmark, and full GUI gate, and landed on master as `d5ca7b9`.
+- The cone/pyramid candidate was not integrated: current master already contains a deeper exact implementation and stronger tests from `f5a9d12`. Its extraction worktree was discarded cleanly.
+- GPU-conditional PCG was reconciled with current master's LRU graph cache and stale-work-buffer protections and updated for Warp 1.12's build API. It passed 435 Python tests, memory safety, and the full GUI production gate and landed on master as `edcd311`.
+- Final same-device/profile comparison retained identical work size and pressure iterations while improving mean frame step from 25.737 ms to 22.556 ms (12.4%) and mean pressure phase from 12.580 ms to 8.453 ms (32.8%). Both profiles report `PROFILE-GPU-SOLVER-PASS`.
+- Lossless tracked patches, untracked ZIPs, manifests, and SHA-256 files for six dirty worktrees were created and verified under `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\worktree_archives\2026-07-29` before removal.
+- Registered worktrees were reduced from 16 to six: master, the clean Phase-4 landing worktree, and the four explicitly excluded experiments. The experiments were not modified.
+- The removed nested addon-review checkout left one empty, unregistered directory that Windows still reports busy: `.claude/worktrees/addon-st-flip-review-717052`. It contains no files and is not a Git worktree.
+
 ## Known limitations of this assessment
 
 - Git state and substantive-path inventories were refreshed against current master.
