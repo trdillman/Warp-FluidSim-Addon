@@ -7,6 +7,7 @@ simulation during playback via frame-change handlers.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import Enum
 import traceback
 
@@ -45,6 +46,7 @@ class Session:
         self.start_frame = 1
         self.cache_written_start = None
         self.cache_written_end = None
+        self.cache_settings_records = {}
         self.frame_stats = []
         self.validation_results = []
         self.benchmark_result = None
@@ -53,8 +55,8 @@ class Session:
         self.device = None
         self.memory_assessment = {}
         self.scene_inputs = SceneInputs()
-        # Identity of the scene this session bakes from; stamped into every
-        # cache frame and into the sequence metadata.
+        self.scene_identity = None
+        # Content digest stamped into cache frames/metadata.
         self.scene_key = ""
 
     @property
@@ -76,10 +78,12 @@ class Session:
         self.start_frame = 1
         self.cache_written_start = None
         self.cache_written_end = None
+        self.cache_settings_records = {}
         self.last_frame = -1
         self.frame_stats = []
         self.scene_inputs.clear()
         self.device = None
+        self.scene_identity = None
         self.scene_key = ""
         del solver
         from ..sim.memory_safety import release_cuda_memory
@@ -141,6 +145,7 @@ class Session:
             self.profiler = profiler
             from ..io import cache
 
+            self.scene_identity = _scene_identity(scene)
             self.scene_key = cache.scene_key(scene)
             self.start_frame = scene.frame_start
             self.sync_scene(scene, capture_first_mesh=False)
@@ -157,6 +162,7 @@ class Session:
             viewport.ensure_outputs(scene)
             fs.status = "Solver ready"
             self.memory_assessment = {}
+            _capture_applied_state(scene, self)
             return self
         except Exception as exc:
             self.set_error(scene, repr(exc))
@@ -176,7 +182,7 @@ class Session:
         if enabled:
             if getattr(fs, "cache_playback_enabled", False):
                 fs.status = "Cache playback enabled - press play"
-            elif not self.active:
+            elif not self.owns_scene(scene):
                 self.initialize(scene)
                 fs.status = "Live simulation enabled - press play"
             else:
@@ -193,8 +199,13 @@ class Session:
         elif getattr(fs, "live", False):
             self.set_live_enabled(scene, True)
 
+    def owns_scene(self, scene):
+        return self.active and (
+            self.scene_identity is None
+            or self.scene_identity == _scene_identity(scene))
+
     def sync_scene(self, scene, depsgraph=None, *, capture_first_mesh=True):
-        if not self.active:
+        if not self.owns_scene(scene):
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
@@ -212,10 +223,21 @@ class Session:
             self.scene_inputs.gather_force_fields(scene))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
+    def prepare_step(self, scene, *, refresh_pending=False):
+        """Reconcile pending signatures and live settings before every step."""
+        if not self.owns_scene(scene):
+            return False
+        # Playback reuses snapshots refreshed by RNA/depsgraph/undo handlers.
+        # Direct scripting callers default to a conservative fresh signature
+        # through step_frame(refresh_pending=True), so an edit followed by an
+        # immediate step cannot slip past pending detection.
+        _refresh_pending_state(scene, self, use_cached=not refresh_pending)
+        return _apply_live_settings_safely(scene, self)
+
     def step(self, scene, *, write_cache=True, timeline_frame=None):
         from . import viewport
 
-        if not self.active:
+        if not self.owns_scene(scene):
             return None
         fs = scene.fluidsim
         stats = self.solver.step_frame()
@@ -241,14 +263,14 @@ class Session:
             from ..io import cache
 
             try:
-                # Catch-up steps several solver frames inside one frame change,
-                # so the caller names the timeline index each one belongs at;
-                # keying them all on scene.frame_current would overwrite one
-                # index and leave the skipped ones as holes.
                 timeline_frame = int(
                     scene.frame_current if timeline_frame is None
                     else timeline_frame)
                 cache.write_frame(scene, self, timeline_frame)
+                record_settings = getattr(cache, "settings_record", None)
+                if callable(record_settings):
+                    self.cache_settings_records[timeline_frame] = record_settings(
+                        self.solver.settings)
                 self.cache_written_start = (
                     timeline_frame if self.cache_written_start is None
                     else min(self.cache_written_start, timeline_frame))
@@ -260,6 +282,7 @@ class Session:
                     self.cache_written_start,
                     self.cache_written_end,
                     source="live_simulation",
+                    settings_records=self.cache_settings_records,
                     scene_key_value=self.scene_key,
                 )
             except Exception as exc:  # noqa: BLE001 - cache is supplemental
@@ -305,12 +328,14 @@ class Session:
     def reset(self, scene):
         from . import sources, viewport
 
-        if not self.active:
+        if not self.owns_scene(scene):
             return
+        _apply_reset_solver_settings(scene, self)
         self.solver.reset()
         self.start_frame = scene.frame_start
         self.cache_written_start = None
         self.cache_written_end = None
+        self.cache_settings_records = {}
         self.last_frame = -1
         self.frame_stats = []
         self.clear_error(scene)
@@ -318,6 +343,7 @@ class Session:
         self.sync_scene(scene, capture_first_mesh=False)
         sources.inject_auto_seeds(scene, self)
         viewport.update_outputs(scene, self)
+        _capture_applied_state(scene, self, reset_only=True)
         scene.fluidsim.status = "Simulation reset"
 
     def export_cache_sequence(self, scene, start, end):
@@ -337,11 +363,16 @@ class Session:
                     frame_set(timeline_frame)
                 self.solver.frame = timeline_frame - 1
                 self.sync_scene(scene)
-                self.step(scene, write_cache=False)
+                step_frame(scene, self, write_cache=False)
                 self.solver.frame = timeline_frame
-                cache.write_frame(scene, self)
+                cache.write_frame(scene, self, timeline_frame)
+                record_settings = getattr(cache, "settings_record", None)
+                if callable(record_settings):
+                    self.cache_settings_records[timeline_frame] = record_settings(
+                        self.solver.settings)
             cache.write_sequence_metadata(
                 base, start, end, source="simulation",
+                settings_records=self.cache_settings_records,
                 scene_key_value=self.scene_key)
         finally:
             if frame_set is not None:
@@ -368,7 +399,7 @@ class Session:
                 fs.status = f"Cache playback error: {exc}"
                 print(f"fluidSim cache playback failed: {exc!r}")
             return
-        if not self.active:
+        if not self.owns_scene(scene):
             try:
                 self.initialize(scene)
             except Exception as exc:  # noqa: BLE001 - never break playback
@@ -377,7 +408,15 @@ class Session:
                 print(f"FluidSim playback initialization failed: {exc!r}")
                 return
         if frame <= self.start_frame or frame < self.last_frame:
-            self.reset(scene)
+            try:
+                if not _apply_pending_on_rewind(scene, self):
+                    self.reset(scene)
+            except Exception as exc:  # noqa: BLE001 - retain pending on failure
+                self.set_error(scene, repr(exc))
+                # Do not continue stepping an advanced solver from a rewound
+                # timeline after its pending reset/reinitialize failed.
+                fs.live = False
+                fs.status = f"Pending settings apply failed; playback stopped: {exc}"
             self.last_frame = frame
             return
         # Blender drops frames during playback, so a forward jump larger than
@@ -402,12 +441,13 @@ class Session:
         try:
             for offset in range(gap - 1, -1, -1):
                 self.sync_scene(scene, depsgraph)
-                self.step(scene, timeline_frame=frame - offset)
+                step_frame(
+                    scene, self, refresh_pending=False,
+                    timeline_frame=frame - offset)
         except Exception as exc:  # noqa: BLE001 - never break playback
             self.set_error(scene, repr(exc))
             # The property callback this fires is suppressed while the handler
-            # is on the stack (see set_live_enabled), so the status written
-            # below is the one the user sees.
+            # is on the stack, so this status remains authoritative.
             fs.live = False
             fs.status = f"Solver error: {exc}"
             self.release(preserve_error=True)
@@ -505,6 +545,7 @@ class SceneUpdate(str, Enum):
 
     REBUILD = "REBUILD"
     RESET = "RESET"
+    LIVE = "LIVE"
     SYNC = "SYNC"
     OUTPUT = "OUTPUT"
     SURFACE = "SURFACE"
@@ -514,6 +555,7 @@ class SceneUpdate(str, Enum):
 _SCENE_UPDATE_REASONS = {
     SceneUpdate.REBUILD: "Solver allocation changed",
     SceneUpdate.RESET: "Simulation settings changed",
+    SceneUpdate.LIVE: "Live setting stored; applies on initialization",
     SceneUpdate.SYNC: "Scene source settings changed",
     SceneUpdate.OUTPUT: "Viewport display settings changed",
     SceneUpdate.SURFACE: "Surface display settings changed",
@@ -569,6 +611,37 @@ _SETTING_ALIASES = {
     "ww_churn_gain": "churn_gain",
 }
 
+_HOT_SETTING_FIELDS = frozenset({
+    "time_scale", "cfl", "min_substeps", "max_substeps",
+    "sample_type", "flip_ratio", "trace_mode", "relax_enabled",
+    "relax_strength", "relax_mode", "max_speed", "limit_behavior",
+    "limit_percent", "directional_force", "omnidirectional_force_center",
+    "omnidirectional_force_strength", "omnidirectional_force_radius",
+    "force_diffusion", "dissipation_enabled", "dissipation_attribute",
+    "dissipation_rate", "dissipation_target", "attraction_enabled",
+    "attraction_strength", "attraction_max_distance", "count_stiffness",
+    "spacetime_jitter_strength", "spacetime_adaptive_jitter",
+    "spacetime_phase_eta", "spacetime_phase_threshold",
+    "spacetime_variable_projection", "spacetime_liquid_density",
+    "spacetime_gas_density", "spacetime_min_density",
+    "spacetime_local_cfl", "spacetime_max_local_substeps",
+    "pressure_solver", "pressure_iterations", "pressure_tolerance",
+    "pressure_threshold", "viscosity_enabled", "viscosity_solver",
+    "viscosity_constant", "viscosity_from_particles",
+    "viscosity_iterations", "viscosity_tolerance",
+    "ww_churn_decay", "ww_churn_gain", "ww_churn_threshold",
+    "ww_emission_rate", "ww_min_speed", "ww_life_min", "ww_life_max",
+    "ww_bubble_drag", "ww_spray_drag",
+})
+
+_LIVE_REFRESH_SETTING_FIELDS = frozenset({"particles_per_voxel"})
+_LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
+
+_RESET_SETTING_FIELDS = frozenset({
+    "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+})
+
 _SURFACE_SETTING_FIELDS = frozenset({
     "surface_enabled", "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_mode", "surface_resolution_multiplier",
@@ -584,8 +657,266 @@ _SURFACE_SETTING_FIELDS = frozenset({
 })
 
 
-def _apply_scene_settings(fs, settings, fields=None):
-    from ..sim.solver import SolverSettings
+_REINIT_SETTING_FIELDS = frozenset({
+    "domain_object", "voxel_size", "leaf_capacity", "max_particles",
+    "max_whitewater", "profiling_enabled", "profiling_sync",
+})
+_RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
+    "height_enabled", "height_base", "height_back_mode",
+    "height_profile_image", "height_profile_scale", "height_emission_mode",
+    "height_velocity", "height_emit_particles",
+})
+_RESET_OBJECT_FIELDS = frozenset({
+    "role", "point_source_representation", "mesh_evaluation_mode",
+    "emission_mode", "auto_inject_seed",
+})
+
+
+@dataclass
+class SceneInteractionState:
+    """Per-scene applied snapshots and cached pending presentation."""
+
+    scene: object
+    applied_reset_signature: tuple | None = None
+    applied_reinit_signature: tuple | None = None
+    current_reset_signature: tuple | None = None
+    current_reinit_signature: tuple | None = None
+    reset_snapshot: dict = field(default_factory=dict)
+    object_reset_snapshot: tuple = ()
+    reinit_snapshot: dict = field(default_factory=dict)
+    domain_matrix_snapshot: object = None
+    applied_device: str = ""
+    pending_action: SceneUpdate | None = None
+    pending_reasons: tuple = ()
+    blocked_reason: str = ""
+    suppress_callbacks: bool = False
+    timer_scheduled: bool = False
+
+
+_INTERACTION_STATES = {}
+_ST_REFERENCE_MASS_CACHE = {}
+_ST_REFERENCE_MASS_CACHE_LIMIT = 64
+
+
+def _scene_identity(scene):
+    pointer = getattr(scene, "as_pointer", None)
+    if callable(pointer):
+        try:
+            value = int(pointer())
+            if value:
+                return value
+        except (TypeError, ValueError, ReferenceError):
+            pass
+    return id(scene)
+
+
+def _interaction_state(scene):
+    key = _scene_identity(scene)
+    state = _INTERACTION_STATES.get(key)
+    if state is None or state.scene is not scene:
+        state = SceneInteractionState(scene=scene)
+        _INTERACTION_STATES[key] = state
+    return state
+
+
+def _stable_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    pointer = getattr(value, "as_pointer", None)
+    if callable(pointer):
+        try:
+            return ("ID", int(pointer()))
+        except (TypeError, ValueError, ReferenceError):
+            pass
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return ("ID", name, id(value))
+    try:
+        return tuple(_stable_value(item) for item in value)
+    except TypeError:
+        return repr(value)
+
+
+def _snapshot_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if callable(getattr(value, "as_pointer", None)):
+        return value
+    try:
+        return tuple(value)
+    except TypeError:
+        return value
+
+
+def _configured_device():
+    from ..preferences import configured_device
+
+    return str(configured_device())
+
+
+def _reset_signature(scene):
+    fs = scene.fluidsim
+    values = [(name, _stable_value(getattr(fs, name, None)))
+              for name in sorted(_RESET_SCENE_FIELDS)]
+    objects = []
+    for obj in getattr(scene, "objects", ()) or ():
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None:
+            continue
+        object_id = _stable_value(obj)
+        fields = tuple((name, _stable_value(getattr(pg, name, None)))
+                       for name in sorted(_RESET_OBJECT_FIELDS))
+        objects.append((object_id, fields))
+    values.append(("objects", tuple(sorted(objects, key=repr))))
+    return tuple(values)
+
+
+def _reinit_signature(scene):
+    fs = scene.fluidsim
+    values = [(name, _stable_value(getattr(fs, name, None)))
+              for name in sorted(_REINIT_SETTING_FIELDS)]
+    domain = getattr(fs, "domain_object", None)
+    values.append(("domain_identity", _stable_value(domain)))
+    try:
+        values.append(("domain_bounds", _stable_value(_domain_bounds(scene))))
+    except Exception as exc:  # preserve a deterministic, visible pending reason
+        values.append(("domain_bounds_error", repr(exc)))
+    values.append(("device", _configured_device()))
+    return tuple(values)
+
+
+def current_interaction_signatures(scene):
+    """Return canonical reset/reinitialize signatures for undo/script checks."""
+    return _reset_signature(scene), _reinit_signature(scene)
+
+
+def _signature_changes(applied, current):
+    if applied is None:
+        # A missing snapshot is unknown, not proof that the values match.
+        return tuple(sorted(name for name, _value in current))
+    old = dict(applied)
+    new = dict(current)
+    return tuple(sorted(name for name in set(old) | set(new)
+                        if old.get(name) != new.get(name)))
+
+
+def _pending_label(action):
+    if action is SceneUpdate.REBUILD:
+        return "REINIT_PENDING"
+    if action is SceneUpdate.RESET:
+        return "RESET_PENDING"
+    return "NONE"
+
+
+def _cache_pending_presentation(scene, state):
+    action = _pending_label(state.pending_action)
+    _scene_set(scene, "fluidsim_pending_action", action)
+    _scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
+    _scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
+    _scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
+
+
+def pending_presentation(scene):
+    """Return draw-safe cached pending data without inspecting RNA or geometry."""
+    state = _INTERACTION_STATES.get(_scene_identity(scene))
+    if state is None:
+        reasons = tuple(filter(None, str(_scene_get(
+            scene, "fluidsim_pending_reasons", "")).splitlines()))
+        return {
+            "action": str(_scene_get(scene, "fluidsim_pending_action", "NONE")),
+            "count": int(_scene_get(scene, "fluidsim_pending_count", len(reasons))),
+            "reasons": reasons,
+            "blocked_reason": str(_scene_get(
+                scene, "fluidsim_pending_blocked", "")),
+        }
+    return {
+        "action": _pending_label(state.pending_action),
+        "count": len(state.pending_reasons),
+        "reasons": state.pending_reasons,
+        "blocked_reason": state.blocked_reason,
+    }
+
+
+def _refresh_pending_state(scene, sess=None, *, use_cached=False):
+    state = _interaction_state(scene)
+    if state.applied_reset_signature is None:
+        state.pending_action = None
+        state.pending_reasons = ()
+        state.blocked_reason = ""
+        _cache_pending_presentation(scene, state)
+        return state
+    if (use_cached and state.current_reset_signature is not None
+            and state.current_reinit_signature is not None):
+        reset_now = state.current_reset_signature
+        reinit_now = state.current_reinit_signature
+    else:
+        reset_now, reinit_now = current_interaction_signatures(scene)
+        state.current_reset_signature = reset_now
+        state.current_reinit_signature = reinit_now
+    reinit_changes = _signature_changes(state.applied_reinit_signature, reinit_now)
+    reset_changes = _signature_changes(state.applied_reset_signature, reset_now)
+    if reinit_changes:
+        state.pending_action = SceneUpdate.REBUILD
+        state.pending_reasons = tuple(f"Reinitialize: {name}" for name in reinit_changes)
+    elif reset_changes:
+        state.pending_action = SceneUpdate.RESET
+        state.pending_reasons = tuple(f"Reset: {name}" for name in reset_changes)
+    else:
+        state.pending_action = None
+        state.pending_reasons = ()
+        state.blocked_reason = ""
+    _cache_pending_presentation(scene, state)
+    return state
+
+
+def _snapshot_object_reset_values(scene):
+    result = []
+    for obj in getattr(scene, "objects", ()) or ():
+        pg = getattr(obj, "fluidsim", None)
+        if pg is not None:
+            result.append((obj, {name: _snapshot_value(getattr(pg, name, None))
+                                 for name in _RESET_OBJECT_FIELDS}))
+    return tuple(result)
+
+
+def _capture_applied_state(scene, sess=None, *, reset_only=False):
+    state = _interaction_state(scene)
+    reset_signature, reinit_signature = current_interaction_signatures(scene)
+    fs = scene.fluidsim
+    state.applied_reset_signature = reset_signature
+    state.current_reset_signature = reset_signature
+    state.current_reinit_signature = reinit_signature
+    state.reset_snapshot = {name: _snapshot_value(getattr(fs, name, None))
+                            for name in _RESET_SCENE_FIELDS}
+    state.object_reset_snapshot = _snapshot_object_reset_values(scene)
+    if not reset_only:
+        state.applied_reinit_signature = reinit_signature
+        state.reinit_snapshot = {
+            name: _snapshot_value(getattr(fs, name, None))
+            for name in _REINIT_SETTING_FIELDS
+        }
+        domain = getattr(fs, "domain_object", None)
+        matrix = getattr(domain, "matrix_world", None)
+        state.domain_matrix_snapshot = (
+            matrix.copy() if matrix is not None and hasattr(matrix, "copy") else matrix)
+        state.applied_device = _configured_device()
+    state.pending_action = None
+    state.pending_reasons = ()
+    state.blocked_reason = ""
+    _cache_pending_presentation(scene, state)
+    if reset_only:
+        return _refresh_pending_state(scene, sess or session())
+    return state
+
+
+_SETTING_REGISTRY_VALIDATED = False
+_ENUM_SETTING_FIELDS = None
+
+
+def _enum_setting_fields():
+    global _ENUM_SETTING_FIELDS
+    if _ENUM_SETTING_FIELDS is not None:
+        return _ENUM_SETTING_FIELDS
     from ..sim.enums import (
         LimitBehavior,
         ParticleSampleType,
@@ -597,9 +928,7 @@ def _apply_scene_settings(fs, settings, fields=None):
         TraceMode,
         ViscositySolver,
     )
-
-    selected = None if fields is None else set(fields)
-    enum_fields = {
+    _ENUM_SETTING_FIELDS = {
         "sample_type": ("sample_type", ParticleSampleType),
         "trace_mode": ("trace_mode", TraceMode),
         "limit_behavior": ("limit_behavior", LimitBehavior),
@@ -611,13 +940,29 @@ def _apply_scene_settings(fs, settings, fields=None):
         "surface_resolution_mode": ("surface_resolution_mode", SurfaceResolutionMode),
         "surface_update_cadence": ("surface_update_cadence", SurfaceUpdateCadence),
     }
-    targets = {_SETTING_ALIASES.get(name, name) for name in _DIRECT_SETTING_FIELDS}
-    targets.update(_SETTING_ALIASES.get(target, target) for target in enum_fields)
-    declared = set(SolverSettings.__dataclass_fields__)
-    unknown = sorted(targets - declared)
-    if unknown:
-        raise ValueError(f"Scene setting targets not declared by SolverSettings: {', '.join(unknown)}")
+    return _ENUM_SETTING_FIELDS
 
+
+def _validate_setting_registry():
+    global _SETTING_REGISTRY_VALIDATED
+    if _SETTING_REGISTRY_VALIDATED:
+        return
+    from ..sim.solver import SolverSettings
+
+    targets = {_SETTING_ALIASES.get(name, name) for name in _DIRECT_SETTING_FIELDS}
+    targets.update(_SETTING_ALIASES.get(target, target)
+                   for target in _enum_setting_fields())
+    unknown = sorted(targets - set(SolverSettings.__dataclass_fields__))
+    if unknown:
+        raise ValueError(
+            "Scene setting targets not declared by SolverSettings: "
+            + ", ".join(unknown))
+    _SETTING_REGISTRY_VALIDATED = True
+
+
+def _apply_scene_settings(fs, settings, fields=None):
+    _validate_setting_registry()
+    selected = None if fields is None else set(fields)
     for source in _DIRECT_SETTING_FIELDS:
         target = _SETTING_ALIASES.get(source, source)
         if (selected is None or source in selected) and hasattr(fs, source):
@@ -628,7 +973,7 @@ def _apply_scene_settings(fs, settings, fields=None):
                 # SolverSettings must own plain host values across frames.
                 value = tuple(float(component) for component in value)
             setattr(settings, target, value)
-    for target, (source, enum_type) in enum_fields.items():
+    for target, (source, enum_type) in _enum_setting_fields().items():
         declared_target = _SETTING_ALIASES.get(target, target)
         if (selected is None or source in selected) and hasattr(fs, source):
             setattr(settings, declared_target, enum_type[getattr(fs, source)])
@@ -790,9 +1135,24 @@ def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
     (sess or session()).sync_scene(scene, depsgraph)
 
 
-def step_frame(scene, sess: Session | None = None, *, write_cache: bool = True):
-    """Advance the solver one frame and update output objects."""
-    return (sess or session()).step(scene, write_cache=write_cache)
+def step_frame(
+        scene, sess: Session | None = None, *, write_cache: bool = True,
+        refresh_pending: bool = True, timeline_frame=None):
+    """Reconcile live RNA, then advance through the authoritative step seam.
+
+    Direct callers conservatively refresh pending signatures. Interactive
+    playback passes ``refresh_pending=False`` because persistent RNA/depsgraph
+    handlers already refreshed the per-scene snapshot.
+    """
+    sess = sess or session()
+    reconciled = sess.prepare_step(scene, refresh_pending=refresh_pending)
+    result = sess.step(
+        scene, write_cache=write_cache, timeline_frame=timeline_frame)
+    if reconciled is False:
+        error = sess.current_error(scene)
+        if error:
+            scene.fluidsim.status = f"Live settings error: {error}"
+    return result
 
 
 def play_cache_frame(scene, frame: int | None = None):
@@ -812,10 +1172,133 @@ def _tag_view3d_redraw():
             area.tag_redraw()
 
 
+def _apply_gravity(scene, settings):
+    fs = scene.fluidsim
+    if not hasattr(fs, "gravity"):
+        return
+    if (getattr(fs, "use_scene_gravity", False)
+            and getattr(scene, "use_gravity", False)):
+        settings.gravity = tuple(float(value) for value in scene.gravity)
+    else:
+        settings.gravity = tuple(float(value) for value in fs.gravity)
+
+
+def _setting_targets(fields):
+    targets = {
+        _SETTING_ALIASES.get(source, source)
+        for source in _DIRECT_SETTING_FIELDS if source in fields
+    }
+    targets.update(
+        _SETTING_ALIASES.get(target, target)
+        for target, (source, _enum_type) in _enum_setting_fields().items()
+        if source in fields
+    )
+    return targets
+
+
+def _remember_st_reference_mass(settings, reference_mass):
+    """Cache the density-normalized automatic ST calibration for one seed."""
+    ppc = max(1.0e-6, float(settings.particles_per_voxel))
+    reference_mass = float(reference_mass or 0.0)
+    if reference_mass <= 0.0:
+        return
+    key = int(getattr(settings, "spacetime_seed", 1729))
+    if len(_ST_REFERENCE_MASS_CACHE) >= _ST_REFERENCE_MASS_CACHE_LIMIT:
+        _ST_REFERENCE_MASS_CACHE.pop(next(iter(_ST_REFERENCE_MASS_CACHE)))
+    _ST_REFERENCE_MASS_CACHE[key] = reference_mass / ppc
+
+
+def _cached_st_reference_mass(solver):
+    """Return a calibration that scales linearly with particle density.
+
+    The estimator's expected mass is linear in particles-per-voxel.  Solver
+    initialization already paid for a real calibration, so remember its
+    density-normalized coefficient and avoid an ~86 ms Monte-Carlo call for
+    every distinct slider/keyframe value.
+    """
+    settings = solver.settings
+    ppc = max(1.0e-6, float(settings.particles_per_voxel))
+    key = int(getattr(settings, "spacetime_seed", 1729))
+    coefficient = _ST_REFERENCE_MASS_CACHE.get(key)
+    if coefficient is None:
+        calibrated = solver._calibrate_st_reference_mass()
+        coefficient = float(calibrated) / ppc
+        if len(_ST_REFERENCE_MASS_CACHE) >= _ST_REFERENCE_MASS_CACHE_LIMIT:
+            _ST_REFERENCE_MASS_CACHE.pop(next(iter(_ST_REFERENCE_MASS_CACHE)))
+        _ST_REFERENCE_MASS_CACHE[key] = coefficient
+    return coefficient * ppc
+
+
+def _apply_realtime_solver_settings(scene, sess: Session | None = None):
+    """Atomically push live settings and refresh ST-FLIP derived state."""
+    sess = sess or session()
+    if not sess.owns_scene(scene):
+        return False
+    fs = scene.fluidsim
+    solver = sess.solver
+    settings = getattr(solver, "settings", None)
+    if settings is None:
+        return False
+    targets = _setting_targets(_LIVE_SETTING_FIELDS) | {"gravity"}
+    previous = {
+        target: getattr(settings, target)
+        for target in targets if hasattr(settings, target)
+    }
+    old_ppv = getattr(settings, "particles_per_voxel", None)
+    old_reference = getattr(solver, "_st_reference_mass_cached", None)
+    if (old_reference is not None
+            and getattr(settings, "spacetime_enabled", False)
+            and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0):
+        _remember_st_reference_mass(settings, old_reference)
+    try:
+        _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS)
+        _apply_gravity(scene, settings)
+        new_ppv = getattr(settings, "particles_per_voxel", None)
+        if (old_ppv != new_ppv
+                and getattr(settings, "spacetime_enabled", False)
+                and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0
+                and hasattr(solver, "_calibrate_st_reference_mass")):
+            solver._st_reference_mass_cached = _cached_st_reference_mass(solver)
+    except Exception:
+        for target, value in previous.items():
+            setattr(settings, target, value)
+        if old_reference is not None:
+            solver._st_reference_mass_cached = old_reference
+        raise
+    return True
+
+
+def _apply_live_settings_safely(scene, sess: Session | None = None):
+    """Contain recoverable RNA translation errors without dropping the solver."""
+    sess = sess or session()
+    try:
+        return _apply_realtime_solver_settings(scene, sess)
+    except Exception as exc:  # noqa: BLE001 - RNA/handler boundary must not raise
+        sess.set_error(scene, repr(exc))
+        try:
+            scene.fluidsim.status = f"Live settings error: {exc}"
+        except Exception:  # noqa: BLE001
+            pass
+        _tag_view3d_redraw()
+        return False
+
+
+def _apply_reset_solver_settings(scene, sess: Session | None = None):
+    """Apply hot and reset values in one bounded pass before state reset."""
+    sess = sess or session()
+    if not sess.owns_scene(scene):
+        return False
+    _apply_scene_settings(
+        scene.fluidsim, sess.solver.settings,
+        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
+    _apply_gravity(scene, sess.solver.settings)
+    return True
+
+
 def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     """Push current surface UI settings into an active solver frame."""
     sess = sess or session()
-    if not sess.active:
+    if not sess.owns_scene(scene):
         return False
     fs = scene.fluidsim
     solver = sess.solver
@@ -826,77 +1309,132 @@ def _apply_realtime_surface_settings(scene, sess: Session | None = None):
 
 def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     sess = sess or session()
-    if not sess.active:
+    if not sess.owns_scene(scene):
         return False
     sess.solver.settings.whitewater_enabled = scene.fluidsim.whitewater_enabled
     return True
 
 
-# REBUILD (full GPU solver reallocation) and RESET (full simulation-state
-# discard) are the two expensive request_scene_update actions: a live UI
-# slider drag emits one property-update callback per drag tick, and applying
-# either action synchronously on every tick measured 174-191ms/tick for
-# REBUILD (voxel_size) in a real GUI session with a live solver -- a
-# multi-second freeze over a normal drag gesture. Coalesce them onto a single
-# one-shot bpy.app.timers callback instead of a bpy.app.timers import at
-# module scope, so plain unit tests that stub bpy without app.timers still
-# import this module.
-_PENDING_REBUILD_RANK = {
-    SceneUpdate.RESET: 1,
-    SceneUpdate.REBUILD: 2,
-}
-_pending_rebuild_action = None
-_rebuild_flush_scheduled = False
-
-
-def _flush_pending_rebuild():
-    """One-shot timer callback: apply the highest-priority coalesced action."""
-    global _pending_rebuild_action, _rebuild_flush_scheduled
-    action = _pending_rebuild_action
-    _pending_rebuild_action = None
-    _rebuild_flush_scheduled = False
-    if action is None:
-        return None
-    scene = getattr(bpy.context, "scene", None)
-    if scene is None:
-        return None
-    sess = session()
+def _is_disposable_start(sess):
     if not sess.active:
-        return None
+        return True
+    solver_frame = int(getattr(sess.solver, "frame", 0) or 0)
+    return solver_frame <= 0 and sess.last_frame <= sess.start_frame
+
+
+def _apply_pending(scene, requested=None):
+    """Apply a scene's pending transition, clearing it only after success."""
+    sess = session()
+    state = _refresh_pending_state(scene, sess)
+    action = state.pending_action
+    if action is None:
+        return False
+    if requested is SceneUpdate.REBUILD:
+        action = SceneUpdate.REBUILD
+    if requested is SceneUpdate.RESET and action is SceneUpdate.REBUILD:
+        state.blocked_reason = "Reinitialize required; reset cannot apply allocation changes"
+        _cache_pending_presentation(scene, state)
+        raise RuntimeError(state.blocked_reason)
+    if requested is SceneUpdate.RESET and not sess.owns_scene(scene):
+        state.blocked_reason = "This scene has no active solver to reset"
+        _cache_pending_presentation(scene, state)
+        raise RuntimeError(state.blocked_reason)
+    if (requested is SceneUpdate.REBUILD and sess.active
+            and not sess.owns_scene(scene)):
+        state.blocked_reason = "Another scene owns the active solver; release it first"
+        _cache_pending_presentation(scene, state)
+        raise RuntimeError(state.blocked_reason)
     try:
         if action is SceneUpdate.REBUILD:
-            initialize_session(scene)
+            sess.initialize(scene)
         else:
-            reset_simulation(scene)
-    except Exception as exc:  # noqa: BLE001 - a deferred timer must not raise
-        set_error(scene, repr(exc))
-        try:
-            scene.fluidsim.status = f"Deferred update failed: {exc}"
-        except Exception:  # noqa: BLE001
-            pass
-    _tag_view3d_redraw()
-    return None
+            sess.reset(scene)
+        _refresh_pending_state(scene, sess)
+        return True
+    except Exception as exc:
+        state.pending_action = action
+        if not state.pending_reasons:
+            state.pending_reasons = ("Pending settings",)
+        state.blocked_reason = str(exc)
+        _cache_pending_presentation(scene, state)
+        raise
 
 
-def _schedule_rebuild(scene, action):
-    """Coalesce REBUILD/RESET onto one deferred flush; keep the worst action."""
-    global _pending_rebuild_action, _rebuild_flush_scheduled
-    current_rank = (
-        _PENDING_REBUILD_RANK[_pending_rebuild_action]
-        if _pending_rebuild_action is not None else -1)
-    if _PENDING_REBUILD_RANK[action] >= current_rank:
-        _pending_rebuild_action = action
-    scene.fluidsim.status = _SCENE_UPDATE_REASONS[action]
+def apply_pending_reinitialize(scene):
+    return _apply_pending(scene, SceneUpdate.REBUILD)
+
+
+def apply_pending_reset(scene):
+    return _apply_pending(scene, SceneUpdate.RESET)
+
+
+def _apply_pending_on_rewind(scene, sess):
+    state = _refresh_pending_state(scene, sess)
+    if state.pending_action is None:
+        return False
+    _apply_pending(scene, state.pending_action)
+    return True
+
+
+def revert_pending_values(scene):
+    """Restore the successfully applied RNA snapshot without saving prefs."""
+    state = _interaction_state(scene)
+    if state.applied_reset_signature is None:
+        return False
+    state.suppress_callbacks = True
+    try:
+        fs = scene.fluidsim
+        for name, value in state.reset_snapshot.items():
+            if hasattr(fs, name):
+                setattr(fs, name, value)
+        for obj, values in state.object_reset_snapshot:
+            pg = getattr(obj, "fluidsim", None)
+            if pg is not None:
+                for name, value in values.items():
+                    if hasattr(pg, name):
+                        setattr(pg, name, value)
+        for name, value in state.reinit_snapshot.items():
+            if hasattr(fs, name):
+                setattr(fs, name, value)
+        domain = getattr(fs, "domain_object", None)
+        if domain is not None and state.domain_matrix_snapshot is not None:
+            domain.matrix_world = state.domain_matrix_snapshot
+    finally:
+        state.suppress_callbacks = False
+    _refresh_pending_state(scene, session())
+    if (_configured_device() != state.applied_device
+            and state.pending_action is SceneUpdate.REBUILD):
+        state.blocked_reason = (
+            "Device preference differs from the applied run; change it explicitly "
+            "or reinitialize (preferences are never changed automatically)")
+        _cache_pending_presentation(scene, state)
+    return state.pending_action is None
+
+
+def _schedule_disposable_apply(scene):
+    """Debounce a safe start-state transition with the edited scene captured."""
+    state = _interaction_state(scene)
+    if state.timer_scheduled:
+        return
     timers = getattr(getattr(bpy, "app", None), "timers", None)
     if timers is None or not hasattr(timers, "register"):
-        # No real Blender timer API available (e.g. a bare unit-test stub):
-        # fall back to the previous synchronous behavior rather than lose
-        # the update entirely.
-        _flush_pending_rebuild()
+        _apply_pending(scene)
         return
-    if not _rebuild_flush_scheduled:
-        _rebuild_flush_scheduled = True
-        timers.register(_flush_pending_rebuild, first_interval=0.05)
+    state.timer_scheduled = True
+
+    def flush_scene_pending():
+        state.timer_scheduled = False
+        sess = session()
+        if sess.owns_scene(scene) and _is_disposable_start(sess):
+            try:
+                _apply_pending(scene)
+            except Exception as exc:  # noqa: BLE001 - timer boundary
+                sess.set_error(scene, repr(exc))
+                scene.fluidsim.status = f"Pending settings apply failed: {exc}"
+        _tag_view3d_redraw()
+        return None
+
+    timers.register(flush_scene_pending, first_interval=0.05)
 
 
 def request_scene_update(scene, action: SceneUpdate):
@@ -906,10 +1444,19 @@ def request_scene_update(scene, action: SceneUpdate):
     sess = session()
     if not isinstance(action, SceneUpdate):
         action = SceneUpdate(action)
+    state = _interaction_state(scene)
+    if state.suppress_callbacks:
+        return
     reason = _SCENE_UPDATE_REASONS[action]
-    if not sess.active:
+    if not sess.owns_scene(scene):
         try:
-            if action in {
+            if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
+                state = _refresh_pending_state(scene, sess)
+                if state.pending_action is not None:
+                    scene.fluidsim.status = (
+                        f"{_pending_label(state.pending_action).replace('_', ' ').title()}: "
+                        + ", ".join(state.pending_reasons))
+            elif action in {
                 SceneUpdate.OUTPUT,
                 SceneUpdate.SURFACE,
                 SceneUpdate.WHITEWATER,
@@ -918,15 +1465,30 @@ def request_scene_update(scene, action: SceneUpdate):
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.
                 viewport.refresh_existing_output_settings(scene)
-            scene.fluidsim.status = reason
+                scene.fluidsim.status = reason
+            elif action not in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
+                scene.fluidsim.status = reason
         finally:
             _tag_view3d_redraw()
         return
 
-    if action in _PENDING_REBUILD_RANK:
-        _schedule_rebuild(scene, action)
+    if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
+        state = _refresh_pending_state(scene, sess)
+        if state.pending_action is None:
+            return
+        if _is_disposable_start(sess):
+            _schedule_disposable_apply(scene)
+        else:
+            scene.fluidsim.status = (
+                f"{_pending_label(state.pending_action).replace('_', ' ').title()}: "
+                + ", ".join(state.pending_reasons))
+            _tag_view3d_redraw()
         return
-    if action is SceneUpdate.SYNC:
+    if action is SceneUpdate.LIVE:
+        # Successful slider ticks preserve the useful frame-statistics status;
+        # only a contained error replaces it with an actionable message.
+        _apply_live_settings_safely(scene, sess)
+    elif action is SceneUpdate.SYNC:
         sync_scene_to_solver(scene, sess)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
@@ -1026,14 +1588,31 @@ def _on_frame_change(scene, depsgraph):
 
 
 @persistent
+def _on_interaction_state_update(*args):
+    """Refresh cached pending UI state after undo, drivers, or scripts."""
+    scene = args[0] if args and hasattr(args[0], "fluidsim") else getattr(
+        bpy.context, "scene", None)
+    if scene is None:
+        return
+    state = _INTERACTION_STATES.get(_scene_identity(scene))
+    if state is not None:
+        _refresh_pending_state(scene, session())
+
+
+@persistent
 def _on_load_pre(_filepath):
     session().release()
+    _INTERACTION_STATES.clear()
 
 
 def register_handlers():
     # Deduplicate only -- registering must not release a live session.
     _remove_handlers()
     bpy.app.handlers.frame_change_post.append(_on_frame_change)
+    if hasattr(bpy.app.handlers, "depsgraph_update_post"):
+        bpy.app.handlers.depsgraph_update_post.append(_on_interaction_state_update)
+    if hasattr(bpy.app.handlers, "undo_post"):
+        bpy.app.handlers.undo_post.append(_on_interaction_state_update)
     if hasattr(bpy.app.handlers, "load_pre"):
         bpy.app.handlers.load_pre.append(_on_load_pre)
     # Build the solver ahead of the first frame change instead of from inside
@@ -1046,7 +1625,9 @@ def _remove_handlers():
     handler_lists = [bpy.app.handlers.frame_change_post]
     # render_init is deliberately absent: render.py owns that list, and clearing
     # it here would drop render._on_render_init depending on register order.
-    for name in ("load_pre", "animation_playback_pre"):
+    for name in (
+            "depsgraph_update_post", "undo_post", "load_pre",
+            "animation_playback_pre"):
         if hasattr(bpy.app.handlers, name):
             handler_lists.append(getattr(bpy.app.handlers, name))
     for handlers in handler_lists:

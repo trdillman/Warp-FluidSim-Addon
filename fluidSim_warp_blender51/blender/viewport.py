@@ -917,10 +917,12 @@ def _draw_overlay():
     fs = getattr(scene, "fluidsim", None)
     if fs is None or not fs.show_overlay:
         return
-    from .scene_bridge import session
+    from .scene_bridge import pending_presentation, session
 
     sess = session()
-    if not sess.active:
+    pending = pending_presentation(scene)
+    owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)(scene)
+    if not owns_scene and pending["action"] == "NONE":
         return
 
     font_id = 0
@@ -932,13 +934,21 @@ def _draw_overlay():
     y = 60 * dpi_scale
     lh = size * 1.4
 
-    lines = [
-        f"FluidSim Warp  |  {fs.status}",
-        f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
-        f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
-        f"{fs.stat_step_ms:.1f} ms/frame",
-    ]
-    if sess.profiler is not None:
+    lines = [f"FluidSim Warp  |  {fs.status}"]
+    if owns_scene:
+        lines.append(
+            f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
+            f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
+            f"{fs.stat_step_ms:.1f} ms/frame")
+    if pending["action"] != "NONE":
+        label = ("REINITIALIZE REQUIRED" if pending["action"] == "REINIT_PENDING"
+                 else "RESTART REQUIRED")
+        lines.append(f"{label}: {pending['count']} pending change(s)")
+        if pending["reasons"]:
+            lines.append("pending: " + "; ".join(pending["reasons"][:2]))
+        if pending["blocked_reason"]:
+            lines.append("blocked: " + pending["blocked_reason"][:120])
+    if owns_scene and sess.profiler is not None:
         summary = sess.profiler.summary(last_n=30)
         phase_names = {
             f"compute_{slot}": phase
@@ -951,7 +961,7 @@ def _draw_overlay():
                 parts.append(f"{label} {v:.1f}")
         if parts:
             lines.append("timers(ms): " + "  ".join(parts))
-    if sess.error:
+    if owns_scene and sess.error:
         lines.append(f"error: {sess.error}")
 
     for i, line in enumerate(reversed(lines)):

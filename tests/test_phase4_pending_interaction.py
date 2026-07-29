@@ -1,0 +1,356 @@
+"""Behavioral contracts for Phase-4 pending/reinitialize interaction."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from types import SimpleNamespace
+
+
+def _bridge(monkeypatch):
+    bpy = types.ModuleType("bpy")
+    bpy.context = SimpleNamespace()
+    bpy.app = SimpleNamespace(handlers=SimpleNamespace(frame_change_post=[]))
+    mathutils = types.ModuleType("mathutils")
+    mathutils.Vector = lambda value: value
+    viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    viewport.refresh_existing_output_settings = lambda *_args, **_kwargs: None
+    viewport.update_outputs = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setitem(sys.modules, "mathutils", mathutils)
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+    sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
+    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+
+
+def _scene(*, voxel_size=0.1):
+    fs = SimpleNamespace(
+        live=True, cache_playback_enabled=False, status="",
+        domain_object=None, voxel_size=voxel_size, leaf_capacity=64,
+        max_particles=1000, max_whitewater=200, profiling_enabled=False,
+        profiling_sync=True, topology_expand=1, open_boundaries=False,
+        domain_sdf_walls=True, spacetime_enabled=False,
+        spacetime_reference_mass=0.0, spacetime_seed=1729,
+        gravity=(0.0, 0.0, -9.81), use_scene_gravity=False,
+        flip_ratio=0.95, cfl=3.0,
+    )
+    return SimpleNamespace(
+        fluidsim=fs, objects=[], frame_start=1, frame_current=1,
+        use_gravity=True, gravity=(0.0, 0.0, -9.81),
+    )
+
+
+def _activate(bridge, scene, *, frame=5):
+    settings = SimpleNamespace(
+        voxel_size=scene.fluidsim.voxel_size,
+        leaf_capacity=scene.fluidsim.leaf_capacity,
+        max_particles=scene.fluidsim.max_particles,
+        max_whitewater=scene.fluidsim.max_whitewater,
+        topology_expand=scene.fluidsim.topology_expand,
+        open_boundaries=scene.fluidsim.open_boundaries,
+        domain_sdf_walls=scene.fluidsim.domain_sdf_walls,
+        spacetime_enabled=scene.fluidsim.spacetime_enabled,
+        spacetime_reference_mass=scene.fluidsim.spacetime_reference_mass,
+        spacetime_seed=scene.fluidsim.spacetime_seed,
+        flip_ratio=scene.fluidsim.flip_ratio,
+        cfl=scene.fluidsim.cfl,
+        gravity=scene.fluidsim.gravity,
+    )
+    solver = SimpleNamespace(frame=frame, settings=settings, particles=object())
+    sess = bridge.session()
+    sess.solver = solver
+    sess.scene_identity = bridge._scene_identity(scene)
+    sess.start_frame = scene.frame_start
+    sess.last_frame = frame
+    bridge._capture_applied_state(scene, sess)
+    return sess, solver
+
+
+def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, solver = _activate(bridge, scene)
+    particles = solver.particles
+
+    scene.fluidsim.voxel_size = 0.05
+    bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
+
+    pending = bridge.pending_presentation(scene)
+    assert pending["action"] == "REINIT_PENDING"
+    assert any("voxel_size" in reason for reason in pending["reasons"])
+    assert sess.solver is solver
+    assert sess.solver.particles is particles
+    assert solver.settings.voxel_size == 0.1
+
+
+def test_pending_state_is_isolated_between_scenes(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    first = _scene()
+    second = _scene()
+    _activate(bridge, first)
+    first.fluidsim.leaf_capacity = 128
+    bridge.request_scene_update(first, bridge.SceneUpdate.REBUILD)
+
+    # Switching the single live solver to another scene must not erase the
+    # first scene's applied snapshot or pending reasons.
+    _activate(bridge, second)
+    second.fluidsim.voxel_size = 0.2
+    bridge.request_scene_update(second, bridge.SceneUpdate.REBUILD)
+
+    first_pending = bridge.pending_presentation(first)
+    second_pending = bridge.pending_presentation(second)
+    assert first_pending["action"] == "REINIT_PENDING"
+    assert first_pending["reasons"] == ("Reinitialize: leaf_capacity",)
+    assert second_pending["action"] == "REINIT_PENDING"
+    assert second_pending["reasons"] == ("Reinitialize: voxel_size",)
+
+
+def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=7)
+    scene.fluidsim.voxel_size = 0.04
+    bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
+    calls = []
+
+    def initialize(actual_scene):
+        calls.append(actual_scene.fluidsim.voxel_size)
+        sess.solver = SimpleNamespace(
+            frame=0,
+            settings=SimpleNamespace(voxel_size=actual_scene.fluidsim.voxel_size),
+        )
+        sess.scene_identity = bridge._scene_identity(actual_scene)
+        bridge._capture_applied_state(actual_scene, sess)
+        return sess
+
+    monkeypatch.setattr(sess, "initialize", initialize)
+    scene.frame_current = scene.frame_start
+    sess.handle_frame_change(scene, depsgraph=None)
+
+    assert calls == [0.04]
+    assert bridge.pending_presentation(scene)["action"] == "NONE"
+    assert sess.last_frame == scene.frame_start
+
+
+def test_reset_lifecycle_pending_applies_exactly_once(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    source_pg = SimpleNamespace(
+        role="SOURCE", point_source_representation="DIRECT_APPEND",
+        mesh_evaluation_mode="FIRST_SIM_FRAME", emission_mode="INITIAL_FILL",
+        auto_inject_seed=False,
+    )
+    scene.objects = [SimpleNamespace(name="Source", fluidsim=source_pg)]
+    sess, _solver = _activate(bridge, scene, frame=4)
+    source_pg.emission_mode = "CONTINUOUS_INFLOW"
+    bridge.request_scene_update(scene, bridge.SceneUpdate.RESET)
+    resets = []
+
+    def reset(actual_scene):
+        resets.append(source_pg.emission_mode)
+        bridge._capture_applied_state(actual_scene, sess, reset_only=True)
+
+    monkeypatch.setattr(sess, "reset", reset)
+    assert bridge._apply_pending_on_rewind(scene, sess) is True
+    assert bridge._apply_pending_on_rewind(scene, sess) is False
+    assert resets == ["CONTINUOUS_INFLOW"]
+    assert bridge.pending_presentation(scene)["action"] == "NONE"
+
+
+def test_scripted_signature_change_is_detected_without_rna_callback(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=3)
+
+    scene.fluidsim.max_particles = 2500
+    bridge._refresh_pending_state(scene, sess)
+
+    assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
+    assert "Reinitialize: max_particles" in bridge.pending_presentation(scene)["reasons"]
+
+
+def test_revert_pending_values_restores_applied_snapshot(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    _activate(bridge, scene, frame=3)
+    scene.fluidsim.voxel_size = 0.025
+    bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
+
+    assert bridge.revert_pending_values(scene) is True
+    assert scene.fluidsim.voxel_size == 0.1
+    assert bridge.pending_presentation(scene)["action"] == "NONE"
+
+
+def test_failed_pending_apply_retains_action_and_reason(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=3)
+    scene.fluidsim.voxel_size = 0.025
+    bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
+    monkeypatch.setattr(sess, "initialize", lambda _scene: (_ for _ in ()).throw(
+        RuntimeError("allocation failed")))
+
+    try:
+        bridge.apply_pending_reinitialize(scene)
+    except RuntimeError:
+        pass
+
+    pending = bridge.pending_presentation(scene)
+    assert pending["action"] == "REINIT_PENDING"
+    assert pending["reasons"]
+    assert pending["blocked_reason"] == "allocation failed"
+
+
+def test_st_reference_calibration_cache_scales_distinct_density_without_recompute(
+        monkeypatch):
+    bridge = _bridge(monkeypatch)
+    calls = []
+    solver = SimpleNamespace(
+        settings=SimpleNamespace(particles_per_voxel=8.0, spacetime_seed=9),
+        _calibrate_st_reference_mass=lambda: calls.append(1) or 3.5,
+    )
+
+    assert bridge._cached_st_reference_mass(solver) == 3.5
+    solver.settings.particles_per_voxel = 16.0
+    assert bridge._cached_st_reference_mass(solver) == 7.0
+    assert calls == [1]
+
+
+def test_midrun_reset_edit_is_pending_without_resetting(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, solver = _activate(bridge, scene, frame=6)
+    scene.fluidsim.topology_expand = 3
+
+    bridge.request_scene_update(scene, bridge.SceneUpdate.RESET)
+
+    assert bridge.pending_presentation(scene)["action"] == "RESET_PENDING"
+    assert sess.solver is solver
+    assert solver.settings.topology_expand == 1
+
+
+def test_rewind_without_pending_resets_once(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=6)
+    calls = []
+    monkeypatch.setattr(sess, "reset", lambda actual: calls.append(actual))
+    scene.frame_current = scene.frame_start
+
+    sess.handle_frame_change(scene, depsgraph=None)
+
+    assert calls == [scene]
+    assert sess.last_frame == scene.frame_start
+
+
+def test_rewind_apply_failure_stops_playback_and_retains_solver(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, solver = _activate(bridge, scene, frame=6)
+    scene.fluidsim.voxel_size = 0.04
+    bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
+    monkeypatch.setattr(sess, "initialize", lambda _scene: (_ for _ in ()).throw(
+        RuntimeError("allocation failed")))
+    scene.frame_current = scene.frame_start
+
+    sess.handle_frame_change(scene, depsgraph=None)
+
+    assert scene.fluidsim.live is False
+    assert sess.solver is solver
+    assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
+    assert "playback stopped" in scene.fluidsim.status
+
+
+def test_prepare_step_reuses_depsgraph_signature_snapshot(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=3)
+    calls = []
+    original = bridge._reset_signature
+
+    def counted(actual_scene):
+        calls.append(actual_scene)
+        return original(actual_scene)
+
+    monkeypatch.setattr(bridge, "_reset_signature", counted)
+    monkeypatch.setattr(bridge, "_apply_live_settings_safely", lambda *_args: True)
+    bridge._on_interaction_state_update(scene, object())
+    sess.prepare_step(scene)
+    sess.prepare_step(scene)
+
+    assert calls == [scene]
+
+
+def test_direct_step_refreshes_immediate_scripted_edit_without_depsgraph(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=3)
+    scene.fluidsim.max_particles = 2500
+    monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: "stepped")
+
+    assert bridge.step_frame(scene, sess, write_cache=False) == "stepped"
+    assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
+
+
+def test_scripted_edit_handler_refreshes_cached_pending_presentation(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    _activate(bridge, scene, frame=3)
+    scene.fluidsim.max_particles = 2500
+
+    bridge._on_interaction_state_update(scene, object())
+
+    assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
+
+
+def test_apply_operators_do_not_destroy_another_scenes_solver(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    first = _scene()
+    second = _scene()
+    sess, first_solver = _activate(bridge, first, frame=4)
+    _activate(bridge, second, frame=4)
+    second.fluidsim.voxel_size = 0.05
+    bridge._refresh_pending_state(second, sess)
+    # Restore ownership to the first scene while keeping the second snapshot.
+    sess.solver = first_solver
+    sess.scene_identity = bridge._scene_identity(first)
+
+    for apply in (bridge.apply_pending_reset, bridge.apply_pending_reinitialize):
+        try:
+            apply(second)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("cross-scene pending apply was not blocked")
+    assert sess.solver is first_solver
+    assert sess.owns_scene(first)
+
+
+def test_apply_reinitialize_with_no_pending_is_a_noop(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, solver = _activate(bridge, scene, frame=4)
+
+    assert bridge.apply_pending_reinitialize(scene) is False
+    assert sess.solver is solver
+
+
+def test_revert_never_changes_device_preferences(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    prefs = SimpleNamespace(device="cuda:0")
+    bridge.bpy.context.preferences = SimpleNamespace(addons={
+        "fluidSim_warp_blender51": SimpleNamespace(preferences=prefs),
+    })
+    from fluidSim_warp_blender51 import preferences
+    monkeypatch.setattr(preferences, "bpy", bridge.bpy)
+    scene = _scene()
+    _activate(bridge, scene, frame=4)
+    prefs.device = "cuda:1"
+    bridge._refresh_pending_state(scene, bridge.session())
+
+    assert bridge.revert_pending_values(scene) is False
+    assert prefs.device == "cuda:1"
+    assert "never changed automatically" in bridge.pending_presentation(scene)[
+        "blocked_reason"]

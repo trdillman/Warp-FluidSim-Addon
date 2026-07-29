@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import os
 import sys
+import textwrap
+import time
 import types
 from types import SimpleNamespace
 
@@ -116,6 +119,29 @@ def test_validation_operator_uses_configured_device(monkeypatch):
     assert seen["device"] == "cuda:3"
 
 
+def test_pending_operators_route_context_scene_and_contain_failures(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace())
+    calls = []
+    fake_bridge = SimpleNamespace(
+        apply_pending_reinitialize=lambda actual: calls.append(("reinit", actual)) or True,
+        apply_pending_reset=lambda actual: calls.append(("reset", actual)) or True,
+        revert_pending_values=lambda actual: calls.append(("revert", actual)) or True,
+    )
+    monkeypatch.setattr(operators, "_bridge", lambda: fake_bridge)
+    context = SimpleNamespace(scene=scene)
+
+    assert operators.FLUIDSIM_OT_apply_pending_reinitialize().execute(context) == {"FINISHED"}
+    assert operators.FLUIDSIM_OT_apply_pending_reset().execute(context) == {"FINISHED"}
+    assert operators.FLUIDSIM_OT_revert_pending().execute(context) == {"FINISHED"}
+    assert calls == [("reinit", scene), ("reset", scene), ("revert", scene)]
+
+    fake_bridge.apply_pending_reset = lambda _scene: (_ for _ in ()).throw(
+        RuntimeError("blocked"))
+    assert operators.FLUIDSIM_OT_apply_pending_reset().execute(context) == {"CANCELLED"}
+
+
 def test_multi_frame_step_resyncs_scene_before_every_simulated_frame(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
@@ -189,6 +215,7 @@ class _Layout:
         self.props = []
         self.prop_calls = []
         self.prop_enum_calls = []
+        self.popovers = []
         self.enabled = True
 
     def column(self, align=False):
@@ -220,6 +247,58 @@ class _Layout:
     def operator(self, operator_id, **kwargs):
         self.operators.append({"id": operator_id, **kwargs})
         return SimpleNamespace()
+
+    def popover(self, **kwargs):
+        self.popovers.append(kwargs)
+        return None
+
+
+def test_pending_banner_and_fixed_header_expose_real_actions(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(live=True),
+        fluidsim_pending_action="REINIT_PENDING",
+        fluidsim_pending_count=2,
+        fluidsim_pending_reasons="Reinitialize: voxel_size\nReinitialize: max_particles",
+        fluidsim_pending_blocked="",
+    )
+    layout = _Layout()
+
+    panels._draw_pending_banner(layout, scene)
+    header = SimpleNamespace(layout=layout)
+    panels._draw_header_interaction(header, SimpleNamespace(scene=scene))
+
+    assert any(label["text"] == "Reinitialize Required (2)"
+               for label in layout.labels)
+    assert {op["id"] for op in layout.operators} >= {
+        "fluidsim.apply_pending_reinitialize", "fluidsim.revert_pending"}
+    assert layout.popovers == [{
+        "panel": "FLUIDSIM_PT_interaction_popover", "text": "2", "icon": "ERROR"}]
+
+
+def test_header_registration_is_symmetric(monkeypatch):
+    bpy = _install_bpy_stub(monkeypatch)
+
+    class Header:
+        callbacks = []
+
+        @classmethod
+        def append(cls, callback):
+            cls.callbacks.append(callback)
+
+        @classmethod
+        def remove(cls, callback):
+            if callback in cls.callbacks:
+                cls.callbacks.remove(callback)
+
+    bpy.types.VIEW3D_HT_header = Header
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+
+    panels.register()
+    assert Header.callbacks == [panels._draw_header_interaction]
+    panels.unregister()
+    assert Header.callbacks == []
 
 
 def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
@@ -491,6 +570,245 @@ def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypat
         (scene, SceneUpdate.SURFACE),
         (scene, SceneUpdate.OUTPUT),
     ]
+
+
+def test_hot_solver_property_callback_requests_live_update(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    from fluidSim_warp_blender51.blender.scene_bridge import SceneUpdate
+
+    calls = []
+    scene = SimpleNamespace()
+    fake_bridge = SimpleNamespace(
+        request_scene_update=lambda scene, action: calls.append((scene, action))
+    )
+    import fluidSim_warp_blender51.blender as blender_pkg
+
+    monkeypatch.setattr(blender_pkg, "scene_bridge", fake_bridge, raising=False)
+
+    properties._request_live(None, SimpleNamespace(scene=scene))
+
+    assert calls == [(scene, SceneUpdate.LIVE)]
+
+
+def test_live_solver_settings_apply_without_resetting_particle_state(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+
+    particle_state = object()
+    solver = SimpleNamespace(
+        settings=SimpleNamespace(flip_ratio=0.95, cfl=1.0),
+        particles=particle_state,
+    )
+    sess = scene_bridge.session()
+    sess.solver = solver
+    reset_calls = []
+    monkeypatch.setattr(sess, "reset", lambda _scene: reset_calls.append("reset"))
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(flip_ratio=0.25, cfl=2.0, status=""),
+        use_gravity=False,
+        gravity=(0.0, 0.0, -9.81),
+    )
+
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+
+    assert solver.settings.flip_ratio == 0.25
+    assert solver.settings.cfl == 2.0
+    assert solver.particles is particle_state
+    assert reset_calls == []
+    assert scene.fluidsim.status == ""
+
+
+def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    settings = SimpleNamespace(sample_type="previous", flip_ratio=0.9)
+    solver = SimpleNamespace(settings=settings, particles=object())
+    sess = scene_bridge.session()
+    sess.solver = solver
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            sample_type="NOT_A_REAL_ENUM", flip_ratio=0.2, status="Frame 8"),
+        use_gravity=False,
+        gravity=(0.0, 0.0, -9.81),
+    )
+
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+
+    assert sess.solver is solver
+    assert settings.sample_type == "previous"
+    assert settings.flip_ratio == 0.9
+    assert "NOT_A_REAL_ENUM" in sess.current_error(scene)
+    assert scene.fluidsim.status.startswith("Live settings error:")
+
+
+def test_particles_per_voxel_live_refresh_rescales_automatic_st_mass(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    settings = SimpleNamespace(
+        particles_per_voxel=8.0,
+        spacetime_enabled=True,
+        spacetime_reference_mass=0.0,
+    )
+    solver = SimpleNamespace(
+        settings=settings,
+        particles=object(),
+        _st_reference_mass_cached=4.0,
+    )
+    solver._calibrate_st_reference_mass = lambda: (_ for _ in ()).throw(
+        AssertionError("existing calibration should be density-rescaled"))
+    sess = scene_bridge.session()
+    sess.solver = solver
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(particles_per_voxel=12.0, status="Frame 4"),
+        use_gravity=False,
+        gravity=(0.0, 0.0, -9.81),
+    )
+
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+
+    assert settings.particles_per_voxel == 12.0
+    assert solver._st_reference_mass_cached == 6.0
+    assert scene.fluidsim.status == "Frame 4"
+
+
+def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    settings = SimpleNamespace(gravity=(0.0, 0.0, 0.0))
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(settings=settings, particles=object())
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            gravity=(1.0, 2.0, 3.0), use_scene_gravity=True, status="stats"),
+        use_gravity=True,
+        gravity=(0.0, 0.0, -4.0),
+    )
+
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+    assert settings.gravity == (0.0, 0.0, -4.0)
+
+    scene.fluidsim.use_scene_gravity = False
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+    assert settings.gravity == (1.0, 2.0, 3.0)
+    assert scene.fluidsim.status == "stats"
+
+
+def test_inactive_live_update_status_is_truthful(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.session().solver = None
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+
+    assert scene.fluidsim.status == "Live setting stored; applies on initialization"
+
+
+def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    import fluidSim_warp_blender51.blender.sources as sources
+    import fluidSim_warp_blender51.blender.viewport as viewport
+
+    reset_snapshots = []
+    solver = SimpleNamespace(
+        settings=SimpleNamespace(flip_ratio=0.95, spacetime_seed=1),
+        reset=lambda: reset_snapshots.append((
+            solver.settings.flip_ratio, solver.settings.spacetime_seed)),
+    )
+    sess = scene_bridge.session()
+    sess.solver = solver
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sources, "inject_auto_seeds", lambda *_args: None)
+    monkeypatch.setattr(viewport, "update_outputs", lambda *_args: None)
+    scene = SimpleNamespace(
+        frame_start=1,
+        fluidsim=SimpleNamespace(
+            flip_ratio=0.2, spacetime_seed=77, status="",
+            gravity=(0.0, 0.0, -4.0), use_scene_gravity=False),
+        use_gravity=False,
+        gravity=(0.0, 0.0, -9.81),
+    )
+
+    sess.reset(scene)
+
+    assert reset_snapshots == [(0.2, 77)]
+    assert solver.settings.flip_ratio == 0.2
+    assert solver.settings.spacetime_seed == 77
+    assert scene.fluidsim.status == "Simulation reset"
+
+
+def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    tree = ast.parse(textwrap.dedent(
+        inspect.getsource(properties.FLUIDSIM_PG_settings)))
+    callbacks = {}
+    for node in tree.body[0].body:
+        if not (isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and isinstance(node.annotation, ast.Call)):
+            continue
+        update = next(
+            (kw.value for kw in node.annotation.keywords if kw.arg == "update"),
+            None,
+        )
+        if isinstance(update, ast.Name):
+            callbacks[node.target.id] = update.id
+
+    live_props = {name for name, callback in callbacks.items()
+                  if callback == "_request_live"}
+    assert live_props == set(bridge._LIVE_SETTING_FIELDS) | {
+        "gravity", "use_scene_gravity"}
+    declared_callbacks = {
+        "_on_live_changed", "_request_rebuild", "_request_live",
+        "_request_reset", "_request_surface_refresh",
+        "_request_whitewater_refresh", "_apply_liquid_view_mode",
+        "_sync_liquid_view_mode", "_request_output_refresh",
+        "_on_cache_playback_changed",
+    }
+    assert set(callbacks.values()) == declared_callbacks
+
+    allocation = {"voxel_size", "leaf_capacity", "max_particles", "max_whitewater"}
+    assert allocation.isdisjoint(
+        bridge._LIVE_SETTING_FIELDS | bridge._RESET_SETTING_FIELDS)
+    assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._RESET_SETTING_FIELDS)
+    assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._SURFACE_SETTING_FIELDS)
+    assert bridge._LIVE_REFRESH_SETTING_FIELDS == {"particles_per_voxel"}
+    enum_sources = {source for source, _enum in bridge._enum_setting_fields().values()}
+    appliable = set(bridge._DIRECT_SETTING_FIELDS) | enum_sources
+    assert (bridge._LIVE_SETTING_FIELDS | bridge._RESET_SETTING_FIELDS).issubset(
+        appliable)
+    assert bridge._RESET_SETTING_FIELDS.issubset(
+        {name for name, callback in callbacks.items()
+         if callback == "_request_reset"})
+    assert bridge._SURFACE_SETTING_FIELDS.issubset(
+        {name for name, callback in callbacks.items()
+         if callback == "_request_surface_refresh"})
+    bridge._validate_setting_registry()
+
+
+def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    settings = SimpleNamespace(flip_ratio=0.9, cfl=1.0)
+    sess = bridge.session()
+    sess.solver = SimpleNamespace(settings=settings)
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(flip_ratio=0.2, cfl=2.0),
+        use_gravity=False,
+        gravity=(0.0, 0.0, -9.81),
+    )
+    assert bridge._apply_realtime_solver_settings(scene, sess)
+
+    started = time.perf_counter()
+    for _ in range(500):
+        assert bridge._apply_realtime_solver_settings(scene, sess)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed / 500 < 0.001
 
 
 def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch):
