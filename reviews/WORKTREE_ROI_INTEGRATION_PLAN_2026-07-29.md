@@ -17,7 +17,7 @@ Current reference points:
 | # | Worktree / branch | High-level purpose and current changes | State vs master | ROI | Recommendation |
 |---:|---|---|---|---:|---|
 | 1 | Main `liquid_warp_blender51_port` / `master` | Canonical baseline. Recent commits enforce report authority and add a real Domain Height Fill emission lifecycle. Dirty files are `.gitignore`, generated demo `.blend`/preview files, and `.agents/`; no dirty source code. | Current at `556bce2` | **5/5** | Integration target. Resolve or preserve generated/config changes before landing Phase 4. |
-| 2 | `34f4/...` / `codex/fix-cone-pyramid-distances` | Replaces approximate cone/pyramid source SDFs with exact Euclidean surface distances using point-to-triangle calculations. Adds focused sourcing tests, plus unrelated reports/backlogs/demo churn. | 34 behind, no unique commits, dirty | **3/5** | Extract only `sourcing.py` and focused tests onto post-Phase-4 master. Do not merge reports or demo binaries wholesale. |
+| 2 | `34f4/...` / `codex/fix-cone-pyramid-distances` | Historical exact cone/pyramid SDF attempt. Current master already has deeper exact `_cone_sdf`/`_pyramid_sdf` implementations, degenerate-dimension handling, world-transform coverage, and stronger edge/resolution tests. | 34 behind, no unique commits, dirty | **0/5** | Do not extract code. Archive its non-duplicate authored backlog files before eventual removal. |
 | 3 | `54d6/...` / `codex/deepen-four-modules` | No remaining module implementation; only modified `dam_break.blend`, preview, and `meta.json` output. | 38 behind, no unique commits | **0/5** | Prune after confirming the demo files are not authoritative. |
 | 4 | `arch-deepen/...` / `codex/deepen-fluidsim-architecture-seams` | Historical architecture/deep-module work already absorbed elsewhere. | Clean, 61 behind, no unique commits | **0/5** | Prune. |
 | 5 | `e9bf/...` / detached | Historical clean snapshot with no unique work. | Clean, 43 behind | **0/5** | Prune. |
@@ -64,14 +64,9 @@ Extraction hygiene: candidate worktrees contain EOL-only churn. Extract explicit
 - Run `blender --background --factory-startup --python tests/headless_spatiotemporal_validation.py -- --device cuda:0` and `blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6`.
 - Run `python tools/run_production_gate.py --include-gui` before landing.
 
-#### 2.2 Exact cone/pyramid source distances — ROI 3
+#### 2.2 Exact cone/pyramid source distances — superseded during execution
 
-- Port only the SDF implementation and focused sourcing tests.
-- Reconcile it with master’s Domain Height Fill lifecycle.
-- Exclude reports and generated demo files from the code extraction, but archive every non-duplicate untracked authored file before any source worktree removal.
-- Run `python -m pytest -q tests/test_sourcing_pipeline.py tests/test_mesh_source_pipeline.py`.
-- Run all five Phase-2 capability scripts (`blender_source_lifecycle_acceptance.py`, `blender_source_region_acceptance.py`, `blender_animated_source_acceptance.py`, `blender_point_source_acceptance.py`, `blender_volume_source_acceptance.py`) with `-- --json-out artifacts/source_acceptance/<capability>.json`, validate every report with `python tools/validate_source_acceptance_report.py`, and require each `*-SOURCE-ACCEPTANCE-PASS` plus `SOURCE-ACCEPTANCE-REPORT-PASS`.
-- Run `blender --background --factory-startup --python tests/blender_mesh_source_acceptance.py` and require `MESH-SOURCE-ACCEPTANCE-PASS`.
+A current-master extraction was attempted and produced conflicts because master already contains deeper exact-distance helpers from `f5a9d12`, including finite degenerate handling and stronger exact surface, resolution-offset, and world-transform tests. The candidate's two source-only tests duplicate existing coverage at lower generality. No code was extracted. Preserve only its non-duplicate untracked authored backlog files during cleanup.
 
 #### 2.3 GPU conditional PCG — ROI 4
 
