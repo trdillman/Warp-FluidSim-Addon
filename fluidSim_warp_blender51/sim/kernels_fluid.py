@@ -228,7 +228,11 @@ def k_particle_set_grid_data_spacetime(
     if tid >= count[0]:
         return
     safe_prev_dt = wp.max(wp.abs(previous_dt), 1.0e-8)
-    tau = -time_offsets[tid] / safe_prev_dt
+    # Residual clamping (Eq. 11) can push tau outside the [-1/2, 1/2] support of
+    # W_T after an abrupt dt decrease, which would drop the particle from the
+    # transfer entirely and punch a mass/momentum hole in the slab estimator.
+    # Clamp to the support edge instead: biased quadrature beats lost mass.
+    tau = wp.clamp(-time_offsets[tid] / safe_prev_dt, -0.5, 0.5)
     wt = _st_temporal_weight(tau)
     if wt <= 0.0:
         return
@@ -302,16 +306,23 @@ def k_spacetime_weights_to_phase_active(
     accum = _st_phase_from_mass(wu[tid], reference_mass, eta_phi)
     accum += _st_phase_from_mass(wv[tid], reference_mass, eta_phi)
     accum += _st_phase_from_mass(ww[tid], reference_mass, eta_phi)
+    nfaces = float(3.0)
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
     if hi >= 0:
         accum += _st_phase_from_mass(wu[hi], reference_mass, eta_phi)
+        nfaces += 1.0
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
     if hi >= 0:
         accum += _st_phase_from_mass(wv[hi], reference_mass, eta_phi)
+        nfaces += 1.0
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1))
     if hi >= 0:
         accum += _st_phase_from_mass(ww[hi], reference_mass, eta_phi)
-    phi = accum / 6.0
+        nfaces += 1.0
+    # Average over the faces that actually exist: an unallocated upper neighbour
+    # means "no data", not "no liquid".  Dividing by a fixed 6 biased phi down at
+    # the sparse-grid fringe and could flip surface cells to Dirichlet air.
+    phi = accum / nfaces
     phase_cell[tid] = phi
 
     if phi >= active_threshold or (vt & VOXEL_SOURCE_REGION_TRACKING) != 0:
