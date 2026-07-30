@@ -394,11 +394,119 @@ class TurbulenceType(IntEnum):
 
 # Blender EnumProperty item helpers -----------------------------------------
 
+# User-facing effects for enums exposed by the add-on UI.  Blender displays
+# these strings while users hover dropdown choices, so repeating the label is
+# not enough: each entry states what selecting that value changes.
+_ENUM_DESCRIPTIONS = {
+    ParticleSampleType: {
+        "PIC": "Use direct grid velocity on particles for smoother, more stable, but more dissipative motion",
+        "FLIP": "Apply grid velocity changes to particles to preserve energy and detail, with more noise",
+    },
+    ViscositySolver: {
+        "JACOBI": "Use simple fixed-point viscosity iterations; predictable but usually slower to converge",
+        "PCG": "Use preconditioned conjugate gradients for faster viscosity convergence on most scenes",
+    },
+    ProjectNonDivergentSolver: {
+        "JACOBI": "Use simple fixed-point pressure iterations; predictable but usually slower to converge",
+        "PCG": "Use preconditioned conjugate gradients for faster pressure convergence on most scenes",
+    },
+    TraceMode: {
+        "NONE": "Move particles from their current velocity without sampling a traced grid trajectory",
+        "SINGLE_SAMPLE": "Sample grid velocity once for the cheapest first-order trajectory",
+        "MID_POINT": "Sample at the trajectory midpoint for better curved-path accuracy at extra cost",
+        "MODIFIED_MID_POINT": "Blend particle and midpoint grid velocity for a more stable midpoint trajectory",
+        "RK3": "Use three-stage Runge-Kutta tracing for the best available path accuracy at the highest sampling cost",
+    },
+    RelaxMode: {
+        "LOCAL_VOXEL": "Redistribute particles using neighbors in the same voxel for lower cost and more local changes",
+        "NEIGHBOR_VOXELS": "Include adjacent voxels for smoother cross-cell spacing at higher search cost",
+    },
+    SdfFilterType: {
+        "DIALATE": "Expand negative SDF regions to thicken and connect the extracted liquid surface",
+        "ERODE": "Contract negative SDF regions to thin the surface and remove small features",
+        "BOX": "Average nearby SDF samples to soften small surface detail",
+        "MEAN_CURVATURE_FLOW": "Smooth by estimated curvature for rounder features with less box-filter character",
+    },
+    SurfaceResolutionMode: {
+        "SIMULATION": "Use the simulation voxel size and shared grid for the lowest additional memory cost",
+        "MULTIPLIER": "Divide simulation voxel size by Resolution Multiplier for independently finer or coarser surfaces",
+        "CUSTOM": "Use the explicit Surface Voxel Size for direct control of render-surface resolution",
+    },
+    SurfaceUpdateCadence: {
+        "SUBSTEP": "Rebuild after every solver substep for the freshest surface at the highest cost",
+        "FRAME": "Rebuild once per display frame for responsive playback with current frame-level results",
+        "MANUAL": "Do not rebuild automatically; keep the previous mesh until a caller explicitly requests a surface",
+    },
+    LimitBehavior: {
+        "MAINTAIN": "Hard-clamp velocity magnitude to Max Speed",
+        "PERCENT": "Remove the Limit Percent fraction of speed above Max Speed each step",
+        "ACCELERATION": "Limit how quickly velocity can be reduced toward Max Speed rather than clamping immediately",
+    },
+    CustomKernelConstantType: {
+        "FLOAT": "Pass the constant as a floating-point value so the snippet can use fractional values",
+        "INT": "Pass the constant as an integer value so fractional input is not available",
+    },
+    CustomKernelOrder: {
+        "FIRST_STEP": "Run at the start of each solver step before sourcing and forces",
+        "BEFORE_SOURCING": "Run immediately before liquid, sink, and field sources are applied",
+        "BEFORE_FORCES": "Run after sourcing and before gravity and other forces",
+        "BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION": "Run before pressure projection and particle advection",
+        "FINAL_STEP": "Run after the standard solver phases so changes become final step output",
+    },
+    CustomKernelRunOver: {
+        "VOXEL_TILE": "Invoke once per active 8x8x8 sparse tile for tile-level work",
+        "VOXEL_LINEAR": "Invoke across active voxel storage for per-voxel field work",
+        "PARTICLES": "Invoke once per live liquid particle for particle-attribute work",
+    },
+    BlendMode: {
+        "ADD": "Add the source payload to the existing target value",
+        "REPLACE": "Overwrite the target with the source payload",
+        "MAXIMUM": "Keep whichever value is larger between the target and source payload",
+        "PULL": "Move the existing target toward the source payload instead of replacing it immediately",
+        "BLEND": "Interpolate the existing target and source payload using Blend Amount",
+    },
+    SourceShapeSourceMode: {
+        "FIELD": "Use the legacy field representation, which does not create liquid particles in this port",
+        "PARTICLES": "Emit liquid particles into the selected source region",
+    },
+    SourceEmissionMode: {
+        "INITIAL_FILL": "Fill the source region once on the first enabled step after initialization or reset",
+        "CONTINUOUS_INFLOW": "Replenish the source region every solver substep while the source remains enabled",
+    },
+    SourceShapeShape: {
+        "SPHERE": "Use the object's transformed sphere interior as the analytic region",
+        "CYLINDER": "Use the object's transformed cylinder interior as the analytic region",
+        "BOX": "Use the object's transformed box interior as the analytic region",
+        "PYRAMID": "Use the object's transformed pyramid interior as the analytic region",
+        "CONE": "Use the object's transformed cone interior as the analytic region",
+        "PLANE": "Use the object's transformed plane half-space as the analytic region",
+    },
+    SourceShapeForceType: {
+        "OFF": "Apply no source-shape force inside the region",
+        "DIRECTIONAL": "Accelerate liquid along Force Direction inside the region",
+        "OMNIDIRECTIONAL": "Accelerate liquid radially from the region center in every direction",
+        "SPIN": "Rotate liquid around the Force Direction axis inside the region",
+        "RADIAL": "Accelerate liquid along the analytic shape's local radial direction",
+    },
+    SourceHeightBackMode: {
+        "INFINITE": "Extend the height region backward without a finite back surface",
+        "FLAT": "Close the height region with a flat back surface at Base Height",
+        "PROFILE": "Shape the back surface from the selected grayscale Height Profile",
+    },
+}
+
+
 def enum_items(enum_cls, descriptions=None):
-    """Build Blender EnumProperty items from an IntEnum class."""
-    descriptions = descriptions or {}
+    """Build Blender EnumProperty items with user-facing selection effects."""
+    merged_descriptions = dict(_ENUM_DESCRIPTIONS.get(enum_cls, {}))
+    if descriptions:
+        merged_descriptions.update(descriptions)
     items = []
     for member in enum_cls:
         label = member.name.replace("_", " ").title()
-        items.append((member.name, label, descriptions.get(member.name, label), member.value))
+        description = merged_descriptions.get(
+            member.name,
+            f"Select {label} for this setting",
+        )
+        items.append((member.name, label, description, member.value))
     return items

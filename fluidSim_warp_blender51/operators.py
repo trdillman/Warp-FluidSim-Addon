@@ -298,7 +298,9 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_idname = "fluidsim.step"
     bl_label = "Step Frame"
 
-    frames: IntProperty(name="Frames", default=1, min=1, max=250)
+    frames: IntProperty(
+        name="Frames", default=1, min=1, max=250,
+        description="Set how many simulation frames this action advances; higher values perform more solver work before returning")
 
     def execute(self, context):
         scene = context.scene
@@ -469,6 +471,7 @@ class FLUIDSIM_OT_tag_object(bpy.types.Operator):
             ("NONE", "Clear", "Remove the FluidSim role"),
         ],
         default="SOURCE",
+        description="Choose the FluidSim role assigned to every selected object; changing it changes whether the objects emit, collide, remove, force, source fields, or remain untagged",
     )
 
     @classmethod
@@ -639,7 +642,7 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     save_baseline: BoolProperty(
         name="Save As Baseline", default=False,
-        description="Store this run as the comparison baseline")
+        description="Enable to store this benchmark run as the comparison baseline; disable to compare without replacing the existing baseline")
 
     def execute(self, context):
         scene = context.scene
@@ -1023,7 +1026,9 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
     bl_idname = "fluidsim.snippet_save_preset"
     bl_label = "Save to Library"
 
-    preset_name: StringProperty(name="Name", default="")
+    preset_name: StringProperty(
+        name="Name", default="",
+        description="Set the name used for the saved snippet preset; changing it changes the library label and output filename")
 
     def invoke(self, context, event):
         pg = _active_snippet(context)
@@ -1156,7 +1161,9 @@ class FLUIDSIM_OT_snippet_edit_line(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     line_index: IntProperty(default=0, min=0)
-    line_text: StringProperty(name="Line", default="")
+    line_text: StringProperty(
+        name="Line", default="",
+        description="Edit the selected snippet source line; changing it replaces that line and triggers snippet validation")
 
     def invoke(self, context, event):
         pg = _active_snippet(context)
@@ -1187,7 +1194,9 @@ class FLUIDSIM_OT_snippet_line_add(bpy.types.Operator):
     bl_label = "Add Line"
     bl_options = {"REGISTER", "UNDO"}
 
-    line_text: StringProperty(name="Line", default="")
+    line_text: StringProperty(
+        name="Line", default="",
+        description="Set the source code appended as a new final line; changing it changes the code that is validated and compiled")
 
     def invoke(self, context, event):
         self.line_text = ""
@@ -1229,7 +1238,9 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_idname = "fluidsim.export_frame"
     bl_label = "Export Current Frame"
 
-    filepath: StringProperty(subtype="FILE_PATH", default="//fluidsim_frame")
+    filepath: StringProperty(
+        subtype="FILE_PATH", default="//fluidsim_frame",
+        description="Set the output path prefix for the current surface and particle export; changing it writes the exported frame to a different location")
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
