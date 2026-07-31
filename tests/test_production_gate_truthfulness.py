@@ -40,6 +40,14 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
         for _label, _command, _env, reject_output, expect_marker in calls
         if reject_output
     )
+    capacity_calls = [
+        (command, marker)
+        for label, command, _env, _reject_output, marker in calls
+        if label == "source capacity planner acceptance"
+    ]
+    assert len(capacity_calls) == 1
+    assert "tests/blender_capacity_planner_acceptance.py" in capacity_calls[0][0]
+    assert capacity_calls[0][1] == "CAPACITY-PLANNER-ACCEPTANCE-PASS"
 
 
 def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypatch, capsys):

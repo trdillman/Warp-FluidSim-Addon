@@ -21,7 +21,9 @@ from fluidSim_warp_blender51.sim.enums import (
     SourceShapeSourceMode,
     SourceShapeType,
 )
-from fluidSim_warp_blender51.sim.sourcing import SourcePipeline, SourceShapeDesc
+from fluidSim_warp_blender51.sim.sourcing import (
+    MeshSourceDesc, SourcePipeline, SourceShapeDesc,
+)
 from fluidSim_warp_blender51.sim.source_regions import (
     AnalyticRegionPlan, PayloadPlan, PointRegionPlan, SourceKey, SourcePlan,
 )
@@ -260,6 +262,27 @@ def test_height_fill_initial_fill_stops_injecting_mass_and_momentum():
     solver.release()
 
 
+def test_height_fill_over_capacity_does_not_stamp_or_consume_lifecycle():
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 4
+    solver = FluidSolver(settings)
+    solver.set_height_source(HeightSourceDesc(
+        enabled=True, base_height=0.4, back_mode=1,
+        emit_particles=True, emission_mode=SourceEmissionMode.INITIAL_FILL))
+    seed = solver.sourcing._emit_seed
+
+    _step(solver)
+
+    assert solver.particles.refresh_host_count() == 0
+    assert solver.sourcing.last_apply_result["admitted"] is False
+    assert solver.sourcing.last_apply_result["required"] > 4
+    assert "builtin:height" not in solver.sourcing._initial_fired
+    assert solver.sourcing._emit_seed == seed
+    solver.release()
+
+
 def test_height_fill_still_applies_alongside_compiled_plan_sources():
     """The domain Height Fill is not a scene object and compiles to no plan.
 
@@ -363,7 +386,128 @@ def test_capacity_gated_liquid_source_stays_armed():
     )
     solver.set_source_plans((direct, box))
     _step(solver)
+    assert solver.particles.refresh_host_count() == 0
+    assert str(direct.stable_id) not in solver.sourcing._initial_fired
     assert str(box.stable_id) not in solver.sourcing._initial_fired
+    assert solver.sourcing.last_apply_result["admitted"] is False
+    assert solver.sourcing.last_apply_result["required"] > 2
+    assert solver.sourcing.last_apply_result["available"] == 2
+    solver.release()
+
+
+def test_aggregate_direct_append_exact_fit_commits_every_source():
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 4
+    solver = FluidSolver(settings)
+    first = SourcePlan(
+        SourceKey("direct-a"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.array(((-0.2, 0.0, 0.7), (0.0, 0.0, 0.7)), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    second = SourcePlan(
+        SourceKey("direct-b"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(np.array(((0.1, 0.0, 0.7), (0.2, 0.0, 0.7)), np.float32)),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+    solver.set_source_plans((first, second))
+
+    _step(solver)
+
+    assert solver.particles.refresh_host_count() == 4
+    assert solver.sourcing.last_apply_result == {
+        "emitted": 4, "capacity_limited": False,
+        "required": 4, "available": 4, "admitted": True,
+    }
+    assert solver.sourcing._initial_fired == {"direct-a", "direct-b"}
+    solver.release()
+
+
+def test_legacy_initial_fill_over_capacity_is_zero_commit_and_retryable():
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 8
+    solver = FluidSolver(settings)
+    solver.set_sources([_box_source(
+        emission_mode=SourceEmissionMode.INITIAL_FILL,
+        source_id="legacy-overflow", emit_rate=6.0)])
+    seed = solver.sourcing._emit_seed
+
+    _step(solver)
+
+    report = solver.sourcing.last_apply_result
+    assert report["admitted"] is False
+    assert report["required"] > report["available"] == 8
+    assert solver.particles.refresh_host_count() == 0
+    assert "legacy-overflow" not in solver.sourcing._initial_fired
+    assert solver.sourcing._emit_seed == seed
+
+    # Retry the same stable lifecycle after an explicit smaller configuration.
+    solver.set_sources([SourceShapeDesc(
+        enabled=True, shape=SourceShapeShape.BOX,
+        stype=SourceShapeType.SOURCE,
+        mode=SourceShapeSourceMode.PARTICLES,
+        position=(0.05, 0.05, 0.75), half_extents=(0.04, 0.04, 0.04),
+        emit_rate=2.0, emission_mode=SourceEmissionMode.INITIAL_FILL,
+        source_id="legacy-overflow",
+    )])
+    _step(solver)
+    assert solver.sourcing.last_apply_result["admitted"] is True
+    assert solver.particles.refresh_host_count() == 2
+    assert "legacy-overflow" in solver.sourcing._initial_fired
+    solver.release()
+
+
+def test_legacy_mesh_over_capacity_is_rejected_before_commit():
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 1
+    device = settings.device
+    vertices = np.array(((-0.4, -0.4, 0.6), (0.4, -0.4, 0.6),
+                         (-0.4, 0.4, 0.6)), np.float32)
+    triangles = np.array(((0, 1, 2),), np.int32)
+    mesh = sourcing.wp.Mesh(
+        points=sourcing.wp.array(vertices, dtype=sourcing.wp.vec3, device=device),
+        indices=sourcing.wp.array(
+            triangles.reshape(-1), dtype=sourcing.wp.int32, device=device),
+        support_winding_number=True,
+    )
+    solver = FluidSolver(settings)
+    solver.set_sources([MeshSourceDesc(
+        mesh=mesh, vertices=vertices, triangles=triangles,
+        aabb_min=tuple(vertices.min(axis=0)),
+        aabb_max=tuple(vertices.max(axis=0)),
+        surface_thickness=0.15, emit_rate=2.0,
+        emission_mode=SourceEmissionMode.INITIAL_FILL,
+        source_id="mesh-overflow",
+    )])
+
+    _step(solver)
+
+    assert solver.particles.refresh_host_count() == 0
+    assert solver.sourcing.last_apply_result["admitted"] is False
+    assert solver.sourcing.last_apply_result["required"] > 1
+    assert "mesh-overflow" not in solver.sourcing._initial_fired
+    solver.release()
+
+
+def test_direct_inject_rejects_before_partial_append_when_auto_growth_is_disabled():
+    settings = _settings(max_substeps=1)
+    settings.max_particles = 2
+    settings.auto_grow_particles = False
+    solver = FluidSolver(settings)
+    points = np.array(((-0.2, 0.0, 0.7), (0.0, 0.0, 0.7),
+                       (0.2, 0.0, 0.7)), np.float32)
+
+    assert solver.inject_particles(points) == 0
+    assert solver.particles.refresh_host_count() == 0
+    result = solver.sourcing.last_apply_result
+    assert result["emitted"] == 0
+    assert result["capacity_limited"] is True
+    assert result["required"] == 3
+    assert result["available"] == 2
+    assert result["admitted"] is False
+    assert result["deferred"] is True
+    assert result["growth_status"] == "DISABLED"
     solver.release()
 
 

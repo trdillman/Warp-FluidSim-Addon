@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import bpy
 import numpy as np
+
+
+@dataclass(frozen=True)
+class PreparedParticleSeed:
+    """Owned host payload prepared without touching solver particle buffers."""
+
+    stable_id: str
+    positions: np.ndarray
+    velocity: tuple[float, float, float]
+    temperature: float
+    viscosity: float
+    density: float
+    life: float
+    use_lifespan: bool
+
+    def __post_init__(self):
+        positions = np.array(self.positions, dtype=np.float32, copy=True, order="C")
+        positions = positions.reshape((-1, 3))
+        positions.setflags(write=False)
+        object.__setattr__(self, "positions", positions)
 
 
 def tag_source(obj, shape="BOX", mode="PARTICLES"):
@@ -103,29 +125,113 @@ def object_points_world(obj, depsgraph=None):
     return np.zeros((0, 3), dtype=np.float32)
 
 
-def inject_object_particles(scene, obj, sess, velocity=(0.0, 0.0, 0.0)):
-    """Inject an object's points directly as liquid particles (one shot)."""
-    pts = object_points_world(obj)
-    if not len(pts):
-        return 0
+def prepare_object_particles(scene, obj, velocity=(0.0, 0.0, 0.0),
+                             depsgraph=None):
+    """Prepare one immutable direct-seed payload without solver mutation."""
+    points = object_points_world(obj, depsgraph)
+    if not len(points):
+        return None
     pg = obj.fluidsim
-    sess.solver.inject_particles(
-        pts,
-        velocity=tuple(velocity) if any(velocity) else tuple(pg.initial_velocity),
-        temperature=pg.temperature,
-        viscosity=pg.viscosity,
-        density=pg.density,
-        life=(pg.life_min + pg.life_max) * 0.5 if pg.use_lifespan else 0.0,
-        use_lifespan=pg.use_lifespan,
+    pointer = getattr(obj, "as_pointer", None)
+    identity = int(pointer()) if callable(pointer) else id(obj)
+    return PreparedParticleSeed(
+        stable_id=f"blender-seed:{identity}",
+        positions=points,
+        velocity=(tuple(velocity) if any(velocity)
+                  else tuple(float(value) for value in pg.initial_velocity)),
+        temperature=float(pg.temperature),
+        viscosity=float(pg.viscosity),
+        density=float(pg.density),
+        life=((float(pg.life_min) + float(pg.life_max)) * 0.5
+              if pg.use_lifespan else 0.0),
+        use_lifespan=bool(pg.use_lifespan),
     )
-    return len(pts)
+
+
+def prepare_auto_seeds(scene, depsgraph=None):
+    """Gather all enabled automatic seeds without touching a live solver."""
+    prepared = []
+    for obj in scene.objects:
+        pg = getattr(obj, "fluidsim", None)
+        if (pg is not None and pg.enabled
+                and getattr(pg, "auto_inject_seed", False)):
+            seed = prepare_object_particles(scene, obj, depsgraph=depsgraph)
+            if seed is not None:
+                prepared.append(seed)
+    return tuple(prepared)
+
+
+def commit_prepared_seeds(sess, prepared):
+    """Commit an already-admitted seed batch atomically with respect to capacity."""
+    prepared = tuple(prepared)
+    solver = sess.solver
+    particles = solver.particles
+    required = sum(len(seed.positions) for seed in prepared)
+    available = max(0, int(particles.capacity) - int(particles.host_count))
+    if required > available:
+        grow = getattr(solver, "ensure_particle_capacity", None)
+        if callable(grow):
+            growth = grow(int(particles.host_count) + required)
+        else:
+            from ..sim.particle_capacity import ParticleGrowthResult
+
+            current = int(particles.capacity)
+            growth = ParticleGrowthResult(
+                "DISABLED", current, current,
+                int(particles.host_count) + required, current,
+                reason="solver does not expose transactional particle growth")
+        particles = solver.particles
+        available = max(
+            0, int(particles.capacity) - int(particles.host_count))
+        if required > available:
+            policy = str(getattr(
+                getattr(solver, "settings", None),
+                "particle_growth_failure_policy", "DEFER",
+            )).upper()
+            solver.sourcing.last_apply_result = {
+                "admitted": False,
+                "required": required,
+                "available": available,
+                "emitted": 0,
+                "capacity_limited": True,
+                "deferred": True,
+                "pause_requested": policy == "PAUSE",
+                "growth_status": growth.status,
+                "growth_previous": growth.previous,
+                "growth_current": growth.current,
+                "growth_target": growth.target,
+                "growth_reason": growth.reason,
+            }
+            return 0
+    emitted = 0
+    for seed in prepared:
+        before = int(particles.host_count)
+        solver.inject_particles(
+            seed.positions,
+            velocity=seed.velocity,
+            temperature=seed.temperature,
+            viscosity=seed.viscosity,
+            density=seed.density,
+            life=seed.life,
+            use_lifespan=seed.use_lifespan,
+        )
+        # The public solver seam historically returns the final total, not the
+        # append delta. Count from authoritative host state so multiple seed
+        # objects cannot be double-counted.
+        emitted += int(particles.host_count) - before
+    if emitted != required:
+        raise RuntimeError(
+            "automatic seed transaction violated its admitted particle count "
+            f"(required {required}, emitted {emitted})")
+    return emitted
+
+
+def inject_object_particles(scene, obj, sess, velocity=(0.0, 0.0, 0.0)):
+    """Compatibility one-shot using the prepare/commit transaction seam."""
+    seed = prepare_object_particles(scene, obj, velocity)
+    return 0 if seed is None else commit_prepared_seeds(sess, (seed,))
 
 
 def inject_auto_seeds(scene, sess):
     """Restore enabled particle seeds after solver initialize/reset."""
-    total = 0
-    for obj in scene.objects:
-        pg = getattr(obj, "fluidsim", None)
-        if pg is not None and pg.enabled and pg.auto_inject_seed:
-            total += inject_object_particles(scene, obj, sess)
-    return total
+    return commit_prepared_seeds(sess, prepare_auto_seeds(scene))

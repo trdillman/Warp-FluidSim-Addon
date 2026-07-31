@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 
 import bpy
@@ -59,8 +60,20 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
                 ignore_memory_safeguard=self.ignore_memory_safeguard,
             )
         except Exception as exc:  # noqa: BLE001
-            self.report({"ERROR"}, f"Solver initialization failed: {exc}")
-            scene.fluidsim.status = f"Init failed: {exc}"
+            plan = getattr(_bridge().session(), "capacity_plan", None)
+            integrity_blocked = bool(plan and any(
+                getattr(blocker, "code", "") != "MEMORY_ESTIMATE"
+                for blocker in getattr(plan, "blockers", ())))
+            if integrity_blocked:
+                self.report(
+                    {"WARNING"},
+                    "Capacity adjustment required; review the FluidSim panel",
+                )
+                scene.fluidsim.status = (
+                    "Capacity warning — approve a safe option below to run")
+            else:
+                self.report({"ERROR"}, f"Solver initialization failed: {exc}")
+                scene.fluidsim.status = f"Init failed: {exc}"
             return {"CANCELLED"}
         dev = sess.solver.device
         cap = sess.solver.grid.capacity
@@ -94,6 +107,185 @@ class FLUIDSIM_OT_clear_error(bpy.types.Operator):
         bridge.clear_error(context.scene)
         fs = context.scene.fluidsim
         fs.status = "Solver ready" if bridge.session().active else "Solver not initialized"
+        return {"FINISHED"}
+
+
+def _capacity_suggestion(plan, key):
+    return next((item for item in getattr(plan, "suggestions", ())
+                 if getattr(item, "key", "") == key), None)
+
+
+def _format_capacity_value(value):
+    if isinstance(value, (tuple, list)):
+        return "(" + ", ".join(f"{float(item):.4g}" for item in value) + ")"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
+def _apply_domain_bounds(scene, minimum, maximum):
+    domain = getattr(scene.fluidsim, "domain_object", None)
+    if domain is None:
+        raise RuntimeError("The scene has no domain object to resize")
+    if getattr(domain, "parent", None) is not None:
+        raise RuntimeError(
+            "Automatic domain-bound adjustment requires an unparented domain")
+    rotations = tuple(float(value) for value in domain.rotation_euler)
+    delta_rotations = tuple(
+        float(value) for value in getattr(
+            domain, "delta_rotation_euler", (0.0, 0.0, 0.0)))
+    angle_distance = lambda value: abs((value + math.pi) % (2.0 * math.pi) - math.pi)
+    if any(angle_distance(value) > 1.0e-6
+           for value in rotations + delta_rotations):
+        raise RuntimeError(
+            "Automatic domain-bound adjustment requires an axis-aligned domain")
+    minimum = tuple(float(value) for value in minimum)
+    maximum = tuple(float(value) for value in maximum)
+    dimensions = tuple(maximum[i] - minimum[i] for i in range(3))
+    if any(value <= 0.0 for value in dimensions):
+        raise RuntimeError("Suggested domain bounds are not valid")
+    domain.location = tuple((minimum[i] + maximum[i]) * 0.5 for i in range(3))
+    domain.dimensions = dimensions
+    if getattr(bpy.context, "view_layer", None) is not None:
+        bpy.context.view_layer.update()
+
+
+class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
+    """Confirm, apply, and retry one planner-verified capacity option."""
+
+    bl_idname = "fluidsim.apply_capacity_suggestion"
+    bl_label = "Approve Capacity Changes & Run"
+    bl_options = {"REGISTER"}
+
+    suggestion_key: StringProperty(default="", options={"SKIP_SAVE"})
+    expected_scene_signature: StringProperty(default="", options={"SKIP_SAVE"})
+    changes_json: StringProperty(default="{}", options={"HIDDEN", "SKIP_SAVE"})
+    suggestion_label: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
+    estimated_bytes: StringProperty(default="0", options={"HIDDEN", "SKIP_SAVE"})
+    budget_bytes: StringProperty(default="0", options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, _context):
+        plan = getattr(_bridge().session(), "capacity_plan", None)
+        if not getattr(plan, "suggestions", ()):
+            cls.poll_message_set("Initialize first to calculate safe capacity options")
+            return False
+        return True
+
+    def invoke(self, context, _event):
+        plan = getattr(_bridge().session(), "capacity_plan", None)
+        suggestion = _capacity_suggestion(plan, self.suggestion_key)
+        if suggestion is None:
+            self.report({"WARNING"}, "Capacity option is stale; initialize again")
+            return {"CANCELLED"}
+        self.expected_scene_signature = str(plan.scene_signature)
+        self.changes_json = json.dumps(dict(suggestion.changes))
+        self.suggestion_label = str(suggestion.label)
+        self.estimated_bytes = str(int(suggestion.estimated_bytes))
+        self.budget_bytes = str(int(suggestion.budget_bytes))
+        return context.window_manager.invoke_props_dialog(self, width=560)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Approve these exact scene changes?", icon="QUESTION")
+        layout.label(text=self.suggestion_label)
+        changes = json.loads(self.changes_json or "{}")
+        settings = _bridge().build_settings(context.scene)
+        for name, value in changes.items():
+            old_value = getattr(settings, name, getattr(context.scene.fluidsim, name, None))
+            layout.label(text=(
+                f"{name}: {_format_capacity_value(old_value)} → "
+                f"{_format_capacity_value(value)}"))
+        layout.separator()
+        layout.label(text=(
+            f"Estimated peak {int(self.estimated_bytes) / 1024**3:.2f} GiB / "
+            f"safe live budget {int(self.budget_bytes) / 1024**3:.2f} GiB"))
+        layout.label(
+            text="Estimate only; approval cannot guarantee CUDA allocation.",
+            icon="INFO",
+        )
+        layout.label(text="Settings are unchanged until you confirm.")
+
+    def execute(self, context):
+        bridge = _bridge()
+        scene = context.scene
+        fs = scene.fluidsim
+        try:
+            fresh_plan = bridge.refresh_capacity_plan(scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Capacity recheck failed: {exc}")
+            return {"CANCELLED"}
+        if (self.expected_scene_signature
+                and fresh_plan.scene_signature != self.expected_scene_signature):
+            self.report(
+                {"WARNING"},
+                "Scene changed after the warning; initialize again for new options",
+            )
+            fs.status = "Capacity options changed — review the refreshed warning"
+            return {"CANCELLED"}
+        suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
+        if suggestion is None:
+            self.report(
+                {"WARNING"},
+                "This option is no longer inside the live safety budget",
+            )
+            fs.status = "Capacity option is no longer safe — review alternatives"
+            return {"CANCELLED"}
+
+        changes = dict(suggestion.changes)
+        domain_min = changes.pop("domain_min", None)
+        domain_max = changes.pop("domain_max", None)
+        old_values = {name: getattr(fs, name) for name in changes
+                      if hasattr(fs, name)}
+        domain = getattr(fs, "domain_object", None)
+        old_domain = None if domain is None else (
+            tuple(domain.location), tuple(domain.dimensions))
+        changed = []
+        try:
+            for name, value in changes.items():
+                if not hasattr(fs, name):
+                    raise RuntimeError(
+                        f"Capacity option cannot apply setting {name!r}")
+                rna = getattr(fs, "bl_rna", None)
+                properties = getattr(rna, "properties", {})
+                rna_property = properties.get(name)
+                if rna_property is not None and rna_property.type == "INT":
+                    value = int(value)
+                setattr(fs, name, value)
+                changed.append(name)
+            if domain_min is not None or domain_max is not None:
+                settings = bridge.build_settings(scene)
+                _apply_domain_bounds(
+                    scene,
+                    domain_min if domain_min is not None else settings.domain_min,
+                    domain_max if domain_max is not None else settings.domain_max,
+                )
+                changed.append("domain bounds")
+        except Exception as exc:  # noqa: BLE001
+            for name, value in old_values.items():
+                setattr(fs, name, value)
+            if domain is not None and old_domain is not None:
+                domain.location, domain.dimensions = old_domain
+            self.report({"ERROR"}, f"Capacity option was not applied: {exc}")
+            fs.status = f"Capacity option was not applied: {exc}"
+            return {"CANCELLED"}
+
+        bridge.clear_error(scene)
+        fs.status = "Approved capacity settings: " + ", ".join(changed)
+        try:
+            sess = bridge.initialize_session(scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Approved retry stopped safely: {exc}")
+            fs.status = f"Approved retry stopped safely: {exc}"
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"Solver ready with approved option: {suggestion.label}",
+        )
+        fs.status = (
+            f"Solver ready on {sess.solver.device}; approved {suggestion.label}")
         return {"FINISHED"}
 
 
@@ -1308,6 +1500,7 @@ CLASSES = (
     FLUIDSIM_OT_initialize,
     FLUIDSIM_OT_release,
     FLUIDSIM_OT_clear_error,
+    FLUIDSIM_OT_apply_capacity_suggestion,
     FLUIDSIM_OT_apply_safe_settings,
     FLUIDSIM_OT_reset,
     FLUIDSIM_OT_apply_pending_reinitialize,

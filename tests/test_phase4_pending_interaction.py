@@ -21,6 +21,16 @@ def _bridge(monkeypatch):
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+    preferences = types.ModuleType("fluidSim_warp_blender51.preferences")
+    preferences.bpy = bpy
+    preferences.configured_device = lambda: getattr(
+        getattr(
+            getattr(bpy.context, "preferences", None), "addons", {}
+        ).get("fluidSim_warp_blender51", SimpleNamespace(
+            preferences=SimpleNamespace(device="cuda:0"))).preferences,
+        "device", "cuda:0")
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.preferences", preferences)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
     return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
 
@@ -29,7 +39,9 @@ def _scene(*, voxel_size=0.1):
     fs = SimpleNamespace(
         live=True, cache_playback_enabled=False, status="",
         domain_object=None, voxel_size=voxel_size, leaf_capacity=64,
-        max_particles=1000, max_whitewater=200, profiling_enabled=False,
+        max_particles=1000, auto_grow_particles=True,
+        particle_growth_failure_policy="DEFER",
+        max_whitewater=200, profiling_enabled=False,
         profiling_sync=True, topology_expand=1, open_boundaries=False,
         domain_sdf_walls=True, spacetime_enabled=False,
         spacetime_reference_mass=0.0, spacetime_seed=1729,
@@ -47,6 +59,8 @@ def _activate(bridge, scene, *, frame=5):
         voxel_size=scene.fluidsim.voxel_size,
         leaf_capacity=scene.fluidsim.leaf_capacity,
         max_particles=scene.fluidsim.max_particles,
+        auto_grow_particles=scene.fluidsim.auto_grow_particles,
+        particle_growth_failure_policy=scene.fluidsim.particle_growth_failure_policy,
         max_whitewater=scene.fluidsim.max_whitewater,
         topology_expand=scene.fluidsim.topology_expand,
         open_boundaries=scene.fluidsim.open_boundaries,
@@ -66,6 +80,25 @@ def _activate(bridge, scene, *, frame=5):
     sess.last_frame = frame
     bridge._capture_applied_state(scene, sess)
     return sess, solver
+
+
+def test_particle_capacity_policy_updates_live_without_restarting_or_rewriting_runtime_capacity(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, solver = _activate(bridge, scene)
+    solver.particles = SimpleNamespace(capacity=4096)
+
+    scene.fluidsim.max_particles = 2048
+    scene.fluidsim.auto_grow_particles = False
+    scene.fluidsim.particle_growth_failure_policy = "PAUSE"
+    bridge.update_particle_capacity_policy(scene)
+
+    assert sess.solver is solver
+    assert solver.particles.capacity == 4096
+    assert solver.settings.max_particles == 1000
+    assert solver.settings.auto_grow_particles is False
+    assert solver.settings.particle_growth_failure_policy == "PAUSE"
+    assert bridge.pending_presentation(scene)["action"] == "NONE"
 
 
 def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
@@ -164,11 +197,11 @@ def test_scripted_signature_change_is_detected_without_rna_callback(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=3)
 
-    scene.fluidsim.max_particles = 2500
+    scene.fluidsim.voxel_size = 0.025
     bridge._refresh_pending_state(scene, sess)
 
     assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
-    assert "Reinitialize: max_particles" in bridge.pending_presentation(scene)["reasons"]
+    assert "Reinitialize: voxel_size" in bridge.pending_presentation(scene)["reasons"]
 
 
 def test_revert_pending_values_restores_applied_snapshot(monkeypatch):
@@ -287,7 +320,7 @@ def test_direct_step_refreshes_immediate_scripted_edit_without_depsgraph(monkeyp
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=3)
-    scene.fluidsim.max_particles = 2500
+    scene.fluidsim.voxel_size = 0.025
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: "stepped")
 
     assert bridge.step_frame(scene, sess, write_cache=False) == "stepped"
@@ -298,7 +331,7 @@ def test_scripted_edit_handler_refreshes_cached_pending_presentation(monkeypatch
     bridge = _bridge(monkeypatch)
     scene = _scene()
     _activate(bridge, scene, frame=3)
-    scene.fluidsim.max_particles = 2500
+    scene.fluidsim.voxel_size = 0.025
 
     bridge._on_interaction_state_update(scene, object())
 

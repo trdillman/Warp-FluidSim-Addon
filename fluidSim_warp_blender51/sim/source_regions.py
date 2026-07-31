@@ -18,6 +18,7 @@ import numpy as np
 import warp as wp
 
 from . import constants as C
+from .capacity_planner import DemandQuality
 from .enums import (
     BlendMode,
     SourceEvaluationCadence,
@@ -464,6 +465,54 @@ class CompiledSource:
     region: CompiledRegion
 
 
+@dataclass(frozen=True)
+class CompiledSourceFootprint:
+    """Host-only capacity facts produced by the accepted source rasterizer."""
+
+    stable_id: str
+    particle_demand: Optional[int]
+    particle_quality: DemandQuality
+    leaf_coords: tuple[tuple[int, int, int], ...]
+    staging_bytes: int
+    reason: str = ""
+
+
+def _compiled_footprint(source: CompiledSource) -> CompiledSourceFootprint:
+    plan, region = source.plan, source.region
+    errors = tuple(item for item in region.diagnostics
+                   if item.severity == "ERROR")
+    coords = tuple(tuple(int(axis) for axis in coord)
+                   for coord in region.leaf_coords)
+    if errors:
+        return CompiledSourceFootprint(
+            str(plan.stable_id), None, DemandQuality.UNKNOWN, coords,
+            region.device_bytes, "; ".join(item.message for item in errors),
+        )
+    if plan.operation != SourceOperation.LIQUID:
+        return CompiledSourceFootprint(
+            str(plan.stable_id), 0, DemandQuality.EXACT, coords,
+            region.device_bytes,
+        )
+    if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
+        if region.points is None:
+            return CompiledSourceFootprint(
+                str(plan.stable_id), None, DemandQuality.UNKNOWN, coords,
+                region.device_bytes, "direct point payload is unavailable",
+            )
+        return CompiledSourceFootprint(
+            str(plan.stable_id), len(region.points.positions),
+            DemandQuality.EXACT, coords, region.device_bytes,
+        )
+    target = max(1, min(64, int(round(
+        float(plan.payload.target_particles_per_voxel)))))
+    demand = int(np.ceil(
+        np.asarray(region.coverage, np.float64) * target).sum(dtype=np.int64))
+    return CompiledSourceFootprint(
+        str(plan.stable_id), demand, DemandQuality.UPPER_BOUND, coords,
+        region.device_bytes,
+    )
+
+
 @dataclass
 class CompiledSourceBatch:
     context_key: tuple
@@ -471,6 +520,10 @@ class CompiledSourceBatch:
     required_leaf_coords: np.ndarray
     diagnostics: tuple[SourceDiagnostic, ...]
     device_bytes: int
+
+    @property
+    def footprints(self) -> tuple[CompiledSourceFootprint, ...]:
+        return tuple(_compiled_footprint(source) for source in self.sources)
 
     def release(self):
         for source in self.sources:
@@ -517,7 +570,8 @@ class SourceCompiler:
             _array_digest(getattr(region, "positions", None)),
             _array_digest(getattr(region, "profile", None)),
             repr((context.origin, context.voxel_size, context.domain_min,
-                  context.domain_max, context.session_generation)),
+                  context.domain_max, context.session_generation,
+                  context.device, context.upload)),
         ]
         if plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME:
             parts.append(repr((context.frame, context.substep)))

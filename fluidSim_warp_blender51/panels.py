@@ -21,30 +21,49 @@ class FluidSimPanel:
     bl_category = "FluidSim"
 
 
-def _draw_pending_banner(layout, scene):
-    """Draw cached pending state only; never inspect geometry or mutate RNA."""
+def _pending_reason_label(scene, reason):
+    """Translate cached internal setting names into user-facing RNA labels."""
+    prefix, separator, field_name = str(reason).partition(":")
+    if not separator:
+        return str(reason)
+    field_name = field_name.strip()
+    rna = getattr(scene.fluidsim, "bl_rna", None)
+    properties = getattr(rna, "properties", {})
+    prop = properties.get(field_name)
+    label = prop.name if prop is not None else field_name.replace("_", " ").title()
+    return f"{label} will apply after restart"
+
+
+def _draw_pending_banner(layout, scene, *, show_actions=False):
+    """Draw one neutral pending summary; never inspect geometry or mutate RNA."""
     from .blender.scene_bridge import pending_presentation
 
     pending = pending_presentation(scene)
     if pending["action"] == "NONE":
         return
     box = layout.box()
-    box.alert = True
-    label = ("Reinitialize Required" if pending["action"] == "REINIT_PENDING"
-             else "Restart Required")
-    box.label(text=f"{label} ({pending['count']})", icon="ERROR")
+    box.label(
+        text=f"{pending['count']} change(s) staged for restart",
+        icon="INFO",
+    )
     for reason in pending["reasons"][:3]:
-        box.label(text=reason)
+        box.label(text=_pending_reason_label(scene, reason))
     if pending["count"] > 3:
         box.label(text=f"+ {pending['count'] - 3} more")
     if pending["blocked_reason"]:
-        box.label(text=pending["blocked_reason"][:120], icon="CANCEL")
-    row = box.row(align=True)
-    if pending["action"] == "REINIT_PENDING":
-        row.operator("fluidsim.apply_pending_reinitialize", text="Apply", icon="FILE_REFRESH")
-    else:
-        row.operator("fluidsim.apply_pending_reset", text="Reset", icon="FILE_REFRESH")
-    row.operator("fluidsim.revert_pending", text="Revert", icon="LOOP_BACK")
+        box.label(text=pending["blocked_reason"][:120], icon="INFO")
+    if show_actions:
+        row = box.row(align=True)
+        if pending["action"] == "REINIT_PENDING":
+            row.operator(
+                "fluidsim.apply_pending_reinitialize",
+                text="Restart Now", icon="FILE_REFRESH")
+        else:
+            row.operator(
+                "fluidsim.apply_pending_reset",
+                text="Reset Now", icon="FILE_REFRESH")
+        row.operator(
+            "fluidsim.revert_pending", text="Discard Changes", icon="LOOP_BACK")
 
 
 def _draw_interaction_tier(layout, text, icon="INFO"):
@@ -60,7 +79,7 @@ def _draw_header_interaction(self, context):
     from .blender.scene_bridge import pending_presentation
 
     pending = pending_presentation(scene)
-    icon = "ERROR" if pending["action"] != "NONE" else "MOD_FLUIDSIM"
+    icon = "INFO" if pending["action"] != "NONE" else "MOD_FLUIDSIM"
     text = str(pending["count"]) if pending["count"] else ""
     self.layout.popover(panel="FLUIDSIM_PT_interaction_popover", text=text, icon=icon)
 
@@ -86,10 +105,80 @@ class FLUIDSIM_PT_interaction_popover(bpy.types.Panel):
         if pending["action"] == "NONE":
             layout.label(text="No pending settings", icon="CHECKMARK")
         else:
-            _draw_pending_banner(layout, scene)
+            _draw_pending_banner(layout, scene, show_actions=True)
         row = layout.row(align=True)
         row.operator("fluidsim.reset", text="Reset", icon="FILE_REFRESH")
         row.operator("fluidsim.release", text="Release", icon="X")
+
+
+def _draw_capacity_plan(layout, plan, fs=None):
+    if plan is None:
+        return
+    box = layout.box()
+    if getattr(plan, "blockers", ()):
+        box.label(text="Capacity adjustment recommended", icon="INFO")
+        box.label(text="Nothing has been changed or partially emitted.")
+    else:
+        box.label(text="Source Capacity Planner", icon="MEMORY")
+    particles = getattr(plan, "particle_demand", None)
+    leaves = getattr(plan, "leaf_demand", None)
+    if particles is not None:
+        quality = getattr(getattr(particles, "quality", None), "value", "unknown")
+        value = "unknown" if particles.value is None else f"{particles.value:,}"
+        box.label(text=f"Initial particles: {value} ({quality.replace('_', ' ')})")
+    if leaves is not None:
+        quality = getattr(getattr(leaves, "quality", None), "value", "unknown")
+        value = "unknown" if leaves.value is None else f"{leaves.value:,}"
+        box.label(text=f"Initial sparse leaves: {value} ({quality.replace('_', ' ')})")
+    estimated = int(getattr(plan, "estimated_bytes", 0) or 0)
+    budget = int(getattr(plan, "budget_bytes", 0) or 0)
+    box.label(text=(
+        f"Estimated peak: {estimated / 1024**3:.2f} GiB / "
+        f"live budget {budget / 1024**3:.2f} GiB"))
+    box.label(text="Estimate only - not an OOM guarantee", icon="INFO")
+    for blocker in getattr(plan, "blockers", ()):
+        row = box.row()
+        required = getattr(blocker, "required", None)
+        available = getattr(blocker, "available", None)
+        if required is None:
+            text = getattr(blocker, "message", "Capacity demand is unknown")
+        else:
+            text = f"{blocker.code}: required {required:,}, available {available:,}"
+        row.label(text=text[:120], icon="INFO")
+    suggestions = tuple(getattr(plan, "suggestions", ()))
+    if suggestions:
+        column = box.column(align=True)
+        column.label(text="Recommended change (review before applying):")
+        show_alternatives = bool(
+            fs is not None and getattr(fs, "capacity_show_alternatives", False))
+        visible = suggestions if show_alternatives else suggestions[:1]
+        for index, suggestion in enumerate(visible):
+            option = column.box()
+            prefix = "Recommended — " if index == 0 else "Alternative — "
+            option.label(text=(prefix + suggestion.label)[:120])
+            changes = ", ".join(
+                f"{name.replace('_', ' ').title()}: "
+                f"{value:,}" if isinstance(value, int)
+                else f"{name.replace('_', ' ').title()}: {value}"
+                for name, value in suggestion.changes.items())
+            option.label(text=changes[:120])
+            for tradeoff in suggestion.tradeoffs:
+                option.label(text=f"{tradeoff}"[:120], icon="DOT")
+            text = ("Review Recommended Changes & Run" if index == 0
+                    else "Review This Option & Run")
+            operator = option.operator(
+                "fluidsim.apply_capacity_suggestion", text=text,
+                icon="CHECKMARK" if index == 0 else "MODIFIER")
+            operator.suggestion_key = getattr(suggestion, "key", "")
+        if len(suggestions) > 1 and fs is not None:
+            column.prop(
+                fs, "capacity_show_alternatives",
+                text="Show lower-priority alternatives")
+    elif getattr(plan, "blockers", ()):
+        box.label(
+            text="No conservative adjustment fits the live safety budget.",
+            icon="CANCEL",
+        )
 
 
 class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
@@ -102,7 +191,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         from .blender.scene_bridge import current_error, session
 
         sess = session()
-        _draw_pending_banner(layout, context.scene)
+        _draw_pending_banner(layout, context.scene, show_actions=True)
 
         col = layout.column(align=True)
         col.operator("fluidsim.setup_scene", icon="MOD_FLUIDSIM")
@@ -135,18 +224,33 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         if error:
             box.label(text=error[:120], icon="ERROR")
             from .sim.memory_safety import is_memory_capacity_error
+            plan = getattr(sess, "capacity_plan", None)
+            integrity_blocked = bool(plan and any(
+                getattr(blocker, "code", "") != "MEMORY_ESTIMATE"
+                for blocker in getattr(plan, "blockers", ())))
             if is_memory_capacity_error(error):
                 recovery = box.column(align=True)
-                recovery.alert = True
-                recovery.label(text="GPU capacity risk detected")
-                recovery.operator("fluidsim.apply_safe_settings", icon="MODIFIER")
-                run_anyway = recovery.operator(
-                    "fluidsim.initialize", text="Run Anyway", icon="ERROR")
-                run_anyway.ignore_memory_safeguard = True
+                if integrity_blocked:
+                    recovery.label(
+                        text="Review and approve a capacity option below",
+                        icon="INFO",
+                    )
+                else:
+                    recovery.label(text="GPU capacity risk detected", icon="INFO")
+                    recovery.operator("fluidsim.apply_safe_settings", icon="MODIFIER")
+                    run_anyway = recovery.operator(
+                        "fluidsim.initialize", text="Ignore Estimate & Initialize",
+                        icon="INFO")
+                    run_anyway.ignore_memory_safeguard = True
             box.operator("fluidsim.clear_error", icon="X")
+        _draw_capacity_plan(
+            layout, getattr(sess, "capacity_plan", None), fs)
         if sess.active:
             col = box.column(align=True)
             col.label(text=f"Particles: {fs.stat_particles:,}")
+            col.label(text=(
+                f"GPU capacity: {sess.solver.particles.capacity:,} "
+                f"(initial reserve {fs.max_particles:,})"))
             col.label(text=f"Active voxels: {fs.stat_voxels:,}")
             col.label(text=f"Step: {fs.stat_step_ms:.1f} ms "
                            f"({fs.stat_substeps} substeps)")
@@ -176,13 +280,10 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_pending_banner(layout, context.scene)
-        _draw_interaction_tier(layout, "Reinitialize Required", "ERROR")
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "voxel_size")
         col.prop(fs, "leaf_capacity")
-        _draw_interaction_tier(col, "Restart Required", "FILE_REFRESH")
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
@@ -212,10 +313,18 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_pending_banner(layout, context.scene)
+        from .blender.scene_bridge import session
+
         col = layout.column(align=True)
-        _draw_interaction_tier(col, "Reinitialize Required", "ERROR")
         col.prop(fs, "max_particles")
+        col.prop(fs, "auto_grow_particles")
+        growth = col.column(align=True)
+        growth.enabled = fs.auto_grow_particles
+        growth.prop(fs, "particle_growth_failure_policy")
+        sess = session()
+        if sess.active:
+            growth.label(text=(
+                f"Current GPU capacity: {sess.solver.particles.capacity:,}"))
         _draw_interaction_tier(col, "Live / Targeted Refresh")
         col.prop(fs, "particles_per_voxel")
         col.prop(fs, "sample_type")
@@ -663,10 +772,8 @@ class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_pending_banner(layout, context.scene)
         sub = layout.column(align=True)
         sub.enabled = fs.whitewater_enabled
-        _draw_interaction_tier(sub, "Reinitialize Required", "ERROR")
         sub.prop(fs, "max_whitewater")
         _draw_interaction_tier(sub, "Live")
         sub.prop(fs, "ww_churn_gain")

@@ -65,7 +65,8 @@ Domain object picker, **Voxel Size**, **Leaf Capacity** (max 8³ leaves),
 resolution and active/total leaves.
 
 ### Particles
-**Max Particles**, **Particles / Voxel**, **Transfer** (PIC / FLIP) with
+**Initial Particle Reserve**, **Auto Grow Particle Pool**, the guarded-growth
+failure policy, **Particles / Voxel**, and **Transfer** (PIC / FLIP) with
 **FLIP Ratio**, **Trace** (Euler / single-sample / midpoint / modified-midpoint
 / **RK3**), relaxation (enable / strength / mode), speed limit
 (**Max Speed** + Limit Behavior + Percent), and **Count Stiffness**
@@ -422,17 +423,28 @@ FluidSim classifies every exposed simulation setting into one interaction tier:
 | **Reinitialize Required** | Allocation, device, or domain construction change | Remains pending until rewind, explicit Reinitialize, or Revert. |
 | **Blocked** | Unsafe in the current context | Remains pending with an actionable reason; the active run is preserved. |
 
-Pending state belongs to each scene. Editing voxel size, capacity, domain, or a
-restart-only lifecycle value in the middle of a run does **not** silently erase
-that run. Rewind to the timeline start to apply it automatically, or use
-**Apply Pending & Reinitialize**, **Apply Pending & Reset**, or **Revert Pending
-Values**. A failed apply keeps the reasons pending and stops playback rather
-than advancing stale state from the rewound frame. Revert never changes or
-saves Blender add-on preferences; device changes must be selected explicitly.
+Pending state belongs to each scene. Editing voxel size, leaf/whitewater
+capacity, domain, or a restart-only lifecycle value in the middle of a run does
+**not** silently erase that run. One neutral summary appears in Simulation and
+the fixed header popover instead of injecting red action rows into individual
+panels. Rewind to the timeline start to apply staged changes automatically, or
+use **Restart Now**, **Reset Now**, or **Discard Changes** from that fixed
+summary. A failed explicit restart retains its pending reasons. Discard never
+changes or saves Blender add-on preferences; device changes must be selected
+explicitly.
+
+Particle capacity is different: **Initial Particle Reserve** is a starting GPU
+allocation, not a hard runtime ceiling. With **Auto Grow Particle Pool** enabled,
+FluidSim allocates a larger particle/binner pool, copies the live prefix, and
+swaps only after successful CUDA allocation and synchronization. The authored
+reserve is not rewritten and an active pool is never shrunk automatically. If
+the live VRAM guard or allocation refuses growth, the selected advanced policy
+either continues while deferring the whole source batch, or pauses Live while
+preserving the initialized solver. No partial source batch is committed.
 
 The FluidSim control in the fixed 3D Viewport header remains reachable while
 the sidebar is scrolled. Its popover shows solver state, pending reasons, Live,
-Apply/Reset/Revert, and Release controls. The viewport overlay is informational
+Restart/Reset/Discard and Release controls. The viewport overlay is informational
 only. Blender does not support CSS-style sticky content inside a scrolling
 sidebar, so FluidSim does not claim that behavior.
 
@@ -479,10 +491,14 @@ that assumption.
 ## Safe Settings recovery
 
 Before allocating solver arrays, FluidSim estimates peak VRAM against the
-GPU's current free memory and reserved safety margin. If the configuration is
-too large, initialization stops without creating the solver and the Simulation
-panel shows **Apply Safe Settings & Retry**. The same button appears after leaf
-overflow or recognized CUDA out-of-memory errors.
+GPU's current free memory and reserved safety margin. Particle-only shortfalls
+auto-grow to a chunked geometric target when that complete solver allocation
+fits the conservative budget. Other unsafe initial allocations remain blocked
+before replacing an existing solver, and the Simulation panel shows a neutral
+safe-settings recovery action. Runtime particle growth separately guards the
+peak where old and replacement pools coexist; a failed grow-copy never swaps or
+uninitializes the existing solver. These estimates reduce allocation risk but
+do not guarantee immunity from arbitrary CUDA failures.
 
 The recommendation samples current VRAM and GPU utilization through Warp and
 the NVIDIA driver, plus Windows CPU and RAM pressure. It stays as close as
