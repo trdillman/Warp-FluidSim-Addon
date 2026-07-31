@@ -184,7 +184,7 @@ def test_reset_autogrow_off_lowered_reserve_uses_grown_runtime_without_shrink(
 
     sess.reset(scene)
 
-    assert planned == [12]
+    assert planned == [12, 12]  # initial admission + pre-allocation VRAM recheck
     assert prepared and sess.solver is prepared[0]
     assert sess.solver.particles.capacity == 12
     assert scene.fluidsim.max_particles == 4
@@ -267,7 +267,7 @@ def test_failed_empty_reset_replacement_preserves_authoritative_session(
     with pytest.raises(RuntimeError, match="candidate allocation failed"):
         sess.reset(scene)
 
-    assert planned == [8]
+    assert planned == [8, 8]  # initial admission + pre-allocation VRAM recheck
     assert sess.solver is old
     assert sess.last_frame == 23
     assert sess.frame_stats is frame_stats
@@ -398,7 +398,8 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
     with pytest.raises(RuntimeError, match="replacement allocation failed"):
         sess.initialize(scene, ignore_memory_safeguard=True)
 
-    assert planned_residencies == [expected_live_solver_bytes]
+    assert planned_residencies == [
+        expected_live_solver_bytes, expected_live_solver_bytes]
     assert sess.solver is old
     assert old.frame == 23
     assert old.particles.host_count == 7
@@ -652,9 +653,9 @@ def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypat
     with pytest.raises(RuntimeError, match="candidate allocation attempted"):
         sess.initialize(scene, ignore_memory_safeguard=True)
 
-    assert len(planned) == 2
+    assert len(planned) == 3
     assert planned[0] == 8
-    assert planned[1] > planned[0]
+    assert planned[1] == planned[2] > planned[0]
     assert prepared == []
     assert released == []
     assert sess.solver is old

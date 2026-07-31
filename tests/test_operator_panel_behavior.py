@@ -875,7 +875,7 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
 
     sess.reset(scene)
 
-    assert planned_capacities == [4096]
+    assert planned_capacities == [4096, 4096]
     assert reset_snapshots == []
     assert released == ["old"]
     assert sess.solver is prepared[0]

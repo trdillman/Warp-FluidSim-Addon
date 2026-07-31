@@ -92,6 +92,8 @@ class ScenePlanningSnapshot:
     height_source: object
     seeds: tuple
     capacity_plan: object
+    source_footprints: tuple = ()
+    collider_footprints: tuple = ()
 
 
 class Session:
@@ -265,9 +267,9 @@ class Session:
         """Gather one immutable-enough scene snapshot and capacity report."""
         from . import sources
         from ..sim.capacity_planner import (
-            DemandQuality, leaf_coords_for_world_bounds, plan_initialization,
-            suggest_configurations,
+            DemandQuality, leaf_coords_for_world_bounds,
         )
+        from ..sim.capacity_service import PreparedCapacityInput, assess
         from ..sim.enums import SourceOperation
         from ..sim.source_compat import (
             descriptors_to_plans, height_descriptor_to_plan,
@@ -370,18 +372,45 @@ class Session:
             leaf_coords=leaf_coords_for_world_bounds(
                 settings, collider.aabb_min, collider.aabb_max))
             for collider in colliders)
-        capacity_plan = plan_initialization(
-            settings, tuple(footprints), seeds, collider_footprints, resources,
-            additional_transaction_bytes=additional_transaction_bytes)
-        capacity_plan = replace(
-            capacity_plan,
-            suggestions=suggest_configurations(capacity_plan, settings),
-        )
-        compiler.release()
+        prepared = PreparedCapacityInput(
+            tuple(footprints), tuple(seeds), collider_footprints)
+        try:
+            capacity_plan = assess(
+                settings, prepared, resources,
+                additional_transaction_bytes=additional_transaction_bytes,
+            ).plan
+        finally:
+            compiler.release()
         return ScenePlanningSnapshot(
             inputs, descriptors, extra_plans, colliders, force_fields,
             height_source, seeds, capacity_plan,
+            prepared.source_footprints, prepared.collider_footprints,
         )
+
+    def _replan_snapshot(
+            self, snapshot, settings, resources, *, scene=None,
+            additional_transaction_bytes=0):
+        """Reassess one host-prepared scene without gathering/compiling again."""
+        from ..sim.capacity_service import PreparedCapacityInput, assess
+
+        if (not hasattr(snapshot, "source_footprints")
+                or not hasattr(snapshot, "collider_footprints")):
+            # Compatibility for external/test planning adapters that return the
+            # historical minimal snapshot. Production snapshots always take
+            # the prepared-data path above and never repeat geometry work.
+            if scene is None:
+                return snapshot
+            return self._plan_scene(
+                scene, settings, resources,
+                additional_transaction_bytes=additional_transaction_bytes)
+        prepared = PreparedCapacityInput(
+            tuple(snapshot.source_footprints), tuple(snapshot.seeds),
+            tuple(snapshot.collider_footprints))
+        capacity_plan = assess(
+            settings, prepared, resources,
+            additional_transaction_bytes=additional_transaction_bytes,
+        ).plan
+        return replace(snapshot, capacity_plan=capacity_plan)
 
     def refresh_capacity_plan(self, scene, *, operation=None):
         """Recompute the originating operation's warning/options model."""
@@ -503,16 +532,13 @@ class Session:
         try:
             fs = scene.fluidsim
             settings = build_settings(scene)
-            from ..sim.memory_safety import (
-                assess_configuration, estimate_solver_bytes, vram_snapshot,
-            )
+            from ..sim.memory_safety import estimate_solver_bytes, vram_snapshot
 
             # One non-blocking live VRAM sample feeds both the legacy memory
             # assessment and the source-capacity planner. Reinitialization is
             # transactional, so any existing solver remains resident until the
             # fully prepared candidate commits; first initialization adds zero.
             resources = vram_snapshot(settings.device)
-            memory_assessment = assess_configuration(settings, resources)
             owns_scene = self.owns_scene(scene)
             plan_operation = "REINITIALIZE" if owns_scene else "INITIALIZE"
             live_solver_bytes = (
@@ -534,8 +560,8 @@ class Session:
                 target = growth_target(
                     int(settings.max_particles), int(particle_blocker.required))
                 candidate_settings = replace(settings, max_particles=target)
-                candidate_snapshot = self._plan_scene(
-                    scene, candidate_settings, resources,
+                candidate_snapshot = self._replan_snapshot(
+                    snapshot, candidate_settings, resources, scene=scene,
                     additional_transaction_bytes=live_solver_bytes)
                 candidate_integrity = self._integrity_blockers(
                     candidate_snapshot.capacity_plan)
@@ -550,7 +576,6 @@ class Session:
                     initial_growth = (int(settings.max_particles), int(target))
                     settings = candidate_settings
                     snapshot = candidate_snapshot
-                    memory_assessment = assess_configuration(settings, resources)
             self._set_capacity_plan(
                 scene, snapshot.capacity_plan,
                 operation=plan_operation,
@@ -561,20 +586,47 @@ class Session:
             memory_blockers = tuple(
                 blocker for blocker in snapshot.capacity_plan.blockers
                 if blocker.code == "MEMORY_ESTIMATE")
-            if ((not memory_assessment["safe"] or memory_blockers)
-                    and not ignore_memory_safeguard):
-                estimate = max(
-                    int(memory_assessment["estimated_bytes"]),
-                    int(snapshot.capacity_plan.estimated_bytes))
+            if memory_blockers and not ignore_memory_safeguard:
+                estimate = int(snapshot.capacity_plan.estimated_bytes)
                 budget = int(snapshot.capacity_plan.budget_bytes)
                 estimate_gib = estimate / 1024**3
                 budget_gib = budget / 1024**3
                 raise RuntimeError(
                     "FluidSim memory safeguard stopped initialization before CUDA "
                     f"allocation (estimated {estimate_gib:.1f} GiB, safe live budget "
-                    f"{budget_gib:.1f} GiB). Apply Safe Settings & Retry. "
+                    f"{budget_gib:.1f} GiB). Review Capacity Options, then retry. "
                     "This estimate is not an OOM guarantee."
                 )
+
+            # Planning may take long enough for another process to consume VRAM.
+            # Re-sample immediately before allocation and reassess the same host
+            # snapshot; never gather meshes or compile sources a second time.
+            resources = vram_snapshot(settings.device)
+            snapshot = self._replan_snapshot(
+                snapshot, settings, resources, scene=scene,
+                additional_transaction_bytes=live_solver_bytes)
+            self._set_capacity_plan(
+                scene, snapshot.capacity_plan,
+                operation=plan_operation,
+                memory_bypassed=ignore_memory_safeguard)
+            late_integrity = self._integrity_blockers(snapshot.capacity_plan)
+            late_memory = tuple(
+                blocker for blocker in snapshot.capacity_plan.blockers
+                if blocker.code == "MEMORY_ESTIMATE")
+            if late_integrity:
+                raise RuntimeError(capacity_blocking_message(late_integrity))
+            if late_memory and not ignore_memory_safeguard:
+                raise RuntimeError(capacity_blocking_message(late_memory))
+            memory_assessment = {
+                "safe": not bool(late_memory),
+                "estimated_bytes": int(getattr(
+                    snapshot.capacity_plan, "estimated_bytes", 0)),
+                "budget_bytes": int(getattr(
+                    snapshot.capacity_plan, "budget_bytes", 0)),
+                "recommended": tuple(getattr(
+                    snapshot.capacity_plan, "suggestions", ())),
+                "resources": dict(resources),
+            }
 
             profiler = None
             if fs.profiling_enabled:
@@ -876,8 +928,8 @@ class Session:
             target = growth_target(
                 runtime_capacity, int(particle_blocker.required))
             candidate_settings = replace(settings, max_particles=target)
-            candidate_snapshot = self._plan_scene(
-                scene, candidate_settings, resources,
+            candidate_snapshot = self._replan_snapshot(
+                snapshot, candidate_settings, resources, scene=scene,
                 additional_transaction_bytes=live_solver_bytes)
             candidate_integrity = self._integrity_blockers(
                 candidate_snapshot.capacity_plan)
@@ -900,6 +952,30 @@ class Session:
             if integrity_blockers:
                 messages.append(capacity_blocking_message(integrity_blockers))
             if memory_blockers:
+                messages.append(reset_memory_blocking_message(
+                    snapshot.capacity_plan))
+            message = " ".join(messages)
+            self.set_error(scene, message)
+            scene.fluidsim.status = "Reset blocked — live solver preserved"
+            raise RuntimeError(message)
+
+        # Re-sample immediately before candidate allocation and reassess the
+        # already-prepared host snapshot without recompiling source geometry.
+        resources = vram_snapshot(settings.device)
+        snapshot = self._replan_snapshot(
+            snapshot, settings, resources, scene=scene,
+            additional_transaction_bytes=live_solver_bytes)
+        self._set_capacity_plan(
+            scene, snapshot.capacity_plan, operation="RESET")
+        late_integrity = self._integrity_blockers(snapshot.capacity_plan)
+        late_memory = tuple(
+            blocker for blocker in snapshot.capacity_plan.blockers
+            if blocker.code == "MEMORY_ESTIMATE")
+        if late_integrity or late_memory:
+            messages = []
+            if late_integrity:
+                messages.append(capacity_blocking_message(late_integrity))
+            if late_memory:
                 messages.append(reset_memory_blocking_message(
                     snapshot.capacity_plan))
             message = " ".join(messages)
