@@ -7,6 +7,7 @@ stored as compressed .npz files.
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 import hashlib
 import json
@@ -121,6 +122,8 @@ def _jsonable_setting(value):
         return {"__fluidsim_nonfinite_float__": label}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if is_dataclass(value):
+        return _jsonable_setting(asdict(value))
     name = getattr(value, "name", None)
     if isinstance(name, str):
         return name

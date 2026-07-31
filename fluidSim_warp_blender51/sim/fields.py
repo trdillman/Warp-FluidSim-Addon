@@ -25,6 +25,7 @@ from .constants import (
     LEAF_VOLUME,
     VOXEL_COLLISION,
 )
+from .quality_contract import AuthoredQualitySettings, resolve_quality
 
 # ---------------------------------------------------------------------------
 # Warp address helpers (shared by every kernel module)
@@ -428,16 +429,16 @@ class SparseGrid:
 
     def __init__(self, origin, size, voxel_size, leaf_capacity, device):
         self.device = device
-        self.voxel_size = float(voxel_size)
-        # pad voxel dims to leaf multiples
-        nx = max(LEAF_DIM, int(np.ceil(size[0] / voxel_size)))
-        ny = max(LEAF_DIM, int(np.ceil(size[1] / voxel_size)))
-        nz = max(LEAF_DIM, int(np.ceil(size[2] / voxel_size)))
-        nx = (nx + LEAF_MASK) & ~LEAF_MASK
-        ny = (ny + LEAF_MASK) & ~LEAF_MASK
-        nz = (nz + LEAF_MASK) & ~LEAF_MASK
+        bounds = (
+            tuple(float(value) for value in origin),
+            tuple(float(origin[i]) + float(size[i]) for i in range(3)),
+        )
+        self.quality = resolve_quality(
+            AuthoredQualitySettings(voxel_size=float(voxel_size)), bounds)
+        self.voxel_size = self.quality.voxel_size
+        nx, ny, nz = self.quality.padded_voxel_dimensions
         self.voxels_dim = wp.vec3i(nx, ny, nz)
-        self.leaves_dim = wp.vec3i(nx >> LEAF_SHIFT, ny >> LEAF_SHIFT, nz >> LEAF_SHIFT)
+        self.leaves_dim = wp.vec3i(*self.quality.leaf_dimensions)
         self.num_leaf_cells = (
             self.leaves_dim[0] * self.leaves_dim[1] * self.leaves_dim[2]
         )

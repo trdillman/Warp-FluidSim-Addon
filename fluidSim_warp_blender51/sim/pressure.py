@@ -1698,9 +1698,13 @@ class PressureSolver:
                       voxel_counts, settings, *, max_gradient,
                       reference_mass=None, pressure_source=None):
         """Build, solve, and safely apply one pressure projection."""
+        resolved_quality = getattr(settings, "resolved_quality", None)
+        rest_count = (resolved_quality.rest_particle_count
+                      if resolved_quality is not None
+                      else settings.particles_per_voxel)
         self.build_rhs(
             velocity, voxel_type, collision_velocity, voxel_counts,
-            rest_count=settings.particles_per_voxel,
+            rest_count=rest_count,
             count_stiffness=settings.count_stiffness,
         )
         st_projection = bool(
@@ -1711,7 +1715,7 @@ class PressureSolver:
             reference_mass = (
                 configured_mass
                 if configured_mass > 0.0 and math.isfinite(configured_mass)
-                else max(1.0, float(settings.particles_per_voxel)))
+                else max(1.0, float(rest_count)))
         st_args = {
             "reference_mass": reference_mass,
             "eta_phi": settings.spacetime_phase_eta,

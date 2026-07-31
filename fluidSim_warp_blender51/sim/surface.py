@@ -16,6 +16,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from . import constants as C
+from .quality_contract import AuthoredQualitySettings, resolve_quality
 from .fields import (
     leaf_linear_index,
     leaf_coord_of_voxel,
@@ -64,27 +65,21 @@ class SurfacePipeline:
 
     @staticmethod
     def voxel_size_for(settings):
-        from .enums import SurfaceResolutionMode
-
-        sim_h = max(float(settings.voxel_size), 1.0e-9)
-        mode = int(getattr(settings, "surface_resolution_mode", int(SurfaceResolutionMode.SIMULATION)))
-        if mode == int(SurfaceResolutionMode.CUSTOM):
-            custom_h = float(getattr(settings, "surface_voxel_size", 0.0))
-            if custom_h > 0.0:
-                return max(custom_h, sim_h / 16.0)
-        if mode == int(SurfaceResolutionMode.MULTIPLIER):
-            return sim_h / max(0.25, min(float(getattr(settings, "surface_resolution_multiplier", 1.0)), 8.0))
-        return sim_h
+        resolved = getattr(settings, "resolved_quality", None)
+        if resolved is None:
+            resolved = resolve_quality(
+                settings, (settings.domain_min, settings.domain_max))
+        return resolved.surface_voxel_size
 
     def voxel_size(self):
         return self.voxel_size_for(self.solver.settings)
 
     def leaf_capacity(self, h):
         s = self.solver.settings
-        size = np.maximum(np.asarray(s.domain_max, dtype=np.float64) - np.asarray(s.domain_min, dtype=np.float64), h)
-        dims = [max(C.LEAF_DIM, int(np.ceil(v / h))) for v in size]
-        dims = [(v + C.LEAF_MASK) & ~C.LEAF_MASK for v in dims]
-        total = (dims[0] >> C.LEAF_SHIFT) * (dims[1] >> C.LEAF_SHIFT) * (dims[2] >> C.LEAF_SHIFT)
+        surface_quality = resolve_quality(
+            AuthoredQualitySettings(voxel_size=float(h)),
+            (s.domain_min, s.domain_max))
+        total = surface_quality.total_domain_leaf_cells
         if abs(h - float(s.voxel_size)) <= 1.0e-8:
             return min(int(self.solver.grid.capacity), int(total))
         scale = max(1.0, float(getattr(s, "surface_leaf_capacity_scale", 8.0)))

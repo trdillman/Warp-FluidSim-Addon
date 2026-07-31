@@ -305,9 +305,15 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         # whole sidebar down, so report the failure in the panel instead.
         try:
             lo, hi = _domain_bounds(context.scene)
-            dims = tuple(hi[i] - lo[i] for i in range(3))
-            vox = tuple(int(d / max(fs.voxel_size, 1e-6)) for d in dims)
-            box.label(text=f"Resolution: {vox[0]} x {vox[1]} x {vox[2]}")
+            from .sim.quality_contract import resolve_quality
+
+            quality = resolve_quality(fs, (lo, hi))
+            raw = quality.unpadded_voxel_dimensions
+            padded = quality.padded_voxel_dimensions
+            box.label(text=f"Grid: {raw[0]} x {raw[1]} x {raw[2]} cells")
+            box.label(text=(
+                f"Padded: {padded[0]} x {padded[1]} x {padded[2]} "
+                f"({quality.total_domain_leaf_cells:,} possible leaves)"))
             sess = session()
             if sess.active:
                 g = sess.solver.grid

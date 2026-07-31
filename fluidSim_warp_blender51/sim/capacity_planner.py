@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping, Optional
 import numpy as np
 
 from .memory_safety import estimate_solver_bytes, safe_memory_budget
+from .quality_contract import resolve_quality
 
 
 class DemandQuality(Enum):
@@ -173,9 +174,7 @@ def _seed_positions(payload: Any) -> Optional[np.ndarray]:
 def _leaf_dims(settings: Any) -> tuple[int, int, int]:
     lo = _value(settings, "domain_min", (0.0, 0.0, 0.0))
     hi = _value(settings, "domain_max", (0.0, 0.0, 0.0))
-    h = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    return tuple(max(1, math.ceil(max(0.0, float(hi[i]) - float(lo[i]))
-                                  / h / 8.0)) for i in range(3))
+    return resolve_quality(settings, (lo, hi)).leaf_dimensions
 
 
 def leaf_coords_for_world_bounds(settings: Any, minimum: Iterable[float],

@@ -38,6 +38,7 @@ from .fields import (
     voxel_center_world,
 )
 from .particles import ParticleSystem, ParticleBins
+from .quality_contract import resolve_quality
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
 from .whitewater import (
@@ -442,6 +443,7 @@ class SolverSettings:
 
     particles_per_voxel: float = float(C.DEFAULT_PARTICLES_PER_VOXEL)
     count_stiffness: float = 0.0
+    resolved_quality: object = dc_field(default=None, repr=False, compare=False)
 
     # Spatiotemporal FLIP (ST-FLIP, Braun et al. 2026).
     spacetime_enabled: bool = False
@@ -595,6 +597,9 @@ class FluidSolver:
 
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
+        self.quality = resolve_quality(
+            settings, (settings.domain_min, settings.domain_max))
+        settings.resolved_quality = self.quality
         self.device = settings.device
         self.profiler = profiler
         # The PCG pressure path (the default; see SolverSettings.pressure_solver)
@@ -1108,7 +1113,7 @@ class FluidSolver:
         manual = float(getattr(s, "spacetime_reference_mass", 0.0))
         if manual > 0.0 and math.isfinite(manual):
             return manual
-        ppc = max(1.0e-6, float(s.particles_per_voxel))
+        ppc = max(1.0e-6, float(self.quality.liquid_sampling))
         particles_per_cell = max(1, int(math.ceil(ppc)))
         particle_mass = ppc / float(particles_per_cell)
         # Deterministic and intentionally small: 3 MAC face orientations,
@@ -1159,7 +1164,7 @@ class FluidSolver:
         cached = float(getattr(self, "_st_reference_mass_cached", 0.0))
         if cached > 0.0 and math.isfinite(cached):
             return cached
-        return max(1.0, float(s.particles_per_voxel))
+        return max(1.0, float(self.quality.rest_particle_count))
 
     def _p2g(self, dt=None):
         g = self.grid
@@ -1514,7 +1519,7 @@ class FluidSolver:
         g = self.grid
         p = self.particles
         self._index_particles()
-        separation = 0.5 * s.voxel_size * (1.0 / max(s.particles_per_voxel, 1.0)) ** (1.0 / 3.0)
+        separation = 0.5 * self.quality.nominal_particle_spacing
         wp.launch(
             k_particles_relax, dim=self._np_dim(),
             inputs=[p.position, p.count, p.voxel_index,

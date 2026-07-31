@@ -9,6 +9,8 @@ import os
 import subprocess
 import time
 
+from .quality_contract import resolve_quality
+
 
 LEAF_VOLUME = 512
 BASE_BYTES = 256 * 1024**2
@@ -191,28 +193,18 @@ def _value(settings, name, default):
     return getattr(settings, name, default)
 
 
-def _domain_leaf_cells(settings) -> int:
+def _resolved_quality(settings):
     lo = _value(settings, "domain_min", (-2.0, -2.0, 0.0))
     hi = _value(settings, "domain_max", (2.0, 2.0, 4.0))
-    voxel_size = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    leaf_dims = [
-        max(1, math.ceil(max(0.0, float(hi[i]) - float(lo[i])) / voxel_size / 8.0))
-        for i in range(3)
-    ]
-    return int(leaf_dims[0] * leaf_dims[1] * leaf_dims[2])
+    return resolve_quality(settings, (lo, hi))
+
+
+def _domain_leaf_cells(settings) -> int:
+    return _resolved_quality(settings).total_domain_leaf_cells
 
 
 def _surface_voxel_size(settings) -> float:
-    sim_h = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    mode = int(_value(settings, "surface_resolution_mode", 0))
-    if mode == 2:
-        custom_h = float(_value(settings, "surface_voxel_size", 0.0))
-        return max(custom_h, sim_h / 16.0) if custom_h > 0.0 else sim_h
-    if mode == 1:
-        multiplier = max(0.25, min(8.0, float(
-            _value(settings, "surface_resolution_multiplier", 1.0))))
-        return sim_h / multiplier
-    return sim_h
+    return _resolved_quality(settings).surface_voxel_size
 
 
 def _surface_dense_voxels(settings, h: float) -> int:
