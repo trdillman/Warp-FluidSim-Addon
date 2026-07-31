@@ -684,6 +684,12 @@ class FluidSolver:
 
     # -- host configuration -------------------------------------------------
 
+    def set_source_batch(self, legacy_descriptors=(), native_plans=()):
+        """Atomically install the complete runtime source snapshot."""
+        from .sourcing import SourceBatch
+        self.sourcing.set_source_batch(SourceBatch(
+            tuple(legacy_descriptors), tuple(native_plans)))
+
     def set_sources(self, sources):
         self.sourcing.set_sources(sources)
 
@@ -927,13 +933,14 @@ class FluidSolver:
         g.mark_points(self.particles.position, self.particles.count,
                       self._np_dim())
         for src in self.sources:
-            if not src.enabled:
+            if not self.sourcing.legacy_descriptor_requires_topology(src):
                 continue
             lo, hi = src.aabb()
             g.mark_world_box(lo, hi)
-        if not self.sources and self.sourcing.plans:
+        if self.sourcing.plans:
             # Compile before topology so imported-volume active leaves and all
             # other normalized regions allocate through the same flat table.
+            from .source_regions import plan_requires_source_topology
             dynamic_sources = any(
                 plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
                 for plan in self.sourcing.plans)
@@ -942,11 +949,14 @@ class FluidSolver:
                 batch = self.sourcing.compile(frame=self.frame, substep=0)
             leaf_world = C.LEAF_DIM * s.voxel_size
             origin = s.domain_min
-            for coord in batch.required_leaf_coords:
-                lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
-                           for axis in range(3))
-                hi = tuple(value + leaf_world for value in lo)
-                g.mark_world_box(lo, hi)
+            for compiled in batch.sources:
+                if not plan_requires_source_topology(compiled.plan):
+                    continue
+                for coord in compiled.region.leaf_coords:
+                    lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
+                               for axis in range(3))
+                    hi = tuple(value + leaf_world for value in lo)
+                    g.mark_world_box(lo, hi)
         for col in self.colliders:
             g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
@@ -1729,6 +1739,18 @@ class FluidSolver:
         return st
 
     # -- direct particle injection ---------------------------------------------
+
+    def inject_particle_packets_exact(self, packets):
+        """Internal exact all-or-zero packet transaction."""
+        return self.sourcing.inject_particle_packets_exact(packets)
+
+    def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
+                               velocities=None, temperature=0.0, viscosity=0.0,
+                               density=1.0, life=0.0, use_lifespan=False):
+        return self.sourcing.inject_particles_exact(
+            positions, velocity=velocity, velocities=velocities,
+            temperature=temperature, viscosity=viscosity, density=density,
+            life=life, use_lifespan=use_lifespan)
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,

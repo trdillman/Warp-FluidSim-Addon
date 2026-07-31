@@ -459,6 +459,33 @@ class CompiledRegion:
             self.points.device_lifespan = None
 
 
+def normalized_liquid_target(plan: SourcePlan) -> int:
+    """Return the canonical bounded liquid occupancy target."""
+    return max(0, min(64, int(round(
+        float(plan.payload.target_particles_per_voxel)))))
+
+
+def liquid_coverage_emission_enabled(plan: SourcePlan) -> bool:
+    """Whether a coverage-backed liquid plan can create particles.
+
+    Authored point cardinality is independent of occupancy.  Non-liquid plans
+    are likewise governed by their own operation semantics.
+    """
+    return (
+        plan.operation == SourceOperation.LIQUID
+        and plan.lifecycle != SourceLifecycle.DIRECT_APPEND
+        and normalized_liquid_target(plan) > 0
+    )
+
+
+def plan_requires_source_topology(plan: SourcePlan) -> bool:
+    if plan.operation != SourceOperation.LIQUID:
+        return True
+    if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
+        return True
+    return liquid_coverage_emission_enabled(plan)
+
+
 @dataclass(frozen=True)
 class CompiledSource:
     plan: SourcePlan
@@ -503,8 +530,12 @@ def _compiled_footprint(source: CompiledSource) -> CompiledSourceFootprint:
             str(plan.stable_id), len(region.points.positions),
             DemandQuality.EXACT, coords, region.device_bytes,
         )
-    target = max(1, min(64, int(round(
-        float(plan.payload.target_particles_per_voxel)))))
+    target = normalized_liquid_target(plan)
+    if target == 0:
+        return CompiledSourceFootprint(
+            str(plan.stable_id), 0, DemandQuality.EXACT, (),
+            region.device_bytes,
+        )
     demand = int(np.ceil(
         np.asarray(region.coverage, np.float64) * target).sum(dtype=np.int64))
     return CompiledSourceFootprint(

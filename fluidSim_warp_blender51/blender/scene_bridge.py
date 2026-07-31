@@ -221,6 +221,8 @@ class Session:
             if legacy_plan.operation == SourceOperation.LIQUID:
                 target = max(0, min(64, int(math.ceil(
                     float(legacy_plan.payload.target_particles_per_voxel)))))
+                if target == 0:
+                    coords = ()
                 # Animated legacy meshes can intentionally exceed the CPU
                 # compiler's staging budget while their accepted runtime path
                 # remains GPU-resident. Bound those by clipped AABB leaves;
@@ -282,10 +284,8 @@ class Session:
 
     def _apply_scene_snapshot(self, snapshot):
         self.scene_inputs = snapshot.scene_inputs
-        self.solver.set_sources(snapshot.descriptors)
-        if snapshot.extra_plans:
-            self.solver.set_source_plans(
-                tuple(self.solver.sourcing.plans) + snapshot.extra_plans)
+        self.solver.set_source_batch(
+            snapshot.descriptors, snapshot.extra_plans)
         self.solver.set_colliders(snapshot.colliders)
         self.solver.set_force_fields(snapshot.force_fields)
         self.solver.set_height_source(snapshot.height_source)
@@ -457,14 +457,11 @@ class Session:
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
-        self.solver.set_sources(
-            self.scene_inputs.gather_sources(
-                scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                sync_generation=sync_generation))
+        descriptors = self.scene_inputs.gather_sources(
+            scene, depsgraph, capture_first_mesh=capture_first_mesh,
+            sync_generation=sync_generation)
         extra_plans = self.scene_inputs.gather_source_plans(scene, depsgraph)
-        if extra_plans:
-            self.solver.set_source_plans(
-                tuple(self.solver.sourcing.plans) + tuple(extra_plans))
+        self.solver.set_source_batch(descriptors, extra_plans)
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_force_fields(

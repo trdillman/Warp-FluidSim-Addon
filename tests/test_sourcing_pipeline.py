@@ -289,6 +289,8 @@ def _record_warp(monkeypatch):
         lambda shape, **kwargs: DeviceArray(shape),
     )
     monkeypatch.setattr(sourcing.wp, "copy", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        sourcing.wp, "empty", lambda shape, **kwargs: ("empty", shape))
 
     def array(values, **kwargs):
         result = ("array", len(values), len(arrays))
@@ -309,8 +311,9 @@ def _record_warp(monkeypatch):
             inputs[-1].values[0] += int(inputs[0])
         elif kernel is sourcing.k_admit_emission_batch:
             particles, capacity, state = inputs
-            state.values[1] = int(
-                state.values[0] <= capacity - particles.host_count)
+            available = capacity - particles.host_count
+            state.values[4] = available
+            state.values[1] = int(state.values[0] <= available)
         elif kernel in {
                 sourcing.k_source_shapes_particles,
                 sourcing.k_mesh_source_particles,
@@ -318,7 +321,10 @@ def _record_warp(monkeypatch):
                 sourcing.k_source_owned_points}:
             state = outputs[-1]
             if state.values[1]:
-                state.values[2] += 1
+                state.values[2] += (
+                    int(inputs[6])
+                    if kernel is sourcing.k_source_owned_points else 1)
+
 
     monkeypatch.setattr(sourcing.wp, "launch", launch)
 
@@ -407,13 +413,19 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     )
 
     assert result == 2
-    assert len(arrays) == 2
-    assert [kernel for kernel, _ in launches] == [sourcing.k_source_particles]
-    assert launches[0][1]["dim"] == 2
-    assert launches[0][1]["inputs"][-1] == pipeline._first_slot_dev
+    assert len(arrays) == 1
+    assert [kernel for kernel, _ in launches] == [
+        sourcing.k_add_emission_demand,
+        sourcing.k_admit_emission_batch,
+        sourcing.k_source_owned_points,
+    ]
+    assert launches[-1][1]["dim"] == 2
     assert owner.particles.refresh_calls == 1
     assert owner._host_frame_cache is None
+    assert pipeline.last_injection_result == sourcing.InjectionResult(
+        admitted=True, emitted=2, required=2, available=8,
+        capacity_limited=False, total=2)
 
     assert pipeline.inject_particles([]) == 0
-    assert len(launches) == 1
+    assert len(launches) == 3
     assert owner.particles.refresh_calls == 1

@@ -1496,3 +1496,40 @@ def test_phase1_point_injection_poll_is_truthful(monkeypatch):
     assert not operators.FLUIDSIM_OT_inject_particles.poll(
         SimpleNamespace(active_object=mesh))
     assert "Initialize the solver" in operators.FLUIDSIM_OT_inject_particles._poll_message
+
+
+def test_phase1_point_injection_capacity_refusal_is_recoverable_cancel(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import sources, viewport
+
+    result = SimpleNamespace(
+        admitted=False, emitted=0, required=5, available=4,
+        capacity_limited=True, total=1)
+    solver = SimpleNamespace(sourcing=SimpleNamespace(
+        last_injection_result=result))
+    sess = SimpleNamespace(active=True, solver=solver)
+    fatal_errors = []
+    bridge = SimpleNamespace(
+        session=lambda: sess,
+        set_error=lambda *_args: fatal_errors.append(_args))
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    monkeypatch.setattr(sources, "inject_object_particles", lambda *_args: 0)
+    viewport_updates = []
+    monkeypatch.setattr(
+        viewport, "update_outputs", lambda *_args: viewport_updates.append(_args))
+
+    reports = []
+    op = operators.FLUIDSIM_OT_inject_particles()
+    op.report = lambda level, message: reports.append((level, message))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status="Solver ready"))
+    obj = SimpleNamespace(name="Seed", type="MESH", particle_systems=[])
+
+    assert op.execute(SimpleNamespace(
+        scene=scene, active_object=obj)) == {"CANCELLED"}
+    assert not viewport_updates
+    assert not fatal_errors
+    assert scene.fluidsim.status == "Solver ready"
+    assert "5 slots" in reports[-1][1]
+    assert "4" in reports[-1][1]
+    assert "Max Particles" in reports[-1][1]

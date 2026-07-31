@@ -788,12 +788,21 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         scene = context.scene
         try:
             n = _sources.inject_object_particles(scene, obj, sess)
-            viewport.update_outputs(scene, sess)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Particle injection failed: {exc}")
             bridge.set_error(scene, f"Particle injection failed: {exc}")
             scene.fluidsim.status = f"Injection failed: {exc}"
             return {"CANCELLED"}
+        result = getattr(sess.solver.sourcing, "last_injection_result", None)
+        if result is not None and not result.admitted:
+            self.report({"WARNING"}, (
+                "Particle injection needs "
+                f"{result.required:,} slots but only {result.available:,} "
+                "are available. Increase Max Particles or enable automatic "
+                "particle-capacity growth, then retry."
+            ))
+            return {"CANCELLED"}
+        viewport.update_outputs(scene, sess)
         self.report({"INFO"}, f"Injected {n:,} particles from {obj.name}")
         return {"FINISHED"}
 

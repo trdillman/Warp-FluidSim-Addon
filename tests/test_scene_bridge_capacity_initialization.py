@@ -38,17 +38,29 @@ class _Solver:
         self.sourcing = SimpleNamespace(last_apply_result={})
         self.injected = []
 
-    def inject_particles(self, positions, **attributes):
-        self.injected.append((np.array(positions, copy=True), attributes))
-        self.particles.host_count += len(positions)
+    def inject_particle_packets_exact(self, packets):
+        packets = tuple(packets)
+        required = sum(len(packet.positions) for packet in packets)
+        available = self.particles.capacity - self.particles.host_count
+        admitted = required <= available
+        emitted = required if admitted else 0
+        if admitted:
+            self.injected.extend(
+                (np.array(packet.positions, copy=True), packet)
+                for packet in packets)
+            self.particles.host_count += required
+        result = SimpleNamespace(
+            admitted=admitted, emitted=emitted, required=required,
+            available=available, capacity_limited=not admitted,
+            total=self.particles.host_count)
         self.sourcing.last_apply_result = {
-            "admitted": True,
-            "required": len(positions),
-            "available": self.particles.capacity - self.particles.host_count + len(positions),
-            "emitted": len(positions),
-            "capacity_limited": False,
+            "admitted": admitted, "required": required,
+            "available": available, "emitted": emitted,
+            "capacity_limited": not admitted,
         }
-        return len(positions)
+        if not admitted:
+            self.sourcing.last_apply_result["deferred"] = True
+        return result
 
 
 def _seed(sources, name, count):
