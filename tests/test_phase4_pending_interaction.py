@@ -392,7 +392,7 @@ def test_revert_never_changes_device_preferences(monkeypatch):
         "blocked_reason"]
 
 
-def test_reserve_edit_invalidates_and_refreshes_only_owned_scene_plan(monkeypatch):
+def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     other = _scene()
@@ -402,6 +402,9 @@ def test_reserve_edit_invalidates_and_refreshes_only_owned_scene_plan(monkeypatc
     new_plan = SimpleNamespace(scene_signature="new")
     sess._set_capacity_plan(scene, old_plan, memory_bypassed=True)
     refreshed = []
+    timer_callbacks = []
+    bridge.bpy.app.timers = SimpleNamespace(register=lambda callback, **_kwargs: (
+        timer_callbacks.append(callback)))
 
     def refresh(actual):
         refreshed.append(actual)
@@ -410,10 +413,21 @@ def test_reserve_edit_invalidates_and_refreshes_only_owned_scene_plan(monkeypatc
     monkeypatch.setattr(sess, "refresh_capacity_plan", refresh)
     scene.fluidsim.max_particles = 2048
     bridge.update_particle_capacity_policy(scene)
+    # Another slider tick invalidates state but must reuse the same timer.
+    scene.fluidsim.max_particles = 3072
+    bridge.update_particle_capacity_policy(scene)
 
-    assert refreshed == [scene]
-    assert sess.capacity_plan_for_scene(scene) is new_plan
+    assert refreshed == []
+    assert len(timer_callbacks) == 1
+    assert sess.capacity_plan_for_scene(scene) is None
     assert sess.capacity_plan_for_scene(other) is None
     assert sess.capacity_plan_memory_bypassed is False
     assert solver.particles.capacity == 4096
-    assert bridge.pending_presentation(scene)["action"] == "REINIT_PENDING"
+    pending = bridge.pending_presentation(scene)
+    assert pending["action"] == "REINIT_PENDING"
+    assert any("max_particles" in reason for reason in pending["reasons"])
+
+    timer_callbacks[0]()
+
+    assert refreshed == [scene]
+    assert sess.capacity_plan_for_scene(scene) is new_plan

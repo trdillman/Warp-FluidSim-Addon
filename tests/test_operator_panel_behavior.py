@@ -845,7 +845,10 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
             device="cuda:0", max_particles=1024,
             flip_ratio=0.2, spacetime_seed=77))
 
-    def plan_scene(_scene, settings, _resources):
+    def plan_scene(
+            _scene, settings, _resources, *,
+            additional_transaction_bytes=0):
+        assert additional_transaction_bytes > 0
         planned_capacities.append(settings.max_particles)
         return snapshot
 

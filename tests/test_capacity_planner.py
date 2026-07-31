@@ -58,6 +58,23 @@ def test_initial_plan_aggregates_seed_and_source_demand_before_admission():
     assert plan.blockers[0].available == 10
 
 
+def test_transaction_residency_is_included_in_peak_plan_and_signature():
+    base = plan_initialization(settings(), (), (), (), resources())
+    resident_bytes = 14 * 1024**3
+    transactional = plan_initialization(
+        settings(), (), (), (), resources(),
+        additional_transaction_bytes=resident_bytes)
+
+    assert transactional.additional_transaction_bytes == resident_bytes
+    assert transactional.transaction_scratch_bytes == (
+        base.transaction_scratch_bytes + resident_bytes)
+    assert transactional.estimated_bytes == base.estimated_bytes + resident_bytes
+    assert transactional.scene_signature != base.scene_signature
+    assert any(
+        blocker.code == "MEMORY_ESTIMATE"
+        for blocker in transactional.blockers)
+
+
 def test_unknown_particle_demand_fails_closed_without_inventing_a_count():
     plan = plan_initialization(
         settings(),

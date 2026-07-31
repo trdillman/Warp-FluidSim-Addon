@@ -98,7 +98,10 @@ def _active_reset(
     )
     planned = []
 
-    def plan_scene(_scene, settings, _resources):
+    def plan_scene(
+            _scene, settings, _resources, *,
+            additional_transaction_bytes=0):
+        assert additional_transaction_bytes > 0
         planned.append(int(settings.max_particles))
         blockers = []
         if demand > int(settings.max_particles):
@@ -220,6 +223,32 @@ def test_reset_autogrow_rejects_memory_blocked_growth_candidate(monkeypatch):
         "PARTICLE_CAPACITY")
 
 
+def test_reset_ungrown_peak_memory_refusal_preserves_live_solver_and_status(
+        monkeypatch):
+    _bridge_mod, scene, sess, old, released, planned, prepared = _active_reset(
+        monkeypatch,
+        authored=8,
+        runtime=8,
+        demand=7,
+        auto_grow=False,
+        memory_blocked_at=8,
+    )
+
+    with pytest.raises(RuntimeError, match=r"old-solver \+ candidate"):
+        sess.reset(scene)
+
+    assert planned == [8]
+    assert prepared == []
+    assert released == []
+    assert sess.solver is old
+    assert old.frame == 23
+    assert sess.last_frame == 23
+    assert scene.fluidsim.status == "Reset blocked — live solver preserved"
+    assert "old-solver + candidate" in sess.current_error(scene)
+    assert sess.capacity_plan_for_scene(scene).blockers[0].code == (
+        "MEMORY_ESTIMATE")
+
+
 def test_failed_empty_reset_replacement_preserves_authoritative_session(
         monkeypatch):
     _bridge_mod, scene, sess, old, released, planned, _prepared = _active_reset(
@@ -243,6 +272,34 @@ def test_failed_empty_reset_replacement_preserves_authoritative_session(
     assert sess.cache_settings_records is cache_records
     assert old.particles.host_count == 7
     assert released == []
+
+
+def test_candidate_constructor_failure_cleans_candidate_pool_only(monkeypatch):
+    bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
+
+    class Candidate:
+        def __init__(self, _settings, profiler=None):
+            raise RuntimeError("candidate allocation failed")
+
+    solver_module = types.ModuleType("fluidSim_warp_blender51.sim.solver")
+    solver_module.FluidSolver = Candidate
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.sim.solver", solver_module)
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    cuda_releases = []
+    monkeypatch.setattr(
+        memory_safety, "release_cuda_memory",
+        lambda device: cuda_releases.append(device))
+
+    with pytest.raises(RuntimeError, match="candidate allocation failed"):
+        bridge.Session._prepare_solver_replacement(
+            sess, scene, _Settings(max_particles=8), SimpleNamespace(), None)
+
+    assert sess.solver is old
+    assert released == []
+    assert cuda_releases == ["cuda:0"]
 
 
 def test_prepared_seed_capacity_mismatch_discards_candidate_not_live_solver(
@@ -427,6 +484,10 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
         lambda *_a, **_k: prepared.append(True))
     from fluidSim_warp_blender51.sim import memory_safety
 
+    cuda_releases = []
+    monkeypatch.setattr(
+        memory_safety, "release_cuda_memory",
+        lambda device: cuda_releases.append(device))
     monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
         "safe": True,
         "estimated_bytes": 0,
@@ -444,4 +505,5 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
     assert sess.frame_stats == [{"frame": 23}]
     assert released == []
     assert prepared == []
+    assert cuda_releases == []
     assert sess.capacity_plan_for_scene(scene) is plan

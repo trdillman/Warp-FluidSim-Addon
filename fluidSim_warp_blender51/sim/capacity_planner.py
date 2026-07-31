@@ -78,6 +78,8 @@ class CapacityPlan:
     source_demands: tuple[SourceDemand, ...]
     scene_signature: str
     staging_bytes: int = 0
+    transaction_scratch_bytes: int = 0
+    additional_transaction_bytes: int = 0
     required_leaf_coords: tuple[tuple[int, int, int], ...] = ()
     suggestions: tuple[CapacitySuggestion, ...] = field(default_factory=tuple)
 
@@ -251,9 +253,11 @@ def _aggregate_particles(source_demands: tuple[SourceDemand, ...],
 
 
 def _signature(settings: Any, demands: tuple[SourceDemand, ...],
-               seed_count: int, leaf_count: int) -> str:
+               seed_count: int, leaf_count: int,
+               additional_transaction_bytes: int = 0) -> str:
     payload = {
         "settings": _settings_dict(settings),
+        "additional_transaction_bytes": int(additional_transaction_bytes),
         "sources": [
             {
                 "stable_id": item.stable_id,
@@ -276,8 +280,14 @@ def _signature(settings: Any, demands: tuple[SourceDemand, ...],
 def plan_initialization(settings: Any, source_footprints: Iterable[Any],
                         seed_payloads: Iterable[Any],
                         collider_footprints: Iterable[Any],
-                        resources: Mapping[str, Any]) -> CapacityPlan:
-    """Plan one initial population without allocating or mutating solver state."""
+                        resources: Mapping[str, Any], *,
+                        additional_transaction_bytes: int = 0) -> CapacityPlan:
+    """Plan one initial population without allocating or mutating solver state.
+
+    ``additional_transaction_bytes`` accounts for memory that must remain
+    resident while the candidate is allocated, such as an authoritative live
+    solver during transactional replacement.
+    """
     sources = tuple(_source_demand(item) for item in source_footprints)
     seeds = tuple(seed_payloads)
     try:
@@ -299,14 +309,18 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
 
     staging_bytes = sum(item.staging_bytes for item in sources)
     # WP3 owns one int32 scratch occupancy entry per allocated sparse voxel.
+    additional_transaction_bytes = max(
+        0, int(additional_transaction_bytes))
     transaction_scratch_bytes = (
-        max(1, int(_value(settings, "leaf_capacity", 0))) * 512 * 4)
+        max(1, int(_value(settings, "leaf_capacity", 0))) * 512 * 4
+        + additional_transaction_bytes)
     estimated_bytes = int(
         estimate_solver_bytes(settings) + staging_bytes
         + transaction_scratch_bytes)
     budget_bytes = int(safe_memory_budget(
         int(resources.get("gpu_total_bytes", 0)),
         int(resources.get("gpu_free_bytes", 0)),
+        additional_transaction_bytes,
     ))
     blockers: list[CapacityBlocker] = []
     source_ids = tuple(item.stable_id for item in sources)
@@ -334,7 +348,9 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
             "Conservative estimated allocation exceeds the live VRAM budget.",
         ))
 
-    signature = _signature(settings, sources, seed_count, leaf_count)
+    signature = _signature(
+        settings, sources, seed_count, leaf_count,
+        additional_transaction_bytes)
     return CapacityPlan(
         verdict=(CapacityVerdict.BLOCKED if blockers
                  else CapacityVerdict.ADMITTED),
@@ -346,6 +362,8 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
         source_demands=sources,
         scene_signature=signature,
         staging_bytes=staging_bytes,
+        transaction_scratch_bytes=transaction_scratch_bytes,
+        additional_transaction_bytes=additional_transaction_bytes,
         required_leaf_coords=required_leaf_coords,
     )
 
@@ -386,10 +404,7 @@ def suggest_configurations(plan: CapacityPlan, settings: Any,
         # No automatic parameter edit can make an unbounded source truthful.
         return ()
     base = _settings_dict(settings)
-    budget = safe_memory_budget(
-        int(resources.get("gpu_total_bytes", 0)),
-        int(resources.get("gpu_free_bytes", 0)),
-    )
+    budget = int(plan.budget_bytes)
     suggestions: list[CapacitySuggestion] = []
 
     if plan.particle_demand.value is not None and plan.leaf_demand.value is not None:
@@ -404,7 +419,8 @@ def suggest_configurations(plan: CapacityPlan, settings: Any,
         candidate = dict(base)
         candidate.update(required)
         estimate = (estimate_solver_bytes(candidate) + plan.staging_bytes
-                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4)
+                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4
+                    + plan.additional_transaction_bytes)
         if changes and estimate <= budget:
             suggestions.append(CapacitySuggestion(
                 "Preserve authored domain and resolution", changes, int(estimate),
@@ -442,7 +458,8 @@ def suggest_configurations(plan: CapacityPlan, settings: Any,
                     int(plan.leaf_demand.value or 0)),
             })
             estimate = (estimate_solver_bytes(tightened) + plan.staging_bytes
-                        + int(tightened["leaf_capacity"]) * 512 * 4)
+                        + int(tightened["leaf_capacity"]) * 512 * 4
+                        + plan.additional_transaction_bytes)
             if estimate <= budget:
                 changes = {
                     "domain_min": domain_min, "domain_max": domain_max,
@@ -477,7 +494,8 @@ def suggest_configurations(plan: CapacityPlan, settings: Any,
         candidate["leaf_capacity"] = max(
             int(candidate.get("leaf_capacity") or 0), required_leaves)
         estimate = (estimate_solver_bytes(candidate) + plan.staging_bytes
-                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4)
+                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4
+                    + plan.additional_transaction_bytes)
         if estimate <= budget:
             changes = {
                 name: candidate[name]
@@ -504,7 +522,8 @@ def suggest_configurations(plan: CapacityPlan, settings: Any,
             int(plan.leaf_demand.value or 0),
             min(int(base["leaf_capacity"]), math.prod(_leaf_dims(balanced))))
         estimate = (estimate_solver_bytes(balanced) + plan.staging_bytes
-                    + int(balanced["leaf_capacity"]) * 512 * 4)
+                    + int(balanced["leaf_capacity"]) * 512 * 4
+                    + plan.additional_transaction_bytes)
         if estimate <= budget:
             changes = {
                 name: balanced[name]

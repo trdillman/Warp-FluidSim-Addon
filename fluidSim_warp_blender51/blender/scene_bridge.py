@@ -67,6 +67,20 @@ def capacity_blocking_message(blockers):
     )
 
 
+def reset_memory_blocking_message(capacity_plan):
+    """Describe transactional reset peak refusal without implying an OOM."""
+    estimate = int(getattr(capacity_plan, "estimated_bytes", 0))
+    budget = int(getattr(capacity_plan, "budget_bytes", 0))
+    return (
+        "FluidSim reset memory safeguard stopped before candidate allocation: "
+        "the conservative old-solver + candidate transactional peak is "
+        f"{estimate / 1024**3:.1f} GiB, above the safe live budget "
+        f"{budget / 1024**3:.1f} GiB. The live solver was preserved. "
+        "Apply Safe Settings or Reinitialize explicitly; this estimate is not "
+        "an OOM guarantee."
+    )
+
+
 @dataclass
 class ScenePlanningSnapshot:
     scene_inputs: SceneInputs
@@ -237,7 +251,9 @@ class Session:
         if not preserve_error:
             self.clear_error(scene)
 
-    def _plan_scene(self, scene, settings, resources, depsgraph=None):
+    def _plan_scene(
+            self, scene, settings, resources, depsgraph=None, *,
+            additional_transaction_bytes=0):
         """Gather one immutable-enough scene snapshot and capacity report."""
         from . import sources
         from ..sim.capacity_planner import (
@@ -341,7 +357,8 @@ class Session:
                 settings, collider.aabb_min, collider.aabb_max))
             for collider in colliders)
         capacity_plan = plan_initialization(
-            settings, tuple(footprints), seeds, collider_footprints, resources)
+            settings, tuple(footprints), seeds, collider_footprints, resources,
+            additional_transaction_bytes=additional_transaction_bytes)
         capacity_plan = replace(
             capacity_plan,
             suggestions=suggest_configurations(
@@ -412,7 +429,15 @@ class Session:
                 build_snippets(scene))
             return candidate, snippet_errors
         except Exception:
-            self._discard_prepared_solver(candidate)
+            if candidate is not None:
+                self._discard_prepared_solver(candidate)
+            else:
+                # FluidSolver construction can fail after Warp has reserved
+                # candidate-owned pooled blocks but before Python receives the
+                # object. This path is allocation cleanup, not live-session
+                # cleanup; pure planner refusals never reach it.
+                from ..sim.memory_safety import release_cuda_memory
+                release_cuda_memory(settings.device)
             raise
 
     def _commit_solver_replacement(
@@ -445,8 +470,10 @@ class Session:
         from ..diagnostics.profiler import Profiler
 
         candidate = None
+        candidate_work_started = False
         replacement_committed = False
         snapshot = None
+        settings = None
         try:
             fs = scene.fluidsim
             settings = build_settings(scene)
@@ -510,6 +537,7 @@ class Session:
             if fs.profiling_enabled:
                 profiler = Profiler(
                     device=settings.device, sync=fs.profiling_sync)
+            candidate_work_started = True
             candidate, errors = self._prepare_solver_replacement(
                 scene, settings, snapshot, profiler)
             self._commit_solver_replacement(
@@ -555,8 +583,12 @@ class Session:
                     self.release(scene, preserve_error=True)
                 else:
                     self._discard_prepared_solver(candidate)
-            from ..sim.memory_safety import release_cuda_memory
-            release_cuda_memory(getattr(locals().get("settings", None), "device", None))
+            elif candidate_work_started:
+                # Constructor exceptions can retain an unassigned candidate
+                # cycle through their traceback until frames are cleared above.
+                # Collect only because candidate allocation work was attempted.
+                import gc
+                gc.collect()
             raise
 
     def set_live_enabled(self, scene, enabled):
@@ -755,7 +787,7 @@ class Session:
 
     def reset(self, scene):
         from . import viewport
-        from ..sim.memory_safety import vram_snapshot
+        from ..sim.memory_safety import estimate_solver_bytes, vram_snapshot
 
         if not self.owns_scene(scene):
             return
@@ -767,7 +799,14 @@ class Session:
         runtime_capacity = int(self.solver.particles.capacity)
         settings = replace(settings, max_particles=runtime_capacity)
         resources = vram_snapshot(settings.device)
-        snapshot = self._plan_scene(scene, settings, resources)
+        # Reset is a replacement transaction: the authoritative solver stays
+        # resident until its fully prepared candidate is ready to commit. Feed
+        # that old-solver residency through the planner's existing transaction
+        # scratch seam so the reported estimate is the actual peak model.
+        live_solver_bytes = estimate_solver_bytes(self.solver.settings)
+        snapshot = self._plan_scene(
+            scene, settings, resources,
+            additional_transaction_bytes=live_solver_bytes)
         replacement_growth = None
         particle_blocker = next((
             blocker for blocker in snapshot.capacity_plan.blockers
@@ -782,7 +821,8 @@ class Session:
                 runtime_capacity, int(particle_blocker.required))
             candidate_settings = replace(settings, max_particles=target)
             candidate_snapshot = self._plan_scene(
-                scene, candidate_settings, resources)
+                scene, candidate_settings, resources,
+                additional_transaction_bytes=live_solver_bytes)
             candidate_integrity = self._integrity_blockers(
                 candidate_snapshot.capacity_plan)
             candidate_memory = any(
@@ -795,14 +835,26 @@ class Session:
 
         self._set_capacity_plan(scene, snapshot.capacity_plan)
         integrity_blockers = self._integrity_blockers(snapshot.capacity_plan)
-        if integrity_blockers:
-            message = capacity_blocking_message(integrity_blockers)
+        memory_blockers = tuple(
+            blocker for blocker in snapshot.capacity_plan.blockers
+            if blocker.code == "MEMORY_ESTIMATE")
+        if integrity_blockers or memory_blockers:
+            messages = []
+            if integrity_blockers:
+                messages.append(capacity_blocking_message(integrity_blockers))
+            if memory_blockers:
+                messages.append(reset_memory_blocking_message(
+                    snapshot.capacity_plan))
+            message = " ".join(messages)
             self.set_error(scene, message)
+            scene.fluidsim.status = "Reset blocked — live solver preserved"
             raise RuntimeError(message)
 
         candidate = None
+        candidate_work_started = False
         replacement_committed = False
         try:
+            candidate_work_started = True
             candidate, errors = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.profiler)
             self._commit_solver_replacement(
@@ -839,6 +891,9 @@ class Session:
                     self.release(scene, preserve_error=True)
                 else:
                     self._discard_prepared_solver(candidate)
+            elif candidate_work_started:
+                import gc
+                gc.collect()
             raise
 
     def export_cache_sequence(self, scene, start, end):
@@ -1187,6 +1242,7 @@ class SceneInteractionState:
     blocked_reason: str = ""
     suppress_callbacks: bool = False
     timer_scheduled: bool = False
+    capacity_plan_timer_scheduled: bool = False
 
 
 _INTERACTION_STATES = {}
@@ -1946,6 +2002,33 @@ def _schedule_disposable_apply(scene):
     timers.register(flush_scene_pending, first_interval=0.05)
 
 
+def _schedule_capacity_plan_refresh(scene):
+    """Debounce heavyweight source/GPU planning outside RNA callbacks."""
+    state = _interaction_state(scene)
+    if state.capacity_plan_timer_scheduled:
+        return
+    timers = getattr(getattr(bpy, "app", None), "timers", None)
+    if timers is None or not hasattr(timers, "register"):
+        # Headless/minimal hosts can refresh explicitly later. Never turn an
+        # RNA slider callback into synchronous SourceCompiler/GPU work.
+        return
+    state.capacity_plan_timer_scheduled = True
+
+    def flush_capacity_plan():
+        state.capacity_plan_timer_scheduled = False
+        sess = session()
+        if sess.owns_scene(scene):
+            try:
+                sess.refresh_capacity_plan(scene)
+            except Exception as exc:  # noqa: BLE001 - timer boundary
+                sess.set_error(scene, repr(exc))
+                scene.fluidsim.status = f"Capacity plan refresh failed: {exc}"
+        _tag_view3d_redraw()
+        return None
+
+    timers.register(flush_capacity_plan, first_interval=0.10)
+
+
 def update_particle_capacity_policy(scene):
     """Apply policy live and persist a scene-owned capacity notice marker."""
     sess = session()
@@ -1961,9 +2044,9 @@ def update_particle_capacity_policy(scene):
             sess.capacity_plan is not None
             and sess.capacity_plan_scene_identity == _scene_identity(scene))
         sess.invalidate_capacity_plan_for_scene(scene)
-        if had_scene_plan:
-            sess.refresh_capacity_plan(scene)
         _refresh_pending_state(scene, sess)
+        if had_scene_plan:
+            _schedule_capacity_plan_refresh(scene)
     else:
         sess.invalidate_capacity_plan_for_scene(scene)
         sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
