@@ -27,6 +27,8 @@
     0.0,
     0.0
   ],
+  "max_speed": 6.0,
+  "relax_enabled": false,
   "whitewater_churn_gain": 2.0,
   "source_object": "DamBreak Source Column",
   "source_location": [

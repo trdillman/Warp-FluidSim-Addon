@@ -85,9 +85,16 @@ def main():
           f"{hot_values}; {live_apply_ms:.2f} ms")
     check("live edits preserve particle allocation", sess.solver is solver
           and solver.particles is particle_state)
-    check("ST-FLIP automatic mass rescales", initial_reference > 0.0
-          and abs(solver._st_reference_mass_cached / initial_reference - 1.5) < 1.0e-5,
-          f"{initial_reference} -> {solver._st_reference_mass_cached}")
+    sampling_pending = scene_bridge.pending_presentation(scene)
+    check("liquid sampling stages Reset without mutating live rest density",
+          initial_reference > 0.0
+          and solver.settings.particles_per_voxel == 8
+          and abs(solver._st_reference_mass_cached - initial_reference) < 1.0e-6
+          and sampling_pending["action"] == "RESET_PENDING",
+          f"{initial_reference} -> {solver._st_reference_mass_cached}; {sampling_pending}")
+    check("sampling Reset change can be discarded",
+          bpy.ops.fluidsim.revert_pending() == {"FINISHED"}
+          and fs.particles_per_voxel == 8)
     check("live refresh is bounded", live_apply_ms < 250.0, f"{live_apply_ms:.2f} ms")
 
     # Keyframed RNA is evaluated before each authoritative step seam.

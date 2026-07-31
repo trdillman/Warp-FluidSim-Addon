@@ -98,6 +98,18 @@ def common_checks(name, meta, series, frames, vmax_limit):
 
 # ---------------------------------------------------------------------------
 
+def bulk_column_height(positions, wall_x=0.2):
+    """Measure collapsed bulk height without treating sparse spray as a wall."""
+    column = positions[positions[:, 0] < wall_x]
+    return float(np.percentile(column[:, 2], 95)) if len(column) else 0.0
+
+
+def first_wall_contact(fronts, wall_x):
+    """Return the exclusive pre-wall index at the first actual wall contact."""
+    hits = np.flatnonzero(np.asarray(fronts) >= wall_x)
+    return int(hits[0]) if len(hits) else len(fronts)
+
+
 def analyze_dam_break():
     name = "dam_break"
     meta, series, frames = load_scene(name)
@@ -108,21 +120,28 @@ def analyze_dam_break():
 
     # Front position: leading edge of near-floor fluid (containment is
     # verified above, so the max is trustworthy).
-    ts, fronts = [], []
+    ts, fronts, bulk_fronts = [], [], []
     for f in sorted(frames):
         p = frames[f]["positions"]
         low = p[p[:, 2] < 0.15]
         if len(low):
             ts.append(f / fps)
             fronts.append(float(low[:, 0].max()))
-    ts, fronts = np.array(ts), np.array(fronts)
+            bulk_fronts.append(float(np.percentile(low[:, 0], 99.5)))
+    ts = np.array(ts)
+    fronts = np.array(fronts)
+    bulk_fronts = np.array(bulk_fronts)
     wall_x = meta["domain"][1][0] - 2 * meta["voxel_size"]
-    pre_wall = fronts < wall_x
+    contact = first_wall_contact(bulk_fronts, wall_x)
+    pre_wall = np.arange(len(fronts)) < first_wall_contact(fronts, wall_x)
 
-    # Monotonic advance until the wall (1-voxel noise tolerance).
-    adv = np.diff(fronts[pre_wall])
+    # Monotonic bulk advance through first wall contact (1-voxel noise
+    # tolerance). Sparse spray owns the leading-edge theory metric below but
+    # cannot make the bulk front appear to retreat.
+    advance = bulk_fronts[:min(contact + 1, len(bulk_fronts))]
+    adv = np.diff(advance)
     check(name, "front advances monotonically",
-          bool((adv > -meta["voxel_size"]).all()),
+          bool(len(adv) and (adv > -meta["voxel_size"]).all()),
           f"min frame-to-frame delta {adv.min() * 1000:.1f} mm")
 
     # Early-phase front speed vs sqrt(g*H): Ritter analytical bound is
@@ -155,8 +174,7 @@ def analyze_dam_break():
     # Column collapse: residual height at the left wall drops below 0.55*H.
     first, last = min(frames), max(frames)
     p_last = frames[last]["positions"]
-    col = p_last[p_last[:, 0] < 0.2]
-    h_end = float(np.percentile(col[:, 2], 99)) if len(col) else 0.0
+    h_end = bulk_column_height(p_last)
     check(name, "column collapses", h_end < 0.55 * H,
           f"left-wall height {h_end:.2f} m from {H:.2f} m")
 
@@ -169,6 +187,32 @@ def analyze_dam_break():
 
 
 # ---------------------------------------------------------------------------
+
+def crown_expansion_end(
+        crown_r, crown_n, impact_frame, frame_numbers, radius_ceiling=0.35):
+    """End the Yarin-Weiss fit when the measured rim starts collapsing.
+
+    Crown particle count can keep rising after the radial rim has reached its
+    maximum, so count peak is not a truthful expansion boundary. Require four
+    accepted samples, then stop at the first material (>0.5%) radius decline
+    or before the analysis annulus clips the measured rim.
+    """
+    accepted = [
+        frame for frame in sorted(frame_numbers)
+        if frame >= impact_frame and crown_n.get(frame, 0) > 200
+    ]
+    if not accepted:
+        return impact_frame
+    for index in range(3, len(accepted) - 1):
+        current = accepted[index]
+        following = accepted[index + 1]
+        radius = max(float(crown_r.get(current, 0.0)), 1.0e-9)
+        if radius >= float(radius_ceiling) * 0.9:
+            return current
+        if float(crown_r.get(following, 0.0)) < radius * 0.995:
+            return current
+    return accepted[-1]
+
 
 def analyze_crown_splash():
     name = "crown_splash"
@@ -207,14 +251,10 @@ def analyze_crown_splash():
           f"max crown height {max(crown_h.values()) * 1000:.0f} mm above pool")
 
     # sqrt(t) rim growth (Yarin-Weiss): correlate rim radius with
-    # sqrt(t - t0) over the crown-expansion window only (the window ends
-    # when the rim collapses back into the pool; afterwards the central
-    # Worthington jet would pollute the radius statistic).
-    expand_end = peak_f
-    for f in range(peak_f, max(frames)):
-        if crown_n.get(f + 1, 0) < crown_n.get(f, 0):
-            expand_end = f + 1
-            break
+    # sqrt(t - t0) over the measured radial-expansion window only. Particle
+    # count can continue rising after the rim starts collapsing, so it is not
+    # used as the end boundary.
+    expand_end = crown_expansion_end(crown_r, crown_n, f_impact, frames)
     grow = [(f / fps, crown_r[f]) for f in sorted(frames)
             if f_impact <= f <= expand_end and crown_n[f] > 200]
     if len(grow) >= 4:

@@ -179,7 +179,6 @@ def _bootstrap_source() -> str:
     # This file runs inside Blender.  Keep it self-contained: the checkout is
     # intentionally not importable until after the verified temporary copy.
     return r'''from __future__ import annotations
-import atexit
 import hashlib
 import importlib
 import json
@@ -241,13 +240,6 @@ def under(path, root):
         return True
     except ValueError:
         return False
-
-
-def runtime_cleanup():
-    try:
-        addon_utils.disable(ADDON_NAME, default_set=False)
-    except Exception:
-        pass
 
 
 try:
@@ -360,7 +352,10 @@ try:
     )
     if not result["ok"]:
         raise RuntimeError("profile-safe bootstrap identity validation failed")
-    atexit.register(runtime_cleanup)
+    # Do not call addon_utils.disable() from Python atexit. Blender 5.1 has
+    # already started RNA teardown at that point, and iterating preferences
+    # during extensions_refresh can dereference destroyed RNA. The enable is
+    # nonpersistent and the parent owns/removes the temporary package.
     result["stage"] = "ready"
 except Exception as exc:
     result["stage"] = "error"
