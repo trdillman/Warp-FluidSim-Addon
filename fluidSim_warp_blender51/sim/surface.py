@@ -263,7 +263,8 @@ class SurfacePipeline:
             if s.whitewater_enabled:
                 sdf_ready = self.ensure_solver_sdf_current()
             cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
-            if s.surface_enabled and cadence == int(SurfaceUpdateCadence.SUBSTEP):
+            if (sdf_ready and s.surface_enabled
+                    and cadence == int(SurfaceUpdateCadence.SUBSTEP)):
                 self.build(build_render=True, build_lowres=not s.whitewater_enabled)
         return sdf_ready
 

@@ -228,7 +228,7 @@ def k_prepare_whitewater_admission(
     diagnostics[0] = diagnostics[0] + required
     diagnostics[1] = diagnostics[1] + admitted
     diagnostics[2] = diagnostics[2] + (required - admitted)
-    diagnostics[3] = available
+    diagnostics[3] = diagnostics[3] + available
 
 
 @wp.kernel
@@ -484,7 +484,7 @@ class WhitewaterSystem:
             self.candidate_capacity, dtype=wp.int32, device=device)
         self.candidate_offsets = wp.zeros_like(self.candidates)
         self.admission_plan = wp.zeros(4, dtype=wp.int32, device=device)
-        # required, admitted, dropped (frame totals), available (last substep)
+        # required, admitted, dropped, and available are per-frame totals.
         self.diagnostics = wp.zeros(4, dtype=wp.int32, device=device)
         self.last_diagnostics = {
             "policy": WHITEWATER_POLICY_FIXED_CAPACITY,

@@ -117,10 +117,42 @@ def _capacity_acceptance(device, grid):
         )
         wp.synchronize_device(device)
         diagnostics = ww.refresh_diagnostics()
-        outputs.append(ww.position.numpy().copy())
         assert diagnostics["required"] == 4
+        assert diagnostics["available"] == 2
         assert diagnostics["admitted"] == 2
         assert diagnostics["dropped"] == 2
+
+        # A second substep sees a full pool. Frame diagnostics must aggregate
+        # its availability alongside required/admitted/dropped, not overwrite
+        # availability with the last substep's zero.
+        ww.emit(
+            candidate_count=4,
+            liquid_positions=liquid_positions,
+            liquid_velocities=liquid_velocities,
+            liquid_count=liquid_count,
+            churn=churn,
+            surface_sdf=surface_sdf,
+            leaf_table=grid.leaf_table,
+            voxels_dim=grid.voxels_dim,
+            leaves_dim=grid.leaves_dim,
+            origin=grid.origin,
+            voxel_size=grid.voxel_size,
+            dt=1.0,
+            churn_threshold=0.0,
+            emission_rate=100.0,
+            surface_band=10.0,
+            min_speed=0.0,
+            life_min=2.0,
+            life_max=1.0,
+            seed=123,
+        )
+        wp.synchronize_device(device)
+        diagnostics = ww.refresh_diagnostics()
+        outputs.append(ww.position.numpy().copy())
+        assert diagnostics["required"] == 8
+        assert diagnostics["available"] == 2
+        assert diagnostics["admitted"] == 2
+        assert diagnostics["dropped"] == 6
         assert diagnostics["status"] == "CAPACITY_EXHAUSTED"
         assert np.allclose(ww.life.numpy(), 2.0)
 
