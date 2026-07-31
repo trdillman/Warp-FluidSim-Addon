@@ -1058,7 +1058,8 @@ register_fn(k_source_resolve_type, "fluidSimSourceResolveType",
 # fluidSimSourceParticles: append externally provided particles
 # ---------------------------------------------------------------------------
 
-
+# Retained for the synthesized snippet-inventory compatibility contract. Live
+# direct injection uses the admission-gated owned-packet kernels below.
 @wp.kernel
 def k_source_particles(
     src_positions: wp.array(dtype=wp.vec3),
@@ -2115,8 +2116,6 @@ class SourcePipeline:
             (2, 2), dtype=float, device=self.device)
         self._height_profile_res = (2, 2)
         self._emit_seed = 12345
-        self._first_slot_dev = wp.zeros(
-            1, dtype=wp.int32, device=self.device)
         self._compiled_result = wp.zeros(
             2, dtype=wp.int32, device=self.device)
         # [required, admitted, emitted, invariant-overflow, available]. Count
@@ -2144,6 +2143,7 @@ class SourcePipeline:
             "required": 0, "available": int(owner.particles.capacity),
             "admitted": True,
         }
+        self.last_injection_result = None
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
         # Per-source initial-fill armed state, keyed by the stable descriptor
@@ -2170,6 +2170,7 @@ class SourcePipeline:
             compiler.release()
         self._compiled_batch = None
         self.last_diagnostics = ()
+        self.last_injection_result = None
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
         self._emission_transaction_active = False
@@ -2937,7 +2938,8 @@ class SourcePipeline:
                         wp.vec3(*settings.domain_min),
                         wp.vec3(*settings.domain_max),
                         wp.vec3(*height.velocity),
-                        1 if height.emit_particles else 0,
+                        1 if (height.emit_particles
+                              and self._legacy_liquid_target(height) > 0) else 0,
                         self._emission_state],
                 outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v,
                          owner.vel.w],

@@ -81,20 +81,42 @@ def main():
             SourceLifecycle.ONCE, SourceEvaluationCadence.STATIC,
             AnalyticRegionPlan(
                 shape=SourceShapeShape.BOX, position=(-0.45, -0.45, 0.9),
-                half_extents=(0.04, 0.04, 0.04)),
+                half_extents=(0.15, 0.15, 0.15)),
             PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
                         target_particles_per_voxel=1.0))
         solver.set_source_batch((legacy,), (direct, volume))
         solver.step_frame()
         first = solver.particles.refresh_host_count()
         fired = set(solver.sourcing._initial_fired)
-        assert first > 1
+        positions = solver.particles.position.numpy()[:first]
+        native_volume_count = int(np.count_nonzero(
+            np.linalg.norm(
+                positions - np.array((-0.45, -0.45, 0.9), np.float32),
+                axis=1) < 0.2))
+        native_direct_count = int(np.count_nonzero(
+            np.linalg.norm(
+                positions - np.array((0.45, 0.45, 0.9), np.float32),
+                axis=1) < 0.2))
+        legacy_count = int(np.count_nonzero(
+            np.linalg.norm(
+                positions - np.array((0.0, 0.0, 0.75), np.float32),
+                axis=1) < 0.3))
+        assert native_volume_count > 0
+        assert native_direct_count == 1
+        assert legacy_count > 0
         assert fired == {"legacy-mixed", "native-direct", "native-volume"}
         solver.step_frame()
         second = solver.particles.refresh_host_count()
         assert second == first
-        cases.append({"name": "mixed_once", "count": first,
-                      "fired": sorted(fired)})
+        cases.append({
+            "name": "mixed_once", "count": first,
+            "per_region": {
+                "legacy": legacy_count,
+                "native_volume": native_volume_count,
+                "native_direct": native_direct_count,
+            },
+            "fired": sorted(fired),
+        })
     finally:
         solver.release()
 

@@ -170,7 +170,7 @@ def commit_prepared_seeds(sess, prepared):
 def inject_object_particles(scene, obj, sess, velocity=(0.0, 0.0, 0.0)):
     """Compatibility one-shot using the prepare/commit transaction seam."""
     seed = prepare_object_particles(scene, obj, velocity)
-    return 0 if seed is None else commit_prepared_seeds(sess, (seed,))
+    return commit_prepared_seeds(sess, () if seed is None else (seed,))
 
 
 def inject_auto_seeds(scene, sess):

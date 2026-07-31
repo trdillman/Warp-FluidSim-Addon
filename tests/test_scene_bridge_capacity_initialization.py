@@ -53,6 +53,7 @@ class _Solver:
             admitted=admitted, emitted=emitted, required=required,
             available=available, capacity_limited=not admitted,
             total=self.particles.host_count)
+        self.sourcing.last_injection_result = result
         self.sourcing.last_apply_result = {
             "admitted": admitted, "required": required,
             "available": available, "emitted": emitted,
@@ -106,6 +107,23 @@ def test_prepared_auto_seed_batch_commits_all_when_exactly_fitting(monkeypatch):
     assert emitted == 3
     assert [len(item[0]) for item in solver.injected] == [1, 2]
     assert solver.particles.host_count == 4
+
+
+def test_empty_object_injection_clears_stale_capacity_refusal(monkeypatch):
+    _bridge, sources, _viewport = _modules(monkeypatch)
+    solver = _Solver(capacity=4, host_count=1)
+    solver.sourcing.last_injection_result = SimpleNamespace(admitted=False)
+    sess = SimpleNamespace(solver=solver)
+    monkeypatch.setattr(sources, "prepare_object_particles", lambda *_args: None)
+
+    emitted = sources.inject_object_particles(object(), object(), sess)
+
+    assert emitted == 0
+    result = solver.sourcing.last_injection_result
+    assert result.admitted is True
+    assert result.required == 0
+    assert result.emitted == 0
+    assert result.total == 1
 
 
 def test_session_step_rejects_capacity_limited_frame_before_publication(monkeypatch):

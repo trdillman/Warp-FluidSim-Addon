@@ -1533,3 +1533,43 @@ def test_phase1_point_injection_capacity_refusal_is_recoverable_cancel(monkeypat
     assert "5 slots" in reports[-1][1]
     assert "4" in reports[-1][1]
     assert "Max Particles" in reports[-1][1]
+
+
+def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import sources, viewport
+
+    sourcing_state = SimpleNamespace(last_injection_result=SimpleNamespace(
+        admitted=False, required=5, available=4))
+
+    class Solver:
+        sourcing = sourcing_state
+
+        def inject_particle_packets_exact(self, packets):
+            assert tuple(packets) == ()
+            result = SimpleNamespace(
+                admitted=True, emitted=0, required=0, available=4,
+                capacity_limited=False, total=0)
+            self.sourcing.last_injection_result = result
+            return result
+
+    sess = SimpleNamespace(active=True, solver=Solver())
+    monkeypatch.setattr(
+        operators, "_bridge", lambda: SimpleNamespace(session=lambda: sess))
+    monkeypatch.setattr(sources, "prepare_object_particles", lambda *_args: None)
+    viewport_updates = []
+    monkeypatch.setattr(
+        viewport, "update_outputs", lambda *_args: viewport_updates.append(_args))
+
+    reports = []
+    op = operators.FLUIDSIM_OT_inject_particles()
+    op.report = lambda level, message: reports.append((level, message))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status="Solver ready"))
+    obj = SimpleNamespace(name="Empty", type="MESH", particle_systems=[])
+
+    assert op.execute(SimpleNamespace(
+        scene=scene, active_object=obj)) == {"FINISHED"}
+    assert len(viewport_updates) == 1
+    assert reports[-1][0] == {"INFO"}
+    assert "Injected 0 particles" in reports[-1][1]

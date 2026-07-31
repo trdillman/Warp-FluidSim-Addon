@@ -73,12 +73,14 @@ def test_reset_clears_armed_state_and_invalidates_caches():
     pipeline._initial_fired = {"bucket"}
     pipeline._shape_array = object()  # stale cached device array
     pipeline._emit_shape_array = object()
+    pipeline.last_injection_result = object()
 
     pipeline.reset()
 
     assert pipeline._initial_fired == set()
     assert pipeline._shape_array is None
     assert pipeline._emit_shape_array is None
+    assert pipeline.last_injection_result is None
 
 
 def test_initial_fill_source_id_is_stable_identity_for_re_arm():
@@ -262,6 +264,30 @@ def test_height_fill_initial_fill_stops_injecting_mass_and_momentum():
     solver.release()
 
 
+def test_zero_rate_height_fill_matches_non_particle_grid_admission():
+    from fluidSim_warp_blender51.sim import constants as C
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    tracked_counts = []
+    for emit_particles in (False, True):
+        solver = FluidSolver(_settings(max_substeps=1))
+        solver.set_height_source(HeightSourceDesc(
+            enabled=True, base_height=0.4, back_mode=1,
+            emit_particles=emit_particles, emit_rate=0.0,
+            emission_mode=SourceEmissionMode.INITIAL_FILL))
+
+        _step(solver)
+
+        tracked = solver.voxel_type.data.numpy() & C.VOXEL_SOURCE_REGION_TRACKING
+        tracked_counts.append(int(np.count_nonzero(tracked)))
+        assert solver.particles.refresh_host_count() == 0
+        assert "builtin:height" not in solver.sourcing._initial_fired
+        solver.release()
+
+    assert tracked_counts[0] > 0
+    assert tracked_counts[1] == tracked_counts[0]
+
+
 def test_height_fill_over_capacity_does_not_stamp_or_consume_lifecycle():
     from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
 
@@ -312,6 +338,7 @@ def test_height_fill_still_applies_alongside_compiled_plan_sources():
 
 def test_mixed_source_batch_owns_each_representation_once():
     solver = FluidSolver(_settings(max_substeps=1))
+    assert solver.sourcing.last_injection_result is None
     legacy = _box_source(
         emission_mode=SourceEmissionMode.INITIAL_FILL,
         source_id="legacy-mixed", emit_rate=1.0)
@@ -326,7 +353,7 @@ def test_mixed_source_batch_owns_each_representation_once():
         SourceLifecycle.ONCE, SourceEvaluationCadence.STATIC,
         AnalyticRegionPlan(
             shape=SourceShapeShape.BOX, position=(-0.45, -0.45, 0.9),
-            half_extents=(0.04, 0.04, 0.04)),
+            half_extents=(0.15, 0.15, 0.15)),
         PayloadPlan(
             kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
             target_particles_per_voxel=1.0),
@@ -337,7 +364,25 @@ def test_mixed_source_batch_owns_each_representation_once():
     assert solver.sourcing.plans == (direct, volume)
     _step(solver)
     first_count = solver.particles.refresh_host_count()
-    assert first_count > 1
+    positions = solver.particles.position.numpy()[:first_count]
+    native_volume_count = int(np.count_nonzero(
+        np.linalg.norm(
+            positions - np.array((-0.45, -0.45, 0.9), np.float32), axis=1
+        ) < 0.2
+    ))
+    native_direct_count = int(np.count_nonzero(
+        np.linalg.norm(
+            positions - np.array((0.45, 0.45, 0.9), np.float32), axis=1
+        ) < 0.2
+    ))
+    legacy_count = int(np.count_nonzero(
+        np.linalg.norm(
+            positions - np.array((0.0, 0.0, 0.75), np.float32), axis=1
+        ) < 0.3
+    ))
+    assert native_volume_count > 0
+    assert native_direct_count == 1
+    assert legacy_count > 0
     assert solver.sourcing._initial_fired == {
         "legacy-mixed", "native-direct", "native-volume"}
 
