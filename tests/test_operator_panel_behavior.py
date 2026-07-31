@@ -751,7 +751,7 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
     assert scene.fluidsim.status.startswith("Live settings error:")
 
 
-def test_particles_per_voxel_live_refresh_rescales_automatic_st_mass(monkeypatch):
+def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     settings = SimpleNamespace(
@@ -773,12 +773,14 @@ def test_particles_per_voxel_live_refresh_rescales_automatic_st_mass(monkeypatch
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = scene_bridge._scene_identity(scene)
 
-    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.LIVE)
+    scene_bridge.request_scene_update(scene, scene_bridge.SceneUpdate.RESET)
 
-    assert settings.particles_per_voxel == 12.0
-    assert solver._st_reference_mass_cached == 6.0
-    assert scene.fluidsim.status == "Frame 4"
+    assert settings.particles_per_voxel == 8.0
+    assert solver._st_reference_mass_cached == 4.0
+    assert "particles_per_voxel" in scene_bridge._RESET_SETTING_FIELDS
+    assert "particles_per_voxel" not in scene_bridge._LIVE_SETTING_FIELDS
 
 
 def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
@@ -929,7 +931,8 @@ def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypat
     }
     assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._RESET_SETTING_FIELDS)
     assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._SURFACE_SETTING_FIELDS)
-    assert bridge._LIVE_REFRESH_SETTING_FIELDS == {"particles_per_voxel"}
+    assert bridge._LIVE_REFRESH_SETTING_FIELDS == set()
+    assert "particles_per_voxel" in bridge._RESET_SETTING_FIELDS
     enum_sources = {source for source, _enum in bridge._enum_setting_fields().values()}
     appliable = set(bridge._DIRECT_SETTING_FIELDS) | enum_sources
     assert (bridge._LIVE_SETTING_FIELDS | bridge._RESET_SETTING_FIELDS).issubset(
@@ -1338,7 +1341,9 @@ def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monke
 
     panel.draw(SimpleNamespace(scene=scene, active_object=source))
 
-    assert {"emission_mode", "emit_rate", "geometry_mode"}.issubset(layout.props)
+    assert {
+        "emission_mode", "source_sampling_mode", "emit_rate", "geometry_mode"
+    }.issubset(layout.props)
     assert {
         ("ANALYTIC", "Analytic Volume"),
         ("MESH", "Mesh Surface Shell"),
@@ -1346,7 +1351,7 @@ def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monke
                 for call in layout.prop_enum_calls})
     assert "source_mode" not in layout.props
     assert "height_back_mode" not in layout.props
-    assert any(call == {"name": "emit_rate", "text": "Target Particles / Voxel"}
+    assert any(call == {"name": "emit_rate", "text": "Legacy Absolute Target"}
                for call in layout.prop_calls)
     assert any(op["id"] == "fluidsim.tag_liquid_emitter"
                for op in layout.operators)

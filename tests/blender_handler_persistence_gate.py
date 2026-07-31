@@ -45,6 +45,7 @@ HANDLER_LISTS = (
 EXPECTED_HANDLERS = {
     "frame_change_post": {"_on_frame_change"},
     "load_pre": {"_on_load_pre"},
+    "load_post": {"_on_load_post"},
     "animation_playback_pre": {"_on_playback_pre"},
     "render_init": {"_on_render_init"},
     "render_complete": {"_on_render_end"},

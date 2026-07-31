@@ -399,6 +399,22 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     source_ui_schema_version: IntProperty(
         name="Source UI Schema", default=0, min=0,
         description="Non-destructive presentation schema marker")
+    source_sampling_mode: EnumProperty(
+        name="Source Fill Target",
+        items=[
+            ("INHERIT", "Inherit Simulation Sampling",
+             "Use the global Liquid Sampling target"),
+            ("MULTIPLIER", "Sampling Multiplier",
+             "Multiply global Liquid Sampling without changing spatial resolution"),
+            ("LEGACY_ABSOLUTE", "Legacy Absolute",
+             "Preserve the source's saved Target Particles / Voxel value"),
+        ],
+        default="LEGACY_ABSOLUTE", update=_request_reset,
+        description="Control source fill occupancy, not solver spatial resolution")
+    source_sampling_multiplier: FloatProperty(
+        name="Fill Multiplier", default=1.0, min=0.0, max=8.0,
+        update=_request_reset,
+        description="Multiply global Liquid Sampling for this source; zero disables liquid emission")
     source_region_kind: EnumProperty(
         name="Emission Region",
         items=[
@@ -564,8 +580,9 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
             "FIELD is the original pressure-influence mode and does not "
             "create liquid (pressure sourcing is not yet exposed in this port)"))
     emit_rate: FloatProperty(
-        name="Target Particles / Voxel", default=8.0, min=0.0, soft_max=32.0,
-        update=_request_sync,
+        name="Legacy Target Particles / Voxel", default=8.0, min=0.0,
+        max=64.0, soft_max=32.0,
+        update=_request_reset,
         description=(
             "Set target particle occupancy in each source voxel, not volume per second. "
             "Higher values create denser source liquid at greater capacity cost, while zero emits no particles"))
@@ -757,9 +774,9 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         options={"SKIP_SAVE"},
         description="Expand lower-priority resolution and domain alternatives")
     particles_per_voxel: IntProperty(
-        name="Particles / Voxel", default=8, min=1, max=64,
-        update=_request_live,
-        description="Set the target initial particle density in occupied cells; higher values sample liquid more densely and cost more memory and transfer work, while lower values are lighter but noisier")
+        name="Liquid Sampling", default=8, min=0, max=64,
+        update=_request_reset,
+        description="Set authoritative liquid rest density and inherited source occupancy; changing it requires Reset, while zero disables inherited liquid emission")
     sample_type: EnumProperty(
         name="Transfer", items=_items(ParticleSampleType), default="FLIP",
         update=_request_live,

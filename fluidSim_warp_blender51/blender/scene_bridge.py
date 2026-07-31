@@ -1333,11 +1333,11 @@ _HOT_SETTING_FIELDS = frozenset({
     "ww_bubble_drag", "ww_spray_drag",
 })
 
-_LIVE_REFRESH_SETTING_FIELDS = frozenset({"particles_per_voxel"})
+_LIVE_REFRESH_SETTING_FIELDS = frozenset()
 _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
-    "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
 })
 
@@ -2372,6 +2372,29 @@ def _on_load_pre(_filepath):
     _INTERACTION_STATES.clear()
 
 
+def migrate_source_sampling_schema(scene=None):
+    """Persist old source occupancy as LEGACY_ABSOLUTE without guessing intent."""
+    objects = (getattr(scene, "objects", ()) if scene is not None
+               else getattr(getattr(bpy, "data", None), "objects", ()))
+    migrated = 0
+    for obj in objects:
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or getattr(pg, "role", "NONE") != "SOURCE":
+            continue
+        if int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4:
+            continue
+        pg.source_sampling_mode = "LEGACY_ABSOLUTE"
+        pg.source_sampling_multiplier = 1.0
+        pg.source_ui_schema_version = 4
+        migrated += 1
+    return migrated
+
+
+@persistent
+def _on_load_post(_filepath):
+    migrate_source_sampling_schema()
+
+
 def register_handlers():
     # Deduplicate only -- registering must not release a live session.
     _remove_handlers()
@@ -2382,6 +2405,9 @@ def register_handlers():
         bpy.app.handlers.undo_post.append(_on_interaction_state_update)
     if hasattr(bpy.app.handlers, "load_pre"):
         bpy.app.handlers.load_pre.append(_on_load_pre)
+    if hasattr(bpy.app.handlers, "load_post"):
+        bpy.app.handlers.load_post.append(_on_load_post)
+    migrate_source_sampling_schema(getattr(bpy.context, "scene", None))
     # Build the solver ahead of the first frame change instead of from inside
     # frame_change_post. The render side is handled in render._on_render_init.
     if hasattr(bpy.app.handlers, "animation_playback_pre"):
@@ -2393,7 +2419,7 @@ def _remove_handlers():
     # render_init is deliberately absent: render.py owns that list, and clearing
     # it here would drop render._on_render_init depending on register order.
     for name in (
-            "depsgraph_update_post", "undo_post", "load_pre",
+            "depsgraph_update_post", "undo_post", "load_pre", "load_post",
             "animation_playback_pre"):
         if hasattr(bpy.app.handlers, name):
             handler_lists.append(getattr(bpy.app.handlers, name))

@@ -492,7 +492,18 @@ class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
                 _draw_volume_input(col, pg)
                 col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
             if kind != "POINTS" or pg.point_source_representation == "RASTERIZED_REGION":
-                col.prop(pg, "emit_rate", text="Target Particles / Voxel")
+                sampling_mode = getattr(
+                    pg, "source_sampling_mode", "LEGACY_ABSOLUTE")
+                col.prop(pg, "source_sampling_mode", text="Fill Target")
+                if sampling_mode == "MULTIPLIER":
+                    col.prop(pg, "source_sampling_multiplier", text="Fill Multiplier")
+                elif sampling_mode == "LEGACY_ABSOLUTE":
+                    col.prop(pg, "emit_rate", text="Legacy Absolute Target")
+                else:
+                    col.label(text=(
+                        f"Uses Simulation Liquid Sampling: "
+                        f"{context.scene.fluidsim.particles_per_voxel}"), icon="INFO")
+                col.label(text="Changes fill occupancy, not spatial resolution; Requires Reset")
             col.prop(pg, "initial_velocity")
             col.prop(pg, "use_object_velocity", text="Add Animated Object Velocity")
             _draw_source_status(box, pg)
