@@ -12,6 +12,8 @@ from enum import Enum
 import math
 from typing import Any, Mapping
 
+from .enums import SurfaceResolutionMode
+
 LEAF_DIM = 8
 MIN_VOXEL_SIZE = 1.0e-4
 MIN_SURFACE_FRACTION = 1.0 / 16.0
@@ -85,9 +87,21 @@ def _align(value: int, multiple: int) -> int:
     return ((int(value) + multiple - 1) // multiple) * multiple
 
 
+def _surface_resolution_mode(value: Any) -> int:
+    """Normalize Blender enum identifiers and runtime integer modes."""
+    if isinstance(value, str):
+        member = SurfaceResolutionMode.__members__.get(value.strip().upper())
+        if member is not None:
+            return int(member)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 def _surface_voxel_size(authored: AuthoredQualitySettings, voxel_size: float,
                         diagnostics: list[str]) -> float:
-    mode = int(authored.surface_resolution_mode)
+    mode = _surface_resolution_mode(authored.surface_resolution_mode)
     if mode == 2:
         custom = float(authored.surface_voxel_size)
         if math.isfinite(custom) and custom > 0.0:
@@ -114,7 +128,7 @@ def resolve_quality(authored_quality: AuthoredQualitySettings | Any,
             voxel_size=float(_value(authored_quality, "voxel_size", 0.1)),
             liquid_sampling=float(_value(
                 authored_quality, "particles_per_voxel", 8.0)),
-            surface_resolution_mode=int(_value(
+            surface_resolution_mode=_surface_resolution_mode(_value(
                 authored_quality, "surface_resolution_mode", 0)),
             surface_resolution_multiplier=float(_value(
                 authored_quality, "surface_resolution_multiplier", 1.0)),

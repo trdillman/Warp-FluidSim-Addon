@@ -30,6 +30,26 @@ def test_resolution_uses_ceil_then_fixed_eight_cell_alignment():
     assert quality.total_domain_leaf_cells == 12
 
 
+@pytest.mark.parametrize(
+    ("mode", "multiplier", "custom", "expected"),
+    [
+        ("SIMULATION", 2.0, 0.025, 0.1),
+        ("MULTIPLIER", 2.0, 0.025, 0.05),
+        ("CUSTOM", 2.0, 0.025, 0.025),
+    ],
+)
+def test_quality_accepts_blender_surface_resolution_identifiers(
+        mode, multiplier, custom, expected):
+    authored = SimpleNamespace(
+        voxel_size=0.1,
+        particles_per_voxel=8.0,
+        surface_resolution_mode=mode,
+        surface_resolution_multiplier=multiplier,
+        surface_voxel_size=custom,
+    )
+    assert resolve_quality(authored, BOUNDS).surface_voxel_size == pytest.approx(expected)
+
+
 def test_sparse_grid_consumes_exact_resolved_dimensions():
     quality = resolve_quality(AuthoredQualitySettings(voxel_size=0.1), BOUNDS)
     size = tuple(BOUNDS[1][i] - BOUNDS[0][i] for i in range(3))
