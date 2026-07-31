@@ -9,8 +9,6 @@
   ],
   "drop_radius": 0.045,
   "drop_speed": 3.5,
-  "max_speed": 4.5,
-  "flip_ratio": 0.97,
   "domain": [
     [
       0.0,

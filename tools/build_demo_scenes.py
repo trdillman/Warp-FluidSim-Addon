@@ -256,8 +256,6 @@ def build_dam_break():
     fs.max_particles = 600_000
     fs.min_substeps = 1
     fs.max_substeps = 16
-    fs.max_speed = 6.0
-    fs.relax_enabled = False
     fs.whitewater_enabled = True
     fs.ww_churn_gain = DAM_BREAK_WHITEWATER_CHURN_GAIN
     fs.profiling_enabled = False
@@ -323,8 +321,6 @@ def build_dam_break():
         "source_region_kind": "ANALYTIC",
         "source_target_particles_per_voxel": 8.0,
         "release_velocity": list(DAM_BREAK_RELEASE_VELOCITY),
-        "max_speed": 6.0,
-        "relax_enabled": False,
         "whitewater_churn_gain": DAM_BREAK_WHITEWATER_CHURN_GAIN,
         "source_object": src.name,
         "source_location": list(src.location),
@@ -354,7 +350,6 @@ def build_crown_splash():
     fs.max_particles = 600_000
     fs.min_substeps = 1
     fs.max_substeps = 24
-    fs.max_speed = 4.5
     fs.flip_ratio = 0.97
     fs.whitewater_enabled = True
     fs.ww_churn_gain = 2.0
@@ -382,8 +377,6 @@ def build_crown_splash():
         "drop_center": list(drop_center),
         "drop_radius": drop_radius,
         "drop_speed": drop_speed,
-        "max_speed": 4.5,
-        "flip_ratio": 0.97,
         "domain": [list(lo), list(hi)],
         "voxel_size": 0.01,
         "fps": FPS,

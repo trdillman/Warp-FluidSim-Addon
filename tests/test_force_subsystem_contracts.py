@@ -120,26 +120,6 @@ def test_force_stage_dispatches_all_enabled_global_force_kernels(monkeypatch):
     assert (solver.tmp_u, solver.tmp_v, solver.tmp_w) == ("tmp_u", "tmp_v", "tmp_w")
 
 
-def test_maintain_max_speed_is_the_final_particle_safety_bound():
-    solver = SimpleNamespace(
-        settings=SimpleNamespace(
-            cfl=1.0, max_speed=6.0, speed_limit_behavior=0),
-        grid=SimpleNamespace(voxel_size=0.03),
-    )
-    assert FluidSolver._particle_speed_limit(solver, 1.0 / 24.0) == 6.0
-
-
-def test_soft_speed_limit_modes_retain_cfl_safety_bound():
-    solver = SimpleNamespace(
-        settings=SimpleNamespace(
-            cfl=1.0, max_speed=6.0, speed_limit_behavior=1),
-        grid=SimpleNamespace(voxel_size=0.03),
-    )
-    # Percent/Acceleration are intentionally gradual. The final sanitizer only
-    # imposes the existing finite/CFL guard rather than silently hard-clamping.
-    assert FluidSolver._particle_speed_limit(solver, 1.0 / 24.0) == 50.0
-
-
 def _evaluate(desc, point=(1.0, 0.2, 0.3), velocity=(0.4, 0.5, 0.6)):
     fields = wp.array([desc.to_struct()], dtype=ForceFieldProxy, device="cpu")
     result = wp.zeros(1, dtype=wp.vec3, device="cpu")

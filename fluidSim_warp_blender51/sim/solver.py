@@ -1432,19 +1432,11 @@ class FluidSolver:
             device=self.device,
         )
 
-    def _particle_speed_limit(self, dt):
-        """Return the final particle safety bound for the authored mode."""
+    def _sanitize_particles(self, dt):
+        """Kill non-finite particles, clamp particle speeds."""
         s = self.settings
         g = self.grid
-        cfl_bound = max(s.cfl * g.voxel_size / dt * 2.0, 50.0)
-        if s.max_speed > 0.0 and int(s.speed_limit_behavior) == 0:
-            return min(cfl_bound, float(s.max_speed))
-        return cfl_bound
-
-    def _sanitize_particles(self, dt):
-        """Kill non-finite particles and enforce the final safety bound."""
-        s = self.settings
-        max_speed = self._particle_speed_limit(dt)
+        max_speed = max(s.cfl * g.voxel_size / dt * 2.0, 50.0)
         p = self.particles
         wp.launch(
             k_sanitize_particles, dim=self._np_dim(),
