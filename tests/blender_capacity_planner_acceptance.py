@@ -211,7 +211,8 @@ def main():
     approved_result = set(bpy.ops.fluidsim.apply_capacity_suggestion(
         "EXEC_DEFAULT",
         suggestion_key=recommended.key,
-        expected_scene_signature=addon_plan.scene_signature,
+        expected_scene_signature=(
+            scene_bridge.session().capacity_plan_signature_for_scene(scene)),
     ))
     assert approved_result == {"FINISHED"}
     assert int(fs.max_particles) == required_particles

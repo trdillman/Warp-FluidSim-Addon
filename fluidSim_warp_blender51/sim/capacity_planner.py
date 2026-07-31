@@ -389,8 +389,8 @@ def _adjustment_score(base: Mapping[str, Any], changes: Mapping[str, Any]) -> fl
     return score + max(0, semantic_count - 1) * 0.02
 
 
-def suggest_configurations(plan: CapacityPlan, settings: Any,
-                           resources: Mapping[str, Any]) -> tuple[CapacitySuggestion, ...]:
+def suggest_configurations(
+        plan: CapacityPlan, settings: Any) -> tuple[CapacitySuggestion, ...]:
     """Return ranked, non-mutating alternatives for a blocked plan.
 
     Capacity-only changes rank first because they preserve authored simulation

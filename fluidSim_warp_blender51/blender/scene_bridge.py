@@ -361,8 +361,7 @@ class Session:
             additional_transaction_bytes=additional_transaction_bytes)
         capacity_plan = replace(
             capacity_plan,
-            suggestions=suggest_configurations(
-                capacity_plan, settings, resources),
+            suggestions=suggest_configurations(capacity_plan, settings),
         )
         compiler.release()
         return ScenePlanningSnapshot(
@@ -372,14 +371,20 @@ class Session:
 
     def refresh_capacity_plan(self, scene):
         """Recompute a scene-owned warning/options model without mutation."""
-        from ..sim.memory_safety import vram_snapshot
+        from ..sim.memory_safety import estimate_solver_bytes, vram_snapshot
 
         settings = build_settings(scene)
+        live_solver_bytes = 0
         if self.owns_scene(scene):
             runtime_capacity = int(self.solver.particles.capacity)
             settings = replace(settings, max_particles=runtime_capacity)
+            # The displayed plan models the same transactional replacement
+            # peak as reset/reinitialize, including the authoritative solver.
+            live_solver_bytes = estimate_solver_bytes(self.solver.settings)
         resources = vram_snapshot(settings.device)
-        snapshot = self._plan_scene(scene, settings, resources)
+        snapshot = self._plan_scene(
+            scene, settings, resources,
+            additional_transaction_bytes=live_solver_bytes)
         return self._set_capacity_plan(scene, snapshot.capacity_plan)
 
     def _apply_scene_snapshot(
@@ -473,17 +478,25 @@ class Session:
         candidate_work_started = False
         replacement_committed = False
         snapshot = None
-        settings = None
         try:
             fs = scene.fluidsim
             settings = build_settings(scene)
-            from ..sim.memory_safety import assess_configuration, vram_snapshot
+            from ..sim.memory_safety import (
+                assess_configuration, estimate_solver_bytes, vram_snapshot,
+            )
 
             # One non-blocking live VRAM sample feeds both the legacy memory
-            # assessment and the source-capacity planner.
+            # assessment and the source-capacity planner. Reinitialization is
+            # transactional, so an owned solver remains resident until the
+            # fully prepared candidate commits; first initialization adds zero.
             resources = vram_snapshot(settings.device)
             memory_assessment = assess_configuration(settings, resources)
-            snapshot = self._plan_scene(scene, settings, resources)
+            live_solver_bytes = (
+                estimate_solver_bytes(self.solver.settings)
+                if self.owns_scene(scene) else 0)
+            snapshot = self._plan_scene(
+                scene, settings, resources,
+                additional_transaction_bytes=live_solver_bytes)
             initial_growth = None
             particle_blocker = next((
                 blocker for blocker in snapshot.capacity_plan.blockers
@@ -498,13 +511,18 @@ class Session:
                     int(settings.max_particles), int(particle_blocker.required))
                 candidate_settings = replace(settings, max_particles=target)
                 candidate_snapshot = self._plan_scene(
-                    scene, candidate_settings, resources)
+                    scene, candidate_settings, resources,
+                    additional_transaction_bytes=live_solver_bytes)
                 candidate_integrity = self._integrity_blockers(
                     candidate_snapshot.capacity_plan)
                 candidate_memory = any(
                     blocker.code == "MEMORY_ESTIMATE"
                     for blocker in candidate_snapshot.capacity_plan.blockers)
-                if not candidate_integrity and not candidate_memory:
+                if (not candidate_integrity
+                        and (not candidate_memory or ignore_memory_safeguard)):
+                    # The explicit operator bypass applies to the selected
+                    # grown candidate too; the retained blocked plan remains
+                    # marked as bypassed below rather than reported admitted.
                     initial_growth = (int(settings.max_particles), int(target))
                     settings = candidate_settings
                     snapshot = candidate_snapshot

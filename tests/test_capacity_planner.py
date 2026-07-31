@@ -87,7 +87,7 @@ def test_unknown_particle_demand_fails_closed_without_inventing_a_count():
     assert plan.particle_demand.value is None
     assert plan.particle_demand.quality is DemandQuality.UNKNOWN
     assert any(blocker.code == "PARTICLE_DEMAND_UNKNOWN" for blocker in plan.blockers)
-    assert suggest_configurations(plan, settings(), resources()) == ()
+    assert suggest_configurations(plan, settings()) == ()
 
 
 def test_leaf_union_is_deduplicated_and_expanded_within_domain():
@@ -134,7 +134,7 @@ def test_suggestions_are_immutable_estimates_and_do_not_mutate_settings():
         (), (), resources(),
     )
 
-    suggestions = suggest_configurations(plan, authored, resources())
+    suggestions = suggest_configurations(plan, authored)
 
     assert authored == original
     assert suggestions
@@ -159,7 +159,7 @@ def test_planner_exposes_domain_margin_and_balanced_alternatives_without_applyin
         (), (), resources(),
     )
 
-    suggestions = suggest_configurations(plan, authored, resources())
+    suggestions = suggest_configurations(plan, authored)
     labels = {item.label for item in suggestions}
 
     assert "Tighten empty X/Y/Z domain margins" in labels
