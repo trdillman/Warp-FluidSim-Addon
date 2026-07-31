@@ -499,6 +499,63 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
     assert sess.capacity_plan_operation == "INITIALIZE"
 
 
+def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene_a = SimpleNamespace(fluidsim=SimpleNamespace())
+    scene_b = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            profiling_enabled=False,
+            profiling_sync=False,
+            snippets=[],
+            status="before",
+        ),
+    )
+    old_settings = _Settings(max_particles=4_000_000)
+    sess = bridge.Session()
+    sess.solver = SimpleNamespace(
+        settings=old_settings,
+        particles=SimpleNamespace(capacity=4_000_000, host_count=0),
+        device="cuda:0",
+    )
+    sess.scene_identity = bridge._scene_identity(scene_a)
+    sess.scene_inputs = SimpleNamespace(clear=lambda: None)
+    monkeypatch.setattr(
+        bridge, "build_settings", lambda _scene: _Settings(max_particles=64))
+    blocker = SimpleNamespace(
+        code="PARTICLE_DEMAND_UNKNOWN", required=None, available=64,
+        message="unknown demand")
+    plan = SimpleNamespace(
+        blockers=(blocker,), estimated_bytes=0, budget_bytes=1024,
+        suggestions=(), scene_signature="cross-scene-init")
+    seen_residencies = []
+
+    def plan_scene(
+            _scene, _settings, _resources, *,
+            additional_transaction_bytes=0):
+        seen_residencies.append(additional_transaction_bytes)
+        return SimpleNamespace(capacity_plan=plan, seeds=())
+
+    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
+        "safe": True,
+        "estimated_bytes": 0,
+        "budget_bytes": 1024,
+        "resources": {},
+        "recommended": {},
+    })
+
+    with pytest.raises(RuntimeError, match="particle demand is unknown"):
+        sess.initialize(scene_b)
+
+    expected = memory_safety.estimate_solver_bytes(old_settings)
+    assert seen_residencies == [expected]
+    assert sess.solver is not None
+    assert sess.scene_identity == bridge._scene_identity(scene_a)
+    assert sess.capacity_plan_operation == "INITIALIZE"
+
+
 def test_owned_reset_refresh_uses_runtime_capacity_and_exact_residency(monkeypatch):
     _bridge_mod, scene, sess, old, _released, _planned, _prepared = _active_reset(
         monkeypatch, authored=4, runtime=12, demand=7, auto_grow=False)

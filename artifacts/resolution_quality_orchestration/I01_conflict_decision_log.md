@@ -45,6 +45,20 @@ The timed-out independent reviewer run `477fcabc-aab0-450f-b895-c734429009c4` wa
 
 This evidence is preserved as reviewer evidence only; no T02 implementation was recreated during I01.
 
+## Preserved timed-out IR01 reviewer evidence and accepted fix
+
+The timed-out cross-lane reviewer run `ccd6825c-ea8a-4e79-b6c5-b1c2fde74c19` was also preserved rather than restarted. Its original 9,957-byte probe, session/events/logs, and hashes are stored under:
+
+`C:/Users/Tyler/AppData/Local/Temp/fluidsim-resolution-quality-orchestration/recovered/ir01-timeout/`
+
+The recovered probe initially reported **1 failed, 5 passed** and exposed a real cross-scene peak-memory defect: scene-B initialization passed zero transaction residency while scene A's solver remained allocated until candidate commit. The accepted shared-seam fix makes `Session.initialize()` account for any existing solver, not only a solver owned by the target scene; genuine first initialization still passes zero. The checked-in regression `test_cross_scene_initialize_charges_existing_solver_residency` preserves that finding.
+
+Post-fix evidence:
+
+- recovered IR01 probe plus session transaction tests: **23 passed**;
+- full Python suite: **514 passed**;
+- real Blender/CUDA capacity acceptance: `CAPACITY-PLANNER-ACCEPTANCE-PASS`.
+
 ## Validation performed on the integrated tree
 
 - Focused union Python lane: 214 passed.

@@ -502,7 +502,7 @@ class Session:
 
             # One non-blocking live VRAM sample feeds both the legacy memory
             # assessment and the source-capacity planner. Reinitialization is
-            # transactional, so an owned solver remains resident until the
+            # transactional, so any existing solver remains resident until the
             # fully prepared candidate commits; first initialization adds zero.
             resources = vram_snapshot(settings.device)
             memory_assessment = assess_configuration(settings, resources)
@@ -510,7 +510,7 @@ class Session:
             plan_operation = "REINITIALIZE" if owns_scene else "INITIALIZE"
             live_solver_bytes = (
                 estimate_solver_bytes(self.solver.settings)
-                if owns_scene else 0)
+                if self.solver is not None else 0)
             snapshot = self._plan_scene(
                 scene, settings, resources,
                 additional_transaction_bytes=live_solver_bytes)
