@@ -51,7 +51,7 @@ def _bridge(monkeypatch):
 
 def _active_reset(
         monkeypatch, *, authored, runtime, demand, auto_grow=False,
-        prepare_error=None):
+        prepare_error=None, memory_blocked_at=None):
     bridge = _bridge(monkeypatch)
     scene = SimpleNamespace(
         frame_start=1,
@@ -100,16 +100,24 @@ def _active_reset(
 
     def plan_scene(_scene, settings, _resources):
         planned.append(int(settings.max_particles))
-        blockers = ()
+        blockers = []
         if demand > int(settings.max_particles):
-            blockers = (SimpleNamespace(
+            blockers.append(SimpleNamespace(
                 code="PARTICLE_CAPACITY",
                 required=demand,
                 available=int(settings.max_particles),
                 message="particle capacity",
-            ),)
+            ))
+        if (memory_blocked_at is not None
+                and int(settings.max_particles) >= memory_blocked_at):
+            blockers.append(SimpleNamespace(
+                code="MEMORY_ESTIMATE",
+                required=2_000,
+                available=1_000,
+                message="memory estimate",
+            ))
         plan = SimpleNamespace(
-            blockers=blockers,
+            blockers=tuple(blockers),
             scene_signature=f"capacity-{settings.max_particles}",
         )
         return SimpleNamespace(
@@ -177,6 +185,39 @@ def test_reset_autogrow_off_lowered_reserve_uses_grown_runtime_without_shrink(
     assert scene.fluidsim.max_particles == 4
     assert released == ["old"]
     assert old.particles.capacity == 12
+
+
+def test_reset_autogrow_rejects_memory_blocked_growth_candidate(monkeypatch):
+    _bridge_mod, scene, sess, old, released, planned, prepared = _active_reset(
+        monkeypatch,
+        authored=8,
+        runtime=8,
+        demand=10,
+        auto_grow=True,
+        memory_blocked_at=9,
+    )
+    authoritative = (
+        sess.solver, old.particles.payload, old.frame, old.stats,
+        sess.start_frame, sess.last_frame, sess.frame_stats,
+        sess.cache_written_start, sess.cache_written_end,
+        sess.cache_settings_records,
+    )
+
+    with pytest.raises(RuntimeError, match="required 10, available 8"):
+        sess.reset(scene)
+
+    assert planned[0] == 8
+    assert len(planned) == 2 and planned[1] > planned[0]
+    assert prepared == []
+    assert released == []
+    assert (
+        sess.solver, old.particles.payload, old.frame, old.stats,
+        sess.start_frame, sess.last_frame, sess.frame_stats,
+        sess.cache_written_start, sess.cache_written_end,
+        sess.cache_settings_records,
+    ) == authoritative
+    assert sess.capacity_plan_for_scene(scene).blockers[0].code == (
+        "PARTICLE_CAPACITY")
 
 
 def test_failed_empty_reset_replacement_preserves_authoritative_session(
@@ -301,7 +342,6 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     sess = bridge.Session()
     sess._set_capacity_plan(first, plan, memory_bypassed=True)
     sess.particle_capacity_notice_scene_identity = bridge._scene_identity(first)
-    sess.particle_capacity_notice = "first only"
 
     assert sess.capacity_plan_for_scene(first) is plan
     assert sess.capacity_plan_for_scene(second) is None
@@ -324,6 +364,48 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     assert global_session.capacity_plan is None
     assert global_session.capacity_plan_scene_identity is None
     assert global_session.capacity_plan_memory_bypassed is False
+
+
+def test_capacity_notice_uses_live_pool_after_growth_and_replacement(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=4))
+    sess = bridge.Session()
+    sess.scene_identity = bridge._scene_identity(scene)
+    sess.solver = SimpleNamespace(particles=SimpleNamespace(capacity=8))
+    sess.particle_capacity_notice_scene_identity = bridge._scene_identity(scene)
+
+    assert "Active pool 8; Initial Reserve 4" in (
+        sess.particle_capacity_notice_for_scene(scene))
+
+    # Playback growth mutates the authoritative pool in place.
+    sess.solver.particles.capacity = 65_536
+    assert "Active pool 65,536; Initial Reserve 4" in (
+        sess.particle_capacity_notice_for_scene(scene))
+
+    # A successful reset/reinitialize swaps in another authoritative solver.
+    sess.solver = SimpleNamespace(particles=SimpleNamespace(capacity=12))
+    assert "Active pool 12; Initial Reserve 4" in (
+        sess.particle_capacity_notice_for_scene(scene))
+
+
+def test_capacity_policy_edit_does_not_discard_another_scenes_plan(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    owner = SimpleNamespace()
+    edited = SimpleNamespace(fluidsim=SimpleNamespace(
+        max_particles=4,
+        auto_grow_particles=True,
+        particle_growth_failure_policy="DEFER",
+        status="",
+    ))
+    plan = SimpleNamespace(scene_signature="owner", suggestions=())
+    sess = bridge.session()
+    sess._set_capacity_plan(owner, plan)
+    monkeypatch.setattr(bridge, "_tag_view3d_redraw", lambda: None)
+
+    bridge.update_particle_capacity_policy(edited)
+
+    assert sess.capacity_plan_for_scene(owner) is plan
+    assert "Initial Reserve 4" in edited.fluidsim.status
 
 
 def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypatch):

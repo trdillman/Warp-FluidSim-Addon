@@ -102,7 +102,6 @@ class Session:
         self.capacity_plan_scene_identity = None
         self.capacity_plan_scene_signature = ""
         self.particle_capacity_notice_scene_identity = None
-        self.particle_capacity_notice = ""
         self.last_reported_growth_capacity = 0
         self.scene_inputs = SceneInputs()
         self.scene_identity = None
@@ -163,10 +162,35 @@ class Session:
             self._clear_capacity_plan()
 
     def particle_capacity_notice_for_scene(self, scene):
+        """Render a scene-owned capacity notice from current authoritative state."""
         if (scene is None or self.particle_capacity_notice_scene_identity
                 != _scene_identity(scene)):
             return ""
-        return self.particle_capacity_notice
+        fs = getattr(scene, "fluidsim", None)
+        authored = getattr(fs, "max_particles", None)
+        if authored is None:
+            return ""
+        authored = int(authored)
+        if self.owns_scene(scene):
+            runtime = int(self.solver.particles.capacity)
+            if authored < runtime:
+                return (
+                    f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                    "Reset keeps the active pool; Reinitialize applies the smaller "
+                    "reserve. The active pool never shrinks automatically.")
+            if authored > runtime:
+                return (
+                    f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                    "Reset uses the active pool; Reinitialize applies the larger "
+                    "reserve.")
+            return (
+                f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                "Growth policy applies live; Reinitialize recreates the pool.")
+        from ..sim.particle_capacity import MAX_AUTO_PARTICLES
+
+        return (
+            f"Initial Reserve {authored:,} will be allocated on Initialize; "
+            f"the auto-growth hard limit remains {MAX_AUTO_PARTICLES:,}.")
 
     def _clear_runtime(self):
         solver = self.solver
@@ -189,7 +213,6 @@ class Session:
         self.scene_key = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
-        self.particle_capacity_notice = ""
         del solver
         from ..sim.memory_safety import release_cuda_memory
         release_cuda_memory(device)
@@ -760,7 +783,12 @@ class Session:
             candidate_settings = replace(settings, max_particles=target)
             candidate_snapshot = self._plan_scene(
                 scene, candidate_settings, resources)
-            if not self._integrity_blockers(candidate_snapshot.capacity_plan):
+            candidate_integrity = self._integrity_blockers(
+                candidate_snapshot.capacity_plan)
+            candidate_memory = any(
+                blocker.code == "MEMORY_ESTIMATE"
+                for blocker in candidate_snapshot.capacity_plan.blockers)
+            if not candidate_integrity and not candidate_memory:
                 settings = candidate_settings
                 snapshot = candidate_snapshot
                 replacement_growth = (runtime_capacity, int(target))
@@ -1776,18 +1804,6 @@ def _apply_live_settings_safely(scene, sess: Session | None = None):
         return False
 
 
-def _apply_reset_solver_settings(scene, sess: Session | None = None):
-    """Apply hot and reset values in one bounded pass before state reset."""
-    sess = sess or session()
-    if not sess.owns_scene(scene):
-        return False
-    _apply_scene_settings(
-        scene.fluidsim, sess.solver.settings,
-        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
-    _apply_gravity(scene, sess.solver.settings)
-    return True
-
-
 def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     """Push current surface UI settings into an active solver frame."""
     sess = sess or session()
@@ -1931,47 +1947,27 @@ def _schedule_disposable_apply(scene):
 
 
 def update_particle_capacity_policy(scene):
-    """Apply policy live and persist truthful reserve/runtime next action."""
+    """Apply policy live and persist a scene-owned capacity notice marker."""
     sess = session()
     fs = scene.fluidsim
     if sess.owns_scene(scene):
         sess.solver.settings.auto_grow_particles = bool(fs.auto_grow_particles)
         sess.solver.settings.particle_growth_failure_policy = str(
             fs.particle_growth_failure_policy)
-        runtime = int(sess.solver.particles.capacity)
-        authored = int(fs.max_particles)
-        if authored < runtime:
-            notice = (
-                f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
-                "Reset keeps the active pool; Reinitialize applies the smaller "
-                "reserve. The active pool never shrinks automatically.")
-        elif authored > runtime:
-            notice = (
-                f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
-                "Reset uses the active pool; Reinitialize applies the larger "
-                "reserve.")
-        else:
-            notice = (
-                f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
-                "Growth policy applies live; Reinitialize recreates the pool.")
         sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
-        sess.particle_capacity_notice = notice
-        fs.status = notice
+        fs.status = sess.particle_capacity_notice_for_scene(scene)
         # Never leave suggestions computed from the old reserve/policy visible.
         had_scene_plan = (
             sess.capacity_plan is not None
             and sess.capacity_plan_scene_identity == _scene_identity(scene))
-        sess._clear_capacity_plan()
+        sess.invalidate_capacity_plan_for_scene(scene)
         if had_scene_plan:
             sess.refresh_capacity_plan(scene)
         _refresh_pending_state(scene, sess)
     else:
-        sess._clear_capacity_plan()
+        sess.invalidate_capacity_plan_for_scene(scene)
         sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
-        sess.particle_capacity_notice = (
-            f"Initial Reserve {int(fs.max_particles):,} will be allocated on "
-            "Initialize; the auto-growth hard limit remains 50,000,000.")
-        fs.status = sess.particle_capacity_notice
+        fs.status = sess.particle_capacity_notice_for_scene(scene)
     _tag_view3d_redraw()
 
 
