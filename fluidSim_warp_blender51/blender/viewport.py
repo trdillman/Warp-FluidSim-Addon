@@ -940,6 +940,12 @@ def _draw_overlay():
             f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
             f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
             f"{fs.stat_step_ms:.1f} ms/frame")
+        if fs.whitewater_enabled:
+            lines.append(
+                f"whitewater {fs.stat_whitewater_status}: required "
+                f"{fs.stat_whitewater_required:,}, admitted "
+                f"{fs.stat_whitewater_admitted:,}, dropped "
+                f"{fs.stat_whitewater_dropped:,}")
     if pending["action"] != "NONE":
         label = ("REINITIALIZE REQUIRED" if pending["action"] == "REINIT_PENDING"
                  else "RESTART REQUIRED")

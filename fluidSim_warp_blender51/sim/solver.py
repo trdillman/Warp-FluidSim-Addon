@@ -42,8 +42,8 @@ from .pressure import PressureSolver
 from .viscosity import ViscositySolver
 from .whitewater import (
     WhitewaterSystem,
+    normalized_life_range,
     k_compute_churn,
-    k_emit_whitewater,
     k_advect_whitewater,
     k_whitewater_set_grid_data,
 )
@@ -533,6 +533,13 @@ class FrameStats:
         self.active_particles = 0
         self.total_particles = 0
         self.whitewater_particles = 0
+        self.whitewater_required = 0
+        self.whitewater_available = 0
+        self.whitewater_admitted = 0
+        self.whitewater_dropped = 0
+        self.whitewater_policy = "FIXED_CAPACITY_DETERMINISTIC_DROPS"
+        self.whitewater_status = "OK"
+        self.whitewater_message = ""
         self.surface_voxel_size = 0.0
         self.surface_active_voxels = 0
         self.surface_active_leaves = 0
@@ -556,6 +563,13 @@ class FrameStats:
             "activeParticles": self.active_particles,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
+            "whitewaterRequired": self.whitewater_required,
+            "whitewaterAvailable": self.whitewater_available,
+            "whitewaterAdmitted": self.whitewater_admitted,
+            "whitewaterDropped": self.whitewater_dropped,
+            "whitewaterPolicy": self.whitewater_policy,
+            "whitewaterStatus": self.whitewater_status,
+            "whitewaterMessage": self.whitewater_message,
             "surfaceVoxelSize": self.surface_voxel_size,
             "surfaceActiveVoxels": self.surface_active_voxels,
             "surfaceActiveLeaves": self.surface_active_leaves,
@@ -647,7 +661,9 @@ class FluidSolver:
 
         self.particles = ParticleSystem(settings.max_particles, self.device)
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
-        self.whitewater = WhitewaterSystem(settings.max_whitewater, self.device)
+        self.whitewater = WhitewaterSystem(
+            settings.max_whitewater, self.device,
+            candidate_capacity=settings.max_particles)
 
         self.pressure_solver = PressureSolver(g, self.device)
         self.viscosity_solver = ViscositySolver(g, self.device)
@@ -762,15 +778,19 @@ class FluidSolver:
 
         grown_particles = None
         grown_bins = None
+        grown_whitewater_workspace = None
         try:
-            # The old pool remains authoritative until every allocation and
-            # copy has completed successfully.
+            # The old pools remain authoritative until every allocation and
+            # copy, including deterministic whitewater emission scratch, has
+            # completed successfully.
             grown_particles = self.particles.resized_copy(plan.target)
             grown_bins = ParticleBins(
                 plan.target, self.grid.voxel_capacity, self.device)
+            grown_whitewater_workspace = (
+                self.whitewater.allocate_candidate_workspace(plan.target))
             wp.synchronize_device(self.device)
         except Exception as exc:  # noqa: BLE001 - CUDA allocation surface
-            del grown_particles, grown_bins
+            del grown_particles, grown_bins, grown_whitewater_workspace
             gc.collect()
             release_cuda_memory(self.device)
             result = ParticleGrowthResult(
@@ -783,6 +803,7 @@ class FluidSolver:
         old_particles, old_bins = self.particles, self.bins
         self.particles = grown_particles
         self.bins = grown_bins
+        self.whitewater.swap_candidate_workspace(grown_whitewater_workspace)
         self.settings.max_particles = int(plan.target)
         self._host_frame_cache = None
         sourcing = getattr(self, "sourcing", None)
@@ -1510,9 +1531,13 @@ class FluidSolver:
         """Rebuild current-frame surface data after realtime setting changes."""
         self.surface.rebuild()
 
-    def _whitewater(self, dt):
+    def _whitewater(self, dt, sdf_ready=True):
         s = self.settings
         if not s.whitewater_enabled:
+            return
+        if not sdf_ready:
+            self.whitewater.mark_sdf_unavailable(
+                getattr(self.surface, "solver_sdf_error", ""))
             return
         g = self.grid
         p = self.particles
@@ -1527,23 +1552,37 @@ class FluidSolver:
         self._whitewater_emit_seed = (
             self._whitewater_emit_seed * 1664525 + 1013904223
         ) & 0x7FFFFFFF
-        wp.launch(
-            k_emit_whitewater, dim=self._np_dim(),
-            inputs=[p.position, p.velocity, p.count,
-                    self.churn.data, self.surface_sdf.data,
-                    g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, s.voxel_size, dt,
-                    s.ww_churn_threshold, s.ww_emission_rate,
-                    s.ww_surface_band * s.voxel_size, s.ww_min_speed,
-                    s.ww_life_min, s.ww_life_max,
-                    self._whitewater_emit_seed, ww.capacity],
-            outputs=[ww.position, ww.velocity, ww.age, ww.life,
-                     ww.alive, ww.count, ww.free_slots, ww.free_count],
-            device=self.device,
+        life_min, life_max = normalized_life_range(
+            s.ww_life_min, s.ww_life_max)
+        ww.emit(
+            candidate_count=self._np_dim(),
+            liquid_positions=p.position,
+            liquid_velocities=p.velocity,
+            liquid_count=p.count,
+            churn=self.churn.data,
+            surface_sdf=self.surface_sdf.data,
+            leaf_table=g.leaf_table,
+            voxels_dim=g.voxels_dim,
+            leaves_dim=g.leaves_dim,
+            origin=g.origin,
+            voxel_size=s.voxel_size,
+            dt=dt,
+            churn_threshold=s.ww_churn_threshold,
+            emission_rate=s.ww_emission_rate,
+            surface_band=s.ww_surface_band * s.voxel_size,
+            min_speed=s.ww_min_speed,
+            life_min=life_min,
+            life_max=life_max,
+            seed=self._whitewater_emit_seed,
         )
-        # Kernels guard on the device-resident count, avoiding a stream barrier
-        # and scalar readback between substeps.
-        nww = ww.capacity
+        # Bound advection by the prior live prefix plus this substep's maximum
+        # possible admissions. Kernels still guard on the device count, so no
+        # scalar readback or stream barrier is introduced.
+        self._whitewater_launch_bound = min(
+            ww.capacity,
+            getattr(self, "_whitewater_launch_bound", ww.host_count)
+            + self._np_dim())
+        nww = max(1, self._whitewater_launch_bound)
         wp.launch(
             k_advect_whitewater, dim=nww,
             inputs=[ww.position, ww.velocity, ww.age, ww.life,
@@ -1657,6 +1696,8 @@ class FluidSolver:
             int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
             self._whitewater_topology_expand(frame_dt),
         )
+        self.whitewater.reset_frame_diagnostics()
+        self._whitewater_launch_bound = self.whitewater.host_count
         for substep_index in range(substeps):
             self.snippets.run(CustomKernelOrder.FIRST_STEP, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
@@ -1704,9 +1745,9 @@ class FluidSolver:
                 self._lifecycle(dt)
             with self._phase("relax"):
                 self._relax()
-            self.surface.after_substep()
+            sdf_ready = self.surface.after_substep()
             with self._phase("whitewater"):
-                self._whitewater(dt)
+                self._whitewater(dt, sdf_ready=sdf_ready)
             self.snippets.run(CustomKernelOrder.FINAL_STEP, self, time_ctx)
             self.sim_time += dt
             time_ctx["time"] = self.sim_time
@@ -1719,6 +1760,7 @@ class FluidSolver:
 
         wp.synchronize_device(self.device)
         self.grid.refresh_topology_counts()
+        whitewater_diagnostics = self.whitewater.refresh_diagnostics()
 
         st = self.stats
         st.step_time = _time.perf_counter() - t_start
@@ -1730,6 +1772,13 @@ class FluidSolver:
         st.active_particles = self.particles.refresh_host_count()
         st.total_particles = self.particles.capacity
         st.whitewater_particles = whitewater_particles
+        st.whitewater_required = whitewater_diagnostics["required"]
+        st.whitewater_available = whitewater_diagnostics["available"]
+        st.whitewater_admitted = whitewater_diagnostics["admitted"]
+        st.whitewater_dropped = whitewater_diagnostics["dropped"]
+        st.whitewater_policy = whitewater_diagnostics["policy"]
+        st.whitewater_status = whitewater_diagnostics["status"]
+        st.whitewater_message = whitewater_diagnostics["message"]
         surface_metadata = self.surface.metadata()
         st.surface_voxel_size = float(surface_metadata["voxel_size"])
         st.surface_active_leaves = surface_metadata["active_leaves"]

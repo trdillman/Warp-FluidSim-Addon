@@ -70,18 +70,19 @@ def test_surface_pipeline_observes_substep_frame_and_manual_cadence():
         whitewater_enabled=False,
     ), _phase=lambda _name: nullcontext())
     pipeline.build = lambda build_render=True, build_lowres=None: calls.append(
-        (build_render, build_lowres))
+        ("render", build_render, build_lowres))
+    pipeline.ensure_solver_sdf_current = lambda: calls.append(("solver_sdf",)) or True
 
     pipeline.after_substep()
     pipeline.after_frame()
-    assert calls == [(True, True)]
+    assert calls == [("render", True, True)]
 
     calls.clear()
     pipeline.solver.settings.surface_update_cadence = SurfaceUpdateCadence.FRAME
     pipeline.solver.settings.whitewater_enabled = True
     pipeline.after_substep()
     pipeline.after_frame()
-    assert calls == [(False, True), (True, False)]
+    assert calls == [("solver_sdf",), ("render", True, False)]
 
     calls.clear()
     pipeline.solver.settings.surface_update_cadence = SurfaceUpdateCadence.MANUAL
@@ -89,6 +90,24 @@ def test_surface_pipeline_observes_substep_frame_and_manual_cadence():
     pipeline.after_substep()
     pipeline.after_frame()
     assert calls == []
+
+
+def test_whitewater_solver_sdf_ignores_render_mesh_enablement():
+    calls = []
+    pipeline = object.__new__(SurfacePipeline)
+    pipeline.solver = SimpleNamespace(settings=SimpleNamespace(
+        surface_enabled=False,
+        surface_build_lowres_sdf=False,
+        surface_update_cadence=SurfaceUpdateCadence.MANUAL,
+        whitewater_enabled=True,
+    ), _phase=lambda _name: nullcontext())
+    pipeline.ensure_solver_sdf_current = lambda: calls.append("solver_sdf") or True
+    pipeline.build = lambda **_kwargs: calls.append("render")
+
+    assert pipeline.after_substep() is True
+    pipeline.after_frame()
+
+    assert calls == ["solver_sdf"]
 
 
 def test_surface_metadata_reports_active_render_grid():

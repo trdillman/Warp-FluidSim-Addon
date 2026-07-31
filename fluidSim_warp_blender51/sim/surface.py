@@ -52,6 +52,8 @@ class SurfacePipeline:
         self.mesh_cache = None
         self.mesh_key = None
         self.built_key = None
+        self.solver_sdf_key = None
+        self.solver_sdf_error = ""
 
     def mode(self):
         from .enums import SurfaceResolutionMode
@@ -187,37 +189,83 @@ class SurfacePipeline:
             self.topology_generation += 1
         return self.nvox
 
+    def solver_sdf_build_key(self):
+        solver, s = self.solver, self.solver.settings
+        return (
+            int(getattr(solver, "frame", 0)),
+            round(float(getattr(solver, "sim_time", 0.0)), 12),
+            round(float(s.voxel_size), 12),
+            round(float(s.particle_radius_scale), 6),
+            int(s.surface_splat_radius),
+            int(s.surface_filter_type), int(s.surface_filter_iterations),
+            round(float(s.surface_filter_strength), 6),
+            int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6),
+            int(s.surface_erode_iterations), round(float(s.surface_erode_strength), 6),
+            int(s.surface_smooth_type), int(s.surface_smooth_iterations),
+            round(float(s.surface_smooth_strength), 6),
+        )
+
+    def ensure_solver_sdf_current(self):
+        """Build the simulation-grid SDF independently of render surfacing.
+
+        Whitewater calls this immediately before emission/advection. Launch
+        failures are converted to a dependency result so whitewater can fail
+        closed instead of sampling zero-initialized or stale storage.
+        """
+        solver, s = self.solver, self.solver.settings
+        key = self.solver_sdf_build_key()
+        if getattr(self, "solver_sdf_key", None) == key:
+            return True
+        try:
+            positions = solver._surface_positions()
+            self.build_sdf(
+                solver.grid, self.sdf, self.tmp, solver._nvox, positions,
+                float(s.voxel_size))
+        except Exception as exc:  # noqa: BLE001 - dependency boundary
+            self.solver_sdf_key = None
+            self.solver_sdf_error = f"Simulation liquid SDF unavailable: {exc}"
+            return False
+        self.solver_sdf_key = key
+        self.solver_sdf_error = ""
+        return True
+
     def build(self, build_render=True, build_lowres=None):
         solver, s = self.solver, self.solver.settings
-        if not s.surface_enabled:
-            return
         if build_lowres is None:
             build_lowres = bool(getattr(s, "surface_build_lowres_sdf", True))
+        if build_lowres and not self.ensure_solver_sdf_current():
+            if build_render and s.surface_enabled:
+                raise RuntimeError(self.solver_sdf_error)
+            return False
+        if not build_render or not s.surface_enabled:
+            return True
         positions = solver._surface_positions()
-        if build_lowres:
-            self.build_sdf(solver.grid, self.sdf, self.tmp, solver._nvox, positions, float(s.voxel_size))
-        if not build_render:
-            return
         self.ensure_resources()
         if self.grid is solver.grid:
-            if not build_lowres:
-                self.build_sdf(solver.grid, self.sdf, self.tmp, solver._nvox, positions, float(s.voxel_size))
+            if not build_lowres and not self.ensure_solver_sdf_current():
+                raise RuntimeError(self.solver_sdf_error)
             self.nvox = solver._nvox
         else:
             self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size))
         self.built_key = self.build_key()
         self.invalidate()
+        return True
 
     def after_substep(self):
         from .enums import SurfaceUpdateCadence
 
         s = self.solver.settings
+        sdf_ready = True
         with self.solver._phase("surface"):
+            # The solver-grid SDF is a whitewater dependency, not a render
+            # product. Always refresh it before whitewater, regardless of
+            # render mesh enablement, visibility, resolution, or cadence.
+            if s.whitewater_enabled:
+                sdf_ready = self.ensure_solver_sdf_current()
             cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
-            if cadence == int(SurfaceUpdateCadence.SUBSTEP):
-                self.build(build_render=True, build_lowres=True)
-            elif s.whitewater_enabled:
-                self.build(build_render=False, build_lowres=True)
+            if s.surface_enabled and cadence == int(SurfaceUpdateCadence.SUBSTEP):
+                self.build(build_render=True, build_lowres=not s.whitewater_enabled)
+        return sdf_ready
 
     def after_frame(self):
         from .enums import SurfaceUpdateCadence
@@ -236,6 +284,8 @@ class SurfacePipeline:
 
     def reset(self):
         self.built_key = None
+        self.solver_sdf_key = None
+        self.solver_sdf_error = ""
         self.invalidate()
         self.extractor.reset_buffers()
         self.grid_key = None

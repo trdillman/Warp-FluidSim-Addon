@@ -739,6 +739,11 @@ class Session:
         fs.stat_particles = stats.active_particles
         fs.stat_voxels = stats.active_voxels
         fs.stat_whitewater = stats.whitewater_particles
+        fs.stat_whitewater_required = int(getattr(stats, "whitewater_required", 0))
+        fs.stat_whitewater_admitted = int(getattr(stats, "whitewater_admitted", 0))
+        fs.stat_whitewater_dropped = int(getattr(stats, "whitewater_dropped", 0))
+        fs.stat_whitewater_policy = str(getattr(stats, "whitewater_policy", ""))
+        fs.stat_whitewater_status = str(getattr(stats, "whitewater_status", "OK"))
         fs.stat_step_ms = stats.step_time * 1000.0
         fs.stat_substeps = stats.substeps
         fs.stat_cfl_clamped = stats.cfl_substeps_clamped
@@ -749,10 +754,12 @@ class Session:
             capacity_notice = (
                 f"Particle capacity grew {int(growth.previous):,} → "
                 f"{int(growth.current):,}")
+        whitewater_notice = str(getattr(stats, "whitewater_message", "") or "")
+        notices = [notice for notice in (capacity_notice, whitewater_notice) if notice]
         fs.status = (
             f"Frame {self.solver.frame}: {stats.active_particles:,} particles, "
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
-            + (f" — {capacity_notice}" if capacity_notice else "")
+            + (f" — {'; '.join(notices)}" if notices else "")
         )
         viewport.update_outputs(scene, self)
         if write_cache and fs.cache_enabled:
@@ -811,6 +818,12 @@ class Session:
         viewport.update_outputs_from_cache_frame(scene, frame_data)
         fs.stat_particles = len(frame_data.get("positions", ()))
         fs.stat_whitewater = len(frame_data.get("whitewater", ()))
+        scalar = lambda key, default=0: frame_data.get(key, default).item() if hasattr(frame_data.get(key, default), "item") else frame_data.get(key, default)
+        fs.stat_whitewater_required = int(scalar("whitewater_required"))
+        fs.stat_whitewater_admitted = int(scalar("whitewater_admitted"))
+        fs.stat_whitewater_dropped = int(scalar("whitewater_dropped"))
+        fs.stat_whitewater_policy = str(scalar("whitewater_policy", "UNAVAILABLE_OLD_CACHE"))
+        fs.stat_whitewater_status = str(scalar("whitewater_status", "UNAVAILABLE_OLD_CACHE"))
         fs.stat_voxels = 0
         fs.stat_step_ms = 0.0
         fs.stat_substeps = 0

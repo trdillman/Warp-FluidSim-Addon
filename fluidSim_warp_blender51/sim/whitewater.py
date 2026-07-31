@@ -24,6 +24,36 @@ from .particles import k_clamp_count
 from .registry import register_fn
 
 
+WHITEWATER_POLICY_FIXED_CAPACITY = "FIXED_CAPACITY_DETERMINISTIC_DROPS"
+WHITEWATER_STATUS_OK = "OK"
+WHITEWATER_STATUS_CAPACITY_EXHAUSTED = "CAPACITY_EXHAUSTED"
+WHITEWATER_STATUS_SDF_UNAVAILABLE = "SDF_DEPENDENCY_UNAVAILABLE"
+
+
+def normalized_life_range(life_min, life_max):
+    """Return a non-negative, ordered lifetime interval."""
+    minimum = max(0.0, float(life_min))
+    return minimum, max(minimum, float(life_max))
+
+
+def deterministic_admission(candidate_flags, *, live_count, free_count, capacity):
+    """Pure reference for the fixed-capacity, liquid-tid admission contract."""
+    winners = tuple(index for index, flag in enumerate(candidate_flags) if flag)
+    required = len(winners)
+    free = max(0, min(int(free_count), int(capacity)))
+    tail = max(0, int(capacity) - max(0, int(live_count)))
+    available = min(int(capacity), free + tail)
+    admitted = min(required, available)
+    return {
+        "policy": WHITEWATER_POLICY_FIXED_CAPACITY,
+        "required": required,
+        "available": available,
+        "admitted": admitted,
+        "dropped": required - admitted,
+        "winner_tids": winners[:admitted],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Churn: measure of local turbulence used to drive whitewater emission.
 # ---------------------------------------------------------------------------
@@ -113,7 +143,7 @@ register_fn(k_compute_churn, "fluidSimComputeChurn",
 
 
 @wp.kernel
-def k_emit_whitewater(
+def k_mark_whitewater_candidates(
     liquid_positions: wp.array(dtype=wp.vec3),
     liquid_velocities: wp.array(dtype=wp.vec3),
     liquid_count: wp.array(dtype=wp.int32),
@@ -129,29 +159,17 @@ def k_emit_whitewater(
     emission_rate: float,
     surface_band: float,
     min_speed: float,
-    life_min: float,
-    life_max: float,
     seed: int,
-    ww_capacity: int,
-    ww_positions: wp.array(dtype=wp.vec3),
-    ww_velocities: wp.array(dtype=wp.vec3),
-    ww_age: wp.array(dtype=float),
-    ww_life: wp.array(dtype=float),
-    ww_alive: wp.array(dtype=wp.int32),
-    ww_count: wp.array(dtype=wp.int32),
-    ww_free_slots: wp.array(dtype=wp.int32),
-    ww_free_count: wp.array(dtype=wp.int32),
+    candidates: wp.array(dtype=wp.int32),
 ):
-    """Emit whitewater from liquid particles that are near the surface,
-    in churny regions and moving fast enough. Emission probability is
-    churn * emission_rate * dt."""
+    """Mark probability-passing candidates without mutating the output pool."""
     tid = wp.tid()
+    candidates[tid] = 0
     if tid >= liquid_count[0]:
         return
     p = liquid_positions[tid]
     vel = liquid_velocities[tid]
-    speed = wp.length(vel)
-    if speed < min_speed:
+    if wp.length(vel) < min_speed:
         return
     vp = world_to_voxel(p, origin, voxel_size)
     flat = voxel_flat_index(
@@ -168,36 +186,114 @@ def k_emit_whitewater(
     )
     if wp.abs(sdf) > surface_band:
         return
-
     state = wp.rand_init(seed, tid)
     prob = wp.clamp((c - churn_threshold) * emission_rate * dt, 0.0, 1.0)
-    if wp.randf(state) > prob:
-        return
+    if wp.randf(state) <= prob:
+        candidates[tid] = 1
 
-    free_before = wp.atomic_sub(ww_free_count, 0, 1)
-    slot = -1
-    if free_before > 0:
-        slot = ww_free_slots[free_before - 1]
-    else:
-        wp.atomic_add(ww_free_count, 0, 1)
-        slot = wp.atomic_add(ww_count, 0, 1)
-        if slot >= ww_capacity:
-            wp.atomic_sub(ww_count, 0, 1)
-            return
+
+@wp.kernel
+def k_prepare_whitewater_admission(
+    candidates: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    candidate_count: int,
+    ww_count: wp.array(dtype=wp.int32),
+    ww_free_count: wp.array(dtype=wp.int32),
+    ww_capacity: int,
+    plan: wp.array(dtype=wp.int32),
+    diagnostics: wp.array(dtype=wp.int32),
+):
+    """Count candidates and publish a device-only deterministic admission plan."""
+    required = offsets[candidate_count - 1] + candidates[candidate_count - 1]
+    live_before = ww_count[0]
+    if live_before < 0:
+        live_before = 0
+    if live_before > ww_capacity:
+        live_before = ww_capacity
+    free_before = ww_free_count[0]
+    if free_before < 0:
+        free_before = 0
+    if free_before > ww_capacity:
+        free_before = ww_capacity
+    available = free_before + (ww_capacity - live_before)
+    if available > ww_capacity:
+        available = ww_capacity
+    admitted = required
+    if admitted > available:
+        admitted = available
+    plan[0] = required
+    plan[1] = admitted
+    plan[2] = free_before
+    plan[3] = live_before
+    diagnostics[0] = diagnostics[0] + required
+    diagnostics[1] = diagnostics[1] + admitted
+    diagnostics[2] = diagnostics[2] + (required - admitted)
+    diagnostics[3] = available
+
+
+@wp.kernel
+def k_commit_whitewater_candidates(
+    liquid_positions: wp.array(dtype=wp.vec3),
+    liquid_velocities: wp.array(dtype=wp.vec3),
+    candidates: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    life_min: float,
+    life_max: float,
+    seed: int,
+    ww_free_slots: wp.array(dtype=wp.int32),
+    plan: wp.array(dtype=wp.int32),
+    ww_positions: wp.array(dtype=wp.vec3),
+    ww_velocities: wp.array(dtype=wp.vec3),
+    ww_age: wp.array(dtype=float),
+    ww_life: wp.array(dtype=float),
+    ww_alive: wp.array(dtype=wp.int32),
+):
+    """Commit ascending-liquid-tid winners to free slots, then the pool tail."""
+    tid = wp.tid()
+    if candidates[tid] == 0:
+        return
+    rank = offsets[tid]
+    if rank >= plan[1]:
+        return
+    free_before = plan[2]
+    slot = plan[3] + rank - free_before
+    if rank < free_before:
+        slot = ww_free_slots[free_before - 1 - rank]
+
+    # Reconsume the predicate draw so jitter/lifetime retain the prior stream.
+    state = wp.rand_init(seed, tid)
+    wp.randf(state)
     jitter = wp.vec3(
         (wp.randf(state) - 0.5) * voxel_size,
         (wp.randf(state) - 0.5) * voxel_size,
         (wp.randf(state) - 0.5) * voxel_size,
     )
-    ww_positions[slot] = p + jitter
-    ww_velocities[slot] = vel
+    ww_positions[slot] = liquid_positions[tid] + jitter
+    ww_velocities[slot] = liquid_velocities[tid]
     ww_age[slot] = 0.0
     ww_life[slot] = life_min + wp.randf(state) * (life_max - life_min)
     ww_alive[slot] = 1
 
 
-register_fn(k_emit_whitewater, "fluidSimEmitWhiteWater",
-            notes="Probabilistic surface-band emission driven by churn.")
+@wp.kernel
+def k_finalize_whitewater_admission(
+    plan: wp.array(dtype=wp.int32),
+    ww_count: wp.array(dtype=wp.int32),
+    ww_free_count: wp.array(dtype=wp.int32),
+):
+    admitted = plan[1]
+    free_used = admitted
+    if free_used > plan[2]:
+        free_used = plan[2]
+    ww_free_count[0] = plan[2] - free_used
+    ww_count[0] = plan[3] + admitted - free_used
+
+
+register_fn(k_mark_whitewater_candidates, "fluidSimMarkWhiteWaterCandidates",
+            notes="Deterministic probability candidate marking in liquid tid order.")
+register_fn(k_commit_whitewater_candidates, "fluidSimEmitWhiteWater",
+            notes="Fixed-capacity deterministic admission with explicit drops.")
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +458,10 @@ register_fn(k_whitewater_set_grid_data, "fluidSimWhiteWaterSetGridData",
 
 
 class WhitewaterSystem:
-    def __init__(self, capacity, device):
+    def __init__(self, capacity, device, candidate_capacity=None):
         self.capacity = int(capacity)
+        self.candidate_capacity = max(
+            1, int(self.capacity if candidate_capacity is None else candidate_capacity))
         self.device = device
         self.position = wp.zeros(self.capacity, dtype=wp.vec3, device=device)
         self.velocity = wp.zeros(self.capacity, dtype=wp.vec3, device=device)
@@ -381,12 +479,130 @@ class WhitewaterSystem:
         self._life2 = wp.zeros_like(self.life)
         self._scan = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self._count2 = wp.zeros(1, dtype=wp.int32, device=device)
+        # Emission scans only the active liquid prefix, never whitewater capacity.
+        self.candidates = wp.zeros(
+            self.candidate_capacity, dtype=wp.int32, device=device)
+        self.candidate_offsets = wp.zeros_like(self.candidates)
+        self.admission_plan = wp.zeros(4, dtype=wp.int32, device=device)
+        # required, admitted, dropped (frame totals), available (last substep)
+        self.diagnostics = wp.zeros(4, dtype=wp.int32, device=device)
+        self.last_diagnostics = {
+            "policy": WHITEWATER_POLICY_FIXED_CAPACITY,
+            "status": WHITEWATER_STATUS_OK,
+            "required": 0,
+            "available": self.capacity,
+            "admitted": 0,
+            "dropped": 0,
+            "message": "",
+        }
+        self._dependency_error = ""
 
     def clear(self):
         self.count.zero_()
         self.alive.zero_()
         self.free_count.zero_()
         self.host_count = 0
+        self.reset_frame_diagnostics()
+
+    def reset_frame_diagnostics(self):
+        self.diagnostics.zero_()
+        self.admission_plan.zero_()
+        self._dependency_error = ""
+        self.last_diagnostics = {
+            "policy": WHITEWATER_POLICY_FIXED_CAPACITY,
+            "status": WHITEWATER_STATUS_OK,
+            "required": 0,
+            "available": self.capacity,
+            "admitted": 0,
+            "dropped": 0,
+            "message": "",
+        }
+
+    def allocate_candidate_workspace(self, capacity):
+        """Allocate replacement emission scratch without mutating live state."""
+        capacity = max(1, int(capacity))
+        candidates = wp.zeros(capacity, dtype=wp.int32, device=self.device)
+        return candidates, wp.zeros_like(candidates)
+
+    def swap_candidate_workspace(self, workspace):
+        """Commit a fully allocated candidate workspace."""
+        candidates, offsets = workspace
+        self.candidates = candidates
+        self.candidate_offsets = offsets
+        self.candidate_capacity = len(candidates)
+
+    def mark_sdf_unavailable(self, message):
+        self._dependency_error = str(message or "Simulation liquid SDF build failed")
+
+    def refresh_diagnostics(self):
+        values = self.diagnostics.numpy()
+        required, admitted, dropped, available = (
+            int(values[0]), int(values[1]), int(values[2]), int(values[3]))
+        if self._dependency_error:
+            status = WHITEWATER_STATUS_SDF_UNAVAILABLE
+            message = self._dependency_error
+        elif dropped:
+            status = WHITEWATER_STATUS_CAPACITY_EXHAUSTED
+            message = (
+                f"Whitewater fixed capacity admitted {admitted:,} of "
+                f"{required:,}; dropped {dropped:,}")
+        else:
+            status = WHITEWATER_STATUS_OK
+            message = ""
+        self.last_diagnostics = {
+            "policy": WHITEWATER_POLICY_FIXED_CAPACITY,
+            "status": status,
+            "required": required,
+            "available": available,
+            "admitted": admitted,
+            "dropped": dropped,
+            "message": message,
+        }
+        return self.last_diagnostics
+
+    def emit(self, *, candidate_count, liquid_positions, liquid_velocities,
+             liquid_count, churn, surface_sdf, leaf_table, voxels_dim,
+             leaves_dim, origin, voxel_size, dt, churn_threshold,
+             emission_rate, surface_band, min_speed, life_min, life_max, seed):
+        """Run device-only candidate/scan/admit/commit emission."""
+        life_min, life_max = normalized_life_range(life_min, life_max)
+        n = max(1, min(int(candidate_count), self.candidate_capacity))
+        wp.launch(
+            k_mark_whitewater_candidates, dim=n,
+            inputs=[
+                liquid_positions, liquid_velocities, liquid_count, churn,
+                surface_sdf, leaf_table, voxels_dim, leaves_dim, origin,
+                voxel_size, dt, churn_threshold, emission_rate, surface_band,
+                min_speed, seed,
+            ],
+            outputs=[self.candidates], device=self.device,
+        )
+        wp.utils.array_scan(
+            self.candidates[:n], self.candidate_offsets[:n], inclusive=False)
+        wp.launch(
+            k_prepare_whitewater_admission, dim=1,
+            inputs=[
+                self.candidates, self.candidate_offsets, n, self.count,
+                self.free_count, self.capacity,
+            ],
+            outputs=[self.admission_plan, self.diagnostics], device=self.device,
+        )
+        wp.launch(
+            k_commit_whitewater_candidates, dim=n,
+            inputs=[
+                liquid_positions, liquid_velocities, self.candidates,
+                self.candidate_offsets, voxel_size, life_min, life_max, seed,
+                self.free_slots, self.admission_plan,
+            ],
+            outputs=[
+                self.position, self.velocity, self.age, self.life, self.alive,
+            ], device=self.device,
+        )
+        wp.launch(
+            k_finalize_whitewater_admission, dim=1,
+            inputs=[self.admission_plan],
+            outputs=[self.count, self.free_count], device=self.device,
+        )
 
     def clamp_count(self):
         wp.launch(

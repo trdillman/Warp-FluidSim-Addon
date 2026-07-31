@@ -998,7 +998,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     surface_build_lowres_sdf: BoolProperty(
         name="Keep Sim Surface Field", default=True,
         update=_request_surface_refresh,
-        description="Enable to retain the simulation-resolution SDF alongside a separate render surface for solver consumers; disable to reduce work when only the render surface is needed")
+        description="Enable to retain the simulation-resolution SDF alongside a separate render surface; whitewater always rebuilds this solver dependency even when this render-only preference is disabled")
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
         update=_request_surface_refresh,
@@ -1256,6 +1256,11 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     stat_particles: IntProperty(default=0)
     stat_voxels: IntProperty(default=0)
     stat_whitewater: IntProperty(default=0)
+    stat_whitewater_required: IntProperty(default=0)
+    stat_whitewater_admitted: IntProperty(default=0)
+    stat_whitewater_dropped: IntProperty(default=0)
+    stat_whitewater_policy: StringProperty(default="FIXED_CAPACITY_DETERMINISTIC_DROPS")
+    stat_whitewater_status: StringProperty(default="OK")
     stat_step_ms: FloatProperty(default=0.0)
     stat_substeps: IntProperty(default=0)
     stat_cfl_clamped: BoolProperty(default=False)

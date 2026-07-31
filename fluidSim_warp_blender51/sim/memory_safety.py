@@ -17,6 +17,7 @@ RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
 WHITEWATER_BYTES = 76
+WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
 TOPOLOGY_BYTES_PER_LEAF_CELL = 12
 
 
@@ -232,7 +233,8 @@ def estimate_solver_bytes(settings) -> int:
     estimate = (
         BASE_BYTES
         + leaves * LEAF_VOLUME * SIM_BYTES_PER_VOXEL
-        + particles * PARTICLE_BYTES
+        + particles * (
+            PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID)
         + whitewater * WHITEWATER_BYTES
         + leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
     )
