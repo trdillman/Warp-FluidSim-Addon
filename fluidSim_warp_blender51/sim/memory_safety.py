@@ -18,7 +18,10 @@ SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
 WHITEWATER_BYTES = 76
 WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
-TOPOLOGY_BYTES_PER_LEAF_CELL = 12
+# Live table + candidate table + candidate flag/expand scratch (int32 each).
+TOPOLOGY_BYTES_PER_LEAF_CELL = 16
+# Live and candidate vec3i coordinate arrays.
+TOPOLOGY_COORD_BYTES_PER_LEAF = 24
 
 
 def release_cuda_memory(device_name: str | None) -> None:
@@ -237,6 +240,7 @@ def estimate_solver_bytes(settings) -> int:
             PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID)
         + whitewater * WHITEWATER_BYTES
         + leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
+        + leaves * TOPOLOGY_COORD_BYTES_PER_LEAF
     )
     surface_enabled = bool(_value(settings, "surface_enabled", True))
     surface_h = _surface_voxel_size(settings)

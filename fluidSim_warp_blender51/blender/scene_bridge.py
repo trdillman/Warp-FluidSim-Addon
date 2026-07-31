@@ -46,6 +46,7 @@ def capacity_blocking_message(blockers):
         "LEAF_CAPACITY": "leaves",
         "MEMORY_ESTIMATE": "estimated bytes",
         "PARTICLE_DEMAND_UNKNOWN": "particle demand",
+        "LEAF_DEMAND_UNKNOWN": "leaf demand",
     }
     for blocker in blockers:
         code = str(getattr(blocker, "code", "CAPACITY"))
@@ -341,6 +342,10 @@ class Session:
                 particle_demand=particle_demand,
                 particle_quality=quality,
                 leaf_coords=coords,
+                leaf_quality=(DemandQuality.UPPER_BOUND
+                              if coords else DemandQuality.EXACT),
+                leaf_reason=("legacy topology bounded by clipped AABB leaves"
+                             if coords else ""),
                 staging_bytes=0,
                 reason="legacy device predicate bounded by clipped AABB leaves",
             ))
@@ -355,6 +360,8 @@ class Session:
             footprints.append(SimpleNamespace(
                 stable_id="source-batch", particle_demand=None,
                 particle_quality=DemandQuality.UNKNOWN, leaf_coords=(),
+                leaf_quality=DemandQuality.UNKNOWN,
+                leaf_reason="; ".join(item.message for item in batch_errors),
                 staging_bytes=0,
                 reason="; ".join(item.message for item in batch_errors),
             ))
@@ -1037,6 +1044,7 @@ class Session:
             self.set_error(scene, message)
             fs.status = f"Solver desync: {message}"
             return
+        previous_last_frame = self.last_frame
         self.last_frame = frame
         try:
             for offset in range(gap - 1, -1, -1):
@@ -1045,7 +1053,21 @@ class Session:
                     scene, self, refresh_pending=False,
                     timeline_frame=frame - offset)
         except Exception as exc:  # noqa: BLE001 - never break playback
+            from ..sim.fields import TopologyCapacityError
+
             self.set_error(scene, repr(exc))
+            # Sparse topology refusal is a normal capacity outcome. Candidate
+            # topology never committed, so retain the authoritative solver,
+            # output/cache frame, and timeline bookkeeping for user recovery.
+            if isinstance(exc, TopologyCapacityError):
+                self.last_frame = previous_last_frame
+                fs.live = False
+                fs.status = (
+                    f"Topology capacity blocked; solver preserved "
+                    f"(need {exc.required:,}, available {exc.capacity:,}). "
+                    "Increase Leaf Capacity or reduce active topology, then resume.")
+                print(f"fluidSim topology admission refused: {exc!r}")
+                return
             # The property callback this fires is suppressed while the handler
             # is on the stack, so this status remains authoritative.
             fs.live = False

@@ -973,7 +973,11 @@ class FluidSolver:
             for compiled in batch.sources:
                 if not plan_requires_source_topology(compiled.plan):
                     continue
-                for coord in compiled.region.leaf_coords:
+                topology_coords = (
+                    compiled.region.topology_leaf_coords
+                    if compiled.region.topology_leaf_coords is not None
+                    else compiled.region.leaf_coords)
+                for coord in topology_coords:
                     lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
                                for axis in range(3))
                     hi = tuple(value + leaf_world for value in lo)

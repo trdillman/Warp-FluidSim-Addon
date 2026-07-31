@@ -43,6 +43,8 @@ class SourceDemand:
     particles: DemandValue
     leaf_coords: tuple[tuple[int, int, int], ...] = ()
     staging_bytes: int = 0
+    leaf_quality: DemandQuality = DemandQuality.EXACT
+    leaf_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,9 @@ def _source_demand(footprint: Any) -> SourceDemand:
         particles=particles,
         leaf_coords=coords,
         staging_bytes=max(0, int(getattr(footprint, "staging_bytes", 0))),
+        leaf_quality=_quality(getattr(
+            footprint, "leaf_quality", DemandQuality.EXACT)),
+        leaf_reason=str(getattr(footprint, "leaf_reason", "")),
     )
 
 
@@ -253,7 +258,7 @@ def _aggregate_particles(source_demands: tuple[SourceDemand, ...],
 
 
 def _signature(settings: Any, demands: tuple[SourceDemand, ...],
-               seed_count: int, leaf_count: int,
+               seed_count: int, leaf_demand: DemandValue,
                additional_transaction_bytes: int = 0) -> str:
     payload = {
         "settings": _settings_dict(settings),
@@ -265,12 +270,18 @@ def _signature(settings: Any, demands: tuple[SourceDemand, ...],
                 "quality": item.particles.quality.value,
                 "reason": item.particles.reason,
                 "leaf_coords": item.leaf_coords,
+                "leaf_quality": item.leaf_quality.value,
+                "leaf_reason": item.leaf_reason,
                 "staging_bytes": item.staging_bytes,
             }
             for item in demands
         ],
         "seed_count": seed_count,
-        "leaf_count": leaf_count,
+        "leaf_demand": {
+            "value": leaf_demand.value,
+            "quality": leaf_demand.quality.value,
+            "reason": leaf_demand.reason,
+        },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                          default=str).encode("utf8")
@@ -305,7 +316,19 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
     leaf_coords.update(_seed_leaf_coords(settings, seeds))
     required_leaf_coords = _expanded_leaf_coords(settings, leaf_coords)
     leaf_count = len(required_leaf_coords)
-    leaf_demand = DemandValue(leaf_count, DemandQuality.EXACT)
+    unknown_leaf_reasons = sorted({
+        item.leaf_reason or f"{item.stable_id} leaf demand is unavailable"
+        for item in sources if item.leaf_quality is DemandQuality.UNKNOWN
+    })
+    if unknown_leaf_reasons:
+        leaf_demand = DemandValue(
+            None, DemandQuality.UNKNOWN, "; ".join(unknown_leaf_reasons))
+    else:
+        leaf_quality = (DemandQuality.UPPER_BOUND
+                        if any(item.leaf_quality is DemandQuality.UPPER_BOUND
+                               for item in sources)
+                        else DemandQuality.EXACT)
+        leaf_demand = DemandValue(leaf_count, leaf_quality)
 
     staging_bytes = sum(item.staging_bytes for item in sources)
     # WP3 owns one int32 scratch occupancy entry per allocated sparse voxel.
@@ -336,7 +359,13 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
             int(_value(settings, "max_particles", 0)), source_ids,
             "Initial seeds and liquid sources exceed particle capacity.",
         ))
-    if leaf_count > int(_value(settings, "leaf_capacity", 0)):
+    if leaf_demand.quality is DemandQuality.UNKNOWN:
+        blockers.append(CapacityBlocker(
+            "LEAF_DEMAND_UNKNOWN", None,
+            int(_value(settings, "leaf_capacity", 0)), source_ids,
+            leaf_demand.reason or "Sparse leaf demand cannot be proven safe.",
+        ))
+    elif leaf_count > int(_value(settings, "leaf_capacity", 0)):
         blockers.append(CapacityBlocker(
             "LEAF_CAPACITY", leaf_count,
             int(_value(settings, "leaf_capacity", 0)), source_ids,
@@ -349,7 +378,7 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
         ))
 
     signature = _signature(
-        settings, sources, seed_count, leaf_count,
+        settings, sources, seed_count, leaf_demand,
         additional_transaction_bytes)
     return CapacityPlan(
         verdict=(CapacityVerdict.BLOCKED if blockers
