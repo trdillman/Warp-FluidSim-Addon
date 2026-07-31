@@ -335,7 +335,7 @@ def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
     assert any(op["id"] == "fluidsim.clear_error" for op in layout.operators)
 
 
-def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatch):
+def test_simulation_panel_uses_only_verified_capacity_recommendation_flow(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
@@ -352,12 +352,18 @@ def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatc
 
     panel.draw(SimpleNamespace(scene=scene))
 
-    assert any(
+    assert not any(
         op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators
     )
+    assert not any(
+        op["id"] == "fluidsim.initialize"
+        and op.get("text") == "Ignore Estimate & Initialize"
+        for op in layout.operators
+    )
+    assert any("verified" in label["text"] for label in layout.labels)
 
 
-def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monkeypatch):
+def test_simulation_panel_hides_unverified_memory_bypass(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
@@ -374,7 +380,7 @@ def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monk
 
     panel.draw(SimpleNamespace(scene=scene))
 
-    assert any(
+    assert not any(
         op["id"] == "fluidsim.initialize"
         and op.get("text") == "Ignore Estimate & Initialize"
         for op in layout.operators
@@ -601,6 +607,12 @@ def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
         surface_enabled=True,
+        surface_resolution_mode="MULTIPLIER",
+        surface_resolution_multiplier=2.0,
+        surface_voxel_size=0.05,
+        particle_radius_scale=1.5,
+        surface_smooth_strength=0.5,
+        surface_update_cadence=1,
         whitewater_enabled=True,
         max_whitewater=1000,
         ww_churn_gain=1.0,
@@ -624,7 +636,12 @@ def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
         "whitewater_display_scale",
         "whitewater_attribute_mode",
         "whitewater_material",
-        "max_whitewater",
+        "surface_enabled",
+        "surface_resolution_mode",
+        "surface_resolution_multiplier",
+        "particle_radius_scale",
+        "surface_smooth_strength",
+        "surface_update_cadence",
         "ww_churn_gain",
         "ww_churn_decay",
         "ww_churn_threshold",
@@ -642,9 +659,14 @@ def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
     panel.draw_header(SimpleNamespace(scene=scene))
     panel.draw(SimpleNamespace(scene=scene))
     assert expected.issubset(layout.props)
+    assert "max_whitewater" not in layout.props
 
     realtime_source = inspect.getsource(panels.FLUIDSIM_PT_realtime_display.draw)
-    assert all(name not in realtime_source for name in expected)
+    whitewater_controls = {
+        name for name in expected
+        if name.startswith(("ww_", "whitewater_")) or name == "show_whitewater"
+    }
+    assert all(name not in realtime_source for name in whitewater_controls)
 
 
 def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
@@ -1738,3 +1760,48 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert op.execute(context) == {"CANCELLED"}
     assert fs.max_particles == 8
     assert "changed" in fs.status.lower()
+
+
+def test_panel_hierarchy_has_seven_task_groups_and_advanced_capacities(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    expected_top = {
+        "Simulation", "Quality", "Inputs", "Physics",
+        "Surface & Whitewater", "Output & Cache", "Advanced",
+    }
+    actual_top = {
+        cls.bl_label for cls in panels.CLASSES
+        if issubclass(cls, panels.FluidSimPanel)
+        and "bl_parent_id" not in cls.__dict__
+    }
+    assert actual_top == expected_top
+    assert panels.FLUIDSIM_PT_advanced.bl_options == {"DEFAULT_CLOSED"}
+    assert panels.FLUIDSIM_PT_domain.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert panels.FLUIDSIM_PT_particles.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert panels.FLUIDSIM_PT_liquid_emitters.bl_parent_id == "FLUIDSIM_PT_inputs"
+    assert panels.FLUIDSIM_PT_pressure.bl_parent_id == "FLUIDSIM_PT_physics"
+    assert panels.FLUIDSIM_PT_realtime_display.bl_parent_id == "FLUIDSIM_PT_surface"
+
+
+def test_basic_quality_panel_exposes_only_semantic_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = inspect.getsource(panels.FLUIDSIM_PT_quality.draw)
+    for field in (
+            "voxel_size", "particles_per_voxel", "sample_type", "flip_ratio",
+            "cfl", "max_substeps"):
+        assert f'prop(fs, "{field}"' in source
+    for technical_capacity in ("max_particles", "max_active_leaves", "max_whitewater"):
+        assert technical_capacity not in source
+    assert "Requires Reinitialize" in source
+    assert "Requires Reset" in source
+
+
+def test_long_capacity_copy_wraps_instead_of_truncating(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    text = "This capacity warning contains enough detail to exceed one narrow panel line."
+    panels._draw_wrapped(layout, text, icon="INFO", width=30)
+    assert len(layout.labels) >= 2
+    assert "".join(label["text"] for label in layout.labels).replace(" ", "") == text.replace(" ", "")

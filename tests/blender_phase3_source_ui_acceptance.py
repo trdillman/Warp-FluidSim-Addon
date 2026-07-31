@@ -61,8 +61,9 @@ def main():
     emitter = add_cube("P3_MeshSolid", (0, 0, 0))
     select_only(emitter)
     check("role-specific emitter operator", bpy.ops.fluidsim.tag_liquid_emitter() == {"FINISHED"})
-    check("new emitter schema/default", emitter.fluidsim.source_ui_schema_version == 3
-          and emitter.fluidsim.emission_mode == "INITIAL_FILL")
+    check("new emitter schema/default", emitter.fluidsim.source_ui_schema_version == 4
+          and emitter.fluidsim.emission_mode == "INITIAL_FILL"
+          and emitter.fluidsim.source_sampling_mode == "INHERIT")
     emitter.fluidsim.source_region_kind = "MESH_SOLID"
     emitter.fluidsim.mesh_object = emitter
 
@@ -136,6 +137,7 @@ def main():
     legacy.fluidsim.source_ui_schema_version = 0
     legacy.fluidsim.geometry_mode = "MESH"
     legacy.fluidsim.source_mode = "PARTICLES"
+    legacy.fluidsim.emit_rate = 5.0
 
     image = bpy.data.images.new("P3_HeightProfile", width=4, height=4)
     pixels = []
@@ -241,8 +243,12 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=str(fixture), load_ui=False)
     check("saved roles reopen", bpy.data.objects["P3_MeshSolid"].fluidsim.role == "SOURCE"
           and bpy.data.objects["P3_FieldPressure"].fluidsim.role == "FIELD")
-    check("legacy values reopen unchanged", bpy.data.objects["P3_LegacyShell"].fluidsim.geometry_mode == "MESH"
-          and bpy.data.objects["P3_LegacyShell"].fluidsim.source_ui_schema_version == 0)
+    reopened_legacy = bpy.data.objects["P3_LegacyShell"].fluidsim
+    check("legacy values migrate without occupancy drift",
+          reopened_legacy.geometry_mode == "MESH"
+          and reopened_legacy.source_ui_schema_version == 4
+          and reopened_legacy.source_sampling_mode == "LEGACY_ABSOLUTE"
+          and reopened_legacy.emit_rate == 5.0)
 
     required_panels = (
         "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",

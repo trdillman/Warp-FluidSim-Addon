@@ -552,6 +552,19 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
+        objects = tuple(getattr(scene, "objects", ()))
+        existing_domain = getattr(fs, "domain_object", None)
+        existing_source = any(
+            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
+            for obj in objects)
+        existing_collider = any(
+            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "COLLIDER"
+            for obj in objects)
+        if existing_domain is not None and existing_source and existing_collider:
+            self.report(
+                {"INFO"},
+                "Quick Setup already exists; existing domain and inputs were preserved")
+            return {"FINISHED"}
 
         # Domain box - extended horizontally (X) and slightly taller (Z)
         # so the released water has room to spread and fall.

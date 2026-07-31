@@ -131,13 +131,14 @@ def test_assessment_stops_before_allocation_and_returns_recovery_plan():
     assert assessment["recommended"]
 
 
-def test_recovery_button_is_registered_and_only_routed_from_memory_errors():
+def test_legacy_recovery_operator_is_registered_but_ui_uses_verified_plan_flow():
     root = Path(__file__).parents[1] / "fluidSim_warp_blender51"
     operators = (root / "operators.py").read_text()
     panels = (root / "panels.py").read_text()
 
     assert 'bl_idname = "fluidsim.apply_safe_settings"' in operators
-    assert 'operator("fluidsim.apply_safe_settings"' in panels
+    assert 'operator("fluidsim.apply_safe_settings"' not in panels
+    assert 'operator(\n                "fluidsim.apply_capacity_suggestion"' in panels
     assert "is_memory_capacity_error" in panels
 
 
