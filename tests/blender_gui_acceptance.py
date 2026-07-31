@@ -46,7 +46,7 @@ PANEL_IDS = [
     "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
     "FLUIDSIM_PT_advanced_field_sources",
     "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_whitewater",
-    "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_surface_advanced", "FLUIDSIM_PT_output",
+    "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output",
     "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_diagnostics",
     "FLUIDSIM_PT_validation",
 ]

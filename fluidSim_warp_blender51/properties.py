@@ -986,6 +986,9 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Keep Sim Surface Field", default=False,
         update=_request_surface_refresh,
         description="Enable to retain the simulation-resolution SDF alongside a separate render surface for solver consumers; disable to reduce work when only the render surface is needed")
+    surface_advanced_expanded: BoolProperty(
+        name="Advanced Surface", default=False, options={"SKIP_SAVE"},
+        description="Show or hide sparse-capacity and simulation-field retention controls")
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
         update=_request_surface_refresh,

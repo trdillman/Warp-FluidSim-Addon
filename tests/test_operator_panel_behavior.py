@@ -404,6 +404,7 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
+        liquid_view_mode="SURFACE_PARTICLES",
         show_surface=True,
         surface_enabled=True,
         particle_radius_scale=1.2,
@@ -416,6 +417,7 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
         surface_update_cadence="FRAME",
         live_surface_publish_cadence=4,
         surface_build_lowres_sdf=True,
+        surface_advanced_expanded=False,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
         surface_filter_strength=0.7,
@@ -442,6 +444,7 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     panel.draw(context)
 
     main_controls = {
+        "liquid_view_mode",
         "surface_enabled",
         "particle_radius_scale",
         "surface_splat_radius",
@@ -473,21 +476,34 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
         "surface_max_dense_dim",
         "surface_build_lowres_sdf",
     }
-    assert layout.props[0] == "surface_enabled"
+    assert layout.props[0] == "liquid_view_mode"
     assert main_controls.issubset(layout.props)
     assert advanced_controls.isdisjoint(layout.props)
     assert layout.labels == [
         {"text": "Surface Mesh", "icon": "MESH_DATA"},
         {"text": "Liquid Particles", "icon": "PARTICLE_DATA"},
     ]
+    advanced_toggle = next(
+        call for call in layout.prop_calls
+        if call["name"] == "surface_advanced_expanded")
+    assert advanced_toggle["text"] == "Advanced Surface"
+    assert advanced_toggle["icon"] == "TRIA_RIGHT"
+    assert advanced_toggle["emboss"] is False
+    assert not hasattr(panels, "FLUIDSIM_PT_surface_advanced")
 
-    advanced_layout = _Layout()
-    advanced = panels.FLUIDSIM_PT_surface_advanced()
-    advanced.layout = advanced_layout
-    advanced.draw(context)
-    assert set(advanced_layout.props) == advanced_controls
-    assert advanced.bl_parent_id == panels.FLUIDSIM_PT_realtime_display.bl_idname
-    assert "DEFAULT_CLOSED" in advanced.bl_options
+    fs.surface_advanced_expanded = True
+    expanded_layout = _Layout()
+    panel.layout = expanded_layout
+    panel.draw(context)
+    assert advanced_controls.issubset(expanded_layout.props)
+    assert expanded_layout.props.index("surface_material") < (
+        expanded_layout.props.index("surface_advanced_expanded"))
+    assert expanded_layout.props.index("surface_build_lowres_sdf") < (
+        expanded_layout.props.index("show_particles"))
+    expanded_toggle = next(
+        call for call in expanded_layout.prop_calls
+        if call["name"] == "surface_advanced_expanded")
+    assert expanded_toggle["icon"] == "TRIA_DOWN"
 
 
 def test_whitewater_panel_starts_with_simulation_toggle_and_owns_controls(monkeypatch):
@@ -560,9 +576,16 @@ def test_panels_keep_static_help_in_tooltips(monkeypatch):
 
     assert all(text not in panel_source for text in prohibited_explanations)
     assert "_draw_interaction_tier" not in panel_source
-    height_source = inspect.getsource(panels.FLUIDSIM_PT_domain_height_fill.draw)
-    assert "col.enabled = fs.height_enabled" in height_source
-    assert "return" not in height_source
+
+
+def test_unrelated_height_fill_keeps_original_collapsed_behavior(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = inspect.getsource(panels.FLUIDSIM_PT_domain_height_fill.draw)
+
+    assert "if not fs.height_enabled:" in source
+    assert "return" in source
+    assert "col.enabled = fs.height_enabled" not in source
 
 
 def test_collider_panel_has_only_per_object_material_controls(monkeypatch):

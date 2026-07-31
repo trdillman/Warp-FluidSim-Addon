@@ -2,7 +2,7 @@
 
 Panel set mirrors the synthesized UI contract:
 Simulation, Domain / Sparse Grid, Particles, Sources, Colliders / Sinks,
-Forces / Attraction, Pressure Projection, Viscosity, Surface / Whitewater,
+Forces / Attraction, Pressure Projection, Viscosity, Whitewater,
 Realtime Surfacing / Particles, Viewport / Render Output, Custom Warp
 Snippets, Diagnostics / Profiling, Validation / Benchmarks.
 """
@@ -516,8 +516,9 @@ class FLUIDSIM_PT_domain_height_fill(FluidSimPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         layout = self.layout
         layout.prop(fs, "height_enabled", text="Enable Domain Height Fill")
+        if not fs.height_enabled:
+            return
         col = layout.column(align=True)
-        col.enabled = fs.height_enabled
         col.prop(fs, "height_base", text="Fill Level")
         row = col.row(align=True)
         row.prop_enum(fs, "height_back_mode", "FLAT", text="Flat")
@@ -671,6 +672,8 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
 
+        layout.prop(fs, "liquid_view_mode")
+
         surface = layout.box()
         surface.label(text="Surface Mesh", icon="MESH_DATA")
         surface.prop(fs, "surface_enabled", text="Build Surface Mesh")
@@ -709,6 +712,18 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         display.prop(fs, "surface_attribute_mode")
         display.prop(fs, "surface_material")
 
+        row = layout.row(align=True)
+        row.prop(
+            fs, "surface_advanced_expanded", text="Advanced Surface",
+            icon=("TRIA_DOWN" if fs.surface_advanced_expanded
+                  else "TRIA_RIGHT"), emboss=False)
+        if fs.surface_advanced_expanded:
+            advanced = layout.column(align=True)
+            advanced.enabled = fs.surface_enabled
+            advanced.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
+            advanced.prop(fs, "surface_max_dense_dim", text="Dense Max")
+            advanced.prop(fs, "surface_build_lowres_sdf")
+
         particles = layout.box()
         particles.label(text="Liquid Particles", icon="PARTICLE_DATA")
         particles.prop(fs, "show_particles", text="Show Liquid Particles")
@@ -718,21 +733,6 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         display.prop(fs, "particle_display_scale")
         display.prop(fs, "particle_attribute_mode")
         display.prop(fs, "particle_material")
-
-
-class FLUIDSIM_PT_surface_advanced(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Advanced Surface"
-    bl_idname = "FLUIDSIM_PT_surface_advanced"
-    bl_parent_id = "FLUIDSIM_PT_realtime_display"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        fs = context.scene.fluidsim
-        layout.enabled = fs.surface_enabled
-        layout.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
-        layout.prop(fs, "surface_max_dense_dim", text="Dense Max")
-        layout.prop(fs, "surface_build_lowres_sdf")
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
@@ -1025,7 +1025,6 @@ CLASSES = (
     FLUIDSIM_PT_viscosity,
     FLUIDSIM_PT_whitewater,
     FLUIDSIM_PT_realtime_display,
-    FLUIDSIM_PT_surface_advanced,
     FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
     FLUIDSIM_PT_snippet_editor,

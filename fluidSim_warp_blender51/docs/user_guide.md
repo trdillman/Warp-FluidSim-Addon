@@ -169,31 +169,39 @@ target velocity; it does not copy a Mantaflow domain velocity grid.
 Enable checkbox. **Solver** (Jacobi / PCG), **Viscosity** constant, **From
 Particles** (per-particle viscosity attribute), **Iterations**, **Tolerance**.
 
-### Surface / Whitewater
-Whitewater simulation budgets and emission dynamics: max whitewater, churn
-gain/decay/threshold, emission rate, min speed, life min/max, bubble & spray
-drag.
+### Whitewater
+Whitewater remains a separate physics panel. **Enable Whitewater** is the first
+control, followed by capacity, emission, lifetime, and motion settings. The
+viewport visibility toggle and appearance controls follow the simulation
+settings; they are not grouped under the general output panel.
 
 ### Realtime Surfacing / Particles
-The sole owner for viewport-facing liquid surface and particle display
-settings. Surface mesh controls include visibility, generate surface, particle
-radius, independent dilate iterations/strength, independent erode
-iterations/strength, Box or Mean-Curvature smooth iterations/strength,
-attribute color mode, and material. Liquid particle controls include
-visibility, display fraction, display scale, attribute color mode, and particle
-material. Whitewater particle controls include visibility, enable, display
-scale, attribute color mode, and material.
+This panel follows the existing add-on pattern of grouping related controls
+inside one workflow panel rather than creating a top-level panel for each
+subsection. The original **Liquid View** dropdown remains at the top.
 
-When a live solver is active, surface stack edits rebuild the current frame's
-surface SDF and output mesh without advancing the simulation frame.
-Particle and material display edits refresh the viewport output immediately.
-When only existing output/cache objects remain, visibility and material edits
-still apply to those objects; geometry-dependent surfacing requires an active
-solver frame.
+**Surface Mesh** contains normal surfacing workflow: generation, resolution,
+particle reconstruction radius, filtering, dilation, erosion, smoothing,
+update cadence, surface visibility, attribute display, and material. Resolution
+fields are shown only for the selected mode. **Live Surface Every** defaults to
+1 so the viewport publishes every frame.
+
+The inline collapsed **Advanced Surface** foldout follows Surface Mesh and
+contains only **Leaf Scale**, **Dense Max**, and **Keep Sim Surface Field**.
+Keep Sim Surface Field defaults off.
+
+**Liquid Particles** follows as a peer viewport-visualization subsection with
+visibility, display fraction, point scale, attribute color mode, and material.
+It is not hidden under Advanced and is not mixed with Whitewater.
+
+When a live solver is active, surface edits rebuild the current frame's surface
+SDF and output mesh without advancing the simulation frame. Visibility and
+material edits also apply to existing output or cache objects.
 
 ### Viewport / Render Output
-Output collection name and overlay toggle. **Optional Cache / Export**: enable
-cache, cache path, **Export Current Frame**.
+Output collection name and overlay toggle. **Cache / Export** includes cache
+enablement, path and playback range, **Export Cache Sequence**, and **Export
+Current Frame**.
 
 ### Custom Warp Snippets
 **Snippet Library** dropdown with ten ready-to-run examples plus your saved
