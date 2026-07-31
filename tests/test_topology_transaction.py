@@ -54,6 +54,17 @@ def test_overflow_preserves_live_leaf_table_coords_and_count():
     assert not np.array_equal(grid.leaf_table.numpy(), live_table)
 
 
+def test_successful_topology_commit_preserves_live_array_identity():
+    grid = _grid(capacity=2)
+    live_arrays = (grid.leaf_table, grid.leaf_coords, grid.num_leaves, grid.overflow)
+
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.1, 0.1, 0.1))
+    assert grid.finalize_topology() == 1
+
+    assert (grid.leaf_table, grid.leaf_coords, grid.num_leaves, grid.overflow) == live_arrays
+
+
 def test_deferred_overflow_does_not_commit_candidate_topology():
     grid = _grid(capacity=1)
     grid.begin_topology()

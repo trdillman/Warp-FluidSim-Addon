@@ -559,14 +559,15 @@ class SparseGrid:
         if int(self._candidate_overflow.numpy()[0]) != 0:
             self._candidate_pending = False
             raise TopologyCapacityError(count, self.capacity)
-        self.leaf_table, self._candidate_leaf_table = (
-            self._candidate_leaf_table, self.leaf_table)
-        self.leaf_coords, self._candidate_leaf_coords = (
-            self._candidate_leaf_coords, self.leaf_coords)
-        self.num_leaves, self._candidate_num_leaves = (
-            self._candidate_num_leaves, self.num_leaves)
-        self.overflow, self._candidate_overflow = (
-            self._candidate_overflow, self.overflow)
+        # Keep live Warp array identities stable. Solver subsystems and queued
+        # kernels bind these arrays by object identity; swapping the Python
+        # handles after admission made later phases observe alternating stale
+        # topology buffers and injected catastrophic vertical energy. Copy the
+        # admitted candidate into the stable live storage instead.
+        wp.copy(self.leaf_table, self._candidate_leaf_table)
+        wp.copy(self.leaf_coords, self._candidate_leaf_coords)
+        wp.copy(self.num_leaves, self._candidate_num_leaves)
+        wp.copy(self.overflow, self._candidate_overflow)
         self._candidate_pending = False
         self.active_leaf_count = count
         return self.active_leaf_count
