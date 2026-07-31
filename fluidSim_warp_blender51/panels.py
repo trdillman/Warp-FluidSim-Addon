@@ -188,9 +188,12 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        from .blender.scene_bridge import current_error, session
+        from .blender.scene_bridge import (
+            capacity_plan_for_scene, current_error, session,
+        )
 
         sess = session()
+        owned_capacity_plan = capacity_plan_for_scene(context.scene)
         _draw_pending_banner(layout, context.scene, show_actions=True)
 
         col = layout.column(align=True)
@@ -224,7 +227,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         if error:
             box.label(text=error[:120], icon="ERROR")
             from .sim.memory_safety import is_memory_capacity_error
-            plan = getattr(sess, "capacity_plan", None)
+            plan = owned_capacity_plan
             integrity_blocked = bool(plan and any(
                 getattr(blocker, "code", "") != "MEMORY_ESTIMATE"
                 for blocker in getattr(plan, "blockers", ())))
@@ -243,8 +246,16 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
                         icon="INFO")
                     run_anyway.ignore_memory_safeguard = True
             box.operator("fluidsim.clear_error", icon="X")
-        _draw_capacity_plan(
-            layout, getattr(sess, "capacity_plan", None), fs)
+        notice_for_scene = getattr(
+            sess, "particle_capacity_notice_for_scene", None)
+        notice = (notice_for_scene(context.scene)
+                  if callable(notice_for_scene) else "")
+        if notice:
+            capacity_notice = layout.box()
+            capacity_notice.label(text=notice[:120], icon="INFO")
+            if len(notice) > 120:
+                capacity_notice.label(text=notice[120:240])
+        _draw_capacity_plan(layout, owned_capacity_plan, fs)
         if sess.active:
             col = box.column(align=True)
             col.label(text=f"Particles: {fs.stat_particles:,}")

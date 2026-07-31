@@ -817,24 +817,28 @@ def test_inactive_live_update_status_is_truthful(monkeypatch):
 def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    import fluidSim_warp_blender51.blender.sources as sources
     import fluidSim_warp_blender51.blender.viewport as viewport
 
     from fluidSim_warp_blender51.sim.solver import SolverSettings
 
     reset_snapshots = []
+    released = []
     planned_capacities = []
+    prepared = []
     solver = SimpleNamespace(
         settings=SolverSettings(
             max_particles=1024, flip_ratio=0.95, spacetime_seed=1),
         particles=SimpleNamespace(capacity=4096),
         reset=lambda: reset_snapshots.append((
             solver.settings.flip_ratio, solver.settings.spacetime_seed)),
+        release=lambda: released.append("old"),
+        device="cuda:0",
     )
     sess = scene_bridge.session()
     sess.solver = solver
     capacity_plan = SimpleNamespace(blockers=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
+    snapshot = SimpleNamespace(
+        capacity_plan=capacity_plan, seeds=(), scene_inputs=sess.scene_inputs)
     monkeypatch.setattr(
         scene_bridge, "build_settings",
         lambda _scene: SolverSettings(
@@ -846,13 +850,21 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
         return snapshot
 
     monkeypatch.setattr(sess, "_plan_scene", plan_scene)
-    monkeypatch.setattr(sess, "_apply_scene_snapshot", lambda *_args: None)
-    monkeypatch.setattr(sources, "commit_prepared_seeds", lambda *_args: 0)
+
+    def prepare_replacement(_scene, settings, _snapshot, _profiler):
+        candidate = SimpleNamespace(
+            settings=settings,
+            particles=SimpleNamespace(capacity=settings.max_particles),
+        )
+        prepared.append(candidate)
+        return candidate, ()
+
+    monkeypatch.setattr(sess, "_prepare_solver_replacement", prepare_replacement)
     monkeypatch.setattr(viewport, "update_outputs", lambda *_args: None)
     scene = SimpleNamespace(
         frame_start=1,
         fluidsim=SimpleNamespace(
-            flip_ratio=0.2, spacetime_seed=77, status="",
+            flip_ratio=0.2, spacetime_seed=77, status="", snippets=[],
             gravity=(0.0, 0.0, -4.0), use_scene_gravity=False),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
@@ -861,9 +873,12 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
     sess.reset(scene)
 
     assert planned_capacities == [4096]
-    assert reset_snapshots == [(0.2, 77)]
-    assert solver.settings.flip_ratio == 0.2
-    assert solver.settings.spacetime_seed == 77
+    assert reset_snapshots == []
+    assert released == ["old"]
+    assert sess.solver is prepared[0]
+    assert sess.solver.particles.capacity == 4096
+    assert sess.solver.settings.flip_ratio == 0.2
+    assert sess.solver.settings.spacetime_seed == 77
     assert scene.fluidsim.status == "Simulation reset"
 
 
@@ -1573,3 +1588,74 @@ def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
     assert len(viewport_updates) == 1
     assert reports[-1][0] == {"INFO"}
     assert "Injected 0 particles" in reports[-1][1]
+
+
+def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="safe", label="Safe", changes={"max_particles": 12},
+        estimated_bytes=1, budget_bytes=2)
+    plan = SimpleNamespace(
+        scene_signature="identical-content", suggestions=(suggestion,), blockers=())
+    first = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
+    second = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
+    bridge.session()._set_capacity_plan(first, plan)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+
+    assert operators.FLUIDSIM_OT_apply_capacity_suggestion.poll(
+        SimpleNamespace(scene=first)) is True
+    assert operators.FLUIDSIM_OT_apply_capacity_suggestion.poll(
+        SimpleNamespace(scene=second)) is False
+
+    dialogs = []
+    context_first = SimpleNamespace(
+        scene=first,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda op, width: (
+                dialogs.append((op, width)) or {"RUNNING_MODAL"})),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "safe"
+    assert op.invoke(context_first, None) == {"RUNNING_MODAL"}
+
+    refreshed = []
+    monkeypatch.setattr(
+        bridge, "refresh_capacity_plan",
+        lambda scene: refreshed.append(scene) or plan)
+    assert op.execute(SimpleNamespace(scene=second)) == {"CANCELLED"}
+    assert refreshed == []
+    assert second.fluidsim.max_particles == 8
+
+
+def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="safe", label="Safe", changes={"max_particles": 12},
+        estimated_bytes=1, budget_bytes=2)
+    original = SimpleNamespace(
+        scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    changed = SimpleNamespace(
+        scene_signature="scene-v2", suggestions=(suggestion,), blockers=())
+    fs = SimpleNamespace(max_particles=8, status="")
+    scene = SimpleNamespace(fluidsim=fs)
+    bridge.session()._set_capacity_plan(scene, original)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda _op, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "safe"
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    monkeypatch.setattr(
+        bridge, "refresh_capacity_plan",
+        lambda actual: bridge.session()._set_capacity_plan(actual, changed))
+
+    assert op.execute(context) == {"CANCELLED"}
+    assert fs.max_particles == 8
+    assert "changed" in fs.status.lower()

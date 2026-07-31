@@ -1,0 +1,365 @@
+"""Trace regressions for active capacity and scene-owned plan transactions."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+import pytest
+
+
+@dataclass
+class _Settings:
+    device: str = "cuda:0"
+    max_particles: int = 8
+    auto_grow_particles: bool = False
+    particle_growth_failure_policy: str = "DEFER"
+
+
+def _bridge(monkeypatch):
+    bpy = types.ModuleType("bpy")
+    bpy.context = SimpleNamespace()
+    bpy.app = SimpleNamespace(handlers=SimpleNamespace(frame_change_post=[]))
+    bpy.path = SimpleNamespace(abspath=lambda value: value)
+    mathutils = types.ModuleType("mathutils")
+    mathutils.Vector = lambda value: value
+    viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    viewport.update_outputs = lambda *_args, **_kwargs: None
+    viewport.ensure_outputs = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setitem(sys.modules, "mathutils", mathutils)
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+    blender_package = importlib.import_module("fluidSim_warp_blender51.blender")
+    monkeypatch.setattr(blender_package, "viewport", viewport, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
+    bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 16 * 1024**3,
+        "gpu_free_bytes": 12 * 1024**3,
+    })
+    monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda _device: None)
+    monkeypatch.setattr(bridge, "_capture_applied_state", lambda *_a, **_k: None)
+    return bridge
+
+
+def _active_reset(
+        monkeypatch, *, authored, runtime, demand, auto_grow=False,
+        prepare_error=None):
+    bridge = _bridge(monkeypatch)
+    scene = SimpleNamespace(
+        frame_start=1,
+        fluidsim=SimpleNamespace(
+            max_particles=authored,
+            auto_grow_particles=auto_grow,
+            particle_growth_failure_policy="DEFER",
+            snippets=[],
+            status="before",
+        ),
+    )
+    released = []
+    old_solver = SimpleNamespace(
+        settings=SimpleNamespace(
+            max_particles=runtime,
+            auto_grow_particles=True,
+            particle_growth_failure_policy="PAUSE",
+        ),
+        particles=SimpleNamespace(
+            capacity=runtime, host_count=7, payload=object()),
+        frame=23,
+        stats=SimpleNamespace(marker="old-stats"),
+        device="cuda:0",
+        release=lambda: released.append("old"),
+    )
+    sess = bridge.Session()
+    sess.solver = old_solver
+    sess.scene_identity = bridge._scene_identity(scene)
+    sess.start_frame = 4
+    sess.last_frame = 23
+    sess.frame_stats = [{"frame": 23}]
+    sess.cache_written_start = 3
+    sess.cache_written_end = 23
+    sess.cache_settings_records = {23: "old-cache"}
+    old_inputs = SimpleNamespace(clear=lambda: None)
+    sess.scene_inputs = old_inputs
+
+    monkeypatch.setattr(
+        bridge, "build_settings",
+        lambda _scene: _Settings(
+            max_particles=authored,
+            auto_grow_particles=auto_grow,
+        ),
+    )
+    planned = []
+
+    def plan_scene(_scene, settings, _resources):
+        planned.append(int(settings.max_particles))
+        blockers = ()
+        if demand > int(settings.max_particles):
+            blockers = (SimpleNamespace(
+                code="PARTICLE_CAPACITY",
+                required=demand,
+                available=int(settings.max_particles),
+                message="particle capacity",
+            ),)
+        plan = SimpleNamespace(
+            blockers=blockers,
+            scene_signature=f"capacity-{settings.max_particles}",
+        )
+        return SimpleNamespace(
+            capacity_plan=plan,
+            seeds=(),
+            scene_inputs=SimpleNamespace(clear=lambda: None),
+        )
+
+    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    prepared = []
+
+    def prepare(_scene, settings, _snapshot, _profiler):
+        if prepare_error is not None:
+            raise prepare_error
+        candidate = SimpleNamespace(
+            settings=settings,
+            particles=SimpleNamespace(capacity=int(settings.max_particles)),
+            device="cuda:0",
+            release=lambda: released.append("candidate"),
+        )
+        prepared.append(candidate)
+        return candidate, ()
+
+    monkeypatch.setattr(sess, "_prepare_solver_replacement", prepare)
+    return bridge, scene, sess, old_solver, released, planned, prepared
+
+
+def test_reset_autogrow_off_raised_reserve_refuses_against_runtime_without_mutation(
+        monkeypatch):
+    bridge, scene, sess, old, released, planned, prepared = _active_reset(
+        monkeypatch, authored=12, runtime=8, demand=10, auto_grow=False)
+    authoritative = (
+        sess.solver, old.particles.payload, old.frame, old.stats,
+        sess.start_frame, sess.last_frame, sess.frame_stats,
+        sess.cache_written_start, sess.cache_written_end,
+        sess.cache_settings_records,
+    )
+
+    with pytest.raises(RuntimeError, match="required 10, available 8"):
+        sess.reset(scene)
+
+    assert planned == [8]
+    assert prepared == []
+    assert released == []
+    assert (
+        sess.solver, old.particles.payload, old.frame, old.stats,
+        sess.start_frame, sess.last_frame, sess.frame_stats,
+        sess.cache_written_start, sess.cache_written_end,
+        sess.cache_settings_records,
+    ) == authoritative
+    assert old.settings.particle_growth_failure_policy == "PAUSE"
+    assert sess.capacity_plan_for_scene(scene).blockers[0].available == 8
+
+
+def test_reset_autogrow_off_lowered_reserve_uses_grown_runtime_without_shrink(
+        monkeypatch):
+    _bridge_mod, scene, sess, old, released, planned, prepared = _active_reset(
+        monkeypatch, authored=4, runtime=12, demand=10, auto_grow=False)
+
+    sess.reset(scene)
+
+    assert planned == [12]
+    assert prepared and sess.solver is prepared[0]
+    assert sess.solver.particles.capacity == 12
+    assert scene.fluidsim.max_particles == 4
+    assert released == ["old"]
+    assert old.particles.capacity == 12
+
+
+def test_failed_empty_reset_replacement_preserves_authoritative_session(
+        monkeypatch):
+    _bridge_mod, scene, sess, old, released, planned, _prepared = _active_reset(
+        monkeypatch,
+        authored=8,
+        runtime=8,
+        demand=7,
+        auto_grow=False,
+        prepare_error=RuntimeError("candidate allocation failed"),
+    )
+    frame_stats = sess.frame_stats
+    cache_records = sess.cache_settings_records
+
+    with pytest.raises(RuntimeError, match="candidate allocation failed"):
+        sess.reset(scene)
+
+    assert planned == [8]
+    assert sess.solver is old
+    assert sess.last_frame == 23
+    assert sess.frame_stats is frame_stats
+    assert sess.cache_settings_records is cache_records
+    assert old.particles.host_count == 7
+    assert released == []
+
+
+def test_prepared_seed_capacity_mismatch_discards_candidate_not_live_solver(
+        monkeypatch):
+    bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
+    candidates = []
+
+    class Candidate:
+        device = "cuda:0"
+
+        def __init__(self, settings, profiler=None):
+            self.settings = settings
+            self.particles = SimpleNamespace(capacity=8, host_count=0)
+            self.sourcing = SimpleNamespace(last_apply_result={})
+            candidates.append(self)
+
+        def release(self):
+            released.append("candidate")
+
+        def set_custom_snippets(self, _snippets):
+            return ()
+
+    solver_module = types.ModuleType("fluidSim_warp_blender51.sim.solver")
+    solver_module.FluidSolver = Candidate
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.sim.solver", solver_module)
+    from fluidSim_warp_blender51.blender import sources
+
+    def refuse(candidate_session, _seeds):
+        candidate_session.solver.sourcing.last_apply_result = {
+            "admitted": False,
+            "required": 9,
+            "available": 8,
+        }
+        return 0
+
+    monkeypatch.setattr(sources, "commit_prepared_seeds", refuse)
+    monkeypatch.setattr(
+        sess, "_apply_scene_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge, "build_snippets", lambda _scene: ())
+    snapshot = SimpleNamespace(seeds=(object(),))
+    settings = _Settings(max_particles=8)
+
+    with pytest.raises(RuntimeError, match="required 9, available 8"):
+        bridge.Session._prepare_solver_replacement(
+            sess, scene, settings, snapshot, None)
+
+    assert candidates
+    assert sess.solver is old
+    assert old.particles.host_count == 7
+    assert released == ["candidate"]
+
+
+def test_reinitialize_candidate_failure_retains_active_solver(monkeypatch):
+    bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
+    scene.fluidsim.profiling_enabled = False
+    scene.fluidsim.profiling_sync = False
+    scene.fluidsim.snippets = []
+    plan = SimpleNamespace(
+        blockers=(), estimated_bytes=0, budget_bytes=1024,
+        suggestions=(), scene_signature="reinit")
+    snapshot = SimpleNamespace(capacity_plan=plan, seeds=())
+    monkeypatch.setattr(sess, "_plan_scene", lambda *_a, **_k: snapshot)
+    monkeypatch.setattr(
+        sess, "_prepare_solver_replacement",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            RuntimeError("replacement allocation failed")),
+    )
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
+        "safe": True,
+        "estimated_bytes": 0,
+        "budget_bytes": 1024,
+        "resources": {},
+        "recommended": {},
+    })
+
+    with pytest.raises(RuntimeError, match="replacement allocation failed"):
+        sess.initialize(scene)
+
+    assert sess.solver is old
+    assert old.frame == 23
+    assert old.particles.host_count == 7
+    assert sess.frame_stats == [{"frame": 23}]
+    assert released == []
+    assert sess.capacity_plan_for_scene(scene) is plan
+
+
+def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    first = SimpleNamespace()
+    second = SimpleNamespace()
+    plan = SimpleNamespace(scene_signature="identical-content", suggestions=(1,))
+    sess = bridge.Session()
+    sess._set_capacity_plan(first, plan, memory_bypassed=True)
+    sess.particle_capacity_notice_scene_identity = bridge._scene_identity(first)
+    sess.particle_capacity_notice = "first only"
+
+    assert sess.capacity_plan_for_scene(first) is plan
+    assert sess.capacity_plan_for_scene(second) is None
+    assert sess.particle_capacity_notice_for_scene(second) == ""
+    plan.scene_signature = "changed"
+    assert sess.capacity_plan_for_scene(first) is None
+
+    plan.scene_signature = "identical-content"
+    sess._set_capacity_plan(first, plan, memory_bypassed=True)
+    sess.release(first)
+    assert sess.capacity_plan is None
+    assert sess.capacity_plan_scene_identity is None
+    assert sess.capacity_plan_scene_signature == ""
+    assert sess.capacity_plan_memory_bypassed is False
+    assert sess.particle_capacity_notice_for_scene(first) == ""
+
+    global_session = bridge.session()
+    global_session._set_capacity_plan(first, plan, memory_bypassed=True)
+    bridge._on_load_pre("")
+    assert global_session.capacity_plan is None
+    assert global_session.capacity_plan_scene_identity is None
+    assert global_session.capacity_plan_memory_bypassed is False
+
+
+def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypatch):
+    bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=8, runtime=12, demand=7, auto_grow=False)
+    scene.fluidsim.profiling_enabled = False
+    scene.fluidsim.profiling_sync = False
+    blocker = SimpleNamespace(
+        code="PARTICLE_CAPACITY", required=9, available=8,
+        message="particle capacity")
+    plan = SimpleNamespace(
+        blockers=(blocker,), estimated_bytes=0, budget_bytes=1024,
+        suggestions=(), scene_signature="blocked-reinit")
+    snapshot = SimpleNamespace(capacity_plan=plan, seeds=())
+    monkeypatch.setattr(sess, "_plan_scene", lambda *_a, **_k: snapshot)
+    prepared = []
+    monkeypatch.setattr(
+        sess, "_prepare_solver_replacement",
+        lambda *_a, **_k: prepared.append(True))
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
+        "safe": True,
+        "estimated_bytes": 0,
+        "budget_bytes": 1024,
+        "resources": {},
+        "recommended": {},
+    })
+
+    with pytest.raises(RuntimeError, match="required 9, available 8"):
+        sess.initialize(scene)
+
+    assert sess.solver is old
+    assert old.frame == 23
+    assert old.particles.host_count == 7
+    assert sess.frame_stats == [{"frame": 23}]
+    assert released == []
+    assert prepared == []
+    assert sess.capacity_plan_for_scene(scene) is plan
