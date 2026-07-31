@@ -418,6 +418,10 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     sess.particle_capacity_notice_scene_identity = bridge._scene_identity(first)
 
     assert sess.capacity_plan_for_scene(first) is plan
+    assert "|operation=INITIALIZE" in sess.capacity_plan_scene_signature
+    sess.capacity_plan_operation = "RESET"
+    assert sess.capacity_plan_for_scene(first) is None
+    sess.capacity_plan_operation = "INITIALIZE"
     assert sess.capacity_plan_for_scene(second) is None
     assert sess.particle_capacity_notice_for_scene(second) == ""
     plan.scene_signature = "changed"
@@ -429,6 +433,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     assert sess.capacity_plan is None
     assert sess.capacity_plan_scene_identity is None
     assert sess.capacity_plan_scene_signature == ""
+    assert sess.capacity_plan_operation is None
     assert sess.capacity_plan_memory_bypassed is False
     assert sess.particle_capacity_notice_for_scene(first) == ""
 
@@ -437,6 +442,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     bridge._on_load_pre("")
     assert global_session.capacity_plan is None
     assert global_session.capacity_plan_scene_identity is None
+    assert global_session.capacity_plan_operation is None
     assert global_session.capacity_plan_memory_bypassed is False
 
 
@@ -460,12 +466,13 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
         blockers=(blocker,), estimated_bytes=0, budget_bytes=1024,
         suggestions=(), scene_signature="first-init")
     snapshot = SimpleNamespace(capacity_plan=plan, seeds=())
-    planned_residencies = []
+    planned_models = []
 
     def plan_scene(
-            _scene, _settings, _resources, *,
+            _scene, settings, _resources, *,
             additional_transaction_bytes=0):
-        planned_residencies.append(additional_transaction_bytes)
+        planned_models.append((
+            int(settings.max_particles), additional_transaction_bytes))
         return snapshot
 
     monkeypatch.setattr(sess, "_plan_scene", plan_scene)
@@ -486,19 +493,22 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
     with pytest.raises(RuntimeError, match="particle demand is unknown"):
         sess.initialize(scene)
 
-    assert planned_residencies == [0]
+    assert planned_models == [(8, 0)]
     assert prepared == []
     assert sess.solver is None
+    assert sess.capacity_plan_operation == "INITIALIZE"
 
 
-def test_owned_refresh_plan_uses_exact_live_solver_residency(monkeypatch):
+def test_owned_reset_refresh_uses_runtime_capacity_and_exact_residency(monkeypatch):
     _bridge_mod, scene, sess, old, _released, _planned, _prepared = _active_reset(
         monkeypatch, authored=4, runtime=12, demand=7, auto_grow=False)
     from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
 
     expected_live_solver_bytes = estimate_solver_bytes(old.settings)
     calls = []
+    original = SimpleNamespace(scene_signature="owned-refresh", suggestions=())
     plan = SimpleNamespace(scene_signature="owned-refresh", suggestions=())
+    sess._set_capacity_plan(scene, original, operation="RESET")
 
     def plan_scene(
             _scene, settings, _resources, *,
@@ -508,10 +518,55 @@ def test_owned_refresh_plan_uses_exact_live_solver_residency(monkeypatch):
 
     monkeypatch.setattr(sess, "_plan_scene", plan_scene)
 
+    expected_signature = sess.capacity_plan_signature_for_scene(scene)
     assert sess.refresh_capacity_plan(scene) is plan
     assert calls == [(12, expected_live_solver_bytes)]
     assert sess.capacity_plan_for_scene(scene) is plan
+    assert sess.capacity_plan_operation == "RESET"
+    assert sess.capacity_plan_signature_for_scene(scene) == expected_signature
     assert sess.capacity_plan_memory_bypassed is False
+
+
+def test_owned_reinitialize_refresh_uses_authored_reserve_after_runtime_growth(
+        monkeypatch):
+    _bridge_mod, scene, sess, old, _released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=1024, runtime=65_536, demand=2048,
+        auto_grow=False)
+    from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
+
+    expected_live_solver_bytes = estimate_solver_bytes(old.settings)
+    suggestion = SimpleNamespace(key="preserve_simulation")
+    original = SimpleNamespace(
+        scene_signature="capacity-1024", suggestions=(suggestion,),
+        blockers=(SimpleNamespace(code="PARTICLE_CAPACITY"),),
+    )
+    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    expected_signature = sess.capacity_plan_signature_for_scene(scene)
+    calls = []
+
+    def plan_scene(
+            _scene, settings, _resources, *,
+            additional_transaction_bytes=0):
+        capacity = int(settings.max_particles)
+        calls.append((capacity, additional_transaction_bytes))
+        plan = SimpleNamespace(
+            scene_signature=f"capacity-{capacity}",
+            suggestions=(suggestion,) if capacity < 2048 else (),
+            blockers=((SimpleNamespace(code="PARTICLE_CAPACITY"),)
+                      if capacity < 2048 else ()),
+        )
+        return SimpleNamespace(capacity_plan=plan)
+
+    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+
+    refreshed = sess.refresh_capacity_plan(scene)
+
+    assert calls == [(1024, expected_live_solver_bytes)]
+    assert refreshed.blockers[0].code == "PARTICLE_CAPACITY"
+    assert [item.key for item in refreshed.suggestions] == [
+        "preserve_simulation"]
+    assert sess.capacity_plan_operation == "REINITIALIZE"
+    assert sess.capacity_plan_signature_for_scene(scene) == expected_signature
 
 
 def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypatch):
@@ -646,3 +701,4 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
     assert prepared == []
     assert cuda_releases == []
     assert sess.capacity_plan_for_scene(scene) is plan
+    assert sess.capacity_plan_operation == "REINITIALIZE"

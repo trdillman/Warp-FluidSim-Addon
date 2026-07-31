@@ -1632,6 +1632,77 @@ def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     assert second.fluidsim.max_particles == 8
 
 
+def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
+        monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    fs = SimpleNamespace(max_particles=1024, status="")
+    scene = SimpleNamespace(fluidsim=fs)
+    sess = bridge.session()
+    sess.solver = SimpleNamespace(
+        settings=SimpleNamespace(device="cuda:0", max_particles=65_536),
+        particles=SimpleNamespace(capacity=65_536),
+        device="cuda:0",
+    )
+    sess.scene_identity = bridge._scene_identity(scene)
+    monkeypatch.setattr(
+        bridge, "build_settings",
+        lambda _scene: SimpleNamespace(
+            device="cuda:0", max_particles=int(fs.max_particles)))
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 16 * 1024**3,
+        "gpu_free_bytes": 12 * 1024**3,
+    })
+    planned = []
+
+    def plan_scene(
+            _scene, settings, _resources, *,
+            additional_transaction_bytes=0):
+        capacity = int(settings.max_particles)
+        planned.append((capacity, additional_transaction_bytes))
+        suggestion = SimpleNamespace(
+            key="preserve_simulation", label="Preserve Simulation",
+            changes={"max_particles": 2048}, estimated_bytes=1,
+            budget_bytes=2)
+        blocked = capacity < 2048
+        return SimpleNamespace(capacity_plan=SimpleNamespace(
+            scene_signature=f"capacity-{capacity}",
+            suggestions=(suggestion,) if blocked else (),
+            blockers=((SimpleNamespace(code="PARTICLE_CAPACITY"),)
+                      if blocked else ()),
+        ))
+
+    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    original = plan_scene(
+        scene, SimpleNamespace(max_particles=1024), {}).capacity_plan
+    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    expected_signature = sess.capacity_plan_signature_for_scene(scene)
+    initialized = []
+    monkeypatch.setattr(
+        bridge, "initialize_session",
+        lambda actual: initialized.append(actual) or sess)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda _op, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "preserve_simulation"
+
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert op.expected_scene_signature == expected_signature
+    assert op.execute(context) == {"FINISHED"}
+    assert planned[-1][0] == 1024
+    assert planned[-1][1] == memory_safety.estimate_solver_bytes(
+        sess.solver.settings)
+    assert fs.max_particles == 2048
+    assert initialized == [scene]
+
+
 def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypatch):
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")

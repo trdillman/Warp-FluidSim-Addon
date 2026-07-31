@@ -113,6 +113,7 @@ class Session:
         self.memory_assessment = {}
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
+        self.capacity_plan_operation = None
         self.capacity_plan_scene_identity = None
         self.capacity_plan_scene_signature = ""
         self.particle_capacity_notice_scene_identity = None
@@ -133,24 +134,30 @@ class Session:
     def _clear_capacity_plan(self):
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
+        self.capacity_plan_operation = None
         self.capacity_plan_scene_identity = None
         self.capacity_plan_scene_signature = ""
 
     @staticmethod
-    def _capacity_plan_binding_signature(scene, plan):
+    def _capacity_plan_binding_signature(scene, plan, operation):
         plan_signature = str(getattr(plan, "scene_signature", ""))
+        binding = f"{plan_signature}|operation={operation}"
         fs = getattr(scene, "fluidsim", None)
         authored_reserve = getattr(fs, "max_particles", None)
         if authored_reserve is None:
-            return plan_signature
-        return f"{plan_signature}|initial-reserve={int(authored_reserve)}"
+            return binding
+        return f"{binding}|initial-reserve={int(authored_reserve)}"
 
-    def _set_capacity_plan(self, scene, plan, *, memory_bypassed=False):
+    def _set_capacity_plan(
+            self, scene, plan, *, operation=None, memory_bypassed=False):
+        if operation is None:
+            operation = "REINITIALIZE" if self.owns_scene(scene) else "INITIALIZE"
         self.capacity_plan = plan
         self.capacity_plan_memory_bypassed = bool(memory_bypassed)
+        self.capacity_plan_operation = str(operation)
         self.capacity_plan_scene_identity = _scene_identity(scene)
         self.capacity_plan_scene_signature = self._capacity_plan_binding_signature(
-            scene, plan)
+            scene, plan, self.capacity_plan_operation)
         return plan
 
     def capacity_plan_for_scene(self, scene):
@@ -161,7 +168,7 @@ class Session:
         if self.capacity_plan_scene_identity != _scene_identity(scene):
             return None
         if self.capacity_plan_scene_signature != self._capacity_plan_binding_signature(
-                scene, plan):
+                scene, plan, self.capacity_plan_operation):
             return None
         return plan
 
@@ -369,23 +376,31 @@ class Session:
             height_source, seeds, capacity_plan,
         )
 
-    def refresh_capacity_plan(self, scene):
-        """Recompute a scene-owned warning/options model without mutation."""
+    def refresh_capacity_plan(self, scene, *, operation=None):
+        """Recompute the originating operation's warning/options model."""
         from ..sim.memory_safety import estimate_solver_bytes, vram_snapshot
 
+        if operation is None:
+            owned_plan = self.capacity_plan_for_scene(scene)
+            operation = (
+                self.capacity_plan_operation if owned_plan is not None
+                else ("REINITIALIZE" if self.owns_scene(scene) else "INITIALIZE")
+            )
         settings = build_settings(scene)
         live_solver_bytes = 0
         if self.owns_scene(scene):
-            runtime_capacity = int(self.solver.particles.capacity)
-            settings = replace(settings, max_particles=runtime_capacity)
-            # The displayed plan models the same transactional replacement
-            # peak as reset/reinitialize, including the authoritative solver.
+            if operation == "RESET":
+                runtime_capacity = int(self.solver.particles.capacity)
+                settings = replace(settings, max_particles=runtime_capacity)
+            # Every owned replacement keeps the authoritative solver resident
+            # until its candidate commits, independent of candidate capacity.
             live_solver_bytes = estimate_solver_bytes(self.solver.settings)
         resources = vram_snapshot(settings.device)
         snapshot = self._plan_scene(
             scene, settings, resources,
             additional_transaction_bytes=live_solver_bytes)
-        return self._set_capacity_plan(scene, snapshot.capacity_plan)
+        return self._set_capacity_plan(
+            scene, snapshot.capacity_plan, operation=operation)
 
     def _apply_scene_snapshot(
             self, snapshot, *, solver=None, commit_inputs=True):
@@ -491,9 +506,11 @@ class Session:
             # fully prepared candidate commits; first initialization adds zero.
             resources = vram_snapshot(settings.device)
             memory_assessment = assess_configuration(settings, resources)
+            owns_scene = self.owns_scene(scene)
+            plan_operation = "REINITIALIZE" if owns_scene else "INITIALIZE"
             live_solver_bytes = (
                 estimate_solver_bytes(self.solver.settings)
-                if self.owns_scene(scene) else 0)
+                if owns_scene else 0)
             snapshot = self._plan_scene(
                 scene, settings, resources,
                 additional_transaction_bytes=live_solver_bytes)
@@ -529,6 +546,7 @@ class Session:
                     memory_assessment = assess_configuration(settings, resources)
             self._set_capacity_plan(
                 scene, snapshot.capacity_plan,
+                operation=plan_operation,
                 memory_bypassed=ignore_memory_safeguard)
             integrity_blockers = self._integrity_blockers(snapshot.capacity_plan)
             if integrity_blockers:
@@ -851,7 +869,8 @@ class Session:
                 snapshot = candidate_snapshot
                 replacement_growth = (runtime_capacity, int(target))
 
-        self._set_capacity_plan(scene, snapshot.capacity_plan)
+        self._set_capacity_plan(
+            scene, snapshot.capacity_plan, operation="RESET")
         integrity_blockers = self._integrity_blockers(snapshot.capacity_plan)
         memory_blockers = tuple(
             blocker for blocker in snapshot.capacity_plan.blockers
