@@ -489,8 +489,8 @@ class SolverSettings:
     surface_leaf_capacity_scale: float = 8.0
     surface_max_dense_dim: int = 512
     surface_update_cadence: int = int(SurfaceUpdateCadence.FRAME)
-    live_surface_publish_cadence: int = 4
-    surface_build_lowres_sdf: bool = True
+    live_surface_publish_cadence: int = 1
+    surface_build_lowres_sdf: bool = False
     surface_filter_type: int = int(SdfFilterType.BOX)
     surface_filter_iterations: int = 0
     surface_filter_strength: float = 0.7

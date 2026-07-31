@@ -465,7 +465,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
             ("VECTOR", "Vector Velocity", "Source a centered vector field after P2G"),
             ("STAGGERED_VELOCITY", "Staggered Velocity", "Source independent MAC face components"),
         ], default="PRESSURE", update=_request_sync,
-        description="Choose which solver field receives this source; changing it changes the payload controls and the solver phase where the value is applied")
+        description="Choose which solver field receives this non-liquid source; field operations write solver data and never emit liquid, and changing the target changes the payload controls and solver phase")
     field_region_kind: EnumProperty(
         name="Field Region", items=[
             ("ANALYTIC", "Analytic Region", "Use this object's analytic region"),
@@ -978,12 +978,12 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         default="FRAME", update=_request_surface_refresh,
         description="Choose when the expensive render surface rebuilds; more frequent updates track substeps better but cost more, while manual updates are cheapest and can appear stale")
     live_surface_publish_cadence: IntProperty(
-        name="Live Surface Every", default=4, min=1, max=8,
+        name="Live Surface Every", default=1, min=1, max=8,
         update=_request_surface_refresh,
         description=("Set how often the Blender viewport mesh publishes during live playback; "
                      "higher values publish less often for better responsiveness, while 1 publishes every frame; physics, cache, and exports still evaluate every frame"))
     surface_build_lowres_sdf: BoolProperty(
-        name="Keep Sim Surface Field", default=True,
+        name="Keep Sim Surface Field", default=False,
         update=_request_surface_refresh,
         description="Enable to retain the simulation-resolution SDF alongside a separate render surface for solver consumers; disable to reduce work when only the render surface is needed")
     surface_filter_type: EnumProperty(

@@ -400,11 +400,10 @@ def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
     assert seen == [(scene, {"ignore_memory_safeguard": True})]
 
 
-def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatch):
+def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
-        liquid_view_mode="SURFACE_PARTICLES",
         show_surface=True,
         surface_enabled=True,
         particle_radius_scale=1.2,
@@ -434,34 +433,25 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         particle_display_scale=1.0,
         particle_attribute_mode="NONE",
         particle_material=None,
-        show_whitewater=True,
-        whitewater_enabled=True,
-        whitewater_display_scale=1.0,
-        whitewater_attribute_mode="NONE",
-        whitewater_material=None,
     )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
     layout = _Layout()
     panel = panels.FLUIDSIM_PT_realtime_display()
     panel.layout = layout
 
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+    panel.draw(context)
 
-    expected = {
-        "liquid_view_mode",
-        "show_surface",
+    main_controls = {
         "surface_enabled",
-            "particle_radius_scale",
-            "surface_splat_radius",
-            "surface_resolution_mode",
-            "surface_resolution_multiplier",
-            "surface_leaf_capacity_scale",
-            "surface_max_dense_dim",
-            "surface_update_cadence",
-            "live_surface_publish_cadence",
-            "surface_build_lowres_sdf",
-            "surface_filter_type",
-            "surface_filter_iterations",
-            "surface_filter_strength",
+        "particle_radius_scale",
+        "surface_splat_radius",
+        "surface_resolution_mode",
+        "surface_resolution_multiplier",
+        "surface_update_cadence",
+        "live_surface_publish_cadence",
+        "surface_filter_type",
+        "surface_filter_iterations",
+        "surface_filter_strength",
         "surface_dilate_iterations",
         "surface_dilate_strength",
         "surface_erode_iterations",
@@ -469,6 +459,7 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "surface_smooth_type",
         "surface_smooth_iterations",
         "surface_smooth_strength",
+        "show_surface",
         "surface_attribute_mode",
         "surface_material",
         "show_particles",
@@ -477,21 +468,32 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "particle_attribute_mode",
         "particle_material",
     }
-    assert expected.issubset(set(layout.props))
-    assert {
-        "show_whitewater",
-        "whitewater_enabled",
-        "whitewater_display_scale",
-        "whitewater_attribute_mode",
-        "whitewater_material",
-    }.isdisjoint(layout.props)
+    advanced_controls = {
+        "surface_leaf_capacity_scale",
+        "surface_max_dense_dim",
+        "surface_build_lowres_sdf",
+    }
+    assert layout.props[0] == "surface_enabled"
+    assert main_controls.issubset(layout.props)
+    assert advanced_controls.isdisjoint(layout.props)
+    assert layout.labels == [
+        {"text": "Surface Mesh", "icon": "MESH_DATA"},
+        {"text": "Liquid Particles", "icon": "PARTICLE_DATA"},
+    ]
+
+    advanced_layout = _Layout()
+    advanced = panels.FLUIDSIM_PT_surface_advanced()
+    advanced.layout = advanced_layout
+    advanced.draw(context)
+    assert set(advanced_layout.props) == advanced_controls
+    assert advanced.bl_parent_id == panels.FLUIDSIM_PT_realtime_display.bl_idname
+    assert "DEFAULT_CLOSED" in advanced.bl_options
 
 
-def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
+def test_whitewater_panel_starts_with_simulation_toggle_and_owns_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
-        surface_enabled=True,
         whitewater_enabled=True,
         max_whitewater=1000,
         ww_churn_gain=1.0,
@@ -508,7 +510,6 @@ def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
         whitewater_attribute_mode="NONE",
         whitewater_material=None,
     )
-    scene = SimpleNamespace(fluidsim=fs)
     expected = {
         "show_whitewater",
         "whitewater_enabled",
@@ -528,14 +529,40 @@ def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
     }
 
     layout = _Layout()
-    panel = panels.FLUIDSIM_PT_surface()
+    panel = panels.FLUIDSIM_PT_whitewater()
     panel.layout = layout
-    panel.draw_header(SimpleNamespace(scene=scene))
-    panel.draw(SimpleNamespace(scene=scene))
-    assert expected.issubset(layout.props)
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
 
-    realtime_source = inspect.getsource(panels.FLUIDSIM_PT_realtime_display.draw)
-    assert all(name not in realtime_source for name in expected)
+    assert layout.props[0] == "whitewater_enabled"
+    assert expected.issubset(layout.props)
+    assert "Viewport / Render" not in {label["text"] for label in layout.labels}
+    assert layout.labels == []
+    other_sources = "\n".join(inspect.getsource(cls.draw) for cls in (
+        panels.FLUIDSIM_PT_realtime_display,
+        panels.FLUIDSIM_PT_output,
+    ))
+    assert all(name not in other_sources for name in expected)
+
+
+def test_panels_keep_static_help_in_tooltips(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    panel_source = inspect.getsource(panels)
+    prohibited_explanations = {
+        "Solid Volume requires a watertight mesh",
+        "Direct Append adds owned points once; it is not volume fill",
+        "Targets colliders and closed domain walls",
+        "Configure these in Blender Physics properties",
+        "Mesh vertices, PointCloud points, or the first particle system",
+        "Compatibility direct append; this is not volume fill",
+        "FIELD operations never emit liquid",
+    }
+
+    assert all(text not in panel_source for text in prohibited_explanations)
+    assert "_draw_interaction_tier" not in panel_source
+    height_source = inspect.getsource(panels.FLUIDSIM_PT_domain_height_fill.draw)
+    assert "col.enabled = fs.height_enabled" in height_source
+    assert "return" not in height_source
 
 
 def test_collider_panel_has_only_per_object_material_controls(monkeypatch):

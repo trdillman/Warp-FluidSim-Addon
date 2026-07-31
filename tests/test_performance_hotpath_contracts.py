@@ -130,8 +130,8 @@ def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch)
     assert len(launches) == 2  # source field + source type resolve only
 
 
-def test_live_surface_publish_cadence_defaults_to_four_frames():
-    assert SolverSettings().live_surface_publish_cadence == 4
+def test_live_surface_publish_cadence_defaults_to_every_frame():
+    assert SolverSettings().live_surface_publish_cadence == 1
 
 
 def test_viewport_replaces_full_mesh_repair_with_index_validation():

@@ -559,7 +559,7 @@ class FLUIDSIM_OT_clear_object_role(_FLUIDSIM_OT_role_tag_base, bpy.types.Operat
 
 
 class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
-    """Inject active-object points once as a compatibility utility"""
+    """Append mesh vertices, point-cloud points, or the first particle system once; this compatibility utility is not a volume fill"""
 
     bl_idname = "fluidsim.inject_particles"
     bl_label = "Inject Active Object Points Once"

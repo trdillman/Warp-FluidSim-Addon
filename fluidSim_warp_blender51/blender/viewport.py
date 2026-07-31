@@ -863,7 +863,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     publish_surface = (
         force_surface or not has_surface or
         host.should_publish_surface(
-            getattr(fs, "live_surface_publish_cadence", 4))
+            getattr(fs, "live_surface_publish_cadence", 1))
     )
     _render_outputs(
         scene, _solver_frame(scene, solver, publish_surface=publish_surface))

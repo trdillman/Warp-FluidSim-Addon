@@ -47,12 +47,6 @@ def _draw_pending_banner(layout, scene):
     row.operator("fluidsim.revert_pending", text="Revert", icon="LOOP_BACK")
 
 
-def _draw_interaction_tier(layout, text, icon="INFO"):
-    row = layout.row() if hasattr(layout, "row") else layout
-    row.alignment = "RIGHT"
-    row.label(text=text, icon=icon)
-
-
 def _draw_header_interaction(self, context):
     scene = getattr(context, "scene", None)
     if getattr(scene, "fluidsim", None) is None:
@@ -156,7 +150,6 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
                 warn.label(text="CFL clamped by Max substeps", icon="ERROR")
 
         col = layout.column(align=True)
-        _draw_interaction_tier(col, "Live")
         col.prop(fs, "time_scale")
         col.prop(fs, "cfl")
         row = col.row(align=True)
@@ -177,12 +170,10 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         layout = self.layout
         fs = context.scene.fluidsim
         _draw_pending_banner(layout, context.scene)
-        _draw_interaction_tier(layout, "Reinitialize Required", "ERROR")
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "voxel_size")
         col.prop(fs, "leaf_capacity")
-        _draw_interaction_tier(col, "Restart Required", "FILE_REFRESH")
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
@@ -214,9 +205,7 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         _draw_pending_banner(layout, context.scene)
         col = layout.column(align=True)
-        _draw_interaction_tier(col, "Reinitialize Required", "ERROR")
         col.prop(fs, "max_particles")
-        _draw_interaction_tier(col, "Live / Targeted Refresh")
         col.prop(fs, "particles_per_voxel")
         col.prop(fs, "sample_type")
         sub = col.column(align=True)
@@ -240,8 +229,6 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
 
         box = layout.box()
         box.label(text="ST-FLIP (Beta)", icon="EXPERIMENTAL")
-        _draw_interaction_tier(box, "Enable/Reference/Seed: Restart Required",
-                               "FILE_REFRESH")
         box.prop(fs, "spacetime_enabled")
         sub = box.column(align=True)
         sub.enabled = fs.spacetime_enabled
@@ -301,8 +288,6 @@ def _draw_mesh_input(col, pg, *, solid, shell):
         error = col.box()
         error.alert = True
         error.label(text=pg.mesh_error, icon="ERROR")
-    elif solid:
-        col.label(text="Solid Volume requires a watertight mesh", icon="INFO")
 
 
 def _draw_volume_input(col, pg, *, fields=False):
@@ -360,8 +345,6 @@ class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
                 if pg.point_source_representation == "RASTERIZED_REGION":
                     col.prop(pg, "point_rasterize_radius")
                     col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
-                else:
-                    col.label(text="Direct Append adds owned points once; it is not volume fill", icon="INFO")
             elif kind == "VOLUME_GRID":
                 _draw_volume_input(col, pg)
                 col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
@@ -500,12 +483,10 @@ class FLUIDSIM_PT_forces(FluidSimPanel, bpy.types.Panel):
         global_box.prop(fs, "attraction_enabled")
         attraction = global_box.column(align=True)
         attraction.enabled = fs.attraction_enabled
-        attraction.label(text="Targets colliders and closed domain walls")
         attraction.prop(fs, "attraction_strength")
         attraction.prop(fs, "attraction_max_distance")
         physics = layout.box()
         physics.label(text="Blender Force Fields", icon="PHYSICS")
-        physics.label(text="Configure these in Blender Physics properties")
         _draw_role_actions(layout, "fluidsim.tag_force_region")
         if obj is not None and _presentation_role(obj.fluidsim) == "FORCE":
             pg = obj.fluidsim
@@ -535,9 +516,8 @@ class FLUIDSIM_PT_domain_height_fill(FluidSimPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         layout = self.layout
         layout.prop(fs, "height_enabled", text="Enable Domain Height Fill")
-        if not fs.height_enabled:
-            return
         col = layout.column(align=True)
+        col.enabled = fs.height_enabled
         col.prop(fs, "height_base", text="Fill Level")
         row = col.row(align=True)
         row.prop_enum(fs, "height_back_mode", "FLAT", text="Flat")
@@ -563,8 +543,6 @@ class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("fluidsim.inject_particles", text="Inject Active Object Points Once", icon="PARTICLES")
-        layout.label(text="Mesh vertices, PointCloud points, or the first particle system", icon="INFO")
-        layout.label(text="Compatibility direct append; this is not volume fill", icon="INFO")
         obj = context.active_object
         if obj is not None:
             layout.prop(obj.fluidsim, "auto_inject_seed", text="Reinject on Initialize / Reset")
@@ -611,7 +589,6 @@ class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
             col.prop(pg, "field_vector_value")
         col.prop(pg, "blend_mode", text="Blend")
         col.prop(pg, "field_amount")
-        col.label(text="FIELD operations never emit liquid", icon="INFO")
         _draw_source_status(box, pg)
 
 
@@ -623,7 +600,6 @@ class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_interaction_tier(layout, "Live")
         col = layout.column(align=True)
         col.prop(fs, "pressure_solver")
         col.prop(fs, "pressure_iterations")
@@ -642,7 +618,6 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_interaction_tier(layout, "Live")
         layout.enabled = fs.viscosity_enabled
         col = layout.column(align=True)
         col.prop(fs, "viscosity_solver")
@@ -652,44 +627,112 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "viscosity_tolerance")
 
 
-class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater(FluidSimPanel, bpy.types.Panel):
     bl_label = "Whitewater"
-    bl_idname = "FLUIDSIM_PT_surface"
+    bl_idname = "FLUIDSIM_PT_whitewater"
     bl_options = {"DEFAULT_CLOSED"}
-
-    def draw_header(self, context):
-        self.layout.prop(context.scene.fluidsim, "whitewater_enabled", text="")
 
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_pending_banner(layout, context.scene)
-        sub = layout.column(align=True)
-        sub.enabled = fs.whitewater_enabled
-        _draw_interaction_tier(sub, "Reinitialize Required", "ERROR")
-        sub.prop(fs, "max_whitewater")
-        _draw_interaction_tier(sub, "Live")
-        sub.prop(fs, "ww_churn_gain")
-        sub.prop(fs, "ww_churn_decay")
-        sub.prop(fs, "ww_churn_threshold")
-        sub.prop(fs, "ww_emission_rate")
-        sub.prop(fs, "ww_min_speed")
-        row = sub.row(align=True)
+
+        layout.prop(fs, "whitewater_enabled")
+        physics = layout.column(align=True)
+        physics.enabled = fs.whitewater_enabled
+        physics.prop(fs, "max_whitewater")
+        physics.separator()
+        physics.prop(fs, "ww_churn_gain")
+        physics.prop(fs, "ww_churn_decay")
+        physics.prop(fs, "ww_churn_threshold")
+        physics.prop(fs, "ww_emission_rate")
+        physics.prop(fs, "ww_min_speed")
+        physics.separator()
+        row = physics.row(align=True)
         row.prop(fs, "ww_life_min")
         row.prop(fs, "ww_life_max")
-        row = sub.row(align=True)
+        row = physics.row(align=True)
         row.prop(fs, "ww_bubble_drag")
         row.prop(fs, "ww_spray_drag")
 
         layout.separator()
-        box = layout.box()
-        box.label(text="Viewport / Render", icon="OUTLINER_OB_POINTCLOUD")
-        box.prop(fs, "show_whitewater")
-        display = box.column(align=True)
+        layout.prop(fs, "show_whitewater", text="Show Whitewater in Viewport")
+        display = layout.column(align=True)
         display.enabled = fs.show_whitewater
         display.prop(fs, "whitewater_display_scale")
         display.prop(fs, "whitewater_attribute_mode")
         display.prop(fs, "whitewater_material")
+
+
+class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Realtime Surfacing / Particles"
+    bl_idname = "FLUIDSIM_PT_realtime_display"
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+
+        surface = layout.box()
+        surface.label(text="Surface Mesh", icon="MESH_DATA")
+        surface.prop(fs, "surface_enabled", text="Build Surface Mesh")
+        settings = surface.column(align=True)
+        settings.enabled = fs.surface_enabled
+        settings.prop(fs, "surface_resolution_mode")
+        if fs.surface_resolution_mode == "MULTIPLIER":
+            settings.prop(fs, "surface_resolution_multiplier")
+        elif fs.surface_resolution_mode == "CUSTOM":
+            settings.prop(fs, "surface_voxel_size")
+        settings.prop(fs, "particle_radius_scale")
+        settings.prop(fs, "surface_splat_radius")
+        settings.separator()
+        settings.prop(fs, "surface_filter_type")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_filter_iterations", text="Filter")
+        row.prop(fs, "surface_filter_strength", text="Strength")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_dilate_iterations", text="Dilate")
+        row.prop(fs, "surface_dilate_strength", text="Strength")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_erode_iterations", text="Erode")
+        row.prop(fs, "surface_erode_strength", text="Strength")
+        settings.prop(fs, "surface_smooth_type")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_smooth_iterations", text="Smooth")
+        row.prop(fs, "surface_smooth_strength", text="Strength")
+        settings.separator()
+        settings.prop(fs, "surface_update_cadence")
+        settings.prop(fs, "live_surface_publish_cadence")
+
+        surface.separator()
+        surface.prop(fs, "show_surface", text="Show Surface in Viewport")
+        display = surface.column(align=True)
+        display.enabled = fs.show_surface
+        display.prop(fs, "surface_attribute_mode")
+        display.prop(fs, "surface_material")
+
+        particles = layout.box()
+        particles.label(text="Liquid Particles", icon="PARTICLE_DATA")
+        particles.prop(fs, "show_particles", text="Show Liquid Particles")
+        display = particles.column(align=True)
+        display.enabled = fs.show_particles
+        display.prop(fs, "particle_display_fraction")
+        display.prop(fs, "particle_display_scale")
+        display.prop(fs, "particle_attribute_mode")
+        display.prop(fs, "particle_material")
+
+
+class FLUIDSIM_PT_surface_advanced(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Advanced Surface"
+    bl_idname = "FLUIDSIM_PT_surface_advanced"
+    bl_parent_id = "FLUIDSIM_PT_realtime_display"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+        layout.enabled = fs.surface_enabled
+        layout.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
+        layout.prop(fs, "surface_max_dense_dim", text="Dense Max")
+        layout.prop(fs, "surface_build_lowres_sdf")
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
@@ -717,64 +760,6 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         row.prop(fs, "cache_frame_end")
         box.operator("fluidsim.export_cache_sequence", icon="RENDER_ANIMATION")
         box.operator("fluidsim.export_frame", icon="EXPORT")
-
-
-class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Realtime Surfacing / Particles"
-    bl_idname = "FLUIDSIM_PT_realtime_display"
-
-    def draw(self, context):
-        layout = self.layout
-        fs = context.scene.fluidsim
-
-        _draw_interaction_tier(layout, "Live / Targeted Refresh")
-        layout.prop(fs, "liquid_view_mode")
-
-        box = layout.box()
-        box.label(text="Surface Mesh", icon="MESH_DATA")
-        box.prop(fs, "show_surface")
-        sub = box.column(align=True)
-        sub.enabled = fs.show_surface
-        sub.prop(fs, "surface_enabled")
-        sub.prop(fs, "particle_radius_scale")
-        sub.prop(fs, "surface_splat_radius")
-        sub.prop(fs, "surface_resolution_mode")
-        sub.prop(fs, "surface_resolution_multiplier")
-        if fs.surface_resolution_mode == "CUSTOM":
-            sub.prop(fs, "surface_voxel_size")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
-        row.prop(fs, "surface_max_dense_dim", text="Dense Max")
-        sub.prop(fs, "surface_update_cadence")
-        sub.prop(fs, "live_surface_publish_cadence")
-        sub.prop(fs, "surface_build_lowres_sdf")
-        sub.separator()
-        sub.prop(fs, "surface_filter_type")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_filter_iterations", text="Filter")
-        row.prop(fs, "surface_filter_strength", text="Strength")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_dilate_iterations", text="Dilate")
-        row.prop(fs, "surface_dilate_strength", text="Strength")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_erode_iterations", text="Erode")
-        row.prop(fs, "surface_erode_strength", text="Strength")
-        sub.prop(fs, "surface_smooth_type")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_smooth_iterations", text="Smooth")
-        row.prop(fs, "surface_smooth_strength", text="Strength")
-        sub.prop(fs, "surface_attribute_mode")
-        sub.prop(fs, "surface_material")
-
-        box = layout.box()
-        box.label(text="Liquid Particles", icon="PARTICLE_DATA")
-        box.prop(fs, "show_particles")
-        sub = box.column(align=True)
-        sub.enabled = fs.show_particles
-        sub.prop(fs, "particle_display_fraction")
-        sub.prop(fs, "particle_display_scale")
-        sub.prop(fs, "particle_attribute_mode")
-        sub.prop(fs, "particle_material")
 
 def _snippet_state_icon(snip):
     """Icon reflecting validation state of a snippet's current source."""
@@ -1038,8 +1023,9 @@ CLASSES = (
     FLUIDSIM_PT_advanced_field_sources,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
-    FLUIDSIM_PT_surface,
+    FLUIDSIM_PT_whitewater,
     FLUIDSIM_PT_realtime_display,
+    FLUIDSIM_PT_surface_advanced,
     FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
     FLUIDSIM_PT_snippet_editor,
