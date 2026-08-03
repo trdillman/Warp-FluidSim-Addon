@@ -352,11 +352,28 @@ def _supports_pointcloud():
     return hasattr(bpy.data, "pointclouds")
 
 
+def _new_prewarmed_pointcloud(name):
+    """Build a point cloud with its attribute schema and headroom already in
+    place, entirely before it is attached to an object.
+
+    ``_needs_realloc`` forces a detach/reattach the first time a point cloud
+    is written to if it has no "position"/"radius" attributes or its capacity
+    is 0 -- both true of a bare ``pointclouds.new()``. Doing that work here,
+    on a still-detached cloud, means the first live write after
+    ``ensure_outputs`` can just ``foreach_set`` into existing slots instead of
+    reallocating from inside ``frame_change_post`` (see ensure_outputs).
+    """
+    pc = bpy.data.pointclouds.new(name)
+    pc.resize(_MIN_POINT_CAPACITY)
+    _ensure_point_attributes(pc, wants_color=False)
+    return pc
+
+
 def _ensure_point_object(scene, name):
     """Get/create a point output object, native point cloud where available."""
     if _supports_pointcloud():
         return _ensure_object(
-            scene, name, lambda: bpy.data.pointclouds.new(name), "POINTCLOUD")
+            scene, name, lambda: _new_prewarmed_pointcloud(name), "POINTCLOUD")
     return _ensure_object(
         scene, name, lambda: bpy.data.meshes.new(name), "MESH")
 
@@ -729,6 +746,17 @@ def ensure_outputs(scene):
     live frame -- i.e. from inside frame_change_post, while the depsgraph the
     handler was handed is still being evaluated. Doing it at initialize time
     leaves the handler writing geometry into IDs that already exist.
+
+    Point clouds need one more thing meshes don't: _new_prewarmed_pointcloud
+    also gives them their attribute schema and starting capacity, because an
+    empty ``pointclouds.new()`` has neither and would still force a
+    detach/reallocate on the very first live write. A live sim that later
+    grows past that capacity still reallocates from inside the handler --
+    Blender 5.1 faults resizing a point cloud that is currently attached to
+    an object (see _needs_realloc), so that growth step cannot be pre-warmed
+    away, only made rare by the headroom in _point_capacity_for. Rendering
+    depends on this same synchronous handler (render.py), so that residual
+    case is not deferred to a timer either.
     """
     _require_bpy()
     from . import materials
