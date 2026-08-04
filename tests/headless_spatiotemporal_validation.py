@@ -31,13 +31,16 @@ def main(argv: list[str] | None = None) -> int:
 
     from fluidSim_warp_blender51.sim import validation
 
-    target = "spatiotemporal FLIP jitter, phase, and residual boundedness"
-    matches = [fn for fn in validation._TESTS if fn.validation_name == target]
+    matches = [fn for fn in validation._TESTS
+               if fn.validation_name.startswith("spatiotemporal")]
     if not matches:
-        raise RuntimeError(f"Validation test not found: {target}")
-    passed, detail = matches[0](args.device)
-    print(f"{target}: {'PASS' if passed else 'FAIL'} - {detail}")
-    return 0 if passed else 1
+        raise RuntimeError("No spatiotemporal validation tests registered")
+    failures = 0
+    for fn in matches:
+        passed, detail = fn(args.device)
+        failures += 0 if passed else 1
+        print(f"{fn.validation_name}: {'PASS' if passed else 'FAIL'} - {detail}")
+    return 0 if failures == 0 else 1
 
 
 if __name__ == "__main__":

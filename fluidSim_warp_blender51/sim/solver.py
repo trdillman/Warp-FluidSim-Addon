@@ -37,7 +37,7 @@ from .fields import (
     voxel_center_world,
 )
 from .particles import ParticleSystem, ParticleBins
-from .pressure import PressureSolver
+from .pressure import PressureSolver, k_compute_face_apertures
 from .viscosity import ViscositySolver
 from .whitewater import (
     WhitewaterSystem,
@@ -61,6 +61,7 @@ from .sourcing import HeightSourceDesc, SourcePipeline, SourceShapeDesc
 from .kernels_core import (
     k_particle_to_grid_collect,
     k_particle_to_grid_average,
+    k_grid_expand_scalar,
     k_max_vec3_magnitude,
 )
 from .kernels_fluid import (
@@ -83,6 +84,8 @@ from .kernels_fluid import (
     k_forces_diffusion,
     k_dissipate_particle_attribute,
     k_attract_sdf_gradient_direction,
+    k_phase_curvature,
+    k_surface_tension_csf,
     k_forces_speed_limit,
     k_particle_to_voxel_count_and_update_index,
     voxel_count_to_starts,
@@ -450,9 +453,16 @@ class SolverSettings:
     spacetime_variable_projection: bool = True
     spacetime_liquid_density: float = 1.0
     spacetime_gas_density: float = 0.0
-    spacetime_min_density: float = 0.05
+    spacetime_min_density: float = C.ST_EPS_RHO  # Eq. (15) eps_rho: a floor, not a cap
     spacetime_local_cfl: float = 1.0
     spacetime_max_local_substeps: int = 64
+    # Algorithm 1 line 21. 0 = derive the band width from the CFL number.
+    spacetime_extrapolation_iterations: int = 0
+    spacetime_solid_apertures: bool = True  # Eq. (14) alpha_f
+    # Sec. 3.9 CSF surface tension. 0.0 matches every paper experiment but
+    # Fig. 23 and keeps the feature entirely free when it is off.
+    spacetime_surface_tension: float = 0.0
+    spacetime_surface_tension_smoothing: int = 2
     spacetime_resync_surface: bool = True
     spacetime_seed: int = 1729
 
@@ -620,6 +630,24 @@ class FluidSolver:
         self.tmp_u = wp.zeros(vc, dtype=float, device=self.device)
         self.tmp_v = wp.zeros(vc, dtype=float, device=self.device)
         self.tmp_w = wp.zeros(vc, dtype=float, device=self.device)
+        # Ping-pong destinations for the ST velocity-extrapolation flood. Fixed
+        # capacity, allocated once: a topology rebuild changes num_leaves, never
+        # voxel_capacity, so these array identities are stable for the solver's
+        # lifetime and no CUDA-graph cache needs invalidating.
+        self.tmp_wu = wp.zeros(vc, dtype=float, device=self.device)
+        self.tmp_wv = wp.zeros(vc, dtype=float, device=self.device)
+        self.tmp_ww = wp.zeros(vc, dtype=float, device=self.device)
+        # ST-FLIP Eq. (14) solid face apertures, same fixed-capacity reasoning.
+        self.alpha_u = wp.zeros(vc, dtype=float, device=self.device)
+        self.alpha_v = wp.zeros(vc, dtype=float, device=self.device)
+        self.alpha_w = wp.zeros(vc, dtype=float, device=self.device)
+        # Smoothed phase (ping-pong) and curvature for the CSF surface tension.
+        # Dedicated rather than aliasing tmp_u/v/w: those are free at the launch
+        # site today only because of where it sits inside _forces, and a future
+        # reorder would corrupt this silently for ~0.8 MB of savings.
+        self.st_phase_a = wp.zeros(vc, dtype=float, device=self.device)
+        self.st_phase_b = wp.zeros(vc, dtype=float, device=self.device)
+        self.st_kappa = wp.zeros(vc, dtype=float, device=self.device)
         self.collision_impact_u = wp.zeros(vc, dtype=float, device=self.device)
         self.collision_impact_v = wp.zeros(vc, dtype=float, device=self.device)
         self.collision_impact_w = wp.zeros(vc, dtype=float, device=self.device)
@@ -1207,6 +1235,7 @@ class FluidSolver:
                         self.vel.wu, self.vel.wv, self.vel.ww],
                 device=self.device,
             )
+        self._surface_tension(dt)
         if s.max_speed > 0.0:
             wp.launch(
                 k_forces_speed_limit, dim=self._nvox,
@@ -1222,6 +1251,55 @@ class FluidSolver:
             self.vel.u, self.tmp_u = self.tmp_u, self.vel.u
             self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
             self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
+
+    def _surface_tension(self, dt):
+        """Sec. 3.9 continuum surface force, Algorithm 1 line 19.
+
+        Gated on ST being enabled because the color function is the ST phase
+        field in ``self.density.data``, rewritten every substep by
+        k_spacetime_weights_to_phase_active. With ST off that array holds an
+        unrelated user attribute, so a non-ST CSF path would need its own
+        color-function P2G pass -- out of scope.
+
+        ponytail: the smoothing reuses k_smooth_surface_sdf_box at strength 1,
+        the discrete 6-neighbour mean. It is not a separable 1-D binomial
+        product, so it only approximates the paper's ~2h cubic B-spline
+        support; the pass count is the exposed knob for tuning against
+        eps_phi = 1.5 dx.
+        """
+        s = self.settings
+        sigma = float(s.spacetime_surface_tension)
+        if not s.spacetime_enabled or sigma <= 0.0:
+            return
+        g = self.grid
+        src = self.density.data
+        bufs = (self.st_phase_a, self.st_phase_b)
+        passes = max(0, int(s.spacetime_surface_tension_smoothing))
+        for i in range(passes):
+            dst = bufs[i % 2]
+            wp.launch(
+                k_smooth_surface_sdf_box, dim=self._nvox,
+                inputs=[src, g.leaf_table, g.leaf_coords, g.voxels_dim,
+                        g.leaves_dim, g.num_leaves, g.voxel_size, 1.0],
+                outputs=[dst], device=self.device,
+            )
+            src = dst
+        wp.launch(
+            k_phase_curvature, dim=self._nvox,
+            inputs=[src, g.leaf_table, g.leaf_coords, g.voxels_dim,
+                    g.leaves_dim, g.num_leaves, g.voxel_size],
+            outputs=[self.st_kappa], device=self.device,
+        )
+        wp.launch(
+            k_surface_tension_csf, dim=self._nvox,
+            inputs=[src, self.st_kappa, g.leaf_table, g.leaf_coords,
+                    g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                    sigma, s.spacetime_liquid_density, s.spacetime_gas_density,
+                    s.spacetime_min_density, dt,
+                    self.vel.u, self.vel.v, self.vel.w,
+                    self.vel.wu, self.vel.wv, self.vel.ww],
+            device=self.device,
+        )
 
     def _viscosity(self, dt):
         s = self.settings
@@ -1245,6 +1323,19 @@ class FluidSolver:
                 tolerance=s.viscosity_tolerance,
             )
 
+    def _apertures_enabled(self):
+        """ST-FLIP Eq. (14) apertures are ST-only.
+
+        ponytail: the standard PPE family has no per-face coefficients at all
+        (k_compute_inverse_diagonal does ``diag += 1.0``), and that stencil is
+        what _prepare_pcg_commands records into the CUDA-graph LRU.  Weighting
+        it is a rewrite of the hot path every non-ST user runs, for a term only
+        the ST formulation needs.  Upgrade path: coefficient-weight the standard
+        family too, when sub-cell solids there justify re-capturing the graphs.
+        """
+        s = self.settings
+        return bool(s.spacetime_enabled and s.spacetime_solid_apertures)
+
     def _collision_faces(self):
         g = self.grid
         wp.launch(
@@ -1253,6 +1344,16 @@ class FluidSolver:
                     g.voxels_dim, g.leaves_dim, g.num_leaves, 0.0],
             outputs=[self.voxel_type.data], device=self.device,
         )
+        if self._apertures_enabled():
+            # Same threshold as the binary face bits above, and re-run every
+            # substep off the same collision_sdf so moving colliders work.
+            wp.launch(
+                k_compute_face_apertures, dim=self._nvox,
+                inputs=[self.collision_sdf.data, g.leaf_table, g.leaf_coords,
+                        g.voxels_dim, g.leaves_dim, g.num_leaves, 0.0],
+                outputs=[self.alpha_u, self.alpha_v, self.alpha_w],
+                device=self.device,
+            )
         wp.launch(
             k_expand_shift_axis_velocity_in_collider, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w, self.voxel_type.data,
@@ -1282,6 +1383,8 @@ class FluidSolver:
             reference_mass=(self._st_reference_mass()
                             if st_projection else None),
             pressure_source=lambda: self.sourcing.apply_pressure_sources(dt),
+            apertures=((self.alpha_u, self.alpha_v, self.alpha_w)
+                       if self._apertures_enabled() else None),
         )
         self.stats.pressure_iterations = status["iterations"]
         self.stats.pressure_residual = status["residual"]
@@ -1300,6 +1403,59 @@ class FluidSolver:
                     self.vel.u, self.vel.v, self.vel.w],
             device=self.device,
         )
+
+    def _extrapolate_velocity(self):
+        """ST-FLIP Algorithm 1 line 21: ExtrapolateVelocity().
+
+        Eq. (9) calls a face under-sampled when m_f <= eps_m, and u* = P_f/m_f
+        meaningless there.  At the high CFL numbers the method exists for,
+        particles routinely land a cell or more outside the band P2G touched
+        and would read zero velocity from those faces, so flood the valid data
+        outwards one 26-neighbour ring per iteration before G2P.
+
+        Band width (paper-silent; it says only "additional iterations ... for a
+        wider velocity extrapolation band" as CFL rises): the band must cover
+        the distance a particle travels in one substep, which in cells is
+        exactly the substep CFL, plus one ring for the trilinear G2P stencil
+        half-width.  Hence ceil(cfl) + 1.  This is also the mechanism behind
+        the paper's observation that speedup flattens past CFL 4 -- the band
+        cost grows linearly with CFL.
+
+        ponytail: solid faces are deliberately not special-cased.
+        _collision_faces has already run k_expand_shift_axis_velocity_in_collider,
+        so collider faces carry valid weighted no-flux velocities and act as
+        seeds for the flood rather than being overwritten.  Adding a voxel_type
+        argument here would fight that, not help it.
+        """
+        s = self.settings
+        if not s.spacetime_enabled:
+            return
+        iters = int(s.spacetime_extrapolation_iterations)
+        if iters <= 0:
+            iters = min(max(int(math.ceil(float(s.cfl))) + 1, 2), 8)
+        iters = min(iters, 16)
+        g = self.grid
+        for _ in range(iters):
+            for src, sw, dst, dw in (
+                (self.vel.u, self.vel.wu, self.tmp_u, self.tmp_wu),
+                (self.vel.v, self.vel.wv, self.tmp_v, self.tmp_wv),
+                (self.vel.w, self.vel.ww, self.tmp_w, self.tmp_ww),
+            ):
+                wp.launch(
+                    k_grid_expand_scalar, dim=self._nvox,
+                    inputs=[src, sw, C.ST_EPS_MASS, g.leaf_table, g.leaf_coords,
+                            g.voxels_dim, g.leaves_dim, g.num_leaves],
+                    outputs=[dst, dw], device=self.device,
+                )
+            # Swap value and weight together: the flood's validity mask is the
+            # weight, so a half swap would read this iteration's values against
+            # last iteration's mask.
+            self.vel.u, self.tmp_u = self.tmp_u, self.vel.u
+            self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
+            self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
+            self.vel.wu, self.tmp_wu = self.tmp_wu, self.vel.wu
+            self.vel.wv, self.tmp_wv = self.tmp_wv, self.vel.wv
+            self.vel.ww, self.tmp_ww = self.tmp_ww, self.vel.ww
 
     def _sanitize(self, dt):
         """Clamp MAC velocity to a CFL-safe bound and kill inf/nan."""
@@ -1343,6 +1499,11 @@ class FluidSolver:
         )
         if s.spacetime_enabled:
             self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+            # Lemma A.1's |delta_t| <= dt/2 residual bound and the temporal-weight
+            # bias integral both assume gamma in [0, 1].  The UI property is
+            # already bounded, but headless callers build SolverSettings directly,
+            # so clamp at the single site where gamma reaches the kernel.
+            jitter = min(max(float(s.spacetime_jitter_strength), 0.0), 1.0)
             wp.launch(
                 k_advect_particles_spacetime, dim=self._np_dim(),
                 inputs=[p.position, p.velocity, p.time_offset, p.count,
@@ -1354,7 +1515,7 @@ class FluidSolver:
                         g.origin, g.voxel_size, dt, int(s.trace_mode),
                         wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
                         1 if s.open_boundaries else 0,
-                        self._st_step_seed, s.spacetime_jitter_strength,
+                        self._st_step_seed, jitter,
                         1 if s.spacetime_adaptive_jitter else 0,
                         s.spacetime_local_cfl, int(s.spacetime_max_local_substeps)],
                 outputs=[p.alive], device=self.device,
@@ -1493,6 +1654,23 @@ class FluidSolver:
 
     # -- CFL ----------------------------------------------------------------
 
+    def _surface_tension_substeps(self, frame_dt):
+        """Substeps required by dt < sqrt(rho_avg * h^3 / (2 pi sigma)).
+
+        Brackbill et al. 1992's explicit capillary-wave limit. Zero when
+        surface tension is off, so it costs nothing at the default sigma = 0.
+        """
+        s = self.settings
+        sigma = float(s.spacetime_surface_tension)
+        if not s.spacetime_enabled or sigma <= 0.0:
+            return 0
+        rho_avg = 0.5 * (float(s.spacetime_liquid_density)
+                         + float(s.spacetime_gas_density))
+        rho_avg = max(rho_avg, max(float(s.spacetime_min_density), 1.0e-8))
+        h = float(s.voxel_size)
+        dt_sigma = math.sqrt(rho_avg * h * h * h / (2.0 * math.pi * sigma))
+        return int(math.ceil(frame_dt / max(dt_sigma, 1.0e-9)))
+
     def _compute_substeps(self, frame_dt):
         """Return (substeps, cfl_clamped) for one frame.
 
@@ -1506,12 +1684,19 @@ class FluidSolver:
         s = self.settings
         min_substeps = max(1, int(s.min_substeps))
         max_substeps = max(min_substeps, int(s.max_substeps))
+        # Surface tension carries its own restriction (Brackbill et al. 1992):
+        # a capillary wave of one-cell wavelength must not outrun the step.
+        # It does not depend on particle speed, so it is folded into the floor
+        # before the early returns rather than into the CFL count below.
+        sigma_n = self._surface_tension_substeps(frame_dt)
+        sigma_clamped = sigma_n > max_substeps
+        min_substeps = min(max(min_substeps, sigma_n), max_substeps)
         # host_count is kept current by end-of-frame stats, inject_particles
         # and clear(); avoid an extra device sync here.
         if self.particles.host_count == 0:
-            return min_substeps, False
+            return min_substeps, sigma_clamped
         if min_substeps == max_substeps:
-            return min_substeps, False
+            return min_substeps, sigma_clamped
         self.max_speed_dev.zero_()
         wp.launch(
             k_max_vec3_magnitude, dim=self.particles.host_count,
@@ -1607,6 +1792,7 @@ class FluidSolver:
             with self._phase("pressure"):
                 self._pressure(dt)
                 self._collider_material_response()
+                self._extrapolate_velocity()
             self._sanitize(dt)
             with self._phase("g2p"):
                 self._g2p_advect(dt)

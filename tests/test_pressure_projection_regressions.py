@@ -23,7 +23,8 @@ from fluidSim_warp_blender51.sim.kernels_fluid import (
     resolve_collision,
     resolve_collision_segment,
 )
-from fluidSim_warp_blender51.sim.pressure import PressureSolver
+from fluidSim_warp_blender51.sim import pressure as pressure_module
+from fluidSim_warp_blender51.sim.pressure import PCG_STALL_PATIENCE, PressureSolver
 from fluidSim_warp_blender51.sim.solver import (
     ColliderDesc,
     FluidSolver,
@@ -835,6 +836,55 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     assert not any(graph in graphs.values() for graph in solver._pcg_graphs.values())
 
 
+def _solve_random_rhs(device, patience, seed=3, check_every=25):
+    """Solve one fixed random zero-mean system at a given stall patience."""
+    original = pressure_module.PCG_STALL_PATIENCE
+    pressure_module.PCG_STALL_PATIENCE = patience
+    try:
+        grid = _one_leaf_grid(device)
+        solver = PressureSolver(grid, device)
+        voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+        voxel_type_wp = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=device)
+        _copy_int(voxel_type_wp, voxel_type, device)
+        rng = np.random.default_rng(seed)
+        rhs = rng.standard_normal(grid.voxel_capacity).astype(np.float32)
+        rhs -= rhs.mean()  # zero-mean: solvable under the pure-Neumann stencil
+        _copy_float(solver.rhs, rhs, device)
+        solver.build_preconditioner(voxel_type_wp)
+        solver.solve_pcg(
+            voxel_type_wp,
+            max_iterations=400,
+            tolerance=1.0e-8,
+            check_every=check_every,
+        )
+        return solver.last_iterations, solver.last_residual_squared
+    finally:
+        pressure_module.PCG_STALL_PATIENCE = original
+
+
+def test_pcg_stall_patience_survives_residual_excursions(cuda_device):
+    """A non-improving checkpoint is an excursion, not a stall.
+
+    CG minimises the A-norm of the error, not the 2-norm of the residual, so
+    ``||r||`` genuinely rises for a stretch and then falls through the earlier
+    minimum.  Tripping on the first non-improving checkpoint aborts converging
+    solves -- in the 1.6M-particle equilibrium scene that abort left ~1e-1
+    residual in the field and the liquid visibly compressed (48% volume loss).
+    """
+    assert PCG_STALL_PATIENCE >= 2
+
+    impatient_iters, impatient_res = _solve_random_rhs(cuda_device, patience=1)
+    patient_iters, patient_res = _solve_random_rhs(
+        cuda_device, patience=PCG_STALL_PATIENCE
+    )
+
+    # Same system, same checkpoints: patience only ever buys more iterations.
+    assert patient_iters > impatient_iters
+    # And those iterations are productive -- the excursion was recovered from,
+    # which is the whole claim.  Two orders of magnitude, measured at 260x.
+    assert patient_res < impatient_res * 1.0e-2
+
+
 def test_pressure_pcg_reductions_ignore_inactive_allocation_tail(cuda_device):
     """Inactive allocation slots must not affect active pressure PCG phases."""
     grid = _one_active_leaf_grid(cuda_device, leaf_capacity=512)
@@ -1073,7 +1123,10 @@ def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch
         settings, max_gradient=2.0, reference_mass=7.0)
 
     assert result is invalid
+    # The ST branch builds the preconditioner first: inv_diag carries the ST
+    # unknown set and k_compute_divergence_st reads it, so the RHS depends on
+    # it.  The non-ST branch above keeps the original order.
     assert [call[0] for call in calls] == [
-        "build_rhs", "build_preconditioner_st", "solve_pcg_st",
+        "build_preconditioner_st", "build_rhs", "solve_pcg_st",
     ]
-    assert calls[1][2]["reference_mass"] == 7.0
+    assert calls[0][2]["reference_mass"] == 7.0

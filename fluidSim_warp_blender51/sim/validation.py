@@ -19,6 +19,8 @@ wp.set_module_options({"enable_backward": False})
 from .constants import (
     LEAF_DIM,
     LEAF_VOLUME,
+    ST_EPS_MASS,
+    ST_EPS_RHO,
     VOXEL_ACTIVE,
     VOXEL_COLLISION,
     VOXEL_FLUID,
@@ -52,6 +54,10 @@ VALIDATION_TESTS = [
     "whitewater churn/emission/advection behavior",
     "benchmark profile schema compatibility",
     "spatiotemporal FLIP jitter, phase, and residual boundedness",
+    "spatiotemporal velocity extrapolation band growth and validity gate",
+    "spatiotemporal solid face apertures from a sub-cell collider interface",
+    "spatiotemporal aperture-weighted pressure operator and projection",
+    "spatiotemporal surface tension curvature, sign, and sphere stability",
 ]
 
 
@@ -1094,9 +1100,9 @@ def test_benchmark_schema(device):
 # ---------------------------------------------------------------------------
 
 
-@_test(VALIDATION_TESTS[15])
-def test_spatiotemporal_flip(device):
-    from .solver import FluidSolver, SolverSettings
+def _spacetime_probe_settings(device, jitter):
+    """Settings for the ST-FLIP smoke test; ``jitter`` is the sample-time gamma."""
+    from .solver import SolverSettings
 
     settings = SolverSettings()
     settings.domain_min = (-0.7, -0.4, 0.0)
@@ -1116,17 +1122,54 @@ def test_spatiotemporal_flip(device):
     settings.pressure_iterations = 80
     settings.pressure_tolerance = 1.0e-5
     settings.spacetime_enabled = True
-    settings.spacetime_jitter_strength = 1.0
+    settings.spacetime_jitter_strength = jitter
     settings.spacetime_adaptive_jitter = False
     settings.spacetime_variable_projection = True
     settings.spacetime_phase_eta = 0.5
     settings.spacetime_phase_threshold = 0.2
-    settings.spacetime_min_density = 0.05
     settings.spacetime_local_cfl = 1.0
     settings.spacetime_max_local_substeps = 32
+    # The beta probe below reads the post-frame face weights, which is after
+    # Algorithm 1 line 21 has run.  At cfl = 16 the auto band is 8 rings, which
+    # floods this small domain end to end and leaves no untouched face to read
+    # a free-surface beta from.  Pin one ring: enough to exercise the pass,
+    # few enough that empty faces survive.  Band growth itself is covered by
+    # test_spacetime_velocity_extrapolation, which needs no solver.
+    settings.spacetime_extrapolation_iterations = 1
     settings.device = device
+    return settings
+
+
+def _spacetime_probe_solver(settings, frames):
+    """Seed a block of rightward-moving particles and run ``frames`` frames."""
+    from .solver import FluidSolver
 
     solver = FluidSolver(settings)
+    xs = np.linspace(-0.35, -0.05, 7, dtype=np.float32)
+    ys = np.linspace(-0.18, 0.18, 5, dtype=np.float32)
+    zs = np.linspace(0.18, 0.58, 6, dtype=np.float32)
+    pts = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
+    vels = np.tile(np.array((0.35, 0.0, 0.0), dtype=np.float32), (len(pts), 1))
+    solver.inject_particles(pts, velocities=vels)
+    for _ in range(frames):
+        solver.step_frame()
+    return solver
+
+
+def _spacetime_max_residual(solver):
+    """Largest |delta_t| carried by any live particle, or None if none survived."""
+    n = solver.particles.refresh_host_count()
+    if n <= 0:
+        return None
+    offsets = solver.particles.time_offset.numpy()[:n]
+    return float(np.max(np.abs(offsets))) if len(offsets) else 0.0
+
+
+@_test(VALIDATION_TESTS[15])
+def test_spatiotemporal_flip(device):
+    settings = _spacetime_probe_settings(device, 1.0)
+
+    solver = _spacetime_probe_solver(settings, 4)
     ref_mass = float(solver._st_reference_mass())
     ref_expected = float(settings.particles_per_voxel)
     ref_ok = bool(
@@ -1134,23 +1177,23 @@ def test_spatiotemporal_flip(device):
         and ref_mass > 0.0
         and 0.5 * ref_expected <= ref_mass <= 1.5 * ref_expected
     )
-    xs = np.linspace(-0.35, -0.05, 7, dtype=np.float32)
-    ys = np.linspace(-0.18, 0.18, 5, dtype=np.float32)
-    zs = np.linspace(0.18, 0.58, 6, dtype=np.float32)
-    pts = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
-    vels = np.tile(np.array((0.35, 0.0, 0.0), dtype=np.float32), (len(pts), 1))
-    solver.inject_particles(pts, velocities=vels)
-
-    for _ in range(4):
-        solver.step_frame()
-
     n = solver.particles.refresh_host_count()
-    if n <= 0:
+    max_abs = _spacetime_max_residual(solver)
+    if max_abs is None:
         return False, "all particles were lost"
-    offsets = solver.particles.time_offset.numpy()[:n]
     frame_dt = settings.time_scale / settings.frame_rate
-    max_abs = float(np.max(np.abs(offsets))) if len(offsets) else 0.0
     bound_ok = max_abs <= 0.5 * frame_dt + 2.0e-5
+
+    # Lemma A.1's |delta_t| <= dt/2 holds only for gamma in [0, 1]: the residual
+    # update is delta_t' = -gamma*xi*dt with xi in [-1/2, 1/2], so gamma = 2 would
+    # reach |delta_t| = dt unless the solver clamps gamma at the launch site.
+    # Headless callers set SolverSettings directly and bypass the property max,
+    # so drive that path here.
+    hi_settings = _spacetime_probe_settings(device, 2.0)
+    hi_solver = _spacetime_probe_solver(hi_settings, 2)
+    hi_abs = _spacetime_max_residual(hi_solver)
+    clamp_ok = hi_abs is not None and hi_abs <= 0.5 * frame_dt + 2.0e-5
+
     pos = solver.particle_positions()
     finite_pos = bool(np.isfinite(pos).all())
     weights = solver.vel.wu.numpy()[: solver._nvox]
@@ -1162,13 +1205,495 @@ def test_spatiotemporal_flip(device):
         and float(phase.min()) >= -1.0e-6
         and float(phase.max()) <= 1.0001
     )
+    status = f"{solver.pressure_solver.last_pressure_status}"
     status_ok = bool(np.isfinite(solver.pressure_solver.last_residual))
-    ok = ref_ok and bound_ok and finite_pos and weights_ok and phase_ok and status_ok
+
+    # Eq. (15): eps_rho is a floor, not a cap.  Reproduce st_face_beta on the
+    # allocated u-faces; free-surface faces carry rho(phi_f) -> 0, so beta_f must
+    # be free to reach ~1/eps_rho.  The old 0.05 capped it at 20 and stiffened
+    # exactly the surface Eq. (17)'s rho_gas -> 0 limit exists to free.  The
+    # projection must still converge under the stiffer operator.
+    eps_rho = max(float(settings.spacetime_min_density), 1.0e-8)
+    denom = max(ref_mass * max(float(settings.spacetime_phase_eta), 1.0e-6), 1.0e-8)
+    phi_u = np.minimum(np.sqrt(np.maximum(weights, 0.0) / denom), 1.0)
+    rho_u = (float(settings.spacetime_liquid_density) * phi_u
+             + float(settings.spacetime_gas_density) * (1.0 - phi_u))
+    # The bar is absolute, not relative to eps_rho: beta_max is 1/eps_rho for any
+    # eps_rho, so a relative bound would pass at the old cap too.  5000 encodes
+    # "eps_rho <= 2e-4 relative to rho_liquid = 1", four orders below liquid.
+    beta_max = float((1.0 / np.maximum(rho_u, eps_rho)).max())
+    beta_floor = 5000.0 / max(float(settings.spacetime_liquid_density), 1.0e-6)
+    beta_ok = beta_max >= beta_floor and status == "converged"
+
+    # Algorithm 1 line 21 actually ran in the substep loop.  The flood stamps
+    # the 1e-6 extrapolated marker weight, a value P2G cannot produce, so its
+    # presence in the post-frame face weights is the wiring check.  Kernel
+    # behaviour itself is test_spacetime_velocity_extrapolation.
+    extrap_faces = int(np.isclose(weights, 1.0e-6, rtol=0.0, atol=1.0e-12).sum())
+    extrap_ok = extrap_faces > 0
+
+    ok = (ref_ok and bound_ok and clamp_ok and finite_pos and weights_ok
+          and phase_ok and status_ok and beta_ok and extrap_ok)
     return ok, (
         f"particles={n}, m0={ref_mass:.4f} (target ppc={ref_expected:.4f}), "
         f"max |delta_t|={max_abs:.6f} <= {0.5 * frame_dt:.6f}, "
+        f"max |delta_t| at gamma=2 (clamped)="
+        f"{'n/a' if hi_abs is None else format(hi_abs, '.6f')}, "
         f"max weight={float(weights.max()):.4f}, max phase={float(phase.max()):.4f}, "
-        f"pressure={solver.pressure_solver.last_pressure_status}"
+        f"max free-surface beta={beta_max:.1f} >= {beta_floor:.1f} "
+        f"(eps_rho={eps_rho:g}), "
+        f"extrapolated faces={extrap_faces}, "
+        f"pressure={status}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 17. spatiotemporal velocity extrapolation
+# ---------------------------------------------------------------------------
+
+
+def _expand_flood(grid, device, seed_weight, iterations):
+    """Seed one interior voxel and run the expand flood ``iterations`` times.
+
+    Returns (values, weights) as numpy arrays over the whole voxel capacity.
+    """
+    cap = grid.voxel_capacity
+    src = wp.zeros(cap, dtype=float, device=device)
+    src_w = wp.zeros(cap, dtype=float, device=device)
+    dst = wp.zeros(cap, dtype=float, device=device)
+    dst_w = wp.zeros(cap, dtype=float, device=device)
+
+    # Centre voxel of the 3x3x3-leaf box, addressed the way
+    # voxel_coord_of_flat does: flat = slot*LEAF_VOLUME + (lz*8 + ly)*8 + lx.
+    ld = grid.leaves_dim
+    leaf_table = grid.leaf_table.numpy()
+    lc = (1, 1, 1)
+    slot = int(leaf_table[(lc[2] * int(ld[1]) + lc[1]) * int(ld[0]) + lc[0]])
+    local = (4, 4, 4)
+    flat = slot * LEAF_VOLUME + (local[2] * LEAF_DIM + local[1]) * LEAF_DIM + local[0]
+
+    v_np = np.zeros(cap, dtype=np.float32)
+    w_np = np.zeros(cap, dtype=np.float32)
+    v_np[flat] = 3.0
+    w_np[flat] = seed_weight
+    wp.copy(src, wp.array(v_np, dtype=float, device=device))
+    wp.copy(src_w, wp.array(w_np, dtype=float, device=device))
+
+    for _ in range(iterations):
+        wp.launch(
+            KC.k_grid_expand_scalar, dim=cap,
+            inputs=[src, src_w, ST_EPS_MASS, grid.leaf_table, grid.leaf_coords,
+                    grid.voxels_dim, grid.leaves_dim, grid.num_leaves],
+            outputs=[dst, dst_w], device=device,
+        )
+        src, dst = dst, src
+        src_w, dst_w = dst_w, src_w
+    return src.numpy(), src_w.numpy()
+
+
+@_test(VALIDATION_TESTS[16])
+def test_spacetime_velocity_extrapolation(device):
+    # ST-FLIP Algorithm 1 line 21.  Kernel-level: no solver, no pressure solve.
+    grid = _make_grid(device)
+    band = 3
+    counts = []
+    values_ok = True
+    for k in range(1, band + 1):
+        vals, weights = _expand_flood(grid, device, 1.0, k)
+        valid = weights > ST_EPS_MASS
+        counts.append(int(valid.sum()))
+        # A constant field must survive neighbour averaging exactly -- any
+        # accumulator off-by-one shows up here as a value that is not 3.0.
+        if not np.allclose(vals[valid], 3.0, atol=1.0e-6):
+            values_ok = False
+    # One 26-neighbour ring per iteration: the valid set is the Chebyshev ball
+    # of radius k, so (2k+1)^3 voxels.  The seed sits at global voxel (12,12,12)
+    # of a 24^3 domain, so the ball stays inside the allocated region.
+    expected = [(2 * k + 1) ** 3 for k in range(1, band + 1)]
+    growth_ok = counts == expected
+
+    # Eq. (9): a face carrying m_f <= eps_m is under-sampled and its
+    # u* = P_f/m_f is amplified noise.  Flooding that outwards is worse than
+    # flooding nothing, so the seed must not count as valid at all.
+    _, tiny_w = _expand_flood(grid, device, 1.0e-12, 2)
+    gate_ok = int((tiny_w > ST_EPS_MASS).sum()) == 0
+
+    ok = growth_ok and values_ok and gate_ok
+    return ok, (
+        f"band counts={counts} (expected {expected}), "
+        f"constant field preserved={values_ok}, "
+        f"eps_m gate rejects w=1e-12: {gate_ok} (eps_m={ST_EPS_MASS:g})"
+    )
+
+
+@_test(VALIDATION_TESTS[17])
+def test_spacetime_solid_apertures(device):
+    # ST-FLIP Eq. (14)/(15) alpha_f.  Kernel-level: no solver, no pressure solve.
+    grid = _make_grid(device)
+    dx = float(grid.voxel_size)
+    centers = _voxel_centers(grid)
+    nvox = grid.active_leaf_count * LEAF_VOLUME
+
+    # Half-space collider filling z < z0, with the interface deliberately off
+    # grid: 0.37 dx above a cell centre, so the two cells straddling it produce
+    # an aperture strictly between 0 and 1 that a binary mask cannot represent.
+    z_centers = np.unique(np.round(centers[:nvox, 2] / dx - 0.5).astype(np.int64))
+    k_ref = int(z_centers[len(z_centers) // 2])
+    z0 = float(grid.origin[2]) + (k_ref + 0.5) * dx + 0.37 * dx
+    sdf_np = (centers[:, 2] - z0).astype(np.float32)
+
+    sdf = wp.array(sdf_np, dtype=float, device=device)
+    alpha_u = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    alpha_v = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    alpha_w = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    wp.launch(
+        P.k_compute_face_apertures, dim=grid.voxel_capacity,
+        inputs=[sdf, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                grid.leaves_dim, grid.num_leaves, 0.0],
+        outputs=[alpha_u, alpha_v, alpha_w], device=device,
+    )
+    au = alpha_u.numpy()[:nvox]
+    av = alpha_v.numpy()[:nvox]
+    aw = alpha_w.numpy()[:nvox]
+
+    finite = bool(np.isfinite(au).all() and np.isfinite(av).all()
+                  and np.isfinite(aw).all())
+    in_range = bool((au >= 0.0).all() and (au <= 1.0).all()
+                    and (av >= 0.0).all() and (av <= 1.0).all()
+                    and (aw >= 0.0).all() and (aw <= 1.0).all())
+
+    # phi varies only along z, so the two cells sharing an x or y face read the
+    # same value: those apertures must be exactly binary.  Anything in between
+    # means the wrong pair of samples reached solid_face_fraction.
+    lateral_binary = bool(
+        np.isin(au, (0.0, 1.0)).all() and np.isin(av, (0.0, 1.0)).all())
+
+    # Analytic expectation for the z faces.  b is this cell, a the -z neighbour
+    # one voxel below; the bottom row's neighbour is outside the domain, which
+    # the kernel treats as solid.
+    b = centers[:nvox, 2] - z0
+    a = b - dx
+    k = np.round((centers[:nvox, 2] - float(grid.origin[2])) / dx - 0.5).astype(np.int64)
+    expect = np.where(
+        (a >= 0.0) & (b >= 0.0), 1.0,
+        np.where((a < 0.0) & (b < 0.0), 0.0,
+                 np.where(a >= 0.0, a / (a - b), b / (b - a))))
+    expect = np.where(k == 0, 0.0, expect).astype(np.float32)
+    exact_ok = bool(np.allclose(aw, expect, atol=1.0e-6))
+
+    partial = aw[(aw > 1.0e-6) & (aw < 1.0 - 1.0e-6)]
+    # b/(b-a) with b = 0.63 dx and b - a = dx.
+    partial_ok = bool(len(partial) > 0
+                      and np.allclose(partial, 0.63, atol=2.0e-3))
+
+    ok = finite and in_range and lateral_binary and exact_ok and partial_ok
+    return ok, (
+        f"finite={finite}, in [0,1]={in_range}, lateral faces binary="
+        f"{lateral_binary}, matches 1D fraction_inside={exact_ok}, "
+        f"partial faces={len(partial)} at alpha={float(partial[0]) if len(partial) else float('nan'):.4f} "
+        f"(expected 0.63 for a 0.37 dx offset)"
+    )
+
+
+@_test(VALIDATION_TESTS[18])
+def test_spacetime_aperture_operator(device):
+    """Apertures actually reaching Eq. (14)'s operator, RHS, and Eq. (16).
+
+    Fixture is a closed box with a flat floor whose interface sits 0.37 dx above
+    a cell centre, air on top so the system is non-singular, and a uniform
+    downward velocity w = -1.  A uniform field is divergence free everywhere
+    *except* across the floor, so the whole right side is where the wall is --
+    which is exactly what alpha_f moves.  Binary masking blocks a full cell of
+    flux; the aperture blocks the true 0.37, and the two rows straddling the
+    interface then have closed-form divergences the test pins directly.
+    """
+    grid = _make_grid(device, size=0.8)
+    dx = float(grid.voxel_size)
+    nvox = grid.active_leaf_count * LEAF_VOLUME
+    centers = _voxel_centers(grid)
+    k = np.round((centers[:, 2] - float(grid.origin[2])) / dx - 0.5).astype(np.int64)
+
+    k_solid = 7        # topmost solid row
+    k_air = 13         # first air row
+    z0 = float(grid.origin[2]) + (k_solid + 0.5) * dx + 0.37 * dx
+    sdf_np = (centers[:, 2] - z0).astype(np.float32)
+
+    vt_np = np.zeros(grid.voxel_capacity, dtype=np.int32)
+    vt_np[(k >= 0) & (k < k_air)] = VOXEL_FLUID
+    vt_np[(k >= 0) & (k <= k_solid)] |= VOXEL_COLLISION
+    vt_np[nvox:] = 0
+    voxel_type = wp.array(vt_np, dtype=wp.int32, device=device)
+    voxel_counts = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=device)
+    collision_vel = wp.zeros(grid.voxel_capacity, dtype=wp.vec3, device=device)
+
+    sdf = wp.array(sdf_np, dtype=float, device=device)
+    alpha = tuple(wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+                  for _ in range(3))
+    wp.launch(
+        P.k_compute_face_apertures, dim=grid.voxel_capacity,
+        inputs=[sdf, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                grid.leaves_dim, grid.num_leaves, 0.0],
+        outputs=list(alpha), device=device,
+    )
+
+    st_args = dict(reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
+                   rho_gas=0.0, eps_rho=ST_EPS_RHO)
+
+    def fresh_velocity():
+        vel = MacVelocityField(grid)
+        vel.zero()
+        vel.w.fill_(-1.0)
+        # Face mass == reference_mass puts phi at 1 everywhere, so beta is a
+        # constant 1/rho_liquid and every effect below is purely alpha's.
+        for arr in (vel.wu, vel.wv, vel.ww):
+            arr.fill_(8.0)
+        return vel
+
+    ps = P.PressureSolver(grid, device)
+
+    def run(apertures):
+        vel = fresh_velocity()
+        ps.build_preconditioner_st(voxel_type, vel, apertures=apertures, **st_args)
+        inv_diag = ps.inv_diag.numpy()[:nvox].copy()
+        ps.build_rhs(vel, voxel_type, collision_vel, voxel_counts,
+                     apertures=apertures)
+        div_before = ps.divergence.numpy()[:nvox].copy()
+        ps.solve_pcg_st(voxel_type, 400, 1.0e-8, vel, apertures=apertures,
+                        **st_args)
+        residual, iters = ps.last_residual, ps.last_iterations
+        ps.project_st(vel, voxel_type, collision_vel, apertures=apertures,
+                      **st_args)
+        ps.build_rhs(vel, voxel_type, collision_vel, voxel_counts,
+                     apertures=apertures)
+        div_after = float(np.abs(ps.divergence.numpy()[:nvox]).max())
+        return inv_diag, div_before, div_after, residual, iters, vel
+
+    inv_off, div_off, off_after, off_res, off_iters, _ = run(None)
+    inv_on, div_on, on_after, on_res, on_iters, vel_on = run(alpha)
+    off_before = float(np.abs(div_off).max())
+    on_before = float(np.abs(div_on).max())
+
+    ks = k[:nvox]
+    solid = ks <= k_solid
+    interface = ks == k_solid
+    deep = (ks >= 0) & (ks < k_solid)
+
+    # (1) aperture-off keeps the legacy unknown set exactly: no solid row is an
+    # unknown, every fluid row is.
+    legacy_ok = bool((inv_off[solid] == 0.0).all()
+                     and (inv_off[(ks > k_solid) & (ks < k_air)] != 0.0).all()
+                     and (inv_off[ks >= k_air] == 0.0).all())
+
+    # (2) apertures on admit exactly the partially open solid row.
+    unknown_ok = bool((inv_on[interface] != 0.0).all()
+                      and (inv_on[deep] == 0.0).all()
+                      and (inv_on[ks >= k_air] == 0.0).all())
+
+    # (3) operator symmetry -- PCG is only valid if A stays symmetric once
+    # alpha weights the off-diagonals.
+    rng = np.random.default_rng(0)
+    xs = wp.array(rng.standard_normal(grid.voxel_capacity).astype(np.float32),
+                  dtype=float, device=device)
+    ys = wp.array(rng.standard_normal(grid.voxel_capacity).astype(np.float32),
+                  dtype=float, device=device)
+    ax = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    ay = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    # Rebuild the face coefficients from vel_on explicitly rather than relying on
+    # what run(alpha) happened to leave in ps: this is the operator under test.
+    wp.launch(
+        P.k_compute_face_coeffs_st, dim=grid.voxel_capacity,
+        inputs=[voxel_type, vel_on.wu, vel_on.wv, vel_on.ww,
+                grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                grid.leaves_dim, grid.num_leaves, 8.0, 0.5, 1.0, 0.0,
+                ST_EPS_RHO, alpha[0], alpha[1], alpha[2], 1,
+                ps.st_coeff_u, ps.st_coeff_v, ps.st_coeff_w],
+        device=device,
+    )
+    for vec, out in ((xs, ax), (ys, ay)):
+        wp.launch(
+            P.k_apply_matrix_st, dim=grid.voxel_capacity,
+            inputs=[vec, voxel_type, ps.inv_diag,
+                    ps.st_coeff_u, ps.st_coeff_v, ps.st_coeff_w,
+                    grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                    grid.leaves_dim, grid.num_leaves, 1, out],
+            device=device,
+        )
+    xv, yv = xs.numpy()[:nvox], ys.numpy()[:nvox]
+    x_ay = float(np.dot(xv, ay.numpy()[:nvox]))
+    y_ax = float(np.dot(yv, ax.numpy()[:nvox]))
+    scale = max(abs(x_ay), abs(y_ax), 1.0e-12)
+    sym_err = abs(x_ay - y_ax) / scale
+    sym_ok = bool(sym_err < 1.0e-4)
+
+    # (4) alpha really reaches Eq. (14)'s right side.  Closed form for w = -1
+    # with the interface 0.37 dx up from the k_solid centre, so alpha = 0.63 on
+    # the face stored at k_solid + 1 and 0 on the one at k_solid:
+    #   apertures on : row k_solid   div = (-0.63 -     0)/dx
+    #                  row k_solid+1 div = (-1.00 - -0.63)/dx
+    #   apertures off: row k_solid   not an unknown, div = 0
+    #                  row k_solid+1 div = (-1.00 -     0)/dx   (a full cell of
+    #                                flux blocked instead of 0.37 of one)
+    a_face = 0.63
+    first_fluid = ks == k_solid + 1
+    rhs_ok = bool(
+        np.allclose(div_on[interface], -a_face / dx, atol=1.0e-3)
+        and np.allclose(div_on[first_fluid], -(1.0 - a_face) / dx, atol=1.0e-3)
+        and np.allclose(div_off[interface], 0.0, atol=1.0e-6)
+        and np.allclose(div_off[first_fluid], -1.0 / dx, atol=1.0e-3))
+    solve_ok = bool(on_after < on_before * 0.01 or on_after < 1.0e-4)
+
+    ok = legacy_ok and unknown_ok and sym_ok and rhs_ok and solve_ok
+    return ok, (
+        f"legacy unknown set unchanged={legacy_ok}, partial-solid row admitted="
+        f"{unknown_ok}, symmetry error={sym_err:.2e}, "
+        f"RHS matches closed form={rhs_ok} (aperture floor rows "
+        f"{float(div_on[interface].mean()):.2f}/"
+        f"{float(div_on[first_fluid].mean()):.2f} vs binary "
+        f"{float(div_off[interface].mean()):.2f}/"
+        f"{float(div_off[first_fluid].mean()):.2f}), "
+        f"aperture max |div| {on_before:.3e} -> {on_after:.3e} "
+        f"({on_iters} PCG iters, residual {on_res:.2e}), "
+        f"aperture-off max |div| {off_before:.3e} -> {off_after:.3e} "
+        f"({off_iters} iters, residual {off_res:.2e})"
+    )
+
+
+@_test(VALIDATION_TESTS[19])
+def test_spacetime_surface_tension(device):
+    """Curvature magnitude, force sign, and that a sphere does not blow up.
+
+    Parts (1) and (2) run on an analytic phase field rather than a simulated
+    one: a particle-derived phase field is noisy enough that a wrong stencil
+    and a right one both land inside any tolerance loose enough to pass, which
+    would make the check decorative.  A linear ramp through the interface has a
+    known curvature 2/R and a known inward normal, so both the |grad phi|^-1
+    normalisation and the sign are falsifiable to a few percent.  Part (3) then
+    runs the real solver, which is the only thing that catches a force that is
+    correct per-face but unstable in the loop.
+    """
+    grid = _make_grid(device, size=0.8)
+    dx = float(grid.voxel_size)
+    nvox = grid.active_leaf_count * LEAF_VOLUME
+    centers = _voxel_centers(grid)[:nvox]
+    origin = np.asarray(grid.origin, dtype=np.float64)
+    center = origin + 0.4
+    rel = centers.astype(np.float64) - center
+    r = np.linalg.norm(rel, axis=1)
+
+    radius = 5.0 * dx
+    # Ramp half-width 2.5 dx, not the solver's 1.5 dx: the sampled band below
+    # needs a one-cell margin on both sides so no stencil arm reaches a clamped
+    # cell, and 1.5 dx leaves no such margin.
+    eps = 2.5 * dx
+    # phi = 1 inside, 0 outside, linear across a 2*eps band: |grad phi| =
+    # 1/(2 eps) and n = grad phi/|grad phi| = -r_hat, so kappa = -div(n) = 2/r.
+    phi_np = np.clip(0.5 - (r - radius) / (2.0 * eps), 0.0, 1.0)
+    phi_full = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    phi_full[:nvox] = phi_np
+    phase = wp.array(phi_full, dtype=float, device=device)
+    kappa = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
+    wp.launch(
+        KF.k_phase_curvature, dim=grid.voxel_capacity,
+        inputs=[phase, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                grid.leaves_dim, grid.num_leaves, dx],
+        outputs=[kappa], device=device,
+    )
+    kap = kappa.numpy()[:nvox]
+
+    # Sample strictly inside the ramp so no stencil arm reaches a clamped cell.
+    band = np.abs(r - radius) < (eps - dx)
+    expected = 2.0 / radius
+    kappa_med = float(np.median(kap[band]))
+    kappa_err = abs(kappa_med - expected) / expected
+    curvature_ok = bool(kappa_err < 0.25 and np.isfinite(kap).all())
+
+    # Flat interior and the outside must stay at exactly zero -- that is the
+    # |grad phi| floor doing its job rather than dividing noise by noise.
+    flat = r < radius - eps - dx
+    flat_ok = bool(flat.any() and np.all(kap[flat] == 0.0))
+
+    vel = MacVelocityField(grid)
+    vel.zero()
+    for arr in (vel.wu, vel.wv, vel.ww):
+        arr.fill_(1.0)
+    # rho_gas == rho_liquid makes the density uniform, so the only thing left
+    # in the acceleration is sigma*kappa*grad(phi) -- the sign under test.
+    wp.launch(
+        KF.k_surface_tension_csf, dim=grid.voxel_capacity,
+        inputs=[phase, kappa, grid.leaf_table, grid.leaf_coords,
+                grid.voxels_dim, grid.leaves_dim, grid.num_leaves, dx,
+                1.0, 1.0, 1.0, ST_EPS_RHO, 1.0,
+                vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
+        device=device,
+    )
+    acc = np.stack([vel.u.numpy()[:nvox], vel.v.numpy()[:nvox],
+                    vel.w.numpy()[:nvox]], axis=1).astype(np.float64)
+    # The three faces stored at a voxel sit half a cell apart, but for a sign
+    # test the cell-centred radial direction is more than accurate enough.
+    rhat = rel / np.maximum(r, 1.0e-12)[:, None]
+    radial = np.sum(acc * rhat, axis=1)[band]
+    inward = float(radial.mean())
+    sign_ok = bool(inward < 0.0 and (radial < 0.0).mean() > 0.9)
+
+    # (3) a real sphere, zero gravity, nothing but surface tension acting.
+    from .solver import FluidSolver, SolverSettings
+
+    settings = SolverSettings()
+    settings.domain_min = (-0.4, -0.4, 0.0)
+    settings.domain_max = (0.4, 0.4, 0.8)
+    settings.voxel_size = 0.05
+    settings.leaf_capacity = 512
+    settings.max_particles = 40_000
+    settings.frame_rate = 24.0
+    settings.min_substeps = 1
+    settings.max_substeps = 16
+    settings.cfl = 2.0
+    settings.gravity = (0.0, 0.0, 0.0)
+    settings.relax_enabled = False
+    settings.surface_enabled = False
+    settings.whitewater_enabled = False
+    settings.pressure_iterations = 120
+    settings.pressure_tolerance = 1.0e-5
+    settings.spacetime_enabled = True
+    settings.spacetime_adaptive_jitter = False
+    settings.spacetime_extrapolation_iterations = 1
+    settings.spacetime_surface_tension = 0.05
+    settings.spacetime_surface_tension_smoothing = 2
+    settings.device = device
+    solver = FluidSolver(settings)
+
+    r0 = 0.2
+    step = 0.5 * settings.voxel_size
+    axis = np.arange(-r0, r0 + 0.5 * step, step, dtype=np.float32)
+    lat = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"),
+                   axis=-1).reshape(-1, 3)
+    lat = lat[np.linalg.norm(lat, axis=1) <= r0]
+    pts = lat + np.array((0.0, 0.0, 0.4), dtype=np.float32)
+    solver.inject_particles(pts)
+
+    def gyration():
+        n = solver.particles.refresh_host_count()
+        if n <= 0:
+            return None
+        p = solver.particles.position.numpy()[:n].astype(np.float64)
+        return float(np.sqrt(np.mean(np.sum((p - p.mean(axis=0)) ** 2, axis=1))))
+
+    gyr0 = gyration()
+    substeps = solver._compute_substeps(1.0 / settings.frame_rate)
+    for _ in range(4):
+        solver.step_frame()
+    gyr1 = gyration()
+    stable_ok = bool(gyr0 is not None and gyr1 is not None
+                     and np.isfinite(gyr1) and gyr1 <= gyr0 * 1.05)
+
+    ok = curvature_ok and flat_ok and sign_ok and stable_ok
+    return ok, (
+        f"kappa median={kappa_med:.4f} vs 2/R={expected:.4f} "
+        f"(error {kappa_err * 100.0:.1f}%, {int(band.sum())} band cells), "
+        f"flat interior zero={flat_ok}, mean radial acceleration="
+        f"{inward:.4e} (inward fraction {float((radial < 0.0).mean()):.2f}), "
+        f"gyration {gyr0:.4f} -> {gyr1:.4f} over 4 frames at sigma=0.05 "
+        f"({substeps[0]} substeps, capillary clamp={substeps[1]})"
     )
 
 

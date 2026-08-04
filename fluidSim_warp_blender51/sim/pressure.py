@@ -34,11 +34,12 @@ import warp as wp
 
 wp.set_module_options({"enable_backward": False})
 
-from .constants import LEAF_VOLUME, VOXEL_COLLISION, VOXEL_FLUID
+from .constants import LEAF_VOLUME, ST_EPS_RHO, VOXEL_COLLISION, VOXEL_FLUID
 from .enums import ProjectNonDivergentSolver
 from .fields import (
     voxel_coord_of_flat,
     voxel_flat_index,
+    voxel_in_domain,
 )
 from .registry import register_fn
 
@@ -49,6 +50,17 @@ PRESSURE_STATUS_MAX_ITERATIONS = "max_iterations"
 PRESSURE_STATUS_STALLED = "stalled"
 PRESSURE_STATUS_SINGULAR = "singular"
 PRESSURE_STATUS_INVALID = "invalid"
+
+# Consecutive checkpoints allowed to make no progress before the solve is
+# called stalled.  CG minimises the A-norm of the error, not the 2-norm of the
+# residual, so ||r|| is genuinely non-monotone -- it can rise for a stretch and
+# then fall through the earlier minimum.  Tripping on the first non-improving
+# checkpoint mistakes that excursion for stagnation and aborts a converging
+# solve; at 1.6M particles that abort left ~1e-1 residual in the field and the
+# liquid visibly compressed.  Progress is measured against the best residual
+# seen rather than the previous one, so an excursion has to be recovered from,
+# not merely stepped down from.
+PCG_STALL_PATIENCE = 3
 
 PRESSURE_STATUS_CODES = {
     PRESSURE_STATUS_NOT_RUN: 0,
@@ -141,6 +153,89 @@ def st_beta_for_cell_face(
         return 0.0
     return st_face_beta(axis, face_flat, wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
 
+
+@wp.func
+def st_alpha_at_face(
+    face_flat: wp.int32,
+    axis: wp.int32,
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+) -> float:
+    """Eq. (14) aperture alpha_f for the face stored at ``face_flat``.
+
+    ``face_flat`` is the voxel holding the LOW face on ``axis`` -- ``tid`` for a
+    step of -1, the +axis neighbour for a step of +1.  Out of domain reads 0
+    (fully blocked), matching k_compute_face_apertures.
+    """
+    if face_flat < 0:
+        return 0.0
+    if axis == 0:
+        return alpha_u[face_flat]
+    if axis == 1:
+        return alpha_v[face_flat]
+    return alpha_w[face_flat]
+
+
+@wp.func
+def st_face_openness(
+    tid: wp.int32,
+    n: wp.int32,
+    axis: wp.int32,
+    step: wp.int32,
+    use_apertures: wp.int32,
+    voxel_type: wp.array(dtype=wp.int32),
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+) -> float:
+    """Open fraction of the face between ``tid`` and neighbour ``n``.
+
+    With apertures off this is the legacy binary gate: 1 when the neighbour
+    exists and is not a collision cell, 0 otherwise.  With apertures on it is
+    the continuous alpha_f, which is a strict generalisation -- alpha reaches 0
+    only when BOTH cells are inside the solid, so the partially blocked faces
+    the binary gate used to discard now contribute in proportion.
+    """
+    if use_apertures != 0:
+        face_flat = tid
+        if step > 0:
+            face_flat = n
+        return st_alpha_at_face(face_flat, axis, alpha_u, alpha_v, alpha_w)
+    if n < 0:
+        return 0.0
+    if (voxel_type[n] & VOXEL_COLLISION) != 0:
+        return 0.0
+    return 1.0
+
+
+@wp.func
+def st_op_coeff(
+    tid: wp.int32,
+    n: wp.int32,
+    axis: wp.int32,
+    step: wp.int32,
+    coeff_u: wp.array(dtype=float),
+    coeff_v: wp.array(dtype=float),
+    coeff_w: wp.array(dtype=float),
+) -> float:
+    """Precomputed alpha_f * beta_f for the face between ``tid`` and ``n``.
+
+    Same face indexing as st_alpha_at_face / st_beta_for_cell_face: the voxel
+    holding the LOW face on ``axis`` is ``tid`` for a step of -1 and the +axis
+    neighbour for a step of +1.  Out of domain reads 0.
+    """
+    face_flat = tid
+    if step > 0:
+        face_flat = n
+    if face_flat < 0:
+        return 0.0
+    if axis == 0:
+        return coeff_u[face_flat]
+    if axis == 1:
+        return coeff_v[face_flat]
+    return coeff_w[face_flat]
+
 # ---------------------------------------------------------------------------
 # Divergence + matrix helpers
 # ---------------------------------------------------------------------------
@@ -172,6 +267,88 @@ def neighbor_flat(
     else:
         o = wp.vec3i(ijk[0], ijk[1], ijk[2] + step)
     return voxel_flat_index(leaf_table, voxels_dim, leaves_dim, o)
+
+
+@wp.func
+def solid_face_fraction(a: float, b: float) -> float:
+    """Fraction of a MAC face that is NOT inside the solid, from two SDF samples.
+
+    ST-FLIP Eq. (14)/(15) weight the operator by the face aperture alpha_f; the
+    paper delegates the estimate to Batty et al. 2007 / Ng et al. 2009, which
+    sample the solid SDF at the face's four corners and take a 2D area
+    fraction.  This repo stores a cell-centered solid SDF, not corner samples,
+    so use the 1D two-point specialisation of Batty's ``fraction_inside`` on
+    the two cells sharing the face: first-order accurate, exact for a planar
+    interface normal to the face axis (the dominant case for a MAC aperture),
+    and needs neither a new sampling pass nor a corner SDF field.  Same linear
+    interface estimator as Ng et al. 2009 sec. 3.
+
+    ponytail: upgrade path is an 8-corner sampled SDF plus Batty et al. 2007
+    Eq. (6)'s 2D area fraction.  Revisit when a validation case shows aperture
+    error dominating.
+    """
+    if a >= 0.0 and b >= 0.0:
+        return 1.0
+    if a < 0.0 and b < 0.0:
+        return 0.0
+    if a >= 0.0:
+        return a / (a - b)
+    return b / (b - a)
+
+
+@wp.kernel
+def k_compute_face_apertures(
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    threshold: float,
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+):
+    """Per-face solid apertures alpha_f in [0, 1] for the ST pressure operator.
+
+    MAC convention matches the rest of this module: the axis face stored at a
+    voxel is its LOW face, shared with the -axis neighbour.
+
+    ``threshold`` must be the same isosurface k_sdf_to_axis_collision was given
+    or the aperture and the binary CollisionX/Y/Z face bit disagree about where
+    the solid is.  They are deliberately not the same predicate: the bit is set
+    when EITHER cell is solid, while alpha_f only reaches 0 when BOTH are.  A
+    partially solid face contributing partially is the whole point of Eq. (14).
+
+    Sparse-miss convention follows k_sdf_to_axis_collision exactly: a missing
+    leaf that is still inside the domain is open (the topology just has not
+    been allocated there), and anything outside the domain is solid.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    b = collision_sdf[tid] - threshold
+    for axis in range(3):
+        n = wp.vec3i(ijk[0], ijk[1], ijk[2])
+        n[axis] = n[axis] - 1
+        flat_n = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, n)
+        af = float(0.0)
+        if flat_n >= 0:
+            af = solid_face_fraction(collision_sdf[flat_n] - threshold, b)
+        elif voxel_in_domain(n, voxels_dim):
+            # Unallocated but in-domain: open space, so only this cell decides.
+            af = solid_face_fraction(1.0e6, b)
+        if axis == 0:
+            alpha_u[tid] = af
+        elif axis == 1:
+            alpha_v[tid] = af
+        else:
+            alpha_w[tid] = af
+
+
+register_fn(k_compute_face_apertures, "fluidSimComputeFaceApertures",
+            notes="ST-FLIP Eq. (14) solid face apertures from the collision SDF.")
 
 
 @wp.kernel
@@ -255,6 +432,82 @@ def k_compute_divergence(
             f_lo = collision_vel[lo_n][axis]
         if hi >= 0 and (voxel_type[hi] & VOXEL_COLLISION) != 0:
             f_hi = collision_vel[hi][axis]
+        div += f_hi - f_lo
+    div = div / voxel_size
+    divergence[tid] = div
+    rhs[tid] = -div * voxel_size * voxel_size
+
+
+@wp.kernel
+def k_compute_divergence_st(
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_vel: wp.array(dtype=wp.vec3),
+    inv_diag: wp.array(dtype=float),
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    rhs: wp.array(dtype=float),
+    divergence: wp.array(dtype=float),
+):
+    """Aperture-weighted right side of Eq. (14): (1/dt) div(alpha u*).
+
+    Each face carries the fluid velocity over its open fraction and the collider
+    velocity over the rest: ``f = alpha*u* + (1 - alpha)*u_solid``.  That reduces
+    exactly to k_compute_divergence when alpha is binary -- alpha = 0 gives the
+    old ``f = collision_vel[n][axis]`` and alpha = 1 the old ``f = u``.
+
+    Rows follow the ST unknown set (``inv_diag != 0``), which by construction
+    includes partially-solid cells; see k_compute_inverse_diagonal_st.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    if inv_diag[tid] == 0.0:
+        rhs[tid] = 0.0
+        divergence[tid] = 0.0
+        return
+    here_solid = (voxel_type[tid] & VOXEL_COLLISION) != 0
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    div = float(0.0)
+    for axis in range(3):
+        hi = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, 1)
+        lo_n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        f_lo = float(0.0)
+        f_hi = float(0.0)
+        if axis == 0:
+            f_lo = u[tid]
+            f_hi = wp.where(hi >= 0, u[hi], 0.0)
+        elif axis == 1:
+            f_lo = v[tid]
+            f_hi = wp.where(hi >= 0, v[hi], 0.0)
+        else:
+            f_lo = w[tid]
+            f_hi = wp.where(hi >= 0, w[hi], 0.0)
+        a_lo = st_alpha_at_face(tid, axis, alpha_u, alpha_v, alpha_w)
+        a_hi = st_alpha_at_face(hi, axis, alpha_u, alpha_v, alpha_w)
+        # Collider velocity behind each face: this cell if it is the solid one,
+        # otherwise the neighbour across that face.
+        uc_lo = float(0.0)
+        if a_lo < 1.0:
+            if here_solid:
+                uc_lo = collision_vel[tid][axis]
+            elif lo_n >= 0:
+                uc_lo = collision_vel[lo_n][axis]
+        uc_hi = float(0.0)
+        if a_hi < 1.0:
+            if here_solid:
+                uc_hi = collision_vel[tid][axis]
+            elif hi >= 0:
+                uc_hi = collision_vel[hi][axis]
+        f_lo = a_lo * f_lo + (1.0 - a_lo) * uc_lo
+        f_hi = a_hi * f_hi + (1.0 - a_hi) * uc_hi
         div += f_hi - f_lo
     div = div / voxel_size
     divergence[tid] = div
@@ -425,7 +678,7 @@ def k_jacobi_iteration(
 
 
 @wp.kernel
-def k_compute_inverse_diagonal_st(
+def k_compute_face_coeffs_st(
     voxel_type: wp.array(dtype=wp.int32),
     wu: wp.array(dtype=float),
     wv: wp.array(dtype=float),
@@ -440,29 +693,114 @@ def k_compute_inverse_diagonal_st(
     rho_liquid: float,
     rho_gas: float,
     eps_rho: float,
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+    use_apertures: wp.int32,
+    coeff_u: wp.array(dtype=float),
+    coeff_v: wp.array(dtype=float),
+    coeff_w: wp.array(dtype=float),
+):
+    """Eq. (14)'s off-diagonal coefficient alpha_f * beta_f, one value per face.
+
+    Every term here is fixed for the whole solve -- wu/wv/ww, the apertures and
+    the density parameters are all written before the preconditioner and are
+    not touched by any PCG or Jacobi iteration -- so evaluating it per iteration
+    (a sparse voxel_flat_index lookup, a sqrt and a divide, six times per cell,
+    ~85 times per solve) was pure repeated work.  The operator kernels now read
+    this array through st_op_coeff instead.
+
+    Face indexing follows the file's MAC convention: the value at ``tid`` is the
+    LOW face on ``axis``, shared with the -axis neighbour.
+
+    The aperture-off branch folds st_face_openness's binary gate in as "both
+    cells exist and neither is a collision cell".  st_face_openness is one-sided
+    (it tests only the *neighbour*), but the two forms differ only when the
+    reading cell is itself solid, and such a row is excluded from the system
+    before any coefficient is read -- so the symmetric form is equivalent on
+    every row that actually exists.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    here_solid = (voxel_type[tid] & VOXEL_COLLISION) != 0
+    for axis in range(3):
+        open_frac = float(0.0)
+        if use_apertures != 0:
+            open_frac = st_alpha_at_face(tid, axis, alpha_u, alpha_v, alpha_w)
+        else:
+            lo = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim,
+                               ijk, axis, -1)
+            if lo >= 0 and not here_solid:
+                if (voxel_type[lo] & VOXEL_COLLISION) == 0:
+                    open_frac = 1.0
+        c = float(0.0)
+        if open_frac > 0.0:
+            c = open_frac * st_face_beta(
+                axis, tid, wu, wv, ww, reference_mass, eta_phi,
+                rho_liquid, rho_gas, eps_rho)
+        if axis == 0:
+            coeff_u[tid] = c
+        elif axis == 1:
+            coeff_v[tid] = c
+        else:
+            coeff_w[tid] = c
+
+
+@wp.kernel
+def k_compute_inverse_diagonal_st(
+    voxel_type: wp.array(dtype=wp.int32),
+    coeff_u: wp.array(dtype=float),
+    coeff_v: wp.array(dtype=float),
+    coeff_w: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    use_apertures: wp.int32,
     inv_diag: wp.array(dtype=float),
 ):
+    """Diagonal of Eq. (14)'s div(beta grad p), row c = sum_f alpha_f beta_f.
+
+    ``inv_diag`` doubles as the ST unknown set: every other ST kernel gates on
+    ``inv_diag != 0``, so widening the unknowns is done here and nowhere else.
+
+    With apertures on, a cell whose centre is inside the solid but which still
+    has an open face IS an unknown.  That is not optional.  VOXEL_COLLISION is
+    set by exactly the predicate alpha uses (sdf[centre] < threshold, see
+    k_sdf_to_axis_collision), so alpha_f lands strictly inside (0, 1) only on
+    faces where one of the two cells is a collision cell.  Keeping the legacy
+    "drop the face if the neighbour is solid" gate would therefore discard
+    every partial aperture and make the whole feature a no-op; dropping the
+    gate while still excluding the cell would leave the face's diagonal term
+    with no off-diagonal partner, i.e. a Dirichlet p = 0 wall -- a free surface
+    where a solid should be.  Batty et al. 2007 avoid the choice by not having
+    a solid cell class at all: cells are liquid/air and solids live purely in
+    alpha.  Admitting partially-solid cells as unknowns is the closest
+    equivalent that leaves the rest of this file's classification intact.
+
+    Fully interior solid cells self-exclude: all six apertures are 0, so the
+    diagonal is 0 and the ``diag > 0`` branch below zeroes them.
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
-        inv_diag[tid] = 0.0
-        return
+    here_fluid = (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0
+    here_solid = (vt & VOXEL_COLLISION) != 0
+    if not here_fluid:
+        # Air is Dirichlet p = 0 in both modes and never an unknown.
+        if use_apertures == 0 or not here_solid:
+            inv_diag[tid] = 0.0
+            return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     diag = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
             n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                diag += st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
+            diag += st_op_coeff(tid, n, axis, step, coeff_u, coeff_v, coeff_w)
     if diag > 0.0:
         inv_diag[tid] = 1.0 / diag
     else:
@@ -474,26 +812,25 @@ def k_apply_matrix_st(
     x: wp.array(dtype=float),
     voxel_type: wp.array(dtype=wp.int32),
     inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
+    coeff_u: wp.array(dtype=float),
+    coeff_v: wp.array(dtype=float),
+    coeff_w: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
+    use_apertures: wp.int32,
     ax: wp.array(dtype=float),
 ):
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
+    if inv_diag[tid] == 0.0:
+        ax[tid] = 0.0
+        return
+    if use_apertures == 0 and ((vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0):
         ax[tid] = 0.0
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
@@ -501,19 +838,22 @@ def k_apply_matrix_st(
     for axis in range(3):
         for step in range(-1, 2, 2):
             n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                beta = st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
+            beta = st_op_coeff(tid, n, axis, step, coeff_u, coeff_v, coeff_w)
+            if beta > 0.0:
                 acc += beta * x[tid]
                 if n >= 0:
-                    nvt = voxel_type[n]
-                    if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
+                    # Off-diagonal only where the neighbour carries an unknown.
+                    # alpha_f is read from the same face index in both rows, so
+                    # the matrix stays symmetric and PCG stays valid.
+                    n_unknown = wp.int32(0)
+                    if use_apertures != 0:
+                        if inv_diag[n] != 0.0:
+                            n_unknown = 1
+                    else:
+                        nvt = voxel_type[n]
+                        if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
+                            n_unknown = 1
+                    if n_unknown != 0:
                         acc -= beta * x[n]
     ax[tid] = acc
 
@@ -524,26 +864,25 @@ def k_jacobi_iteration_st(
     rhs: wp.array(dtype=float),
     voxel_type: wp.array(dtype=wp.int32),
     inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
+    coeff_u: wp.array(dtype=float),
+    coeff_v: wp.array(dtype=float),
+    coeff_w: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
+    use_apertures: wp.int32,
     x_out: wp.array(dtype=float),
 ):
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
+    if inv_diag[tid] == 0.0:
+        x_out[tid] = 0.0
+        return
+    if use_apertures == 0 and ((vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0):
         x_out[tid] = 0.0
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
@@ -551,18 +890,21 @@ def k_jacobi_iteration_st(
     for axis in range(3):
         for step in range(-1, 2, 2):
             n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
             if n < 0:
-                solid = 1
-            if solid == 0 and n >= 0:
+                continue
+            beta = st_op_coeff(tid, n, axis, step, coeff_u, coeff_v, coeff_w)
+            if beta <= 0.0:
+                continue
+            n_unknown = wp.int32(0)
+            if use_apertures != 0:
+                if inv_diag[n] != 0.0:
+                    n_unknown = 1
+            else:
                 nvt = voxel_type[n]
                 if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
-                    beta = st_beta_for_cell_face(
-                        tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                        wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-                    acc += beta * x_in[n]
+                    n_unknown = 1
+            if n_unknown != 0:
+                acc += beta * x_in[n]
     x_out[tid] = acc * inv_diag[tid]
 
 # ---------------------------------------------------------------------------
@@ -984,6 +1326,11 @@ def k_project_st(
     rho_gas: float,
     eps_rho: float,
     collision_vel: wp.array(dtype=wp.vec3),
+    inv_diag: wp.array(dtype=float),
+    alpha_u: wp.array(dtype=float),
+    alpha_v: wp.array(dtype=float),
+    alpha_w: wp.array(dtype=float),
+    use_apertures: wp.int32,
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
 ):
@@ -992,6 +1339,14 @@ def k_project_st(
     Uses beta_f = 1/max(rho(phi_f), eps_rho), with phi_f read from the same
     face P2G accumulators used for velocity normalization.  This is the folded
     q=p*dt discretization of Eq. (14)-(16) in the add-on's pressure units.
+
+    Eq. (16) has alpha_f cancel out of the velocity update, so the gradient
+    itself is aperture-free.  What apertures do change is *which* faces get a
+    gradient at all: the no-flux prescription now fires on alpha_f <= 0 (fully
+    inside the solid) rather than on either cell being classified solid, and the
+    unknown set is read from ``inv_diag`` so partially-solid cells contribute
+    their pressure.  With ``use_apertures == 0`` this is the previous kernel
+    exactly.
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
@@ -1003,12 +1358,20 @@ def k_project_st(
     here_solid = (vt & VOXEL_COLLISION) != 0
     limit = wp.max(max_gradient, 1.0e-6)
     x_here = float(0.0)
-    if here_fluid:
-        x_here = finite_pressure_value(x[tid])
+    here_unknown = wp.int32(0)
+    if use_apertures != 0:
+        if inv_diag[tid] != 0.0:
+            here_unknown = 1
+            x_here = finite_pressure_value(x[tid])
+    else:
+        if here_fluid:
+            here_unknown = 1
+            x_here = finite_pressure_value(x[tid])
     for axis in range(3):
         n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         n_fluid = wp.int32(0)
         n_solid = wp.int32(0)
+        n_unknown = wp.int32(0)
         x_n = float(0.0)
         if n >= 0:
             nvt = voxel_type[n]
@@ -1016,10 +1379,25 @@ def k_project_st(
                 n_solid = 1
             elif (nvt & VOXEL_FLUID) != 0:
                 n_fluid = 1
-                x_n = finite_pressure_value(x[n])
         else:
             n_solid = 1
-        if here_solid or n_solid != 0:
+        if use_apertures != 0:
+            if n >= 0:
+                if inv_diag[n] != 0.0:
+                    n_unknown = 1
+                    x_n = finite_pressure_value(x[n])
+        else:
+            if n_fluid != 0:
+                n_unknown = 1
+                x_n = finite_pressure_value(x[n])
+        prescribe = wp.int32(0)
+        if use_apertures != 0:
+            if st_alpha_at_face(tid, axis, alpha_u, alpha_v, alpha_w) <= 0.0:
+                prescribe = 1
+        else:
+            if here_solid or n_solid != 0:
+                prescribe = 1
+        if prescribe != 0:
             vel_c = wp.vec3(0.0, 0.0, 0.0)
             if here_solid:
                 vel_c = collision_vel[tid]
@@ -1034,7 +1412,7 @@ def k_project_st(
             else:
                 w[tid] = vel_c[2]
                 ww[tid] = wp.max(ww[tid], 1.0e-6)
-        elif here_fluid or n_fluid != 0:
+        elif here_unknown != 0 or n_unknown != 0:
             beta = st_face_beta(axis, tid, wu_mass, wv_mass, ww_mass,
                                 reference_mass, eta_phi,
                                 rho_liquid, rho_gas, eps_rho)
@@ -1178,6 +1556,8 @@ def k_pressure_scale(
 register_fn(k_compute_divergence,
             "fluidSimProjectNonDivergentComputeDivergence",
             "fluidSimProjectNonDivergentComputeDivergence_old")
+register_fn(k_compute_divergence_st,
+            "fluidSimProjectNonDivergentComputeDivergenceSpatiotemporal")
 register_fn(k_particle_count_to_pressure_rhs,
             "fluidSimParticleToCountPressure", "fluidSimParticleCountToPressure")
 register_fn(k_compute_inverse_diagonal,
@@ -1193,6 +1573,9 @@ register_fn(k_apply_matrix,
             "fluidSimProjectNonDivergentApplyMatrix16",
             "fluidSimProjectNonDivergentApplyMatrix32",
             strategy="tiled")
+register_fn(k_compute_face_coeffs_st,
+            "fluidSimProjectNonDivergentFaceCoefficientsSpatiotemporal",
+            notes="ST-FLIP Eq. (14) alpha_f * beta_f, precomputed once per solve.")
 register_fn(k_compute_inverse_diagonal_st,
             "fluidSimProjectNonDivergentPreConditionerSpatiotemporal")
 register_fn(k_apply_matrix_st,
@@ -1256,6 +1639,17 @@ class PressureSolver:
         self.pressure = wp.zeros(n, dtype=float, device=device)
         self.pressure_tmp = wp.zeros(n, dtype=float, device=device)
         self.inv_diag = wp.zeros(n, dtype=float, device=device)
+        # ponytail: one permanently-zero array so the aperture-off path can bind
+        # the same kernel signature instead of duplicating every ST kernel.  It
+        # is never read (use_apertures == 0 short-circuits first), so its
+        # contents do not matter -- only that a valid array is bound.
+        self._alpha_off = wp.zeros(n, dtype=float, device=device)
+        # Eq. (14) face coefficients alpha_f * beta_f, rebuilt once per solve by
+        # k_compute_face_coeffs_st.  Fixed capacity, so a topology rebuild never
+        # changes array identity (same reasoning as inv_diag above).
+        self.st_coeff_u = wp.zeros(n, dtype=float, device=device)
+        self.st_coeff_v = wp.zeros(n, dtype=float, device=device)
+        self.st_coeff_w = wp.zeros(n, dtype=float, device=device)
         self.r = wp.zeros(n, dtype=float, device=device)
         self.z = wp.zeros(n, dtype=float, device=device)
         self.p_dir = wp.zeros(n, dtype=float, device=device)
@@ -1296,6 +1690,19 @@ class PressureSolver:
         self._pcg_beta_cmds = None
         self._pcg_pack_cmds = None
         self._pcg_graphs = OrderedDict()
+        # ST operator family: same graph-capture treatment as the standard PCG
+        # above.  Measured on a 29k-voxel dam break, an un-captured ST iteration
+        # costs ~0.38 ms of which almost all is host dispatch -- a dim=1 kernel
+        # launch alone measures ~38 us here -- against ~0.12 ms captured for the
+        # standard path.  The face-coefficient precompute is what makes this
+        # possible: the operator kernels now take only arrays and two ints, all
+        # of fixed identity, so a recorded command stays valid for the solve.
+        self._st_pcg_key = None
+        self._st_apply_cmd = None
+        self._st_update_cmd = None
+        self._st_precond_cmd = None
+        self._st_update_p_cmd = None
+        self._st_graphs = OrderedDict()
         self.last_iterations = 0
         self.last_residual = 0.0
         self.last_residual_squared = 0.0
@@ -1388,6 +1795,7 @@ class PressureSolver:
             self.rz, self.rz_new = self.rz_new, self.rz
 
     def _prepare_pcg_commands(self, n, voxel_type, x):
+        self._ensure_scalar_cmds()
         if self._pcg_voxel_type is voxel_type:
             return
         g = self.grid
@@ -1414,6 +1822,19 @@ class PressureSolver:
                     self._pressure_count, g.num_leaves, self.p_dir],
             device=self.device, record_cmd=True,
         )
+        self._pcg_graphs.clear()
+
+    def _ensure_scalar_cmds(self):
+        """Record the dim=1 recurrence-scalar commands once, for both families.
+
+        Every array they bind (rz_a/rz_b, p_ap, alpha, beta, residual,
+        pcg_stats) is allocated in __init__ and never reallocated, so these
+        commands never go stale -- unlike the operator commands, which bind
+        voxel_type and have to be re-recorded when the caller hands over a
+        different array.
+        """
+        if self._pcg_alpha_cmds is not None:
+            return
         self._pcg_alpha_cmds = (
             wp.launch(k_compute_alpha, dim=1,
                       inputs=[self._pcg_rz_a, self.p_ap, self.alpha],
@@ -1440,7 +1861,85 @@ class PressureSolver:
                               self.pcg_stats],
                       device=self.device, record_cmd=True),
         )
-        self._pcg_graphs.clear()
+
+    def _prepare_pcg_st_commands(self, n, voxel_type, x, use_apertures):
+        """Record the ST operator commands, keyed on everything they bake in.
+
+        ``use_apertures`` is a kernel argument, not an array, so it is part of
+        the key: a solve that flips it must re-record or the recorded command
+        would silently keep the previous mode.
+        """
+        self._ensure_scalar_cmds()
+        key = (id(voxel_type), id(x), int(use_apertures))
+        if self._st_pcg_key == key:
+            return
+        g = self.grid
+        self._st_pcg_key = key
+        op_args = [self.st_coeff_u, self.st_coeff_v, self.st_coeff_w,
+                   g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                   g.num_leaves, int(use_apertures)]
+        self._st_apply_cmd = wp.launch(
+            k_apply_matrix_st, dim=n,
+            inputs=[self.p_dir, voxel_type, self.inv_diag] + op_args + [self.ap],
+            device=self.device, record_cmd=True,
+        )
+        self._st_update_cmd = wp.launch(
+            k_update_xr, dim=n,
+            inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves, x, self.r],
+            device=self.device, record_cmd=True,
+        )
+        self._st_precond_cmd = wp.launch(
+            k_apply_preconditioner, dim=n,
+            inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
+            device=self.device, record_cmd=True,
+        )
+        self._st_update_p_cmd = wp.launch(
+            k_update_p, dim=n,
+            inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
+            device=self.device, record_cmd=True,
+        )
+        self._st_graphs.clear()
+
+    def _launch_pcg_st_batch(self, work_n, batch):
+        """Launch one ST PCG batch as a single CUDA graph.
+
+        Identical recurrence to the un-captured loop it replaces, with the
+        per-iteration ``wp.copy(rz, rz_new)`` traded for the standard path's
+        parity ping-pong so the batch has no host work at all.
+        """
+        start_parity = 0 if self.rz is self._pcg_rz_a else 1
+        key = (work_n, batch, start_parity)
+        graph = self._st_graphs.get(key)
+        if graph is not None:
+            self._st_graphs.move_to_end(key)
+        else:
+            if len(self._st_graphs) >= self._PCG_GRAPH_CAPACITY:
+                self._st_graphs.popitem(last=False)
+            self._st_apply_cmd.set_dim(work_n)
+            self._st_update_cmd.set_dim(work_n)
+            self._st_precond_cmd.set_dim(work_n)
+            self._st_update_p_cmd.set_dim(work_n)
+            wp.synchronize_device(self.device)
+            with wp.ScopedCapture(device=self.device) as capture:
+                parity = start_parity
+                for _ in range(batch):
+                    self._st_apply_cmd.launch()
+                    wp.utils.array_inner(self.p_dir, self.ap,
+                                         out=self.p_ap, count=work_n)
+                    self._pcg_alpha_cmds[parity].launch()
+                    self._st_update_cmd.launch()
+                    self._st_precond_cmd.launch()
+                    rz_out = self._pcg_rz_b if parity == 0 else self._pcg_rz_a
+                    wp.utils.array_inner(self.r, self.z,
+                                         out=rz_out, count=work_n)
+                    self._pcg_beta_cmds[parity].launch()
+                    self._st_update_p_cmd.launch()
+                    parity ^= 1
+            graph = capture.graph
+            self._st_graphs[key] = graph
+        wp.capture_launch(graph)
+        if batch & 1:
+            self.rz, self.rz_new = self.rz_new, self.rz
 
     def _make_status(
         self, converged, reason, residual, iterations,
@@ -1477,16 +1976,15 @@ class PressureSolver:
 
     def project_frame(self, velocity, voxel_type, collision_velocity,
                       voxel_counts, settings, *, max_gradient,
-                      reference_mass=None, pressure_source=None):
+                      reference_mass=None, pressure_source=None,
+                      apertures=None):
         """Build, solve, and safely apply one pressure projection."""
-        self.build_rhs(
-            velocity, voxel_type, collision_velocity, voxel_counts,
-            rest_count=settings.particles_per_voxel,
-            count_stiffness=settings.count_stiffness,
-        )
         st_projection = bool(
             settings.spacetime_enabled
             and settings.spacetime_variable_projection)
+        if not st_projection:
+            # Eq. (14) apertures only exist in the ST operator family.
+            apertures = None
         if reference_mass is None:
             configured_mass = float(settings.spacetime_reference_mass)
             reference_mass = (
@@ -1500,21 +1998,35 @@ class PressureSolver:
             "rho_gas": settings.spacetime_gas_density,
             "eps_rho": settings.spacetime_min_density,
         }
+        rhs_args = {
+            "rest_count": settings.particles_per_voxel,
+            "count_stiffness": settings.count_stiffness,
+        }
         if st_projection:
-            self.build_preconditioner_st(voxel_type, velocity, **st_args)
+            # inv_diag carries the ST unknown set, and k_compute_divergence_st
+            # reads it, so the preconditioner has to precede the RHS here.
+            # Neither depends on the other's output in the aperture-off path,
+            # so the swap is numerically inert there.
+            self.build_preconditioner_st(voxel_type, velocity,
+                                         apertures=apertures, **st_args)
+            self.build_rhs(velocity, voxel_type, collision_velocity,
+                           voxel_counts, apertures=apertures, **rhs_args)
         else:
+            self.build_rhs(velocity, voxel_type, collision_velocity,
+                           voxel_counts, **rhs_args)
             self.build_preconditioner(voxel_type)
         if int(settings.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
             if st_projection:
                 self.solve_jacobi_st(
                     voxel_type, settings.pressure_iterations, velocity,
-                    **st_args)
+                    apertures=apertures, **st_args)
             else:
                 self.solve_jacobi(voxel_type, settings.pressure_iterations)
         elif st_projection:
             self.solve_pcg_st(
                 voxel_type, settings.pressure_iterations,
-                settings.pressure_tolerance, velocity, **st_args)
+                settings.pressure_tolerance, velocity,
+                apertures=apertures, **st_args)
         else:
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
@@ -1531,23 +2043,45 @@ class PressureSolver:
         if st_projection:
             self.project_st(
                 velocity, voxel_type, collision_velocity,
-                max_gradient=max_gradient, **st_args)
+                max_gradient=max_gradient, apertures=apertures, **st_args)
         else:
             self.project(
                 velocity, voxel_type, collision_velocity,
                 max_gradient=max_gradient)
         return self.last_status
 
+    def _aperture_args(self, apertures):
+        """(alpha_u, alpha_v, alpha_w, use_apertures) for the ST kernels."""
+        if apertures is None:
+            z = self._alpha_off
+            return [z, z, z, 0]
+        return [apertures[0], apertures[1], apertures[2], 1]
+
+    def _use_apertures(self, apertures):
+        return 0 if apertures is None else 1
+
     def build_rhs(self, vel, voxel_type, collision_vel, voxel_counts,
-                  rest_count=8.0, count_stiffness=0.0):
+                  rest_count=8.0, count_stiffness=0.0, apertures=None):
         g = self.grid
-        wp.launch(
-            k_compute_divergence, dim=self._dim(),
-            inputs=[vel.u, vel.v, vel.w, voxel_type, collision_vel,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, g.voxel_size, self.rhs, self.divergence],
-            device=self.device,
-        )
+        if apertures is None:
+            wp.launch(
+                k_compute_divergence, dim=self._dim(),
+                inputs=[vel.u, vel.v, vel.w, voxel_type, collision_vel,
+                        g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                        g.num_leaves, g.voxel_size, self.rhs, self.divergence],
+                device=self.device,
+            )
+        else:
+            # Reads inv_diag for the unknown set -- build_preconditioner_st must
+            # already have run this frame (project_frame orders it that way).
+            wp.launch(
+                k_compute_divergence_st, dim=self._dim(),
+                inputs=[vel.u, vel.v, vel.w, voxel_type, collision_vel,
+                        self.inv_diag, apertures[0], apertures[1], apertures[2],
+                        g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                        g.num_leaves, g.voxel_size, self.rhs, self.divergence],
+                device=self.device,
+            )
         if count_stiffness > 0.0:
             wp.launch(
                 k_particle_count_to_pressure_rhs, dim=self._dim(),
@@ -1569,32 +2103,47 @@ class PressureSolver:
 
     def build_preconditioner_st(self, voxel_type, vel, reference_mass=8.0,
                                 eta_phi=0.5, rho_liquid=1.0,
-                                rho_gas=0.0, eps_rho=0.05):
+                                rho_gas=0.0, eps_rho=ST_EPS_RHO,
+                                apertures=None):
         g = self.grid
+        n = self._dim()
+        # alpha_f * beta_f is fixed for the whole solve, so it is built once
+        # here and every operator kernel below reads the arrays.
         wp.launch(
-            k_compute_inverse_diagonal_st, dim=self._dim(),
+            k_compute_face_coeffs_st, dim=n,
             inputs=[voxel_type, vel.wu, vel.wv, vel.ww,
                     g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
                     g.num_leaves, reference_mass, eta_phi,
-                    rho_liquid, rho_gas, eps_rho, self.inv_diag],
+                    rho_liquid, rho_gas, eps_rho]
+                   + self._aperture_args(apertures)
+                   + [self.st_coeff_u, self.st_coeff_v, self.st_coeff_w],
+            device=self.device,
+        )
+        wp.launch(
+            k_compute_inverse_diagonal_st, dim=n,
+            inputs=[voxel_type,
+                    self.st_coeff_u, self.st_coeff_v, self.st_coeff_w,
+                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                    g.num_leaves, self._use_apertures(apertures),
+                    self.inv_diag],
             device=self.device,
         )
 
     def solve_jacobi_st(self, voxel_type, iterations, vel, reference_mass=8.0,
                         eta_phi=0.5, rho_liquid=1.0, rho_gas=0.0,
-                        eps_rho=0.05):
+                        eps_rho=ST_EPS_RHO, apertures=None):
         g = self.grid
         n = self._dim()
+        op_args = [self.st_coeff_u, self.st_coeff_v, self.st_coeff_w,
+                   g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                   g.num_leaves, self._use_apertures(apertures)]
         src, dst = self.pressure, self.pressure_tmp
         src[:n].zero_()
         for _ in range(iterations):
             wp.launch(
                 k_jacobi_iteration_st, dim=n,
-                inputs=[src, self.rhs, voxel_type, self.inv_diag,
-                        vel.wu, vel.wv, vel.ww,
-                        g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                        g.num_leaves, reference_mass, eta_phi,
-                        rho_liquid, rho_gas, eps_rho, dst],
+                inputs=[src, self.rhs, voxel_type, self.inv_diag]
+                       + op_args + [dst],
                 device=self.device,
             )
             src, dst = dst, src
@@ -1609,11 +2158,14 @@ class PressureSolver:
 
     def solve_pcg_st(self, voxel_type, max_iterations, tolerance, vel,
                      reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                     rho_gas=0.0, eps_rho=0.05, check_every=25):
+                     rho_gas=0.0, eps_rho=ST_EPS_RHO, check_every=25,
+                     apertures=None):
         """PCG solve for the ST-FLIP variable-coefficient pressure matrix."""
         g = self.grid
         n = self._dim()
         x = self.pressure
+        self._prepare_pcg_st_commands(n, voxel_type, x,
+                                      self._use_apertures(apertures))
         self.x0[:n].zero_()
         self._zero_pcg_vectors(n, x)
         wp.launch(
@@ -1632,59 +2184,23 @@ class PressureSolver:
         pressure_valid = False
         wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
         wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-        last_checked_res = float(self.residual.numpy()[0])
-        res_sq = last_checked_res
+        best_res = float(self.residual.numpy()[0])
+        res_sq = best_res
+        stall_checks = 0
         it = 0
-        if not math.isfinite(last_checked_res):
+        if not math.isfinite(best_res):
             status = PRESSURE_STATUS_INVALID
             failure = "non_finite_residual"
-        elif last_checked_res < tol_sq:
+        elif best_res < tol_sq:
             status = PRESSURE_STATUS_CONVERGED
             failure = PRESSURE_STATUS_CONVERGED
             pressure_valid = True
         while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
             batch = min(check_every, max_iterations - it)
-            for _ in range(batch):
-                wp.launch(
-                    k_apply_matrix_st, dim=n,
-                    inputs=[self.p_dir, voxel_type, self.inv_diag,
-                            vel.wu, vel.wv, vel.ww,
-                            g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                            g.num_leaves, reference_mass, eta_phi,
-                            rho_liquid, rho_gas, eps_rho, self.ap],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
-                wp.launch(k_compute_alpha, dim=1,
-                          inputs=[self.rz, self.p_ap, self.alpha],
-                          device=self.device)
-                wp.launch(
-                    k_update_xr, dim=n,
-                    inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
-                            x, self.r],
-                    device=self.device,
-                )
-                wp.launch(
-                    k_apply_preconditioner, dim=n,
-                    inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
-                wp.launch(k_compute_beta, dim=1,
-                          inputs=[self.rz_new, self.rz, self.beta],
-                          device=self.device)
-                wp.launch(
-                    k_update_p, dim=n,
-                    inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
-                    device=self.device,
-                )
-                wp.copy(self.rz, self.rz_new)
-                it += 1
+            self._launch_pcg_st_batch(n, batch)
+            it += batch
             wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-            wp.launch(k_pack_pcg_stats, dim=1,
-                      inputs=[self.residual, self.rz, self.p_ap,
-                              self.pcg_stats],
-                      device=self.device)
+            self._pcg_pack_cmds[0 if self.rz is self._pcg_rz_a else 1].launch()
             stats = self.pcg_stats.numpy()
             res_sq = float(stats[0])
             rz_cur = float(stats[1])
@@ -1701,11 +2217,14 @@ class PressureSolver:
                     or abs(p_ap_cur) < 1.0e-30):
                 status = PRESSURE_STATUS_SINGULAR
                 failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
+            elif res_sq >= best_res * (1.0 - 1.0e-6):
+                stall_checks += 1
+                if stall_checks >= PCG_STALL_PATIENCE:
+                    status = PRESSURE_STATUS_STALLED
+                    failure = "stalled"
             else:
-                last_checked_res = res_sq
+                best_res = res_sq
+                stall_checks = 0
         self.last_iterations = it
         if not math.isfinite(res_sq):
             status = PRESSURE_STATUS_INVALID
@@ -1861,13 +2380,14 @@ class PressureSolver:
         wp.utils.array_inner(
             self._pcg_compact_r, self._pcg_compact_r,
             out=self.residual, count=work_n)
-        last_checked_res = float(self.residual.numpy()[0])
-        res_sq = last_checked_res
+        best_res = float(self.residual.numpy()[0])
+        res_sq = best_res
+        stall_checks = 0
         it = 0
-        if not math.isfinite(last_checked_res):
+        if not math.isfinite(best_res):
             status = PRESSURE_STATUS_INVALID
             failure = "non_finite_residual"
-        elif last_checked_res < tol_sq:
+        elif best_res < tol_sq:
             status = PRESSURE_STATUS_CONVERGED
             failure = PRESSURE_STATUS_CONVERGED
             pressure_valid = True
@@ -1902,11 +2422,14 @@ class PressureSolver:
                     or abs(p_ap_cur) < 1.0e-30):
                 status = PRESSURE_STATUS_SINGULAR
                 failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
+            elif res_sq >= best_res * (1.0 - 1.0e-6):
+                stall_checks += 1
+                if stall_checks >= PCG_STALL_PATIENCE:
+                    status = PRESSURE_STATUS_STALLED
+                    failure = "stalled"
             else:
-                last_checked_res = res_sq
+                best_res = res_sq
+                stall_checks = 0
         self.last_iterations = it
         if not math.isfinite(res_sq):
             status = PRESSURE_STATUS_INVALID
@@ -1975,7 +2498,7 @@ class PressureSolver:
 
     def project_st(self, vel, voxel_type, collision_vel, max_gradient=1.0e6,
                    reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                   rho_gas=0.0, eps_rho=0.05):
+                   rho_gas=0.0, eps_rho=ST_EPS_RHO, apertures=None):
         g = self.grid
         wp.launch(
             k_project_st, dim=self._dim(),
@@ -1983,8 +2506,9 @@ class PressureSolver:
                     g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
                     g.num_leaves, g.voxel_size, max_gradient,
                     reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho,
-                    collision_vel,
-                    vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
+                    collision_vel, self.inv_diag]
+                   + self._aperture_args(apertures)
+                   + [vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
             device=self.device,
         )
 

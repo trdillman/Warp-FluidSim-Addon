@@ -59,6 +59,7 @@ def _force_harness():
         speed_limit_percent=0.1,
     )
     source_force_calls = []
+    surface_tension_calls = []
     return SimpleNamespace(
         settings=settings,
         grid=SimpleNamespace(
@@ -75,6 +76,11 @@ def _force_harness():
         sourcing=SimpleNamespace(
             apply_forces=lambda dt: source_force_calls.append(dt)),
         source_force_calls=source_force_calls,
+        # Algorithm 1 line 19: CSF surface tension is a grid force, so _forces
+        # owns it.  Its own kernels are covered by the ST validation suite;
+        # here we only pin that the force stage still calls it.
+        _surface_tension=lambda dt: surface_tension_calls.append(dt),
+        surface_tension_calls=surface_tension_calls,
         _force_field_data=lambda: "force_field_array",
         _nvox=512,
         _np_dim=lambda: 13,
@@ -104,6 +110,7 @@ def test_force_stage_dispatches_all_enabled_global_force_kernels(monkeypatch):
         solver_mod.k_forces_speed_limit,
     ]
     assert solver.source_force_calls == [0.125]
+    assert solver.surface_tension_calls == [0.125]
     assert launches[3][1]["inputs"][:2] == ["force_field_array", 1]
     assert launches[5][1]["inputs"][0] == "particle_attr:viscosity"
     assert launches[6][1]["inputs"][0] == "collision_sdf"

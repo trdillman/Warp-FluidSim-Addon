@@ -538,6 +538,8 @@ _DIRECT_SETTING_FIELDS = (
     "spacetime_variable_projection", "spacetime_liquid_density",
     "spacetime_gas_density", "spacetime_min_density",
     "spacetime_local_cfl", "spacetime_max_local_substeps",
+    "spacetime_extrapolation_iterations", "spacetime_solid_apertures",
+    "spacetime_surface_tension", "spacetime_surface_tension_smoothing",
     "spacetime_resync_surface", "spacetime_seed",
     "relax_enabled", "relax_strength",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",

@@ -59,6 +59,7 @@ def _build_settings(args):
     settings.max_substeps = args.max_substeps
     settings.surface_enabled = not args.no_surface
     settings.whitewater_enabled = args.whitewater
+    settings.spacetime_enabled = args.spacetime
     return settings
 
 
@@ -153,6 +154,9 @@ def main(argv=None):
     parser.add_argument("--max-substeps", type=int, default=4)
     parser.add_argument("--whitewater", action="store_true")
     parser.add_argument("--no-surface", action="store_true")
+    parser.add_argument("--spacetime", action="store_true",
+                        help="Enable the ST-FLIP path; every ST stage is gated "
+                             "on it, so per-phase deltas are invisible without.")
     parser.add_argument("--sync", action="store_true", help="CUDA-sync every profiled phase for accurate phase timings.")
     parser.add_argument("--no-phase-timers", action="store_true")
     parser.add_argument("--json-out")

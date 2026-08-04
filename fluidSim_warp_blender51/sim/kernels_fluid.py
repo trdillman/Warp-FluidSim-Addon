@@ -228,7 +228,11 @@ def k_particle_set_grid_data_spacetime(
     if tid >= count[0]:
         return
     safe_prev_dt = wp.max(wp.abs(previous_dt), 1.0e-8)
-    tau = -time_offsets[tid] / safe_prev_dt
+    # Residual clamping (Eq. 11) can push tau outside the [-1/2, 1/2] support of
+    # W_T after an abrupt dt decrease, which would drop the particle from the
+    # transfer entirely and punch a mass/momentum hole in the slab estimator.
+    # Clamp to the support edge instead: biased quadrature beats lost mass.
+    tau = wp.clamp(-time_offsets[tid] / safe_prev_dt, -0.5, 0.5)
     wt = _st_temporal_weight(tau)
     if wt <= 0.0:
         return
@@ -299,19 +303,46 @@ def k_spacetime_weights_to_phase_active(
         return
 
     ijk = voxel_coord_of_flat(leaf_coords, tid)
-    accum = _st_phase_from_mass(wu[tid], reference_mass, eta_phi)
-    accum += _st_phase_from_mass(wv[tid], reference_mass, eta_phi)
-    accum += _st_phase_from_mass(ww[tid], reference_mass, eta_phi)
+    # Average the MASS over the surrounding faces, then apply C once.  Eq. (13)
+    # defines phi at a point as C(m(x)/(eta*m0)); the cell-centered m(x_c) has no
+    # accumulator here, so the six face masses stand in for it.  Applying C per
+    # face and averaging the results is a different quantity: C(x)=min(sqrt(x),1)
+    # is concave, so by Jensen mean(C(x_i)) >= C(mean(x_i)), with equality only
+    # when the face masses are equal.  They are most unequal exactly at the free
+    # surface -- some faces saturated at 1, others near 0 -- so the per-face form
+    # biases phi up precisely at the rim, holding marginal cells in the pressure
+    # system where beta = alpha/max(rho(phi), eps_rho) is largest.
+    #
+    # This form is chosen on fidelity to Eq. (13), NOT on measurement.  Measured
+    # on the equilibrium scene (dx 0.025, CFL 1, 10 s) it moved volume error from
+    # +17.02% to a mean of +17.86% over four runs -- the wrong direction, and
+    # roughly the size of the repeat-to-repeat noise (ST-on sd 0.35 pp over three
+    # identical runs; the solver is not bit-deterministic, P2G uses atomics).
+    # Whatever drives the +17% expansion at paper defaults, it is not this: the
+    # gap to the non-ST path is 22 pp.  The remaining known deviation is that
+    # BOTH forms use a 6-face average as a surrogate for m(x_c); the paper
+    # samples phi at the cell centre.  A cell-centred sample needs no new pass --
+    # voxel_counts is filled by _index_particles() immediately before _p2g() --
+    # but it loses the slab-integrated smoothing that is the point of the method,
+    # so it is an open design question rather than a drop-in.
+    accum = wu[tid] + wv[tid] + ww[tid]
+    nfaces = float(3.0)
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
     if hi >= 0:
-        accum += _st_phase_from_mass(wu[hi], reference_mass, eta_phi)
+        accum += wu[hi]
+        nfaces += 1.0
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
     if hi >= 0:
-        accum += _st_phase_from_mass(wv[hi], reference_mass, eta_phi)
+        accum += wv[hi]
+        nfaces += 1.0
     hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1))
     if hi >= 0:
-        accum += _st_phase_from_mass(ww[hi], reference_mass, eta_phi)
-    phi = accum / 6.0
+        accum += ww[hi]
+        nfaces += 1.0
+    # Average over the faces that actually exist: an unallocated upper neighbour
+    # means "no data", not "no liquid".  Dividing by a fixed 6 biased phi down at
+    # the sparse-grid fringe and could flip surface cells to Dirichlet air.
+    phi = _st_phase_from_mass(accum / nfaces, reference_mass, eta_phi)
     phase_cell[tid] = phi
 
     if phi >= active_threshold or (vt & VOXEL_SOURCE_REGION_TRACKING) != 0:
@@ -1519,6 +1550,184 @@ register_fn(k_attract_mask_to_field, "fluidSimAttractMaskToField")
 register_fn(k_attract_smooth_field, "fluidSimAttractSmoothField")
 register_fn(k_attract_direction, "fluidSimAttractDirection")
 register_fn(k_attract_sdf_gradient_direction, "fluidSimAttractSdfGradientDirection")
+
+
+# ---------------------------------------------------------------------------
+# Surface tension (ST-FLIP Sec. 3.9 -- continuum surface force)
+# ---------------------------------------------------------------------------
+
+
+@wp.func
+def _phase_read(
+    src: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    ijk: wp.vec3i,
+    fallback: float,
+) -> float:
+    """Neighbour phase, replicating the centre on a sparse-grid miss.
+
+    Same Neumann convention as surface.py's _sdf_read: an unallocated leaf means
+    "no data", so mirroring the centre keeps the stencil from inventing an
+    interface at the fringe.
+    """
+    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+    if flat < 0:
+        return fallback
+    return src[flat]
+
+
+@wp.kernel
+def k_phase_curvature(
+    phase_s: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    kappa: wp.array(dtype=float),
+):
+    """Interface curvature kappa = -div(grad phi / |grad phi|).
+
+    Sec. 3.9 names a CSF model but gives no discretisation, so this is
+    Brackbill et al. 1992's curvature on the same second-order stencil
+    k_smooth_surface_sdf_mean_curvature already uses (all three mixed
+    derivatives, replicate-centre misses).  That kernel forms num/g2 =
+    kappa*|grad phi| because it wants a level-set step; the CSF force wants
+    kappa alone, hence the extra factor of 1/|grad phi|.
+
+    Sign: phi = 1 inside the liquid, so grad phi points inward and -div(n) is
+    positive for a convex blob; sigma*kappa*grad(phi)/rho then pulls inward.
+    The sphere validation test is the arbiter of that, not this comment.
+
+    Two guards, both standard practice given Brackbill's O(h) curvature error.
+    The gradient floor keeps the flat interior from dividing noise by noise:
+    |grad phi| ~ 1/h across a resolved interface, so 0.01/h is two orders below
+    a real one.  The |kappa| <= 1/h clamp exists because one cell is the finest
+    resolvable radius -- without it a single-cell droplet produces unbounded
+    force.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    kappa[tid] = 0.0
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    c = phase_s[tid]
+    h = voxel_size
+
+    xp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]), c)
+    xm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] - 1, ijk[1], ijk[2]), c)
+    yp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]), c)
+    ym = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] - 1, ijk[2]), c)
+    zp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1), c)
+    zm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] - 1), c)
+
+    gx = (xp - xm) / (2.0 * h)
+    gy = (yp - ym) / (2.0 * h)
+    gz = (zp - zm) / (2.0 * h)
+    g2 = gx * gx + gy * gy + gz * gz
+    g_floor = 0.01 / h
+    if g2 < g_floor * g_floor:
+        return
+
+    gxx = (xp - 2.0 * c + xm) / (h * h)
+    gyy = (yp - 2.0 * c + ym) / (h * h)
+    gzz = (zp - 2.0 * c + zm) / (h * h)
+
+    xpyp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1] + 1, ijk[2]), c)
+    xpym = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1] - 1, ijk[2]), c)
+    xmyp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] - 1, ijk[1] + 1, ijk[2]), c)
+    xmym = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] - 1, ijk[1] - 1, ijk[2]), c)
+    xpzp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2] + 1), c)
+    xpzm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2] - 1), c)
+    xmzp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] - 1, ijk[1], ijk[2] + 1), c)
+    xmzm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] - 1, ijk[1], ijk[2] - 1), c)
+    ypzp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2] + 1), c)
+    ypzm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2] - 1), c)
+    ymzp = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] - 1, ijk[2] + 1), c)
+    ymzm = _phase_read(phase_s, leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] - 1, ijk[2] - 1), c)
+
+    gxy = (xpyp - xpym - xmyp + xmym) / (4.0 * h * h)
+    gxz = (xpzp - xpzm - xmzp + xmzm) / (4.0 * h * h)
+    gyz = (ypzp - ypzm - ymzp + ymzm) / (4.0 * h * h)
+
+    num = (
+        gxx * (gy * gy + gz * gz)
+        + gyy * (gx * gx + gz * gz)
+        + gzz * (gx * gx + gy * gy)
+        - 2.0 * (gx * gy * gxy + gx * gz * gxz + gy * gz * gyz)
+    )
+    # num / |grad|^3 is div(n); kappa is its negative.
+    k = -num / (g2 * wp.sqrt(g2))
+    lim = 1.0 / h
+    kappa[tid] = wp.clamp(k, -lim, lim)
+
+
+@wp.kernel
+def k_surface_tension_csf(
+    phase_s: wp.array(dtype=float),
+    kappa: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    sigma: float,
+    rho_liquid: float,
+    rho_gas: float,
+    eps_rho: float,
+    dt: float,
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+):
+    """CSF body force f = sigma*kappa*grad(phi), applied as an acceleration.
+
+    Brackbill et al. 1992 give f_sv = sigma*kappa*grad(c)/[c]; the ST phase
+    field is already a colour function on [0, 1], so the jump [c] is 1 and the
+    force per unit volume is sigma*kappa*grad(phi) directly.  Dividing by
+    max(rho(phi_f), eps_rho) -- the same expression st_face_beta uses -- keeps
+    the acceleration on the ST projection's density model instead of
+    introducing a second one.
+
+    The face on ``axis`` stored at ``tid`` is its LOW face, shared with the
+    -axis neighbour, matching pressure.py.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    phi_c = phase_s[tid]
+    kappa_c = kappa[tid]
+    inv_h = 1.0 / voxel_size
+    rho_min = wp.max(eps_rho, 1.0e-8)
+    for axis in range(3):
+        lo = wp.vec3i(ijk[0] - wp.where(axis == 0, 1, 0),
+                      ijk[1] - wp.where(axis == 1, 1, 0),
+                      ijk[2] - wp.where(axis == 2, 1, 0))
+        flo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, lo)
+        if flo < 0:
+            continue
+        phi_n = phase_s[flo]
+        grad = (phi_c - phi_n) * inv_h
+        kappa_f = 0.5 * (kappa_c + kappa[flo])
+        phi_f = 0.5 * (phi_c + phi_n)
+        rho_f = rho_liquid * phi_f + rho_gas * (1.0 - phi_f)
+        dv = dt * sigma * kappa_f * grad / wp.max(rho_f, rho_min)
+        if axis == 0 and wu[tid] > 0.0:
+            u[tid] = u[tid] + dv
+        elif axis == 1 and wv[tid] > 0.0:
+            v[tid] = v[tid] + dv
+        elif axis == 2 and ww[tid] > 0.0:
+            w[tid] = w[tid] + dv
+
+
+register_fn(k_phase_curvature, "fluidSimSpacetimePhaseCurvature",
+            notes="kappa = -div(grad phi/|grad phi|) for the CSF force.")
+register_fn(k_surface_tension_csf, "fluidSimSpacetimeSurfaceTensionCsf",
+            notes="Brackbill CSF acceleration on MAC faces.")
 
 
 # ---------------------------------------------------------------------------

@@ -640,6 +640,7 @@ register_fn(k_particle_to_grid_average, "coreParticleToGridAverage")
 def k_grid_expand_scalar(
     src: wp.array(dtype=float),
     src_weight: wp.array(dtype=float),
+    valid_eps: float,
     leaf_table: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     voxels_dim: wp.vec3i,
@@ -648,11 +649,18 @@ def k_grid_expand_scalar(
     dst: wp.array(dtype=float),
     dst_weight: wp.array(dtype=float),
 ):
-    """coreGridExpand: flood one voxel ring of valid data into empty voxels."""
+    """coreGridExpand: flood one voxel ring of valid data into empty voxels.
+
+    ``valid_eps`` is the weight above which a source voxel counts as sampled.
+    It must match the threshold used to form the value being flooded: a MAC
+    face whose splat kernel decays smoothly to zero can carry m_f ~ 1e-12 and
+    a u* = P_f/m_f that is amplified noise, and flooding that outwards is worse
+    than flooding nothing (ST-FLIP Eq. 9, eps_m).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
-    if src_weight[tid] > 0.0:
+    if src_weight[tid] > valid_eps:
         dst[tid] = src[tid]
         dst_weight[tid] = src_weight[tid]
         return
@@ -666,7 +674,7 @@ def k_grid_expand_scalar(
                     continue
                 o = wp.vec3i(ijk[0] + dx, ijk[1] + dy, ijk[2] + dz)
                 flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, o)
-                if flat >= 0 and src_weight[flat] > 0.0:
+                if flat >= 0 and src_weight[flat] > valid_eps:
                     acc += src[flat]
                     n += 1.0
     if n > 0.0:

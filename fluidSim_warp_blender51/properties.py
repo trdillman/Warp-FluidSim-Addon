@@ -20,6 +20,7 @@ from bpy.props import (
 )
 
 from .sim import custom
+from .sim.constants import ST_EPS_RHO
 from .sim.enums import (
     BlendMode,
     CustomKernelConstantType,
@@ -734,7 +735,13 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Enable ST-FLIP (Beta)", default=False, update=_request_reset,
         description="Experimental spatiotemporal FLIP path for large time steps")
     spacetime_jitter_strength: FloatProperty(
-        name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_reset)
+        name="Jitter", default=1.0, min=0.0, max=1.0, update=_request_reset,
+        description=(
+            "Sample-time jitter strength gamma. Bounded to [0, 1]: the paper's "
+            "residual bound |delta_t| <= dt/2 (Lemma A.1) and the temporal-weight "
+            "bias integral (945 + 105g^2 - 21g^4 - 5g^6)/1024, which stays within "
+            "7.7% of unity and is why m0 needs no rescaling, are both derived only "
+            "on that interval. gamma > 1 invalidates both"))
     spacetime_adaptive_jitter: BoolProperty(
         name="Adaptive Jitter", default=True, update=_request_reset)
     spacetime_phase_eta: FloatProperty(
@@ -754,14 +761,54 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Gas Density", default=0.0, min=0.0, soft_max=1.0,
         update=_request_reset)
     spacetime_min_density: FloatProperty(
-        name="Min Density", default=0.05, min=1.0e-6, soft_max=1.0,
-        update=_request_reset)
+        name="Density Floor (eps_rho)", default=ST_EPS_RHO, min=1.0e-6,
+        soft_max=0.1, precision=6, update=_request_reset,
+        description=(
+            "Eq. (15) eps_rho in beta_f = alpha_f / max(rho(phi_f), eps_rho). "
+            "A floor that guards the divide and bounds PPE conditioning, not a "
+            "physical minimum density: raising it caps free-surface beta and "
+            "stiffens exactly the surface Eq. (17)'s rho_gas -> 0 limit frees"))
     spacetime_local_cfl: FloatProperty(
         name="Local CFL", default=1.0, min=0.0, soft_max=4.0,
         update=_request_reset)
     spacetime_max_local_substeps: IntProperty(
         name="Max Local Substeps", default=64, min=1, max=256,
         update=_request_reset)
+    spacetime_extrapolation_iterations: IntProperty(
+        name="Extrapolation Band", default=0, min=0, max=16,
+        update=_request_reset,
+        description=(
+            "Algorithm 1 line 21: how many 26-neighbour rings of valid MAC "
+            "velocity are flooded into under-sampled faces before G2P. "
+            "0 derives the band from the CFL number as ceil(CFL) + 1, capped "
+            "at 8 -- one ring per cell a particle can cross in a substep, plus "
+            "one for the trilinear G2P stencil"))
+    spacetime_solid_apertures: BoolProperty(
+        name="Solid Apertures", default=True, update=_request_reset,
+        description=(
+            "Eq. (14)/(15): weight the pressure operator by the fraction of "
+            "each MAC face that is not inside a collider, instead of treating "
+            "faces as fully open or fully blocked. Estimated from the "
+            "cell-centered collision SDF with the linear-interface fraction of "
+            "Batty et al. 2007 / Ng et al. 2009. Spatiotemporal path only"))
+    spacetime_surface_tension: FloatProperty(
+        name="Surface Tension", default=0.0, min=0.0, soft_max=0.2,
+        precision=4, update=_request_reset,
+        description=(
+            "Sec. 3.9: continuum surface force sigma*kappa*grad(phi) applied "
+            "to the spacetime phase field (Brackbill et al. 1992), in N/m. "
+            "0 disables it entirely, matching every experiment in the paper "
+            "but Fig. 23. Nonzero values raise the substep count to satisfy "
+            "the capillary-wave limit dt < sqrt(rho h^3 / (2 pi sigma))"))
+    spacetime_surface_tension_smoothing: IntProperty(
+        name="Tension Smoothing", default=2, min=0, max=4,
+        update=_request_reset,
+        description=(
+            "Box-smoothing passes applied to the phase field before curvature "
+            "is taken. The paper smooths the color function with a cubic "
+            "B-spline of about 2 voxels support; 2 passes of the 6-neighbour "
+            "mean approximate that. More passes trade curvature detail for "
+            "less high-frequency force noise"))
     spacetime_resync_surface: BoolProperty(
         name="Resync Surface", default=True, update=_request_surface_refresh)
     spacetime_seed: IntProperty(

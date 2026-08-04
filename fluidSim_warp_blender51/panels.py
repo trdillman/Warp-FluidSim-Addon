@@ -162,26 +162,45 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
         box = layout.box()
         box.label(text="ST-FLIP (Beta)", icon="EXPERIMENTAL")
         box.prop(fs, "spacetime_enabled")
+
+        box.label(text="Sampling")
         sub = box.column(align=True)
         sub.enabled = fs.spacetime_enabled
         sub.prop(fs, "spacetime_jitter_strength")
         sub.prop(fs, "spacetime_adaptive_jitter")
         row = sub.row(align=True)
-        row.prop(fs, "spacetime_phase_eta", text="Eta")
-        row.prop(fs, "spacetime_phase_threshold", text="Threshold")
-        sub.prop(fs, "spacetime_reference_mass")
+        row.prop(fs, "spacetime_local_cfl", text="Local CFL")
+        row.prop(fs, "spacetime_max_local_substeps", text="Max Steps")
+        sub.prop(fs, "spacetime_seed")
+
+        box.label(text="Projection")
+        sub = box.column(align=True)
+        sub.enabled = fs.spacetime_enabled
         sub.prop(fs, "spacetime_variable_projection")
         projection = sub.column(align=True)
         projection.enabled = fs.spacetime_variable_projection
         row = projection.row(align=True)
+        row.prop(fs, "spacetime_phase_eta", text="Eta")
+        row.prop(fs, "spacetime_phase_threshold", text="Threshold")
+        projection.prop(fs, "spacetime_reference_mass")
+        row = projection.row(align=True)
         row.prop(fs, "spacetime_liquid_density", text="Liquid Density")
         row.prop(fs, "spacetime_gas_density", text="Gas Density")
         projection.prop(fs, "spacetime_min_density")
+        projection.prop(fs, "spacetime_solid_apertures")
+        sub.prop(fs, "spacetime_extrapolation_iterations")
+
+        box.label(text="Surface Tension")
+        sub = box.column(align=True)
+        sub.enabled = fs.spacetime_enabled
+        sub.prop(fs, "spacetime_surface_tension")
         row = sub.row(align=True)
-        row.prop(fs, "spacetime_local_cfl", text="Local CFL")
-        row.prop(fs, "spacetime_max_local_substeps", text="Max Steps")
+        row.enabled = fs.spacetime_surface_tension > 0.0
+        row.prop(fs, "spacetime_surface_tension_smoothing")
+
+        sub = box.column(align=True)
+        sub.enabled = fs.spacetime_enabled
         sub.prop(fs, "spacetime_resync_surface")
-        sub.prop(fs, "spacetime_seed")
 
 
 def _presentation_role(pg):

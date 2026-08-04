@@ -66,6 +66,28 @@ DEFAULT_PRESSURE_TOLERANCE = 1.0e-5
 DEFAULT_VISCOSITY_ITERATIONS = 40
 DEFAULT_VISCOSITY_TOLERANCE = 1.0e-4
 
+# Spatiotemporal FLIP (Braun et al., ACM TOG 45(4) Art. 76).
+#
+# ST_EPS_RHO is Eq. (15)'s eps_rho: beta_f = alpha_f / max(rho(phi_f), eps_rho).
+# The paper gives no value.  Reconstruction, relative to rho_liquid = 1: the
+# max() is a divide-by-zero and PPE-conditioning guard, and the resulting
+# condition number scales as rho_liquid / eps_rho.  A value near 0.05 makes that
+# ratio 20 and turns the guard into a physical cap that stiffens the free
+# surface Eq. (17)'s rho_g -> 0 limit exists to free; a value near 1e-6 makes it
+# 1e6 and diagonally-preconditioned PCG stalls at the paper's 1e-4 tolerance.
+# 1e-4 sits four orders below liquid (physically negligible) and four orders
+# above the float32 reciprocal risk.  st_face_beta keeps its own absolute
+# max(eps_rho, 1e-8) as the true zero guard.
+ST_EPS_RHO = 1.0e-4
+
+# ST_EPS_MASS is Eq. (9)'s eps_m: a face is under-sampled, and its u* = P_f/m_f
+# meaningless, when m_f <= eps_m.  The paper quotes 1e-9; this port uses 1e-8
+# because that is the threshold k_normalize_mac already applies when it forms
+# u* = P/m.  The invariant that matters is that the velocity-extrapolation
+# validity mask and the divide gate agree -- a face valid to one and invalid to
+# the other either keeps an amplified garbage velocity or gets flooded over.
+ST_EPS_MASS = 1.0e-8
+
 # Timer tracks (profiler contract): compute_0..15 phase assignment
 TIMER_PHASE_SLOTS = {
     "sourcing": 0,
