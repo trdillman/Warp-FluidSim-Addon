@@ -11,6 +11,7 @@ from enum import Enum
 import hashlib
 import json
 import io
+import math
 import os
 import pickle
 import tempfile
@@ -111,6 +112,52 @@ def _metadata_path(base_dir: str) -> str:
     return os.path.join(base_dir, CACHE_SEQUENCE_METADATA)
 
 
+def _jsonable_setting(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        # Preserve a deterministic diagnostic signature without emitting
+        # non-standard JSON or aborting an otherwise recoverable cache export.
+        label = ("NaN" if math.isnan(value) else
+                 "Infinity" if value > 0.0 else "-Infinity")
+        return {"__fluidsim_nonfinite_float__": label}
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name
+    if isinstance(value, dict):
+        return {str(key): _jsonable_setting(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
+    try:
+        return [_jsonable_setting(item) for item in value]
+    except TypeError:
+        return repr(value)
+
+
+def settings_record(settings) -> dict:
+    """Canonical, JSON-safe settings snapshot plus its stable content hash."""
+    fields = getattr(settings, "__dataclass_fields__", None)
+    names = sorted(fields) if fields is not None else sorted(vars(settings))
+    values = {name: _jsonable_setting(getattr(settings, name)) for name in names
+              if not name.startswith("_") and hasattr(settings, name)}
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                         allow_nan=False).encode("utf-8")
+    return {"signature": hashlib.sha256(encoded).hexdigest(), "settings": values}
+
+
+def compact_settings_segments(settings_records: dict) -> list[dict]:
+    """Compact frame->record data into contiguous signature boundaries."""
+    segments = []
+    for frame in sorted(int(value) for value in settings_records):
+        signature = settings_records[frame]["signature"]
+        if (segments and segments[-1]["signature"] == signature
+                and segments[-1]["frame_end"] + 1 == frame):
+            segments[-1]["frame_end"] = frame
+        else:
+            segments.append({"frame_start": frame, "frame_end": frame,
+                             "signature": signature})
+    return segments
+
+
 def _frame_payload(solver, scene_key_value: str = ""):
     """Build the version-1 cache payload from the shared lazy host frame."""
     from ..sim.frame_output import HostFrame
@@ -122,8 +169,10 @@ def _frame_payload(solver, scene_key_value: str = ""):
                    (empty_verts, empty_tris))
     surface_metadata = (solver.surface.metadata() if hasattr(solver, "surface") else {
         "voxel_size": getattr(solver.settings, "voxel_size", 0.05)})
+    record = settings_record(solver.settings)
     return {
         "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
+        "settings_signature": np.array(record["signature"]),
         "scene_key": np.array(str(scene_key_value)),
         "positions": host.positions,
         "velocities": host.velocities,
@@ -173,6 +222,7 @@ def write_sequence_metadata(
         frame_end: int,
         *,
         source: str = "simulation",
+        settings_records: dict | None = None,
         scene_key_value: str = "") -> str:
     """Write sequence-level cache metadata next to per-frame .npz files."""
     os.makedirs(base_dir, exist_ok=True)
@@ -188,6 +238,39 @@ def write_sequence_metadata(
         "source": str(source),
         "scene_key": str(scene_key_value),
     }
+    if settings_records:
+        normalized = {int(frame): record for frame, record in settings_records.items()
+                      if start <= int(frame) <= end}
+        segments = compact_settings_segments(normalized)
+        records_by_signature = {
+            record["signature"]: record["settings"]
+            for record in normalized.values()
+        }
+        signatures = list(records_by_signature)
+        baseline_signature = segments[0]["signature"] if segments else None
+        baseline = records_by_signature.get(baseline_signature, {})
+        changes = {}
+        for signature, values in records_by_signature.items():
+            if signature == baseline_signature:
+                continue
+            delta = {
+                name: value for name, value in values.items()
+                if baseline.get(name) != value
+            }
+            removed = sorted(set(baseline) - set(values))
+            changes[signature] = {"changed": delta, "removed": removed}
+        metadata.update({
+            "settings_segments": segments,
+            "settings_baseline": {
+                "signature": baseline_signature,
+                "settings": baseline,
+            },
+            # Store only deltas after the baseline. Long keyframed sequences no
+            # longer repeat the entire settings object for every signature.
+            "settings_changes": changes,
+            "mixed_settings": len(signatures) > 1,
+            "settings_signature": signatures[0] if len(signatures) == 1 else None,
+        })
     path = _metadata_path(base_dir)
     fd, tmp_path = tempfile.mkstemp(
         prefix=f"{CACHE_SEQUENCE_METADATA}.",

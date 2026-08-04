@@ -2,7 +2,7 @@
 
 Panel set mirrors the synthesized UI contract:
 Simulation, Domain / Sparse Grid, Particles, Sources, Colliders / Sinks,
-Forces / Attraction, Pressure Projection, Viscosity, Surface / Whitewater,
+Forces / Attraction, Pressure Projection, Viscosity, Whitewater,
 Realtime Surfacing / Particles, Viewport / Render Output, Custom Warp
 Snippets, Diagnostics / Profiling, Validation / Benchmarks.
 """
@@ -21,6 +21,71 @@ class FluidSimPanel:
     bl_category = "FluidSim"
 
 
+def _draw_pending_banner(layout, scene):
+    """Draw cached pending state only; never inspect geometry or mutate RNA."""
+    from .blender.scene_bridge import pending_presentation
+
+    pending = pending_presentation(scene)
+    if pending["action"] == "NONE":
+        return
+    box = layout.box()
+    box.alert = True
+    label = ("Reinitialize Required" if pending["action"] == "REINIT_PENDING"
+             else "Restart Required")
+    box.label(text=f"{label} ({pending['count']})", icon="ERROR")
+    for reason in pending["reasons"][:3]:
+        box.label(text=reason)
+    if pending["count"] > 3:
+        box.label(text=f"+ {pending['count'] - 3} more")
+    if pending["blocked_reason"]:
+        box.label(text=pending["blocked_reason"][:120], icon="CANCEL")
+    row = box.row(align=True)
+    if pending["action"] == "REINIT_PENDING":
+        row.operator("fluidsim.apply_pending_reinitialize", text="Apply", icon="FILE_REFRESH")
+    else:
+        row.operator("fluidsim.apply_pending_reset", text="Reset", icon="FILE_REFRESH")
+    row.operator("fluidsim.revert_pending", text="Revert", icon="LOOP_BACK")
+
+
+def _draw_header_interaction(self, context):
+    scene = getattr(context, "scene", None)
+    if getattr(scene, "fluidsim", None) is None:
+        return
+    from .blender.scene_bridge import pending_presentation
+
+    pending = pending_presentation(scene)
+    icon = "ERROR" if pending["action"] != "NONE" else "MOD_FLUIDSIM"
+    text = str(pending["count"]) if pending["count"] else ""
+    self.layout.popover(panel="FLUIDSIM_PT_interaction_popover", text=text, icon=icon)
+
+
+class FLUIDSIM_PT_interaction_popover(bpy.types.Panel):
+    bl_label = "FluidSim Interaction"
+    bl_idname = "FLUIDSIM_PT_interaction_popover"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        fs = scene.fluidsim
+        from .blender.scene_bridge import pending_presentation, session
+
+        pending = pending_presentation(scene)
+        sess = session()
+        layout.label(text="Solver active" if sess.owns_scene(scene)
+                     else "Solver inactive", icon="PLAY" if sess.owns_scene(scene)
+                     else "PAUSE")
+        layout.prop(fs, "live", text="Live Playback")
+        if pending["action"] == "NONE":
+            layout.label(text="No pending settings", icon="CHECKMARK")
+        else:
+            _draw_pending_banner(layout, scene)
+        row = layout.row(align=True)
+        row.operator("fluidsim.reset", text="Reset", icon="FILE_REFRESH")
+        row.operator("fluidsim.release", text="Release", icon="X")
+
+
 class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
     bl_label = "Simulation"
     bl_idname = "FLUIDSIM_PT_simulation"
@@ -31,6 +96,7 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         from .blender.scene_bridge import current_error, session
 
         sess = session()
+        _draw_pending_banner(layout, context.scene)
 
         col = layout.column(align=True)
         col.operator("fluidsim.setup_scene", icon="MOD_FLUIDSIM")
@@ -103,6 +169,7 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_pending_banner(layout, context.scene)
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "voxel_size")
@@ -136,6 +203,7 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
+        _draw_pending_banner(layout, context.scene)
         col = layout.column(align=True)
         col.prop(fs, "max_particles")
         col.prop(fs, "particles_per_voxel")
@@ -239,8 +307,6 @@ def _draw_mesh_input(col, pg, *, solid, shell):
         error = col.box()
         error.alert = True
         error.label(text=pg.mesh_error, icon="ERROR")
-    elif solid:
-        col.label(text="Solid Volume requires a watertight mesh", icon="INFO")
 
 
 def _draw_volume_input(col, pg, *, fields=False):
@@ -298,8 +364,6 @@ class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
                 if pg.point_source_representation == "RASTERIZED_REGION":
                     col.prop(pg, "point_rasterize_radius")
                     col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
-                else:
-                    col.label(text="Direct Append adds owned points once; it is not volume fill", icon="INFO")
             elif kind == "VOLUME_GRID":
                 _draw_volume_input(col, pg)
                 col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
@@ -438,12 +502,10 @@ class FLUIDSIM_PT_forces(FluidSimPanel, bpy.types.Panel):
         global_box.prop(fs, "attraction_enabled")
         attraction = global_box.column(align=True)
         attraction.enabled = fs.attraction_enabled
-        attraction.label(text="Targets colliders and closed domain walls")
         attraction.prop(fs, "attraction_strength")
         attraction.prop(fs, "attraction_max_distance")
         physics = layout.box()
         physics.label(text="Blender Force Fields", icon="PHYSICS")
-        physics.label(text="Configure these in Blender Physics properties")
         _draw_role_actions(layout, "fluidsim.tag_force_region")
         if obj is not None and _presentation_role(obj.fluidsim) == "FORCE":
             pg = obj.fluidsim
@@ -501,8 +563,6 @@ class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.operator("fluidsim.inject_particles", text="Inject Active Object Points Once", icon="PARTICLES")
-        layout.label(text="Mesh vertices, PointCloud points, or the first particle system", icon="INFO")
-        layout.label(text="Compatibility direct append; this is not volume fill", icon="INFO")
         obj = context.active_object
         if obj is not None:
             layout.prop(obj.fluidsim, "auto_inject_seed", text="Reinject on Initialize / Reset")
@@ -549,7 +609,6 @@ class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
             col.prop(pg, "field_vector_value")
         col.prop(pg, "blend_mode", text="Blend")
         col.prop(pg, "field_amount")
-        col.label(text="FIELD operations never emit liquid", icon="INFO")
         _draw_source_status(box, pg)
 
 
@@ -588,41 +647,111 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "viscosity_tolerance")
 
 
-class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater(FluidSimPanel, bpy.types.Panel):
     bl_label = "Whitewater"
-    bl_idname = "FLUIDSIM_PT_surface"
+    bl_idname = "FLUIDSIM_PT_whitewater"
     bl_options = {"DEFAULT_CLOSED"}
-
-    def draw_header(self, context):
-        self.layout.prop(context.scene.fluidsim, "whitewater_enabled", text="")
 
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        sub = layout.column(align=True)
-        sub.enabled = fs.whitewater_enabled
-        sub.prop(fs, "max_whitewater")
-        sub.prop(fs, "ww_churn_gain")
-        sub.prop(fs, "ww_churn_decay")
-        sub.prop(fs, "ww_churn_threshold")
-        sub.prop(fs, "ww_emission_rate")
-        sub.prop(fs, "ww_min_speed")
-        row = sub.row(align=True)
+
+        layout.prop(fs, "whitewater_enabled")
+        physics = layout.column(align=True)
+        physics.enabled = fs.whitewater_enabled
+        physics.prop(fs, "max_whitewater")
+        physics.separator()
+        physics.prop(fs, "ww_churn_gain")
+        physics.prop(fs, "ww_churn_decay")
+        physics.prop(fs, "ww_churn_threshold")
+        physics.prop(fs, "ww_emission_rate")
+        physics.prop(fs, "ww_min_speed")
+        physics.separator()
+        row = physics.row(align=True)
         row.prop(fs, "ww_life_min")
         row.prop(fs, "ww_life_max")
-        row = sub.row(align=True)
+        row = physics.row(align=True)
         row.prop(fs, "ww_bubble_drag")
         row.prop(fs, "ww_spray_drag")
 
         layout.separator()
-        box = layout.box()
-        box.label(text="Viewport / Render", icon="OUTLINER_OB_POINTCLOUD")
-        box.prop(fs, "show_whitewater")
-        display = box.column(align=True)
+        layout.prop(fs, "show_whitewater", text="Show Whitewater in Viewport")
+        display = layout.column(align=True)
         display.enabled = fs.show_whitewater
         display.prop(fs, "whitewater_display_scale")
         display.prop(fs, "whitewater_attribute_mode")
         display.prop(fs, "whitewater_material")
+
+
+class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Realtime Surfacing / Particles"
+    bl_idname = "FLUIDSIM_PT_realtime_display"
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+
+        layout.prop(fs, "liquid_view_mode")
+
+        surface = layout.box()
+        surface.label(text="Surface Mesh", icon="MESH_DATA")
+        surface.prop(fs, "surface_enabled", text="Build Surface Mesh")
+        settings = surface.column(align=True)
+        settings.enabled = fs.surface_enabled
+        settings.prop(fs, "surface_resolution_mode")
+        if fs.surface_resolution_mode == "MULTIPLIER":
+            settings.prop(fs, "surface_resolution_multiplier")
+        elif fs.surface_resolution_mode == "CUSTOM":
+            settings.prop(fs, "surface_voxel_size")
+        settings.prop(fs, "particle_radius_scale")
+        settings.prop(fs, "surface_splat_radius")
+        settings.separator()
+        settings.prop(fs, "surface_filter_type")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_filter_iterations", text="Filter")
+        row.prop(fs, "surface_filter_strength", text="Strength")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_dilate_iterations", text="Dilate")
+        row.prop(fs, "surface_dilate_strength", text="Strength")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_erode_iterations", text="Erode")
+        row.prop(fs, "surface_erode_strength", text="Strength")
+        settings.prop(fs, "surface_smooth_type")
+        row = settings.row(align=True)
+        row.prop(fs, "surface_smooth_iterations", text="Smooth")
+        row.prop(fs, "surface_smooth_strength", text="Strength")
+        settings.separator()
+        settings.prop(fs, "surface_update_cadence")
+        settings.prop(fs, "live_surface_publish_cadence")
+
+        surface.separator()
+        surface.prop(fs, "show_surface", text="Show Surface in Viewport")
+        display = surface.column(align=True)
+        display.enabled = fs.show_surface
+        display.prop(fs, "surface_attribute_mode")
+        display.prop(fs, "surface_material")
+
+        row = layout.row(align=True)
+        row.prop(
+            fs, "surface_advanced_expanded", text="Advanced Surface",
+            icon=("TRIA_DOWN" if fs.surface_advanced_expanded
+                  else "TRIA_RIGHT"), emboss=False)
+        if fs.surface_advanced_expanded:
+            advanced = layout.column(align=True)
+            advanced.enabled = fs.surface_enabled
+            advanced.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
+            advanced.prop(fs, "surface_max_dense_dim", text="Dense Max")
+            advanced.prop(fs, "surface_build_lowres_sdf")
+
+        particles = layout.box()
+        particles.label(text="Liquid Particles", icon="PARTICLE_DATA")
+        particles.prop(fs, "show_particles", text="Show Liquid Particles")
+        display = particles.column(align=True)
+        display.enabled = fs.show_particles
+        display.prop(fs, "particle_display_fraction")
+        display.prop(fs, "particle_display_scale")
+        display.prop(fs, "particle_attribute_mode")
+        display.prop(fs, "particle_material")
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
@@ -650,63 +779,6 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         row.prop(fs, "cache_frame_end")
         box.operator("fluidsim.export_cache_sequence", icon="RENDER_ANIMATION")
         box.operator("fluidsim.export_frame", icon="EXPORT")
-
-
-class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Realtime Surfacing / Particles"
-    bl_idname = "FLUIDSIM_PT_realtime_display"
-
-    def draw(self, context):
-        layout = self.layout
-        fs = context.scene.fluidsim
-
-        layout.prop(fs, "liquid_view_mode")
-
-        box = layout.box()
-        box.label(text="Surface Mesh", icon="MESH_DATA")
-        box.prop(fs, "show_surface")
-        sub = box.column(align=True)
-        sub.enabled = fs.show_surface
-        sub.prop(fs, "surface_enabled")
-        sub.prop(fs, "particle_radius_scale")
-        sub.prop(fs, "surface_splat_radius")
-        sub.prop(fs, "surface_resolution_mode")
-        sub.prop(fs, "surface_resolution_multiplier")
-        if fs.surface_resolution_mode == "CUSTOM":
-            sub.prop(fs, "surface_voxel_size")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_leaf_capacity_scale", text="Leaf Scale")
-        row.prop(fs, "surface_max_dense_dim", text="Dense Max")
-        sub.prop(fs, "surface_update_cadence")
-        sub.prop(fs, "live_surface_publish_cadence")
-        sub.prop(fs, "surface_build_lowres_sdf")
-        sub.separator()
-        sub.prop(fs, "surface_filter_type")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_filter_iterations", text="Filter")
-        row.prop(fs, "surface_filter_strength", text="Strength")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_dilate_iterations", text="Dilate")
-        row.prop(fs, "surface_dilate_strength", text="Strength")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_erode_iterations", text="Erode")
-        row.prop(fs, "surface_erode_strength", text="Strength")
-        sub.prop(fs, "surface_smooth_type")
-        row = sub.row(align=True)
-        row.prop(fs, "surface_smooth_iterations", text="Smooth")
-        row.prop(fs, "surface_smooth_strength", text="Strength")
-        sub.prop(fs, "surface_attribute_mode")
-        sub.prop(fs, "surface_material")
-
-        box = layout.box()
-        box.label(text="Liquid Particles", icon="PARTICLE_DATA")
-        box.prop(fs, "show_particles")
-        sub = box.column(align=True)
-        sub.enabled = fs.show_particles
-        sub.prop(fs, "particle_display_fraction")
-        sub.prop(fs, "particle_display_scale")
-        sub.prop(fs, "particle_attribute_mode")
-        sub.prop(fs, "particle_material")
 
 def _snippet_state_icon(snip):
     """Icon reflecting validation state of a snippet's current source."""
@@ -956,6 +1028,7 @@ class FLUIDSIM_PT_validation(FluidSimPanel, bpy.types.Panel):
 
 
 CLASSES = (
+    FLUIDSIM_PT_interaction_popover,
     FLUIDSIM_PT_simulation,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,
@@ -969,7 +1042,7 @@ CLASSES = (
     FLUIDSIM_PT_advanced_field_sources,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
-    FLUIDSIM_PT_surface,
+    FLUIDSIM_PT_whitewater,
     FLUIDSIM_PT_realtime_display,
     FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
@@ -983,8 +1056,21 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    header = getattr(bpy.types, "VIEW3D_HT_header", None)
+    if header is not None:
+        try:
+            header.remove(_draw_header_interaction)
+        except Exception:
+            pass
+        header.append(_draw_header_interaction)
 
 
 def unregister():
+    header = getattr(bpy.types, "VIEW3D_HT_header", None)
+    if header is not None:
+        try:
+            header.remove(_draw_header_interaction)
+        except Exception:
+            pass
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

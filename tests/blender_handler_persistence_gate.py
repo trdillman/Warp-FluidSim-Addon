@@ -30,6 +30,7 @@ HANDLER_LISTS = (
     "render_pre",
     "render_post",
     "depsgraph_update_post",
+    "undo_post",
     "save_pre",
     "load_post",
     "animation_playback_pre",

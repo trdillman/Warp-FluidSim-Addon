@@ -28,6 +28,9 @@ _NO_POLL_REQUIRED = {
     "FLUIDSIM_OT_clear_error",
     "FLUIDSIM_OT_toggle_live",
     "FLUIDSIM_OT_export_cache_sequence",
+    # Explicit reinitialize is also a no-session recovery path when a scene
+    # retains a per-scene pending snapshot after its solver was released.
+    "FLUIDSIM_OT_apply_pending_reinitialize",
 }
 
 # Sanity floor for the source detector below: if it stops recognising these,

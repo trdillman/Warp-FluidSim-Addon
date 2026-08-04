@@ -169,31 +169,39 @@ target velocity; it does not copy a Mantaflow domain velocity grid.
 Enable checkbox. **Solver** (Jacobi / PCG), **Viscosity** constant, **From
 Particles** (per-particle viscosity attribute), **Iterations**, **Tolerance**.
 
-### Surface / Whitewater
-Whitewater simulation budgets and emission dynamics: max whitewater, churn
-gain/decay/threshold, emission rate, min speed, life min/max, bubble & spray
-drag.
+### Whitewater
+Whitewater remains a separate physics panel. **Enable Whitewater** is the first
+control, followed by capacity, emission, lifetime, and motion settings. The
+viewport visibility toggle and appearance controls follow the simulation
+settings; they are not grouped under the general output panel.
 
 ### Realtime Surfacing / Particles
-The sole owner for viewport-facing liquid surface and particle display
-settings. Surface mesh controls include visibility, generate surface, particle
-radius, independent dilate iterations/strength, independent erode
-iterations/strength, Box or Mean-Curvature smooth iterations/strength,
-attribute color mode, and material. Liquid particle controls include
-visibility, display fraction, display scale, attribute color mode, and particle
-material. Whitewater particle controls include visibility, enable, display
-scale, attribute color mode, and material.
+This panel follows the existing add-on pattern of grouping related controls
+inside one workflow panel rather than creating a top-level panel for each
+subsection. The original **Liquid View** dropdown remains at the top.
 
-When a live solver is active, surface stack edits rebuild the current frame's
-surface SDF and output mesh without advancing the simulation frame.
-Particle and material display edits refresh the viewport output immediately.
-When only existing output/cache objects remain, visibility and material edits
-still apply to those objects; geometry-dependent surfacing requires an active
-solver frame.
+**Surface Mesh** contains normal surfacing workflow: generation, resolution,
+particle reconstruction radius, filtering, dilation, erosion, smoothing,
+update cadence, surface visibility, attribute display, and material. Resolution
+fields are shown only for the selected mode. **Live Surface Every** defaults to
+1 so the viewport publishes every frame.
+
+The inline collapsed **Advanced Surface** foldout follows Surface Mesh and
+contains only **Leaf Scale**, **Dense Max**, and **Keep Sim Surface Field**.
+Keep Sim Surface Field defaults off.
+
+**Liquid Particles** follows as a peer viewport-visualization subsection with
+visibility, display fraction, point scale, attribute color mode, and material.
+It is not hidden under Advanced and is not mixed with Whitewater.
+
+When a live solver is active, surface edits rebuild the current frame's surface
+SDF and output mesh without advancing the simulation frame. Visibility and
+material edits also apply to existing output or cache objects.
 
 ### Viewport / Render Output
-Output collection name and overlay toggle. **Optional Cache / Export**: enable
-cache, cache path, **Export Current Frame**.
+Output collection name and overlay toggle. **Cache / Export** includes cache
+enablement, path and playback range, **Export Cache Sequence**, and **Export
+Current Frame**.
 
 ### Custom Warp Snippets
 **Snippet Library** dropdown with ten ready-to-run examples plus your saved
@@ -398,10 +406,47 @@ FluidSim Warp is interactive-first; these are supplemental:
 - **Export Current Frame** writes the surface as `*_surface.obj` and particles
   / whitewater as binary `*_particles.ply` / `*_whitewater.ply` (particles
   include velocity).
+- Every cached frame stores its applied settings signature. Sequence metadata
+  records contiguous signature boundaries and marks `mixed_settings: true`
+  when a bake contains more than one applied parameter set; it never presents
+  that sequence as homogeneous. `settings_baseline` stores the first complete
+  setting set and `settings_changes` stores only changed/removed fields for
+  later signatures, avoiding repeated full snapshots during animation.
+  Non-finite diagnostic floats use an explicit
+  `__fluidsim_nonfinite_float__` JSON tag rather than non-standard JSON values
+  or ambiguous ordinary strings.
 
 ---
 
-## 10. Tips
+## 10. Live interaction and pending changes
+
+FluidSim classifies every exposed simulation setting into one interaction tier:
+
+| Tier | Meaning | What happens while a run is advanced |
+|---|---|---|
+| **Live** | Safe bounded solver mutation | Applies before the next step without clearing particles or history. |
+| **Live / Targeted Refresh** | Live mutation with a bounded subsystem refresh | Applies without resetting; for example surface refresh or ST-FLIP density recalibration. |
+| **Restart Required** | Meaningful from simulation start | Remains pending until rewind, explicit Reset, or Revert. |
+| **Reinitialize Required** | Allocation, device, or domain construction change | Remains pending until rewind, explicit Reinitialize, or Revert. |
+| **Blocked** | Unsafe in the current context | Remains pending with an actionable reason; the active run is preserved. |
+
+Pending state belongs to each scene. Editing voxel size, capacity, domain, or a
+restart-only lifecycle value in the middle of a run does **not** silently erase
+that run. Rewind to the timeline start to apply it automatically, or use
+**Apply Pending & Reinitialize**, **Apply Pending & Reset**, or **Revert Pending
+Values**. A failed apply keeps the reasons pending and stops playback rather
+than advancing stale state from the rewound frame. Revert never changes or
+saves Blender add-on preferences; device changes must be selected explicitly.
+
+The FluidSim control in the fixed 3D Viewport header remains reachable while
+the sidebar is scrolled. Its popover shows solver state, pending reasons, Live,
+Apply/Reset/Revert, and Release controls. The viewport overlay is informational
+only. Blender does not support CSS-style sticky content inside a scrolling
+sidebar, so FluidSim does not claim that behavior.
+
+---
+
+## 11. Tips
 
 - **Start coarse.** Use a large Voxel Size (e.g. 0.08) while iterating, then
   refine. Resolution scales cubically.
@@ -432,7 +477,12 @@ phase-field activation, optional variable pressure, local trajectory
 substepping, and render-surface re-synchronization. It is beta because phase
 three still needs multi-scene reference-error and long-run conservation work.
 Keep the default feature disabled for production scenes until those results
-are acceptable for the scene type.
+are acceptable for the scene type. With automatic reference mass, the solver
+runs the Monte Carlo calibration for the current ST seed and then rescales that
+result linearly for live particles-per-voxel edits. This follows the estimator's
+linear mass expectation and avoids rerunning the expensive calibration on every
+slider or keyframe value; changes to the ST weighting kernels must revalidate
+that assumption.
 
 ## Safe Settings recovery
 

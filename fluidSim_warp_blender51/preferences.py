@@ -65,10 +65,10 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
 
     device: StringProperty(
         name="Device", default="cuda:0",
-        description="Warp CUDA device identifier")
+        description="Set the Warp CUDA device used by the solver and status probe, such as cuda:0; changing it moves future initialization to that GPU and an invalid identifier prevents startup")
     verbose: BoolProperty(
         name="Verbose Kernel Loading", default=False,
-        description="Print Warp module load timings to the console")
+        description="Enable to print detailed Warp module-load timings to the console for diagnosis; disable for quieter startup output")
 
     def draw(self, context):
         layout = self.layout

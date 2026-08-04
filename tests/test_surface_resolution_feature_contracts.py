@@ -20,7 +20,7 @@ def test_surface_settings_preserve_fast_default_with_frame_cadence():
     assert settings.surface_resolution_mode == SurfaceResolutionMode.SIMULATION
     assert settings.surface_resolution_multiplier == 2.0
     assert settings.surface_update_cadence == SurfaceUpdateCadence.FRAME
-    assert settings.surface_build_lowres_sdf is True
+    assert settings.surface_build_lowres_sdf is False
     assert settings.surface_max_dense_dim == 512
 
 

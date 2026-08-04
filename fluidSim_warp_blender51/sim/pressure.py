@@ -1077,6 +1077,36 @@ def k_compute_beta(
 
 
 @wp.kernel
+def k_compute_alpha_and_reset(
+    rz: wp.array(dtype=float),
+    p_ap_accum: wp.array(dtype=float),
+    p_ap: wp.array(dtype=float),
+    alpha: wp.array(dtype=float),
+):
+    denom = p_ap_accum[0]
+    p_ap[0] = denom
+    p_ap_accum[0] = 0.0
+    if wp.abs(denom) < 1.0e-30:
+        alpha[0] = 0.0
+    else:
+        alpha[0] = rz[0] / denom
+
+
+@wp.kernel
+def k_compute_beta_and_reset_old(
+    rz_new: wp.array(dtype=float),
+    rz_old: wp.array(dtype=float),
+    beta: wp.array(dtype=float),
+):
+    denom = rz_old[0]
+    if wp.abs(denom) < 1.0e-30:
+        beta[0] = 0.0
+    else:
+        beta[0] = rz_new[0] / denom
+    rz_old[0] = 0.0
+
+
+@wp.kernel
 def k_pack_pcg_stats(
     residual: wp.array(dtype=float),
     rz: wp.array(dtype=float),
@@ -1087,6 +1117,82 @@ def k_pack_pcg_stats(
     stats[0] = residual[0]
     stats[1] = rz[0]
     stats[2] = p_ap[0]
+
+
+@wp.kernel
+def k_prepare_pcg_conditional_loop(
+    residual: wp.array(dtype=float),
+    rz: wp.array(dtype=float),
+    condition: wp.array(dtype=wp.int32),
+    iterations: wp.array(dtype=wp.int32),
+    last_residual: wp.array(dtype=float),
+    tolerance_squared: float,
+    stats: wp.array(dtype=float),
+):
+    res_sq = residual[0]
+    keep_going = 1
+    reason = 0
+    if wp.isnan(res_sq) or wp.isinf(res_sq):
+        keep_going = 0
+        reason = 4
+    elif res_sq < tolerance_squared:
+        keep_going = 0
+        reason = 1
+    condition[0] = keep_going
+    iterations[0] = 0
+    last_residual[0] = res_sq
+    stats[0] = res_sq
+    stats[1] = rz[0]
+    stats[2] = 0.0
+    stats[3] = 0.0
+    stats[4] = float(reason)
+    residual[0] = 0.0
+
+
+@wp.kernel
+def k_finish_pcg_conditional_batch(
+    residual: wp.array(dtype=float),
+    rz_current: wp.array(dtype=float),
+    rz_canonical: wp.array(dtype=float),
+    p_ap: wp.array(dtype=float),
+    condition: wp.array(dtype=wp.int32),
+    iterations: wp.array(dtype=wp.int32),
+    last_residual: wp.array(dtype=float),
+    batch: int,
+    max_iterations: int,
+    tolerance_squared: float,
+    stats: wp.array(dtype=float),
+):
+    res_sq = residual[0]
+    rz_value = rz_current[0]
+    p_ap_value = p_ap[0]
+    iteration = iterations[0] + batch
+    reason = 0
+    keep_going = 0
+    if (wp.isnan(res_sq) or wp.isinf(res_sq) or wp.isnan(rz_value)
+            or wp.isinf(rz_value) or wp.isnan(p_ap_value) or wp.isinf(p_ap_value)):
+        reason = 4
+    elif res_sq < tolerance_squared:
+        reason = 1
+    elif rz_value < -1.0e-20 or wp.abs(rz_value) < 1.0e-30 or wp.abs(p_ap_value) < 1.0e-30:
+        reason = 2
+    elif res_sq >= last_residual[0] * (1.0 - 1.0e-6):
+        reason = 3
+    elif iteration >= max_iterations:
+        reason = 5
+    else:
+        keep_going = 1
+        last_residual[0] = res_sq
+    condition[0] = keep_going
+    iterations[0] = iteration
+    stats[0] = res_sq
+    stats[1] = rz_value
+    stats[2] = p_ap_value
+    stats[3] = float(iteration)
+    stats[4] = float(reason)
+    rz_canonical[0] = rz_value
+    rz_current[0] = 0.0
+    residual[0] = 0.0
 
 
 @wp.kernel
@@ -1594,6 +1700,14 @@ register_fn(k_compute_alpha, "fluidSimProjectNonDivergentComputeAlpha")
 register_fn(k_update_xr, "fluidSimProjectNonDivergentUpdateXR")
 register_fn(k_apply_preconditioner, "fluidSimProjectNonDivergentApplyPreConditioner")
 register_fn(k_compute_beta, "fluidSimProjectNonDivergentComputeBeta")
+register_fn(k_compute_alpha_and_reset,
+            "fluidSimProjectNonDivergentComputeAlphaAndReset")
+register_fn(k_compute_beta_and_reset_old,
+            "fluidSimProjectNonDivergentComputeBetaAndResetOld")
+register_fn(k_prepare_pcg_conditional_loop,
+            "fluidSimProjectNonDivergentPrepareConditionalLoop")
+register_fn(k_finish_pcg_conditional_batch,
+            "fluidSimProjectNonDivergentFinishConditionalBatch")
 register_fn(k_update_p_indexed, "fluidSimProjectNonDivergentUpdateP")
 register_fn(k_build_leaf_aggregates,
             "fluidSimProjectNonDivergentElectrostaticBuildLeafAggregates8",
@@ -1673,13 +1787,17 @@ class PressureSolver:
         self.rz = wp.zeros(1, dtype=float, device=device)
         self.rz_new = wp.zeros(1, dtype=float, device=device)
         self.p_ap = wp.zeros(1, dtype=float, device=device)
+        self._pcg_p_ap_accum = wp.zeros(1, dtype=float, device=device)
         self.alpha = wp.zeros(1, dtype=float, device=device)
         self.beta = wp.zeros(1, dtype=float, device=device)
         self.residual = wp.zeros(1, dtype=float, device=device)
         self.max_pressure = wp.zeros(1, dtype=float, device=device)
         # packed [residual^2, r.z, p.Ap] monitor scalars: one readback per
         # convergence checkpoint instead of three per PCG iteration.
-        self.pcg_stats = wp.zeros(3, dtype=float, device=device)
+        self.pcg_stats = wp.zeros(5, dtype=float, device=device)
+        self._pcg_condition = wp.zeros(1, dtype=wp.int32, device=device)
+        self._pcg_iterations = wp.zeros(1, dtype=wp.int32, device=device)
+        self._pcg_last_checked_res = wp.zeros(1, dtype=float, device=device)
         self._pcg_voxel_type = None
         self._pcg_apply_cmd = None
         self._pcg_update_cmd = None
@@ -1703,6 +1821,11 @@ class PressureSolver:
         self._st_precond_cmd = None
         self._st_update_p_cmd = None
         self._st_graphs = OrderedDict()
+        self._pcg_conditional_graphs = {}
+        self._pcg_dot = None
+        self._pcg_native_available = None
+        self.last_pcg_native_error = ""
+        self.last_pcg_execution_mode = "host_batched"
         self.last_iterations = 0
         self.last_residual = 0.0
         self.last_residual_squared = 0.0
@@ -1755,6 +1878,57 @@ class PressureSolver:
         for array in (x, self.r, self.z, self.p_dir, self.ap):
             array[:n].zero_()
 
+    def _persistent_inner_product(self, a, b, out, count):
+        out.zero_()
+        if self._ensure_pcg_dot():
+            self._pcg_dot.launch(a, b, out, count)
+        else:
+            wp.utils.array_inner(a, b, out=out, count=count)
+
+    def _ensure_pcg_dot(self):
+        if self._pcg_native_available is False:
+            return False
+        if self._pcg_dot is not None:
+            return True
+        try:
+            from .cuda_reduction import CudaDotProduct
+
+            self._pcg_dot = CudaDotProduct(self.device)
+        except Exception as exc:
+            self._pcg_native_available = False
+            self.last_pcg_native_error = f"{type(exc).__name__}: {exc}"
+            return False
+        self._pcg_native_available = True
+        self.last_pcg_native_error = ""
+        return True
+
+    def _record_pcg_iterations(self, work_n, batch, start_parity):
+        parity = start_parity
+        for _ in range(batch):
+            self._pcg_apply_cmd.launch()
+            if self._pcg_dot is None:
+                wp.utils.array_inner(
+                    self._pcg_compact_p, self._pcg_compact_ap,
+                    out=self._pcg_p_ap_accum, count=work_n)
+            else:
+                self._pcg_dot.launch(
+                    self._pcg_compact_p, self._pcg_compact_ap,
+                    self._pcg_p_ap_accum, work_n)
+            self._pcg_alpha_cmds[parity].launch()
+            self._pcg_update_cmd.launch()
+            rz_out = self._pcg_rz_b if parity == 0 else self._pcg_rz_a
+            if self._pcg_dot is None:
+                wp.utils.array_inner(
+                    self._pcg_compact_r, self._pcg_compact_z,
+                    out=rz_out, count=work_n)
+            else:
+                self._pcg_dot.launch(
+                    self._pcg_compact_r, self._pcg_compact_z, rz_out, work_n)
+            self._pcg_beta_cmds[parity].launch()
+            self._pcg_update_p_cmd.launch()
+            parity ^= 1
+        return parity
+
     def _launch_pcg_batch(self, work_n, batch):
         """Launch an unchanged fixed-coefficient PCG batch as one CUDA graph."""
         start_parity = 0 if self.rz is self._pcg_rz_a else 1
@@ -1763,6 +1937,7 @@ class PressureSolver:
         if graph is not None:
             self._pcg_graphs.move_to_end(key)
         else:
+            self._ensure_pcg_dot()
             # Evict one LRU entry. Flushing the whole map instead forced every
             # surviving key to re-capture (and re-pay the synchronize below)
             # every time the tail-iteration batch minted a fresh key.
@@ -1773,26 +1948,67 @@ class PressureSolver:
             self._pcg_update_p_cmd.set_dim(work_n)
             wp.synchronize_device(self.device)
             with wp.ScopedCapture(device=self.device) as capture:
-                parity = start_parity
-                for _ in range(batch):
-                    self._pcg_apply_cmd.launch()
-                    wp.utils.array_inner(
-                        self._pcg_compact_p, self._pcg_compact_ap,
-                        out=self.p_ap, count=work_n)
-                    self._pcg_alpha_cmds[parity].launch()
-                    self._pcg_update_cmd.launch()
-                    rz_out = self._pcg_rz_b if parity == 0 else self._pcg_rz_a
-                    wp.utils.array_inner(
-                        self._pcg_compact_r, self._pcg_compact_z,
-                        out=rz_out, count=work_n)
-                    self._pcg_beta_cmds[parity].launch()
-                    self._pcg_update_p_cmd.launch()
-                    parity ^= 1
+                self._record_pcg_iterations(work_n, batch, start_parity)
             graph = capture.graph
             self._pcg_graphs[key] = graph
         wp.capture_launch(graph)
         if batch & 1:
             self.rz, self.rz_new = self.rz_new, self.rz
+
+    def _get_pcg_conditional_graphs(self, work_n, batch, max_iterations, tol_sq):
+        self._pcg_apply_cmd.set_dim(work_n)
+        self._pcg_update_cmd.set_dim(work_n)
+        self._pcg_update_p_cmd.set_dim(work_n)
+        key = (work_n, batch, max_iterations, float(tol_sq))
+        graphs = self._pcg_conditional_graphs.get(key)
+        if graphs is None:
+            if len(self._pcg_conditional_graphs) >= 8:
+                self._pcg_conditional_graphs.clear()
+            wp.synchronize_device(self.device)
+            with wp.ScopedCapture(device=self.device) as body_capture:
+                parity = self._record_pcg_iterations(work_n, batch, 0)
+                if parity != 1:
+                    raise RuntimeError("Conditional PCG batches must have odd parity")
+                self._pcg_dot.launch(
+                    self._pcg_compact_r, self._pcg_compact_r,
+                    self.residual, work_n)
+                wp.launch(
+                    k_finish_pcg_conditional_batch,
+                    dim=1,
+                    inputs=[self.residual, self._pcg_rz_b, self._pcg_rz_a,
+                            self.p_ap, self._pcg_condition,
+                            self._pcg_iterations, self._pcg_last_checked_res,
+                            batch, max_iterations, tol_sq, self.pcg_stats],
+                    device=self.device,
+                )
+            with wp.ScopedCapture(device=self.device) as loop_capture:
+                wp.capture_while(
+                    condition=self._pcg_condition,
+                    while_body=body_capture.graph,
+                )
+            graphs = (loop_capture.graph, body_capture.graph)
+            self._pcg_conditional_graphs[key] = graphs
+        return graphs
+
+    def _launch_pcg_conditional(self, work_n, graphs, tol_sq):
+        if self.rz is self._pcg_rz_b:
+            wp.copy(self._pcg_rz_a, self._pcg_rz_b, count=1)
+        self._pcg_rz_b.zero_()
+        self._pcg_p_ap_accum.zero_()
+        self.rz = self._pcg_rz_a
+        self.rz_new = self._pcg_rz_b
+        wp.launch(
+            k_prepare_pcg_conditional_loop,
+            dim=1,
+            inputs=[self.residual, self.rz, self._pcg_condition,
+                    self._pcg_iterations, self._pcg_last_checked_res,
+                    tol_sq, self.pcg_stats],
+            device=self.device,
+        )
+        wp.capture_launch(graphs[0])
+        self.rz = self._pcg_rz_a
+        self.rz_new = self._pcg_rz_b
+        return self.pcg_stats.numpy()
 
     def _prepare_pcg_commands(self, n, voxel_type, x):
         self._ensure_scalar_cmds()
@@ -1823,6 +2039,9 @@ class PressureSolver:
             device=self.device, record_cmd=True,
         )
         self._pcg_graphs.clear()
+        # The conditional graphs bake in the same recorded commands, so they
+        # are invalidated by exactly the same events.
+        self._pcg_conditional_graphs.clear()
 
     def _ensure_scalar_cmds(self):
         """Record the dim=1 recurrence-scalar commands once, for both families.
@@ -1836,18 +2055,20 @@ class PressureSolver:
         if self._pcg_alpha_cmds is not None:
             return
         self._pcg_alpha_cmds = (
-            wp.launch(k_compute_alpha, dim=1,
-                      inputs=[self._pcg_rz_a, self.p_ap, self.alpha],
+            wp.launch(k_compute_alpha_and_reset, dim=1,
+                      inputs=[self._pcg_rz_a, self._pcg_p_ap_accum,
+                              self.p_ap, self.alpha],
                       device=self.device, record_cmd=True),
-            wp.launch(k_compute_alpha, dim=1,
-                      inputs=[self._pcg_rz_b, self.p_ap, self.alpha],
+            wp.launch(k_compute_alpha_and_reset, dim=1,
+                      inputs=[self._pcg_rz_b, self._pcg_p_ap_accum,
+                              self.p_ap, self.alpha],
                       device=self.device, record_cmd=True),
         )
         self._pcg_beta_cmds = (
-            wp.launch(k_compute_beta, dim=1,
+            wp.launch(k_compute_beta_and_reset_old, dim=1,
                       inputs=[self._pcg_rz_b, self._pcg_rz_a, self.beta],
                       device=self.device, record_cmd=True),
-            wp.launch(k_compute_beta, dim=1,
+            wp.launch(k_compute_beta_and_reset_old, dim=1,
                       inputs=[self._pcg_rz_a, self._pcg_rz_b, self.beta],
                       device=self.device, record_cmd=True),
         )
@@ -2310,6 +2531,7 @@ class PressureSolver:
 
     def solve_pcg(self, voxel_type, max_iterations, tolerance, use_coarse_guess=False,
                   check_every=25):
+        self.last_pcg_execution_mode = "not_run"
         g = self.grid
         full_n = self._dim()
         pressure_count = self._build_pressure_index(voxel_type)
@@ -2350,7 +2572,6 @@ class PressureSolver:
                     self._pcg_compact_r, self._pcg_compact_z],
             device=self.device,
         )
-        self.ap[:full_n].zero_()
         if use_coarse_guess:
             wp.launch(
                 k_apply_matrix, dim=work_n,
@@ -2380,23 +2601,73 @@ class PressureSolver:
         wp.utils.array_inner(
             self._pcg_compact_r, self._pcg_compact_r,
             out=self.residual, count=work_n)
-        best_res = float(self.residual.numpy()[0])
-        res_sq = best_res
+        best_res = 0.0
+        res_sq = 0.0
         stall_checks = 0
         it = 0
-        if not math.isfinite(best_res):
-            status = PRESSURE_STATUS_INVALID
-            failure = "non_finite_residual"
-        elif best_res < tol_sq:
-            status = PRESSURE_STATUS_CONVERGED
-            failure = PRESSURE_STATUS_CONVERGED
-            pressure_valid = True
+        use_conditional = (
+            max_iterations > 0
+            and wp.get_device(self.device).is_cuda
+            and wp.is_conditional_graph_supported()
+            and check_every % 2 == 1
+            and max_iterations % check_every == 0
+        )
+        conditional_graphs = None
+        if use_conditional and self._ensure_pcg_dot():
+            try:
+                conditional_graphs = self._get_pcg_conditional_graphs(
+                    work_n, check_every, max_iterations, tol_sq)
+            except Exception as exc:
+                self._pcg_dot = None
+                self._pcg_native_available = False
+                self.last_pcg_native_error = f"{type(exc).__name__}: {exc}"
+        use_conditional = conditional_graphs is not None
+        if use_conditional:
+            # The device-side rule classifies a stall on the first non-improving
+            # checkpoint; the host loop below allows PCG_STALL_PATIENCE of them.
+            # Same solve can therefore report "stalled" one mode and
+            # "max_iterations" the other. Both leave the iterate usable
+            # (pressure_valid covers STALLED), so this is a reporting
+            # difference, not a physics one.
+            self.last_pcg_execution_mode = "cuda_conditional"
+            stats = self._launch_pcg_conditional(work_n, conditional_graphs, tol_sq)
+            res_sq = float(stats[0])
+            it = int(round(float(stats[3])))
+            reason = int(round(float(stats[4])))
+            if reason == 1:
+                status = PRESSURE_STATUS_CONVERGED
+                failure = PRESSURE_STATUS_CONVERGED
+                pressure_valid = True
+            elif reason == 2:
+                status = PRESSURE_STATUS_SINGULAR
+                failure = "singular_system"
+            elif reason == 3:
+                status = PRESSURE_STATUS_STALLED
+                failure = "stalled"
+            elif reason == 4:
+                status = PRESSURE_STATUS_INVALID
+                failure = "non_finite_residual"
+            else:
+                status = PRESSURE_STATUS_MAX_ITERATIONS
+                failure = "max_iterations"
+        else:
+            self.last_pcg_execution_mode = "host_batched"
+            best_res = float(self.residual.numpy()[0])
+            res_sq = best_res
+            if not math.isfinite(best_res):
+                status = PRESSURE_STATUS_INVALID
+                failure = "non_finite_residual"
+            elif best_res < tol_sq:
+                status = PRESSURE_STATUS_CONVERGED
+                failure = PRESSURE_STATUS_CONVERGED
+                pressure_valid = True
         # Batched device-resident iterations: all recurrence scalars (alpha,
-        # beta) stay on the GPU. k_compute_alpha/k_compute_beta clamp to zero
-        # on tiny denominators, so a breakdown mid-batch freezes x/r in place
+        # beta) stay on the GPU. The scalar update kernels clamp to zero on
+        # tiny denominators, so a breakdown mid-batch freezes x/r in place
         # and is classified at the next checkpoint from one packed readback
         # instead of three host syncs per iteration.
-        while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
+        while (not use_conditional and it < max_iterations
+               and status == PRESSURE_STATUS_MAX_ITERATIONS):
             batch = min(check_every, max_iterations - it)
             self._launch_pcg_batch(work_n, batch)
             it += batch

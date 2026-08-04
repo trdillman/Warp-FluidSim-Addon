@@ -27,6 +27,8 @@ Desktop.ini
 /blender/
 /.serena/
 /tmp/
+/.agents/
+/.pi-subagents/
 
 # Generated simulation/demo outputs
 /artifacts/

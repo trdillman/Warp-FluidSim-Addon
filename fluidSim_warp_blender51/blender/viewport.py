@@ -352,11 +352,28 @@ def _supports_pointcloud():
     return hasattr(bpy.data, "pointclouds")
 
 
+def _new_prewarmed_pointcloud(name):
+    """Build a point cloud with its attribute schema and headroom already in
+    place, entirely before it is attached to an object.
+
+    ``_needs_realloc`` forces a detach/reattach the first time a point cloud
+    is written to if it has no "position"/"radius" attributes or its capacity
+    is 0 -- both true of a bare ``pointclouds.new()``. Doing that work here,
+    on a still-detached cloud, means the first live write after
+    ``ensure_outputs`` can just ``foreach_set`` into existing slots instead of
+    reallocating from inside ``frame_change_post`` (see ensure_outputs).
+    """
+    pc = bpy.data.pointclouds.new(name)
+    pc.resize(_MIN_POINT_CAPACITY)
+    _ensure_point_attributes(pc, wants_color=False)
+    return pc
+
+
 def _ensure_point_object(scene, name):
     """Get/create a point output object, native point cloud where available."""
     if _supports_pointcloud():
         return _ensure_object(
-            scene, name, lambda: bpy.data.pointclouds.new(name), "POINTCLOUD")
+            scene, name, lambda: _new_prewarmed_pointcloud(name), "POINTCLOUD")
     return _ensure_object(
         scene, name, lambda: bpy.data.meshes.new(name), "MESH")
 
@@ -729,6 +746,17 @@ def ensure_outputs(scene):
     live frame -- i.e. from inside frame_change_post, while the depsgraph the
     handler was handed is still being evaluated. Doing it at initialize time
     leaves the handler writing geometry into IDs that already exist.
+
+    Point clouds need one more thing meshes don't: _new_prewarmed_pointcloud
+    also gives them their attribute schema and starting capacity, because an
+    empty ``pointclouds.new()`` has neither and would still force a
+    detach/reallocate on the very first live write. A live sim that later
+    grows past that capacity still reallocates from inside the handler --
+    Blender 5.1 faults resizing a point cloud that is currently attached to
+    an object (see _needs_realloc), so that growth step cannot be pre-warmed
+    away, only made rare by the headroom in _point_capacity_for. Rendering
+    depends on this same synchronous handler (render.py), so that residual
+    case is not deferred to a timer either.
     """
     _require_bpy()
     from . import materials
@@ -863,7 +891,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     publish_surface = (
         force_surface or not has_surface or
         host.should_publish_surface(
-            getattr(fs, "live_surface_publish_cadence", 4))
+            getattr(fs, "live_surface_publish_cadence", 1))
     )
     _render_outputs(
         scene, _solver_frame(scene, solver, publish_surface=publish_surface))
@@ -917,10 +945,12 @@ def _draw_overlay():
     fs = getattr(scene, "fluidsim", None)
     if fs is None or not fs.show_overlay:
         return
-    from .scene_bridge import session
+    from .scene_bridge import pending_presentation, session
 
     sess = session()
-    if not sess.active:
+    pending = pending_presentation(scene)
+    owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)(scene)
+    if not owns_scene and pending["action"] == "NONE":
         return
 
     font_id = 0
@@ -932,13 +962,21 @@ def _draw_overlay():
     y = 60 * dpi_scale
     lh = size * 1.4
 
-    lines = [
-        f"FluidSim Warp  |  {fs.status}",
-        f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
-        f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
-        f"{fs.stat_step_ms:.1f} ms/frame",
-    ]
-    if sess.profiler is not None:
+    lines = [f"FluidSim Warp  |  {fs.status}"]
+    if owns_scene:
+        lines.append(
+            f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
+            f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
+            f"{fs.stat_step_ms:.1f} ms/frame")
+    if pending["action"] != "NONE":
+        label = ("REINITIALIZE REQUIRED" if pending["action"] == "REINIT_PENDING"
+                 else "RESTART REQUIRED")
+        lines.append(f"{label}: {pending['count']} pending change(s)")
+        if pending["reasons"]:
+            lines.append("pending: " + "; ".join(pending["reasons"][:2]))
+        if pending["blocked_reason"]:
+            lines.append("blocked: " + pending["blocked_reason"][:120])
+    if owns_scene and sess.profiler is not None:
         summary = sess.profiler.summary(last_n=30)
         phase_names = {
             f"compute_{slot}": phase
@@ -951,7 +989,7 @@ def _draw_overlay():
                 parts.append(f"{label} {v:.1f}")
         if parts:
             lines.append("timers(ms): " + "  ".join(parts))
-    if sess.error:
+    if owns_scene and sess.error:
         lines.append(f"error: {sess.error}")
 
     for i, line in enumerate(reversed(lines)):

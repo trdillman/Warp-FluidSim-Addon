@@ -818,6 +818,124 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     assert sess.last_frame == 3
 
 
+def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    scene.fluidsim.flip_ratio = 0.3
+    scene.fluidsim.cfl = 2.5
+    scene.fluidsim.gravity = (0.0, 0.0, -2.0)
+    scene.fluidsim.use_scene_gravity = False
+    scene.use_gravity = False
+    scene.gravity = (0.0, 0.0, -9.81)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(
+        frame=1,
+        settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0),
+    )
+    sess.start_frame = 1
+    sess.last_frame = 1
+    observed = []
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: observed.append(
+        (sess.solver.settings.flip_ratio, sess.solver.settings.cfl)))
+
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert observed == [(0.3, 2.5)]
+
+
+def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    scene.fluidsim.sample_type = "BAD_ENUM"
+    sess = scene_bridge.session()
+    solver = SimpleNamespace(
+        frame=1,
+        settings=SimpleNamespace(sample_type="previous"),
+    )
+    sess.solver = solver
+    sess.start_frame = 1
+    sess.last_frame = 1
+    stepped = []
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: stepped.append(True))
+
+    scene_bridge._on_frame_change(scene, depsgraph=object())
+
+    assert stepped == [True]
+    assert scene.fluidsim.live is True
+    assert sess.solver is solver
+    assert solver.settings.sample_type == "previous"
+    assert "BAD_ENUM" in sess.current_error(scene)
+    assert scene.fluidsim.status.startswith("Live settings error:")
+
+
+def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=7, playback=False)
+    scene.fluidsim.flip_ratio = 0.9
+    scene.fluidsim.cfl = 1.0
+    scene.fluidsim.gravity = (0.0, 0.0, -9.81)
+    scene.fluidsim.use_scene_gravity = False
+    scene.use_gravity = False
+    scene.gravity = (0.0, 0.0, -9.81)
+    scene.fluidsim.cache_enabled = False
+    values = {
+        2: (0.2, 1.2, (0.0, 0.0, -2.0)),
+        3: (0.3, 1.3, (0.0, 0.0, -3.0)),
+        4: (0.4, 1.4, (0.0, 0.0, -4.0)),
+    }
+
+    def frame_set(frame):
+        scene.frame_current = frame
+        if frame in values:
+            (scene.fluidsim.flip_ratio, scene.fluidsim.cfl,
+             scene.fluidsim.gravity) = values[frame]
+
+    scene.frame_set = frame_set
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(
+        frame=0, settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0))
+    monkeypatch.setattr(sess, "initialize", lambda _scene: sess)
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+    observed = []
+    monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: observed.append((
+        sess.solver.settings.flip_ratio,
+        sess.solver.settings.cfl,
+        sess.solver.settings.gravity)))
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.write_frame = lambda *_args, **_kwargs: None
+    fake_cache.write_sequence_metadata = lambda *_args, **_kwargs: None
+    import fluidSim_warp_blender51.io as io_pkg
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
+    monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
+
+    sess.export_cache_sequence(scene, 2, 4)
+
+    expected = [values[2], values[3], values[4]]
+    assert observed == expected
+    assert scene.frame_current == 7
+
+    observed.clear()
+    sess.solver.settings.flip_ratio = 0.9
+    sess.solver.settings.cfl = 1.0
+    for frame in range(2, 5):
+        frame_set(frame)
+        scene_bridge.step_frame(scene, sess)
+    assert observed == expected
+
+    observed.clear()
+    scene.fluidsim.live = True
+    sess.start_frame = 1
+    sess.last_frame = 1
+    sess.solver.settings.flip_ratio = 0.9
+    sess.solver.settings.cfl = 1.0
+    for frame in range(2, 5):
+        frame_set(frame)
+        scene_bridge._on_frame_change(scene, depsgraph=object())
+    assert observed == expected
+
+
 def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2, playback=False)
@@ -1042,7 +1160,9 @@ def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
     fake_cache.write_frame = lambda *_args: None
     fake_cache.write_sequence_metadata = lambda *_args, **_kwargs: None
+    import fluidSim_warp_blender51.io as io_pkg
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
+    monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
     with pytest.raises(RuntimeError, match="step failed"):
         sess.export_cache_sequence(scene, 2, 4)

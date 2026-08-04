@@ -99,7 +99,7 @@ class SurfacePipeline:
         return (int(getattr(s, "surface_resolution_mode", 0)), round(float(getattr(s, "surface_resolution_multiplier", 1.0)), 6),
                 round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 1.0)), 6),
                 int(getattr(s, "surface_max_dense_dim", 512)), int(getattr(s, "surface_update_cadence", 1)),
-                bool(getattr(s, "surface_build_lowres_sdf", True)), round(float(s.particle_radius_scale), 6), int(s.surface_splat_radius),
+                bool(getattr(s, "surface_build_lowres_sdf", False)), round(float(s.particle_radius_scale), 6), int(s.surface_splat_radius),
                 int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
                 int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6), int(s.surface_erode_iterations),
                 round(float(s.surface_erode_strength), 6), int(s.surface_smooth_type), int(s.surface_smooth_iterations),
@@ -192,7 +192,7 @@ class SurfacePipeline:
         if not s.surface_enabled:
             return
         if build_lowres is None:
-            build_lowres = bool(getattr(s, "surface_build_lowres_sdf", True))
+            build_lowres = bool(getattr(s, "surface_build_lowres_sdf", False))
         positions = solver._surface_positions()
         if build_lowres:
             self.build_sdf(solver.grid, self.sdf, self.tmp, solver._nvox, positions, float(s.voxel_size))
@@ -227,7 +227,7 @@ class SurfacePipeline:
         if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
             with self.solver._phase("surface"):
                 self.build(build_render=True, build_lowres=bool(
-                    getattr(s, "surface_build_lowres_sdf", True)))
+                    getattr(s, "surface_build_lowres_sdf", False)))
 
     def rebuild(self):
         self.built_key = None

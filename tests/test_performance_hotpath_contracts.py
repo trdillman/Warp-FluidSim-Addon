@@ -73,6 +73,31 @@ def test_pcg_reuses_scalar_buffers_without_device_copy():
     assert "self.rz, self.rz_new = self.rz_new, self.rz" in batch_source
 
 
+def test_pcg_centralizes_required_full_grid_work_buffer_clears():
+    source = inspect.getsource(PressureSolver.solve_pcg)
+    helper = inspect.getsource(PressureSolver._zero_pcg_vectors)
+    assert "for array in (x, self.r, self.z, self.p_dir, self.ap)" not in source
+    assert "self.ap[:full_n].zero_()" not in source
+    assert source.count("x[:full_n].zero_()") == 1
+    assert source.count("self._zero_pcg_vectors(full_n, x)") == 1
+    assert "for array in (x, self.r, self.z, self.p_dir, self.ap)" in helper
+
+
+def test_pcg_cuda_conditional_path_does_not_preclassify_residual_on_host():
+    source = inspect.getsource(PressureSolver.solve_pcg)
+    conditional_anchor = '        if use_conditional:\n'
+    fallback_anchor = (
+        '        else:\n'
+        '            self.last_pcg_execution_mode = "host_batched"\n'
+    )
+    conditional_source = source.split(conditional_anchor, 1)[1].split(fallback_anchor, 1)[0]
+    fallback_source = source.split(fallback_anchor, 1)[1].split(
+        "        # Batched device-resident iterations", 1)[0]
+
+    assert "self.residual.numpy()" not in conditional_source
+    assert "self.residual.numpy()" in fallback_source
+
+
 def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch):
     launches = []
     monkeypatch.setattr(wp, "launch", lambda kernel, **kwargs: launches.append(kernel))
@@ -105,8 +130,8 @@ def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch)
     assert len(launches) == 2  # source field + source type resolve only
 
 
-def test_live_surface_publish_cadence_defaults_to_four_frames():
-    assert SolverSettings().live_surface_publish_cadence == 4
+def test_live_surface_publish_cadence_defaults_to_every_frame():
+    assert SolverSettings().live_surface_publish_cadence == 1
 
 
 def test_viewport_replaces_full_mesh_repair_with_index_validation():

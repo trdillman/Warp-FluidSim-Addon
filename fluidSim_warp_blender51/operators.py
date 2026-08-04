@@ -188,10 +188,107 @@ class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     def execute(self, context):
         sess = _bridge().session()
-        if not sess.active:
-            self.report({"WARNING"}, "Solver not initialized")
+        owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+        if not owns_scene(context.scene):
+            self.report({"WARNING"}, "Solver not initialized for this scene")
             return {"CANCELLED"}
         _bridge().reset_simulation(context.scene)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_apply_pending_reinitialize(bpy.types.Operator):
+    """Apply pending allocation/domain settings by rebuilding the solver"""
+
+    bl_idname = "fluidsim.apply_pending_reinitialize"
+    bl_label = "Apply Pending & Reinitialize"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        if getattr(scene, "fluidsim", None) is None:
+            return False
+        bridge = _bridge()
+        if bridge.pending_presentation(scene)["action"] == "NONE":
+            return False
+        sess = bridge.session()
+        return not sess.active or sess.owns_scene(scene)
+
+    def execute(self, context):
+        try:
+            changed = _bridge().apply_pending_reinitialize(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending reinitialize failed: {exc}")
+            return {"CANCELLED"}
+        if not changed:
+            self.report({"WARNING"}, "No pending settings to apply")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending settings applied")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_apply_pending_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
+    """Apply reset-tier pending settings without reallocating the solver"""
+
+    bl_idname = "fluidsim.apply_pending_reset"
+    bl_label = "Apply Pending & Reset"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        bridge = _bridge()
+        sess = bridge.session()
+        if not sess.active:
+            cls.poll_message_set("Initialize the solver first")
+            return False
+        scene = getattr(context, "scene", None)
+        if getattr(scene, "fluidsim", None) is None:
+            cls.poll_message_set("No FluidSim scene is active")
+            return False
+        if bridge.pending_presentation(scene)["action"] != "RESET_PENDING":
+            cls.poll_message_set("No reset-tier settings are pending")
+            return False
+        if not sess.owns_scene(scene):
+            cls.poll_message_set("The active solver belongs to another scene")
+            return False
+        return True
+
+    def execute(self, context):
+        try:
+            changed = _bridge().apply_pending_reset(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending reset failed: {exc}")
+            return {"CANCELLED"}
+        if not changed:
+            self.report({"WARNING"}, "No pending reset settings to apply")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending reset settings applied")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_revert_pending(bpy.types.Operator):
+    """Restore the last successfully applied restart/reinitialize values"""
+
+    bl_idname = "fluidsim.revert_pending"
+    bl_label = "Revert Pending Values"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        return (getattr(scene, "fluidsim", None) is not None
+                and _bridge().pending_presentation(scene)["count"] > 0)
+
+    def execute(self, context):
+        try:
+            reverted = _bridge().revert_pending_values(context.scene)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Pending revert failed: {exc}")
+            return {"CANCELLED"}
+        if not reverted:
+            self.report({"WARNING"}, "No applied pending snapshot is available")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Pending values reverted")
         return {"FINISHED"}
 
 
@@ -201,13 +298,16 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_idname = "fluidsim.step"
     bl_label = "Step Frame"
 
-    frames: IntProperty(name="Frames", default=1, min=1, max=250)
+    frames: IntProperty(
+        name="Frames", default=1, min=1, max=250,
+        description="Set how many simulation frames this action advances; higher values perform more solver work before returning")
 
     def execute(self, context):
         scene = context.scene
         bridge = _bridge()
         sess = bridge.session()
-        if not sess.active:
+        owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+        if not owns_scene(scene):
             try:
                 sess = bridge.initialize_session(scene)
             except Exception as exc:  # noqa: BLE001
@@ -235,7 +335,9 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
         fs = scene.fluidsim
         bridge = _bridge()
         if not fs.live:
-            if not bridge.session().active:
+            sess = bridge.session()
+            owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+            if not owns_scene(scene):
                 try:
                     bridge.initialize_session(scene)
                 except Exception as exc:  # noqa: BLE001
@@ -369,6 +471,7 @@ class FLUIDSIM_OT_tag_object(bpy.types.Operator):
             ("NONE", "Clear", "Remove the FluidSim role"),
         ],
         default="SOURCE",
+        description="Choose the FluidSim role assigned to every selected object; changing it changes whether the objects emit, collide, remove, force, source fields, or remain untagged",
     )
 
     @classmethod
@@ -456,7 +559,7 @@ class FLUIDSIM_OT_clear_object_role(_FLUIDSIM_OT_role_tag_base, bpy.types.Operat
 
 
 class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
-    """Inject active-object points once as a compatibility utility"""
+    """Append mesh vertices, point-cloud points, or the first particle system once; this compatibility utility is not a volume fill"""
 
     bl_idname = "fluidsim.inject_particles"
     bl_label = "Inject Active Object Points Once"
@@ -539,7 +642,7 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     save_baseline: BoolProperty(
         name="Save As Baseline", default=False,
-        description="Store this run as the comparison baseline")
+        description="Enable to store this benchmark run as the comparison baseline; disable to compare without replacing the existing baseline")
 
     def execute(self, context):
         scene = context.scene
@@ -923,7 +1026,9 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
     bl_idname = "fluidsim.snippet_save_preset"
     bl_label = "Save to Library"
 
-    preset_name: StringProperty(name="Name", default="")
+    preset_name: StringProperty(
+        name="Name", default="",
+        description="Set the name used for the saved snippet preset; changing it changes the library label and output filename")
 
     def invoke(self, context, event):
         pg = _active_snippet(context)
@@ -1056,7 +1161,9 @@ class FLUIDSIM_OT_snippet_edit_line(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     line_index: IntProperty(default=0, min=0)
-    line_text: StringProperty(name="Line", default="")
+    line_text: StringProperty(
+        name="Line", default="",
+        description="Edit the selected snippet source line; changing it replaces that line and triggers snippet validation")
 
     def invoke(self, context, event):
         pg = _active_snippet(context)
@@ -1087,7 +1194,9 @@ class FLUIDSIM_OT_snippet_line_add(bpy.types.Operator):
     bl_label = "Add Line"
     bl_options = {"REGISTER", "UNDO"}
 
-    line_text: StringProperty(name="Line", default="")
+    line_text: StringProperty(
+        name="Line", default="",
+        description="Set the source code appended as a new final line; changing it changes the code that is validated and compiled")
 
     def invoke(self, context, event):
         self.line_text = ""
@@ -1129,7 +1238,9 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_idname = "fluidsim.export_frame"
     bl_label = "Export Current Frame"
 
-    filepath: StringProperty(subtype="FILE_PATH", default="//fluidsim_frame")
+    filepath: StringProperty(
+        subtype="FILE_PATH", default="//fluidsim_frame",
+        description="Set the output path prefix for the current surface and particle export; changing it writes the exported frame to a different location")
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -1199,6 +1310,9 @@ CLASSES = (
     FLUIDSIM_OT_clear_error,
     FLUIDSIM_OT_apply_safe_settings,
     FLUIDSIM_OT_reset,
+    FLUIDSIM_OT_apply_pending_reinitialize,
+    FLUIDSIM_OT_apply_pending_reset,
+    FLUIDSIM_OT_revert_pending,
     FLUIDSIM_OT_step,
     FLUIDSIM_OT_toggle_live,
     FLUIDSIM_OT_setup_scene,
