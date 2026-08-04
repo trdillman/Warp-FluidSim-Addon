@@ -1140,6 +1140,7 @@ def k_prepare_pcg_conditional_loop(
         reason = 1
     condition[0] = keep_going
     iterations[0] = 0
+    iterations[1] = 0
     last_residual[0] = res_sq
     stats[0] = res_sq
     stats[1] = rz[0]
@@ -1160,6 +1161,7 @@ def k_finish_pcg_conditional_batch(
     last_residual: wp.array(dtype=float),
     batch: int,
     max_iterations: int,
+    stall_patience: int,
     tolerance_squared: float,
     stats: wp.array(dtype=float),
 ):
@@ -1167,6 +1169,7 @@ def k_finish_pcg_conditional_batch(
     rz_value = rz_current[0]
     p_ap_value = p_ap[0]
     iteration = iterations[0] + batch
+    stalls = iterations[1]
     reason = 0
     keep_going = 0
     if (wp.isnan(res_sq) or wp.isinf(res_sq) or wp.isnan(rz_value)
@@ -1176,15 +1179,26 @@ def k_finish_pcg_conditional_batch(
         reason = 1
     elif rz_value < -1.0e-20 or wp.abs(rz_value) < 1.0e-30 or wp.abs(p_ap_value) < 1.0e-30:
         reason = 2
-    elif res_sq >= last_residual[0] * (1.0 - 1.0e-6):
-        reason = 3
-    elif iteration >= max_iterations:
-        reason = 5
     else:
-        keep_going = 1
-        last_residual[0] = res_sq
+        # One non-improving checkpoint is a residual excursion, not a stall: CG
+        # minimises the A-norm of the error, so ||r|| rises for a stretch and
+        # then falls through the earlier minimum.  Mirror the host loop's
+        # PCG_STALL_PATIENCE exactly -- tripping on the first excursion aborted
+        # converging solves and left the liquid visibly compressed.
+        if res_sq >= last_residual[0] * (1.0 - 1.0e-6):
+            stalls = stalls + 1
+        else:
+            stalls = 0
+            last_residual[0] = res_sq
+        if stalls >= stall_patience:
+            reason = 3
+        elif iteration >= max_iterations:
+            reason = 5
+        else:
+            keep_going = 1
     condition[0] = keep_going
     iterations[0] = iteration
+    iterations[1] = stalls
     stats[0] = res_sq
     stats[1] = rz_value
     stats[2] = p_ap_value
@@ -1796,7 +1810,10 @@ class PressureSolver:
         # convergence checkpoint instead of three per PCG iteration.
         self.pcg_stats = wp.zeros(5, dtype=float, device=device)
         self._pcg_condition = wp.zeros(1, dtype=wp.int32, device=device)
-        self._pcg_iterations = wp.zeros(1, dtype=wp.int32, device=device)
+        # [0] = iterations completed, [1] = consecutive non-improving checkpoints.
+        # The stall counter lives on the device so the conditional loop can apply
+        # the same PCG_STALL_PATIENCE the host loop does without a readback.
+        self._pcg_iterations = wp.zeros(2, dtype=wp.int32, device=device)
         self._pcg_last_checked_res = wp.zeros(1, dtype=float, device=device)
         self._pcg_voxel_type = None
         self._pcg_apply_cmd = None
@@ -1959,7 +1976,9 @@ class PressureSolver:
         self._pcg_apply_cmd.set_dim(work_n)
         self._pcg_update_cmd.set_dim(work_n)
         self._pcg_update_p_cmd.set_dim(work_n)
-        key = (work_n, batch, max_iterations, float(tol_sq))
+        # Patience is baked into the captured graph, so it belongs in the key.
+        stall_patience = int(PCG_STALL_PATIENCE)
+        key = (work_n, batch, max_iterations, stall_patience, float(tol_sq))
         graphs = self._pcg_conditional_graphs.get(key)
         if graphs is None:
             if len(self._pcg_conditional_graphs) >= 8:
@@ -1978,7 +1997,8 @@ class PressureSolver:
                     inputs=[self.residual, self._pcg_rz_b, self._pcg_rz_a,
                             self.p_ap, self._pcg_condition,
                             self._pcg_iterations, self._pcg_last_checked_res,
-                            batch, max_iterations, tol_sq, self.pcg_stats],
+                            batch, max_iterations, stall_patience, tol_sq,
+                            self.pcg_stats],
                     device=self.device,
                 )
             with wp.ScopedCapture(device=self.device) as loop_capture:
@@ -2623,12 +2643,8 @@ class PressureSolver:
                 self.last_pcg_native_error = f"{type(exc).__name__}: {exc}"
         use_conditional = conditional_graphs is not None
         if use_conditional:
-            # The device-side rule classifies a stall on the first non-improving
-            # checkpoint; the host loop below allows PCG_STALL_PATIENCE of them.
-            # Same solve can therefore report "stalled" one mode and
-            # "max_iterations" the other. Both leave the iterate usable
-            # (pressure_valid covers STALLED), so this is a reporting
-            # difference, not a physics one.
+            # k_finish_pcg_conditional_batch applies the same PCG_STALL_PATIENCE
+            # as the host loop below, so both modes classify a solve identically.
             self.last_pcg_execution_mode = "cuda_conditional"
             stats = self._launch_pcg_conditional(work_n, conditional_graphs, tol_sq)
             res_sq = float(stats[0])
