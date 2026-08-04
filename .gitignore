@@ -40,3 +40,4 @@ Desktop.ini
 /fluidsim_report.json
 /fluidsim_test_*.obj
 /fluidsim_test_*.ply
+/bench/
