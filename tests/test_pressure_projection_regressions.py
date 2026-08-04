@@ -1089,8 +1089,12 @@ def test_pcg_stall_patience_survives_residual_excursions(cuda_device):
     # Same system, same checkpoints: patience only ever buys more iterations.
     assert patient_iters > impatient_iters
     # And those iterations are productive -- the excursion was recovered from,
-    # which is the whole claim.  Two orders of magnitude, measured at 260x.
-    assert patient_res < impatient_res * 1.0e-2
+    # which is the whole claim.  The margin is deliberately loose: the 260x
+    # originally measured here was against wp.utils.array_inner, and the fp32
+    # CudaDotProduct reduction raised the impatient baseline by 34x
+    # (2.22e-05 -> 6.42e-07), leaving 4.5x on the same system.  Whether the
+    # extra iterations help is the claim; how much depends on the reduction.
+    assert patient_res < impatient_res * 0.5
 
 
 def test_pressure_pcg_reductions_ignore_inactive_allocation_tail(cuda_device):

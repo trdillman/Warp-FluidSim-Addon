@@ -2165,8 +2165,11 @@ class PressureSolver:
                 parity = start_parity
                 for _ in range(batch):
                     self._st_apply_cmd.launch()
+                    # Into the accumulator, not p_ap: the shared alpha command
+                    # is k_compute_alpha_and_reset, which reads _pcg_p_ap_accum
+                    # and publishes it to p_ap for the checkpoint pack.
                     wp.utils.array_inner(self.p_dir, self.ap,
-                                         out=self.p_ap, count=work_n)
+                                         out=self._pcg_p_ap_accum, count=work_n)
                     self._pcg_alpha_cmds[parity].launch()
                     self._st_update_cmd.launch()
                     self._st_precond_cmd.launch()
