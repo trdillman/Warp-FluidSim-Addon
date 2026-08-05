@@ -25,7 +25,7 @@
       "scene": "dam_break",
       "check": "velocity bounded (p99.9)",
       "passed": true,
-      "detail": "p99.9 speed 5.59 m/s (limit 13.724139317275965)"
+      "detail": "p99.9 speed 5.75 m/s (limit 13.724139317275965)"
     },
     {
       "scene": "dam_break",
@@ -55,7 +55,7 @@
       "scene": "dam_break",
       "check": "whitewater emitted by turbulent bore",
       "passed": true,
-      "detail": "peak whitewater 3,480"
+      "detail": "peak whitewater 3,354"
     },
     {
       "scene": "crown_splash",
@@ -79,7 +79,7 @@
       "scene": "crown_splash",
       "check": "velocity bounded (p99.9)",
       "passed": true,
-      "detail": "p99.9 speed 8.89 m/s (limit 10.5)"
+      "detail": "p99.9 speed 8.47 m/s (limit 10.5)"
     },
     {
       "scene": "crown_splash",
@@ -91,7 +91,7 @@
       "scene": "crown_splash",
       "check": "crown rises above pool",
       "passed": true,
-      "detail": "max crown height 206 mm above pool"
+      "detail": "max crown height 240 mm above pool"
     },
     {
       "scene": "crown_splash",
@@ -103,7 +103,7 @@
       "scene": "crown_splash",
       "check": "Worthington jet rebounds at center",
       "passed": true,
-      "detail": "peak 535 jet particles, height 176 mm"
+      "detail": "peak 524 jet particles, height 230 mm"
     },
     {
       "scene": "crown_splash",
@@ -116,14 +116,14 @@
     "dam_break": {
       "front_speed_over_c0": 1.0113339116667397,
       "z_at_T2": 2.5878494958278724,
-      "column_height_end": 0.07941645383834839
+      "column_height_end": 0.08270263671875
     },
     "crown_splash": {
       "impact_frame": 1,
       "peak_frame": 4,
       "crown_sqrt_t_corr": 0.9715342739868315,
       "crown_symmetry_cv": 0.006861797533929348,
-      "max_crown_height": 0.20558105409145355
+      "max_crown_height": 0.24036620557308197
     }
   }
 }

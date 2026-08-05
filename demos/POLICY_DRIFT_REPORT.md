@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-07-28T17:04:58.639694+00:00
+generated_at: 2026-08-05T06:19:29.304612+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: f9c7b366baaa31d171ff3b6773f39eb0125d110c
-gate_run_at: 2026-07-28T17:04:58.639694+00:00
+git_head: d781fbb3cf4545f1e99b15f4c8c59a5af6f319cf
+gate_run_at: 2026-08-05T06:19:29.304612+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750dfe32f
+demo_artifact_sha256: 40749f42c9d8afd946ac73e63578c2c5645ea48aba7b19fffee03af248c11431
 ---
 
 # Policy Drift Report — demos unit
@@ -15,7 +15,7 @@ demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750
 ## Strongest live evidence
 
 - The parent full gate passed with real Blender/Warp execution and wrote the
-  current manifest: `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (35/35)`,
+  current manifest: `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (38/38)`,
   and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - `demos/analysis_report.json` is synchronized byte-for-byte with
   `artifacts/demo_analysis/analysis_report.json`; the same SHA-256 and HEAD
@@ -35,20 +35,20 @@ closed when any of those bindings is stale or misbound.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-07-28T17:04:58.639694+00:00
+generated_at: 2026-08-05T06:19:29.304612+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: f9c7b366baaa31d171ff3b6773f39eb0125d110c
-gate_run_at: 2026-07-28T17:04:58.639694+00:00
+git_head: d781fbb3cf4545f1e99b15f4c8c59a5af6f319cf
+gate_run_at: 2026-08-05T06:19:29.304612+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750dfe32f
+demo_artifact_sha256: 40749f42c9d8afd946ac73e63578c2c5645ea48aba7b19fffee03af248c11431
 freshness: fresh
 status: fresh
 blocking_criticality: none
 human_decision_required: false
 strongest_live_verification:
   - 'PASS: parent full gate; DEMO-ANALYSIS-PASS (18/18).'
-  - 'PASS: GUI-ACCEPTANCE-PASS (35/35) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
+  - 'PASS: GUI-ACCEPTANCE-PASS (38/38) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:

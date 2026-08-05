@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-07-28T17:04:58.639694+00:00
+generated_at: 2026-08-05T06:19:29.304612+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: f9c7b366baaa31d171ff3b6773f39eb0125d110c
-gate_run_at: 2026-07-28T17:04:58.639694+00:00
+git_head: d781fbb3cf4545f1e99b15f4c8c59a5af6f319cf
+gate_run_at: 2026-08-05T06:19:29.304612+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750dfe32f
+demo_artifact_sha256: 40749f42c9d8afd946ac73e63578c2c5645ea48aba7b19fffee03af248c11431
 ---
 
 # Policy Drift Report — root unit
@@ -15,8 +15,9 @@ demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750
 ## Strongest live evidence
 
 - `rtk python tools/run_production_gate.py --include-gui` passed at HEAD
-  `f9c7b366baaa31d171ff3b6773f39eb0125d110c`; the run wrote the full-gate
-  manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (35/35)`, and
+  `d781fbb3cf4545f1e99b15f4c8c59a5af6f319cf`; the run wrote the full-gate
+  manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (38/38)`,
+  `CAPACITY-PLANNER-ACCEPTANCE-PASS`, `DEMO-ANALYSIS-PASS (18/18)`, and
   `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - The GUI fixture now keeps tagged sink/force regions inside the documented
   `[-6, 6] x [-2, 2] x [0, 6]` domain. The direct regression still preserves
@@ -25,7 +26,7 @@ demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750
 - Current generated demo analysis and checked-in `demos/analysis_report.json`
   are byte-for-byte synchronized at
   `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750dfe32f`.
+  `40749f42c9d8afd946ac73e63578c2c5645ea48aba7b19fffee03af248c11431`.
 
 ## Findings
 
@@ -45,21 +46,22 @@ clears the manifest and validation fails closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-07-28T17:04:58.639694+00:00
+generated_at: 2026-08-05T06:19:29.304612+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: f9c7b366baaa31d171ff3b6773f39eb0125d110c
-gate_run_at: 2026-07-28T17:04:58.639694+00:00
+git_head: d781fbb3cf4545f1e99b15f4c8c59a5af6f319cf
+gate_run_at: 2026-08-05T06:19:29.304612+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d1c41549ac490071522b59a380b7c2ad16e6be3414aae12fb5d3d15750dfe32f
+demo_artifact_sha256: 40749f42c9d8afd946ac73e63578c2c5645ea48aba7b19fffee03af248c11431
 freshness: fresh
 status: fresh
 blocking_criticality: none
 human_decision_required: false
 strongest_live_verification:
   - 'PASS: rtk python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS.'
-  - 'PASS: GUI-ACCEPTANCE-PASS (35/35) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
-  - 'PASS: rtk python -m pytest -q; 388 passed.'
+  - 'PASS: GUI-ACCEPTANCE-PASS (38/38) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
+  - 'PASS: CAPACITY-PLANNER-ACCEPTANCE-PASS and DEMO-ANALYSIS-PASS (18/18).'
+  - 'PASS: rtk python -m pytest -q; 484 passed.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:
