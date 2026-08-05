@@ -219,6 +219,7 @@ def main(argv=None):
         "tests/blender_mesh_source_acceptance.py",
         "tests/blender_force_region_acceptance.py",
         "tests/blender_phase3_source_ui_acceptance.py",
+        "tests/blender_capacity_planner_acceptance.py",
         "tests/blender_phase3_profile_safe_review.py",
         "tests/blender_phase4_live_interaction_acceptance.py",
         "tests/blender_gui_acceptance.py",
@@ -273,6 +274,12 @@ def main(argv=None):
          "tests/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
          os.path.abspath("artifacts/phase3_source_ui_acceptance.json")],
         reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
+    _run(
+        "source capacity planner acceptance",
+        [blender_exe, "--background", "--factory-startup", "--python",
+         "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
+         os.path.abspath("artifacts/capacity_planner_acceptance.json")],
+        reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
     for scene_name in CANONICAL_DEMO_SCENES:
         _run(f"demo cache build {scene_name}", [
             blender_exe,
