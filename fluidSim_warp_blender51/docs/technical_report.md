@@ -24,11 +24,17 @@ fluidSim_warp_blender51/
 ├── panels.py                16 sidebar panels
 ├── preferences.py           add-on preferences
 ├── blender/                 bpy integration layer
-│   ├── scene_bridge.py      Session, gather sources/colliders, frame handler
-│   ├── viewport.py          output datablocks + display_color + overlay
+│   ├── simulation_admission.py  coherent preflight + Replacement Cutover
+│   ├── solver_settings.py   authored-value projection into SolverSettings
+│   ├── scene_bridge.py      Solver Session, direct sync/step/stats/errors
+│   ├── output_publication.py persistent output preparation/publication
+│   ├── viewport_overlay.py  diagnostic drawing only
+│   ├── playback.py          preview/cache timeline policy + handlers
+│   ├── cache_bake.py        sequential authoritative Production Cache Bake
+│   ├── pending_settings.py  lifecycle registry, snapshots, pending policy
+│   ├── snippets.py          Blender snippet property-group adapter
+│   ├── scene_inputs.py      evaluated sources/colliders/forces/height gather
 │   ├── materials.py         liquid / particle / whitewater / attribute mats
-│   ├── sources.py           tag_source / tag_sink / inject_object_particles
-│   ├── colliders.py         tag_collider → wp.Mesh
 │   └── render.py            render handler
 ├── sim/                     GPU core — NO bpy imports
 │   ├── constants.py         TOOL_*, voxel bits, LEAF_DIM=8, phase slots
@@ -55,10 +61,12 @@ fluidSim_warp_blender51/
     └── export.py            OBJ surface + PLY points
 ```
 
-**Boundary rule:** `sim/` and `diagnostics/` never import `bpy`. Only
-`__init__`, `properties`, `operators`, `panels`, `preferences`, `blender/`,
-and `io/cache.py` may. This keeps the core and validation suite runnable
-headlessly with only `warp`.
+**Boundary and direction rule:** `sim/` and `diagnostics/` never import `bpy`.
+Blender adapters (`properties`, `operators`, `panels`, and handlers) call the
+deep Admission, Publication, Playback, Cache Bake, and Pending Settings modules;
+those modules call Solver Settings, the Solver Session, and `sim`/`io` owners
+through narrow seams. Deep modules do not import UI adapters. This keeps core
+validation headless and prevents adapters from reconstructing runtime policy.
 
 ---
 
@@ -240,35 +248,47 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
 
 ## 8. Blender Integration
 
-- **`blender/scene_bridge.py`** owns the `Session` (`solver`, `profiler`,
-  `frame_stats`, `validation_results`, `benchmark_result`, `error`). It
-  translates tagged Blender objects into `SourceShapeDesc` / `ColliderDesc`
-  (mesh → `wp.Mesh` via evaluated depsgraph, with linear/angular velocity from
-  animation), calls `sync_scene_to_solver`, and registers the
-  `frame_change_post` handler that steps the solver when `fs.live` is on.
-- **`blender/viewport.py` (`update_outputs`)** writes solver output into real
-  datablocks each frame: `FluidSim Surface` (mesh via fast bulk
-  `foreach_set`), `FluidSim Particles` and `FluidSim Whitewater` (PointCloud
-  objects with `position`/`radius`/`display_color` attributes, falling back to
-  a vertex cloud if `bpy.data.pointclouds` is absent). The `_draw_overlay`
-  handler renders the live status + per-phase timers via `blf`. Output object
-  colors and material diffuse colors are also written for Solid viewport
-  legibility without changing the user's global viewport shading mode.
-- **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
-  bridge for realtime UI edits. Its `SceneUpdate` enum owns the supported
-  actions and default status reasons, so property callbacks do not exchange
-  raw dispatcher strings. Surface radius/dilate/erode/smooth changes
-  push into the active solver, rebuild the current-frame surface SDF, invalidate
-  the cached mesh, and refresh output datablocks without advancing playback.
-  Inactive output/cache objects receive visibility/material refreshes only;
-  geometry recomputation still requires an active solver frame or cached
-  particles.
+- **`blender/simulation_admission.py`** owns one coherent evaluated Admission
+  Snapshot, non-destructive preflight, explicit Replacement Cutover, solver
+  allocation/configuration, seed/snippet installation, initial Output
+  Preparation, and deterministic failure cleanup.
+- **`blender/scene_bridge.py`** owns the Solver Session (`solver`, profiler,
+  frame statistics, errors, scene inputs, and teardown), direct scene
+  synchronization, and direct step execution. It does not interpret Blender
+  timeline gaps, own pending-setting policy, mutate persistent output state, or
+  run production bakes.
+- **`blender/output_publication.py`** owns persistent output collections,
+  objects/datablocks, payload adapters, geometry/attributes, materials,
+  capacity/schema, and visibility. Live publication receives an already
+  acquired host frame and does not reacquire solver data. Diagnostic drawing is
+  isolated in **`viewport_overlay.py`**.
+- **`blender/playback.py`** owns non-authoritative Preview Playback and Cache
+  Playback: live/cache exclusivity, playback-pre admission, frame
+  interpretation, bounded catch-up/desynchronization, rewind delegation,
+  render-restore/re-entry suppression, and persistent playback handlers. Exact
+  existing status/error/backend behavior is preserved.
+- **`blender/cache_bake.py`** owns Production Cache Bake. It advances requested
+  frames sequentially, synchronizes the scene, writes full non-preview-decimated
+  cache payloads and `source="simulation"` metadata, suppresses frame handlers,
+  bypasses Output Publication, and restores Blender frame/live state in
+  `finally`. CUDA atomics, compaction/emission order, and derived marching-cubes
+  output are not claimed numerically repeatable; determinism here is control
+  flow, ordering, state handling, and metadata.
+- **`blender/pending_settings.py`** owns the exhaustive/disjoint setting-tier
+  registry, per-scene Applied Settings Snapshot and signatures, pending
+  presentation/IDProperties, live/reset/output application, apply/revert and
+  debounce transitions, and depsgraph/undo/load handlers. Properties,
+  operators, panels, overlay, and Playback are thin adapters.
 - **`blender/materials.py`** provides default liquid / particle / whitewater
   Principled BSDF materials, plus **attribute materials** that add a
   `ShaderNodeAttribute` (`attribute_name = "display_color"`) linked into the
   BSDF `Base Color`, so attribute coloring is visible in viewport and render.
-- **`properties.py`** defines the scene + object PropertyGroups. Attribute-viz
-  item tuples and the `liquid_view_mode` update callback live here.
+- **`properties.py`** defines scene/object PropertyGroups and declares update
+  intent without reimplementing lifecycle policy.
+
+Source-level contracts and real Blender/CUDA acceptance certify these ownership
+and runtime claims. Reports, demos, screenshots, profiles, and HTML reviews are
+supporting evidence only and cannot substitute for those gates.
 
 ---
 
@@ -337,24 +357,18 @@ never crash the suite.
 | Pressure projection regressions | **5 / 5** passing (`pytest tests/test_pressure_projection_regressions.py`) |
 | Blender background acceptance | **34 / 34** checks (`BACKGROUND-ACCEPTANCE-PASS`) |
 | Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |
-| Demo `dam_break` | **9 / 9** (mass, containment, front speed 1.01·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0744 m`, peak whitewater `3,233`) |
-| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `242 mm`, Worthington jet height `203 mm`, azimuthal symmetry CV 0.007) |
+| Demo `dam_break` | **9 / 9** (promoted metrics and provenance bound below) |
+| Demo `crown_splash` | **9 / 9** (promoted metrics and provenance bound below) |
 
 The current generated source evidence comes from
-`artifacts/demo_analysis/analysis_report.json`, produced by the headless/demo
-portion of the real `python tools/run_production_gate.py --include-gui` run
-and bound to audit run `2026-08-05T06:49:33.968820+00:00`, HEAD
-`3bf6da6aa6f1ab043cb2dd3a125ad9b416fa9d5a`, using the checked-in
-`demos/dam_break/meta.json` and `demos/crown_splash/meta.json` profiles. The
-bounded profiles are 128,000 particles over 72 frames for `dam_break` and
-259,112 particles over 48 frames for `crown_splash`. The checked-in demo JSON
-and Markdown now match this artifact exactly: the standalone demo-analysis
-lane passes **18 / 18** with exact promoted metrics
-`front_speed_over_c0=1.0113339117`, `column_height_end=0.0743652880`,
-`crown_sqrt_t_corr=0.9715359144`, and `max_crown_height=0.2423486263`;
-peak whitewater is `3,233` and Worthington jet height is `203 mm`. Artifact
-SHA-256 is `65ec3d69463d150c0a19df231e2f33697543fd1e2d273aad451fdfd0c57a472a`.
-These are bounded generated-run metrics, not arbitrary-scale claims.
+`artifacts/demo_analysis/analysis_report.json`, produced by the real GUI-inclusive production
+gate at `2026-08-05T15:23:58.988102+00:00` under HEAD `afbdf0e0f902a3e6205420aca3e31b04defe9749`. The
+demo-analysis lane passes **18 / 18** with exact promoted metrics
+`front_speed_over_c0=1.0113339117`,
+`column_height_end=0.0854480267`,
+`crown_sqrt_t_corr=0.9715337333`, and
+`max_crown_height=0.2854394317`. Artifact SHA-256 is
+`d1a0cd12233a3a7c92ecac177fa9b3c1c1f3514dcc1ea464c798c6d153310242`. These are bounded generated-run metrics, not arbitrary-scale claims.
 
 Generated source evidence is separate from review evidence:
 `artifacts/gui_playback_probe.json` records live CUDA playback on `cuda:0`
