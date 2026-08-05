@@ -17,6 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fluidSim_warp_blender51.sim.solver import SolverSettings
 
 
+def _build_settings(scene):
+    from fluidSim_warp_blender51.blender.solver_settings import build_settings
+
+    return build_settings(scene)
+
+
 def test_multigrid_feature_is_not_exposed_or_scene_configurable():
     root = Path(__file__).parents[1] / "fluidSim_warp_blender51"
 
@@ -149,7 +155,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
 
     direct_fields = (
         "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
@@ -219,7 +225,7 @@ def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
     scene.fluidsim.directional_force = directional
     scene.fluidsim.omnidirectional_force_center = center
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
     directional.valid = False
     center.valid = False
 
@@ -233,10 +239,10 @@ def test_domain_collision_wall_setting_is_persisted(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    assert scene_bridge.build_settings(scene).domain_sdf_walls is True
+    assert _build_settings(scene).domain_sdf_walls is True
 
     scene.fluidsim.domain_sdf_walls = False
-    assert scene_bridge.build_settings(scene).domain_sdf_walls is False
+    assert _build_settings(scene).domain_sdf_walls is False
 
 
 def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
@@ -247,7 +253,7 @@ def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
     scene.fluidsim.ww_churn_decay = 2.75
     scene.fluidsim.ww_churn_gain = 3.25
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
 
     assert settings.speed_limit_percent == 0.37
     assert settings.speed_limit_behavior.name == "ACCELERATION"

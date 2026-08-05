@@ -3,8 +3,10 @@
 GPU liquid simulation for Blender 5.1, powered by NVIDIA Warp / CUDA.
 The solver is a sparse-grid PIC/FLIP liquid simulator that runs entirely on
 the GPU and plays back **interactively in the viewport** — no cache baking is
-required. Optional npz caching and OBJ/PLY export are available as supplemental
-tools.
+required. Timeline-driven **Preview Playback** is non-authoritative viewport
+feedback and preserves its bounded catch-up/desynchronization behavior. Use
+**Export Cache Sequence** for sequential authoritative production output;
+optional npz playback and OBJ/PLY export remain supplemental tools.
 
 > Requirements: **Blender 5.1**, an **NVIDIA GPU with CUDA**, and `warp-lang`
 > importable from Blender's Python. Open the **FluidSim** tab in the 3D
@@ -402,12 +404,30 @@ The benchmark implements the synthesized `BENCHMARK_FIELDS` schema
 
 ## 9. Optional Cache & Export
 
-FluidSim Warp is interactive-first; these are supplemental:
+FluidSim Warp is interactive-first, but Preview Playback and Production Cache
+Bake have different authority:
 
-- **Cache** (Viewport / Render Output panel): enable **Enable Cache**, set a
-  **Cache Path**, and each played frame is written as a compressed
-  `fluidsim_NNNNN.npz` (positions, velocities, whitewater, surface
-  verts/tris). Useful for reloading a run later.
+- **Preview Playback** is timeline-event-driven visual feedback. Blender may
+  drop events, so the preserved bounded catch-up gate can report desynchronization
+  rather than pretending an over-limit scrub is authoritative. Enabling
+  **Cache Playback** publishes existing frames without initializing or stepping
+  a live solver.
+- **Enable Cache** records `source="live_simulation"` frames during Preview
+  Playback. These are useful for reloading that interactive run, but remain
+  distinct from production output.
+- **Export Cache Sequence** runs the dedicated Production Cache Bake over the
+  selected range. It advances and synchronizes every frame sequentially,
+  writes full non-preview-decimated liquid/whitewater/surface data with
+  `source="simulation"`, bypasses frame handlers and viewport publication, and
+  restores the Blender frame/live toggle afterward. Preview display fraction,
+  attributes, visibility, and retained-surface publication cadence cannot
+  decimate its cache writes.
+- Cache frames are compressed `fluidsim_NNNNN.npz` files containing positions,
+  velocities, whitewater, surface verts/tris, aligned attributes, settings
+  signatures, and scene identity. CUDA atomics, compaction/emission order, and
+  derived marching-cubes surfaces are not bitwise repeatable; exact hashes,
+  counts, and topology are diagnostics rather than a numerical-determinism
+  promise.
 - **Export Current Frame** writes the surface as `*_surface.obj` and particles
   / whitewater as binary `*_particles.ply` / `*_whitewater.ply` (particles
   include velocity).

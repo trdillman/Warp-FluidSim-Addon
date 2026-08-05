@@ -79,7 +79,7 @@ def scene_key(scene) -> str:
     in place, without changing the count or the transform, is the known blind
     spot; hash ``obj.evaluated_get(depsgraph).to_mesh()`` here if it bites.
     """
-    from ..blender.scene_bridge import build_settings
+    from ..blender.solver_settings import build_settings
 
     h = hashlib.blake2b(digest_size=16)
     h.update(f"{SCENE_KEY_VERSION}|settings|".encode())

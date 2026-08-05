@@ -13,7 +13,6 @@ import bpy
 
 from .scene_inputs import SceneInputs
 from .simulation_admission import capacity_blocking_message
-from .solver_settings import build_settings
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -101,12 +100,12 @@ class Session:
             self.clear_error(scene)
 
     def _admission(self):
-        from . import pending_settings
+        from . import pending_settings, snippets
         from .simulation_admission import SimulationAdmission
 
         return SimulationAdmission(
             self, scene_identity=_scene_identity,
-            snippet_builder=build_snippets,
+            snippet_builder=snippets.build_snippets,
             applied_state_capture=pending_settings.capture_applied_state,
             reset_settings_apply=pending_settings.apply_reset_solver_settings,
         )
@@ -316,111 +315,6 @@ def current_error(scene) -> str:
 # ---------------------------------------------------------------------------
 
 
-def snippet_argument_names(pg):
-    """Names a snippet's declared arguments expose to its body."""
-    names = []
-    for apg in pg.arguments:
-        names.append(apg.field if apg.mode == "FIELD" else apg.constant_name)
-    return names
-
-
-def validate_snippet_pg(pg):
-    """Statically validate one snippet property group and mirror the result.
-
-    Updates ``is_valid`` / ``validated_hash`` / ``validation_report`` /
-    ``last_error`` on the property group and returns the list of issues.
-    """
-    from ..sim import custom
-
-    code = pg.text_block.as_string() if pg.text_block else ""
-    issues = custom.validate_snippet(
-        code, pg.run_over, snippet_argument_names(pg))
-    errors = [i for i in issues if i.level == "ERROR"]
-    pg.is_valid = not errors
-    pg.validated_hash = custom.code_hash(code)
-    pg.validation_report = "\n".join(str(i) for i in issues)[:1024]
-    if errors:
-        pg.last_error = str(errors[0])[:256]
-    elif pg.last_error.startswith("ERROR:"):
-        pg.last_error = ""
-    return issues
-
-
-def build_snippets(scene):
-    """Convert snippet property groups into sim CustomSnippet objects.
-
-    This is the single choke point through which snippets reach the solver
-    (both solver init and Apply). Enabled snippets are statically validated
-    here; snippets with errors are gated out so only valid code can run in
-    the scene.
-    """
-    result = []
-    for pg in scene.fluidsim.snippets:
-        if pg.enabled:
-            validate_snippet_pg(pg)
-            if not pg.is_valid:
-                continue
-        result.append(snippet_from_pg(pg))
-    return result
-
-
-def snippet_from_pg(pg):
-    """Convert one snippet property group into a sim CustomSnippet."""
-    from ..sim.custom import CustomArgument, CustomSnippet
-    from ..sim.enums import (
-        CustomKernelArgumentMode,
-        CustomKernelConstantType,
-        CustomKernelOrder,
-        CustomKernelRunOver,
-    )
-
-    code = pg.text_block.as_string() if pg.text_block else ""
-    args = []
-    for apg in pg.arguments:
-        args.append(CustomArgument(
-            mode=CustomKernelArgumentMode[apg.mode],
-            field=apg.field,
-            constant_type=CustomKernelConstantType[apg.constant_type],
-            constant_name=apg.constant_name,
-            constant_value=apg.constant_value,
-        ))
-    return CustomSnippet(
-        enabled=pg.enabled,
-        kernel_name=pg.kernel_name,
-        order=CustomKernelOrder[pg.order],
-        run_over=CustomKernelRunOver[pg.run_over],
-        code=code,
-        arguments=args,
-        frame_start=pg.frame_start,
-        frame_end=pg.frame_end,
-        frame_step=pg.frame_step,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Object -> descriptor translation
-# ---------------------------------------------------------------------------
-
-
-def gather_sources(scene, sess: Session):
-    """Compatibility wrapper for source descriptor translation."""
-    from . import sources
-
-    return sources.gather_sources(scene, sess)
-
-
-def gather_colliders(scene, sess: Session, depsgraph=None):
-    """Compatibility wrapper for collider descriptor translation."""
-    from . import colliders
-
-    return colliders.gather_colliders(scene, sess, depsgraph)
-
-
-def gather_height_source(scene):
-    """Compatibility wrapper for height-source descriptor translation."""
-    from . import sources
-
-    return sources.gather_height_source(scene)
 # ---------------------------------------------------------------------------
 # Session lifecycle
 # ---------------------------------------------------------------------------

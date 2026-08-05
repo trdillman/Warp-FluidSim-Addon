@@ -27,6 +27,20 @@ This glossary names the domain concepts used by architecture reviews and impleme
 - **Pending Settings** — authored scene edits whose effect on an active Solver Session is classified as live, synchronized, output-only, reset, reinitialize, or authored-next-run.
 - **Applied Settings Snapshot** — the per-scene record of settings and scene facts currently represented by the Solver Session, used to derive Pending Settings without making UI adapters reconstruct policy.
 
+## Module ownership and dependency direction
+
+- **Simulation Admission** (`blender/simulation_admission.py`) owns the authored-scene-to-running-Solver-Session transaction, coherent Admission Snapshot, preflight, Replacement Cutover, and failure cleanup.
+- **Solver Session** (`blender/scene_bridge.py`) owns only the live solver runtime, direct scene synchronization and stepping, frame statistics, errors, teardown, and its established lifecycle compatibility functions.
+- **Output Publication** (`blender/output_publication.py`) owns persistent output objects/datablocks, payload adaptation, preparation, publication, materials, attributes, capacity/schema, and visibility. `viewport_overlay.py` only draws diagnostics.
+- **Playback** (`blender/playback.py`) owns Preview/Cache Playback selection, timeline interpretation, catch-up/desynchronization, rewind delegation, render-restore and re-entry suppression, and playback handlers.
+- **Production Cache Bake** (`blender/cache_bake.py`) owns authoritative sequential cache generation and restoration of temporary Blender state. It does not call Preview Playback handlers or Output Publication.
+- **Pending Settings** (`blender/pending_settings.py`) owns the exhaustive lifecycle registry, applied snapshots, pending state/presentation, apply/revert/debounce policy, and depsgraph/undo/load handlers.
+- **Solver Settings** (`blender/solver_settings.py`) owns Blender-authored-value projection only; `blender/snippets.py` converts Blender snippet property groups into the lifecycle owned by `sim/custom.py`.
+
+Dependency direction is one-way: Blender UI/handler adapters call these deep modules; deep modules call Solver Settings, Output Publication, the Solver Session, and `sim`/`io` owners through narrow seams. UI adapters do not reconstruct lifecycle or playback policy, and Output Publication never reacquires solver data while publishing.
+
+Runtime tests and source-level contracts certify these claims. HTML reviews, screenshots, demos, profiles, and policy reports are supporting evidence only, not substitutes for core implementation proof.
+
 ## Storage invariant
 
 - **Sparse Leaf Grid** — the live field-storage contract: fixed `8x8x8` leaf tiles addressed through a flat leaf table, with no hierarchical tree storage.

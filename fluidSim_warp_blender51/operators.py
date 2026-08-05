@@ -22,6 +22,18 @@ def _pending():
     return pending_settings
 
 
+def _snippets():
+    from .blender import snippets
+
+    return snippets
+
+
+def _solver_settings():
+    from .blender import solver_settings
+
+    return solver_settings
+
+
 def _configured_device():
     from .preferences import configured_device
 
@@ -198,7 +210,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         layout.label(text="Approve these exact scene changes?", icon="QUESTION")
         layout.label(text=self.suggestion_label)
         changes = json.loads(self.changes_json or "{}")
-        settings = _bridge().build_settings(context.scene)
+        settings = _solver_settings().build_settings(context.scene)
         for name, value in changes.items():
             old_value = getattr(settings, name, getattr(context.scene.fluidsim, name, None))
             layout.label(text=(
@@ -262,7 +274,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 setattr(fs, name, value)
                 changed.append(name)
             if domain_min is not None or domain_max is not None:
-                settings = bridge.build_settings(scene)
+                settings = _solver_settings().build_settings(scene)
                 _apply_domain_bounds(
                     scene,
                     domain_min if domain_min is not None else settings.domain_min,
@@ -317,7 +329,7 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
         # for the error already on screen, and clobbering it would hide the
         # failure the user is trying to recover from.
         try:
-            settings = bridge.build_settings(scene)
+            settings = _solver_settings().build_settings(scene)
             resources = resource_snapshot(settings.device)
             assessment = assess_configuration(settings, resources)
         except Exception as exc:  # noqa: BLE001
@@ -993,10 +1005,10 @@ class FLUIDSIM_OT_snippet_apply(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         for pg in fs.snippets:
             if not pg.enabled:
                 continue
-            bridge.validate_snippet_pg(pg)
+            _snippets().validate_snippet_pg(pg)
             if not pg.is_valid:
                 invalid += 1
-        errors = sess.solver.set_custom_snippets(bridge.build_snippets(scene))
+        errors = sess.solver.set_custom_snippets(_snippets().build_snippets(scene))
         for name, err in errors:
             for pg in fs.snippets:
                 if pg.kernel_name == name:
@@ -1114,7 +1126,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
         pg.text_block = text
         fs.active_snippet = len(fs.snippets) - 1
         bridge = _bridge()
-        bridge.validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         self.report({"INFO"}, f"Loaded '{data.get('label', base_name)}' - "
                               f"press Apply Snippets to run it")
         return {"FINISHED"}
@@ -1132,7 +1144,7 @@ class FLUIDSIM_OT_snippet_validate(bpy.types.Operator):
             self.report({"ERROR"}, "No active snippet")
             return {"CANCELLED"}
         bridge = _bridge()
-        issues = bridge.validate_snippet_pg(pg)
+        issues = _snippets().validate_snippet_pg(pg)
         errors = [i for i in issues if i.level == "ERROR"]
         warnings = [i for i in issues if i.level == "WARNING"]
         if errors:
@@ -1165,7 +1177,7 @@ class FLUIDSIM_OT_snippet_autofix(bpy.types.Operator):
         if fixed != code:
             _set_snippet_code(pg, fixed)
         bridge = _bridge()
-        bridge.validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         if fixes:
             self.report({"INFO"}, f"Applied {len(fixes)} fix(es): "
                                   f"{'; '.join(fixes[:3])}")
@@ -1186,7 +1198,7 @@ class FLUIDSIM_OT_snippet_test(bpy.types.Operator):
             self.report({"ERROR"}, "No active snippet")
             return {"CANCELLED"}
         bridge = _bridge()
-        issues = bridge.validate_snippet_pg(pg)
+        issues = _snippets().validate_snippet_pg(pg)
         errors = [i for i in issues if i.level == "ERROR"]
         if errors:
             self.report({"WARNING"}, f"Static validation failed: {errors[0]}")
@@ -1194,7 +1206,7 @@ class FLUIDSIM_OT_snippet_test(bpy.types.Operator):
         try:
             from .sim.custom import CompiledSnippet
 
-            compiled = CompiledSnippet(bridge.snippet_from_pg(pg))
+            compiled = CompiledSnippet(_snippets().snippet_from_pg(pg))
         except Exception as exc:  # warp unavailable etc.
             self.report({"WARNING"}, f"Warp compile unavailable: {exc}")
             return {"CANCELLED"}
@@ -1271,7 +1283,7 @@ class FLUIDSIM_OT_snippet_insert_shortcut(bpy.types.Operator):
             self.report({"ERROR"}, f"Unknown shortcut '{self.shortcut_id}'")
             return {"CANCELLED"}
         _append_snippet_code(pg, shortcut.code)
-        _bridge().validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 
@@ -1302,7 +1314,7 @@ class FLUIDSIM_OT_snippet_shortcut_field(bpy.types.Operator):
                         f"Particles to index it correctly")
         _append_snippet_code(pg, f"# field '{name}': read/write via "
                                  f"{name}[{index}]")
-        _bridge().validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 
@@ -1337,7 +1349,7 @@ class FLUIDSIM_OT_snippet_shortcut_constant(bpy.types.Operator):
         _append_snippet_code(
             pg, f"# constant '{name}' = {fs.shortcut_constant_value:g} "
                 f"(edit value in the Arguments list)")
-        _bridge().validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 
@@ -1371,7 +1383,7 @@ class FLUIDSIM_OT_snippet_edit_line(bpy.types.Operator):
             lines.append("")
         lines[self.line_index] = self.line_text
         _set_snippet_code(pg, "\n".join(lines))
-        _bridge().validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 
@@ -1395,7 +1407,7 @@ class FLUIDSIM_OT_snippet_line_add(bpy.types.Operator):
         if pg is None:
             return {"CANCELLED"}
         _append_snippet_code(pg, self.line_text)
-        _bridge().validate_snippet_pg(pg)
+        _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 
@@ -1416,7 +1428,7 @@ class FLUIDSIM_OT_snippet_line_delete(bpy.types.Operator):
         if self.line_index < len(lines):
             lines.pop(self.line_index)
             _set_snippet_code(pg, "\n".join(lines))
-            _bridge().validate_snippet_pg(pg)
+            _snippets().validate_snippet_pg(pg)
         return {"FINISHED"}
 
 

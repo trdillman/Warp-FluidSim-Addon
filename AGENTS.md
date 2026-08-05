@@ -11,6 +11,16 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - Do not describe their overlap with active code or documentation as a future merge requirement. It is only historical collision information.
 - Reuse requires an explicit user request to reactivate the experiment plus a new implementation and validation plan; ordinary cleanup or integration work is not authorization.
 
+## Architecture ownership
+
+- `blender/simulation_admission.py` owns coherent Admission Snapshot capture, preflight, Replacement Cutover, solver configuration, and admission cleanup.
+- `blender/scene_bridge.py` owns only the Solver Session, direct scene synchronization/stepping, statistics, errors, teardown, and established lifecycle compatibility functions.
+- `blender/output_publication.py` owns persistent output preparation/publication; `viewport_overlay.py` draws diagnostics only.
+- `blender/playback.py` owns non-authoritative Preview/Cache Playback policy and playback handlers. Preserve its exact catch-up, desynchronization, status, error, and backend presentation.
+- `blender/cache_bake.py` owns sequential Production Cache Bake. It bypasses Preview Playback handlers and Output Publication and writes full authoritative cache data. Do not claim bitwise CUDA repeatability: atomic accumulation, compaction/emission ordering, and derived marching-cubes output are numerically nondeterministic.
+- `blender/pending_settings.py` owns the exhaustive setting lifecycle registry, Applied Settings Snapshots, pending presentation/transitions, and depsgraph/undo/load handlers. UI/property adapters must not reconstruct this policy.
+- Dependency direction is adapters → deep Blender modules → Solver Settings / Output Publication / Solver Session → `sim` and `io`. Review artifacts do not certify core behavior without source/runtime evidence.
+
 ## Verified workflows
 
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
@@ -27,6 +37,7 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - For the profile-safe Phase 3 visible review, run `python tools/launch_profile_safe_addon_review.py --blend demos/dam_break.blend --report artifacts/profile_safe_final_source_review.json --review-script tests/blender_phase3_profile_safe_review.py` and expect `FLUIDSIM-PROFILE-SAFE-REVIEW-PASS`; the launcher uses a temporary add-on copy and verifies owned-process cleanup plus unchanged Blender profile hashes.
 - For source-compiler performance changes, run `blender --background --factory-startup --python tools/profile_source_pipeline.py -- --frames 30 --json-out artifacts/source_pipeline_profile.json`; expect `SOURCE-PIPELINE-PROFILE-PASS`. Use Blender's bundled Python for this workflow because system Python lacks the bundled OpenVDB dependency.
 - For collider/mesh-source gather, evaluated-mesh caching, or watertight-validation changes, run `python -m pytest -q tests/test_scene_bridge_collider_cache.py` and `blender --background --factory-startup --python tests/blender_mesh_source_acceptance.py`. Watertight edge analysis is deferred to SOLID mesh sinks only and must never run on the collider/source gather path; `test_watertight_check_is_deferred_to_solid_sink_consumers` enforces that.
+- For Pending Settings ownership or interaction changes, run `python -m pytest -q tests/test_pending_settings_registry.py tests/test_phase4_pending_interaction.py tests/test_operator_panel_behavior.py`, `blender --background --factory-startup --python tests/blender_phase4_live_interaction_acceptance.py`, and the handler persistence gate.
 - For app-handler registration changes, run `blender --background --factory-startup --python tests/blender_handler_persistence_gate.py`. That gate checks every add-on handler list, asserts each callback carries `@persistent`, and asserts none are dropped across a save/reopen cycle; add new handler lists to its `HANDLER_LISTS` when registering into them.
 - For GPU solver timing changes, run `"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe" tools/profile_gpu_solver.py --device cuda:0 --frames 8 --warmup 2 --json-out artifacts/gpu_solver_profile.json`.
 - For Simulation Admission ownership or cutover changes, run `python -m pytest -q tests/test_scene_bridge_capacity_initialization.py tests/test_capacity_planner.py tests/test_memory_safety_recovery.py tests/test_sourcing_pipeline.py tests/test_source_emission_lifecycle.py tests/test_particle_capacity_growth.py tests/test_solver_settings_projection.py tests/test_simulation_admission.py` and `blender --background --factory-startup --python tests/blender_simulation_admission_acceptance.py`; expect `SIMULATION-ADMISSION-ACCEPTANCE-PASS`.

@@ -284,8 +284,9 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     scene.fluidsim.cache_path = base
 
     voxel_size = [0.1]
+    from fluidSim_warp_blender51.blender import solver_settings
     monkeypatch.setattr(
-        scene_bridge, "build_settings",
+        solver_settings, "build_settings",
         lambda _scene: SimpleNamespace(device="cuda:0", voxel_size=voxel_size[0]))
 
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")

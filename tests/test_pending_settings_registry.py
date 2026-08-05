@@ -101,6 +101,11 @@ def test_scene_bridge_no_longer_owns_pending_policy(monkeypatch):
     assert "def pending_presentation" not in source
     assert "def request_scene_update" not in source
     assert "def apply_pending_" not in source
+    assert "def build_snippets" not in source
+    assert "def validate_snippet_pg" not in source
+    assert "def gather_sources" not in source
+    assert "def gather_colliders" not in source
+    assert "def register_handlers" not in source
     assert pending.SceneUpdate.REBUILD.value == "REBUILD"
     assert "pending_settings.request_scene_update" in inspect.getsource(properties)
 
