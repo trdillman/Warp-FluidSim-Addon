@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -15,6 +16,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
+# A commit that only records gate evidence (this report, its promoted
+# metrics, and the demo artifacts the gate regenerates) does not invalidate
+# the gate's proof. Anything else changing after the proof commit does.
+ALLOWED_EVIDENCE_PATTERNS = (
+    "POLICY_DRIFT_REPORT.md",
+    "demos/POLICY_DRIFT_REPORT.md",
+    "demos/ANALYSIS.md",
+    "fluidSim_warp_blender51/docs/technical_report.md",
+    "demos/analysis_report.json",
+    "demos/*.blend",
+    "demos/*_preview.png",
+)
 REQUIRED_BINDINGS = (
     "generated_at",
     "git_head",
@@ -91,6 +104,51 @@ def _same_path(left: str, right: Path) -> bool:
         os.path.abspath(str(right)))
 
 
+def _is_evidence_path(rel_path: str) -> bool:
+    return any(fnmatch.fnmatch(rel_path, pattern) for pattern in ALLOWED_EVIDENCE_PATTERNS)
+
+
+def _non_evidence_drift(proof_head: str, current_head: str) -> list[str]:
+    """Commits between the gate's proof HEAD and current HEAD.
+
+    A commit that only touches gate evidence (the reports, promoted docs,
+    and regenerated demo artifacts) does not need a fresh gate run to stay
+    truthful; a report can never assert its own committed hash, since a
+    commit's hash depends on the tree that contains that assertion.
+    Anything else in that range means the proof is stale.
+    """
+    if proof_head == current_head:
+        return []
+    try:
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", proof_head, current_head],
+            cwd=ROOT, capture_output=True).returncode == 0
+        if not ancestor:
+            return ["gate manifest HEAD is not an ancestor of current HEAD"]
+        commits = subprocess.check_output(
+            ["git", "rev-list", f"{proof_head}..{current_head}"],
+            cwd=ROOT, text=True).split()
+        errors = []
+        for sha in commits:
+            parents = subprocess.check_output(
+                ["git", "rev-parse", f"{sha}^@"], cwd=ROOT, text=True).split()
+            if len(parents) > 1:
+                errors.append(
+                    f"commit {sha} after the gate proof is a merge; "
+                    "re-run the gate")
+                continue
+            changed = subprocess.check_output(
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+                cwd=ROOT, text=True).splitlines()
+            errors.extend(
+                f"commit {sha} changed non-evidence file {path} after the "
+                "gate proof; re-run the gate"
+                for path in changed if path and not _is_evidence_path(path))
+        return errors
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return [f"cannot verify commit history since the gate proof: {exc}"]
+
+
 def _card_state(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     match = re.search(r"^## State\s*$.*?^([^\r\n]+)\s*$", text,
@@ -143,8 +201,11 @@ def validate_report_authority(manifest_path: Path = DEFAULT_MANIFEST) -> list[st
     except (OSError, subprocess.CalledProcessError) as exc:
         errors.append(f"cannot resolve current HEAD: {exc}")
         current_head = ""
-    if manifest.get("git_head") != current_head:
-        errors.append("gate manifest HEAD does not match current HEAD")
+    proof_head = manifest.get("git_head")
+    if not isinstance(proof_head, str) or not proof_head:
+        errors.append("gate manifest is missing git_head")
+    elif current_head:
+        errors.extend(_non_evidence_drift(proof_head, current_head))
     artifact_rel = manifest.get("demo_artifact")
     artifact = ROOT / artifact_rel if isinstance(artifact_rel, str) else None
     if artifact is None or not artifact.is_file():
@@ -176,7 +237,7 @@ def validate_report_authority(manifest_path: Path = DEFAULT_MANIFEST) -> list[st
         expected_unit = report_path.parent
         if not _same_path(footer.get("audit_unit", ""), expected_unit):
             errors.append(f"{report_path}: audit_unit is misbound")
-        if footer.get("git_head") != current_head:
+        if footer.get("git_head") != manifest.get("git_head"):
             errors.append(f"{report_path}: report HEAD is stale")
         if footer.get("gate_run_at") != manifest.get("gate_run_at"):
             errors.append(f"{report_path}: gate timestamp is stale")
