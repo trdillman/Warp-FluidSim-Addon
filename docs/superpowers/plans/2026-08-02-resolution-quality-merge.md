@@ -4,23 +4,24 @@
 
 **Revalidated:** 2026-08-05 against live repository state.
 
-**Goal:** Integrate `feature/resolution-quality-standardization` into current `master` without losing the committed source-capacity corrections on master, disturbing the user's five generated demo/evidence assets, duplicating sibling slices, or importing any archived experiment.
+**Goal:** Integrate `feature/resolution-quality-standardization` into current `master` without losing the committed source-capacity corrections on master, disturbing the user's four regenerated demo/preview assets, duplicating sibling slices, or importing any archived experiment.
 
-**Architecture:** Treat `d781fbb` as the observed source/test baseline. Commit this updated plan alone, capture that plan-only descendant as `BASE_HEAD`, and work only in a disposable integration worktree created from `BASE_HEAD`. Start one no-commit merge, resolve all conflict groups and run focused checks while that merge is pending, then create exactly one merge commit. Run HEAD-sensitive full regression, production, GUI, playback, and policy-report gates only after that merge commit exists.
+**Architecture:** Treat `5d5e468` as the observed repository baseline. Let the active evidence-only rebind finish and land separately, commit this updated plan alone, then capture that bounded descendant as `BASE_HEAD` and work only in a disposable integration worktree created from it. Start one no-commit merge, resolve all conflict groups and run focused checks while that merge is pending, then create exactly one merge commit. Run HEAD-sensitive full regression, production, GUI, playback, and policy-report gates only after that merge commit exists.
 
 **Tech Stack:** Git worktrees, PowerShell, Python 3, Blender 5.1 bundled Python, Warp/CUDA, pytest.
 
 ## Global Constraints
 
-- Preserve the original master worktree. Do not reset, clean, stash, checkout over, overwrite, or broadly stage its five modified generated files.
+- Preserve the original master worktree. Do not reset, clean, stash, checkout over, overwrite, or broadly stage its four modified generated files.
 - The live field contract remains fixed 8x8x8 sparse leaf tiles addressed through a flat leaf table.
 - Production simulation remains GPU-resident; CPU preview cannot substitute for CUDA acceptance.
 - Preserve transactional behavior: failed admission, growth, solver replacement, source application, topology commit, or frame publication leaves prior authoritative state unchanged.
 - Merge the umbrella branch once. Do not merge `agent/res-quality-t01-source-truth`, `agent/res-quality-t02-session-capacity`, or `agent/res-quality-t03-whitewater-truth` afterward.
 - The four AGENTS.md experiments remain `EXPERIMENT — NOT A MERGE CANDIDATE`: `worktree-stflip-implementation`, `claude/particle-surface-rendering-apis-f62356`, `codex/native-gpu-interop`, and `codex/native-gpu-interop-main-20260715`.
 - Do not resolve semantic conflicts with whole-file `ours` or `theirs`. Preserve both sides' proven corrections at the shared seam.
-- Do not make task-level commits while the merge is pending. All 28 conflict resolutions belong to the single merge commit.
-- Before execution, commit this plan alone without staging the five user-owned generated files. No source, test, runtime, or other documentation change may enter that plan-only commit.
+- Do not make task-level commits while the merge is pending. All 23 conflict resolutions belong to the single merge commit.
+- The policy-report-authority correction landed separately as `5d5e468`. Before execution, its focused test must pass and the five current policy-report/document refreshes must land in a separate evidence-only commit. Do not absorb or rewrite that work here.
+- Commit this plan alone afterward without staging the four user-owned generated files. No source, test, runtime, or other documentation change may enter that plan-only commit.
 - Run Blender/OpenVDB workflows with Blender's bundled Python or the documented Blender command, not system Python.
 - A special alias, partial lane, stale report, missing marker, or mismatched HEAD/hash is not production proof.
 
@@ -32,12 +33,12 @@ State verified on 2026-08-05:
 
 | Worktree / branch | Relation to current master | State | Treatment |
 |---|---:|---|---|
-| `master / d781fbb` | observed target baseline | five modified generated demo/evidence files; no source/test dirt; no untracked files | Preserve generated dirt; require only a plan-only descendant before execution |
-| `feature/resolution-quality-standardization / c82988f` | 21 ahead, 11 behind | clean; 67-file umbrella change | Sole merge source |
-| `agent/res-quality-t01-source-truth / 2a55a62` | 3 ahead, 11 behind | clean | Reference only; patch-represented in umbrella |
-| `agent/res-quality-t02-session-capacity / e36d84d` | 6 ahead, 11 behind | clean | Reference only; range-diff adapted in umbrella |
-| `agent/res-quality-t03-whitewater-truth / 365db1f` | 3 ahead, 11 behind | clean | Reference only; patch-represented in umbrella |
-| `phase4/live-interaction-merge-20260728 / 701490ed` | 19 behind, no unique commits | clean | Do not merge |
+| `master / 5d5e468` | observed target baseline | four modified generated demo/preview files, this plan edit, and five policy-report/document refreshes; no untracked files | Block until evidence edits land separately; then commit plan alone |
+| `feature/resolution-quality-standardization / c82988f` | 21 ahead, 14 behind | clean; 67-file umbrella change | Sole merge source |
+| `agent/res-quality-t01-source-truth / 2a55a62` | 3 ahead, 13 behind | clean | Reference only; patch-represented in umbrella |
+| `agent/res-quality-t02-session-capacity / e36d84d` | 6 ahead, 13 behind | clean | Reference only; range-diff adapted in umbrella |
+| `agent/res-quality-t03-whitewater-truth / 365db1f` | 3 ahead, 13 behind | clean | Reference only; patch-represented in umbrella |
+| `phase4/live-interaction-merge-20260728 / 701490ed` | 21 behind, no unique commits | clean | Do not merge |
 | archived experiments | irrelevant to this merge | clean or dirty experimental records | Explicitly excluded |
 
 The prior dirty source/capacity work is now committed on master:
@@ -46,12 +47,15 @@ The prior dirty source/capacity work is now committed on master:
 - `7977e0d test(gate): require capacity-planner acceptance in the headless gate`
 - `92d60af fix(sim): gate direct particle injection on the device counter`
 - `1c6381a chore(git): ignore generated caches and fix dangling doc reference`
+- `c2bae4c docs(evidence): rebind policy-drift reports to the current full gate`
+- `c2df030 docs(plan): revalidate the resolution-quality merge plan against live state`
+- `5d5e468 fix(tools): let policy-drift validation survive its own commit`
 
 `git cherry` shows one T02 commit (`7ffdb5c`) is not patch-identical to the umbrella. `git range-diff` maps it to adapted commit `08a78a8`, where source binding uses the umbrella's `set_source_batch` seam. Treat that as semantic adaptation, not proof of byte-equivalent commits.
 
 ## 1. Current conflict inventory
 
-A read-only three-way `git merge-tree` from merge-base `f1e9b1e` predicts 28 conflicts:
+A read-only `git merge-tree --write-tree master feature/resolution-quality-standardization` from merge-base `f1e9b1e` predicts 23 conflicts:
 
 **Documents**
 
@@ -63,7 +67,6 @@ A read-only three-way `git merge-tree` from merge-base `f1e9b1e` predicts 28 con
 
 - `fluidSim_warp_blender51/blender/scene_bridge.py`
 - `fluidSim_warp_blender51/blender/sources.py`
-- `fluidSim_warp_blender51/blender/viewport.py`
 - `fluidSim_warp_blender51/operators.py`
 - `fluidSim_warp_blender51/panels.py`
 - `fluidSim_warp_blender51/properties.py`
@@ -77,18 +80,14 @@ A read-only three-way `git merge-tree` from merge-base `f1e9b1e` predicts 28 con
 **Tests and acceptance**
 
 - `tests/blender_capacity_planner_acceptance.py`
-- `tests/blender_phase4_live_interaction_acceptance.py`
 - `tests/test_capacity_planner.py`
-- `tests/test_frame_change_catchup.py`
 - `tests/test_operator_panel_behavior.py`
 - `tests/test_particle_capacity_growth.py`
-- `tests/test_performance_hotpath_contracts.py`
 - `tests/test_phase4_pending_interaction.py`
 - `tests/test_scene_bridge_capacity_initialization.py`
 - `tests/test_source_emission_lifecycle.py`
 - `tests/test_source_region_compilation.py`
 - `tests/test_sourcing_pipeline.py`
-- `tests/test_surface_resolution_feature_contracts.py`
 
 If the actual unmerged-path list differs, stop and classify the difference before resolving anything.
 
@@ -102,33 +101,43 @@ If the actual unmerged-path list differs, stop and classify the difference befor
 - Record outside the repository: `C:\tmp\fluidsim-master-generated-20260805.sha256`
 - Record outside the repository: `C:\tmp\fluidsim-resolution-quality-base-20260805.txt`
 
-- [ ] Commit this updated plan by itself if it is not already committed. Do not stage any generated demo/evidence file.
-- [ ] Verify `d781fbb` is an ancestor of current `master`.
-- [ ] Inspect `git diff --name-only d781fbb..master`; require that every post-baseline path is this plan file only.
-- [ ] Record current `master` as `BASE_HEAD` in `C:\tmp\fluidsim-resolution-quality-base-20260805.txt`.
-- [ ] Run `git status --short --untracked-files=all`; require exactly these five paths and no others:
+- [ ] Confirm `5d5e468` changes only `tools/validate_policy_drift_reports.py` and `tests/test_policy_drift_report_authority.py`. If any policy-report/document path below is still dirty, stop until its owner finishes the evidence lane:
 
 ~~~text
+POLICY_DRIFT_REPORT.md
+demos/ANALYSIS.md
+demos/POLICY_DRIFT_REPORT.md
 demos/analysis_report.json
+fluidSim_warp_blender51/docs/technical_report.md
+~~~
+
+- [ ] Require `python -m pytest -q tests/test_policy_drift_report_authority.py` to pass against `5d5e468` or its bounded descendant.
+- [ ] Require a following evidence-only commit containing only the five report/document files above; it must not include code, tests, binaries, or this plan.
+- [ ] Commit this updated plan by itself afterward. Do not stage any generated demo/evidence file.
+- [ ] Verify `5d5e468` is an ancestor of current `master`.
+- [ ] Inspect `git diff --name-only 5d5e468..master`; permit only this plan and the five policy-report/document paths listed above. Stop on any other path.
+- [ ] Record current `master` as `BASE_HEAD` in `C:\tmp\fluidsim-resolution-quality-base-20260805.txt`.
+- [ ] Run `git status --short --untracked-files=all`; after the plan-only commit, require exactly these four paths and no others:
+
+~~~text
 demos/crown_splash.blend
 demos/crown_splash_preview.png
 demos/dam_break.blend
 demos/dam_break_preview.png
 ~~~
 
-- [ ] Copy those five files, preserving names, into `C:\tmp\fluidsim-master-generated-20260805\`.
-- [ ] Record SHA-256 hashes for the five originals and copies; require exact equality.
+- [ ] Copy those four files, preserving names, into `C:\tmp\fluidsim-master-generated-20260805\`.
+- [ ] Record SHA-256 hashes for the four originals and copies; require exact equality.
 - [ ] Save the exact status output.
 - [ ] Re-run status and hashes; stop if either changed.
 
 **Current reference hashes; refresh rather than trust them if execution starts later:**
 
 ~~~text
-40749F42C9D8AFD946AC73E63578C2C5645EA48ABA7B19FFFEE03AF248C11431  demos/analysis_report.json
-D554CD63E8392561E9321D615A0FD2A04002D76D0B818ED0C40F139326C62C58  demos/crown_splash.blend
-BC6682A8E8C436DF9026D78E02EB6AB47A496F6383F8D80130CE938FE3BCCD09  demos/crown_splash_preview.png
-25E51C5B27D15D1FBB79C537BEADDA7DDB859F6CAFAAC3BC8EA3D9BFD7856A65  demos/dam_break.blend
-36D9D991E92C2293102E7A851F64EF9415A624588A80771BF41A3F2BE3BC1FFB  demos/dam_break_preview.png
+5B03D31667CC7FBC4F1B38E9E622AF49B3A16B116C69AB19A24BD60594777C23  demos/crown_splash.blend
+EEDA28780C90C724B5CC847C798E55545428D0F04B3126544742C3F76CC3211B  demos/crown_splash_preview.png
+48C6A874F9DEB52CC503246A1E9F400C98E9BA409FC014FBA903D3877DB561EB  demos/dam_break.blend
+BCE47069FF458D2498C91030C34B847F5E12C4C1BDCAE2441A7A89D49F8BCF5A  demos/dam_break_preview.png
 ~~~
 
 ### Task 2: Create the isolated integration worktree
@@ -146,24 +155,24 @@ git worktree add -b codex/merge-resolution-quality-20260805 C:\tmp\fluidsim-reso
 ~~~
 
 - [ ] In the new worktree, verify `HEAD=BASE_HEAD`, branch identity, and a clean status.
-- [ ] Do not copy the five generated demo/evidence files into this worktree.
+- [ ] Do not copy the four generated demo/preview files into this worktree.
 
 ### Task 3: Start the one umbrella merge
 
 **Inputs:**
-- Source/test baseline: `d781fbb`
-- Execution base: recorded `BASE_HEAD`, differing from `d781fbb` only by the plan-only commit
+- Repository baseline: `5d5e468`
+- Execution base: recorded `BASE_HEAD`, differing from `5d5e468` only by the evidence-only rebind commit and the plan-only commit
 - Merge source: `feature/resolution-quality-standardization=c82988f`
 
 - [ ] Reconfirm `BASE_HEAD`, umbrella identity `c82988f`, and merge-base `f1e9b1e`.
-- [ ] Load `$baseHead` from the receipt, run `git rev-list --left-right --count "$baseHead...feature/resolution-quality-standardization"`, require 21 umbrella-side commits, and inspect every base-side commit after `d781fbb`.
+- [ ] Load `$baseHead` from the receipt, run `git rev-list --left-right --count "$baseHead...feature/resolution-quality-standardization"`, require 21 umbrella-side commits, and inspect every base-side commit after `5d5e468`; permit only the two bounded commits from Task 1.
 - [ ] Run:
 
 ~~~powershell
 git merge --no-ff --no-commit feature/resolution-quality-standardization
 ~~~
 
-- [ ] Capture `git diff --name-only --diff-filter=U`; expect the 28 paths in Section 1.
+- [ ] Capture `git diff --name-only --diff-filter=U`; expect the 23 paths in Section 1.
 - [ ] Do not commit until Tasks 4–7 have resolved every conflict and focused checks pass.
 - [ ] Do not merge any sibling slice or archived experiment.
 
@@ -176,7 +185,7 @@ git merge --no-ff --no-commit feature/resolution-quality-standardization
 - `fluidSim_warp_blender51/sim/particle_capacity.py`: master `43-97`; umbrella `47-103`
 - `fluidSim_warp_blender51/sim/solver.py`: master source/step `1058-1729`; umbrella exact injection/step `1098-1803`
 - `fluidSim_warp_blender51/sim/source_regions.py`: master compiler `580-622`; umbrella compiler `615-657`
-- `fluidSim_warp_blender51/sim/sourcing.py`: master transaction `2355-2454`; umbrella transaction/exact injection `2430-2536, 3063-3125`
+- `fluidSim_warp_blender51/sim/sourcing.py`: master transaction/direct injection `2355-2454, 2901-2967`; umbrella transaction/exact injection `2430-2536, 3063-3125`
 
 - [ ] Keep umbrella `quality_contract.py` and `capacity_service.py` as the authored-to-resolved quality and public assessment authority.
 - [ ] Keep master `PreparedParticleSeed`, `prepare_auto_seeds`, and atomic `commit_prepared_seeds`; automatic seeds must be included in initial admission before solver replacement.
@@ -228,19 +237,27 @@ Expected markers: `PHASE3-SOURCE-UI-ACCEPTANCE-PASS` and `PHASE4-LIVE-INTERACTIO
 - Every conflicted test in Section 1
 - `tools/run_production_gate.py:182-365`
 - `tests/test_production_gate_truthfulness.py`
+- `tools/validate_policy_drift_reports.py`
+- `tests/test_policy_drift_report_authority.py`
+- `POLICY_DRIFT_REPORT.md`
+- `demos/ANALYSIS.md`
+- `demos/POLICY_DRIFT_REPORT.md`
+- `demos/analysis_report.json`
+- `fluidSim_warp_blender51/docs/technical_report.md`
 - The three conflicted documents in Section 1
 
 - [ ] Preserve master regression corrections and umbrella feature coverage in every conflicted test; do not choose a whole test file from one side.
 - [ ] Verify the canonical headless gate invokes capacity-planner acceptance exactly once with `CAPACITY-PLANNER-ACCEPTANCE-PASS`.
 - [ ] Verify Phase 4 live interaction remains in the canonical gate with `PHASE4-LIVE-INTERACTION-PASS`.
 - [ ] Keep traceback, missing-marker, stale-manifest, and zero-exit false-green rejection.
+- [ ] Preserve the separately committed policy-authority rule: an evidence-only commit after the proof HEAD is allowed, while any non-evidence path after the proof HEAD is drift.
 - [ ] Resolve the two add/add plan documents against final code behavior. Remove stale pre-merge claims; keep historical orchestration records labelled historical rather than current proof.
 - [ ] Update the user guide only with behavior preserved by the resolved implementation and focused tests.
 
 - [ ] Run:
 
 ~~~text
-python -m pytest -q tests/test_production_gate_truthfulness.py tests/test_operator_panel_behavior.py tests/test_scene_bridge_cache_playback.py tests/test_source_region_compilation.py tests/test_performance_hotpath_contracts.py
+python -m pytest -q tests/test_production_gate_truthfulness.py tests/test_policy_drift_report_authority.py tests/test_operator_panel_behavior.py tests/test_scene_bridge_cache_playback.py tests/test_source_region_compilation.py tests/test_performance_hotpath_contracts.py
 ~~~
 
 ### Task 7: Close the pending merge and create one merge commit
@@ -249,7 +266,7 @@ python -m pytest -q tests/test_production_gate_truthfulness.py tests/test_operat
 - [ ] Run `git diff --check`.
 - [ ] Inspect `git status --short --untracked-files=all`; classify every path.
 - [ ] Re-run the focused commands from Tasks 4–6 after the final conflict edit.
-- [ ] Stage only the resolved umbrella merge paths and required focused-test artifacts; exclude unrelated generated output.
+- [ ] Review the merge index, then stage each resolved conflict path. Leave `artifacts/` reports and all other generated output unstaged.
 - [ ] Create exactly one merge commit:
 
 ~~~text
@@ -289,7 +306,7 @@ python tools/validate_gui_playback_report.py artifacts/gui_playback_probe.json
 ### Task 9: Handoff and original-worktree proof
 
 - [ ] Capture `BASE_HEAD`, integration HEAD, both merge parents, merge-base, branch status, focused test outputs, full pytest output, production-gate receipt/manifest, GUI report, and hashes.
-- [ ] Recheck the original master worktree. Require its five paths and SHA-256 hashes to match Task 1 exactly.
+- [ ] Recheck the original master worktree. Require its four paths and SHA-256 hashes to match Task 1 exactly.
 - [ ] Do not copy, restore, stage, or otherwise modify those original generated assets.
 - [ ] Do not promote the integration branch if any marker/report/hash is stale or any required lane is partial.
 
@@ -309,7 +326,7 @@ python tools/validate_gui_playback_report.py artifacts/gui_playback_probe.json
 
 ## 4. Stop and rollback conditions
 
-- Stop before editing if umbrella HEAD, source/test tree since `d781fbb`, worktree status, conflict list, or original generated-file hashes differ from this plan.
+- Stop before editing if the evidence edits remain uncommitted, the policy-authority focused test fails, the evidence or plan commits mix scopes, umbrella HEAD changes, repository history since `5d5e468` contains any other path, worktree status drifts, the conflict list changes, or original generated-file hashes differ from this plan.
 - Stop if resolving a conflict requires choosing between incompatible planner, transaction, or publication authorities without a focused regression proving the choice.
 - Stop if candidate failure releases/mutates the live solver, advances source lifecycle, commits sparse topology, or publishes partial output.
 - Stop if any sibling slice or archived experiment appears in the merge ancestry beyond its already adapted umbrella representation.
@@ -320,7 +337,7 @@ python tools/validate_gui_playback_report.py artifacts/gui_playback_probe.json
 
 - **Live identity:** target and umbrella SHAs, divergence, dirty paths, hashes, and predicted conflicts are explicit.
 - **Executable ordering:** one pending merge, one merge commit, then HEAD-sensitive gates.
-- **Dirty-work preservation:** only the five current generated assets are dirty; they are copied and hash-checked outside the repository and never imported.
-- **Coverage:** prepared seeds, source compiler, frame catch-up/UI contract, Phase 4 acceptance, device-counter injection, surface/whitewater, gate truth, and documentation each have a task and check.
+- **Dirty-work preservation:** after the plan-only commit, only the four current generated assets remain dirty; they are copied and hash-checked outside the repository and never imported.
+- **Coverage:** prepared seeds, source compiler, frame catch-up/UI contract, Phase 4 acceptance, device-counter injection, surface/whitewater, gate truth, policy-report authority, and documentation each have a task and check.
 - **Experiment exclusion:** all four archived experiments remain outside the merge regardless of cleanliness or unique commits.
 - **No placeholders:** every stop condition, command, marker, and handoff artifact is named.
