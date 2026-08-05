@@ -11,7 +11,7 @@ against pure solver cost:
 
 - ``sync``: ``sync_scene_to_solver`` (sources + collider gather)
 - ``solve``: ``FluidSolver.step_frame``
-- ``view``: ``viewport.update_outputs`` (readback + datablock update)
+- ``view``: ``output_publication.update_outputs`` (readback + datablock update)
 - ``cache``: ``io.cache.write_frame`` (only when ``--cache``)
 
 Run:
@@ -36,7 +36,7 @@ USER_PATH_CONTRACT = {
     "protected_path": (
         "repo add-on load -> fluidsim.setup_scene -> fluidsim.initialize -> "
         "sync_scene_to_solver -> FluidSolver.step_frame -> "
-        "viewport.update_outputs -> optional cache.write_frame"
+        "output_publication.update_outputs -> optional cache.write_frame"
     ),
     "parameter_surface": [
         "--frames",
@@ -62,6 +62,8 @@ USER_PATH_CONTRACT = {
         "surface_verts_last",
         "surface_dense_dim_last",
         "reset_probe",
+        "phase2_costs",
+        "output_entrypoint_counts",
     ],
     "regression_focus": [
         "CUDA session remains active",
@@ -168,9 +170,9 @@ def _viewport_counts(bpy, particles_mode):
     surface_verts = len(surf.data.vertices) if surf and surf.type == "MESH" else 0
     # Output clouds carry spare capacity, so the attribute length is not the
     # count -- profiling numbers would read as inflated by the padding.
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    particle_points = viewport.live_point_count(parts)
+    particle_points = output_publication.live_point_count(parts)
     primary_count = particle_points if particles_mode else surface_verts
     return {
         "surface_verts": int(surface_verts),
@@ -236,6 +238,39 @@ def _validate_contract(args, summary, sess, device, output_counts):
         _check(checks, "cache writes timed", means["cache_ms"] > 0.0,
                f"{means['cache_ms']:.3f} ms")
 
+    measured = len(frames)
+    entrypoints = summary["output_entrypoint_counts"]
+    _check(checks, "no output-path Warp synchronization",
+           entrypoints["warp_synchronizations"] == 0,
+           entrypoints["warp_synchronizations"])
+    _check(checks, "surface readback entrypoints unchanged",
+           entrypoints["warp_array_numpy"] == measured * 6,
+           f"{entrypoints['warp_array_numpy']} == {measured * 6}")
+
+    costs = summary["phase2_costs"]
+    live = costs["live_adaptation"]
+    publication = costs["output_publication"]
+    _check(checks, "one host-frame acquisition per live publication",
+           live["host_frame_acquisitions"] == measured,
+           f"{live['host_frame_acquisitions']} == {measured}")
+    _check(checks, "one live adaptation per measured frame",
+           live["invocations"] == measured,
+           f"{live['invocations']} == {measured}")
+    _check(checks, "one output publication per measured frame",
+           publication["invocations"] == measured,
+           f"{publication['invocations']} == {measured}")
+    _check(checks, "one surface extraction per surface frame",
+           live["surface_extractions"] == measured,
+           f"{live['surface_extractions']} == {measured}")
+    for event in (
+            "device_readbacks", "synchronizations",
+            "blender_id_creations", "blender_id_removals",
+            "depsgraph_updates", "relation_changes", "structural_replacements",
+            "datablock_replacements"):
+        added = live[event] + publication[event]
+        _check(checks, f"no added output-path {event.replace('_', ' ')}",
+               added == 0, added)
+
     return checks
 
 
@@ -299,8 +334,9 @@ def main():
 
     assert bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status
 
-    from fluidSim_warp_blender51.blender import scene_bridge, viewport
+    from fluidSim_warp_blender51.blender import scene_bridge, output_publication
     from fluidSim_warp_blender51.io import cache as cache_io
+    import warp as wp
 
     sess = scene_bridge.session()
     assert sess.active
@@ -318,8 +354,43 @@ def main():
         fs.cache_enabled = True
         fs.cache_path = "//_bench_user_cache/"
 
+    # Measure only the repeated frame path. Initialization/preparation has
+    # already completed, matching the Phase 1 baseline profile boundary.
+    output_publication.output_cost_counts(reset=True)
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+    host_output_operation_counts(reset=True)
+
     rows = []
     output_counts = []
+    output_entrypoint_counts = {
+        "warp_array_numpy": 0,
+        "warp_synchronizations": 0,
+    }
+    in_output_path = False
+    original_numpy = wp.array.numpy
+    original_synchronize = wp.synchronize
+    original_synchronize_device = wp.synchronize_device
+
+    def counted_numpy(array, *args, **kwargs):
+        if in_output_path:
+            output_entrypoint_counts["warp_array_numpy"] += 1
+        return original_numpy(array, *args, **kwargs)
+
+    def counted_synchronize(*args, **kwargs):
+        if in_output_path:
+            output_entrypoint_counts["warp_synchronizations"] += 1
+        return original_synchronize(*args, **kwargs)
+
+    def counted_synchronize_device(*args, **kwargs):
+        if in_output_path:
+            output_entrypoint_counts["warp_synchronizations"] += 1
+        return original_synchronize_device(*args, **kwargs)
+
+    wp.array.numpy = counted_numpy
+    wp.synchronize = counted_synchronize
+    wp.synchronize_device = counted_synchronize_device
     solve_profiler = None
     if os.environ.get("FLUIDSIM_SOLVE_CPROFILE"):
         import cProfile
@@ -338,7 +409,11 @@ def main():
             if solve_profiler is not None:
                 solve_profiler.disable()
             t2 = time.perf_counter()
-            viewport.update_outputs(scene, sess)
+            in_output_path = True
+            try:
+                output_publication.update_outputs(scene, sess)
+            finally:
+                in_output_path = False
             t3 = time.perf_counter()
             counts = _viewport_counts(bpy, args.particles)
             output_counts.append(counts)
@@ -375,6 +450,9 @@ def main():
             if args.stop_after_total_ms > 0.0 and row["total_ms"] >= args.stop_after_total_ms:
                 break
     finally:
+        wp.array.numpy = original_numpy
+        wp.synchronize = original_synchronize
+        wp.synchronize_device = original_synchronize_device
         if frame_csv_fh is not None:
             frame_csv_fh.close()
     if solve_profiler is not None:
@@ -384,6 +462,8 @@ def main():
 
     def mean(key):
         return statistics.fmean(r[key] for r in warm)
+
+    phase2_costs = output_publication.output_cost_counts()
 
     # Untimed wrapper-path probe: the segmented timings above isolate sync,
     # solve, and viewport cost; this call verifies the live scene-bridge surface
@@ -433,6 +513,8 @@ def main():
         "reset_probe": reset_probe,
         "viewport_counts": output_counts,
         "scene_stats_probe": scene_stats_probe,
+        "phase2_costs": phase2_costs,
+        "output_entrypoint_counts": output_entrypoint_counts,
         "frames": rows,
     }
     if not args.no_validate:

@@ -155,14 +155,14 @@ def test_step_writes_the_cache_at_the_named_timeline_index(monkeypatch):
     fake_cache.write_frame = (
         lambda scene, sess, frame: written.append(int(frame)))
     fake_cache.write_sequence_metadata = lambda *args, **kwargs: None
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda scene, sess: None
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
 
     stats = SimpleNamespace(
         active_particles=3, active_voxels=4, whitewater_particles=0,

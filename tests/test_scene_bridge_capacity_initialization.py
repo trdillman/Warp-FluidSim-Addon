@@ -13,15 +13,16 @@ def _modules(monkeypatch):
     bpy.app = SimpleNamespace(handlers=SimpleNamespace(frame_change_post=[]))
     mathutils = types.ModuleType("mathutils")
     mathutils.Vector = lambda value: value
-    viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
-    viewport.refresh_existing_output_settings = lambda *_args, **_kwargs: None
-    viewport.update_outputs = lambda *_args, **_kwargs: None
+    output_publication = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
+    output_publication.refresh_existing_output_settings = lambda *_args, **_kwargs: None
+    output_publication.update_outputs = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", output_publication)
     blender_package = importlib.import_module("fluidSim_warp_blender51.blender")
-    monkeypatch.setattr(blender_package, "viewport", viewport, raising=False)
+    monkeypatch.setattr(
+        blender_package, "output_publication", output_publication, raising=False)
     for name in (
         "fluidSim_warp_blender51.blender.scene_bridge",
         "fluidSim_warp_blender51.blender.sources",
@@ -29,7 +30,7 @@ def _modules(monkeypatch):
         sys.modules.pop(name, None)
     sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")
     bridge = importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
-    return bridge, sources, viewport
+    return bridge, sources, output_publication
 
 
 class _Solver:

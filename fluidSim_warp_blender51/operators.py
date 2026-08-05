@@ -783,12 +783,12 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
             self.report({"ERROR"}, "No active object")
             return {"CANCELLED"}
         from .blender import sources as _sources
-        from .blender import viewport
+        from .blender import output_publication
 
         scene = context.scene
         try:
             n = _sources.inject_object_particles(scene, obj, sess)
-            viewport.update_outputs(scene, sess)
+            output_publication.update_outputs(scene, sess)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Particle injection failed: {exc}")
             bridge.set_error(scene, f"Particle injection failed: {exc}")

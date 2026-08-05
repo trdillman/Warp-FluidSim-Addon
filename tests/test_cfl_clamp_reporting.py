@@ -45,12 +45,12 @@ def _install_scene_bridge_stubs(monkeypatch):
 def _stub_viewport(monkeypatch):
     import fluidSim_warp_blender51.blender as blender_pkg
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda scene, sess: None
     fake_viewport.update_outputs_from_cache_frame = lambda scene, data: None
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
 
 
 def _scene():

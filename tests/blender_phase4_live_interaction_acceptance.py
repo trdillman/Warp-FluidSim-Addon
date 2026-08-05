@@ -35,7 +35,7 @@ def check(name, condition, detail=""):
 
 def main():
     enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=True)
-    from fluidSim_warp_blender51.blender import scene_bridge, viewport
+    from fluidSim_warp_blender51.blender import scene_bridge, viewport_overlay
     from fluidSim_warp_blender51.io import cache
 
     scene = bpy.context.scene
@@ -171,7 +171,7 @@ def main():
 
     check("fixed header popover registered",
           hasattr(bpy.types, "FLUIDSIM_PT_interaction_popover"))
-    check("viewport pending overlay registered", viewport._OVERLAY_HANDLE is not None)
+    check("viewport pending overlay registered", viewport_overlay._OVERLAY_HANDLE is not None)
 
 
 try:

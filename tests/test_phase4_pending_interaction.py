@@ -14,13 +14,13 @@ def _bridge(monkeypatch):
     bpy.app = SimpleNamespace(handlers=SimpleNamespace(frame_change_post=[]))
     mathutils = types.ModuleType("mathutils")
     mathutils.Vector = lambda value: value
-    viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
-    viewport.refresh_existing_output_settings = lambda *_args, **_kwargs: None
-    viewport.update_outputs = lambda *_args, **_kwargs: None
+    output_publication = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
+    output_publication.refresh_existing_output_settings = lambda *_args, **_kwargs: None
+    output_publication.update_outputs = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", output_publication)
     preferences = types.ModuleType("fluidSim_warp_blender51.preferences")
     preferences.bpy = bpy
     preferences.configured_device = lambda: getattr(

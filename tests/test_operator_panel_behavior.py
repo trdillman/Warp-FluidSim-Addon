@@ -951,7 +951,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     from fluidSim_warp_blender51.blender import simulation_admission
     import fluidSim_warp_blender51.blender.sources as sources
-    import fluidSim_warp_blender51.blender.viewport as viewport
+    import fluidSim_warp_blender51.blender.output_publication as output_publication
     from fluidSim_warp_blender51.sim.solver import SolverSettings
 
     events = []
@@ -1032,7 +1032,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         sources, "commit_prepared_seeds",
         lambda owner, seeds: events.append(("seeds", owner, tuple(seeds))))
     monkeypatch.setattr(
-        viewport, "update_outputs",
+        output_publication, "update_outputs",
         lambda actual_scene, owner: events.append(
             ("outputs", actual_scene, owner)))
     applied = []
@@ -1284,14 +1284,16 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     addon = _reload_module("fluidSim_warp_blender51")
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     render = _reload_module("fluidSim_warp_blender51.blender.render")
-    viewport = _reload_module("fluidSim_warp_blender51.blender.viewport")
+    viewport_overlay = _reload_module("fluidSim_warp_blender51.blender.viewport_overlay")
     operators = _reload_module("fluidSim_warp_blender51.operators")
     panels = _reload_module("fluidSim_warp_blender51.panels")
     preferences = _reload_module("fluidSim_warp_blender51.preferences")
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
     calls = []
-    monkeypatch.setattr(viewport, "unregister_overlay", lambda: calls.append("viewport"))
+    monkeypatch.setattr(
+        viewport_overlay, "unregister_overlay",
+        lambda: calls.append("viewport"))
     monkeypatch.setattr(render, "unregister_handlers", lambda: calls.append("render"))
     monkeypatch.setattr(scene_bridge, "unregister_handlers", lambda: calls.append("scene_handlers"))
     monkeypatch.setattr(scene_bridge, "release_session", lambda: calls.append("release"))
@@ -1321,12 +1323,15 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     output_calls = []
     surface_calls = []
     fake_viewport = SimpleNamespace(
+        prepare_outputs=lambda scene: None,
         update_outputs=lambda scene, sess, **kwargs: output_calls.append(
-            (scene, sess, kwargs))
+            (scene, sess, kwargs)),
     )
-    import fluidSim_warp_blender51.blender.viewport as viewport
+    import fluidSim_warp_blender51.blender.output_publication as output_publication
 
-    monkeypatch.setattr(viewport, "update_outputs", fake_viewport.update_outputs)
+    monkeypatch.setattr(
+        output_publication, "prepare_outputs", fake_viewport.prepare_outputs)
+    monkeypatch.setattr(output_publication, "update_outputs", fake_viewport.update_outputs)
     solver = SimpleNamespace(
         settings=SimpleNamespace(),
         rebuild_surface=lambda: surface_calls.append("rebuilt"),
@@ -1380,11 +1385,14 @@ def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):
 
     output_calls = []
     fake_viewport = SimpleNamespace(
-        update_outputs=lambda scene, sess: output_calls.append((scene, sess))
+        prepare_outputs=lambda scene: None,
+        update_outputs=lambda scene, sess: output_calls.append((scene, sess)),
     )
-    import fluidSim_warp_blender51.blender.viewport as viewport
+    import fluidSim_warp_blender51.blender.output_publication as output_publication
 
-    monkeypatch.setattr(viewport, "update_outputs", fake_viewport.update_outputs)
+    monkeypatch.setattr(
+        output_publication, "prepare_outputs", fake_viewport.prepare_outputs)
+    monkeypatch.setattr(output_publication, "update_outputs", fake_viewport.update_outputs)
     solver = SimpleNamespace(settings=SimpleNamespace(whitewater_enabled=True))
     sess = scene_bridge.session()
     sess.solver = solver
@@ -1406,10 +1414,10 @@ def test_output_refresh_updates_existing_outputs_without_active_solver(monkeypat
     fake_viewport = SimpleNamespace(
         refresh_existing_output_settings=lambda scene: refresh_calls.append(scene)
     )
-    import fluidSim_warp_blender51.blender.viewport as viewport
+    import fluidSim_warp_blender51.blender.output_publication as output_publication
 
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "refresh_existing_output_settings",
         fake_viewport.refresh_existing_output_settings,
     )

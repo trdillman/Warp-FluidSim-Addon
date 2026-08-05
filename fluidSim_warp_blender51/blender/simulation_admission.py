@@ -452,9 +452,9 @@ class SimulationAdmission:
             ),)))
 
     def _prepare_outputs(self, scene):
-        from . import viewport
+        from . import output_publication
 
-        viewport.ensure_outputs(scene)
+        output_publication.prepare_outputs(scene)
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False):
         from ..diagnostics.profiler import Profiler
@@ -564,9 +564,9 @@ class SimulationAdmission:
                 for pg in scene.fluidsim.snippets:
                     if pg.kernel_name == name:
                         pg.last_error = str(error)[:256]
-            from . import viewport
+            from . import output_publication
 
-            viewport.update_outputs(scene, self.session)
+            output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(
                 scene, self.session, reset_only=True)
             scene.fluidsim.status = "Simulation reset"

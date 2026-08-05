@@ -47,7 +47,12 @@ def _solver(calls):
 
 
 def test_host_frame_reads_each_requested_output_once_and_nothing_eagerly():
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+
     calls = {}
+    host_output_operation_counts(reset=True)
     frame = HostFrame(_solver(calls))
 
     frame.positions
@@ -59,6 +64,11 @@ def test_host_frame_reads_each_requested_output_once_and_nothing_eagerly():
     frame.particle_attr("age")
 
     assert calls == {"positions": 1, "velocities": 1, "surface": 1, "age": 1}
+    assert host_output_operation_counts() == {
+        "host_frame_constructions": 1,
+        "device_readbacks": 3,
+        "surface_extractions": 1,
+    }
 
 
 def test_new_host_frame_rereads_requested_outputs():
@@ -119,15 +129,15 @@ def test_viewport_frame_module_does_not_require_blender_runtime(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", import_without_bpy)
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
-    assert viewport._solver_frame.__name__ == "_solver_frame"
+    assert output_publication.prepare_live_payload.__name__ == "prepare_live_payload"
 
 
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
     import sys
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache, export
 
     calls = {}
@@ -145,7 +155,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
         whitewater_attribute_mode="NONE", show_surface=True,
         surface_enabled=True, surface_attribute_mode="NONE")
 
-    viewport._solver_frame(SimpleNamespace(fluidsim=fs), solver)
+    output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=fs), solver.host_frame())
     payload = cache._frame_payload(solver)
     export.export_frame(solver, str(tmp_path / "frame"))
 
@@ -165,5 +176,183 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
                  "whitewater_age", "whitewater_life"):
         assert calls[name] == 1
     assert calls.get("unused", 0) == 0
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
     sys.modules.pop("mathutils.kdtree", None)
+
+
+def test_live_update_acquires_one_host_frame_then_publishes_owned_payload(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    calls = []
+    host = SimpleNamespace(
+        should_publish_surface=lambda cadence: calls.append(
+            ("cadence", cadence)) or True)
+    solver = SimpleNamespace(
+        host_frame=lambda: calls.append("host_frame") or host)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        live_surface_publish_cadence=3))
+    session = SimpleNamespace(active=True, solver=solver)
+    payload = object()
+
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: None)
+    existing_surface = SimpleNamespace(
+        type="MESH", data=SimpleNamespace(vertices=[1]))
+    monkeypatch.setattr(
+        output_publication, "output_object",
+        lambda *_args: existing_surface)
+    monkeypatch.setattr(
+        output_publication, "prepare_live_payload",
+        lambda scene_arg, host_arg, publish_surface: (
+            calls.append(("live_prepare", scene_arg, host_arg, publish_surface))
+            or payload))
+    monkeypatch.setattr(
+        output_publication, "publish_payload",
+        lambda scene_arg, payload_arg: calls.append(
+            ("publish", scene_arg, payload_arg)))
+
+    output_publication.update_outputs(scene, session)
+
+    assert calls == [
+        "host_frame", ("cadence", 3),
+        ("live_prepare", scene, host, True),
+        ("publish", scene, payload),
+    ]
+
+
+def test_cache_update_prepares_cache_payload_without_live_readback(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    calls = []
+    scene = object()
+    frame_data = {"frame": 4}
+    payload = object()
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: None)
+    monkeypatch.setattr(
+        output_publication, "prepare_live_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cache publication entered live readback")))
+    monkeypatch.setattr(
+        output_publication, "prepare_cache_payload",
+        lambda scene_arg, data_arg: calls.append(
+            ("cache_prepare", scene_arg, data_arg)) or payload)
+    monkeypatch.setattr(
+        output_publication, "publish_payload",
+        lambda scene_arg, payload_arg: calls.append(
+            ("publish", scene_arg, payload_arg)))
+
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
+
+    assert calls == [
+        ("cache_prepare", scene, frame_data),
+        ("publish", scene, payload),
+    ]
+
+
+def test_publisher_only_path_poisons_actual_solver_warp_and_blender_entrypoints(
+        monkeypatch):
+    import warp as wp
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.sim import frame_output, solver, surface
+
+    def forbidden(name):
+        def fail(*_args, **_kwargs):
+            raise AssertionError(f"publisher called forbidden entry point: {name}")
+        return fail
+
+    # Poison the real imported/module-global boundaries, not attributes added
+    # to a duck-typed payload. A new publisher dependency fails at its source.
+    for name in ("host_frame", "particle_positions", "particle_velocities",
+                 "surface_mesh"):
+        monkeypatch.setattr(solver.FluidSolver, name, forbidden(name))
+    monkeypatch.setattr(frame_output.HostFrame, "__init__", forbidden("HostFrame"))
+    monkeypatch.setattr(surface.SurfacePipeline, "mesh", forbidden("surface.mesh"))
+    monkeypatch.setattr(
+        surface.SurfaceExtractor, "extract", forbidden("surface.extract"))
+    monkeypatch.setattr(wp.array, "numpy", forbidden("warp.array.numpy"))
+    monkeypatch.setattr(wp, "synchronize", forbidden("warp.synchronize"))
+    monkeypatch.setattr(
+        wp, "synchronize_device", forbidden("warp.synchronize_device"))
+
+    poisoned_ids = SimpleNamespace(
+        new=forbidden("Blender ID creation"),
+        remove=forbidden("Blender ID removal"), get=lambda _name: None)
+    poisoned_links = SimpleNamespace(
+        link=forbidden("Blender relation link"),
+        unlink=forbidden("Blender relation unlink"))
+    fake_bpy = SimpleNamespace(
+        data=SimpleNamespace(
+            collections=poisoned_ids, objects=poisoned_ids,
+            meshes=poisoned_ids, pointclouds=poisoned_ids,
+            materials=poisoned_ids),
+        context=SimpleNamespace(
+            evaluated_depsgraph_get=forbidden("depsgraph acquisition"),
+            view_layer=SimpleNamespace(update=forbidden("depsgraph update"))),
+        relation_entrypoints=poisoned_links,
+    )
+    monkeypatch.setattr(output_publication, "bpy", fake_bpy)
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: fake_bpy)
+
+    payload = output_publication.PublicationPayload(
+        voxel_size=.1, publish_surface=True,
+        surface_visible=False, surface_attribute_mode="NONE",
+        surface_verts=np.zeros((0, 3), np.float32),
+        surface_tris=np.zeros((0, 3), np.int32), surface_attributes={},
+        particles_visible=False, particle_attribute_mode="NONE",
+        particle_radius=.01, particles=np.zeros((0, 3), np.float32),
+        particle_attributes={}, whitewater_visible=False,
+        whitewater_attribute_mode="NONE", whitewater_radius=.01,
+        whitewater=np.zeros((0, 3), np.float32), whitewater_attributes={})
+    calls = []
+    monkeypatch.setattr(
+        output_publication, "output_object",
+        lambda _scene, name: calls.append(("lookup", name)))
+    monkeypatch.setattr(
+        output_publication, "_clear_points",
+        lambda _scene, name: calls.append(("clear", name)))
+    for name in ("_swap_mesh", "_swap_points", "_swap_vertex_cloud",
+                 "_replace_datablock", "_link_relation"):
+        monkeypatch.setattr(output_publication, name, forbidden(name))
+
+    output_publication.publish_payload(object(), payload)
+
+    assert calls == [
+        ("lookup", output_publication.SURFACE_NAME),
+        ("clear", output_publication.PARTICLES_NAME),
+        ("clear", output_publication.WHITEWATER_NAME),
+    ]
+
+
+def test_output_cost_counters_separate_all_four_phases(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    fs = SimpleNamespace(
+        show_surface=False, surface_enabled=False, surface_attribute_mode="NONE",
+        show_particles=False, particle_attribute_mode="NONE",
+        show_whitewater=False, whitewater_enabled=False,
+        whitewater_attribute_mode="NONE", voxel_size=.1)
+    scene = SimpleNamespace(fluidsim=fs)
+    host = SimpleNamespace(solver=SimpleNamespace(
+        settings=SimpleNamespace(voxel_size=.1)))
+
+    output_publication.output_cost_counts(reset=True)
+    live = output_publication.prepare_live_payload(scene, host)
+    cache = output_publication.prepare_cache_payload(scene, {})
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: None)
+    monkeypatch.setattr(output_publication, "output_object", lambda *_args: None)
+    monkeypatch.setattr(output_publication, "_clear_points", lambda *_args: None)
+    output_publication.prepare_outputs(scene)
+    output_publication.publish_payload(scene, live)
+
+    counts = output_publication.output_cost_counts()
+    assert {phase: values["invocations"] for phase, values in counts.items()} == {
+        "live_adaptation": 1,
+        "cache_adaptation": 1,
+        "output_preparation": 1,
+        "output_publication": 1,
+    }
+    assert counts["live_adaptation"]["host_frame_acquisitions"] == 0
+    assert counts["live_adaptation"]["device_readbacks"] == 0
+    assert counts["cache_adaptation"]["device_readbacks"] == 0
+    assert counts["output_preparation"]["blender_id_creations"] == 0
+    assert counts["output_publication"]["blender_id_creations"] == 0
+    assert cache.publish_surface is True

@@ -38,9 +38,9 @@ def _enable_addon(package_dir: pathlib.Path) -> None:
 
 def _count_object(name: str) -> int:
     # Output clouds carry spare capacity, so len(data.points) is not the count.
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    return viewport.live_point_count(bpy.data.objects.get(name))
+    return output_publication.live_point_count(bpy.data.objects.get(name))
 
 
 
@@ -111,8 +111,8 @@ def main(argv: list[str] | None = None) -> int:
     solver.inject_particles(pts, velocities=vels)
     # First viewport update is setup only.  Actual acceptance motion below is
     # driven by Blender frame changes and the persistent timeline handler.
-    from fluidSim_warp_blender51.blender import viewport
-    viewport.update_outputs(scene, sess)
+    from fluidSim_warp_blender51.blender import output_publication
+    output_publication.update_outputs(scene, sess)
     p1 = solver.particle_positions().copy()
     v1, _t1 = solver.surface_mesh()
     out_p1 = _count_object("FluidSim Particles")

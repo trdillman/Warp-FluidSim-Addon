@@ -33,9 +33,9 @@ def check(name, cond, detail=""):
 
 def point_count(obj):
     # Output clouds carry spare capacity, so len(data.points) is not the count.
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    return viewport.live_point_count(obj)
+    return output_publication.live_point_count(obj)
 
 
 def point_sample(obj, limit=32):

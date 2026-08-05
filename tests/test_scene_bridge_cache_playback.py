@@ -96,16 +96,16 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     import fluidSim_warp_blender51.io as io_pkg
 
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
 
 def test_nearest_values_native_and_fallback_agree(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
     points = np.array([[0.1, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float32)
     samples = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
     values = np.array([2.0, 7.0], dtype=np.float32)
@@ -126,10 +126,10 @@ def test_nearest_values_native_and_fallback_agree(monkeypatch):
                 self.items, key=lambda item: np.sum((item[0] - point) ** 2))
             return sample, index, float(np.linalg.norm(sample - point))
 
-    monkeypatch.setattr(viewport, "_KDTree", FakeKDTree)
-    native = viewport._nearest_values(points, samples, values, 0.5)
-    monkeypatch.setattr(viewport, "_KDTree", None)
-    fallback = viewport._nearest_values(points, samples, values, 0.5)
+    monkeypatch.setattr(output_publication, "_KDTree", FakeKDTree)
+    native = output_publication._nearest_values(points, samples, values, 0.5)
+    monkeypatch.setattr(output_publication, "_KDTree", None)
+    fallback = output_publication._nearest_values(points, samples, values, 0.5)
 
     np.testing.assert_array_equal(native, [2.0, 7.0])
     np.testing.assert_array_equal(fallback, native)
@@ -140,7 +140,7 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     scene = _scene()
     calls = []
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs_from_cache_frame = (
         lambda scene_arg, data: calls.append((scene_arg.frame_current, int(data["frame"])))
     )
@@ -215,7 +215,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         scene_bridge, "build_settings",
         lambda _scene: SimpleNamespace(device="cuda:0", voxel_size=voxel_size[0]))
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     drawn = []
     fake_viewport.update_outputs_from_cache_frame = (
         lambda _scene, data: drawn.append(int(data["frame"])))
@@ -244,7 +244,7 @@ def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monk
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs_from_cache_frame = (
         lambda *_args: (_ for _ in ()).throw(AssertionError("no snapshot to draw"))
     )
@@ -279,35 +279,37 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
     fake_materials.ensure_particle_material = lambda *_args: None
     fake_materials.ensure_whitewater_material = lambda *_args: None
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials)
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
     calls = []
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: SimpleNamespace(name=name, data=SimpleNamespace()),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "output_object",
         lambda _scene, name: None,
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_mesh",
         lambda obj, *_args, **_kwargs: calls.append(("mesh", obj.name)),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_points",
         lambda obj, _pos, radius, _colors=None, **_kwargs: calls.append(
             ("points", obj.name, radius)
         ),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_clear_points",
         lambda _scene, name: calls.append(("clear_points", name)),
     )
@@ -338,17 +340,17 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
         "surface_tris": np.array([[0, 1, 2]], dtype=np.int32),
     }
 
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
-    assert ("mesh", viewport.SURFACE_NAME) not in calls
-    assert ("clear_points", viewport.WHITEWATER_NAME) in calls
+    assert ("mesh", output_publication.SURFACE_NAME) not in calls
+    assert ("clear_points", output_publication.WHITEWATER_NAME) in calls
     assert any(
         call[0] == "points"
-        and call[1] == viewport.PARTICLES_NAME
+        and call[1] == output_publication.PARTICLES_NAME
         and abs(call[2] - 0.1) < 1e-6
         for call in calls
     )
-    assert all(call[:2] != ("points", viewport.WHITEWATER_NAME) for call in calls)
+    assert all(call[:2] != ("points", output_publication.WHITEWATER_NAME) for call in calls)
 
 
 def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
@@ -372,34 +374,36 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials
     )
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
     def values(array):
         if array is None:
             return None
         return np.asarray(array).round(6).tolist()
 
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: SimpleNamespace(name=name, data=SimpleNamespace()),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "output_object",
         lambda _scene, name: None,
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_mesh",
         lambda obj, verts, tris, colors=None: calls.append(
             ("mesh", obj.name, values(verts), values(tris), values(colors))
         ),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_points",
         lambda obj, positions, radius, colors=None, *, reuse_datablock=True: calls.append(
             ("points", obj.name, values(positions), round(radius, 6),
@@ -407,7 +411,7 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        viewport, "_clear_points",
+        output_publication, "_clear_points",
         lambda _scene, name: calls.append(("clear", name))
     )
 
@@ -450,10 +454,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
         "surface_tris": tris,
     }
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -472,10 +476,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     frame_data.pop("velocities")
     frame_data["whitewater"] = solver.whitewater_positions()
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -483,10 +487,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     solver.whitewater_positions = lambda: np.zeros((0, 3), dtype=np.float32)
     frame_data["whitewater"] = solver.whitewater_positions()
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -516,18 +520,21 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials
     )
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport, "_ensure_object",
+        output_publication, "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: (
             calls.append(("object", name)) or SimpleNamespace(name=name)),
     )
     for name in ("_swap_mesh", "_swap_points", "_swap_vertex_cloud",
                  "_clear_points"):
-        monkeypatch.setattr(viewport, name, _no_geometry_write(name))
+        monkeypatch.setattr(
+            output_publication, name, _no_geometry_write(name))
 
     fs = SimpleNamespace(
         show_surface=True, surface_enabled=True,
@@ -536,12 +543,12 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     )
     scene = SimpleNamespace(fluidsim=fs, collection=_fake_scene_collection())
 
-    viewport.ensure_outputs(scene)
+    output_publication.prepare_outputs(scene)
 
     assert calls == [
-        ("object", viewport.SURFACE_NAME), ("material", "surface"),
-        ("object", viewport.PARTICLES_NAME), ("material", "particle"),
-        ("object", viewport.WHITEWATER_NAME), ("material", "whitewater"),
+        ("object", output_publication.SURFACE_NAME), ("material", "surface"),
+        ("object", output_publication.PARTICLES_NAME), ("material", "particle"),
+        ("object", output_publication.WHITEWATER_NAME), ("material", "whitewater"),
     ]
 
     # Disabled outputs stay unallocated -- toggling one on later goes through
@@ -549,9 +556,9 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     calls.clear()
     fs.surface_enabled = False
     fs.show_whitewater = False
-    viewport.ensure_outputs(scene)
+    output_publication.prepare_outputs(scene)
 
-    assert calls == [("object", viewport.PARTICLES_NAME),
+    assert calls == [("object", output_publication.PARTICLES_NAME),
                      ("material", "particle")]
 
 
@@ -569,14 +576,14 @@ def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
     capacity and only realloc when the count leaves the band.
     """
     _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
     def cloud(capacity, *, has_color=False, users=1, schema=True):
         attributes = {}
         if schema:
             attributes = {"position": object(), "radius": object()}
         if has_color:
-            attributes[viewport.COLOR_ATTR] = object()
+            attributes[output_publication.COLOR_ATTR] = object()
         return SimpleNamespace(
             users=users,
             resize=lambda _count: None,
@@ -584,35 +591,35 @@ def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
             attributes=attributes,
         )
 
-    cap = viewport._point_capacity_for(100_000)
+    cap = output_publication._point_capacity_for(100_000)
     assert cap > 100_000
 
     # In-band counts reuse the attached cloud, including a count that changed.
-    assert not viewport._needs_realloc(cloud(cap), 100_000, False)
-    assert not viewport._needs_realloc(cloud(cap), 99_000, False)
-    assert not viewport._needs_realloc(cloud(cap), cap, False)
+    assert not output_publication._needs_realloc(cloud(cap), 100_000, False)
+    assert not output_publication._needs_realloc(cloud(cap), 99_000, False)
+    assert not output_publication._needs_realloc(cloud(cap), cap, False)
     # ...and the reuse band is wide enough that ordinary FLIP drift stays in it.
-    assert not viewport._needs_realloc(cloud(cap), int(cap * 0.55), False)
+    assert not output_publication._needs_realloc(cloud(cap), int(cap * 0.55), False)
 
     # Structural changes force a fresh, detached cloud.
-    assert viewport._needs_realloc(cloud(cap), cap + 1, False)          # grow
-    assert viewport._needs_realloc(cloud(cap), cap // 8, False)         # shrink
-    assert viewport._needs_realloc(cloud(cap), 100_000, True)           # +color
-    assert viewport._needs_realloc(
+    assert output_publication._needs_realloc(cloud(cap), cap + 1, False)          # grow
+    assert output_publication._needs_realloc(cloud(cap), cap // 8, False)         # shrink
+    assert output_publication._needs_realloc(cloud(cap), 100_000, True)           # +color
+    assert output_publication._needs_realloc(
         cloud(cap, has_color=True), 100_000, False)                     # -color
-    assert viewport._needs_realloc(cloud(cap, users=2), 100_000, False)
-    assert viewport._needs_realloc(cloud(cap, schema=False), 100_000, False)
-    assert viewport._needs_realloc(None, 100_000, False)
+    assert output_publication._needs_realloc(cloud(cap, users=2), 100_000, False)
+    assert output_publication._needs_realloc(cloud(cap, schema=False), 100_000, False)
+    assert output_publication._needs_realloc(None, 100_000, False)
 
     # An empty frame must not realloc every time just for sitting under the
     # floor -- whitewater is empty for the whole start of a sim.
-    floor = viewport._point_capacity_for(0)
-    assert not viewport._needs_realloc(cloud(floor), 0, False)
+    floor = output_publication._point_capacity_for(0)
+    assert not output_publication._needs_realloc(cloud(floor), 0, False)
 
     # Shrinking settles: the capacity chosen for n is inside n's own band.
     for count in (0, 1, 5_000, 250_000):
-        assert not viewport._needs_realloc(
-            cloud(viewport._point_capacity_for(count)), count, False)
+        assert not output_publication._needs_realloc(
+            cloud(output_publication._point_capacity_for(count)), count, False)
 
 
 def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
@@ -803,13 +810,13 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
     )
     sess.solver = SimpleNamespace(frame=1001, step_frame=lambda: stats)
     sess.frame_stats = [{"frame": index} for index in range(1, 1001)]
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda *_args: None
     import fluidSim_warp_blender51.blender as blender_pkg
 
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
 
     scene_bridge.step_frame(scene, sess)
 

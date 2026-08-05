@@ -119,16 +119,16 @@ def test_live_surface_publish_cadence_defaults_to_every_frame():
 
 
 def test_viewport_replaces_full_mesh_repair_with_index_validation():
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    source = inspect.getsource(viewport._swap_mesh)
+    source = inspect.getsource(output_publication._swap_mesh)
     assert "mesh.validate()" not in source
     assert "surface triangle index is outside the vertex range" in source
 
 
 def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
     from fluidSim_warp_blender51 import blender
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
     fake_materials = types.ModuleType("fluidSim_warp_blender51.blender.materials")
     fake_materials.ensure_surface_material = lambda *_args: None
@@ -138,21 +138,22 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
     monkeypatch.setattr(blender, "materials", fake_materials, raising=False)
 
     fake_bpy = types.ModuleType("bpy")
-    monkeypatch.setattr(viewport, "bpy", fake_bpy)
+    monkeypatch.setattr(output_publication, "bpy", fake_bpy)
     existing = SimpleNamespace(type="MESH", data=SimpleNamespace(vertices=[1]))
     monkeypatch.setattr(
-        viewport.bpy, "data",
+        output_publication.bpy, "data",
         SimpleNamespace(objects=SimpleNamespace(get=lambda _name: existing)),
         raising=False)
     swaps = []
-    monkeypatch.setattr(viewport, "_swap_mesh", lambda *args: swaps.append(args))
-    monkeypatch.setattr(viewport, "_clear_points", lambda _scene, _name: None)
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        show_surface=True, surface_enabled=True, surface_attribute_mode="NONE",
-        show_particles=False, show_whitewater=False, whitewater_enabled=False))
-    frame = SimpleNamespace(publish_surface=False)
+    monkeypatch.setattr(output_publication, "_swap_mesh", lambda *args: swaps.append(args))
+    monkeypatch.setattr(output_publication, "_clear_points", lambda _scene, _name: None)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace())
+    payload = SimpleNamespace(
+        surface_visible=True, publish_surface=False,
+        particles_visible=False, whitewater_visible=False,
+    )
 
-    viewport._render_outputs(scene, frame)
+    output_publication.publish_payload(scene, payload)
 
     assert swaps == []
 

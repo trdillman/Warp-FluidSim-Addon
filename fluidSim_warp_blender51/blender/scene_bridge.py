@@ -210,7 +210,7 @@ class Session:
         return _apply_live_settings_safely(scene, self)
 
     def step(self, scene, *, write_cache=True, timeline_frame=None):
-        from . import viewport
+        from . import output_publication
 
         if not self.owns_scene(scene):
             return None
@@ -275,7 +275,7 @@ class Session:
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
             + (f" — {capacity_notice}" if capacity_notice else "")
         )
-        viewport.update_outputs(scene, self)
+        output_publication.update_outputs(scene, self)
         if write_cache and fs.cache_enabled:
             from ..io import cache
 
@@ -307,7 +307,7 @@ class Session:
         return stats
 
     def play_cache_frame(self, scene, frame=None):
-        from . import viewport
+        from . import output_publication
         from ..io import cache
 
         fs = scene.fluidsim
@@ -329,7 +329,7 @@ class Session:
             raise FileNotFoundError(
                 f"Cache frame {frame} is missing or corrupt in {base}")
         _check_cache_scene_key(scene, base, frame_data)
-        viewport.update_outputs_from_cache_frame(scene, frame_data)
+        output_publication.update_outputs_from_cache_frame(scene, frame_data)
         fs.stat_particles = len(frame_data.get("positions", ()))
         fs.stat_whitewater = len(frame_data.get("whitewater", ()))
         fs.stat_voxels = 0
@@ -1305,7 +1305,7 @@ def update_particle_capacity_policy(scene):
 
 def request_scene_update(scene, action: SceneUpdate):
     """Apply property changes immediately where the live session allows it."""
-    from . import viewport
+    from . import output_publication
 
     sess = session()
     if not isinstance(action, SceneUpdate):
@@ -1330,7 +1330,7 @@ def request_scene_update(scene, action: SceneUpdate):
                 # Cache/export playback leaves Blender output objects behind
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.
-                viewport.refresh_existing_output_settings(scene)
+                output_publication.refresh_existing_output_settings(scene)
                 scene.fluidsim.status = reason
             elif action not in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
                 scene.fluidsim.status = reason
@@ -1358,12 +1358,15 @@ def request_scene_update(scene, action: SceneUpdate):
         sync_scene_to_solver(scene, sess)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
-        viewport.update_outputs(scene, sess, force_surface=True)
+        output_publication.prepare_outputs(scene)
+        output_publication.update_outputs(scene, sess, force_surface=True)
     elif action is SceneUpdate.WHITEWATER:
         _apply_realtime_whitewater_settings(scene, sess)
-        viewport.update_outputs(scene, sess)
+        output_publication.prepare_outputs(scene)
+        output_publication.update_outputs(scene, sess)
     elif action is SceneUpdate.OUTPUT:
-        viewport.update_outputs(scene, sess, force_surface=True)
+        output_publication.prepare_outputs(scene)
+        output_publication.update_outputs(scene, sess, force_surface=True)
     _tag_view3d_redraw()
 
 

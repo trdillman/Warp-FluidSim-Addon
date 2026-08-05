@@ -63,7 +63,7 @@ def _solver(log, count):
 
 
 def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache
     from fluidSim_warp_blender51.sim.frame_output import HostFrame
 
@@ -82,7 +82,8 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     def reads():
         return [n for name, n in log if name == "positions"]
 
-    frame = viewport._solver_frame(SimpleNamespace(fluidsim=fs), solver)
+    frame = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=fs), solver.host_frame())
 
     # Half one: the viewport read decimated before crossing the bus.
     assert len(frame.particles) == 16
