@@ -337,23 +337,23 @@ never crash the suite.
 | Pressure projection regressions | **5 / 5** passing (`pytest tests/test_pressure_projection_regressions.py`) |
 | Blender background acceptance | **34 / 34** checks (`BACKGROUND-ACCEPTANCE-PASS`) |
 | Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |
-| Demo `dam_break` | **9 / 9** (mass, containment, front speed 1.01·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0865 m`, peak whitewater `4,009`) |
-| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `448 mm`, Worthington jet height `194 mm`, azimuthal symmetry CV 0.007) |
+| Demo `dam_break` | **9 / 9** (mass, containment, front speed 1.01·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0744 m`, peak whitewater `3,233`) |
+| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `242 mm`, Worthington jet height `203 mm`, azimuthal symmetry CV 0.007) |
 
 The current generated source evidence comes from
 `artifacts/demo_analysis/analysis_report.json`, produced by the headless/demo
 portion of the real `python tools/run_production_gate.py --include-gui` run
-and bound to audit run `2026-08-05T06:32:01.456246+00:00`, HEAD
-`c2df030b1f5cd823e93621181bf026a73ef9cc37`, using the checked-in
+and bound to audit run `2026-08-05T06:49:33.968820+00:00`, HEAD
+`3bf6da6aa6f1ab043cb2dd3a125ad9b416fa9d5a`, using the checked-in
 `demos/dam_break/meta.json` and `demos/crown_splash/meta.json` profiles. The
 bounded profiles are 128,000 particles over 72 frames for `dam_break` and
 259,112 particles over 48 frames for `crown_splash`. The checked-in demo JSON
 and Markdown now match this artifact exactly: the standalone demo-analysis
 lane passes **18 / 18** with exact promoted metrics
-`front_speed_over_c0=1.0130985943`, `column_height_end=0.0864740014`,
-`crown_sqrt_t_corr=0.9715342740`, and `max_crown_height=0.4475585818`;
-peak whitewater is `4,009` and Worthington jet height is `194 mm`. Artifact
-SHA-256 is `fa523174d6eb3aa47c5f6d7cd67b5b43e7d0202aaafb31f20913c75ecca6fc0e`.
+`front_speed_over_c0=1.0113339117`, `column_height_end=0.0743652880`,
+`crown_sqrt_t_corr=0.9715359144`, and `max_crown_height=0.2423486263`;
+peak whitewater is `3,233` and Worthington jet height is `203 mm`. Artifact
+SHA-256 is `65ec3d69463d150c0a19df231e2f33697543fd1e2d273aad451fdfd0c57a472a`.
 These are bounded generated-run metrics, not arbitrary-scale claims.
 
 Generated source evidence is separate from review evidence:
