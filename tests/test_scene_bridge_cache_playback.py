@@ -713,11 +713,21 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     monkeypatch.setattr(
         scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cuda:0"))
     sess = scene_bridge.session()
+    capacity_plan = SimpleNamespace(
+        blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
+    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
+    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
     monkeypatch.setattr(
-        sess,
-        "sync_scene",
+        sess, "_apply_scene_snapshot",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sync failed")),
     )
+    from fluidSim_warp_blender51.sim import memory_safety
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
+    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
+        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
+        "resources": {}, "recommended": {},
+    })
 
     with pytest.raises(RuntimeError, match="sync failed"):
         sess.initialize(scene)
@@ -758,14 +768,20 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
     monkeypatch.setattr(
         scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cpu"))
     from fluidSim_warp_blender51.sim import memory_safety
-    monkeypatch.setattr(memory_safety, "resource_snapshot", lambda _device: {})
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
     monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
-        "safe": True, "estimated_bytes": 0, "budget_bytes": 0,
+        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
         "resources": {}, "recommended": {},
     })
+    sess = scene_bridge.session()
+    capacity_plan = SimpleNamespace(
+        blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
+    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
+    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
 
     with pytest.raises(RuntimeError, match="constructor failed"):
-        scene_bridge.session().initialize(scene)
+        sess.initialize(scene)
 
     assert refs[0]() is None
     assert not scene_bridge.session().active

@@ -156,6 +156,29 @@ class ParticleSystem:
         self.time_offset.zero_()
         self.host_count = 0
 
+    def resized_copy(self, capacity: int) -> "ParticleSystem":
+        """Allocate a larger pool and copy the live prefix without swapping it.
+
+        Callers own the final atomic swap.  If allocation or copying raises,
+        this object remains the authoritative particle pool.
+        """
+        capacity = int(capacity)
+        if capacity <= self.capacity:
+            raise ValueError("resized particle capacity must be larger")
+        count = self.refresh_host_count()
+        grown = ParticleSystem(capacity, self.device)
+        if count:
+            wp.copy(grown.position, self.position, count=count)
+            wp.copy(grown.velocity, self.velocity, count=count)
+            for name in self.ATTR_NAMES:
+                wp.copy(grown.attrs[name], self.attrs[name], count=count)
+            wp.copy(grown.time_offset, self.time_offset, count=count)
+            wp.copy(grown.alive, self.alive, count=count)
+            wp.copy(grown.voxel_index, self.voxel_index, count=count)
+        wp.copy(grown.count, self.count, count=1)
+        grown.host_count = count
+        return grown
+
     def compact(self, count_hint: int | None = None):
         """Remove dead particles (alive==0) with a GPU scan + scatter.
 

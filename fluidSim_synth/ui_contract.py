@@ -15,6 +15,10 @@ EXTRA_PARTICLE_ATTRIBUTE_RULE = {
     "label_source": "attribute name",
 }
 
+SIMULATION_ADVANCED_PLAYBACK = [
+    "max_frame_catchup",
+]
+
 BLENDER_UI_PANELS = [
     "Simulation",
     "Domain / Sparse Grid",

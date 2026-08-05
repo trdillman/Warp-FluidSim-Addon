@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from fluidSim_warp_blender51.sim import sourcing
+# Import before monkeypatching Warp constructors in host-transaction tests.
+from fluidSim_warp_blender51.sim.source_regions import SourceCompiler  # noqa: F401
 from fluidSim_warp_blender51.sim.sourcing import (
     HeightSourceDesc,
     MeshSourceDesc,
@@ -231,7 +233,7 @@ class _Particles:
         self.velocity = "velocity"
         self.time_offset = "time_offset"
         self.alive = "alive"
-        self.count = "count"
+        self.count = self
 
     def attr(self, name):
         return f"attr:{name}"
@@ -271,11 +273,22 @@ def _record_warp(monkeypatch):
     arrays = []
     launches = []
 
+    class DeviceArray:
+        def __init__(self, shape):
+            self.values = np.zeros(shape, dtype=np.int32)
+
+        def zero_(self):
+            self.values.fill(0)
+
+        def numpy(self):
+            return self.values.copy()
+
     monkeypatch.setattr(
         sourcing.wp,
         "zeros",
-        lambda shape, **kwargs: ("zeros", shape, kwargs),
+        lambda shape, **kwargs: DeviceArray(shape),
     )
+    monkeypatch.setattr(sourcing.wp, "copy", lambda *args, **kwargs: None)
 
     def array(values, **kwargs):
         result = ("array", len(values), len(arrays))
@@ -283,11 +296,32 @@ def _record_warp(monkeypatch):
         return result
 
     monkeypatch.setattr(sourcing.wp, "array", array)
-    monkeypatch.setattr(
-        sourcing.wp,
-        "launch",
-        lambda kernel, **kwargs: launches.append((kernel, kwargs)),
-    )
+    def launch(kernel, **kwargs):
+        launches.append((kernel, kwargs))
+        inputs = kwargs.get("inputs", ())
+        outputs = kwargs.get("outputs", ())
+        if kernel in {
+                sourcing.k_count_source_shapes_particles,
+                sourcing.k_count_mesh_source_particles,
+                sourcing.k_count_compiled_source_particles}:
+            inputs[-1].values[0] += 1
+        elif kernel is sourcing.k_add_emission_demand:
+            inputs[-1].values[0] += int(inputs[0])
+        elif kernel is sourcing.k_admit_emission_batch:
+            particles, capacity, state = inputs
+            state.values[1] = int(
+                state.values[0] <= capacity - particles.host_count)
+        elif kernel in {
+                sourcing.k_source_shapes_particles,
+                sourcing.k_mesh_source_particles,
+                sourcing.k_emit_compiled_source_particles,
+                sourcing.k_source_owned_points}:
+            state = outputs[-1]
+            if state.values[1]:
+                state.values[2] += 1
+
+    monkeypatch.setattr(sourcing.wp, "launch", launch)
+
     monkeypatch.setattr(
         SourceShapeDesc,
         "to_struct",
@@ -311,21 +345,25 @@ def test_apply_owns_launch_order_cache_and_full_capacity_signal(monkeypatch):
     assert pipeline.apply(1.0 / 24.0) is False
     assert pipeline.apply(1.0 / 24.0) is False
 
-    assert [kernel for kernel, _ in launches[:3]] == [
-        sourcing.k_source_shapes,
-        sourcing.k_source_height,
-        sourcing.k_source_resolve_type,
-    ]
-    assert [kernel for kernel, _ in launches[3:]] == [
-        sourcing.k_source_shapes,
-        sourcing.k_source_height,
-        sourcing.k_source_resolve_type,
-    ]
-    assert len(arrays) == 1
+    kernels = [kernel for kernel, _ in launches]
+    assert kernels.count(sourcing.k_count_source_shapes_particles) == 2
+    assert kernels.count(sourcing.k_admit_emission_batch) == 2
+    assert kernels.count(sourcing.k_source_shapes_particles) == 2
+    assert kernels.count(sourcing.k_source_height) == 2
+    assert kernels.count(sourcing.k_source_resolve_type) == 2
+    assert len(arrays) == 2  # guarded emission array plus field-stamp array
     assert owner.particles.refresh_calls == 0
-    expected_seed = (first_seed * 1664525 + 1013904223) & 0x7FFFFFFF
-    expected_seed = (expected_seed * 1664525 + 1013904223) & 0x7FFFFFFF
-    assert pipeline._emit_seed == expected_seed
+    # Both transactions were rejected by the full pool, so retry state is
+    # byte-for-byte deterministic rather than silently advancing the RNG.
+    assert pipeline._emit_seed == first_seed
+    result = pipeline.last_apply_result
+    assert result["emitted"] == 0
+    assert result["capacity_limited"] is True
+    assert result["required"] == 1
+    assert result["available"] == 0
+    assert result["admitted"] is False
+    assert result["deferred"] is True
+    assert result["growth_status"] == "DISABLED"
 
 
 def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeypatch):
@@ -346,7 +384,9 @@ def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeyp
     assert pipeline.apply(0.01) is True
     assert pipeline.apply(0.01) is True
 
-    assert [kernel for kernel, _ in launches[:3]] == [
+    assert [kernel for kernel, _ in launches[:5]] == [
+        sourcing.k_count_source_shapes_particles,
+        sourcing.k_admit_emission_batch,
         sourcing.k_source_height,
         sourcing.k_source_resolve_type,
         sourcing.k_source_shapes_particles,

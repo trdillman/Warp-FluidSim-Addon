@@ -107,6 +107,8 @@ def _particle_outputs(capacity, device):
         "time_offset": sourcing.wp.empty(capacity, dtype=float, device=device),
         "alive": sourcing.wp.zeros(capacity, dtype=sourcing.wp.int32, device=device),
         "count": sourcing.wp.zeros(1, dtype=sourcing.wp.int32, device=device),
+        "emission_state": sourcing.wp.array(
+            [0, 1, 0, 0], dtype=sourcing.wp.int32, device=device),
     }
 
 

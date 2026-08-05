@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 
 from fluidSim_warp_blender51.sim.enums import (
@@ -6,7 +8,7 @@ from fluidSim_warp_blender51.sim.enums import (
 )
 from fluidSim_warp_blender51.sim.source_regions import (
     AnalyticRegionPlan, CompileContext, MeshRegionPlan, PayloadPlan,
-    SourceCompiler, SourceKey, SourcePlan,
+    PointRegionPlan, SourceCompiler, SourceKey, SourcePlan,
 )
 
 
@@ -62,6 +64,53 @@ def test_capacity_failure_is_structured_and_visible():
     batch = SourceCompiler().compile((plan(MeshRegionPlan(vertices,triangles,solid=True)),),limited)
     assert any(d.code == "SOURCE_LEAF_CAPACITY" and d.severity == "ERROR"
                for d in batch.diagnostics)
+
+
+def test_no_upload_planning_cache_cannot_poison_runtime_upload():
+    compiler = SourceCompiler()
+    source = plan(AnalyticRegionPlan(
+        shape=SourceShapeShape.BOX, position=(1, 1, 1),
+        half_extents=(0.5, 0.5, 0.5)), "upload-isolation")
+
+    planned = compiler.compile((source,), ctx())
+    runtime = compiler.compile((source,), replace(ctx(), upload=True))
+
+    assert planned.sources[0].region.device_coverage is None
+    assert runtime.sources[0].region.device_coverage is not None
+    assert runtime.sources[0].region.device_leaf_coords is not None
+
+
+def test_compiled_footprints_expose_conservative_particle_and_leaf_demand():
+    source = plan(AnalyticRegionPlan(
+        shape=SourceShapeShape.BOX, position=(1, 1, 1),
+        half_extents=(0.5, 0.5, 0.5)), "footprint")
+    source = replace(source, payload=replace(
+        source.payload, target_particles_per_voxel=2.0))
+
+    batch = SourceCompiler().compile((source,), ctx())
+    footprint = batch.footprints[0]
+
+    # A unit box at h=.25 covers 4^3 voxels, each with full coverage.
+    assert footprint.stable_id == "footprint"
+    assert footprint.particle_demand == 128
+    assert footprint.particle_quality.value == "upper_bound"
+    assert len(footprint.leaf_coords) == batch.sources[0].region.leaf_count
+    assert footprint.staging_bytes == batch.sources[0].region.device_bytes
+
+
+def test_direct_point_footprint_count_is_exact():
+    points = np.array(((0.25, 0.25, 0.25), (1.25, 1.25, 1.25)), np.float32)
+    direct = SourcePlan(
+        SourceKey("direct"), SourceOperation.LIQUID,
+        SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
+        PointRegionPlan(points),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
+    )
+
+    footprint = SourceCompiler().compile((direct,), ctx()).footprints[0]
+
+    assert footprint.particle_demand == 2
+    assert footprint.particle_quality.value == "exact"
 
 
 def test_static_source_edit_releases_superseded_cache_generation():

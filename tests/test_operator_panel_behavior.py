@@ -106,6 +106,8 @@ def test_validation_operator_uses_configured_device(monkeypatch):
 
     fake_validation.run_all = _run_all
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.validation", fake_validation)
+    import fluidSim_warp_blender51.sim as sim_pkg
+    monkeypatch.setattr(sim_pkg, "validation", fake_validation, raising=False)
     monkeypatch.setattr(
         operators,
         "_bridge",
@@ -209,23 +211,41 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
 
 
 class _Layout:
-    def __init__(self):
-        self.labels = []
-        self.operators = []
-        self.props = []
-        self.prop_calls = []
-        self.prop_enum_calls = []
-        self.popovers = []
+    def __init__(self, _root=None, _box_scope=()):
+        if _root is None:
+            self.labels = []
+            self.operators = []
+            self.props = []
+            self.prop_calls = []
+            self.prop_enum_calls = []
+            self.prop_scopes = []
+            self.popovers = []
+            self._root = self
+            self._next_box_id = 0
+        else:
+            self.labels = _root.labels
+            self.operators = _root.operators
+            self.props = _root.props
+            self.prop_calls = _root.prop_calls
+            self.prop_enum_calls = _root.prop_enum_calls
+            self.prop_scopes = _root.prop_scopes
+            self.popovers = _root.popovers
+            self._root = _root
+        self._box_scope = _box_scope
         self.enabled = True
 
     def column(self, align=False):
-        return self
+        return _Layout(self._root, self._box_scope)
 
     def row(self, align=False):
-        return self
+        return _Layout(self._root, self._box_scope)
 
     def box(self):
-        return self
+        self._root._next_box_id += 1
+        return _Layout(
+            self._root,
+            self._box_scope + (self._root._next_box_id,),
+        )
 
     def separator(self):
         return None
@@ -234,11 +254,14 @@ class _Layout:
         if len(args) >= 2:
             self.props.append(args[1])
             self.prop_calls.append({"name": args[1], **kwargs})
+            self.prop_scopes.append({
+                "name": args[1], "boxes": self._box_scope})
         return None
 
     def prop_enum(self, _data, name, value, **kwargs):
         self.props.append(name)
         self.prop_enum_calls.append({"name": name, "value": value, **kwargs})
+        self.prop_scopes.append({"name": name, "boxes": self._box_scope})
         return None
 
     def label(self, text="", icon="NONE"):
@@ -265,16 +288,19 @@ def test_pending_banner_and_fixed_header_expose_real_actions(monkeypatch):
     )
     layout = _Layout()
 
-    panels._draw_pending_banner(layout, scene)
+    panels._draw_pending_banner(layout, scene, show_actions=True)
     header = SimpleNamespace(layout=layout)
     panels._draw_header_interaction(header, SimpleNamespace(scene=scene))
 
-    assert any(label["text"] == "Reinitialize Required (2)"
+    assert any(label["text"] == "2 change(s) staged for restart"
                for label in layout.labels)
     assert {op["id"] for op in layout.operators} >= {
         "fluidsim.apply_pending_reinitialize", "fluidsim.revert_pending"}
+    assert any(op.get("text") == "Restart Now" for op in layout.operators)
+    assert any(op.get("text") == "Discard Changes" for op in layout.operators)
+    assert getattr(layout, "alert", False) is False
     assert layout.popovers == [{
-        "panel": "FLUIDSIM_PT_interaction_popover", "text": "2", "icon": "ERROR"}]
+        "panel": "FLUIDSIM_PT_interaction_popover", "text": "2", "icon": "INFO"}]
 
 
 def test_header_registration_is_symmetric(monkeypatch):
@@ -299,6 +325,49 @@ def test_header_registration_is_symmetric(monkeypatch):
     assert Header.callbacks == [panels._draw_header_interaction]
     panels.unregister()
     assert Header.callbacks == []
+
+
+def test_simulation_hides_playback_recovery_limit_in_advanced_foldout(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    fs = SimpleNamespace(
+        status="Solver ready", live=False, max_frame_catchup=8,
+        playback_advanced_expanded=False,
+        stat_particles=0, stat_voxels=0, stat_step_ms=0.0, stat_substeps=0,
+        time_scale=1.0, cfl=1.0, min_substeps=1, max_substeps=4,
+        use_scene_gravity=True, gravity=(0.0, 0.0, -9.81),
+    )
+    panel = panels.FLUIDSIM_PT_simulation()
+    layout = _Layout()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert "playback_advanced_expanded" in layout.props
+    assert "max_frame_catchup" not in layout.props
+    toggle = next(
+        call for call in layout.prop_calls
+        if call["name"] == "playback_advanced_expanded")
+    assert toggle["text"] == "Advanced Playback"
+    assert toggle["icon"] == "TRIA_RIGHT"
+    assert toggle["emboss"] is False
+
+    fs.playback_advanced_expanded = True
+    expanded = _Layout()
+    panel.layout = expanded
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert expanded.props.index("playback_advanced_expanded") < (
+        expanded.props.index("max_frame_catchup"))
+    recovery = next(
+        call for call in expanded.prop_calls
+        if call["name"] == "max_frame_catchup")
+    assert recovery["text"] == "Maximum Playback Recovery Frames"
+    expanded_toggle = next(
+        call for call in expanded.prop_calls
+        if call["name"] == "playback_advanced_expanded")
+    assert expanded_toggle["icon"] == "TRIA_DOWN"
 
 
 def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
@@ -372,7 +441,8 @@ def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monk
     panel.draw(SimpleNamespace(scene=scene))
 
     assert any(
-        op["id"] == "fluidsim.initialize" and op.get("text") == "Run Anyway"
+        op["id"] == "fluidsim.initialize"
+        and op.get("text") == "Ignore Estimate & Initialize"
         for op in layout.operators
     )
 
@@ -400,6 +470,111 @@ def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
     assert seen == [(scene, {"ignore_memory_safeguard": True})]
 
 
+def test_capacity_warning_offers_approval_gated_recommended_option(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    suggestion = SimpleNamespace(
+        key="preserve_simulation",
+        label="Preserve authored domain and resolution",
+        changes={"max_particles": 120},
+        tradeoffs=("Raises only fixed GPU capacity.",),
+    )
+    plan = SimpleNamespace(
+        particle_demand=SimpleNamespace(value=120, quality=SimpleNamespace(value="exact")),
+        leaf_demand=SimpleNamespace(value=1, quality=SimpleNamespace(value="exact")),
+        estimated_bytes=1024,
+        budget_bytes=2048,
+        blockers=(SimpleNamespace(
+            code="PARTICLE_CAPACITY", required=120, available=100,
+            message="particle capacity"),),
+        suggestions=(suggestion,),
+    )
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        status="Capacity warning", live=False, stat_particles=0, stat_voxels=0,
+        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
+        min_substeps=1, max_substeps=4, use_scene_gravity=True,
+        gravity=(0.0, 0.0, -9.81),
+    ))
+    scene_bridge.set_error(scene, "source capacity blocked")
+    monkeypatch.setattr(
+        scene_bridge, "session",
+        lambda: SimpleNamespace(
+            active=False, capacity_plan=plan,
+            current_error=lambda actual: "source capacity blocked"),
+    )
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_simulation()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=scene))
+
+    assert any(
+        op["id"] == "fluidsim.apply_capacity_suggestion"
+        and op.get("text") == "Review Recommended Changes & Run"
+        for op in layout.operators
+    )
+    assert not any(
+        op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators)
+    assert any("Nothing has been changed" in label["text"]
+               for label in layout.labels)
+
+
+def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="preserve_simulation",
+        label="Preserve authored domain and resolution",
+        changes={"max_particles": 120, "leaf_capacity": 4},
+        estimated_bytes=1024,
+        budget_bytes=2048,
+    )
+    plan = SimpleNamespace(
+        scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    int_property = SimpleNamespace(type="INT")
+    fs = SimpleNamespace(
+        max_particles=100,
+        leaf_capacity=2,
+        domain_object=None,
+        status="Capacity warning",
+        bl_rna=SimpleNamespace(properties={
+            "max_particles": int_property,
+            "leaf_capacity": int_property,
+        }),
+    )
+    scene = SimpleNamespace(fluidsim=fs)
+    initialized = []
+    bridge = SimpleNamespace(
+        session=lambda: SimpleNamespace(capacity_plan=plan),
+        refresh_capacity_plan=lambda actual: plan,
+        clear_error=lambda actual: None,
+        initialize_session=lambda actual: (
+            initialized.append(actual) or SimpleNamespace(
+                solver=SimpleNamespace(device="cuda:0"))),
+    )
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    dialogs = []
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda actual, width: (
+                dialogs.append((actual, width)) or {"RUNNING_MODAL"})),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "preserve_simulation"
+
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert dialogs == [(op, 560)]
+    assert fs.max_particles == 100
+    assert fs.leaf_capacity == 2
+    assert op.expected_scene_signature == "scene-v1"
+    assert op.execute(context) == {"FINISHED"}
+    assert fs.max_particles == 120
+    assert fs.leaf_capacity == 4
+    assert initialized == [scene]
+
+
 def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
@@ -415,8 +590,8 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
         surface_leaf_capacity_scale=8.0,
         surface_max_dense_dim=512,
         surface_update_cadence="FRAME",
-        live_surface_publish_cadence=4,
-        surface_build_lowres_sdf=True,
+        live_surface_publish_cadence=1,
+        surface_build_lowres_sdf=False,
         surface_advanced_expanded=False,
         surface_filter_type="BOX",
         surface_filter_iterations=1,
@@ -480,6 +655,7 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     assert main_controls.issubset(layout.props)
     assert advanced_controls.isdisjoint(layout.props)
     assert layout.labels == [
+        {"text": "Live / Targeted Refresh", "icon": "INFO"},
         {"text": "Surface Mesh", "icon": "MESH_DATA"},
         {"text": "Liquid Particles", "icon": "PARTICLE_DATA"},
     ]
@@ -489,6 +665,10 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
     assert advanced_toggle["text"] == "Advanced Surface"
     assert advanced_toggle["icon"] == "TRIA_RIGHT"
     assert advanced_toggle["emboss"] is False
+    scopes = {call["name"]: call["boxes"] for call in layout.prop_scopes}
+    assert scopes["surface_enabled"]
+    assert scopes["surface_advanced_expanded"] == scopes["surface_enabled"]
+    assert scopes["show_particles"] != scopes["surface_enabled"]
     assert not hasattr(panels, "FLUIDSIM_PT_surface_advanced")
 
     fs.surface_advanced_expanded = True
@@ -500,6 +680,11 @@ def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
         expanded_layout.props.index("surface_advanced_expanded"))
     assert expanded_layout.props.index("surface_build_lowres_sdf") < (
         expanded_layout.props.index("show_particles"))
+    expanded_scopes = {
+        call["name"]: call["boxes"] for call in expanded_layout.prop_scopes}
+    for name in advanced_controls:
+        assert expanded_scopes[name] == expanded_scopes["surface_enabled"]
+    assert expanded_scopes["show_particles"] != expanded_scopes["surface_enabled"]
     expanded_toggle = next(
         call for call in expanded_layout.prop_calls
         if call["name"] == "surface_advanced_expanded")
@@ -545,14 +730,17 @@ def test_whitewater_panel_starts_with_simulation_toggle_and_owns_controls(monkey
     }
 
     layout = _Layout()
-    panel = panels.FLUIDSIM_PT_whitewater()
+    panel = panels.FLUIDSIM_PT_surface()
     panel.layout = layout
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
 
     assert layout.props[0] == "whitewater_enabled"
     assert expected.issubset(layout.props)
     assert "Viewport / Render" not in {label["text"] for label in layout.labels}
-    assert layout.labels == []
+    assert layout.labels == [
+        {"text": "Reinitialize Required", "icon": "ERROR"},
+        {"text": "Live", "icon": "INFO"},
+    ]
     other_sources = "\n".join(inspect.getsource(cls.draw) for cls in (
         panels.FLUIDSIM_PT_realtime_display,
         panels.FLUIDSIM_PT_output,
@@ -560,7 +748,7 @@ def test_whitewater_panel_starts_with_simulation_toggle_and_owns_controls(monkey
     assert all(name not in other_sources for name in expected)
 
 
-def test_panels_keep_static_help_in_tooltips(monkeypatch):
+def test_panels_move_static_help_to_tooltips_but_keep_structural_tiers(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     panel_source = inspect.getsource(panels)
@@ -575,17 +763,20 @@ def test_panels_keep_static_help_in_tooltips(monkeypatch):
     }
 
     assert all(text not in panel_source for text in prohibited_explanations)
-    assert "_draw_interaction_tier" not in panel_source
+    assert "def _draw_interaction_tier" in panel_source
+    assert '_draw_interaction_tier(layout, "Live / Targeted Refresh")' in inspect.getsource(
+        panels.FLUIDSIM_PT_realtime_display.draw)
+    assert '_draw_interaction_tier(layout, "Live")' in inspect.getsource(
+        panels.FLUIDSIM_PT_pressure.draw)
 
 
-def test_unrelated_height_fill_keeps_original_collapsed_behavior(monkeypatch):
+def test_unrelated_height_fill_keeps_original_disabled_controls_visible(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     source = inspect.getsource(panels.FLUIDSIM_PT_domain_height_fill.draw)
 
-    assert "if not fs.height_enabled:" in source
-    assert "return" in source
-    assert "col.enabled = fs.height_enabled" not in source
+    assert "col.enabled = fs.height_enabled" in source
+    assert "if not fs.height_enabled:" not in source
 
 
 def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
@@ -761,16 +952,34 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
     import fluidSim_warp_blender51.blender.sources as sources
     import fluidSim_warp_blender51.blender.viewport as viewport
 
+    from fluidSim_warp_blender51.sim.solver import SolverSettings
+
     reset_snapshots = []
+    planned_capacities = []
     solver = SimpleNamespace(
-        settings=SimpleNamespace(flip_ratio=0.95, spacetime_seed=1),
+        settings=SolverSettings(
+            max_particles=1024, flip_ratio=0.95, spacetime_seed=1),
+        particles=SimpleNamespace(capacity=4096),
         reset=lambda: reset_snapshots.append((
             solver.settings.flip_ratio, solver.settings.spacetime_seed)),
     )
     sess = scene_bridge.session()
     sess.solver = solver
-    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(sources, "inject_auto_seeds", lambda *_args: None)
+    capacity_plan = SimpleNamespace(blockers=())
+    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
+    monkeypatch.setattr(
+        scene_bridge, "build_settings",
+        lambda _scene: SolverSettings(
+            device="cuda:0", max_particles=1024,
+            flip_ratio=0.2, spacetime_seed=77))
+
+    def plan_scene(_scene, settings, _resources):
+        planned_capacities.append(settings.max_particles)
+        return snapshot
+
+    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess, "_apply_scene_snapshot", lambda *_args: None)
+    monkeypatch.setattr(sources, "commit_prepared_seeds", lambda *_args: 0)
     monkeypatch.setattr(viewport, "update_outputs", lambda *_args: None)
     scene = SimpleNamespace(
         frame_start=1,
@@ -783,6 +992,7 @@ def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
 
     sess.reset(scene)
 
+    assert planned_capacities == [4096]
     assert reset_snapshots == [(0.2, 77)]
     assert solver.settings.flip_ratio == 0.2
     assert solver.settings.spacetime_seed == 77
@@ -817,13 +1027,20 @@ def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypat
         "_request_reset", "_request_surface_refresh",
         "_request_whitewater_refresh", "_apply_liquid_view_mode",
         "_sync_liquid_view_mode", "_request_output_refresh",
-        "_on_cache_playback_changed",
+        "_request_particle_capacity", "_on_cache_playback_changed",
     }
     assert set(callbacks.values()) == declared_callbacks
 
     allocation = {"voxel_size", "leaf_capacity", "max_particles", "max_whitewater"}
     assert allocation.isdisjoint(
         bridge._LIVE_SETTING_FIELDS | bridge._RESET_SETTING_FIELDS)
+    assert {
+        name for name, callback in callbacks.items()
+        if callback == "_request_particle_capacity"
+    } == {
+        "max_particles", "auto_grow_particles",
+        "particle_growth_failure_policy",
+    }
     assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._RESET_SETTING_FIELDS)
     assert bridge._HOT_SETTING_FIELDS.isdisjoint(bridge._SURFACE_SETTING_FIELDS)
     assert bridge._LIVE_REFRESH_SETTING_FIELDS == {"particles_per_voxel"}

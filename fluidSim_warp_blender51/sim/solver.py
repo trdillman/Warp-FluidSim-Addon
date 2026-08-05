@@ -7,6 +7,7 @@ receives surface mesh / particle data for Blender display.
 
 from __future__ import annotations
 
+import gc
 import math
 import time as _time
 from dataclasses import dataclass, field as dc_field
@@ -409,6 +410,8 @@ class SolverSettings:
     voxel_size: float = C.DEFAULT_VOXEL_SIZE
     leaf_capacity: int = C.DEFAULT_LEAF_CAPACITY
     max_particles: int = C.DEFAULT_MAX_PARTICLES
+    auto_grow_particles: bool = True
+    particle_growth_failure_policy: str = "DEFER"
     max_whitewater: int = C.DEFAULT_MAX_WHITEWATER
 
     frame_rate: float = 24.0
@@ -481,8 +484,8 @@ class SolverSettings:
     particle_radius_scale: float = 1.2
     surface_splat_radius: int = 2
     # Render surfacing is intentionally decoupled from the simulation grid.
-    # The simulation SDF remains on the solver grid for whitewater/snippets,
-    # while the render SDF can use a higher-resolution grid for viewport/export.
+    # The optional simulation SDF is retained only when requested or required
+    # by whitewater, while the render SDF can use a separate resolution.
     surface_resolution_mode: int = int(SurfaceResolutionMode.SIMULATION)
     surface_resolution_multiplier: float = 2.0
     surface_voxel_size: float = 0.0
@@ -651,6 +654,7 @@ class FluidSolver:
         self.sourcing = SourcePipeline(self)
         self.surface = SurfacePipeline(self)
         self._host_frame_cache = None
+        self.last_particle_growth = None
         self.snippets = SnippetManager()
 
         self.colliders: list[ColliderDesc] = []
@@ -715,6 +719,81 @@ class FluidSolver:
     def set_custom_snippets(self, snippets):
         self.snippets.set_snippets(snippets)
         return self.snippets.errors
+
+    def ensure_particle_capacity(self, required: int):
+        """Atomically grow particle/binner storage while preserving solver state."""
+        from .memory_safety import release_cuda_memory, vram_snapshot
+        from .particle_capacity import (
+            ParticleGrowthResult, plan_particle_growth,
+        )
+
+        current = int(self.particles.capacity)
+        required = max(0, int(required))
+        if required <= current:
+            result = ParticleGrowthResult(
+                "SUFFICIENT", current, current, required, current)
+            self.last_particle_growth = result
+            return result
+        if not bool(getattr(self.settings, "auto_grow_particles", True)):
+            result = ParticleGrowthResult(
+                "DISABLED", current, current, required, current,
+                reason="automatic particle growth is disabled")
+            self.last_particle_growth = result
+            return result
+
+        resources = vram_snapshot(self.device)
+        plan = plan_particle_growth(
+            current, required,
+            gpu_total_bytes=int(resources.get("gpu_total_bytes", 0)),
+            gpu_free_bytes=int(resources.get("gpu_free_bytes", 0)),
+        )
+        if not plan.allowed:
+            result = ParticleGrowthResult(
+                "BLOCKED", current, current, required, plan.target,
+                plan.peak_allocation_bytes, plan.budget_bytes, plan.reason)
+            self.last_particle_growth = result
+            return result
+
+        grown_particles = None
+        grown_bins = None
+        try:
+            # The old pool remains authoritative until every allocation and
+            # copy has completed successfully.
+            grown_particles = self.particles.resized_copy(plan.target)
+            grown_bins = ParticleBins(
+                plan.target, self.grid.voxel_capacity, self.device)
+            wp.synchronize_device(self.device)
+        except Exception as exc:  # noqa: BLE001 - CUDA allocation surface
+            del grown_particles, grown_bins
+            gc.collect()
+            release_cuda_memory(self.device)
+            result = ParticleGrowthResult(
+                "FAILED", current, current, required, plan.target,
+                plan.peak_allocation_bytes, plan.budget_bytes,
+                f"CUDA particle growth failed before swap: {exc}")
+            self.last_particle_growth = result
+            return result
+
+        old_particles, old_bins = self.particles, self.bins
+        self.particles = grown_particles
+        self.bins = grown_bins
+        self.settings.max_particles = int(plan.target)
+        self._host_frame_cache = None
+        sourcing = getattr(self, "sourcing", None)
+        if sourcing is not None:
+            sourcing._compiled_batch = None
+            sourcing.last_apply_result = {
+                **dict(getattr(sourcing, "last_apply_result", {})),
+                "available": max(0, plan.target - self.particles.host_count),
+            }
+        del old_particles, old_bins
+        gc.collect()
+        release_cuda_memory(self.device)
+        result = ParticleGrowthResult(
+            "GROWN", current, plan.target, required, plan.target,
+            plan.peak_allocation_bytes, plan.budget_bytes)
+        self.last_particle_growth = result
+        return result
 
     def reset(self):
         self._host_frame_cache = None

@@ -154,7 +154,7 @@ def main():
 
     # Real Blender RNA/Scene instances keep independent cached pending state.
     first = scene
-    first.fluidsim.max_particles += 1000
+    first.fluidsim.leaf_capacity += 64
     scene_bridge.request_scene_update(first, scene_bridge.SceneUpdate.REBUILD)
     second = first.copy()
     second.name = "Phase4 Pending Isolation"

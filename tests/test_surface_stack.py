@@ -39,6 +39,7 @@ def test_surface_filters_stack_in_fixed_houdini_style_order(monkeypatch):
         lambda kernel, **kwargs: launches.append((kernel, kwargs)),
     )
     settings = solver_mod.SolverSettings()
+    settings.surface_build_lowres_sdf = True
     settings.surface_dilate_iterations = 1
     settings.surface_dilate_strength = 0.2
     settings.surface_erode_iterations = 2
@@ -64,7 +65,7 @@ def test_surface_filters_stack_in_fixed_houdini_style_order(monkeypatch):
     assert strengths == [0.2, 0.3, 0.3, 0.4, 0.4, 0.4]
 
 
-def test_surface_stack_defaults_preserve_legacy_box_smoothing(monkeypatch):
+def test_surface_stack_default_does_not_retain_simulation_surface_field(monkeypatch):
     import fluidSim_warp_blender51.sim.solver as solver_mod
 
     launches = []
@@ -75,6 +76,25 @@ def test_surface_stack_defaults_preserve_legacy_box_smoothing(monkeypatch):
         lambda kernel, **kwargs: launches.append((kernel, kwargs)),
     )
     pipeline = _fake_solver(solver_mod, solver_mod.SolverSettings())
+
+    pipeline.build(build_render=False)
+
+    assert launches == []
+
+
+def test_retained_simulation_surface_uses_default_box_smoothing(monkeypatch):
+    import fluidSim_warp_blender51.sim.solver as solver_mod
+
+    launches = []
+    import fluidSim_warp_blender51.sim.surface as surface_mod
+    monkeypatch.setattr(
+        surface_mod.wp,
+        "launch",
+        lambda kernel, **kwargs: launches.append((kernel, kwargs)),
+    )
+    settings = solver_mod.SolverSettings()
+    settings.surface_build_lowres_sdf = True
+    pipeline = _fake_solver(solver_mod, settings)
 
     pipeline.build(build_render=False)
 

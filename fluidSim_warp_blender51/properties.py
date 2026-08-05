@@ -163,6 +163,18 @@ def _request_sync(self, context):
     _request_scene_update(context, SceneUpdate.SYNC)
 
 
+def _request_particle_capacity(self, context):
+    scene = getattr(context, "scene", None) if context is not None else None
+    if scene is None:
+        return
+    try:
+        from .blender import scene_bridge
+
+        scene_bridge.update_particle_capacity_policy(scene)
+    except Exception as exc:  # noqa: BLE001 - property callbacks must be safe
+        scene.fluidsim.status = f"Particle capacity setting failed: {exc}"
+
+
 def _request_output_refresh(self, context):
     from .blender.scene_bridge import SceneUpdate
 
@@ -656,11 +668,14 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Live Simulation", default=False,
         update=_on_live_changed,
         description="Enable to step the GPU solver as the timeline plays; disable to stop live stepping while keeping the current state")
+    playback_advanced_expanded: BoolProperty(
+        name="Advanced Playback", default=False, options={"SKIP_SAVE"},
+        description="Show or hide expert controls for recovering timeline frames dropped during live playback")
     max_frame_catchup: IntProperty(
-        name="Max Frame Catch-up", default=8, min=1, max=120,
+        name="Maximum Playback Recovery Frames", default=8, min=1, max=120,
         description=(
-            "Set the largest forward timeline jump stepped during one frame change. "
-            "Higher values recover more dropped playback frames but can stall Blender longer; lower values report desync sooner instead of silently running in slow motion"))
+            "Set the largest forward timeline gap the live solver may recover synchronously. "
+            "Higher values preserve more dropped playback frames but can stall Blender longer; lower values stop sooner and report desynchronization instead of silently running the simulation in slow motion"))
     domain_object: PointerProperty(
         name="Domain", type=bpy.types.Object,
         update=_request_rebuild,
@@ -717,14 +732,15 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(
         name="Initial Particle Reserve", default=2_000_000, min=1024,
-        max=50_000_000, update=_request_live,
+        max=50_000_000, update=_request_particle_capacity,
         description=(
             "Set the particle capacity reserved when a solver starts. With Auto Grow enabled, "
             "the live GPU pool can grow transactionally without rewriting this authored value; "
             "an active pool never shrinks automatically"
         ))
     auto_grow_particles: BoolProperty(
-        name="Auto Grow Particle Pool", default=True, update=_request_live,
+        name="Auto Grow Particle Pool", default=True,
+        update=_request_particle_capacity,
         description=(
             "Grow GPU particle and bin buffers transactionally when an admitted source needs more capacity; "
             "the existing solver remains authoritative if the live VRAM guard or allocation refuses growth"
@@ -737,7 +753,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
             ("PAUSE", "Pause Live, Preserve Solver",
              "Turn Live off after the current safe step while preserving the initialized solver and all particles"),
         ),
-        default="DEFER", update=_request_live,
+        default="DEFER", update=_request_particle_capacity,
         description="Choose how a source behaves when guarded particle growth cannot allocate safely")
     capacity_show_alternatives: BoolProperty(
         name="Show Capacity Alternatives", default=False,
@@ -1099,7 +1115,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Emit Particles", default=True, update=_request_reset,
         description="Enable to seed liquid particles in the height region; disable to keep the height configuration without creating particles")
 
-    # -- Output ---------------------------------------------------------------------
+    # -- Viewport display / output --------------------------------------------------
     liquid_view_mode: EnumProperty(
         name="Liquid View",
         items=LIQUID_VIEW_ITEMS,

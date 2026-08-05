@@ -120,7 +120,10 @@ def test_a_jump_past_the_catchup_bound_reports_desync_and_takes_no_step(
     assert steps == []
     assert sess.last_frame == 50
     assert "desync" in scene.fluidsim.status.lower()
-    assert "47" in sess.current_error(scene)
+    error = sess.current_error(scene)
+    assert "47" in error
+    assert "Maximum Playback Recovery Frames" in error
+    assert "Advanced Playback" in error
 
 
 def test_the_catchup_bound_is_the_scene_property_not_a_constant(monkeypatch):

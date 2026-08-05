@@ -737,9 +737,11 @@ def k_source_shapes_particles(
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
 ):
-    """Emit particles inside particle-mode source shapes, topping each voxel
-    up to the shape's emit_rate target using the current particle counts."""
+    """Emit particles inside particle-mode source shapes after batch admission."""
+    if emission_state[1] == 0:
+        return
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
@@ -767,6 +769,7 @@ def k_source_shapes_particles(
             slot = wp.atomic_add(count, 0, 1)
             if slot >= capacity:
                 wp.atomic_sub(count, 0, 1)
+                emission_state[3] = 1
                 return
             jitter = wp.vec3(
                 (wp.randf(state) - 0.5) * voxel_size,
@@ -786,6 +789,7 @@ def k_source_shapes_particles(
             density[slot] = s.density
             time_offset[slot] = 0.0
             alive[slot] = 1
+            wp.atomic_add(emission_state, 2, 1)
 
 
 register_fn(k_source_shapes_particles, "fluidSimSourceShapesParticlesAttributes",
@@ -883,8 +887,11 @@ def k_mesh_source_particles(
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
 ):
-    """Top up intersecting voxels and project every spawn onto a triangle."""
+    """Top up intersecting voxels after whole-batch admission."""
+    if emission_state[1] == 0:
+        return
     tid = wp.tid()
     if (tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0
             or source.stype != 0 or source.mode != 1
@@ -922,6 +929,7 @@ def k_mesh_source_particles(
         slot = wp.atomic_add(count, 0, 1)
         if slot >= capacity:
             wp.atomic_sub(count, 0, 1)
+            emission_state[3] = 1
             return
         position = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
         positions[slot] = position
@@ -937,6 +945,7 @@ def k_mesh_source_particles(
         density[slot] = source.density
         time_offset[slot] = 0.0
         alive[slot] = 1
+        wp.atomic_add(emission_state, 2, 1)
 
 
 register_fn(
@@ -964,12 +973,16 @@ def k_source_height(
     domain_min: wp.vec3,
     domain_max: wp.vec3,
     velocity: wp.vec3,
+    require_admission: int,
+    emission_state: wp.array(dtype=wp.int32),
     voxel_type: wp.array(dtype=wp.int32),
     u: wp.array(dtype=float),
     v: wp.array(dtype=float),
     w: wp.array(dtype=float),
 ):
-    """Fill voxels whose center lies below the height surface with fluid."""
+    """Fill voxels below the height surface, guarded when particles emit."""
+    if require_admission != 0 and emission_state[1] == 0:
+        return
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
@@ -1128,8 +1141,11 @@ def k_source_owned_points(
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
     result: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
 ):
     """Direct point append preserving every owned per-point attribute."""
+    if emission_state[1] == 0:
+        return
     tid = wp.tid()
     if tid >= src_count:
         return
@@ -1137,6 +1153,7 @@ def k_source_owned_points(
     if slot >= capacity:
         wp.atomic_sub(count, 0, 1)
         result[1] = 1
+        emission_state[3] = 1
         return
     positions[slot] = src_positions[tid]
     velocities[slot] = default_velocity
@@ -1160,6 +1177,7 @@ def k_source_owned_points(
     time_offset[slot] = 0.0
     alive[slot] = 1
     wp.atomic_add(result, 0, 1)
+    wp.atomic_add(emission_state, 2, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1857,7 +1875,10 @@ def k_emit_compiled_source_particles(
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
     result: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
 ):
+    if emission_state[1] == 0:
+        return
     tid = wp.tid()
     if tid >= source_leaf_count * C.LEAF_VOLUME or coverage[tid] <= 0.0:
         return
@@ -1882,6 +1903,7 @@ def k_emit_compiled_source_particles(
         if slot >= capacity:
             wp.atomic_sub(count, 0, 1)
             result[1] = 1
+            emission_state[3] = 1
             break
         positions[slot] = center
         velocities[slot] = emission_velocity
@@ -1894,6 +1916,142 @@ def k_emit_compiled_source_particles(
         alive[slot] = 1
         wp.atomic_add(voxel_counts, flat, 1)
         wp.atomic_add(result, 0, 1)
+        wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_add_emission_demand(amount: int, emission_state: wp.array(dtype=wp.int32)):
+    if wp.tid() == 0 and amount > 0:
+        wp.atomic_add(emission_state, 0, amount)
+
+
+@wp.kernel
+def k_admit_emission_batch(
+    particle_count: wp.array(dtype=wp.int32),
+    capacity: int,
+    emission_state: wp.array(dtype=wp.int32),
+):
+    if wp.tid() == 0:
+        available = wp.max(0, capacity - particle_count[0])
+        emission_state[1] = wp.where(emission_state[0] <= available, 1, 0)
+
+
+@wp.kernel
+def k_count_compiled_source_particles(
+    coverage: wp.array(dtype=float),
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    target_per_voxel: int,
+    scratch_counts: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
+):
+    """Count compiled top-up demand and reserve occupancy only in scratch."""
+    tid = wp.tid()
+    if tid >= source_leaf_count * C.LEAF_VOLUME or coverage[tid] <= 0.0:
+        return
+    source_slot = tid // C.LEAF_VOLUME
+    local = tid - source_slot * C.LEAF_VOLUME
+    lc = source_leaf_coords[source_slot]
+    ijk = wp.vec3i(
+        (lc[0] << C.LEAF_SHIFT) + (local & C.LEAF_MASK),
+        (lc[1] << C.LEAF_SHIFT) + ((local >> C.LEAF_SHIFT) & C.LEAF_MASK),
+        (lc[2] << C.LEAF_SHIFT) + ((local >> (2 * C.LEAF_SHIFT)) & C.LEAF_MASK),
+    )
+    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+    if flat < 0:
+        return
+    desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
+    missing = wp.max(0, desired - scratch_counts[flat])
+    if missing > 0:
+        scratch_counts[flat] = scratch_counts[flat] + missing
+        wp.atomic_add(emission_state, 0, missing)
+
+
+@wp.kernel
+def k_count_source_shapes_particles(
+    shapes: wp.array(dtype=SourceShape),
+    num_shapes: int,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    scratch_counts: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
+):
+    """Predicate-identical demand pass for analytic and derived height shapes."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    pw = voxel_center_world(ijk, origin, voxel_size)
+    have = scratch_counts[tid]
+    for si in range(num_shapes):
+        s = shapes[si]
+        if (s.enabled == 0 or s.stype != 0 or s.mode != 1
+                or (s.emission_mode == 0 and s.armed == 0)):
+            continue
+        if shape_sdf_world(s, pw) > 0.0:
+            continue
+        want = int(s.emit_rate)
+        if want > have:
+            # The accepted legacy commit kernel does not update voxel_counts
+            # between overlapping shapes; mirror that behavior exactly.
+            wp.atomic_add(emission_state, 0, want - have)
+
+
+@wp.kernel
+def k_count_mesh_source_particles(
+    mesh_id: wp.uint64,
+    source: MeshSource,
+    query_radius: float,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    scratch_counts: wp.array(dtype=wp.int32),
+    seed: int,
+    emission_state: wp.array(dtype=wp.int32),
+):
+    """Run the same projected-spawn predicates as the mesh commit pass."""
+    tid = wp.tid()
+    if (tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0
+            or source.stype != 0 or source.mode != 1
+            or (source.emission_mode == 0 and source.armed == 0)):
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    center = voxel_center_world(ijk, origin, voxel_size)
+    half_diagonal = 0.8660254037844386 * voxel_size
+    shell = wp.max(source.surface_thickness, 0.0) + half_diagonal
+    projection_radius = wp.max(query_radius, shell + half_diagonal)
+    center_query = wp.mesh_query_point_no_sign(mesh_id, center, shell)
+    if not center_query.result:
+        return
+    center_closest = wp.mesh_eval_position(
+        mesh_id, center_query.face, center_query.u, center_query.v)
+    if wp.length(center - center_closest) > shell:
+        return
+    have = scratch_counts[tid]
+    want = int(source.emit_rate)
+    if want <= have:
+        return
+    state = wp.rand_init(seed, tid * 31)
+    for emit_index in range(want - have):
+        jitter = wp.vec3(
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+        )
+        query = wp.mesh_query_point_no_sign(
+            mesh_id, center + jitter, projection_radius)
+        if query.result:
+            wp.atomic_add(emission_state, 0, 1)
+            # Commit consumes one additional random value for lifespan before
+            # the next projected spawn; preserve predicate parity.
+            if source.use_lifespan != 0:
+                wp.randf(state)
 
 
 class SourcePipeline:
@@ -1917,9 +2075,31 @@ class SourcePipeline:
             1, dtype=wp.int32, device=self.device)
         self._compiled_result = wp.zeros(
             2, dtype=wp.int32, device=self.device)
+        # [required, admitted, emitted, invariant-overflow].  Count passes and
+        # guarded commit kernels remain on-device until one aggregate result
+        # is read after the whole source batch.
+        self._emission_state = wp.zeros(
+            4, dtype=wp.int32, device=self.device)
+        self._emission_scratch_counts = wp.zeros(
+            max(1, int(getattr(owner.grid, "voxel_capacity",
+                               getattr(owner, "_nvox", 1)))),
+            dtype=wp.int32, device=self.device)
+        self._emission_transaction_active = False
+        self._emission_pending_fired: set[str] = set()
+        self._emission_initial_count = 0
+        self._emission_available = 0
+        self._emission_legacy_attempted = False
+        self._transaction_shapes = None
+        self._transaction_shape_count = 0
+        self._transaction_mesh_sources = ()
+        self._transaction_height_armed = False
         self._compiled_empty_scalar = None
         self._compiled_empty_vector = None
-        self.last_apply_result = {"emitted": 0, "capacity_limited": False}
+        self.last_apply_result = {
+            "emitted": 0, "capacity_limited": False,
+            "required": 0, "available": int(owner.particles.capacity),
+            "admitted": True,
+        }
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
         # Per-source initial-fill armed state, keyed by the stable descriptor
@@ -1947,6 +2127,16 @@ class SourcePipeline:
         self.last_diagnostics = ()
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
+        self._emission_transaction_active = False
+        self._emission_pending_fired = set()
+        owner = getattr(self, "owner", None)
+        particles = getattr(owner, "particles", None)
+        self.last_apply_result = {
+            "emitted": 0, "capacity_limited": False,
+            "required": 0,
+            "available": int(getattr(particles, "capacity", 0)),
+            "admitted": True,
+        }
 
     def release(self):
         """Release all compiler-owned GPU values on solver teardown/failure."""
@@ -2073,8 +2263,272 @@ class SourcePipeline:
             device=self.device,
         )
 
-    def apply_compiled(self, batch, dt):
+    @staticmethod
+    def _legacy_source_armed(source, fired):
+        return not (
+            int(getattr(source, "emission_mode",
+                        SourceEmissionMode.CONTINUOUS_INFLOW))
+            == SourceEmissionMode.INITIAL_FILL
+            and getattr(source, "source_id", "") in fired
+        )
+
+    def _prepare_legacy_emission(self):
+        """Freeze legacy emitters and their deterministic seed for one batch."""
+        owner, settings = self.owner, self.owner.settings
+        analytic = tuple(getattr(self, "analytic_sources", self.sources))
+        meshes = tuple(getattr(self, "mesh_sources", ()))
+        height = self.height_source
+        height_armed = self._legacy_source_armed(height, self._initial_fired)
+        emit_height = bool(height.enabled and height.emit_particles and height_armed)
+        emit_shapes = any(
+            source.enabled
+            and source.stype == SourceShapeType.SOURCE
+            and source.mode == SourceShapeSourceMode.PARTICLES
+            and self._legacy_source_armed(source, self._initial_fired)
+            for source in analytic
+        )
+        emit_meshes = tuple(
+            source for source in meshes
+            if source.enabled and source.mesh is not None
+            and source.stype == SourceShapeType.SOURCE
+            and source.mode == SourceShapeSourceMode.PARTICLES
+            and self._legacy_source_armed(source, self._initial_fired)
+        )
+        self._transaction_height_armed = height_armed
+        self._transaction_emit_seed = (
+            self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+        self._transaction_mesh_sources = emit_meshes
+        self._transaction_shapes = None
+        self._transaction_shape_count = 0
+
+        if emit_shapes or emit_height:
+            emit_sources = list(analytic)
+            if emit_height:
+                domain_min, domain_max = settings.domain_min, settings.domain_max
+                center_z = (domain_min[2] + height.base_height) * 0.5
+                half_z = max((height.base_height - domain_min[2]) * 0.5, 0.0)
+                emit_sources.append(SourceShapeDesc(
+                    enabled=True, shape=2, stype=0, mode=1,
+                    position=(
+                        (domain_min[0] + domain_max[0]) * 0.5,
+                        (domain_min[1] + domain_max[1]) * 0.5,
+                        center_z,
+                    ),
+                    half_extents=(
+                        (domain_max[0] - domain_min[0]) * 0.5,
+                        (domain_max[1] - domain_min[1]) * 0.5,
+                        half_z,
+                    ),
+                    velocity=tuple(height.velocity),
+                    emit_rate=height.emit_rate,
+                    emission_mode=int(getattr(
+                        height, "emission_mode",
+                        SourceEmissionMode.CONTINUOUS_INFLOW)),
+                    source_id=getattr(height, "source_id", ""),
+                ))
+            key = tuple(repr(source) for source in emit_sources)
+            if self._emit_shape_array is None or self._emit_shape_key != key:
+                self._emit_shape_array = wp.array(
+                    [self._bake_struct(source) for source in emit_sources],
+                    dtype=SourceShape, device=self.device)
+                self._emit_shape_key = key
+            self._transaction_shapes = self._emit_shape_array
+            self._transaction_shape_count = len(emit_sources)
+
+        pending = set()
+        if (emit_height
+                and int(getattr(height, "emission_mode",
+                                SourceEmissionMode.CONTINUOUS_INFLOW))
+                == SourceEmissionMode.INITIAL_FILL
+                and getattr(height, "source_id", "")):
+            pending.add(height.source_id)
+        for source in analytic + emit_meshes:
+            if (source.enabled
+                    and int(getattr(source, "emission_mode",
+                                    SourceEmissionMode.CONTINUOUS_INFLOW))
+                    == SourceEmissionMode.INITIAL_FILL
+                    and getattr(source, "source_id", "")
+                    and self._legacy_source_armed(source, self._initial_fired)):
+                pending.add(source.source_id)
+        return bool(emit_shapes or emit_height or emit_meshes), pending
+
+    def _begin_emission_transaction(self, batch=None, *, include_legacy=False):
+        """Count a complete source batch and enqueue one device admission gate."""
+        owner, grid, particles = self.owner, self.owner.grid, self.owner.particles
+        compiled_candidates = []
+        self._emission_pending_fired = set()
+        if batch is not None:
+            for compiled in batch.sources:
+                plan, region = compiled.plan, compiled.region
+                if (plan.operation != SourceOperation.LIQUID
+                        or any(item.severity == "ERROR"
+                               for item in region.diagnostics)):
+                    continue
+                stable_id = str(plan.stable_id)
+                if (plan.lifecycle in {SourceLifecycle.ONCE,
+                                       SourceLifecycle.DIRECT_APPEND}
+                        and stable_id in self._initial_fired):
+                    continue
+                compiled_candidates.append(compiled)
+                if plan.lifecycle in {SourceLifecycle.ONCE,
+                                      SourceLifecycle.DIRECT_APPEND}:
+                    self._emission_pending_fired.add(stable_id)
+
+        self._emission_legacy_attempted = False
+        if include_legacy:
+            legacy_attempted, pending = self._prepare_legacy_emission()
+            self._emission_legacy_attempted = legacy_attempted
+            self._emission_pending_fired |= pending
+
+        attempted = bool(compiled_candidates or self._emission_legacy_attempted)
+        self._emission_initial_count = int(particles.host_count)
+        self._emission_available = max(
+            0, int(particles.capacity) - self._emission_initial_count)
+        self._emission_transaction_active = attempted
+        if not attempted:
+            self.last_apply_result = {
+                "emitted": 0, "capacity_limited": False,
+                "required": 0, "available": self._emission_available,
+                "admitted": True,
+            }
+            return False
+
+        self._emission_state.zero_()
+        self._compiled_result.zero_()
+        wp.copy(self._emission_scratch_counts, owner.voxel_counts.data,
+                count=int(owner._nvox))
+
+        for compiled in compiled_candidates:
+            plan, region = compiled.plan, compiled.region
+            if (plan.lifecycle == SourceLifecycle.DIRECT_APPEND
+                    and region.points is not None):
+                count = int(len(region.points.positions))
+                if count:
+                    wp.launch(
+                        k_add_emission_demand, dim=1,
+                        inputs=[count, self._emission_state],
+                        device=self.device)
+            elif region.leaf_count:
+                wp.launch(
+                    k_count_compiled_source_particles,
+                    dim=region.leaf_count * C.LEAF_VOLUME,
+                    inputs=[
+                        region.device_coverage, region.device_leaf_coords,
+                        region.leaf_count, grid.leaf_table, grid.voxels_dim,
+                        grid.leaves_dim,
+                        max(1, min(64, int(round(
+                            plan.payload.target_particles_per_voxel)))),
+                        self._emission_scratch_counts,
+                        self._emission_state,
+                    ], device=self.device)
+
+        if self._transaction_shape_count:
+            wp.launch(
+                k_count_source_shapes_particles, dim=owner._nvox,
+                inputs=[
+                    self._transaction_shapes,
+                    self._transaction_shape_count,
+                    grid.leaf_coords, grid.num_leaves, grid.origin,
+                    owner.settings.voxel_size,
+                    self._emission_scratch_counts,
+                    self._emission_state,
+                ], device=self.device)
+        for mesh_index, source in enumerate(self._transaction_mesh_sources):
+            wp.launch(
+                k_count_mesh_source_particles, dim=owner._nvox,
+                inputs=[
+                    source.mesh.id, self._bake_struct(source),
+                    source.query_radius(), grid.leaf_coords,
+                    grid.num_leaves, grid.origin,
+                    owner.settings.voxel_size,
+                    self._emission_scratch_counts,
+                    self._transaction_emit_seed + mesh_index + 1,
+                    self._emission_state,
+                ], device=self.device)
+
+        wp.launch(
+            k_admit_emission_batch, dim=1,
+            inputs=[particles.count, particles.capacity,
+                    self._emission_state],
+            device=self.device)
+        return True
+
+    def _request_particle_growth(self, required_total):
+        grow = getattr(self.owner, "ensure_particle_capacity", None)
+        if callable(grow):
+            return grow(required_total)
+        from .particle_capacity import ParticleGrowthResult
+
+        current = int(getattr(self.owner.particles, "capacity", 0))
+        return ParticleGrowthResult(
+            "DISABLED", current, current, int(required_total), current,
+            reason="owner does not expose transactional particle growth")
+
+    def _finish_emission_transaction(self):
+        if not self._emission_transaction_active:
+            return False
+        values = np.asarray(self._emission_state.numpy(), dtype=np.int64)
+        required, admitted, emitted, invariant = map(int, values[:4])
+        self._emission_transaction_active = False
+        if invariant:
+            self.last_apply_result = {
+                "emitted": emitted, "capacity_limited": True,
+                "required": required, "available": self._emission_available,
+                "admitted": False, "invariant_violation": True,
+            }
+            raise RuntimeError(
+                "source emission exceeded capacity after admission; "
+                "the solver session must be discarded")
+        if admitted:
+            if self._emission_legacy_attempted:
+                self._emit_seed = self._transaction_emit_seed
+            if self._emission_pending_fired:
+                self._initial_fired |= self._emission_pending_fired
+                self._shape_array = None
+                self._emit_shape_array = None
+                self._emit_shape_key = None
+            if emitted:
+                self.owner.particles.refresh_host_count()
+                self.owner._host_frame_cache = None
+            self.last_apply_result = {
+                "emitted": emitted,
+                "capacity_limited": False,
+                "required": required,
+                "available": self._emission_available,
+                "admitted": True,
+            }
+            return bool(emitted)
+
+        # Guarded commit kernels have made no particle/lifecycle/RNG changes.
+        # Grow only after that fact is known; the prepared source remains armed
+        # and retries on the next source phase without stopping the solver.
+        total_required = self._emission_initial_count + required
+        growth = self._request_particle_growth(total_required)
+        policy = str(getattr(
+            self.owner.settings, "particle_growth_failure_policy", "DEFER"
+        )).upper()
+        pause_requested = not growth.grew and policy == "PAUSE"
+        self.last_apply_result = {
+            "emitted": 0,
+            "capacity_limited": True,
+            "required": required,
+            "available": self._emission_available,
+            "admitted": False,
+            "deferred": True,
+            "pause_requested": pause_requested,
+            "growth_status": growth.status,
+            "growth_previous": growth.previous,
+            "growth_current": growth.current,
+            "growth_target": growth.target,
+            "growth_reason": growth.reason,
+        }
+        return False
+
+    def apply_compiled(self, batch, dt, *, transaction_ready=False,
+                       finalize=True):
         """Apply compiled operations in fixed precedence/semantic order."""
+        if not transaction_ready:
+            self._begin_emission_transaction(batch, include_legacy=False)
         owner, grid = self.owner, self.owner.grid
         if self._compiled_empty_scalar is None:
             self._compiled_empty_scalar = wp.empty(
@@ -2085,11 +2539,6 @@ class SourcePipeline:
         empty_vector = self._compiled_empty_vector
         pressure = owner.pressure_solver.pressure
         particles = owner.particles
-        initial_particle_count = int(particles.host_count)
-        requested_direct = 0
-        self._compiled_result.zero_()
-        emitted_any = False
-        count_dirty = False
         order = {
             SourceOperation.COLLISION: 0,
             SourceOperation.SINK: 1,
@@ -2175,31 +2624,12 @@ class SourcePipeline:
                              particles.attr("temperature"),
                              particles.attr("viscosity"), particles.attr("density"),
                              particles.time_offset, particles.alive,
-                             particles.count, self._compiled_result],
+                             particles.count, self._compiled_result,
+                             self._emission_state],
                     device=self.device,
                 )
-                requested_direct += count
-                # Accumulate: a later zero-count source in the same batch must
-                # not erase an earlier successful emission, or the end-of-loop
-                # refresh_host_count() is skipped and the emitted particles are
-                # left unbinned for the substep.
-                emitted_any = emitted_any or count > 0
-                count_dirty = count_dirty or count > 0
             elif plan.operation == SourceOperation.LIQUID:
-                # host_count is only refreshed at the end of the loop, so several
-                # liquid sources in one batch would otherwise all test the same
-                # pre-loop value and each launch a full-size emit against a
-                # capacity that is already gone. Re-read, but only once another
-                # source in this batch has actually added particles: the common
-                # single-source case still costs no extra device sync.
-                if count_dirty:
-                    particles.refresh_host_count()
-                    count_dirty = False
-                if not (region.leaf_count
-                        and particles.host_count < particles.capacity):
-                    # Skip the _initial_fired bookkeeping below: a source that
-                    # was gated out never emitted, so marking it fired would
-                    # silence it for the rest of the run.
+                if not region.leaf_count:
                     continue
                 wp.launch(
                     k_emit_compiled_source_particles,
@@ -2220,30 +2650,18 @@ class SourcePipeline:
                              particles.attr("temperature"),
                              particles.attr("viscosity"), particles.attr("density"),
                              particles.time_offset, particles.alive,
-                             particles.count, self._compiled_result],
+                             particles.count, self._compiled_result,
+                             self._emission_state],
                     device=self.device,
                 )
-                emitted_any = True
-            if (plan.lifecycle in {SourceLifecycle.ONCE,
-                                   SourceLifecycle.DIRECT_APPEND}
-                    and plan.operation not in {
-                        SourceOperation.PRESSURE, SourceOperation.SCALAR_FIELD,
-                        SourceOperation.VECTOR_FIELD,
-                        SourceOperation.STAGGERED_VELOCITY}):
+            if (plan.lifecycle == SourceLifecycle.ONCE
+                    and plan.operation in {
+                        SourceOperation.COLLISION, SourceOperation.SINK,
+                        SourceOperation.ACTIVATION}):
                 self._initial_fired.add(stable_id)
-        final_particle_count = initial_particle_count
-        if emitted_any:
-            final_particle_count = int(particles.refresh_host_count())
-        emitted_count = max(0, final_particle_count - initial_particle_count)
-        result_values = (self._compiled_result.numpy()
-                         if emitted_any else np.zeros(2, dtype=np.int32))
-        self.last_apply_result = {
-            "emitted": emitted_count,
-            "capacity_limited": bool(
-                int(result_values[1]) != 0
-                or requested_direct > emitted_count),
-        }
-        return emitted_any
+        if finalize:
+            return self._finish_emission_transaction()
+        return False
 
     def apply_post_p2g_fields(self, dt):
         """Apply scalar/vector/staggered fields after P2G so they persist."""
@@ -2357,32 +2775,34 @@ class SourcePipeline:
         return self.last_pressure_apply_count
 
     def apply(self, dt):
-        # SourcePlan callers use the compiled operation path. Legacy descriptors
-        # retain their accepted kernels through the compatibility seam.
-        compiled_emitted = False
+        """Apply one all-or-nothing particle-emission transaction."""
+        batch = None
         if getattr(self, "plans", ()) and not self.sources:
-            dynamic = any(plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
-                          for plan in self.plans)
+            dynamic = any(
+                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
+                for plan in self.plans)
             batch = getattr(self, "_compiled_batch", None)
             if batch is None or dynamic:
                 batch = self.compile(
                     frame=int(getattr(self.owner, "frame", 0)), substep=0)
-            compiled_emitted = self.apply_compiled(batch, dt)
-            # The Domain Height Fill is a domain property, not a scene object,
-            # so it never compiles into a plan of its own. Returning here would
-            # silently drop the fill from every scene that happens to hold one
-            # plan-based source. Fall through with no legacy descriptors: the
-            # shape/mesh launches below degenerate to no-ops and only the
-            # height stamp and its emitter run.
-            if not self.height_source.enabled:
-                return compiled_emitted
+
+        include_legacy = bool(self.sources or self.height_source.enabled)
+        self._begin_emission_transaction(
+            batch, include_legacy=include_legacy)
+        if batch is not None:
+            self.apply_compiled(
+                batch, dt, transaction_ready=True, finalize=False)
+        if not include_legacy:
+            return self._finish_emission_transaction()
+
         owner = self.owner
         grid = owner.grid
         settings = owner.settings
-        shapes = self._shapes()
-        analytic_sources = getattr(self, "analytic_sources", self.sources)
-        mesh_sources = getattr(self, "mesh_sources", ())
+        analytic_sources = tuple(getattr(
+            self, "analytic_sources", self.sources))
+        mesh_sources = tuple(getattr(self, "mesh_sources", ()))
         shape_count = len(analytic_sources)
+        shapes = self._shapes()
 
         if shape_count:
             wp.launch(
@@ -2411,16 +2831,7 @@ class SourcePipeline:
             )
 
         height = self.height_source
-        # The height fill has an emission lifecycle like any other source, and
-        # it has to be resolved once for the whole substep: the grid stamp and
-        # the particle emitter below both consult it, and disarming between
-        # them would stamp the fill without ever emitting into it.
-        height_armed = (
-            int(getattr(height, "emission_mode",
-                        SourceEmissionMode.CONTINUOUS_INFLOW))
-            != SourceEmissionMode.INITIAL_FILL
-            or getattr(height, "source_id", "") not in self._initial_fired)
-        if height.enabled and height_armed:
+        if height.enabled and self._transaction_height_armed:
             profile_res = wp.vec2i(
                 int(self._height_profile_res[0]),
                 int(self._height_profile_res[1]),
@@ -2432,7 +2843,9 @@ class SourcePipeline:
                         int(height.back_mode), self._height_profile, profile_res,
                         wp.vec3(*settings.domain_min),
                         wp.vec3(*settings.domain_max),
-                        wp.vec3(*height.velocity)],
+                        wp.vec3(*height.velocity),
+                        1 if height.emit_particles else 0,
+                        self._emission_state],
                 outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v,
                          owner.vel.w],
                 device=self.device,
@@ -2444,143 +2857,46 @@ class SourcePipeline:
             device=self.device,
         )
 
-        self._emit_seed = (
-            self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
-        emit_shapes = shape_count > 0 and any(
-            source.enabled
-            and source.stype == SourceShapeType.SOURCE
-            and source.mode == SourceShapeSourceMode.PARTICLES
-            for source in analytic_sources
-        )
-        emit_mesh = any(
-            source.enabled and source.mesh is not None
-            and source.stype == SourceShapeType.SOURCE
-            and source.mode == SourceShapeSourceMode.PARTICLES
-            for source in mesh_sources
-        )
-        emit_height = height.enabled and height.emit_particles and height_armed
         particles = owner.particles
-        if ((emit_shapes or emit_mesh or emit_height)
-                and particles.host_count < particles.capacity):
-            emit_count = shape_count
-            if emit_height:
-                domain_min = settings.domain_min
-                domain_max = settings.domain_max
-                key = (
-                    shape_count,
-                    height.base_height,
-                    tuple(height.velocity),
-                    height.emit_rate,
-                    tuple(domain_min),
-                    tuple(domain_max),
-                )
-                if (self._emit_shape_array is None
-                        or self._emit_shape_key != key):
-                    center_z = (domain_min[2] + height.base_height) * 0.5
-                    half_z = max(
-                        (height.base_height - domain_min[2]) * 0.5, 0.0)
-                    emit_sources = list(analytic_sources)
-                    emit_sources.append(SourceShapeDesc(
-                        enabled=True,
-                        shape=2,
-                        stype=0,
-                        mode=1,
-                        position=(
-                            (domain_min[0] + domain_max[0]) * 0.5,
-                            (domain_min[1] + domain_max[1]) * 0.5,
-                            center_z,
-                        ),
-                        half_extents=(
-                            (domain_max[0] - domain_min[0]) * 0.5,
-                            (domain_max[1] - domain_min[1]) * 0.5,
-                            half_z,
-                        ),
-                        velocity=tuple(height.velocity),
-                        emit_rate=height.emit_rate,
-                        emission_mode=int(getattr(
-                            height, "emission_mode",
-                            SourceEmissionMode.CONTINUOUS_INFLOW)),
-                        source_id=getattr(height, "source_id", ""),
-                    ))
-                    self._emit_shape_array = wp.array(
-                        [self._bake_struct(source) for source in emit_sources],
-                        dtype=SourceShape,
-                        device=self.device,
-                    )
-                    self._emit_shape_key = key
-                shapes = self._emit_shape_array
-                emit_count = shape_count + 1
-
+        if self._transaction_shape_count:
             wp.launch(
                 k_source_shapes_particles, dim=owner._nvox,
-                inputs=[shapes, emit_count, grid.leaf_coords, grid.num_leaves,
-                        grid.origin, settings.voxel_size,
-                        owner.voxel_counts.data, self._emit_seed,
-                        particles.capacity],
+                inputs=[
+                    self._transaction_shapes, self._transaction_shape_count,
+                    grid.leaf_coords, grid.num_leaves, grid.origin,
+                    settings.voxel_size, owner.voxel_counts.data,
+                    self._transaction_emit_seed, particles.capacity,
+                ],
                 outputs=[particles.position, particles.velocity,
                          particles.attr("age"), particles.attr("life"),
                          particles.attr("temperature"),
                          particles.attr("viscosity"),
                          particles.attr("density"), particles.time_offset,
-                         particles.alive, particles.count],
+                         particles.alive, particles.count,
+                         self._emission_state],
                 device=self.device,
             )
-            for mesh_index, source in enumerate(mesh_sources):
-                if (not source.enabled or source.mesh is None
-                        or source.stype != 0 or source.mode != 1):
-                    continue
-                wp.launch(
-                    k_mesh_source_particles, dim=owner._nvox,
-                    inputs=[source.mesh.id, self._bake_struct(source),
-                            source.query_radius(), grid.leaf_coords,
-                            grid.num_leaves, grid.origin, settings.voxel_size,
-                            owner.voxel_counts.data,
-                            self._emit_seed + mesh_index + 1,
-                            particles.capacity],
-                    outputs=[particles.position, particles.velocity,
-                             particles.attr("age"), particles.attr("life"),
-                             particles.attr("temperature"),
-                             particles.attr("viscosity"),
-                             particles.attr("density"), particles.time_offset,
-                             particles.alive, particles.count],
-                    device=self.device,
-                )
-            # Disarm initial-fill sources that fired on this substep so they
-            # emit exactly once per run (re-armed only by Initialize/Reset).
-            fired_now: set[str] = set()
-            if (emit_height
-                    and int(getattr(height, "emission_mode",
-                                    SourceEmissionMode.CONTINUOUS_INFLOW))
-                    == SourceEmissionMode.INITIAL_FILL
-                    and getattr(height, "source_id", "")):
-                fired_now.add(height.source_id)
-            for _src in analytic_sources:
-                if (_src.enabled and _src.stype == SourceShapeType.SOURCE
-                        and _src.mode == SourceShapeSourceMode.PARTICLES
-                        and int(getattr(_src, "emission_mode",
-                                SourceEmissionMode.CONTINUOUS_INFLOW))
-                        == SourceEmissionMode.INITIAL_FILL
-                        and getattr(_src, "source_id", "")
-                        and _src.source_id not in self._initial_fired):
-                    fired_now.add(_src.source_id)
-            for _src in mesh_sources:
-                if (_src.enabled and _src.mesh is not None
-                        and _src.stype == SourceShapeType.SOURCE
-                        and _src.mode == SourceShapeSourceMode.PARTICLES
-                        and int(getattr(_src, "emission_mode",
-                                SourceEmissionMode.CONTINUOUS_INFLOW))
-                        == SourceEmissionMode.INITIAL_FILL
-                        and getattr(_src, "source_id", "")
-                        and _src.source_id not in self._initial_fired):
-                    fired_now.add(_src.source_id)
-            if fired_now:
-                self._initial_fired |= fired_now
-                self._shape_array = None
-                self._emit_shape_array = None
-                self._emit_shape_key = None
-            particles.refresh_host_count()
-            return True
-        return compiled_emitted
+        for mesh_index, source in enumerate(self._transaction_mesh_sources):
+            wp.launch(
+                k_mesh_source_particles, dim=owner._nvox,
+                inputs=[
+                    source.mesh.id, self._bake_struct(source),
+                    source.query_radius(), grid.leaf_coords,
+                    grid.num_leaves, grid.origin, settings.voxel_size,
+                    owner.voxel_counts.data,
+                    self._transaction_emit_seed + mesh_index + 1,
+                    particles.capacity,
+                ],
+                outputs=[particles.position, particles.velocity,
+                         particles.attr("age"), particles.attr("life"),
+                         particles.attr("temperature"),
+                         particles.attr("viscosity"),
+                         particles.attr("density"), particles.time_offset,
+                         particles.alive, particles.count,
+                         self._emission_state],
+                device=self.device,
+            )
+        return self._finish_emission_transaction()
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
@@ -2590,6 +2906,32 @@ class SourcePipeline:
         count = len(points)
         if count == 0:
             return 0
+
+        particles = self.owner.particles
+        available = max(0, int(particles.capacity) - int(particles.host_count))
+        if count > available:
+            growth = self._request_particle_growth(
+                int(particles.host_count) + count)
+            particles = self.owner.particles
+            available = max(
+                0, int(particles.capacity) - int(particles.host_count))
+            if count > available:
+                policy = str(getattr(
+                    self.owner.settings,
+                    "particle_growth_failure_policy", "DEFER",
+                )).upper()
+                self.last_apply_result = {
+                    "emitted": 0, "capacity_limited": True,
+                    "required": count, "available": available,
+                    "admitted": False, "deferred": True,
+                    "pause_requested": policy == "PAUSE",
+                    "growth_status": growth.status,
+                    "growth_previous": growth.previous,
+                    "growth_current": growth.current,
+                    "growth_target": growth.target,
+                    "growth_reason": growth.reason,
+                }
+                return 0
 
         source_positions = wp.array(
             points, dtype=wp.vec3, device=self.device)
@@ -2602,7 +2944,6 @@ class SourcePipeline:
         source_velocities = wp.array(
             velocities, dtype=wp.vec3, device=self.device)
 
-        particles = self.owner.particles
         wp.launch(
             k_source_particles, dim=count,
             inputs=[source_positions, source_velocities, count, float(life),
@@ -2617,4 +2958,10 @@ class SourcePipeline:
             device=self.device,
         )
         self.owner._host_frame_cache = None
-        return particles.refresh_host_count()
+        final_count = particles.refresh_host_count()
+        self.last_apply_result = {
+            "emitted": count, "capacity_limited": False,
+            "required": count, "available": available,
+            "admitted": True,
+        }
+        return final_count

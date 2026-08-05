@@ -47,6 +47,8 @@ def test_particle_emission_saturates_device_and_host_counts():
     leaf_coords = wp.array([(0, 0, 0)], dtype=wp.vec3i, device=device)
     num_leaves = wp.array([1], dtype=wp.int32, device=device)
     voxel_counts = wp.zeros(512, dtype=wp.int32, device=device)
+    emission_state = wp.array(
+        [0, 1, 0, 0], dtype=wp.int32, device=device)
 
     wp.launch(
         k_source_shapes_particles, dim=512,
@@ -56,13 +58,14 @@ def test_particle_emission_saturates_device_and_host_counts():
                  particles.attr("age"), particles.attr("life"),
                  particles.attr("temperature"), particles.attr("viscosity"),
                  particles.attr("density"), particles.time_offset,
-                 particles.alive, particles.count],
+                 particles.alive, particles.count, emission_state],
         device=device,
     )
 
     assert particles.refresh_host_count() == particles.capacity
     assert int(particles.count.numpy()[0]) == particles.capacity
     assert np.isfinite(particles.position.numpy()[:particles.capacity]).all()
+    assert int(emission_state.numpy()[3]) == 1
 
 
 def test_pcg_reuses_scalar_buffers_without_device_copy():
@@ -98,36 +101,17 @@ def test_pcg_cuda_conditional_path_does_not_preclassify_residual_on_host():
     assert "self.residual.numpy()" in fallback_source
 
 
-def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch):
-    launches = []
-    monkeypatch.setattr(wp, "launch", lambda kernel, **kwargs: launches.append(kernel))
-    particles = SimpleNamespace(host_count=64, capacity=64)
-    solver = SimpleNamespace(
-        grid=SimpleNamespace(leaf_coords=None, num_leaves=None, origin=wp.vec3(0.0)),
-        settings=SimpleNamespace(voxel_size=0.1),
-        particles=particles,
-        voxel_type=SimpleNamespace(data=None),
-        collision_sdf=SimpleNamespace(data=None),
-        collision_vel=None,
-        vel=SimpleNamespace(u=None, v=None, w=None),
-        temperature=SimpleNamespace(data=None),
-        viscosity_field=SimpleNamespace(data=None),
-        device=None,
-        _nvox=1,
-    )
-    pipeline = SimpleNamespace(
-        owner=solver,
-        device=None,
-        sources=[SimpleNamespace(enabled=True, stype=0, mode=1)],
-        height_source=SimpleNamespace(enabled=False, emit_particles=False),
-        _shapes=lambda: None,
-        _emit_seed=1,
-    )
+def test_source_admission_has_one_aggregate_readback_and_no_per_source_sync():
+    begin = inspect.getsource(SourcePipeline._begin_emission_transaction)
+    finish = inspect.getsource(SourcePipeline._finish_emission_transaction)
+    compiled = inspect.getsource(SourcePipeline.apply_compiled)
 
-    emitted = SourcePipeline.apply(pipeline, 1.0 / 24.0)
-
-    assert emitted is False
-    assert len(launches) == 2  # source field + source type resolve only
+    assert "k_admit_emission_batch" in begin
+    assert begin.index("if not attempted") < begin.index("wp.copy")
+    assert begin.count(".numpy()") == 0
+    assert compiled.count("refresh_host_count") == 0
+    assert compiled.count(".numpy()") == 0
+    assert finish.count("self._emission_state.numpy()") == 1
 
 
 def test_live_surface_publish_cadence_defaults_to_every_frame():
