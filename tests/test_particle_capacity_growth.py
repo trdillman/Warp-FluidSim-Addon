@@ -191,6 +191,38 @@ def test_growth_failure_policy_preserves_source_batch_for_retry(
     assert particles.refresh_host_count() == 0
 
 
+def test_direct_injection_admits_against_device_count_not_stale_host_mirror():
+    """A stale host_count must not admit a batch the kernel would then drop."""
+    from fluidSim_warp_blender51.sim.particle_capacity import ParticleGrowthResult
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+    from fluidSim_warp_blender51.sim.sourcing import SourcePipeline
+
+    particles = ParticleSystem(4, "cpu")
+    # Device counter advanced (as ordinary emission does) while the host mirror
+    # still reports the pre-emission value.
+    particles.count.fill_(3)
+    particles.host_count = 0
+    owner = SimpleNamespace(
+        device="cpu",
+        particles=particles,
+        grid=SimpleNamespace(voxel_capacity=1),
+        _nvox=1,
+        settings=SimpleNamespace(particle_growth_failure_policy="DEFER"),
+        ensure_particle_capacity=lambda required: ParticleGrowthResult(
+            "BLOCKED", 4, 4, required, 4, reason="guarded"),
+    )
+    pipeline = SourcePipeline(owner)
+    points = np.asarray(((0.0, 0.0, 0.0),) * 2, np.float32)
+
+    assert pipeline.inject_particles(points) == 0
+    result = pipeline.last_apply_result
+    assert result["admitted"] is False
+    assert result["required"] == 2
+    assert result["available"] == 1
+    assert result["emitted"] == 0
+    assert particles.refresh_host_count() == 3
+
+
 def test_growth_hard_limit_is_truthful():
     plan = plan_particle_growth(
         1_000_000,

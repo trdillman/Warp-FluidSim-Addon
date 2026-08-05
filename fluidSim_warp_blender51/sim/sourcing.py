@@ -2907,14 +2907,18 @@ class SourcePipeline:
         if count == 0:
             return 0
 
+        # Admission must read the device counter, not the cached host mirror:
+        # every other emitter gates on particles.count through
+        # k_admit_emission_batch, and a stale host_count would admit a batch the
+        # kernel's own capacity guard then silently drops.
         particles = self.owner.particles
-        available = max(0, int(particles.capacity) - int(particles.host_count))
+        admitted_at = int(particles.refresh_host_count())
+        available = max(0, int(particles.capacity) - admitted_at)
         if count > available:
-            growth = self._request_particle_growth(
-                int(particles.host_count) + count)
+            growth = self._request_particle_growth(admitted_at + count)
             particles = self.owner.particles
-            available = max(
-                0, int(particles.capacity) - int(particles.host_count))
+            admitted_at = int(particles.refresh_host_count())
+            available = max(0, int(particles.capacity) - admitted_at)
             if count > available:
                 policy = str(getattr(
                     self.owner.settings,
@@ -2958,9 +2962,23 @@ class SourcePipeline:
             device=self.device,
         )
         self.owner._host_frame_cache = None
-        final_count = particles.refresh_host_count()
+        final_count = int(particles.refresh_host_count())
+        emitted = final_count - admitted_at
+        if emitted != count:
+            # k_source_particles drops any thread whose slot lands past capacity,
+            # so a short commit means the admission above was made against state
+            # that no longer held. Report it the way _finish_emission_transaction
+            # reports its own overflow rather than claiming a full emission.
+            self.last_apply_result = {
+                "emitted": emitted, "capacity_limited": True,
+                "required": count, "available": available,
+                "admitted": False, "invariant_violation": True,
+            }
+            raise RuntimeError(
+                "direct particle injection exceeded capacity after admission; "
+                "the solver session must be discarded")
         self.last_apply_result = {
-            "emitted": count, "capacity_limited": False,
+            "emitted": emitted, "capacity_limited": False,
             "required": count, "available": available,
             "admitted": True,
         }
