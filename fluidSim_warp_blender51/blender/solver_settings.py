@@ -1,7 +1,7 @@
 """Projection of Blender-authored values into owned solver settings.
 
-This module owns value conversion only.  Lifecycle classification remains in
-its current owner until the Pending Settings phase.
+This module owns value conversion only. Lifecycle classification is owned by
+``pending_settings``.
 """
 
 from __future__ import annotations

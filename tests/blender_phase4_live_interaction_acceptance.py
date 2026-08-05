@@ -35,7 +35,8 @@ def check(name, condition, detail=""):
 
 def main():
     enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=True)
-    from fluidSim_warp_blender51.blender import scene_bridge, viewport_overlay
+    from fluidSim_warp_blender51.blender import (
+        pending_settings, scene_bridge, viewport_overlay)
     from fluidSim_warp_blender51.io import cache
 
     scene = bpy.context.scene
@@ -143,7 +144,7 @@ def main():
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
     fs.voxel_size = 0.1
-    pending = scene_bridge.pending_presentation(scene)
+    pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
           pending)
@@ -151,20 +152,20 @@ def main():
     check("timeline rewind applies pending reinitialize", sess.active
           and sess.solver is not advanced_solver
           and abs(sess.solver.settings.voxel_size - 0.1) < 1e-8
-          and scene_bridge.pending_presentation(scene)["action"] == "NONE",
-          scene_bridge.pending_presentation(scene))
+          and pending_settings.pending_presentation(scene)["action"] == "NONE",
+          pending_settings.pending_presentation(scene))
 
     # Real Blender RNA/Scene instances keep independent cached pending state.
     first = scene
     first.fluidsim.leaf_capacity += 64
-    scene_bridge.request_scene_update(first, scene_bridge.SceneUpdate.REBUILD)
+    pending_settings.request_scene_update(first, pending_settings.SceneUpdate.REBUILD)
     second = first.copy()
     second.name = "Phase4 Pending Isolation"
-    scene_bridge._capture_applied_state(second, sess)
+    pending_settings.capture_applied_state(second, sess)
     second.fluidsim.voxel_size = 0.09
-    scene_bridge.request_scene_update(second, scene_bridge.SceneUpdate.REBUILD)
-    first_pending = scene_bridge.pending_presentation(first)
-    second_pending = scene_bridge.pending_presentation(second)
+    pending_settings.request_scene_update(second, pending_settings.SceneUpdate.REBUILD)
+    first_pending = pending_settings.pending_presentation(first)
+    second_pending = pending_settings.pending_presentation(second)
     check("multiple-scene pending state is isolated",
           first_pending["action"] == "REINIT_PENDING"
           and second_pending["action"] == "REINIT_PENDING"

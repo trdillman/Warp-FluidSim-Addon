@@ -546,11 +546,11 @@ def _run_phase(phase, scene):
 
         # The fixed header popover remains callable independently of sidebar
         # scroll position and renders the same cached pending state as panels.
-        from fluidSim_warp_blender51.blender import scene_bridge
+        from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
         sess = scene_bridge.session()
         solver_before_pending = sess.solver
         scene.fluidsim.voxel_size *= 0.9
-        pending = scene_bridge.pending_presentation(scene)
+        pending = pending_settings.pending_presentation(scene)
         check("mid-run GUI edit is pending", pending["action"] == "REINIT_PENDING"
               and sess.solver is solver_before_pending, pending)
         popover_result = _call_panel("FLUIDSIM_PT_interaction_popover")
@@ -558,7 +558,7 @@ def _run_phase(phase, scene):
               popover_result in PANEL_CALL_SUCCESS, popover_result)
         revert_result = bpy.ops.fluidsim.revert_pending()
         check("GUI pending revert action", revert_result == {"FINISHED"}
-              and scene_bridge.pending_presentation(scene)["action"] == "NONE",
+              and pending_settings.pending_presentation(scene)["action"] == "NONE",
               revert_result)
 
         # Viewport screenshot (viewport-visible proof).
@@ -606,7 +606,7 @@ def _run_phase(phase, scene):
             "validation result",
             label_contains="1/2 passed",
         )
-        from fluidSim_warp_blender51.blender import scene_bridge
+        from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
 
         scene_bridge.set_error(scene, "intentional panel-visible error")
         _assert_panel_state(

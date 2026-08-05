@@ -129,9 +129,9 @@ def _request_scene_update(context, action):
     if scene is None:
         return
     try:
-        from .blender import scene_bridge
+        from .blender import pending_settings
 
-        scene_bridge.request_scene_update(scene, action)
+        pending_settings.request_scene_update(scene, action)
     except Exception as exc:  # noqa: BLE001 - property callbacks must be safe
         try:
             scene.fluidsim.status = f"Settings changed; auto-update failed: {exc}"
@@ -140,25 +140,25 @@ def _request_scene_update(context, action):
 
 
 def _request_rebuild(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.REBUILD)
 
 
 def _request_reset(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.RESET)
 
 
 def _request_live(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.LIVE)
 
 
 def _request_sync(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.SYNC)
 
@@ -168,27 +168,27 @@ def _request_particle_capacity(self, context):
     if scene is None:
         return
     try:
-        from .blender import scene_bridge
+        from .blender import pending_settings
 
-        scene_bridge.update_particle_capacity_policy(scene)
+        pending_settings.update_particle_capacity_policy(scene)
     except Exception as exc:  # noqa: BLE001 - property callbacks must be safe
         scene.fluidsim.status = f"Particle capacity setting failed: {exc}"
 
 
 def _request_output_refresh(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.OUTPUT)
 
 
 def _request_surface_refresh(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.SURFACE)
 
 
 def _request_whitewater_refresh(self, context):
-    from .blender.scene_bridge import SceneUpdate
+    from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.WHITEWATER)
 

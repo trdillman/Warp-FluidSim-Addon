@@ -16,6 +16,12 @@ def _bridge():
     return scene_bridge
 
 
+def _pending():
+    from .blender import pending_settings
+
+    return pending_settings
+
+
 def _configured_device():
     from .preferences import configured_device
 
@@ -400,15 +406,14 @@ class FLUIDSIM_OT_apply_pending_reinitialize(bpy.types.Operator):
         scene = getattr(context, "scene", None)
         if getattr(scene, "fluidsim", None) is None:
             return False
-        bridge = _bridge()
-        if bridge.pending_presentation(scene)["action"] == "NONE":
-            return False
-        sess = bridge.session()
-        return not sess.active or sess.owns_scene(scene)
+        eligible, message = _pending().reinitialize_eligibility(scene)
+        if not eligible and message:
+            cls.poll_message_set(message)
+        return eligible
 
     def execute(self, context):
         try:
-            changed = _bridge().apply_pending_reinitialize(context.scene)
+            changed = _pending().apply_pending_reinitialize(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending reinitialize failed: {exc}")
             return {"CANCELLED"}
@@ -428,26 +433,15 @@ class FLUIDSIM_OT_apply_pending_reset(_FLUIDSIM_OT_session_base, bpy.types.Opera
 
     @classmethod
     def poll(cls, context):
-        bridge = _bridge()
-        sess = bridge.session()
-        if not sess.active:
-            cls.poll_message_set("Initialize the solver first")
-            return False
         scene = getattr(context, "scene", None)
-        if getattr(scene, "fluidsim", None) is None:
-            cls.poll_message_set("No FluidSim scene is active")
-            return False
-        if bridge.pending_presentation(scene)["action"] != "RESET_PENDING":
-            cls.poll_message_set("No reset-tier settings are pending")
-            return False
-        if not sess.owns_scene(scene):
-            cls.poll_message_set("The active solver belongs to another scene")
-            return False
-        return True
+        eligible, message = _pending().reset_eligibility(scene)
+        if not eligible and message:
+            cls.poll_message_set(message)
+        return eligible
 
     def execute(self, context):
         try:
-            changed = _bridge().apply_pending_reset(context.scene)
+            changed = _pending().apply_pending_reset(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending reset failed: {exc}")
             return {"CANCELLED"}
@@ -468,12 +462,14 @@ class FLUIDSIM_OT_revert_pending(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         scene = getattr(context, "scene", None)
-        return (getattr(scene, "fluidsim", None) is not None
-                and _bridge().pending_presentation(scene)["count"] > 0)
+        eligible, message = _pending().revert_eligibility(scene)
+        if not eligible and message:
+            cls.poll_message_set(message)
+        return eligible
 
     def execute(self, context):
         try:
-            reverted = _bridge().revert_pending_values(context.scene)
+            reverted = _pending().revert_pending_values(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending revert failed: {exc}")
             return {"CANCELLED"}

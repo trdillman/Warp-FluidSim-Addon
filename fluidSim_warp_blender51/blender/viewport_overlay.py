@@ -36,7 +36,8 @@ def _draw_overlay():
     fs = getattr(scene, "fluidsim", None)
     if fs is None or not fs.show_overlay:
         return
-    from .scene_bridge import pending_presentation, session
+    from .pending_settings import pending_presentation
+    from .scene_bridge import session
 
     sess = session()
     pending = pending_presentation(scene)

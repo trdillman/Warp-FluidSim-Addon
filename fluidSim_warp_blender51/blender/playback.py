@@ -184,7 +184,9 @@ def handle_frame_change(sess, scene, depsgraph):
     bridge = _bridge()
     if frame <= sess.start_frame or frame < sess.last_frame:
         try:
-            if not bridge._apply_pending_on_rewind(  # Phase 4 seam
+            from . import pending_settings
+
+            if not pending_settings.apply_pending_on_rewind(
                     scene, sess, depsgraph=depsgraph):
                 sess.reset(scene, depsgraph=depsgraph)
         except Exception as exc:  # noqa: BLE001 - retain pending on failure

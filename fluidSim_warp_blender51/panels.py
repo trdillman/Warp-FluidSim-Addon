@@ -43,7 +43,7 @@ def _pending_reason_label(scene, reason):
 
 def _draw_pending_banner(layout, scene, *, show_actions=False):
     """Draw one neutral pending summary; never inspect geometry or mutate RNA."""
-    from .blender.scene_bridge import pending_presentation
+    from .blender.pending_settings import pending_presentation
 
     pending = pending_presentation(scene)
     if pending["action"] == "NONE":
@@ -77,7 +77,7 @@ def _draw_header_interaction(self, context):
     scene = getattr(context, "scene", None)
     if getattr(scene, "fluidsim", None) is None:
         return
-    from .blender.scene_bridge import pending_presentation
+    from .blender.pending_settings import pending_presentation
 
     pending = pending_presentation(scene)
     icon = "INFO" if pending["action"] != "NONE" else "MOD_FLUIDSIM"
@@ -95,7 +95,8 @@ class FLUIDSIM_PT_interaction_popover(bpy.types.Panel):
         layout = self.layout
         scene = context.scene
         fs = scene.fluidsim
-        from .blender.scene_bridge import pending_presentation, session
+        from .blender.pending_settings import pending_presentation
+        from .blender.scene_bridge import session
 
         pending = pending_presentation(scene)
         sess = session()
@@ -298,13 +299,14 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
-        from .blender.scene_bridge import _domain_bounds, session
+        from .blender.scene_bridge import session
+        from .blender.solver_settings import domain_bounds
 
         box = layout.box()
         # A draw callback runs on every redraw and an exception here takes the
         # whole sidebar down, so report the failure in the panel instead.
         try:
-            lo, hi = _domain_bounds(context.scene)
+            lo, hi = domain_bounds(context.scene)
             dims = tuple(hi[i] - lo[i] for i in range(3))
             vox = tuple(int(d / max(fs.voxel_size, 1e-6)) for d in dims)
             box.label(text=f"Resolution: {vox[0]} x {vox[1]} x {vox[2]}")

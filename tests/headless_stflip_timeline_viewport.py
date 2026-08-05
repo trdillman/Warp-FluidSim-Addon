@@ -78,14 +78,14 @@ def main(argv: list[str] | None = None) -> int:
     _enable_addon(package_dir)
     bpy.ops.wm.open_mainfile(filepath=str(scene_path))
     _enable_addon(package_dir)
-    from fluidSim_warp_blender51.blender import scene_bridge
+    from fluidSim_warp_blender51.blender import playback, scene_bridge
 
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.live = True
     fs.spacetime_enabled = True
     fs.cache_playback_enabled = False
-    scene_bridge.register_handlers()
+    playback.register_handlers()
 
     handlers = [getattr(h, "__name__", "") for h in bpy.app.handlers.frame_change_post]
     frames = max(24, int(args.frames))

@@ -19,7 +19,7 @@ def write_result(payload):
 
 
 def prepare_review():
-    from fluidSim_warp_blender51.blender import scene_bridge
+    from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
 
     scene = bpy.context.scene
     fs = scene.fluidsim
@@ -54,7 +54,7 @@ def prepare_review():
     # Stage one restart-only edit after validating growth so the visible review
     # exercises the new single neutral pending surface without saving the file.
     fs.voxel_size = float(before["voxel_size"]) * 1.05
-    pending = scene_bridge.pending_presentation(scene)
+    pending = pending_settings.pending_presentation(scene)
     if pending["action"] != "REINIT_PENDING":
         errors.append("restart-only review edit did not produce pending state")
 

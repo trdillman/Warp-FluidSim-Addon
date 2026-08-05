@@ -25,7 +25,7 @@ ensure_warp_discoverable()
 
 def register():
     from . import operators, panels, preferences, properties
-    from .blender import playback, render, scene_bridge, viewport_overlay
+    from .blender import pending_settings, playback, render, viewport_overlay
 
     # register()/unregister() must be idempotent in both directions: if a
     # later step raises, Blender's add-on enable path leaves everything
@@ -38,10 +38,10 @@ def register():
         ("preferences", preferences.register, preferences.unregister),
         ("operators", operators.register, operators.unregister),
         ("panels", panels.register, panels.unregister),
-        ("pending handlers", scene_bridge.register_handlers,
-         scene_bridge.unregister_handlers),
         ("playback handlers", playback.register_handlers,
          playback.unregister_handlers),
+        ("pending handlers", pending_settings.register_handlers,
+         pending_settings.unregister_handlers),
         ("render handlers", render.register_handlers,
          render.unregister_handlers),
         ("viewport overlay", viewport_overlay.register_overlay,
@@ -63,7 +63,7 @@ def register():
 
 def unregister():
     from . import operators, panels, preferences, properties
-    from .blender import playback, render, scene_bridge, viewport_overlay
+    from .blender import pending_settings, playback, render, viewport_overlay
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a
@@ -72,8 +72,8 @@ def unregister():
     steps = (
         ("viewport overlay", viewport_overlay.unregister_overlay),
         ("render handlers", render.unregister_handlers),
+        ("pending handlers", pending_settings.unregister_handlers),
         ("playback handlers", playback.unregister_handlers),
-        ("pending handlers", scene_bridge.unregister_handlers),
         ("panels", panels.unregister),
         ("operators", operators.unregister),
         ("preferences", preferences.unregister),

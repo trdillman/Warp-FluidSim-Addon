@@ -276,7 +276,9 @@ def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
-    source = inspect.getsource(scene_bridge._apply_realtime_surface_settings)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    source = inspect.getsource(pending_settings._apply_realtime_surface_settings)
 
     assert "rebuild_surface()" in source
     assert "_surface_mesh_cache" not in source
@@ -287,6 +289,8 @@ def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
 def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
-    source = inspect.getsource(scene_bridge.request_scene_update)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    source = inspect.getsource(pending_settings.request_scene_update)
 
     assert source.count("force_surface=True") == 2
