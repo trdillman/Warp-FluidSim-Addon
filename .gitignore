@@ -29,6 +29,8 @@ Desktop.ini
 /tmp/
 /.agents/
 /.pi-subagents/
+/.claude/worktrees/
+/pi-session-*.html
 
 # Generated simulation/demo outputs
 /artifacts/
@@ -37,6 +39,7 @@ Desktop.ini
 /fluidsim_warp_snippets/
 /fluidSim_warp_blender51/demo_outputs/
 /demos/*.blend[0-9]
+/demos/fluidsim_cache/
 /demos/fluidsim_report.json
 *.npz
 /fluidsim_report.json
