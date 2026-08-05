@@ -50,8 +50,14 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     assert capacity_calls[0][1] == "CAPACITY-PLANNER-ACCEPTANCE-PASS"
 
 
-def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypatch, capsys):
+def test_production_gate_include_gui_requires_foreground_gui_acceptance(
+        monkeypatch, capsys, tmp_path):
     calls = []
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    stale_report = artifacts / "gui_playback_probe.json"
+    stale_report.write_text("stale", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     def fake_run(label, command, env=None, reject_output=False,
                  expect_marker=None):
@@ -68,6 +74,7 @@ def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypa
     run_production_gate.main(["--include-gui"])
 
     out = capsys.readouterr().out
+    assert not stale_report.exists()
     gui_calls = [
         (label, command, reject_output, expect_marker)
         for label, command, _env, reject_output, expect_marker in calls
