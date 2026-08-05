@@ -320,8 +320,10 @@ def test_initialize_reads_the_cheap_snapshot(monkeypatch):
     ``initialize`` needs a GPU, so this reads the source instead -- the
     smallest check that fails if the blocking call comes back.
     """
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    source = inspect.getsource(scene_bridge.Session.initialize)
+    _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import simulation_admission
+
+    source = inspect.getsource(simulation_admission.SimulationAdmission._preflight)
     # Comments stripped: the comment there explains why the blocking sampler
     # is not used, and naming it is not calling it.
     code = "\n".join(line for line in source.splitlines()

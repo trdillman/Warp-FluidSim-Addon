@@ -127,7 +127,7 @@ def test_build_settings_routes_through_the_helper():
     the source -- the smallest check that fails if the inline walk returns.
     """
     pytest.importorskip("warp")
-    source = (_PACKAGE_ROOT / "blender" / "scene_bridge.py").read_text(
+    source = (_PACKAGE_ROOT / "blender" / "solver_settings.py").read_text(
         encoding="utf-8")
     body = source.split("def build_settings", 1)[1].split("\ndef ", 1)[0]
 

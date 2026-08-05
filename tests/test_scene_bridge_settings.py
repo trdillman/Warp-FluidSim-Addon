@@ -46,11 +46,19 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     fake_solver = types.ModuleType("fluidSim_warp_blender51.sim.solver")
     fake_solver.SolverSettings = SolverSettings
+    fake_preferences = types.ModuleType("fluidSim_warp_blender51.preferences")
+    fake_preferences.configured_device = lambda: "cuda:0"
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.solver", fake_solver)
-    sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.preferences", fake_preferences)
+    for module in (
+        "fluidSim_warp_blender51.blender.scene_bridge",
+        "fluidSim_warp_blender51.blender.solver_settings",
+    ):
+        sys.modules.pop(module, None)
     return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
 
 
@@ -250,14 +258,18 @@ def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
 
 def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import solver_settings
+
     settings = SolverSettings(voxel_size=9.0)
     monkeypatch.setattr(
-        scene_bridge, "_DIRECT_SETTING_FIELDS",
-        scene_bridge._DIRECT_SETTING_FIELDS + ("unknown_setting",),
+        solver_settings, "DIRECT_SETTING_FIELDS",
+        solver_settings.DIRECT_SETTING_FIELDS + ("unknown_setting",),
     )
+    monkeypatch.setattr(
+        solver_settings, "_SETTING_REGISTRY_VALIDATED", False)
 
     with pytest.raises(ValueError, match="unknown_setting"):
-        scene_bridge._apply_scene_settings(_scene().fluidsim, settings)
+        solver_settings.apply_scene_settings(_scene().fluidsim, settings)
     assert settings.voxel_size == 9.0
 
 

@@ -148,7 +148,7 @@ def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
     bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
     calls = []
 
-    def initialize(actual_scene):
+    def initialize(actual_scene, **_kwargs):
         calls.append(actual_scene.fluidsim.voxel_size)
         sess.solver = SimpleNamespace(
             frame=0,
@@ -181,7 +181,7 @@ def test_reset_lifecycle_pending_applies_exactly_once(monkeypatch):
     bridge.request_scene_update(scene, bridge.SceneUpdate.RESET)
     resets = []
 
-    def reset(actual_scene):
+    def reset(actual_scene, **_kwargs):
         resets.append(source_pg.emission_mode)
         bridge._capture_applied_state(actual_scene, sess, reset_only=True)
 
@@ -222,8 +222,9 @@ def test_failed_pending_apply_retains_action_and_reason(monkeypatch):
     sess, _solver = _activate(bridge, scene, frame=3)
     scene.fluidsim.voxel_size = 0.025
     bridge.request_scene_update(scene, bridge.SceneUpdate.REBUILD)
-    monkeypatch.setattr(sess, "initialize", lambda _scene: (_ for _ in ()).throw(
-        RuntimeError("allocation failed")))
+    monkeypatch.setattr(
+        sess, "initialize", lambda _scene, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("allocation failed")))
 
     try:
         bridge.apply_pending_reinitialize(scene)
@@ -269,7 +270,8 @@ def test_rewind_without_pending_resets_once(monkeypatch):
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=6)
     calls = []
-    monkeypatch.setattr(sess, "reset", lambda actual: calls.append(actual))
+    monkeypatch.setattr(
+        sess, "reset", lambda actual, **_kwargs: calls.append(actual))
     scene.frame_current = scene.frame_start
 
     sess.handle_frame_change(scene, depsgraph=None)

@@ -7,16 +7,25 @@ simulation during playback via frame-change handlers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import Enum
 from types import SimpleNamespace
-import math
-import traceback
 
 import bpy
-from mathutils import Vector
 
 from .scene_inputs import SceneInputs
+from .simulation_admission import capacity_blocking_message
+from .solver_settings import (
+    DIRECT_SETTING_FIELDS as _DIRECT_SETTING_FIELDS,
+    SETTING_ALIASES as _SETTING_ALIASES,
+    VECTOR_SETTING_FIELDS as _VECTOR_SETTING_FIELDS,
+    apply_gravity as _project_gravity,
+    apply_scene_settings as _apply_scene_settings,
+    build_settings,
+    domain_bounds as _domain_bounds,
+    enum_setting_fields as _enum_setting_fields,
+    validate_setting_registry as _validate_setting_registry,
+)
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -36,47 +45,6 @@ _RENDER_RESTORE_FRAME = None
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
-
-
-def capacity_blocking_message(blockers):
-    """Render bounded, actionable source-capacity blockers for UI/errors."""
-    details = []
-    labels = {
-        "PARTICLE_CAPACITY": "particles",
-        "LEAF_CAPACITY": "leaves",
-        "MEMORY_ESTIMATE": "estimated bytes",
-        "PARTICLE_DEMAND_UNKNOWN": "particle demand",
-    }
-    for blocker in blockers:
-        code = str(getattr(blocker, "code", "CAPACITY"))
-        label = labels.get(code, code.lower().replace("_", " "))
-        required = getattr(blocker, "required", None)
-        available = getattr(blocker, "available", None)
-        if required is None:
-            reason = str(getattr(blocker, "message", "") or "").strip()
-            suffix = f": {reason}" if reason else ""
-            details.append(
-                f"{label} is unknown and cannot be admitted safely{suffix}")
-        else:
-            details.append(f"{label} required {required}, available {available}")
-    joined = "; ".join(details) or "source capacity could not be admitted"
-    return (
-        f"FluidSim source capacity blocked: {joined}. "
-        "No partial source emission was committed. Adjust settings or apply "
-        "an explicit planner suggestion, then Initialize/Reset and retry."
-    )
-
-
-@dataclass
-class ScenePlanningSnapshot:
-    scene_inputs: SceneInputs
-    descriptors: tuple
-    extra_plans: tuple
-    colliders: tuple
-    force_fields: tuple
-    height_source: object
-    seeds: tuple
-    capacity_plan: object
 
 
 class Session:
@@ -156,267 +124,26 @@ class Session:
         if not preserve_error:
             self.clear_error(scene)
 
-    def _plan_scene(self, scene, settings, resources, depsgraph=None):
-        """Gather one immutable-enough scene snapshot and capacity report."""
-        from . import sources
-        from ..sim.capacity_planner import (
-            DemandQuality, leaf_coords_for_world_bounds, plan_initialization,
-            suggest_configurations,
-        )
-        from ..sim.enums import SourceOperation
-        from ..sim.source_compat import (
-            descriptors_to_plans, height_descriptor_to_plan,
-        )
-        from ..sim.source_regions import CompileContext, SourceCompiler
+    def _admission(self):
+        from .simulation_admission import SimulationAdmission
 
-        inputs = SceneInputs()
-        inputs.device = settings.device
-        sync_generation = inputs.begin_sync()
-        descriptors = tuple(inputs.gather_sources(
-            scene, depsgraph, capture_first_mesh=True,
-            sync_generation=sync_generation))
-        extra_plans = tuple(inputs.gather_source_plans(scene, depsgraph))
-        colliders = tuple(inputs.gather_colliders(
-            scene, depsgraph, sync_generation=sync_generation))
-        force_fields = tuple(inputs.gather_force_fields(scene))
-        height_source = inputs.gather_height_source(scene)
-        seeds = sources.prepare_auto_seeds(scene, depsgraph)
-
-        legacy_plans = tuple(descriptors_to_plans(
-            descriptors, session_generation=inputs._session_generation))
-        plans = list(extra_plans)
-        if getattr(height_source, "enabled", False):
-            height_plan = height_descriptor_to_plan(
-                height_source, session_generation=inputs._session_generation)
-            if not getattr(height_source, "emit_particles", False):
-                height_plan = replace(
-                    height_plan, operation=SourceOperation.ACTIVATION)
-            plans.append(height_plan)
-
-        compiler = SourceCompiler()
-        context = CompileContext(
-            frame=int(getattr(scene, "frame_current", 0)), substep=0,
-            session_generation=inputs._session_generation,
-            device=settings.device,
-            origin=tuple(float(value) for value in settings.domain_min),
-            voxel_size=float(settings.voxel_size),
-            domain_min=tuple(float(value) for value in settings.domain_min),
-            domain_max=tuple(float(value) for value in settings.domain_max),
-            leaf_capacity=int(settings.leaf_capacity),
-            particle_capacity=int(settings.max_particles), upload=False,
-        )
-        batch = compiler.compile(tuple(plans), context)
-        footprints = []
-        for legacy_plan in legacy_plans:
-            legacy_batch = compiler.compile((legacy_plan,), context)
-            compiled_footprint = legacy_batch.footprints[0]
-            if compiled_footprint.particle_quality is not DemandQuality.UNKNOWN:
-                # The shared rasterizer gives a substantially tighter safe
-                # upper bound for ordinary analytic/static mesh descriptors.
-                footprints.append(compiled_footprint)
-                continue
-            bounds = getattr(legacy_plan.region, "bounds", None)
-            coords = (leaf_coords_for_world_bounds(settings, *bounds())
-                      if bounds is not None else ())
-            if legacy_plan.operation == SourceOperation.LIQUID:
-                target = max(0, min(64, int(math.ceil(
-                    float(legacy_plan.payload.target_particles_per_voxel)))))
-                # Animated legacy meshes can intentionally exceed the CPU
-                # compiler's staging budget while their accepted runtime path
-                # remains GPU-resident. Bound those by clipped AABB leaves;
-                # runtime device admission still computes the exact demand.
-                particle_demand = len(coords) * 512 * target
-                quality = DemandQuality.UPPER_BOUND
-            else:
-                particle_demand = 0
-                quality = DemandQuality.EXACT
-            footprints.append(SimpleNamespace(
-                stable_id=str(legacy_plan.stable_id),
-                particle_demand=particle_demand,
-                particle_quality=quality,
-                leaf_coords=coords,
-                staging_bytes=0,
-                reason="legacy device predicate bounded by clipped AABB leaves",
-            ))
-        footprints.extend(batch.footprints)
-        batch_errors = tuple(
-            item for item in batch.diagnostics
-            if item.severity == "ERROR"
-            and item.code not in {"SOURCE_LEAF_CAPACITY"}
-            and not any(item in source.region.diagnostics
-                        for source in batch.sources))
-        if batch_errors:
-            footprints.append(SimpleNamespace(
-                stable_id="source-batch", particle_demand=None,
-                particle_quality=DemandQuality.UNKNOWN, leaf_coords=(),
-                staging_bytes=0,
-                reason="; ".join(item.message for item in batch_errors),
-            ))
-
-        collider_footprints = tuple(SimpleNamespace(
-            leaf_coords=leaf_coords_for_world_bounds(
-                settings, collider.aabb_min, collider.aabb_max))
-            for collider in colliders)
-        capacity_plan = plan_initialization(
-            settings, tuple(footprints), seeds, collider_footprints, resources)
-        capacity_plan = replace(
-            capacity_plan,
-            suggestions=suggest_configurations(
-                capacity_plan, settings, resources),
-        )
-        compiler.release()
-        return ScenePlanningSnapshot(
-            inputs, descriptors, extra_plans, colliders, force_fields,
-            height_source, seeds, capacity_plan,
+        return SimulationAdmission(
+            self, scene_identity=_scene_identity,
+            snippet_builder=build_snippets,
+            applied_state_capture=_capture_applied_state,
+            reset_settings_apply=_apply_reset_solver_settings,
         )
 
-    def refresh_capacity_plan(self, scene):
-        """Recompute the warning/options model without creating a solver."""
-        from ..sim.memory_safety import vram_snapshot
+    def refresh_capacity_plan(self, scene, depsgraph=None):
+        """Recompute admission options without mutating authored settings."""
+        return self._admission().refresh_capacity_plan(scene, depsgraph)
 
-        settings = build_settings(scene)
-        resources = vram_snapshot(settings.device)
-        snapshot = self._plan_scene(scene, settings, resources)
-        self.capacity_plan = snapshot.capacity_plan
-        return snapshot.capacity_plan
-
-    def _apply_scene_snapshot(self, snapshot):
-        self.scene_inputs = snapshot.scene_inputs
-        self.solver.set_sources(snapshot.descriptors)
-        if snapshot.extra_plans:
-            self.solver.set_source_plans(
-                tuple(self.solver.sourcing.plans) + snapshot.extra_plans)
-        self.solver.set_colliders(snapshot.colliders)
-        self.solver.set_force_fields(snapshot.force_fields)
-        self.solver.set_height_source(snapshot.height_source)
-
-    @staticmethod
-    def _integrity_blockers(capacity_plan):
-        return tuple(blocker for blocker in capacity_plan.blockers
-                     if blocker.code != "MEMORY_ESTIMATE")
-
-    def initialize(self, scene, *, ignore_memory_safeguard=False):
-        """(Re)create the solver from current scene state."""
-        from ..diagnostics.profiler import Profiler
-        from ..sim.solver import FluidSolver
-        from . import sources
-
-        replacement_started = False
-        snapshot = None
-        try:
-            fs = scene.fluidsim
-            settings = build_settings(scene)
-            from ..sim.memory_safety import assess_configuration, vram_snapshot
-
-            # One non-blocking live VRAM sample feeds both the legacy memory
-            # assessment and the source-capacity planner.
-            resources = vram_snapshot(settings.device)
-            memory_assessment = assess_configuration(settings, resources)
-            snapshot = self._plan_scene(scene, settings, resources)
-            initial_growth = None
-            particle_blocker = next((
-                blocker for blocker in snapshot.capacity_plan.blockers
-                if blocker.code == "PARTICLE_CAPACITY"
-                and blocker.required is not None
-            ), None)
-            if (particle_blocker is not None
-                    and bool(getattr(settings, "auto_grow_particles", True))):
-                from ..sim.particle_capacity import growth_target
-
-                target = growth_target(
-                    int(settings.max_particles), int(particle_blocker.required))
-                candidate_settings = replace(settings, max_particles=target)
-                candidate_snapshot = self._plan_scene(
-                    scene, candidate_settings, resources)
-                candidate_integrity = self._integrity_blockers(
-                    candidate_snapshot.capacity_plan)
-                candidate_memory = any(
-                    blocker.code == "MEMORY_ESTIMATE"
-                    for blocker in candidate_snapshot.capacity_plan.blockers)
-                if not candidate_integrity and not candidate_memory:
-                    initial_growth = (int(settings.max_particles), int(target))
-                    settings = candidate_settings
-                    snapshot = candidate_snapshot
-                    memory_assessment = assess_configuration(settings, resources)
-            self.capacity_plan = snapshot.capacity_plan
-            self.capacity_plan_memory_bypassed = bool(ignore_memory_safeguard)
-            integrity_blockers = self._integrity_blockers(snapshot.capacity_plan)
-            if integrity_blockers:
-                raise RuntimeError(capacity_blocking_message(integrity_blockers))
-            memory_blockers = tuple(
-                blocker for blocker in snapshot.capacity_plan.blockers
-                if blocker.code == "MEMORY_ESTIMATE")
-            if ((not memory_assessment["safe"] or memory_blockers)
-                    and not ignore_memory_safeguard):
-                estimate = max(
-                    int(memory_assessment["estimated_bytes"]),
-                    int(snapshot.capacity_plan.estimated_bytes))
-                budget = int(snapshot.capacity_plan.budget_bytes)
-                estimate_gib = estimate / 1024**3
-                budget_gib = budget / 1024**3
-                raise RuntimeError(
-                    "FluidSim memory safeguard stopped initialization before CUDA "
-                    f"allocation (estimated {estimate_gib:.1f} GiB, safe live budget "
-                    f"{budget_gib:.1f} GiB). Apply Safe Settings & Retry. "
-                    "This estimate is not an OOM guarantee."
-                )
-
-            # Only now is it safe to destroy the prior session. A rejected
-            # source/configuration preflight leaves that solver untouched.
-            self.release(scene)
-            replacement_started = True
-            self.device = settings.device
-            self.memory_assessment = memory_assessment
-            self.capacity_plan = snapshot.capacity_plan
-            self.capacity_plan_memory_bypassed = bool(ignore_memory_safeguard)
-            profiler = None
-            if fs.profiling_enabled:
-                profiler = Profiler(
-                    device=settings.device, sync=fs.profiling_sync)
-            self.solver = FluidSolver(settings, profiler=profiler)
-            self.profiler = profiler
-            from ..io import cache
-
-            self.scene_identity = _scene_identity(scene)
-            self.scene_key = cache.scene_key(scene)
-            self.start_frame = scene.frame_start
-            self._apply_scene_snapshot(snapshot)
-            sources.commit_prepared_seeds(self, snapshot.seeds)
-            seed_result = getattr(
-                getattr(self.solver, "sourcing", None),
-                "last_apply_result", {},
-            )
-            if seed_result and not seed_result.get("admitted", True):
-                blocker = SimpleNamespace(
-                    code="PARTICLE_CAPACITY",
-                    required=seed_result.get("required"),
-                    available=seed_result.get("available"),
-                )
-                raise RuntimeError(capacity_blocking_message((blocker,)))
-            errors = self.solver.set_custom_snippets(build_snippets(scene))
-            for name, error in errors:
-                for pg in fs.snippets:
-                    if pg.kernel_name == name:
-                        pg.last_error = str(error)[:256]
-            from . import viewport
-
-            viewport.ensure_outputs(scene)
-            if initial_growth is not None:
-                self.last_reported_growth_capacity = int(initial_growth[1])
-                fs.status = (
-                    f"Solver ready — particle capacity grew "
-                    f"{initial_growth[0]:,} → {initial_growth[1]:,}")
-            else:
-                fs.status = "Solver ready"
-            self.memory_assessment = {}
-            _capture_applied_state(scene, self)
-            return self
-        except Exception as exc:
-            self.set_error(scene, repr(exc))
-            traceback.clear_frames(exc.__traceback__)
-            if replacement_started:
-                self.release(scene, preserve_error=True)
-            raise
+    def initialize(self, scene, *, depsgraph=None,
+                   ignore_memory_safeguard=False):
+        """Admit one coherent Blender scene into a running Solver Session."""
+        return self._admission().initialize(
+            scene, depsgraph=depsgraph,
+            ignore_memory_safeguard=ignore_memory_safeguard)
 
     def set_live_enabled(self, scene, enabled):
         if _IN_FRAME_HANDLER:
@@ -615,83 +342,9 @@ class Session:
         self.clear_error(scene)
         return frame_data
 
-    def reset(self, scene):
-        from . import sources, viewport
-        from ..sim.memory_safety import vram_snapshot
-
-        if not self.owns_scene(scene):
-            return
-        settings = build_settings(scene)
-        self.solver.settings.auto_grow_particles = bool(
-            getattr(settings, "auto_grow_particles", True))
-        self.solver.settings.particle_growth_failure_policy = str(
-            getattr(settings, "particle_growth_failure_policy", "DEFER"))
-        authored_capacity = getattr(settings, "max_particles", None)
-        runtime_capacity = getattr(
-            getattr(self.solver, "particles", None), "capacity", None)
-        if (bool(getattr(settings, "auto_grow_particles", True))
-                and authored_capacity is not None
-                and runtime_capacity is not None):
-            settings = replace(
-                settings,
-                max_particles=max(
-                    int(authored_capacity), int(runtime_capacity)),
-            )
-        resources = vram_snapshot(settings.device)
-        snapshot = self._plan_scene(scene, settings, resources)
-        particle_blocker = next((
-            blocker for blocker in snapshot.capacity_plan.blockers
-            if blocker.code == "PARTICLE_CAPACITY"
-            and blocker.required is not None
-        ), None)
-        if (particle_blocker is not None
-                and bool(getattr(settings, "auto_grow_particles", True))):
-            growth = self.solver.ensure_particle_capacity(
-                int(particle_blocker.required))
-            if growth.grew:
-                settings = replace(
-                    settings, max_particles=int(growth.current))
-                snapshot = self._plan_scene(scene, settings, resources)
-        self.capacity_plan = snapshot.capacity_plan
-        integrity_blockers = self._integrity_blockers(snapshot.capacity_plan)
-        if integrity_blockers:
-            message = capacity_blocking_message(integrity_blockers)
-            self.set_error(scene, message)
-            raise RuntimeError(message)
-
-        reset_started = False
-        try:
-            _apply_reset_solver_settings(scene, self)
-            self.solver.reset()
-            reset_started = True
-            self.start_frame = scene.frame_start
-            self.cache_written_start = None
-            self.cache_written_end = None
-            self.cache_settings_records = {}
-            self.last_frame = -1
-            self.frame_stats = []
-            self.clear_error(scene)
-            self._apply_scene_snapshot(snapshot)
-            sources.commit_prepared_seeds(self, snapshot.seeds)
-            seed_result = getattr(
-                getattr(self.solver, "sourcing", None),
-                "last_apply_result", {},
-            )
-            if seed_result and not seed_result.get("admitted", True):
-                blocker = SimpleNamespace(
-                    code="PARTICLE_CAPACITY",
-                    required=seed_result.get("required"),
-                    available=seed_result.get("available"),
-                )
-                raise RuntimeError(capacity_blocking_message((blocker,)))
-            viewport.update_outputs(scene, self)
-            _capture_applied_state(scene, self, reset_only=True)
-            scene.fluidsim.status = "Simulation reset"
-        except Exception as exc:
-            self.set_error(scene, repr(exc))
-            if reset_started:
-                self.release(scene, preserve_error=True)
-            raise
+    def reset(self, scene, *, depsgraph=None):
+        """Reset through the same coherent admission preflight."""
+        return self._admission().reset(scene, depsgraph=depsgraph)
 
     def export_cache_sequence(self, scene, start, end):
         from ..io import cache
@@ -748,7 +401,7 @@ class Session:
             return
         if not self.owns_scene(scene):
             try:
-                self.initialize(scene)
+                self.initialize(scene, depsgraph=depsgraph)
             except Exception as exc:  # noqa: BLE001 - never break playback
                 self.set_error(scene, repr(exc))
                 fs.status = f"Solver initialization error: {exc}"
@@ -756,8 +409,9 @@ class Session:
                 return
         if frame <= self.start_frame or frame < self.last_frame:
             try:
-                if not _apply_pending_on_rewind(scene, self):
-                    self.reset(scene)
+                if not _apply_pending_on_rewind(
+                        scene, self, depsgraph=depsgraph):
+                    self.reset(scene, depsgraph=depsgraph)
             except Exception as exc:  # noqa: BLE001 - retain pending on failure
                 self.set_error(scene, repr(exc))
                 # Do not continue stepping an advanced solver from a rewound
@@ -875,19 +529,6 @@ def current_error(scene) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _domain_bounds(scene) -> tuple:
-    fs = scene.fluidsim
-    obj = fs.domain_object
-    if obj is not None:
-        corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
-        lo = (min(c.x for c in corners), min(c.y for c in corners),
-              min(c.z for c in corners))
-        hi = (max(c.x for c in corners), max(c.y for c in corners),
-              max(c.z for c in corners))
-        return lo, hi
-    return (-2.0, -2.0, 0.0), (2.0, 2.0, 4.0)
-
-
 class SceneUpdate(str, Enum):
     """Kinds of scene edits that can affect an active solver session."""
 
@@ -910,55 +551,6 @@ _SCENE_UPDATE_REASONS = {
     SceneUpdate.WHITEWATER: "Whitewater display settings changed",
 }
 
-
-_DIRECT_SETTING_FIELDS = (
-    "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
-    "domain_sdf_walls",
-    "max_particles", "auto_grow_particles",
-    "particle_growth_failure_policy", "max_whitewater", "time_scale", "cfl",
-    "min_substeps", "max_substeps", "flip_ratio", "max_speed",
-    "limit_percent", "directional_force", "omnidirectional_force_center",
-    "omnidirectional_force_strength", "omnidirectional_force_radius",
-    "force_diffusion", "dissipation_enabled", "dissipation_attribute",
-    "dissipation_rate", "dissipation_target", "attraction_enabled",
-    "attraction_strength", "attraction_max_distance",
-    "particles_per_voxel", "count_stiffness",
-    "spacetime_enabled", "spacetime_jitter_strength",
-    "spacetime_adaptive_jitter", "spacetime_phase_eta",
-    "spacetime_phase_threshold", "spacetime_reference_mass",
-    "spacetime_variable_projection", "spacetime_liquid_density",
-    "spacetime_gas_density", "spacetime_min_density",
-    "spacetime_local_cfl", "spacetime_max_local_substeps",
-    "spacetime_resync_surface", "spacetime_seed",
-    "relax_enabled", "relax_strength",
-    "pressure_iterations", "pressure_tolerance", "pressure_threshold",
-    "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
-    "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
-    "particle_radius_scale", "surface_splat_radius",
-    "surface_resolution_multiplier", "surface_voxel_size",
-    "surface_leaf_capacity_scale", "surface_max_dense_dim",
-    "live_surface_publish_cadence",
-    "surface_build_lowres_sdf", "surface_filter_iterations",
-    "surface_filter_strength", "surface_dilate_iterations",
-    "surface_dilate_strength", "surface_erode_iterations",
-    "surface_erode_strength", "surface_smooth_iterations",
-    "surface_smooth_strength", "whitewater_enabled", "ww_churn_decay",
-    "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
-    "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
-    "ww_spray_drag",
-)
-
-_VECTOR_SETTING_FIELDS = frozenset({
-    "directional_force",
-    "omnidirectional_force_center",
-})
-
-_SETTING_ALIASES = {
-    "limit_percent": "speed_limit_percent",
-    "limit_behavior": "speed_limit_behavior",
-    "ww_churn_decay": "churn_decay",
-    "ww_churn_gain": "churn_gain",
-}
 
 _HOT_SETTING_FIELDS = frozenset({
     "time_scale", "cfl", "min_substeps", "max_substeps",
@@ -1258,97 +850,6 @@ def _capture_applied_state(scene, sess=None, *, reset_only=False):
     return state
 
 
-_SETTING_REGISTRY_VALIDATED = False
-_ENUM_SETTING_FIELDS = None
-
-
-def _enum_setting_fields():
-    global _ENUM_SETTING_FIELDS
-    if _ENUM_SETTING_FIELDS is not None:
-        return _ENUM_SETTING_FIELDS
-    from ..sim.enums import (
-        LimitBehavior,
-        ParticleSampleType,
-        ProjectNonDivergentSolver,
-        RelaxMode,
-        SdfFilterType,
-        SurfaceResolutionMode,
-        SurfaceUpdateCadence,
-        TraceMode,
-        ViscositySolver,
-    )
-    _ENUM_SETTING_FIELDS = {
-        "sample_type": ("sample_type", ParticleSampleType),
-        "trace_mode": ("trace_mode", TraceMode),
-        "limit_behavior": ("limit_behavior", LimitBehavior),
-        "relax_mode": ("relax_mode", RelaxMode),
-        "pressure_solver": ("pressure_solver", ProjectNonDivergentSolver),
-        "viscosity_solver": ("viscosity_solver", ViscositySolver),
-        "surface_filter_type": ("surface_filter_type", SdfFilterType),
-        "surface_smooth_type": ("surface_smooth_type", SdfFilterType),
-        "surface_resolution_mode": ("surface_resolution_mode", SurfaceResolutionMode),
-        "surface_update_cadence": ("surface_update_cadence", SurfaceUpdateCadence),
-    }
-    return _ENUM_SETTING_FIELDS
-
-
-def _validate_setting_registry():
-    global _SETTING_REGISTRY_VALIDATED
-    if _SETTING_REGISTRY_VALIDATED:
-        return
-    from ..sim.solver import SolverSettings
-
-    targets = {_SETTING_ALIASES.get(name, name) for name in _DIRECT_SETTING_FIELDS}
-    targets.update(_SETTING_ALIASES.get(target, target)
-                   for target in _enum_setting_fields())
-    unknown = sorted(targets - set(SolverSettings.__dataclass_fields__))
-    if unknown:
-        raise ValueError(
-            "Scene setting targets not declared by SolverSettings: "
-            + ", ".join(unknown))
-    _SETTING_REGISTRY_VALIDATED = True
-
-
-def _apply_scene_settings(fs, settings, fields=None):
-    _validate_setting_registry()
-    selected = None if fields is None else set(fields)
-    for source in _DIRECT_SETTING_FIELDS:
-        target = _SETTING_ALIASES.get(source, source)
-        if (selected is None or source in selected) and hasattr(fs, source):
-            value = getattr(fs, source)
-            if source in _VECTOR_SETTING_FIELDS:
-                # FloatVectorProperty returns a live RNA/mathutils proxy whose
-                # IDProperty owner can be invalidated by later scene edits.
-                # SolverSettings must own plain host values across frames.
-                value = tuple(float(component) for component in value)
-            setattr(settings, target, value)
-    for target, (source, enum_type) in _enum_setting_fields().items():
-        declared_target = _SETTING_ALIASES.get(target, target)
-        if (selected is None or source in selected) and hasattr(fs, source):
-            setattr(settings, declared_target, enum_type[getattr(fs, source)])
-
-
-def build_settings(scene):
-    """Create SolverSettings from scene properties (imports Warp lazily)."""
-    from ..sim.solver import SolverSettings
-
-    fs = scene.fluidsim
-    s = SolverSettings()
-    from ..preferences import configured_device
-
-    s.device = configured_device()
-    lo, hi = _domain_bounds(scene)
-    s.domain_min = lo
-    s.domain_max = hi
-    s.frame_rate = scene.render.fps / scene.render.fps_base
-    if fs.use_scene_gravity and scene.use_gravity:
-        s.gravity = tuple(scene.gravity)
-    else:
-        s.gravity = tuple(fs.gravity)
-    _apply_scene_settings(fs, s)
-    return s
-
-
 def snippet_argument_names(pg):
     """Names a snippet's declared arguments expose to its body."""
     names = []
@@ -1459,15 +960,17 @@ def gather_height_source(scene):
 # ---------------------------------------------------------------------------
 
 
-def refresh_capacity_plan(scene):
+def refresh_capacity_plan(scene, depsgraph=None):
     """Refresh actionable capacity options without mutating scene settings."""
-    return session().refresh_capacity_plan(scene)
+    return session().refresh_capacity_plan(scene, depsgraph)
 
 
-def initialize_session(scene, *, ignore_memory_safeguard=False) -> Session:
+def initialize_session(
+        scene, *, depsgraph=None, ignore_memory_safeguard=False) -> Session:
     """(Re)create the solver from current scene state."""
     return session().initialize(
-        scene, ignore_memory_safeguard=ignore_memory_safeguard)
+        scene, depsgraph=depsgraph,
+        ignore_memory_safeguard=ignore_memory_safeguard)
 
 
 def release_session(scene=None):
@@ -1514,9 +1017,9 @@ def play_cache_frame(scene, frame: int | None = None):
     return session().play_cache_frame(scene, frame)
 
 
-def reset_simulation(scene):
+def reset_simulation(scene, depsgraph=None):
     """Reset solver state and clear outputs (used at playback start)."""
-    session().reset(scene)
+    session().reset(scene, depsgraph=depsgraph)
 
 
 def _tag_view3d_redraw():
@@ -1527,14 +1030,7 @@ def _tag_view3d_redraw():
 
 
 def _apply_gravity(scene, settings):
-    fs = scene.fluidsim
-    if not hasattr(fs, "gravity"):
-        return
-    if (getattr(fs, "use_scene_gravity", False)
-            and getattr(scene, "use_gravity", False)):
-        settings.gravity = tuple(float(value) for value in scene.gravity)
-    else:
-        settings.gravity = tuple(float(value) for value in fs.gravity)
+    return _project_gravity(scene, settings)
 
 
 def _setting_targets(fields):
@@ -1676,7 +1172,7 @@ def _is_disposable_start(sess):
     return solver_frame <= 0 and sess.last_frame <= sess.start_frame
 
 
-def _apply_pending(scene, requested=None):
+def _apply_pending(scene, requested=None, *, depsgraph=None):
     """Apply a scene's pending transition, clearing it only after success."""
     sess = session()
     state = _refresh_pending_state(scene, sess)
@@ -1700,9 +1196,9 @@ def _apply_pending(scene, requested=None):
         raise RuntimeError(state.blocked_reason)
     try:
         if action is SceneUpdate.REBUILD:
-            sess.initialize(scene)
+            sess.initialize(scene, depsgraph=depsgraph)
         else:
-            sess.reset(scene)
+            sess.reset(scene, depsgraph=depsgraph)
         _refresh_pending_state(scene, sess)
         return True
     except Exception as exc:
@@ -1722,11 +1218,11 @@ def apply_pending_reset(scene):
     return _apply_pending(scene, SceneUpdate.RESET)
 
 
-def _apply_pending_on_rewind(scene, sess):
+def _apply_pending_on_rewind(scene, sess, *, depsgraph=None):
     state = _refresh_pending_state(scene, sess)
     if state.pending_action is None:
         return False
-    _apply_pending(scene, state.pending_action)
+    _apply_pending(scene, state.pending_action, depsgraph=depsgraph)
     return True
 
 

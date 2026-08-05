@@ -946,57 +946,136 @@ def test_inactive_live_update_status_is_truthful(monkeypatch):
     assert scene.fluidsim.status == "Live setting stored; applies on initialization"
 
 
-def test_timeline_reset_reapplies_current_solver_settings(monkeypatch):
+def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    from fluidSim_warp_blender51.blender import simulation_admission
     import fluidSim_warp_blender51.blender.sources as sources
     import fluidSim_warp_blender51.blender.viewport as viewport
-
     from fluidSim_warp_blender51.sim.solver import SolverSettings
 
-    reset_snapshots = []
-    planned_capacities = []
+    events = []
     solver = SimpleNamespace(
+        device="cuda:0",
         settings=SolverSettings(
-            max_particles=1024, flip_ratio=0.95, spacetime_seed=1),
+            max_particles=4096, flip_ratio=0.95, spacetime_seed=1),
         particles=SimpleNamespace(capacity=4096),
-        reset=lambda: reset_snapshots.append((
-            solver.settings.flip_ratio, solver.settings.spacetime_seed)),
+        sourcing=SimpleNamespace(plans=(), last_apply_result={}),
+        reset=lambda: events.append((
+            "reset", solver.settings.flip_ratio,
+            solver.settings.spacetime_seed)),
+        set_sources=lambda values: events.append(("sources", tuple(values))),
+        set_source_plans=lambda values: events.append(("plans", tuple(values))),
+        set_colliders=lambda values: events.append(("colliders", tuple(values))),
+        set_force_fields=lambda values: events.append(("forces", tuple(values))),
+        set_height_source=lambda value: events.append(("height", value)),
+        set_custom_snippets=lambda values: events.append(
+            ("snippets", tuple(values))) or (),
     )
     sess = scene_bridge.session()
     sess.solver = solver
-    capacity_plan = SimpleNamespace(blockers=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
+    sess.scene_identity = None
+    sess.start_frame = 99
+    sess.cache_written_start = 2
+    sess.cache_written_end = 8
+    sess.cache_settings_records = {2: object()}
+    sess.last_frame = 8
+    sess.frame_stats = [{"frame": 8}]
+
+    class Inputs:
+        def clear(self):
+            events.append("inputs-clear")
+
+        def materialize_device_meshes(self, descriptors, colliders, device):
+            events.append((
+                "materialize", tuple(descriptors), tuple(colliders), device))
+
+    class Snapshot:
+        frame_start = 3
+        settings = SolverSettings(
+            device="cuda:0", max_particles=4096,
+            flip_ratio=0.2, spacetime_seed=77)
+        capacity_plan = SimpleNamespace(blockers=())
+        descriptors = ("source",)
+        extra_plans = ("plan",)
+        colliders = ("collider",)
+        force_fields = ("force",)
+        height_source = "height-source"
+        snippets = ("snippet",)
+        seeds = ("seed",)
+        configured_device = "cuda:0"
+
+        def __init__(self):
+            self.inputs = Inputs()
+            self.release_calls = 0
+
+        def transfer_scene_inputs(self):
+            value, self.inputs = self.inputs, None
+            return value
+
+        def release_transients(self):
+            self.release_calls += 1
+            if self.inputs is not None:
+                self.inputs.clear()
+                self.inputs = None
+
+    snapshot = Snapshot()
+    preflight_calls = []
+
+    def preflight(_owner, _scene, **kwargs):
+        preflight_calls.append(kwargs)
+        return snapshot, {"safe": True}, None
+
     monkeypatch.setattr(
-        scene_bridge, "build_settings",
-        lambda _scene: SolverSettings(
-            device="cuda:0", max_particles=1024,
-            flip_ratio=0.2, spacetime_seed=77))
-
-    def plan_scene(_scene, settings, _resources):
-        planned_capacities.append(settings.max_particles)
-        return snapshot
-
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
-    monkeypatch.setattr(sess, "_apply_scene_snapshot", lambda *_args: None)
-    monkeypatch.setattr(sources, "commit_prepared_seeds", lambda *_args: 0)
-    monkeypatch.setattr(viewport, "update_outputs", lambda *_args: None)
+        simulation_admission.SimulationAdmission, "_preflight", preflight)
+    monkeypatch.setattr(
+        sources, "commit_prepared_seeds",
+        lambda owner, seeds: events.append(("seeds", owner, tuple(seeds))))
+    monkeypatch.setattr(
+        viewport, "update_outputs",
+        lambda actual_scene, owner: events.append(
+            ("outputs", actual_scene, owner)))
+    applied = []
+    monkeypatch.setattr(
+        scene_bridge, "_capture_applied_state",
+        lambda actual_scene, owner, **kwargs: applied.append(
+            (actual_scene, owner, kwargs)))
+    depsgraph = object()
     scene = SimpleNamespace(
-        frame_start=1,
+        frame_start=3,
         fluidsim=SimpleNamespace(
-            flip_ratio=0.2, spacetime_seed=77, status="",
+            flip_ratio=0.2, spacetime_seed=77, snippets=[], status="",
             gravity=(0.0, 0.0, -4.0), use_scene_gravity=False),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
 
-    sess.reset(scene)
+    sess.reset(scene, depsgraph=depsgraph)
 
-    assert planned_capacities == [4096]
-    assert reset_snapshots == [(0.2, 77)]
-    assert solver.settings.flip_ratio == 0.2
-    assert solver.settings.spacetime_seed == 77
+    assert preflight_calls == [{
+        "depsgraph": depsgraph,
+        "runtime_capacity": 4096,
+        "ignore_memory_safeguard": True,
+        "defer_particle_growth": True,
+    }]
+    assert ("reset", 0.2, 77) in events
+    assert ("sources", ("source",)) in events
+    assert ("plans", ("plan",)) in events
+    assert ("colliders", ("collider",)) in events
+    assert ("forces", ("force",)) in events
+    assert ("height", "height-source") in events
+    assert ("snippets", ("snippet",)) in events
+    assert any(event[0] == "seeds" for event in events if isinstance(event, tuple))
+    assert any(event[0] == "outputs" for event in events if isinstance(event, tuple))
+    assert sess.start_frame == 3
+    assert sess.cache_written_start is None
+    assert sess.cache_written_end is None
+    assert sess.cache_settings_records == {}
+    assert sess.last_frame == -1
+    assert sess.frame_stats == []
     assert scene.fluidsim.status == "Simulation reset"
+    assert snapshot.release_calls == 1
+    assert applied == [(scene, sess, {"reset_only": True})]
 
 
 def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypatch):

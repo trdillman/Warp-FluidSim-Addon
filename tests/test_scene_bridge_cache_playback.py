@@ -710,24 +710,24 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
         "fluidSim_warp_blender51.diagnostics.profiler",
         fake_profiler_module,
     )
-    monkeypatch.setattr(
-        scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cuda:0"))
+    from fluidSim_warp_blender51.blender import simulation_admission
+
     sess = scene_bridge.session()
     capacity_plan = SimpleNamespace(
         blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
-    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
+    snapshot = SimpleNamespace(
+        configured_device="cuda:0", settings=SimpleNamespace(device="cuda:0"),
+        profiling_enabled=False, capacity_plan=capacity_plan,
+        scene_identity=1, scene_key="key",
+        frame_start=1, release_transients=lambda: None)
     monkeypatch.setattr(
-        sess, "_apply_scene_snapshot",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sync failed")),
-    )
-    from fluidSim_warp_blender51.sim import memory_safety
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
-        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
-        "resources": {}, "recommended": {},
-    })
+        simulation_admission.SimulationAdmission, "_preflight",
+        lambda *_args, **_kwargs: (
+            snapshot, {"safe": True, "estimated_bytes": 0}, None))
+    monkeypatch.setattr(
+        simulation_admission.SimulationAdmission, "_configure_solver",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("sync failed")))
 
     with pytest.raises(RuntimeError, match="sync failed"):
         sess.initialize(scene)
@@ -765,20 +765,20 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
         "fluidSim_warp_blender51.diagnostics.profiler",
         fake_profiler_module,
     )
-    monkeypatch.setattr(
-        scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cpu"))
-    from fluidSim_warp_blender51.sim import memory_safety
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
-        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
-        "resources": {}, "recommended": {},
-    })
+    from fluidSim_warp_blender51.blender import simulation_admission
+
     sess = scene_bridge.session()
     capacity_plan = SimpleNamespace(
         blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
-    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
+    snapshot = SimpleNamespace(
+        configured_device="cpu", settings=SimpleNamespace(device="cpu"),
+        profiling_enabled=False, capacity_plan=capacity_plan,
+        scene_identity=1, scene_key="key",
+        frame_start=1, release_transients=lambda: None)
+    monkeypatch.setattr(
+        simulation_admission.SimulationAdmission, "_preflight",
+        lambda *_args, **_kwargs: (
+            snapshot, {"safe": True, "estimated_bytes": 0}, None))
 
     with pytest.raises(RuntimeError, match="constructor failed"):
         sess.initialize(scene)
@@ -826,11 +826,14 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     sess.start_frame = 1
     sess.last_frame = 8
     calls = []
-    monkeypatch.setattr(sess, "reset", lambda scene_arg: calls.append(scene_arg))
+    monkeypatch.setattr(
+        sess, "reset",
+        lambda scene_arg, **kwargs: calls.append((scene_arg, kwargs)))
+    depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge._on_frame_change(scene, depsgraph=depsgraph)
 
-    assert calls == [scene]
+    assert calls == [(scene, {"depsgraph": depsgraph})]
     assert sess.last_frame == 3
 
 
@@ -957,8 +960,10 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
     scene = _scene(frame=2, playback=False)
     sess = scene_bridge.session()
     calls = []
+    depsgraphs = []
 
-    def initialize(scene_arg):
+    def initialize(scene_arg, **kwargs):
+        depsgraphs.append(kwargs.get("depsgraph"))
         calls.append(("initialize", scene_arg.frame_current))
         sess.solver = SimpleNamespace(frame=0)
         sess.start_frame = scene_arg.frame_start
@@ -971,10 +976,12 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
         sess, "step",
         lambda _scene, **kwargs: calls.append(
             ("step", kwargs.get("timeline_frame", scene.frame_current))))
+    depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge._on_frame_change(scene, depsgraph=depsgraph)
 
     assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
+    assert depsgraphs == [depsgraph]
 
 
 def _count_initialize(monkeypatch, sess):

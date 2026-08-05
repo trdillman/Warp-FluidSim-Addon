@@ -48,6 +48,14 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     assert len(capacity_calls) == 1
     assert "tests/blender_capacity_planner_acceptance.py" in capacity_calls[0][0]
     assert capacity_calls[0][1] == "CAPACITY-PLANNER-ACCEPTANCE-PASS"
+    admission_calls = [
+        (command, marker)
+        for label, command, _env, _reject_output, marker in calls
+        if label == "tests/blender_simulation_admission_acceptance.py"
+    ]
+    assert len(admission_calls) == 1
+    assert "tests/blender_simulation_admission_acceptance.py" in admission_calls[0][0]
+    assert admission_calls[0][1] == "SIMULATION-ADMISSION-ACCEPTANCE-PASS"
 
 
 def test_production_gate_include_gui_requires_foreground_gui_acceptance(monkeypatch, capsys):
