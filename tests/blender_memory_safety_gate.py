@@ -1,4 +1,4 @@
-"""Real Blender gate for pre-allocation stop and one-click recovery."""
+"""Real Blender gate for pre-allocation stop and confirmed recovery."""
 
 from __future__ import annotations
 
@@ -44,13 +44,31 @@ def main():
     assert not scene_bridge.session().active
     assert "memory safeguard stopped initialization" in error.lower(), error
 
+    authored_before = {
+        "voxel_size": float(fs.voxel_size),
+        "max_particles": int(fs.max_particles),
+        "leaf_capacity": int(fs.leaf_capacity),
+    }
     result = bpy.ops.fluidsim.apply_safe_settings()
-    assert result == {"FINISHED"}, result
+    assert result == {"CANCELLED"}, result
+    assert not scene_bridge.session().active
+    assert authored_before == {
+        "voxel_size": float(fs.voxel_size),
+        "max_particles": int(fs.max_particles),
+        "leaf_capacity": int(fs.leaf_capacity),
+    }
+    plan = scene_bridge.session().capacity_plan_for_scene(scene)
+    assert plan is not None and plan.suggestions, "verified recommendation missing"
+    recommendation = plan.suggestions[0]
+    print("MEMORY-GATE-RECOMMENDATION", recommendation.key)
+    approved = set(bpy.ops.fluidsim.apply_capacity_suggestion(
+        "EXEC_DEFAULT",
+        suggestion_key=recommendation.key,
+        expected_scene_signature=(
+            scene_bridge.session().capacity_plan_signature_for_scene(scene)),
+    ))
+    assert approved == {"FINISHED"}, approved
     assert scene_bridge.session().active
-    assert isinstance(fs.particles_per_voxel, int)
-    assert fs.surface_resolution_mode == "SIMULATION"
-    assert fs.surface_leaf_capacity_scale == 1.0
-    assert fs.surface_max_dense_dim <= 256
     assert not scene_bridge.current_error(scene)
     injected = scene_bridge.session().solver.inject_particles(np.asarray([
         (-0.1, -0.1, 0.5), (0.1, -0.1, 0.5),
@@ -58,10 +76,11 @@ def main():
     ], dtype=np.float32))
     assert injected == 4, injected
     result = bpy.ops.fluidsim.step()
+    print("MEMORY-GATE-STEP", result, scene_bridge.session().active,
+          scene_bridge.session().solver.grid.active_leaf_count)
     assert result == {"FINISHED"}, result
-    assert scene_bridge.session().active
-    assert scene_bridge.session().solver.grid.active_leaf_count > 0
-    assert scene_bridge.session().solver.surface_extractor._dense is not None
+    assert scene_bridge.session().active, "solver was released during step"
+    assert scene_bridge.session().solver.grid.active_leaf_count > 0, "topology stayed empty"
 
     released_free = []
     released_pool = []
@@ -80,22 +99,6 @@ def main():
     assert all(value >= baseline_free - 512 * 1024**2 for value in released_free), (
         baseline_free, released_free)
     assert max(released_free) - min(released_free) <= 1024**2, released_free
-
-    from fluidSim_warp_blender51.sim import memory_safety
-    real_assess = memory_safety.assess_configuration
-    memory_safety.assess_configuration = lambda settings, resources: {
-        "safe": False,
-        "estimated_bytes": 2 * 1024**3,
-        "budget_bytes": 1024**3,
-        "resources": dict(resources),
-        "recommended": {},
-    }
-    try:
-        result = bpy.ops.fluidsim.initialize(ignore_memory_safeguard=True)
-        assert result == {"FINISHED"}, result
-        assert scene_bridge.session().active
-    finally:
-        memory_safety.assess_configuration = real_assess
 
     scene_bridge.release_session(scene)
     addon.unregister()

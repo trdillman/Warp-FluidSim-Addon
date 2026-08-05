@@ -7,6 +7,7 @@ stored as compressed .npz files.
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 import hashlib
 import json
@@ -121,6 +122,8 @@ def _jsonable_setting(value):
         return {"__fluidsim_nonfinite_float__": label}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if is_dataclass(value):
+        return _jsonable_setting(asdict(value))
     name = getattr(value, "name", None)
     if isinstance(name, str):
         return name
@@ -195,6 +198,23 @@ def _frame_payload(solver, scene_key_value: str = ""):
         "whitewater_velocities": host.whitewater_attr("velocity"),
         "whitewater_age": host.whitewater_attr("age"),
         "whitewater_life": host.whitewater_attr("life"),
+        "whitewater_required": np.array(
+            int(getattr(getattr(solver, "stats", None), "whitewater_required", 0)),
+            dtype=np.int32),
+        "whitewater_available": np.array(
+            int(getattr(getattr(solver, "stats", None), "whitewater_available", 0)),
+            dtype=np.int32),
+        "whitewater_admitted": np.array(
+            int(getattr(getattr(solver, "stats", None), "whitewater_admitted", 0)),
+            dtype=np.int32),
+        "whitewater_dropped": np.array(
+            int(getattr(getattr(solver, "stats", None), "whitewater_dropped", 0)),
+            dtype=np.int32),
+        "whitewater_policy": np.array(str(getattr(
+            getattr(solver, "stats", None), "whitewater_policy",
+            "FIXED_CAPACITY_DETERMINISTIC_DROPS"))),
+        "whitewater_status": np.array(str(getattr(
+            getattr(solver, "stats", None), "whitewater_status", "OK"))),
     }
 
 

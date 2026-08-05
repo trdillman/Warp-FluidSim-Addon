@@ -39,38 +39,53 @@ If you prefer to build the scene yourself instead of using Quick Setup:
 
 1. Create a **domain** object (any mesh) sized to your simulation volume.
    In **Simulation**, assign it to **Domain**.
-2. Create an emitter object, select it, and in **Sources** click
-   **Tag Liquid Emitter**. Choose **Initial Fill** or **Continuous Inflow**, an
-   **Analytic Volume** or **Mesh Surface Shell**, its target particles per voxel,
-   and initial velocity.
-3. Create collider or sink objects, select them, and in **Colliders / Sinks**
-   click **Tag Collider** (mesh SDF) or **Tag Liquid Sink** (removes liquid).
-4. Set **Voxel Size** and **Leaf Capacity** in **Domain / Sparse Grid**.
+2. Create an emitter object, select it, and in **Inputs → Liquid Emitters**
+   click **Tag Liquid Emitter**. Choose **Initial Fill** or **Continuous Inflow**,
+   an **Analytic Volume** or **Mesh Surface Shell**, inherited or multiplied
+   liquid sampling, and initial velocity.
+3. Create collider or sink objects, select them, and use the corresponding
+   collapsed section under **Inputs**.
+4. Set **Simulation Resolution** in **Quality**. Manual leaf and particle
+   capacities remain available under collapsed **Advanced** sections.
 5. Click **Initialize Solver**, then **Live: Off** to start, then Play.
 
 ---
 
-## 3. Panel Reference (22 panels)
+## 3. Panel Reference (7 task-oriented top-level groups)
 
 ### Simulation
 Core controls: **Quick Setup**, **Initialize Solver**, **Live** toggle,
-**Reset**, **Release**, **Step 1 / Step 10**. Live status mirrors (particles,
-active voxels, step time, substeps). Time Scale, CFL, Min/Max Substeps,
-gravity (or *Use Scene Gravity*). The collapsed **Advanced Playback** foldout
-contains **Maximum Playback Recovery Frames**, an expert safety limit for how
-many timeline frames live playback may recover synchronously after Blender
-drops frames.
+**Reset**, **Release**, **Step 1 / Step 10**. Live status mirrors particles,
+active voxels, step time, and substeps. Time Scale and gravity remain here.
+Quick Setup is idempotent when its complete domain/source/collider setup already
+exists. The collapsed **Advanced Playback** foldout contains **Maximum Playback
+Recovery Frames**, an expert safety limit for how many timeline frames live
+playback may recover synchronously after Blender drops frames.
 
-### Domain / Sparse Grid
+### Quality
+
+The default user-facing quality controls are **Simulation Resolution** (cell
+size), **Liquid Sampling** (rest occupancy), **Transfer** (PIC/FLIP and FLIP
+ratio), **Adaptive CFL**, and **Max Substeps**. The panel reports authoritative
+cell size, unpadded and 8-cell-padded dimensions, sparse leaf-cell count, and
+nominal particle spacing. Resolution stages **Reinitialize**; sampling stages
+**Reset** and never mutates an advanced live solver in place.
+
+### Inputs
+
+Liquid emitters, sinks, colliders, force regions, height fill, and compatibility
+point injection are collapsed task sections under this group.
+
+### Advanced → Domain / Sparse Grid
 Domain object picker, **Voxel Size**, **Leaf Capacity** (max 8³ leaves),
 **Topology Expand** (dilation iterations around active fluid),
 **Open Boundaries** (kill particles leaving the domain). Shows the resolved
 resolution and active/total leaves.
 
-### Particles
+### Advanced → Particles
 **Initial Particle Reserve**, **Auto Grow Particle Pool**, the guarded-growth
-failure policy, **Particles / Voxel**, and **Transfer** (PIC / FLIP) with
-**FLIP Ratio**, **Trace** (Euler / single-sample / midpoint / modified-midpoint
+failure policy, advanced copies of liquid sampling and **Transfer** (PIC / FLIP)
+with **FLIP Ratio**, **Trace** (Euler / single-sample / midpoint / modified-midpoint
 / **RK3**), relaxation (enable / strength / mode), speed limit
 (**Max Speed** + Limit Behavior + Percent), and **Count Stiffness**
 (anti-clumping).
@@ -79,7 +94,10 @@ failure policy, **Particles / Voxel**, and **Transfer** (PIC / FLIP) with
 Use **Tag Liquid Emitter** to create a role-owned workflow. New Phase 3 emitters
 start as **Initial Fill** without changing the saved default of older files.
 Initial Fill acts once after Initialize/Reset; **Continuous Inflow** replenishes
-while Enabled. **Target Particles / Voxel** is occupancy, never volume/second.
+while Enabled. New sources inherit global **Liquid Sampling** by default or use
+a bounded multiplier. Migrated sources retain a **Legacy Absolute Target** so
+old authored occupancy is preserved. Sampling is occupancy, never volume/second
+or spatial resolution, and changes require Reset.
 
 Accepted emission regions are:
 
@@ -165,24 +183,35 @@ a CPU evaluation of arbitrary texture nodes. Curve Guide samples up to four
 curve controls. Fluid Flow uses the source object's local Z direction as its
 target velocity; it does not copy a Mantaflow domain velocity grid.
 
-### Pressure Projection
+### Physics
+
+Pressure and viscosity are collapsed solver sections under this group.
+
+#### Pressure Projection
 **Solver** (Jacobi / **PCG**), **Iterations**, **Tolerance**, **Threshold**
 (relative pressure cutoff).
 
-### Viscosity
+#### Viscosity
 Enable checkbox. **Solver** (Jacobi / PCG), **Viscosity** constant, **From
 Particles** (per-particle viscosity attribute), **Iterations**, **Tolerance**.
 
-### Whitewater
-Whitewater remains a separate physics panel. **Enable Whitewater** is the first
-control, followed by capacity, emission, lifetime, and motion settings. The
-viewport visibility toggle and appearance controls follow the simulation
-settings; they are not grouped under the general output panel.
+### Surface & Whitewater
+Basic render-surface controls expose generation, surface upres, particle radius,
+smoothing, and viewport update cadence while stating that render visibility does
+not disable the solver liquid SDF. Whitewater exposes aggregate churn,
+emission, speed, validated life range, liquid/air drag, and display controls;
+it does not claim unsupported foam/spray/bubble species classification. Raw
+surface and whitewater capacities remain collapsed advanced controls.
 
-### Realtime Surfacing / Particles
-This panel follows the existing add-on pattern of grouping related controls
-inside one workflow panel rather than creating a top-level panel for each
-subsection. The original **Liquid View** dropdown remains at the top.
+#### Advanced Surface / Display
+The detailed owner for viewport-facing liquid surface and particle display
+settings. Surface mesh controls include visibility, generate surface, particle
+radius, independent dilate iterations/strength, independent erode
+iterations/strength, Box or Mean-Curvature smooth iterations/strength,
+attribute color mode, and material. Liquid particle controls include
+visibility, display fraction, display scale, attribute color mode, and particle
+material. Whitewater particle controls include visibility, enable, display
+scale, attribute color mode, and material.
 
 **Surface Mesh** contains normal surfacing workflow: generation, resolution,
 particle reconstruction radius, filtering, dilation, erosion, smoothing,
@@ -203,12 +232,17 @@ When a live solver is active, surface edits rebuild the current frame's surface
 SDF and output mesh without advancing the simulation frame. Visibility and
 material edits also apply to existing output or cache objects.
 
-### Viewport / Render Output
-Output collection name and overlay toggle. **Cache / Export** includes cache
-enablement, path and playback range, **Export Cache Sequence**, and **Export
-Current Frame**.
+### Output & Cache
+Output collection name and overlay toggle. **Optional Cache / Export** includes
+cache enablement, path and playback range, **Export Cache Sequence**, and
+**Export Current Frame**.
 
-### Custom Warp Snippets
+### Advanced
+
+Manual capacities, sparse-grid implementation controls, field sources, snippets,
+diagnostics, and validation are hidden by default but remain reachable.
+
+#### Custom Warp Snippets
 **Snippet Library** dropdown with ten ready-to-run examples plus your saved
 snippets, and a **Load** button. Add / remove / apply custom kernels.
 Per-snippet: enabled, kernel name, **Order** slot, **Run Over**, frame window
@@ -218,13 +252,13 @@ editing, **Validate**, **Auto Fix**, **Test**, **Save to Library**) and
 **Shortcuts** (one-click insertion of fields, constants, and common
 context/time/math code). See §5.
 
-### Diagnostics / Profiling
+#### Diagnostics / Profiling
 **Enable Profiling**, **Accurate GPU Timing** (CUDA-sync each phase),
 report path, **Write Diagnostics Report**. Shows average per-phase timers
 (Sourcing, Indexing, P2G, Forces, Viscosity, Pressure, G2P, Collision, Relax,
 Surface, Whitewater, Custom, Lifecycle, Topology).
 
-### Validation / Benchmarks
+#### Validation / Benchmarks
 **Run Validation Suite** (13 GPU tests, ~30 s). Benchmark **Frames** and
 **Baseline** path, **Run Benchmark** / **Save Baseline**. Shows avg step time,
 voxels/s, active voxels, and pass/regression vs baseline.
@@ -430,13 +464,14 @@ FluidSim classifies every exposed simulation setting into one interaction tier:
 | Tier | Meaning | What happens while a run is advanced |
 |---|---|---|
 | **Live** | Safe bounded solver mutation | Applies before the next step without clearing particles or history. |
-| **Live / Targeted Refresh** | Live mutation with a bounded subsystem refresh | Applies without resetting; for example surface refresh or ST-FLIP density recalibration. |
+| **Live / Targeted Refresh** | Live mutation with a bounded subsystem refresh | Applies without resetting; for example a surface or viewport-output refresh. |
 | **Restart Required** | Meaningful from simulation start | Remains pending until rewind, explicit Reset, or Revert. |
 | **Reinitialize Required** | Allocation, device, or domain construction change | Remains pending until rewind, explicit Reinitialize, or Revert. |
 | **Blocked** | Unsafe in the current context | Remains pending with an actionable reason; the active run is preserved. |
 
-Pending state belongs to each scene. Editing voxel size, leaf/whitewater
-capacity, domain, or a restart-only lifecycle value in the middle of a run does
+Pending state belongs to each scene. Editing simulation resolution,
+liquid sampling, leaf/whitewater capacity, domain, or a restart-only lifecycle
+value in the middle of a run does
 **not** silently erase that run. One neutral summary appears in Simulation and
 the fixed header popover instead of injecting red action rows into individual
 panels. Rewind to the timeline start to apply staged changes automatically, or
@@ -494,11 +529,9 @@ substepping, and render-surface re-synchronization. It is beta because phase
 three still needs multi-scene reference-error and long-run conservation work.
 Keep the default feature disabled for production scenes until those results
 are acceptable for the scene type. With automatic reference mass, the solver
-runs the Monte Carlo calibration for the current ST seed and then rescales that
-result linearly for live particles-per-voxel edits. This follows the estimator's
-linear mass expectation and avoids rerunning the expensive calibration on every
-slider or keyframe value; changes to the ST weighting kernels must revalidate
-that assumption.
+runs the Monte Carlo calibration for the current ST seed. Liquid Sampling is a
+Reset-tier rest-density contract, so changing it stages Reset rather than
+rescaling the active ST-FLIP reference mass in place.
 
 ## Safe Settings recovery
 
@@ -506,8 +539,10 @@ Before allocating solver arrays, FluidSim estimates peak VRAM against the
 GPU's current free memory and reserved safety margin. Particle-only shortfalls
 auto-grow to a chunked geometric target when that complete solver allocation
 fits the conservative budget. Other unsafe initial allocations remain blocked
-before replacing an existing solver, and the Simulation panel shows a neutral
-safe-settings recovery action. Runtime particle growth separately guards the
+before replacing an existing solver. The Simulation panel shows one capacity
+report, a severity-ranked recommendation list, and one explicit review/confirm
+flow; it does not expose an unverified memory bypass. Runtime particle growth
+separately guards the
 peak where old and replacement pools coexist; a failed grow-copy never swaps or
 uninitializes the existing solver. These estimates reduce allocation risk but
 do not guarantee immunity from arbitrary CUDA failures.

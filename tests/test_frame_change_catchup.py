@@ -90,6 +90,30 @@ def test_dropped_playback_frames_step_the_whole_gap_at_the_right_indices(
     assert sess.last_frame == 7
 
 
+def test_topology_capacity_refusal_pauses_without_releasing_live_solver(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.sim.fields import TopologyCapacityError
+
+    scene = _scene(4)
+    sess, _steps = _live_session(scene_bridge, last_frame=3)
+    old_solver = sess.solver
+    releases = []
+    sess.release = lambda *args, **kwargs: releases.append((args, kwargs))
+
+    def refuse(_scene, **_kwargs):
+        raise TopologyCapacityError(required=9, capacity=8)
+
+    sess.step = refuse
+    sess.handle_frame_change(scene, None)
+
+    assert sess.solver is old_solver
+    assert releases == []
+    assert sess.last_frame == 3
+    assert scene.fluidsim.live is False
+    assert "solver preserved" in scene.fluidsim.status.lower()
+    assert "need 9" in scene.fluidsim.status.lower()
+
+
 def test_first_frame_of_a_fresh_session_is_a_single_step(monkeypatch):
     """``last_frame`` starts at -1, which is not a 6-frame backlog.
 

@@ -414,6 +414,7 @@ class CompiledRegion:
     points: Optional[CompiledPoints] = None
     diagnostics: tuple[SourceDiagnostic, ...] = ()
     covered_voxel_count: int = 0
+    topology_leaf_coords: Optional[np.ndarray] = None
     device_leaf_coords: object = None
     device_coverage: object = None
     device_sdf: object = None
@@ -459,6 +460,33 @@ class CompiledRegion:
             self.points.device_lifespan = None
 
 
+def normalized_liquid_target(plan: SourcePlan) -> int:
+    """Return the canonical bounded liquid occupancy target."""
+    return max(0, min(64, int(round(
+        float(plan.payload.target_particles_per_voxel)))))
+
+
+def liquid_coverage_emission_enabled(plan: SourcePlan) -> bool:
+    """Whether a coverage-backed liquid plan can create particles.
+
+    Authored point cardinality is independent of occupancy.  Non-liquid plans
+    are likewise governed by their own operation semantics.
+    """
+    return (
+        plan.operation == SourceOperation.LIQUID
+        and plan.lifecycle != SourceLifecycle.DIRECT_APPEND
+        and normalized_liquid_target(plan) > 0
+    )
+
+
+def plan_requires_source_topology(plan: SourcePlan) -> bool:
+    if plan.operation != SourceOperation.LIQUID:
+        return True
+    if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
+        return True
+    return liquid_coverage_emission_enabled(plan)
+
+
 @dataclass(frozen=True)
 class CompiledSource:
     plan: SourcePlan
@@ -481,8 +509,11 @@ def _compiled_footprint(source: CompiledSource) -> CompiledSourceFootprint:
     plan, region = source.plan, source.region
     errors = tuple(item for item in region.diagnostics
                    if item.severity == "ERROR")
+    topology_coords = (region.topology_leaf_coords
+                       if region.topology_leaf_coords is not None
+                       else region.leaf_coords)
     coords = tuple(tuple(int(axis) for axis in coord)
-                   for coord in region.leaf_coords)
+                   for coord in topology_coords)
     if errors:
         return CompiledSourceFootprint(
             str(plan.stable_id), None, DemandQuality.UNKNOWN, coords,
@@ -503,8 +534,12 @@ def _compiled_footprint(source: CompiledSource) -> CompiledSourceFootprint:
             str(plan.stable_id), len(region.points.positions),
             DemandQuality.EXACT, coords, region.device_bytes,
         )
-    target = max(1, min(64, int(round(
-        float(plan.payload.target_particles_per_voxel)))))
+    target = normalized_liquid_target(plan)
+    if target == 0:
+        return CompiledSourceFootprint(
+            str(plan.stable_id), 0, DemandQuality.EXACT, (),
+            region.device_bytes,
+        )
     demand = int(np.ceil(
         np.asarray(region.coverage, np.float64) * target).sum(dtype=np.int64))
     return CompiledSourceFootprint(
@@ -1090,9 +1125,12 @@ class SourceCompiler:
 
     def _compile_height(self, plan, context, key):
         r = plan.region
+        # Match FluidSolver._rebuild_topology's four-voxel height safety band;
+        # planner/compiler topology must not under-count the runtime contributor.
         bounds = (context.domain_min,
                   (context.domain_max[0], context.domain_max[1],
-                   min(context.domain_max[2], r.base_height + context.voxel_size)))
+                   min(context.domain_max[2],
+                       r.base_height + 4.0 * context.voxel_size)))
         leaves = self._candidate_leaves(bounds, context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=2)
         if rejected is not None:
@@ -1111,7 +1149,9 @@ class SourceCompiler:
             top = r.base_height
         coverage = (points[...,2] <= top).astype(np.float32)
         sdf = (points[...,2]-top).astype(np.float32)
-        return CompiledRegion(r.kind, key, leaves, coverage, sdf=sdf)
+        region = CompiledRegion(r.kind, key, leaves, coverage, sdf=sdf)
+        region.topology_leaf_coords = np.ascontiguousarray(leaves)
+        return region
 
     @staticmethod
     def _accessor_value(accessor, coord):

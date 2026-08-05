@@ -22,6 +22,37 @@ def _configured_device():
     return configured_device()
 
 
+def _scene_identity_token(scene):
+    pointer = getattr(scene, "as_pointer", None)
+    if callable(pointer):
+        try:
+            value = int(pointer())
+            if value:
+                return str(value)
+        except (TypeError, ValueError, ReferenceError):
+            pass
+    return str(id(scene))
+
+
+def _owned_capacity_plan(scene):
+    bridge = _bridge()
+    getter = getattr(bridge, "capacity_plan_for_scene", None)
+    if callable(getter):
+        return getter(scene)
+    sess = bridge.session()
+    getter = getattr(sess, "capacity_plan_for_scene", None)
+    return getter(scene) if callable(getter) else getattr(
+        sess, "capacity_plan", None)
+
+
+def _owned_capacity_signature(scene, plan):
+    bridge = _bridge()
+    getter = getattr(bridge, "capacity_plan_signature_for_scene", None)
+    if callable(getter):
+        return str(getter(scene))
+    return str(getattr(plan, "scene_signature", ""))
+
+
 class _FLUIDSIM_OT_session_base:
     """Grey out operators that cannot do anything without a live solver."""
 
@@ -60,7 +91,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
                 ignore_memory_safeguard=self.ignore_memory_safeguard,
             )
         except Exception as exc:  # noqa: BLE001
-            plan = getattr(_bridge().session(), "capacity_plan", None)
+            plan = _owned_capacity_plan(scene)
             integrity_blocked = bool(plan and any(
                 getattr(blocker, "code", "") != "MEMORY_ESTIMATE"
                 for blocker in getattr(plan, "blockers", ())))
@@ -161,26 +192,30 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     suggestion_key: StringProperty(default="", options={"SKIP_SAVE"})
     expected_scene_signature: StringProperty(default="", options={"SKIP_SAVE"})
+    expected_scene_identity: StringProperty(
+        default="", options={"HIDDEN", "SKIP_SAVE"})
     changes_json: StringProperty(default="{}", options={"HIDDEN", "SKIP_SAVE"})
     suggestion_label: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     estimated_bytes: StringProperty(default="0", options={"HIDDEN", "SKIP_SAVE"})
     budget_bytes: StringProperty(default="0", options={"HIDDEN", "SKIP_SAVE"})
 
     @classmethod
-    def poll(cls, _context):
-        plan = getattr(_bridge().session(), "capacity_plan", None)
+    def poll(cls, context):
+        plan = _owned_capacity_plan(getattr(context, "scene", None))
         if not getattr(plan, "suggestions", ()):
             cls.poll_message_set("Initialize first to calculate safe capacity options")
             return False
         return True
 
     def invoke(self, context, _event):
-        plan = getattr(_bridge().session(), "capacity_plan", None)
+        plan = _owned_capacity_plan(context.scene)
         suggestion = _capacity_suggestion(plan, self.suggestion_key)
         if suggestion is None:
             self.report({"WARNING"}, "Capacity option is stale; initialize again")
             return {"CANCELLED"}
-        self.expected_scene_signature = str(plan.scene_signature)
+        self.expected_scene_signature = _owned_capacity_signature(
+            context.scene, plan)
+        self.expected_scene_identity = _scene_identity_token(context.scene)
         self.changes_json = json.dumps(dict(suggestion.changes))
         self.suggestion_label = str(suggestion.label)
         self.estimated_bytes = str(int(suggestion.estimated_bytes))
@@ -212,13 +247,27 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         bridge = _bridge()
         scene = context.scene
         fs = scene.fluidsim
+        if (self.expected_scene_identity
+                and self.expected_scene_identity != _scene_identity_token(scene)):
+            self.report(
+                {"WARNING"},
+                "Capacity option belongs to another scene; review this scene",
+            )
+            return {"CANCELLED"}
+        if _owned_capacity_plan(scene) is None:
+            self.report(
+                {"WARNING"},
+                "Capacity option is no longer owned by this scene",
+            )
+            return {"CANCELLED"}
         try:
             fresh_plan = bridge.refresh_capacity_plan(scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Capacity recheck failed: {exc}")
             return {"CANCELLED"}
         if (self.expected_scene_signature
-                and fresh_plan.scene_signature != self.expected_scene_signature):
+                and _owned_capacity_signature(scene, fresh_plan)
+                != self.expected_scene_signature):
             self.report(
                 {"WARNING"},
                 "Scene changed after the warning; initialize again for new options",
@@ -290,86 +339,36 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
-    """Apply machine-aware memory settings and retry solver initialization."""
+    """Compatibility entry point that routes into reviewed capacity options."""
 
     bl_idname = "fluidsim.apply_safe_settings"
-    bl_label = "Apply Safe Settings & Retry"
+    bl_label = "Review Capacity Options"
     bl_options = {"REGISTER"}
 
-    def execute(self, context):
-        from .sim.memory_safety import (
-            assess_configuration,
-            estimate_solver_bytes,
-            recommend_safe_settings,
-            resource_snapshot,
-        )
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(getattr(context, "scene", None), "fluidsim", None))
 
+    def execute(self, context):
         bridge = _bridge()
         scene = context.scene
         fs = scene.fluidsim
-        # Deliberately no set_error here: this operator is the recovery path
-        # for the error already on screen, and clobbering it would hide the
-        # failure the user is trying to recover from.
         try:
-            settings = bridge.build_settings(scene)
-            resources = resource_snapshot(settings.device)
-            assessment = assess_configuration(settings, resources)
+            plan = bridge.refresh_capacity_plan(scene)
         except Exception as exc:  # noqa: BLE001
-            self.report({"ERROR"}, f"Safe Settings inspection failed: {exc}")
-            fs.status = f"Safe settings failed: {exc}"
+            self.report({"ERROR"}, f"Capacity inspection failed: {exc}")
+            fs.status = f"Capacity inspection failed: {exc}"
             return {"CANCELLED"}
-        budget = assessment["budget_bytes"]
-        recommended = dict(assessment["recommended"])
-
-        error = bridge.current_error(scene)
-        overflow = re.search(
-            r"leaf capacity exceeded \((\d+) > (\d+)\)", error, re.IGNORECASE
-        )
-        if overflow:
-            required = int(overflow.group(1))
-            candidate = min(262_144, 1 << max(6, (required - 1).bit_length()))
-            candidate_settings = vars(settings).copy()
-            candidate_settings["leaf_capacity"] = candidate
-            if estimate_solver_bytes(candidate_settings) <= budget:
-                recommended["leaf_capacity"] = candidate
-            else:
-                ratio = max(1.0, required / max(int(settings.leaf_capacity), 1))
-                recommended["voxel_size"] = float(settings.voxel_size) * (
-                    ratio ** (1.0 / 3.0)
-                ) * 1.1
-
-        if not recommended:
-            recovery_budget = min(
-                budget, max(512 * 1024**2, int(assessment["estimated_bytes"] * 0.75))
-            )
-            recommended = recommend_safe_settings(settings, recovery_budget, {
-                **resources,
-                "gpu_utilization": max(85.0, resources["gpu_utilization"]),
-            })
-        if not recommended:
-            self.report({"ERROR"}, "Safe Settings could not find a lower-risk configuration")
+        if not tuple(getattr(plan, "suggestions", ())):
+            self.report({"ERROR"}, "No verified capacity-only option is available")
+            fs.status = "No verified capacity-only option is available"
             return {"CANCELLED"}
-
-        changed = []
-        for name, value in recommended.items():
-            if name == "surface_resolution_mode":
-                value = "SIMULATION"
-            if hasattr(fs, name):
-                rna_property = fs.bl_rna.properties.get(name)
-                if rna_property is not None and rna_property.type == "INT":
-                    value = int(value)
-                setattr(fs, name, value)
-                changed.append(name)
-
-        bridge.clear_error(scene)
-        fs.status = "Safe settings applied: " + ", ".join(changed)
-        try:
-            bridge.initialize_session(scene)
-        except Exception as exc:  # noqa: BLE001
-            self.report({"ERROR"}, f"Safe retry stopped: {exc}")
-            return {"CANCELLED"}
-        self.report({"INFO"}, fs.status)
-        return {"FINISHED"}
+        # Never mutate semantic quality/capacity from a one-click retry. The
+        # existing plan panel and apply_capacity_suggestion dialog own the one
+        # exact-values confirmation and stale-signature revalidation flow.
+        fs.status = "Capacity options ready — review and confirm one option"
+        self.report({"WARNING"}, fs.status)
+        return {"CANCELLED"}
 
 
 class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
@@ -553,6 +552,19 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
+        objects = tuple(getattr(scene, "objects", ()))
+        existing_domain = getattr(fs, "domain_object", None)
+        existing_source = any(
+            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
+            for obj in objects)
+        existing_collider = any(
+            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "COLLIDER"
+            for obj in objects)
+        if existing_domain is not None and existing_source and existing_collider:
+            self.report(
+                {"INFO"},
+                "Quick Setup already exists; existing domain and inputs were preserved")
+            return {"FINISHED"}
 
         # Domain box - extended horizontally (X) and slightly taller (Z)
         # so the released water has room to spread and fall.
@@ -788,12 +800,21 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         scene = context.scene
         try:
             n = _sources.inject_object_particles(scene, obj, sess)
-            viewport.update_outputs(scene, sess)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Particle injection failed: {exc}")
             bridge.set_error(scene, f"Particle injection failed: {exc}")
             scene.fluidsim.status = f"Injection failed: {exc}"
             return {"CANCELLED"}
+        result = getattr(sess.solver.sourcing, "last_injection_result", None)
+        if result is not None and not result.admitted:
+            self.report({"WARNING"}, (
+                "Particle injection needs "
+                f"{result.required:,} slots but only {result.available:,} "
+                "are available. Increase Max Particles or enable automatic "
+                "particle-capacity growth, then retry."
+            ))
+            return {"CANCELLED"}
+        viewport.update_outputs(scene, sess)
         self.report({"INFO"}, f"Injected {n:,} particles from {obj.name}")
         return {"FINISHED"}
 

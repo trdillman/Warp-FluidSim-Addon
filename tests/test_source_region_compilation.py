@@ -98,6 +98,20 @@ def test_compiled_footprints_expose_conservative_particle_and_leaf_demand():
     assert footprint.staging_bytes == batch.sources[0].region.device_bytes
 
 
+def test_zero_liquid_occupancy_has_no_particle_or_leaf_demand():
+    source = plan(AnalyticRegionPlan(
+        shape=SourceShapeShape.BOX, position=(1, 1, 1),
+        half_extents=(0.5, 0.5, 0.5)), "zero-footprint")
+    source = replace(source, payload=replace(
+        source.payload, target_particles_per_voxel=0.0))
+
+    footprint = SourceCompiler().compile((source,), ctx()).footprints[0]
+
+    assert footprint.particle_demand == 0
+    assert footprint.particle_quality.value == "exact"
+    assert footprint.leaf_coords == ()
+
+
 def test_direct_point_footprint_count_is_exact():
     points = np.array(((0.25, 0.25, 0.25), (1.25, 1.25, 1.25)), np.float32)
     direct = SourcePlan(

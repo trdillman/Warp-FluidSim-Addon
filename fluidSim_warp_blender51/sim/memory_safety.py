@@ -9,6 +9,8 @@ import os
 import subprocess
 import time
 
+from .quality_contract import resolve_quality
+
 
 LEAF_VOLUME = 512
 BASE_BYTES = 256 * 1024**2
@@ -17,7 +19,11 @@ RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
 WHITEWATER_BYTES = 76
-TOPOLOGY_BYTES_PER_LEAF_CELL = 12
+WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
+# Live table + candidate table + candidate flag/expand scratch (int32 each).
+TOPOLOGY_BYTES_PER_LEAF_CELL = 16
+# Live and candidate vec3i coordinate arrays.
+TOPOLOGY_COORD_BYTES_PER_LEAF = 24
 
 
 def release_cuda_memory(device_name: str | None) -> None:
@@ -54,9 +60,19 @@ def is_memory_capacity_error(message: str) -> bool:
     ))
 
 
-def safe_memory_budget(total_bytes: int, free_bytes: int) -> int:
-    """Leave room for Blender, the display driver, and allocator variance."""
-    return int(min(max(0, total_bytes) * 0.85, max(0, free_bytes) * 0.90))
+def safe_memory_budget(
+        total_bytes: int, free_bytes: int, resident_bytes: int = 0) -> int:
+    """Leave room for Blender, the display driver, and allocator variance.
+
+    When a transaction must retain owned GPU allocations, return a peak budget:
+    the resident estimate is already committed, while only 90% of currently
+    free VRAM is available to the candidate.
+    """
+    resident_bytes = max(0, int(resident_bytes))
+    return int(min(
+        max(0, total_bytes) * 0.85,
+        resident_bytes + max(0, free_bytes) * 0.90,
+    ))
 
 
 def assess_configuration(settings, resources: dict) -> dict:
@@ -177,28 +193,18 @@ def _value(settings, name, default):
     return getattr(settings, name, default)
 
 
-def _domain_leaf_cells(settings) -> int:
+def _resolved_quality(settings):
     lo = _value(settings, "domain_min", (-2.0, -2.0, 0.0))
     hi = _value(settings, "domain_max", (2.0, 2.0, 4.0))
-    voxel_size = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    leaf_dims = [
-        max(1, math.ceil(max(0.0, float(hi[i]) - float(lo[i])) / voxel_size / 8.0))
-        for i in range(3)
-    ]
-    return int(leaf_dims[0] * leaf_dims[1] * leaf_dims[2])
+    return resolve_quality(settings, (lo, hi))
+
+
+def _domain_leaf_cells(settings) -> int:
+    return _resolved_quality(settings).total_domain_leaf_cells
 
 
 def _surface_voxel_size(settings) -> float:
-    sim_h = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    mode = int(_value(settings, "surface_resolution_mode", 0))
-    if mode == 2:
-        custom_h = float(_value(settings, "surface_voxel_size", 0.0))
-        return max(custom_h, sim_h / 16.0) if custom_h > 0.0 else sim_h
-    if mode == 1:
-        multiplier = max(0.25, min(8.0, float(
-            _value(settings, "surface_resolution_multiplier", 1.0))))
-        return sim_h / multiplier
-    return sim_h
+    return _resolved_quality(settings).surface_voxel_size
 
 
 def _surface_dense_voxels(settings, h: float) -> int:
@@ -222,9 +228,11 @@ def estimate_solver_bytes(settings) -> int:
     estimate = (
         BASE_BYTES
         + leaves * LEAF_VOLUME * SIM_BYTES_PER_VOXEL
-        + particles * PARTICLE_BYTES
+        + particles * (
+            PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID)
         + whitewater * WHITEWATER_BYTES
         + leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
+        + leaves * TOPOLOGY_COORD_BYTES_PER_LEAF
     )
     surface_enabled = bool(_value(settings, "surface_enabled", True))
     surface_h = _surface_voxel_size(settings)

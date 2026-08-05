@@ -26,10 +26,7 @@ from fluidSim_warp_blender51.sim.sourcing import (
     SourceShape,
     k_source_shapes_particles,
 )
-from fluidSim_warp_blender51.sim.whitewater import (
-    WhitewaterSystem,
-    k_emit_whitewater,
-)
+from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
 
 
 def test_particle_emission_saturates_device_and_host_counts():
@@ -166,8 +163,11 @@ def test_whitewater_compaction_is_frame_batched_without_substep_readback():
     assert "ww.compact()" not in substep_source
     assert "ww.free_slots" in substep_source
     assert "ww.free_count" in substep_source
+    emit_source = inspect.getsource(WhitewaterSystem.emit)
     assert "ww.compact(active_whitewater)" in finalize_source
     assert "dim=max(1, active_whitewater)" in finalize_source
+    assert "self.candidates[:n]" in emit_source
+    assert "synchronize" not in emit_source
     assert "whitewater_particles = self._finalize_whitewater()" in frame_source
 
 
@@ -259,19 +259,26 @@ def test_whitewater_emission_reuses_dead_slot_at_capacity():
     churn = wp.ones(grid.voxel_capacity, dtype=float, device=device)
     surface_sdf = wp.zeros(grid.voxel_capacity, dtype=float, device=device)
 
-    wp.launch(
-        k_emit_whitewater, dim=1,
-        inputs=[
-            liquid_position, liquid_velocity, liquid_count, churn, surface_sdf,
-            grid.leaf_table, grid.voxels_dim, grid.leaves_dim, grid.origin,
-            grid.voxel_size, 1.0, 0.0, 100.0, 10.0, 0.0, 1.0, 1.0,
-            123, ww.capacity,
-        ],
-        outputs=[
-            ww.position, ww.velocity, ww.age, ww.life, ww.alive, ww.count,
-            ww.free_slots, ww.free_count,
-        ],
-        device=device,
+    ww.emit(
+        candidate_count=1,
+        liquid_positions=liquid_position,
+        liquid_velocities=liquid_velocity,
+        liquid_count=liquid_count,
+        churn=churn,
+        surface_sdf=surface_sdf,
+        leaf_table=grid.leaf_table,
+        voxels_dim=grid.voxels_dim,
+        leaves_dim=grid.leaves_dim,
+        origin=grid.origin,
+        voxel_size=grid.voxel_size,
+        dt=1.0,
+        churn_threshold=0.0,
+        emission_rate=100.0,
+        surface_band=10.0,
+        min_speed=0.0,
+        life_min=1.0,
+        life_max=1.0,
+        seed=123,
     )
 
     assert int(ww.count.numpy()[0]) == ww.capacity

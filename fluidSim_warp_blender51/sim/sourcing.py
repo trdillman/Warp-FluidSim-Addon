@@ -1058,7 +1058,8 @@ register_fn(k_source_resolve_type, "fluidSimSourceResolveType",
 # fluidSimSourceParticles: append externally provided particles
 # ---------------------------------------------------------------------------
 
-
+# Retained for the synthesized snippet-inventory compatibility contract. Live
+# direct injection uses the admission-gated owned-packet kernels below.
 @wp.kernel
 def k_source_particles(
     src_positions: wp.array(dtype=wp.vec3),
@@ -1933,6 +1934,7 @@ def k_admit_emission_batch(
 ):
     if wp.tid() == 0:
         available = wp.max(0, capacity - particle_count[0])
+        emission_state[4] = available
         emission_state[1] = wp.where(emission_state[0] <= available, 1, 0)
 
 
@@ -2054,6 +2056,49 @@ def k_count_mesh_source_particles(
                 wp.randf(state)
 
 
+@dataclass(frozen=True)
+class SourceBatch:
+    """One runtime source snapshot with unambiguous representation ownership."""
+
+    legacy_descriptors: tuple[SourceShapeDesc | MeshSourceDesc, ...] = ()
+    native_plans: tuple = ()
+
+
+@dataclass(frozen=True)
+class DirectInjectionPacket:
+    positions: np.ndarray
+    velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    velocities: np.ndarray | None = None
+    temperature: float = 0.0
+    viscosity: float = 0.0
+    density: float = 1.0
+    life: float = 0.0
+    use_lifespan: bool = False
+
+    def __post_init__(self):
+        positions = np.array(
+            self.positions, dtype=np.float32, copy=True, order="C"
+        ).reshape((-1, 3))
+        object.__setattr__(self, "positions", positions)
+        if self.velocities is not None:
+            velocities = np.array(
+                self.velocities, dtype=np.float32, copy=True, order="C"
+            ).reshape((-1, 3))
+            if len(velocities) != len(positions):
+                raise ValueError("per-particle velocities must match positions")
+            object.__setattr__(self, "velocities", velocities)
+
+
+@dataclass(frozen=True)
+class InjectionResult:
+    admitted: bool
+    emitted: int
+    required: int
+    available: int
+    capacity_limited: bool
+    total: int
+
+
 class SourcePipeline:
     """Own source state and the complete source-launch transaction."""
 
@@ -2071,15 +2116,13 @@ class SourcePipeline:
             (2, 2), dtype=float, device=self.device)
         self._height_profile_res = (2, 2)
         self._emit_seed = 12345
-        self._first_slot_dev = wp.zeros(
-            1, dtype=wp.int32, device=self.device)
         self._compiled_result = wp.zeros(
             2, dtype=wp.int32, device=self.device)
-        # [required, admitted, emitted, invariant-overflow].  Count passes and
-        # guarded commit kernels remain on-device until one aggregate result
-        # is read after the whole source batch.
+        # [required, admitted, emitted, invariant-overflow, available]. Count
+        # passes and guarded commit kernels remain on-device until one
+        # aggregate result is read after the whole source batch.
         self._emission_state = wp.zeros(
-            4, dtype=wp.int32, device=self.device)
+            5, dtype=wp.int32, device=self.device)
         self._emission_scratch_counts = wp.zeros(
             max(1, int(getattr(owner.grid, "voxel_capacity",
                                getattr(owner, "_nvox", 1)))),
@@ -2100,6 +2143,7 @@ class SourcePipeline:
             "required": 0, "available": int(owner.particles.capacity),
             "admitted": True,
         }
+        self.last_injection_result = None
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
         # Per-source initial-fill armed state, keyed by the stable descriptor
@@ -2108,6 +2152,7 @@ class SourcePipeline:
         self._initial_fired: set[str] = set()
         from .source_regions import SourceCompiler
         self.compiler = SourceCompiler()
+        self.batch = SourceBatch()
         self.plans = ()
         self._compiled_batch = None
         self._session_generation = 0
@@ -2125,6 +2170,7 @@ class SourcePipeline:
             compiler.release()
         self._compiled_batch = None
         self.last_diagnostics = ()
+        self.last_injection_result = None
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
         self._emission_transaction_active = False
@@ -2143,40 +2189,44 @@ class SourcePipeline:
         self.reset()
         self.owner = None
 
-    def set_plans(self, plans):
-        """Set immutable Phase 2 plans; tests and Blender share this seam."""
+    def set_source_batch(self, batch):
+        """Install both runtime representations without compatibility copies."""
         from .source_regions import SourcePlan
-        values = tuple(plans)
-        if not all(isinstance(plan, SourcePlan) for plan in values):
-            raise TypeError("set_plans accepts SourcePlan values only")
-        self.plans = values
+        if not isinstance(batch, SourceBatch):
+            raise TypeError("set_source_batch accepts a SourceBatch")
+        descriptors = tuple(batch.legacy_descriptors)
+        plans = tuple(batch.native_plans)
+        if not all(isinstance(plan, SourcePlan) for plan in plans):
+            raise TypeError("native_plans accepts SourcePlan values only")
+        if not all(isinstance(value, (SourceShapeDesc, MeshSourceDesc))
+                   for value in descriptors):
+            raise TypeError("legacy_descriptors accepts source descriptors only")
+        self.batch = SourceBatch(descriptors, plans)
+        self.sources = list(descriptors)
+        self.analytic_sources = [
+            source for source in descriptors if isinstance(source, SourceShapeDesc)
+        ]
+        self.mesh_sources = [
+            source for source in descriptors if isinstance(source, MeshSourceDesc)
+        ]
+        self.plans = plans
         self._compiled_batch = None
-
-    def set_sources(self, sources):
-        from .source_compat import descriptors_to_plans
-        from .source_regions import SourcePlan
-        values = list(sources)
-        if values and all(isinstance(value, SourcePlan) for value in values):
-            self.sources = []
-            self.analytic_sources = []
-            self.mesh_sources = []
-            self.set_plans(values)
-        else:
-            self.sources = values
-            self.analytic_sources = [
-                source for source in self.sources
-                if isinstance(source, SourceShapeDesc)
-            ]
-            self.mesh_sources = [
-                source for source in self.sources
-                if isinstance(source, MeshSourceDesc)
-            ]
-            self.plans = descriptors_to_plans(
-                self.sources, session_generation=self._session_generation)
-            self._compiled_batch = None
         self._shape_array = None
         self._emit_shape_array = None
         self._emit_shape_key = None
+
+    def set_plans(self, plans):
+        """Compatibility seam: native plans replace all legacy descriptors."""
+        self.set_source_batch(SourceBatch(native_plans=tuple(plans)))
+
+    def set_sources(self, sources):
+        """Compatibility seam: descriptors replace all native plans."""
+        from .source_regions import SourcePlan
+        values = tuple(sources)
+        if values and all(isinstance(value, SourcePlan) for value in values):
+            self.set_plans(values)
+        else:
+            self.set_source_batch(SourceBatch(legacy_descriptors=values))
 
     def required_leaf_boxes(self):
         """World-space plan bounds used by solver topology marking."""
@@ -2272,6 +2322,23 @@ class SourcePipeline:
             and getattr(source, "source_id", "") in fired
         )
 
+    @staticmethod
+    def _legacy_liquid_target(source):
+        # Legacy kernels historically truncate emit_rate; preserve that
+        # behavior while making the zero predicate explicit and shared.
+        return max(0, min(64, int(float(getattr(source, "emit_rate", 0.0)))))
+
+    @classmethod
+    def legacy_descriptor_requires_topology(cls, source):
+        if not getattr(source, "enabled", False):
+            return False
+        if (getattr(source, "stype", SourceShapeType.SOURCE)
+                != SourceShapeType.SOURCE
+                or getattr(source, "mode", SourceShapeSourceMode.PARTICLES)
+                != SourceShapeSourceMode.PARTICLES):
+            return True
+        return cls._legacy_liquid_target(source) > 0
+
     def _prepare_legacy_emission(self):
         """Freeze legacy emitters and their deterministic seed for one batch."""
         owner, settings = self.owner, self.owner.settings
@@ -2279,11 +2346,15 @@ class SourcePipeline:
         meshes = tuple(getattr(self, "mesh_sources", ()))
         height = self.height_source
         height_armed = self._legacy_source_armed(height, self._initial_fired)
-        emit_height = bool(height.enabled and height.emit_particles and height_armed)
+        emit_height = bool(
+            height.enabled and height.emit_particles and height_armed
+            and self._legacy_liquid_target(height) > 0
+        )
         emit_shapes = any(
             source.enabled
             and source.stype == SourceShapeType.SOURCE
             and source.mode == SourceShapeSourceMode.PARTICLES
+            and self._legacy_liquid_target(source) > 0
             and self._legacy_source_armed(source, self._initial_fired)
             for source in analytic
         )
@@ -2292,6 +2363,7 @@ class SourcePipeline:
             if source.enabled and source.mesh is not None
             and source.stype == SourceShapeType.SOURCE
             and source.mode == SourceShapeSourceMode.PARTICLES
+            and self._legacy_liquid_target(source) > 0
             and self._legacy_source_armed(source, self._initial_fired)
         )
         self._transaction_height_armed = height_armed
@@ -2342,8 +2414,11 @@ class SourcePipeline:
                 == SourceEmissionMode.INITIAL_FILL
                 and getattr(height, "source_id", "")):
             pending.add(height.source_id)
-        for source in analytic + emit_meshes:
+        for source in tuple(analytic) + emit_meshes:
             if (source.enabled
+                    and source.stype == SourceShapeType.SOURCE
+                    and source.mode == SourceShapeSourceMode.PARTICLES
+                    and self._legacy_liquid_target(source) > 0
                     and int(getattr(source, "emission_mode",
                                     SourceEmissionMode.CONTINUOUS_INFLOW))
                     == SourceEmissionMode.INITIAL_FILL
@@ -2354,6 +2429,9 @@ class SourcePipeline:
 
     def _begin_emission_transaction(self, batch=None, *, include_legacy=False):
         """Count a complete source batch and enqueue one device admission gate."""
+        from .source_regions import (
+            liquid_coverage_emission_enabled, normalized_liquid_target,
+        )
         owner, grid, particles = self.owner, self.owner.grid, self.owner.particles
         compiled_candidates = []
         self._emission_pending_fired = set()
@@ -2368,6 +2446,11 @@ class SourcePipeline:
                 if (plan.lifecycle in {SourceLifecycle.ONCE,
                                        SourceLifecycle.DIRECT_APPEND}
                         and stable_id in self._initial_fired):
+                    continue
+                if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
+                    if region.points is None or not len(region.points.positions):
+                        continue
+                elif not liquid_coverage_emission_enabled(plan):
                     continue
                 compiled_candidates.append(compiled)
                 if plan.lifecycle in {SourceLifecycle.ONCE,
@@ -2416,8 +2499,7 @@ class SourcePipeline:
                         region.device_coverage, region.device_leaf_coords,
                         region.leaf_count, grid.leaf_table, grid.voxels_dim,
                         grid.leaves_dim,
-                        max(1, min(64, int(round(
-                            plan.payload.target_particles_per_voxel)))),
+                        normalized_liquid_target(plan),
                         self._emission_scratch_counts,
                         self._emission_state,
                     ], device=self.device)
@@ -2469,6 +2551,9 @@ class SourcePipeline:
             return False
         values = np.asarray(self._emission_state.numpy(), dtype=np.int64)
         required, admitted, emitted, invariant = map(int, values[:4])
+        self._emission_available = int(values[4])
+        self._emission_initial_count = max(
+            0, int(self.owner.particles.capacity) - self._emission_available)
         self._emission_transaction_active = False
         if invariant:
             self.last_apply_result = {
@@ -2527,6 +2612,9 @@ class SourcePipeline:
     def apply_compiled(self, batch, dt, *, transaction_ready=False,
                        finalize=True):
         """Apply compiled operations in fixed precedence/semantic order."""
+        from .source_regions import (
+            liquid_coverage_emission_enabled, normalized_liquid_target,
+        )
         if not transaction_ready:
             self._begin_emission_transaction(batch, include_legacy=False)
         owner, grid = self.owner, self.owner.grid
@@ -2561,6 +2649,12 @@ class SourcePipeline:
                     and stable_id in self._initial_fired):
                 continue
             payload = plan.payload
+            if plan.operation == SourceOperation.LIQUID:
+                if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
+                    if region.points is None or not len(region.points.positions):
+                        continue
+                elif not liquid_coverage_emission_enabled(plan):
+                    continue
             # Liquid coverage is materialized by the particle kernel and the
             # immediate re-index/P2G path. Avoid a redundant field-stamp launch;
             # particle indexing truthfully owns Fluid/Active classification.
@@ -2639,7 +2733,7 @@ class SourcePipeline:
                         region.leaf_count, grid.leaf_table, grid.voxels_dim,
                         grid.leaves_dim, grid.origin,
                         self.owner.settings.voxel_size,
-                        max(1, min(64, int(round(payload.target_particles_per_voxel)))),
+                        normalized_liquid_target(plan),
                         wp.vec3(*payload.velocity), payload.temperature,
                         payload.viscosity, payload.density, payload.lifespan,
                         1 if payload.use_lifespan else 0, particles.capacity,
@@ -2777,7 +2871,7 @@ class SourcePipeline:
     def apply(self, dt):
         """Apply one all-or-nothing particle-emission transaction."""
         batch = None
-        if getattr(self, "plans", ()) and not self.sources:
+        if getattr(self, "plans", ()):
             dynamic = any(
                 plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
                 for plan in self.plans)
@@ -2844,7 +2938,8 @@ class SourcePipeline:
                         wp.vec3(*settings.domain_min),
                         wp.vec3(*settings.domain_max),
                         wp.vec3(*height.velocity),
-                        1 if height.emit_particles else 0,
+                        1 if (height.emit_particles
+                              and self._legacy_liquid_target(height) > 0) else 0,
                         self._emission_state],
                 outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v,
                          owner.vel.w],
@@ -2898,88 +2993,153 @@ class SourcePipeline:
             )
         return self._finish_emission_transaction()
 
-    def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
-                         velocities=None, temperature=0.0, viscosity=0.0,
-                         density=1.0, life=0.0, use_lifespan=False):
-        """Append external world-space points as liquid particles."""
-        points = np.ascontiguousarray(positions, dtype=np.float32)
-        count = len(points)
-        if count == 0:
-            return 0
+    def _upload_direct_packets(self, packets):
+        if self._compiled_empty_scalar is None:
+            self._compiled_empty_scalar = wp.empty(
+                0, dtype=float, device=self.device)
+            self._compiled_empty_vector = wp.empty(
+                0, dtype=wp.vec3, device=self.device)
+        uploaded = []
+        for packet in packets:
+            positions = wp.array(
+                packet.positions, dtype=wp.vec3, device=self.device)
+            velocities = (
+                wp.array(packet.velocities, dtype=wp.vec3, device=self.device)
+                if packet.velocities is not None else self._compiled_empty_vector
+            )
+            uploaded.append((packet, positions, velocities))
+        return tuple(uploaded)
 
-        # Admission must read the device counter, not the cached host mirror:
-        # every other emitter gates on particles.count through
-        # k_admit_emission_batch, and a stale host_count would admit a batch the
-        # kernel's own capacity guard then silently drops.
+    def _direct_packet_attempt(self, uploaded, required):
+        """Run one device-authoritative admit/commit attempt for all packets."""
         particles = self.owner.particles
-        admitted_at = int(particles.refresh_host_count())
-        available = max(0, int(particles.capacity) - admitted_at)
-        if count > available:
-            growth = self._request_particle_growth(admitted_at + count)
-            particles = self.owner.particles
-            admitted_at = int(particles.refresh_host_count())
-            available = max(0, int(particles.capacity) - admitted_at)
-            if count > available:
-                policy = str(getattr(
-                    self.owner.settings,
-                    "particle_growth_failure_policy", "DEFER",
-                )).upper()
-                self.last_apply_result = {
-                    "emitted": 0, "capacity_limited": True,
-                    "required": count, "available": available,
-                    "admitted": False, "deferred": True,
-                    "pause_requested": policy == "PAUSE",
-                    "growth_status": growth.status,
-                    "growth_previous": growth.previous,
-                    "growth_current": growth.current,
-                    "growth_target": growth.target,
-                    "growth_reason": growth.reason,
-                }
-                return 0
-
-        source_positions = wp.array(
-            points, dtype=wp.vec3, device=self.device)
-        if velocities is None:
-            velocities = np.tile(
-                np.asarray(velocity, dtype=np.float32), (count, 1))
-        else:
-            velocities = np.ascontiguousarray(
-                velocities, dtype=np.float32)
-        source_velocities = wp.array(
-            velocities, dtype=wp.vec3, device=self.device)
-
+        self._emission_state.zero_()
+        self._compiled_result.zero_()
         wp.launch(
-            k_source_particles, dim=count,
-            inputs=[source_positions, source_velocities, count, float(life),
-                    1 if use_lifespan else 0, float(temperature),
-                    float(viscosity), float(density), particles.capacity,
+            k_add_emission_demand, dim=1,
+            inputs=[required, self._emission_state], device=self.device)
+        wp.launch(
+            k_admit_emission_batch, dim=1,
+            inputs=[particles.count, particles.capacity, self._emission_state],
+            device=self.device)
+        empty_scalar = self._compiled_empty_scalar
+        for packet, positions, velocities in uploaded:
+            count = len(packet.positions)
+            wp.launch(
+                k_source_owned_points, dim=max(1, count),
+                inputs=[
+                    positions, velocities, empty_scalar, empty_scalar,
+                    empty_scalar, empty_scalar, count,
+                    1 if packet.velocities is not None else 0,
+                    0, 0, 0, 0, wp.vec3(*packet.velocity),
+                    float(packet.temperature), float(packet.viscosity),
+                    float(packet.density), float(packet.life),
+                    1 if packet.use_lifespan else 0, particles.capacity,
+                ],
+                outputs=[
                     particles.position, particles.velocity,
                     particles.attr("age"), particles.attr("life"),
                     particles.attr("temperature"),
                     particles.attr("viscosity"), particles.attr("density"),
                     particles.time_offset, particles.alive, particles.count,
-                    self._first_slot_dev],
-            device=self.device,
-        )
-        self.owner._host_frame_cache = None
-        final_count = int(particles.refresh_host_count())
-        emitted = final_count - admitted_at
-        if emitted != count:
-            # k_source_particles drops any thread whose slot lands past capacity,
-            # so a short commit means the admission above was made against state
-            # that no longer held. Report it the way _finish_emission_transaction
-            # reports its own overflow rather than claiming a full emission.
-            self.last_apply_result = {
-                "emitted": emitted, "capacity_limited": True,
-                "required": count, "available": available,
-                "admitted": False, "invariant_violation": True,
-            }
+                    self._compiled_result, self._emission_state,
+                ], device=self.device)
+
+        values = np.asarray(self._emission_state.numpy(), dtype=np.int64)
+        demand, admitted, emitted, invariant, available = map(
+            int, values[:5])
+        initial = max(0, int(particles.capacity) - available)
+        if invariant or (admitted and emitted != demand):
             raise RuntimeError(
-                "direct particle injection exceeded capacity after admission; "
-                "the solver session must be discarded")
+                "direct particle transaction violated its admitted count")
+        if admitted:
+            total = particles.refresh_host_count() if emitted else initial
+            if emitted:
+                self.owner._host_frame_cache = None
+            return InjectionResult(
+                True, emitted, demand, available, False, int(total))
+        return InjectionResult(False, 0, demand, available, True, initial)
+
+    def inject_particle_packets_exact(self, packets):
+        """Append every packet or none and return exact device-derived truth."""
+        normalized = tuple(
+            packet if isinstance(packet, DirectInjectionPacket)
+            else DirectInjectionPacket(
+                positions=packet.positions,
+                velocity=tuple(packet.velocity),
+                temperature=float(packet.temperature),
+                viscosity=float(packet.viscosity),
+                density=float(packet.density),
+                life=float(packet.life),
+                use_lifespan=bool(packet.use_lifespan),
+            )
+            for packet in packets
+            if len(packet.positions)
+        )
+        required = sum(len(packet.positions) for packet in normalized)
+        if not required:
+            particles = self.owner.particles
+            result = InjectionResult(
+                True, 0, 0,
+                max(0, int(particles.capacity) - int(particles.host_count)),
+                False, int(particles.host_count))
+            self.last_injection_result = result
+            self.last_apply_result = {
+                "emitted": 0, "capacity_limited": False,
+                "required": 0, "available": result.available,
+                "admitted": True, "total": result.total,
+            }
+            return result
+
+        uploaded = self._upload_direct_packets(normalized)
+        result = self._direct_packet_attempt(uploaded, required)
+        growth = None
+        if not result.admitted:
+            growth = self._request_particle_growth(result.total + required)
+            if growth.grew:
+                result = self._direct_packet_attempt(uploaded, required)
+
+        self.last_injection_result = result
         self.last_apply_result = {
-            "emitted": emitted, "capacity_limited": False,
-            "required": count, "available": available,
-            "admitted": True,
+            "emitted": result.emitted,
+            "capacity_limited": result.capacity_limited,
+            "required": result.required,
+            "available": result.available,
+            "admitted": result.admitted,
+            "total": result.total,
         }
-        return final_count
+        if not result.admitted:
+            policy = str(getattr(
+                self.owner.settings,
+                "particle_growth_failure_policy", "DEFER",
+            )).upper()
+            self.last_apply_result.update({
+                "deferred": True,
+                "pause_requested": policy == "PAUSE",
+                "growth_status": growth.status,
+                "growth_previous": growth.previous,
+                "growth_current": growth.current,
+                "growth_target": growth.target,
+                "growth_reason": growth.reason,
+            })
+        return result
+
+    def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
+                               velocities=None, temperature=0.0, viscosity=0.0,
+                               density=1.0, life=0.0, use_lifespan=False):
+        packet = DirectInjectionPacket(
+            positions=positions, velocity=tuple(velocity),
+            velocities=velocities, temperature=float(temperature),
+            viscosity=float(viscosity), density=float(density),
+            life=float(life), use_lifespan=bool(use_lifespan))
+        return self.inject_particle_packets_exact((packet,))
+
+    def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
+                         velocities=None, temperature=0.0, viscosity=0.0,
+                         density=1.0, life=0.0, use_lifespan=False):
+        """Compatibility API: final total on success, zero on refusal/empty."""
+        result = self.inject_particles_exact(
+            positions, velocity=velocity, velocities=velocities,
+            temperature=temperature, viscosity=viscosity, density=density,
+            life=life, use_lifespan=use_lifespan)
+        return result.total if result.admitted and result.emitted else 0

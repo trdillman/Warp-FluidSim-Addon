@@ -158,7 +158,9 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
         "surface_smooth_iterations", "particle_age", "particle_life",
         "particle_temperature", "particle_viscosity", "particle_density",
         "particle_time_offset", "whitewater_velocities", "whitewater_age",
-        "whitewater_life"}
+        "whitewater_life", "whitewater_required", "whitewater_available",
+        "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
+        "whitewater_status"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
     for name in ("age", "life", "temperature", "viscosity", "density",
                  "time_offset", "whitewater", "whitewater_velocity",

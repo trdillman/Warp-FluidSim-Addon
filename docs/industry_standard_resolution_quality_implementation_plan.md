@@ -1,7 +1,7 @@
 # Industry-Standard Resolution and Quality Model — Review and Implementation Plan
 
-**Status:** Proposed; no implementation authorized by this document  
-**Scope:** User-facing liquid resolution/quality controls, their runtime meanings, and the capacity/safety modules they cross  
+**Status:** Historical architecture and implementation plan; not current execution authority
+**Scope:** User-facing liquid resolution/quality controls, their runtime meanings, and the capacity/safety modules they cross
 **Explicit non-goal:** This plan does **not** implement the previously proposed lifetime peak-particle predictor or a source/sink-derived predictive autogrowth ceiling.
 
 ## 1. Truth contract

@@ -25,6 +25,7 @@ from .constants import (
     LEAF_VOLUME,
     VOXEL_COLLISION,
 )
+from .quality_contract import AuthoredQualitySettings, resolve_quality
 
 # ---------------------------------------------------------------------------
 # Warp address helpers (shared by every kernel module)
@@ -412,33 +413,56 @@ def k_allocate_leaves(
 # ---------------------------------------------------------------------------
 
 
+class TopologyCapacityError(RuntimeError):
+    """Recoverable sparse-topology refusal that leaves the live grid intact."""
+
+    def __init__(self, required: int, capacity: int):
+        self.required = int(required)
+        self.capacity = int(capacity)
+        super().__init__(
+            f"FluidSim: leaf capacity exceeded ({self.required} > {self.capacity}); "
+            "increase the domain leaf allocation.")
+
+
 class SparseGrid:
     """Sparse leaf-tile grid over a world-space domain box."""
 
     def __init__(self, origin, size, voxel_size, leaf_capacity, device):
         self.device = device
-        self.voxel_size = float(voxel_size)
-        # pad voxel dims to leaf multiples
-        nx = max(LEAF_DIM, int(np.ceil(size[0] / voxel_size)))
-        ny = max(LEAF_DIM, int(np.ceil(size[1] / voxel_size)))
-        nz = max(LEAF_DIM, int(np.ceil(size[2] / voxel_size)))
-        nx = (nx + LEAF_MASK) & ~LEAF_MASK
-        ny = (ny + LEAF_MASK) & ~LEAF_MASK
-        nz = (nz + LEAF_MASK) & ~LEAF_MASK
+        bounds = (
+            tuple(float(value) for value in origin),
+            tuple(float(origin[i]) + float(size[i]) for i in range(3)),
+        )
+        self.quality = resolve_quality(
+            AuthoredQualitySettings(voxel_size=float(voxel_size)), bounds)
+        self.voxel_size = self.quality.voxel_size
+        nx, ny, nz = self.quality.padded_voxel_dimensions
         self.voxels_dim = wp.vec3i(nx, ny, nz)
-        self.leaves_dim = wp.vec3i(nx >> LEAF_SHIFT, ny >> LEAF_SHIFT, nz >> LEAF_SHIFT)
+        self.leaves_dim = wp.vec3i(*self.quality.leaf_dimensions)
         self.num_leaf_cells = (
             self.leaves_dim[0] * self.leaves_dim[1] * self.leaves_dim[2]
         )
         self.origin = wp.vec3(float(origin[0]), float(origin[1]), float(origin[2]))
         self.capacity = int(min(leaf_capacity, self.num_leaf_cells))
 
+        # Live lookup/count buffers are never cleared while candidate demand is
+        # still unadmitted. Candidate table/coords are swapped into place only
+        # after the overflow readback proves the rebuild fits.
         self.leaf_table = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        self.leaf_flags = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        self.leaf_flags_tmp = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
         self.leaf_coords = wp.zeros(self.capacity, dtype=wp.vec3i, device=device)
         self.num_leaves = wp.zeros(1, dtype=wp.int32, device=device)
         self.overflow = wp.zeros(1, dtype=wp.int32, device=device)
+        self._candidate_leaf_table = wp.zeros(
+            self.num_leaf_cells, dtype=wp.int32, device=device)
+        self._candidate_leaf_coords = wp.zeros(
+            self.capacity, dtype=wp.vec3i, device=device)
+        self._candidate_num_leaves = wp.zeros(1, dtype=wp.int32, device=device)
+        self._candidate_overflow = wp.zeros(1, dtype=wp.int32, device=device)
+        # Flags are candidate-only scratch and do not participate in live field
+        # lookup, so one pair can be reused across transactions.
+        self.leaf_flags = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
+        self.leaf_flags_tmp = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
+        self._candidate_pending = False
         self.active_leaf_count = 0  # host mirror, refreshed by refresh_topology_counts
 
     # -- properties ---------------------------------------------------------
@@ -455,14 +479,15 @@ class SparseGrid:
 
     # -- topology lifecycle ---------------------------------------------------
     def begin_topology(self):
+        self._candidate_pending = False
         wp.launch(
             k_clear_leaf_topology,
             dim=self.num_leaf_cells,
-            inputs=[self.leaf_table, self.leaf_flags],
+            inputs=[self._candidate_leaf_table, self.leaf_flags],
             device=self.device,
         )
-        self.num_leaves.zero_()
-        self.overflow.zero_()
+        self._candidate_num_leaves.zero_()
+        self._candidate_overflow.zero_()
 
     def mark_points(self, points: wp.array, count: wp.array, max_points: int):
         wp.launch(
@@ -517,23 +542,33 @@ class SparseGrid:
             dim=self.num_leaf_cells,
             inputs=[
                 self.leaf_flags, self.leaves_dim, self.capacity,
-                self.leaf_table, self.leaf_coords, self.num_leaves, self.overflow,
+                self._candidate_leaf_table, self._candidate_leaf_coords,
+                self._candidate_num_leaves, self._candidate_overflow,
             ],
             device=self.device,
         )
+        self._candidate_pending = True
         if not sync:
             return self.active_leaf_count
         return self.refresh_topology_counts()
 
     def refresh_topology_counts(self) -> int:
-        counts = self.num_leaves.numpy()
-        count = int(counts[0])
-        if int(self.overflow.numpy()[0]) != 0:
-            self.active_leaf_count = min(count, self.capacity)
-            raise RuntimeError(
-                f"FluidSim: leaf capacity exceeded ({count} > {self.capacity}); "
-                "increase the domain leaf allocation."
-            )
+        if not self._candidate_pending:
+            return self.active_leaf_count
+        count = int(self._candidate_num_leaves.numpy()[0])
+        if int(self._candidate_overflow.numpy()[0]) != 0:
+            self._candidate_pending = False
+            raise TopologyCapacityError(count, self.capacity)
+        # Keep live Warp array identities stable. Solver subsystems and queued
+        # kernels bind these arrays by object identity; swapping the Python
+        # handles after admission made later phases observe alternating stale
+        # topology buffers and injected catastrophic vertical energy. Copy the
+        # admitted candidate into the stable live storage instead.
+        wp.copy(self.leaf_table, self._candidate_leaf_table)
+        wp.copy(self.leaf_coords, self._candidate_leaf_coords)
+        wp.copy(self.num_leaves, self._candidate_num_leaves)
+        wp.copy(self.overflow, self._candidate_overflow)
+        self._candidate_pending = False
         self.active_leaf_count = count
         return self.active_leaf_count
 

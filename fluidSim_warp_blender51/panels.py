@@ -9,6 +9,8 @@ Snippets, Diagnostics / Profiling, Validation / Benchmarks.
 
 from __future__ import annotations
 
+import textwrap
+
 import bpy
 
 from .sim.constants import TIMER_PHASE_SLOTS
@@ -71,6 +73,13 @@ def _draw_pending_banner(layout, scene, *, show_actions=False):
                 text="Reset Now", icon="FILE_REFRESH")
         row.operator(
             "fluidsim.revert_pending", text="Discard Changes", icon="LOOP_BACK")
+
+
+def _draw_wrapped(layout, text, *, icon="NONE", width=48):
+    """Draw bounded copy as real lines at normal/narrow N-panel widths."""
+    lines = textwrap.wrap(str(text), width=max(24, int(width))) or [""]
+    for index, line in enumerate(lines):
+        layout.label(text=line, icon=icon if index == 0 else "NONE")
 
 
 def _draw_header_interaction(self, context):
@@ -145,7 +154,7 @@ def _draw_capacity_plan(layout, plan, fs=None):
             text = getattr(blocker, "message", "Capacity demand is unknown")
         else:
             text = f"{blocker.code}: required {required:,}, available {available:,}"
-        row.label(text=text[:120], icon="INFO")
+        _draw_wrapped(row, text, icon="INFO")
     suggestions = tuple(getattr(plan, "suggestions", ()))
     if suggestions:
         column = box.column(align=True)
@@ -162,9 +171,9 @@ def _draw_capacity_plan(layout, plan, fs=None):
                 f"{value:,}" if isinstance(value, int)
                 else f"{name.replace('_', ' ').title()}: {value}"
                 for name, value in suggestion.changes.items())
-            option.label(text=changes[:120])
+            _draw_wrapped(option, changes)
             for tradeoff in suggestion.tradeoffs:
-                option.label(text=f"{tradeoff}"[:120], icon="DOT")
+                _draw_wrapped(option, tradeoff, icon="DOT")
             text = ("Review Recommended Changes & Run" if index == 0
                     else "Review This Option & Run")
             operator = option.operator(
@@ -189,9 +198,12 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        from .blender.scene_bridge import current_error, session
+        from .blender.scene_bridge import (
+            capacity_plan_for_scene, current_error, session,
+        )
 
         sess = session()
+        owned_capacity_plan = capacity_plan_for_scene(context.scene)
         _draw_pending_banner(layout, context.scene, show_actions=True)
 
         col = layout.column(align=True)
@@ -232,27 +244,29 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         if error:
             box.label(text=error[:120], icon="ERROR")
             from .sim.memory_safety import is_memory_capacity_error
-            plan = getattr(sess, "capacity_plan", None)
+            plan = owned_capacity_plan
             integrity_blocked = bool(plan and any(
                 getattr(blocker, "code", "") != "MEMORY_ESTIMATE"
                 for blocker in getattr(plan, "blockers", ())))
             if is_memory_capacity_error(error):
                 recovery = box.column(align=True)
-                if integrity_blocked:
-                    recovery.label(
-                        text="Review and approve a capacity option below",
-                        icon="INFO",
-                    )
-                else:
-                    recovery.label(text="GPU capacity risk detected", icon="INFO")
-                    recovery.operator("fluidsim.apply_safe_settings", icon="MODIFIER")
-                    run_anyway = recovery.operator(
-                        "fluidsim.initialize", text="Ignore Estimate & Initialize",
-                        icon="INFO")
-                    run_anyway.ignore_memory_safeguard = True
+                recovery.label(
+                    text=("Review and approve one verified capacity option below"
+                          if integrity_blocked else
+                          "GPU capacity risk — review one verified option below"),
+                    icon="INFO",
+                )
             box.operator("fluidsim.clear_error", icon="X")
-        _draw_capacity_plan(
-            layout, getattr(sess, "capacity_plan", None), fs)
+        notice_for_scene = getattr(
+            sess, "particle_capacity_notice_for_scene", None)
+        notice = (notice_for_scene(context.scene)
+                  if callable(notice_for_scene) else "")
+        if notice:
+            capacity_notice = layout.box()
+            capacity_notice.label(text=notice[:120], icon="INFO")
+            if len(notice) > 120:
+                capacity_notice.label(text=notice[120:240])
+        _draw_capacity_plan(layout, owned_capacity_plan, fs)
         if sess.active:
             col = box.column(align=True)
             col.label(text=f"Particles: {fs.stat_particles:,}")
@@ -270,31 +284,94 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         col = layout.column(align=True)
         _draw_interaction_tier(col, "Live")
         col.prop(fs, "time_scale")
-        col.prop(fs, "cfl")
-        row = col.row(align=True)
-        row.prop(fs, "min_substeps", text="Min")
-        row.prop(fs, "max_substeps", text="Max")
         col.prop(fs, "use_scene_gravity")
         sub = col.column(align=True)
         sub.enabled = not fs.use_scene_gravity
         sub.prop(fs, "gravity")
 
 
+class FLUIDSIM_PT_quality(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Quality"
+    bl_idname = "FLUIDSIM_PT_quality"
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+        spatial = layout.column(align=True)
+        spatial.prop(fs, "voxel_size", text="Simulation Resolution")
+        spatial.label(text="Changes spatial resolution; Requires Reinitialize")
+        sampling = layout.column(align=True)
+        sampling.prop(fs, "particles_per_voxel", text="Liquid Sampling")
+        sampling.label(text="Changes liquid rest density and inherited fill; Requires Reset")
+        transfer = layout.column(align=True)
+        transfer.prop(fs, "sample_type", text="Transfer")
+        flip = transfer.column(align=True)
+        flip.enabled = fs.sample_type == "FLIP"
+        flip.prop(fs, "flip_ratio")
+        temporal = layout.column(align=True)
+        temporal.prop(fs, "cfl", text="Adaptive CFL")
+        temporal.prop(fs, "max_substeps", text="Max Substeps")
+
+        from .blender.scene_bridge import _domain_bounds
+        from .sim.quality_contract import resolve_quality
+
+        box = layout.box()
+        try:
+            quality = resolve_quality(fs, _domain_bounds(context.scene))
+            raw = quality.unpadded_voxel_dimensions
+            padded = quality.padded_voxel_dimensions
+            box.label(text=f"Cell Size: {quality.voxel_size:.6g}")
+            box.label(text=f"Grid: {raw[0]} x {raw[1]} x {raw[2]}")
+            box.label(text=(
+                f"Padded: {padded[0]} x {padded[1]} x {padded[2]} "
+                f"/ {quality.total_domain_leaf_cells:,} leaf cells"))
+            box.label(text=(
+                f"Nominal spacing: {quality.nominal_particle_spacing:.6g}"))
+        except Exception as exc:  # noqa: BLE001 - draw must never raise
+            box.label(text=f"Quality unavailable: {exc}"[:120], icon="ERROR")
+
+
+class FLUIDSIM_PT_inputs(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Inputs"
+    bl_idname = "FLUIDSIM_PT_inputs"
+
+    def draw(self, _context):
+        self.layout.label(text="Emitters, sinks, colliders, forces, and direct inputs")
+
+
+class FLUIDSIM_PT_physics(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Physics"
+    bl_idname = "FLUIDSIM_PT_physics"
+
+    def draw(self, _context):
+        self.layout.label(text="Pressure, viscosity, and solver physics")
+
+
+class FLUIDSIM_PT_advanced(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Advanced"
+    bl_idname = "FLUIDSIM_PT_advanced"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        fs = context.scene.fluidsim
+        col = self.layout.column(align=True)
+        col.label(text="Manual Capacity Overrides and implementation controls")
+        col.prop(fs, "min_substeps", text="Min Substeps")
+
+
 class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
     bl_label = "Domain / Sparse Grid"
     bl_idname = "FLUIDSIM_PT_domain"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
         fs = context.scene.fluidsim
-        _draw_pending_banner(layout, context.scene)
-        _draw_interaction_tier(layout, "Reinitialize Required", "ERROR")
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "voxel_size")
         col.prop(fs, "leaf_capacity")
-        _draw_interaction_tier(col, "Restart Required", "FILE_REFRESH")
         col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
@@ -305,9 +382,15 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         # whole sidebar down, so report the failure in the panel instead.
         try:
             lo, hi = _domain_bounds(context.scene)
-            dims = tuple(hi[i] - lo[i] for i in range(3))
-            vox = tuple(int(d / max(fs.voxel_size, 1e-6)) for d in dims)
-            box.label(text=f"Resolution: {vox[0]} x {vox[1]} x {vox[2]}")
+            from .sim.quality_contract import resolve_quality
+
+            quality = resolve_quality(fs, (lo, hi))
+            raw = quality.unpadded_voxel_dimensions
+            padded = quality.padded_voxel_dimensions
+            box.label(text=f"Grid: {raw[0]} x {raw[1]} x {raw[2]} cells")
+            box.label(text=(
+                f"Padded: {padded[0]} x {padded[1]} x {padded[2]} "
+                f"({quality.total_domain_leaf_cells:,} possible leaves)"))
             sess = session()
             if sess.active:
                 g = sess.solver.grid
@@ -319,6 +402,7 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
     bl_label = "Particles"
     bl_idname = "FLUIDSIM_PT_particles"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -441,6 +525,7 @@ def _draw_volume_input(col, pg, *, fields=False):
 class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
     bl_label = "Liquid Emitters"
     bl_idname = "FLUIDSIM_PT_liquid_emitters"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -486,7 +571,18 @@ class FLUIDSIM_PT_liquid_emitters(FluidSimPanel, bpy.types.Panel):
                 _draw_volume_input(col, pg)
                 col.prop(pg, "mesh_evaluation_mode", text="Evaluation Cadence")
             if kind != "POINTS" or pg.point_source_representation == "RASTERIZED_REGION":
-                col.prop(pg, "emit_rate", text="Target Particles / Voxel")
+                sampling_mode = getattr(
+                    pg, "source_sampling_mode", "LEGACY_ABSOLUTE")
+                col.prop(pg, "source_sampling_mode", text="Fill Target")
+                if sampling_mode == "MULTIPLIER":
+                    col.prop(pg, "source_sampling_multiplier", text="Fill Multiplier")
+                elif sampling_mode == "LEGACY_ABSOLUTE":
+                    col.prop(pg, "emit_rate", text="Legacy Absolute Target")
+                else:
+                    col.label(text=(
+                        f"Uses Simulation Liquid Sampling: "
+                        f"{context.scene.fluidsim.particles_per_voxel}"), icon="INFO")
+                col.label(text="Changes fill occupancy, not spatial resolution; Requires Reset")
             col.prop(pg, "initial_velocity")
             col.prop(pg, "use_object_velocity", text="Add Animated Object Velocity")
             _draw_source_status(box, pg)
@@ -528,6 +624,7 @@ class FLUIDSIM_PT_liquid_emitter_attributes(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_liquid_sinks(FluidSimPanel, bpy.types.Panel):
     bl_label = "Liquid Sinks"
     bl_idname = "FLUIDSIM_PT_liquid_sinks"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -570,6 +667,7 @@ class FLUIDSIM_PT_liquid_sinks(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
     bl_label = "Colliders"
     bl_idname = "FLUIDSIM_PT_colliders"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -596,6 +694,7 @@ class FLUIDSIM_PT_colliders(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_forces(FluidSimPanel, bpy.types.Panel):
     bl_label = "Forces"
     bl_idname = "FLUIDSIM_PT_forces"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -647,6 +746,7 @@ class FLUIDSIM_PT_forces(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_domain_height_fill(FluidSimPanel, bpy.types.Panel):
     bl_label = "Domain Height Fill"
     bl_idname = "FLUIDSIM_PT_domain_height_fill"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -675,6 +775,7 @@ class FLUIDSIM_PT_domain_height_fill(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
     bl_label = "Point / Particle Injection"
     bl_idname = "FLUIDSIM_PT_point_particle_injection"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -688,6 +789,7 @@ class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
     bl_label = "Advanced Field Sources"
     bl_idname = "FLUIDSIM_PT_advanced_field_sources"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -732,6 +834,7 @@ class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
     bl_label = "Pressure Projection"
     bl_idname = "FLUIDSIM_PT_pressure"
+    bl_parent_id = "FLUIDSIM_PT_physics"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -748,6 +851,7 @@ class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
     bl_label = "Viscosity"
     bl_idname = "FLUIDSIM_PT_viscosity"
+    bl_parent_id = "FLUIDSIM_PT_physics"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw_header(self, context):
@@ -767,7 +871,7 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Whitewater"
+    bl_label = "Surface & Whitewater"
     bl_idname = "FLUIDSIM_PT_surface"
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -807,6 +911,8 @@ class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
     bl_label = "Realtime Surfacing / Particles"
     bl_idname = "FLUIDSIM_PT_realtime_display"
+    bl_parent_id = "FLUIDSIM_PT_surface"
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
@@ -877,7 +983,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Viewport / Render Output"
+    bl_label = "Output & Cache"
     bl_idname = "FLUIDSIM_PT_output"
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -915,6 +1021,7 @@ def _snippet_state_icon(snip):
 class FLUIDSIM_PT_snippets(FluidSimPanel, bpy.types.Panel):
     bl_label = "Custom Warp Snippets"
     bl_idname = "FLUIDSIM_PT_snippets"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1078,6 +1185,7 @@ class FLUIDSIM_PT_snippet_shortcuts(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_diagnostics(FluidSimPanel, bpy.types.Panel):
     bl_label = "Diagnostics / Profiling"
     bl_idname = "FLUIDSIM_PT_diagnostics"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1113,6 +1221,7 @@ class FLUIDSIM_PT_diagnostics(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_validation(FluidSimPanel, bpy.types.Panel):
     bl_label = "Validation / Benchmarks"
     bl_idname = "FLUIDSIM_PT_validation"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1152,6 +1261,12 @@ class FLUIDSIM_PT_validation(FluidSimPanel, bpy.types.Panel):
 CLASSES = (
     FLUIDSIM_PT_interaction_popover,
     FLUIDSIM_PT_simulation,
+    FLUIDSIM_PT_quality,
+    FLUIDSIM_PT_inputs,
+    FLUIDSIM_PT_physics,
+    FLUIDSIM_PT_surface,
+    FLUIDSIM_PT_output,
+    FLUIDSIM_PT_advanced,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,
     FLUIDSIM_PT_liquid_emitters,
@@ -1164,9 +1279,7 @@ CLASSES = (
     FLUIDSIM_PT_advanced_field_sources,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
-    FLUIDSIM_PT_surface,
     FLUIDSIM_PT_realtime_display,
-    FLUIDSIM_PT_output,
     FLUIDSIM_PT_snippets,
     FLUIDSIM_PT_snippet_editor,
     FLUIDSIM_PT_snippet_shortcuts,

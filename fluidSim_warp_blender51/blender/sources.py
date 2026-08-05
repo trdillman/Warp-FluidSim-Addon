@@ -33,7 +33,9 @@ def tag_source(obj, shape="BOX", mode="PARTICLES"):
     obj.fluidsim.role = "SOURCE"
     obj.fluidsim.shape = shape
     obj.fluidsim.source_mode = mode
-    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.source_ui_schema_version = 4
+    obj.fluidsim.source_sampling_mode = "INHERIT"
+    obj.fluidsim.source_sampling_multiplier = 1.0
     obj.fluidsim.source_region_kind = "ANALYTIC"
     obj.fluidsim.emission_mode = "INITIAL_FILL"
     obj.display_type = "WIRE"
@@ -44,7 +46,7 @@ def tag_source(obj, shape="BOX", mode="PARTICLES"):
 def tag_sink(obj, shape="BOX"):
     obj.fluidsim.role = "SINK"
     obj.fluidsim.shape = shape
-    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.source_ui_schema_version = 4
     obj.fluidsim.sink_region_kind = "ANALYTIC"
     obj.display_type = "WIRE"
     obj.hide_render = True
@@ -56,7 +58,7 @@ def tag_field(obj, shape="BOX"):
     obj.fluidsim.role = "FIELD"
     obj.fluidsim.shape = shape
     obj.fluidsim.source_mode = "FIELD"
-    obj.fluidsim.source_ui_schema_version = 3
+    obj.fluidsim.source_ui_schema_version = 4
     obj.fluidsim.field_operation = "PRESSURE"
     obj.fluidsim.field_region_kind = "ANALYTIC"
     obj.display_type = "WIRE"
@@ -162,76 +164,15 @@ def prepare_auto_seeds(scene, depsgraph=None):
 
 
 def commit_prepared_seeds(sess, prepared):
-    """Commit an already-admitted seed batch atomically with respect to capacity."""
-    prepared = tuple(prepared)
-    solver = sess.solver
-    particles = solver.particles
-    required = sum(len(seed.positions) for seed in prepared)
-    available = max(0, int(particles.capacity) - int(particles.host_count))
-    if required > available:
-        grow = getattr(solver, "ensure_particle_capacity", None)
-        if callable(grow):
-            growth = grow(int(particles.host_count) + required)
-        else:
-            from ..sim.particle_capacity import ParticleGrowthResult
-
-            current = int(particles.capacity)
-            growth = ParticleGrowthResult(
-                "DISABLED", current, current,
-                int(particles.host_count) + required, current,
-                reason="solver does not expose transactional particle growth")
-        particles = solver.particles
-        available = max(
-            0, int(particles.capacity) - int(particles.host_count))
-        if required > available:
-            policy = str(getattr(
-                getattr(solver, "settings", None),
-                "particle_growth_failure_policy", "DEFER",
-            )).upper()
-            solver.sourcing.last_apply_result = {
-                "admitted": False,
-                "required": required,
-                "available": available,
-                "emitted": 0,
-                "capacity_limited": True,
-                "deferred": True,
-                "pause_requested": policy == "PAUSE",
-                "growth_status": growth.status,
-                "growth_previous": growth.previous,
-                "growth_current": growth.current,
-                "growth_target": growth.target,
-                "growth_reason": growth.reason,
-            }
-            return 0
-    emitted = 0
-    for seed in prepared:
-        before = int(particles.host_count)
-        solver.inject_particles(
-            seed.positions,
-            velocity=seed.velocity,
-            temperature=seed.temperature,
-            viscosity=seed.viscosity,
-            density=seed.density,
-            life=seed.life,
-            use_lifespan=seed.use_lifespan,
-        )
-        # The public solver seam historically returns the final total, not the
-        # append delta. Count from authoritative host state so multiple seed
-        # objects cannot be double-counted.
-        emitted += int(particles.host_count) - before
-    if emitted != required:
-        raise RuntimeError(
-            "automatic seed transaction violated its admitted particle count "
-            f"(required {required}, emitted {emitted})")
-    return emitted
+    """Commit every prepared payload under one device admission gate."""
+    result = sess.solver.inject_particle_packets_exact(tuple(prepared))
+    return int(result.emitted) if result.admitted else 0
 
 
 def inject_object_particles(scene, obj, sess, velocity=(0.0, 0.0, 0.0)):
     """Compatibility one-shot using the prepare/commit transaction seam."""
     seed = prepare_object_particles(scene, obj, velocity)
-    if seed is None:
-        return 0
-    emitted = commit_prepared_seeds(sess, (seed,))
+    emitted = commit_prepared_seeds(sess, () if seed is None else (seed,))
     # commit_prepared_seeds reports a rejected batch through last_apply_result
     # instead of raising, so initialize()/reset() can apply their own deferral
     # policy. This one-shot has no such policy: surface it as an error rather

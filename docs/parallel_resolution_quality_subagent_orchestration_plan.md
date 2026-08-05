@@ -1,10 +1,8 @@
 # Parallel Subagent Orchestration Plan — Resolution, Quality, and Capacity
 
-**Status:** Executed. The three agent lanes and the integration lane exist as
-worktrees with distinct histories (`agent/res-quality-t01-source-truth`,
-`agent/res-quality-t02-session-capacity`, `agent/res-quality-t03-whitewater-truth`,
-`feature/resolution-quality-standardization`). None is merged to `master`;
-`docs/superpowers/plans/2026-08-02-resolution-quality-merge.md` drives that merge.  
+**Status:** Historical execution record. The isolated T01, T02, T03, and
+integration lanes produced `feature/resolution-quality-standardization`; this
+document is not current execution authority.
 **Parent orchestrator:** Main Pi session  
 **Canonical product/architecture plan:** `docs/industry_standard_resolution_quality_implementation_plan.md`  
 **Rule:** Every major changeset is traced by a read-only subagent before implementation and reviewed afterward by a separate fresh-context reviewer.

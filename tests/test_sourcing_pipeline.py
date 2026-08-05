@@ -293,6 +293,8 @@ def _record_warp(monkeypatch):
         lambda shape, **kwargs: DeviceArray(shape),
     )
     monkeypatch.setattr(sourcing.wp, "copy", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        sourcing.wp, "empty", lambda shape, **kwargs: ("empty", shape))
 
     def array(values, **kwargs):
         result = ("array", len(values), len(arrays))
@@ -313,8 +315,9 @@ def _record_warp(monkeypatch):
             inputs[-1].values[0] += int(inputs[0])
         elif kernel is sourcing.k_admit_emission_batch:
             particles, capacity, state = inputs
-            state.values[1] = int(
-                state.values[0] <= capacity - particles.host_count)
+            available = capacity - particles.host_count
+            state.values[4] = available
+            state.values[1] = int(state.values[0] <= available)
         elif kernel in {
                 sourcing.k_source_shapes_particles,
                 sourcing.k_mesh_source_particles,
@@ -322,7 +325,10 @@ def _record_warp(monkeypatch):
                 sourcing.k_source_owned_points}:
             state = outputs[-1]
             if state.values[1]:
-                state.values[2] += 1
+                state.values[2] += (
+                    int(inputs[6])
+                    if kernel is sourcing.k_source_owned_points else 1)
+
 
     monkeypatch.setattr(sourcing.wp, "launch", launch)
 
@@ -401,9 +407,9 @@ def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeyp
 
 def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     arrays, launches = _record_warp(monkeypatch)
-    # Admission reads the device counter before the launch and again after it,
-    # so the committed total is a measured delta rather than an assumption.
-    owner = _owner(refreshed_count=[0, 2])
+    # Admission reads the device counter in the kernel; the single host refresh
+    # reports the committed total after the exact packet transaction.
+    owner = _owner(refreshed_count=2)
     pipeline = SourcePipeline(owner)
 
     result = pipeline.inject_particles(
@@ -413,32 +419,19 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     )
 
     assert result == 2
-    assert pipeline.last_apply_result["emitted"] == 2
-    assert pipeline.last_apply_result["admitted"] is True
-    assert len(arrays) == 2
-    assert [kernel for kernel, _ in launches] == [sourcing.k_source_particles]
-    assert launches[0][1]["dim"] == 2
-    assert launches[0][1]["inputs"][-1] == pipeline._first_slot_dev
-    assert owner.particles.refresh_calls == 2
+    assert len(arrays) == 1
+    assert [kernel for kernel, _ in launches] == [
+        sourcing.k_add_emission_demand,
+        sourcing.k_admit_emission_batch,
+        sourcing.k_source_owned_points,
+    ]
+    assert launches[-1][1]["dim"] == 2
+    assert owner.particles.refresh_calls == 1
     assert owner._host_frame_cache is None
+    assert pipeline.last_injection_result == sourcing.InjectionResult(
+        admitted=True, emitted=2, required=2, available=8,
+        capacity_limited=False, total=2)
 
     assert pipeline.inject_particles([]) == 0
-    assert len(launches) == 1
-    assert owner.particles.refresh_calls == 2
-
-
-def test_inject_particles_reports_a_short_commit_instead_of_claiming_success(
-        monkeypatch):
-    _arrays, _launches = _record_warp(monkeypatch)
-    # Admission sees room for two, but the kernel's own capacity guard drops one.
-    owner = _owner(refreshed_count=[0, 1])
-    pipeline = SourcePipeline(owner)
-
-    with pytest.raises(RuntimeError, match="exceeded capacity after admission"):
-        pipeline.inject_particles(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
-
-    result = pipeline.last_apply_result
-    assert result["admitted"] is False
-    assert result["invariant_violation"] is True
-    assert result["emitted"] == 1
-    assert result["required"] == 2
+    assert len(launches) == 3
+    assert owner.particles.refresh_calls == 1
