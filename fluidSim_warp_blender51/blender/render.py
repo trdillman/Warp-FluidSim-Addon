@@ -44,11 +44,11 @@ def _on_render_init(scene, *_args):
     # This module owns render_init outright -- unregister_handlers() below drops
     # every add-on callback on that list -- so the solver hoist rides along here
     # rather than registering a second handler that this module would strip.
-    from . import scene_bridge
+    from . import playback
 
     global _PRE_RENDER_FRAME
     _PRE_RENDER_FRAME = scene.frame_current
-    scene_bridge.ensure_session_before_frames(scene, "render")
+    playback.ensure_session_before_frames(scene, "render")
     ensure_render_visibility(scene)
 
 
@@ -57,10 +57,10 @@ def _on_render_end(_scene, *_args):
     # Arm here rather than in _on_render_init: during the job itself the render
     # walks real frames, and one of them can equal the pre-render frame. Only
     # the restore that lands after the job is Blender's bookkeeping.
-    from . import scene_bridge
+    from . import playback
 
     if _PRE_RENDER_FRAME is not None:
-        scene_bridge.arm_render_frame_restore(_PRE_RENDER_FRAME)
+        playback.arm_render_frame_restore(_PRE_RENDER_FRAME)
 
 
 _HANDLER_LISTS = ("render_init", "render_complete", "render_cancel")

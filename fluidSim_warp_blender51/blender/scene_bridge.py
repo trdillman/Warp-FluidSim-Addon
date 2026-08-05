@@ -1,8 +1,8 @@
-"""Scene <-> solver bridge.
+"""Scene <-> solver bridge and Solver Session owner.
 
-Owns the live solver session (module-level, cannot live in ID properties),
-translates Blender scene/object data into solver descriptors, and steps the
-simulation during playback via frame-change handlers.
+The module owns the live Solver Session, direct scene synchronization and
+direct stepping. Blender timeline interpretation lives in ``playback`` and
+deterministic production cache generation lives in ``cache_bake``.
 """
 
 from __future__ import annotations
@@ -29,18 +29,6 @@ from .solver_settings import (
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
-
-# True while _on_frame_change is on the stack. The handler runs inside the
-# depsgraph evaluation it was handed, so anything it writes to scene.fluidsim
-# can fire an RNA update callback that re-enters this module from inside that
-# window -- fs.live = False on the error path is the standing example.
-# Same idiom as properties._LIQUID_VIEW_SYNCING: module bool, early return,
-# try/finally reset.
-_IN_FRAME_HANDLER = False
-
-# Frame Blender will restore once a render job ends; armed by render.py so the
-# handler can ignore that one frame change. See arm_render_frame_restore.
-_RENDER_RESTORE_FRAME = None
 
 # ---------------------------------------------------------------------------
 # Session state
@@ -145,35 +133,6 @@ class Session:
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard)
 
-    def set_live_enabled(self, scene, enabled):
-        if _IN_FRAME_HANDLER:
-            # Reached from the frame-change handler writing fs.live, which
-            # fires properties._on_live_changed synchronously. The handler
-            # owns its own teardown; re-entering here would run initialize()
-            # -- a full GPU allocation -- or touch Blender IDs while the
-            # depsgraph the handler was handed is still mid-evaluation.
-            return
-        fs = scene.fluidsim
-        if enabled:
-            if getattr(fs, "cache_playback_enabled", False):
-                fs.status = "Cache playback enabled - press play"
-            elif not self.owns_scene(scene):
-                self.initialize(scene)
-                fs.status = "Live simulation enabled - press play"
-            else:
-                fs.status = "Live simulation enabled - press play"
-        else:
-            fs.status = "Live simulation disabled"
-
-    def set_cache_playback_enabled(self, scene, enabled):
-        fs = scene.fluidsim
-        if enabled:
-            self.release(scene)
-            if getattr(fs, "live", False):
-                fs.status = "Cache playback enabled - press play"
-        elif getattr(fs, "live", False):
-            self.set_live_enabled(scene, True)
-
     def owns_scene(self, scene):
         return self.active and (
             self.scene_identity is None
@@ -209,8 +168,8 @@ class Session:
         _refresh_pending_state(scene, self, use_cached=not refresh_pending)
         return _apply_live_settings_safely(scene, self)
 
-    def step(self, scene, *, write_cache=True, timeline_frame=None):
-        from . import output_publication
+    def step(self, scene, *, write_cache=True, timeline_frame=None,
+             publish_outputs=True):
 
         if not self.owns_scene(scene):
             return None
@@ -275,7 +234,10 @@ class Session:
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
             + (f" — {capacity_notice}" if capacity_notice else "")
         )
-        output_publication.update_outputs(scene, self)
+        if publish_outputs:
+            from . import output_publication
+
+            output_publication.update_outputs(scene, self)
         if write_cache and fs.cache_enabled:
             from ..io import cache
 
@@ -306,155 +268,9 @@ class Session:
                 print(f"fluidSim cache write failed: {exc!r}")
         return stats
 
-    def play_cache_frame(self, scene, frame=None):
-        from . import output_publication
-        from ..io import cache
-
-        fs = scene.fluidsim
-        frame = int(scene.frame_current if frame is None else frame)
-        if getattr(fs, "cache_use_custom_range", False):
-            start, end = cache.resolve_frame_range(
-                scene,
-                use_custom=True,
-                frame_start=fs.cache_frame_start,
-                frame_end=fs.cache_frame_end,
-            )
-            if frame < start or frame > end:
-                raise FileNotFoundError(
-                    f"Cache frame {frame} is outside playback range {start}-{end}"
-                )
-        base = bpy.path.abspath(fs.cache_path)
-        frame_data = cache.read_frame(base, frame)
-        if frame_data is None:
-            raise FileNotFoundError(
-                f"Cache frame {frame} is missing or corrupt in {base}")
-        _check_cache_scene_key(scene, base, frame_data)
-        output_publication.update_outputs_from_cache_frame(scene, frame_data)
-        fs.stat_particles = len(frame_data.get("positions", ()))
-        fs.stat_whitewater = len(frame_data.get("whitewater", ()))
-        fs.stat_voxels = 0
-        fs.stat_step_ms = 0.0
-        fs.stat_substeps = 0
-        # Cached frames carry no substep record, so a stale True here would
-        # report a CFL violation against a frame this session never integrated.
-        fs.stat_cfl_clamped = False
-        fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
-        self.clear_error(scene)
-        return frame_data
-
     def reset(self, scene, *, depsgraph=None):
         """Reset through the same coherent admission preflight."""
         return self._admission().reset(scene, depsgraph=depsgraph)
-
-    def export_cache_sequence(self, scene, start, end):
-        from ..io import cache
-
-        fs = scene.fluidsim
-        base = bpy.path.abspath(fs.cache_path)
-        original_frame = scene.frame_current
-        original_live = fs.live
-        frame_set = getattr(scene, "frame_set", None)
-        fs.live = False
-        try:
-            self.initialize(scene)
-            self.start_frame = start
-            for timeline_frame in range(start, end + 1):
-                if frame_set is not None:
-                    frame_set(timeline_frame)
-                self.solver.frame = timeline_frame - 1
-                self.sync_scene(scene)
-                step_frame(scene, self, write_cache=False)
-                self.solver.frame = timeline_frame
-                cache.write_frame(scene, self, timeline_frame)
-                record_settings = getattr(cache, "settings_record", None)
-                if callable(record_settings):
-                    self.cache_settings_records[timeline_frame] = record_settings(
-                        self.solver.settings)
-            cache.write_sequence_metadata(
-                base, start, end, source="simulation",
-                settings_records=self.cache_settings_records,
-                scene_key_value=self.scene_key)
-        finally:
-            if frame_set is not None:
-                try:
-                    frame_set(original_frame)
-                except Exception:  # noqa: BLE001 - preserve original failure
-                    pass
-            fs.live = original_live
-        return base
-
-    def handle_frame_change(self, scene, depsgraph):
-        fs = getattr(scene, "fluidsim", None)
-        if fs is None or not fs.live:
-            return
-        frame = scene.frame_current
-        if frame == self.last_frame:
-            return
-        if getattr(fs, "cache_playback_enabled", False):
-            self.last_frame = frame
-            try:
-                self.play_cache_frame(scene, frame)
-            except Exception as exc:  # noqa: BLE001 - never break playback
-                self.set_error(scene, repr(exc))
-                fs.status = f"Cache playback error: {exc}"
-                print(f"fluidSim cache playback failed: {exc!r}")
-            return
-        if not self.owns_scene(scene):
-            try:
-                self.initialize(scene, depsgraph=depsgraph)
-            except Exception as exc:  # noqa: BLE001 - never break playback
-                self.set_error(scene, repr(exc))
-                fs.status = f"Solver initialization error: {exc}"
-                print(f"FluidSim playback initialization failed: {exc!r}")
-                return
-        if frame <= self.start_frame or frame < self.last_frame:
-            try:
-                if not _apply_pending_on_rewind(
-                        scene, self, depsgraph=depsgraph):
-                    self.reset(scene, depsgraph=depsgraph)
-            except Exception as exc:  # noqa: BLE001 - retain pending on failure
-                self.set_error(scene, repr(exc))
-                # Do not continue stepping an advanced solver from a rewound
-                # timeline after its pending reset/reinitialize failed.
-                fs.live = False
-                fs.status = f"Pending settings apply failed; playback stopped: {exc}"
-            self.last_frame = frame
-            return
-        # Blender drops frames during playback, so a forward jump larger than
-        # one is normal rather than exceptional. Taking a single step per frame
-        # change ran the solver in slow motion against the timeline and left
-        # holes in the cache. Step the whole gap instead -- but only up to a
-        # bound, so a long scrub reports a desync instead of hanging Blender
-        # inside a frame-change handler.
-        gap = (frame - self.last_frame
-               if self.last_frame >= self.start_frame else 1)
-        bound = max(1, int(getattr(fs, "max_frame_catchup", 8)))
-        if gap > bound:
-            self.last_frame = frame
-            message = (
-                f"Timeline jumped {gap} frames, past the {bound}-frame recovery "
-                f"limit. The solver would be out of sync with the timeline. "
-                f"Rewind to restart, or increase Maximum Playback Recovery "
-                f"Frames under Advanced Playback.")
-            self.set_error(scene, message)
-            fs.status = f"Solver desync: {message}"
-            return
-        self.last_frame = frame
-        try:
-            for offset in range(gap - 1, -1, -1):
-                self.sync_scene(scene, depsgraph)
-                step_frame(
-                    scene, self, refresh_pending=False,
-                    timeline_frame=frame - offset)
-        except Exception as exc:  # noqa: BLE001 - never break playback
-            self.set_error(scene, repr(exc))
-            # The property callback this fires is suppressed while the handler
-            # is on the stack, so this status remains authoritative.
-            fs.live = False
-            fs.status = f"Solver error: {exc}"
-            self.release(preserve_error=True)
-            print(f"fluidSim step failed: {exc!r}")
-
 
 _SESSION = Session()
 ERROR_SCENE_KEY = "fluidsim_last_error"
@@ -462,39 +278,6 @@ ERROR_SCENE_KEY = "fluidsim_last_error"
 
 def session() -> Session:
     return _SESSION
-
-
-_CACHE_SCENE_KEY_MESSAGE = (
-    "Cache frame {frame} was baked from different scene settings "
-    "(cache {baked}, scene {current}). Re-bake the cache, or restore the "
-    "settings it was baked with."
-)
-
-
-def _check_cache_scene_key(scene, base, frame_data):
-    """Refuse to play a cache baked from a materially different scene.
-
-    Caches written before this check carry no key; they still play, so an
-    existing bake is not invalidated by upgrading. Both the sequence metadata
-    and the frame's own stamp are checked, so a frame file moved out of its
-    sequence is caught too.
-    """
-    import numpy as np
-
-    from ..io import cache
-
-    frame = int(frame_data.get("frame", -1))
-    metadata_key = str((cache.read_sequence_metadata(base) or {}).get("scene_key", ""))
-    frame_key = (str(np.asarray(frame_data["scene_key"]).item())
-                 if "scene_key" in frame_data else "")
-    baked = metadata_key or frame_key
-    if not baked:
-        return
-    current = cache.scene_key(scene)
-    for candidate in (metadata_key, frame_key):
-        if candidate and candidate != current:
-            raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
-                frame=frame, baked=candidate[:12], current=current[:12]))
 
 
 def _scene_get(scene, key: str, default=""):
@@ -977,16 +760,6 @@ def release_session(scene=None):
     session().release(scene)
 
 
-def set_live_enabled(scene, enabled: bool):
-    """Own the scene.fluidsim.live enable/disable lifecycle."""
-    session().set_live_enabled(scene, enabled)
-
-
-def set_cache_playback_enabled(scene, enabled: bool):
-    """Own cache playback transition without requiring a live solver."""
-    session().set_cache_playback_enabled(scene, enabled)
-
-
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
     """Push current scene objects (sources/colliders/height) to the solver."""
     (sess or session()).sync_scene(scene, depsgraph)
@@ -994,7 +767,8 @@ def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
 
 def step_frame(
         scene, sess: Session | None = None, *, write_cache: bool = True,
-        refresh_pending: bool = True, timeline_frame=None):
+        refresh_pending: bool = True, timeline_frame=None,
+        publish_outputs: bool = True):
     """Reconcile live RNA, then advance through the authoritative step seam.
 
     Direct callers conservatively refresh pending signatures. Interactive
@@ -1004,17 +778,13 @@ def step_frame(
     sess = sess or session()
     reconciled = sess.prepare_step(scene, refresh_pending=refresh_pending)
     result = sess.step(
-        scene, write_cache=write_cache, timeline_frame=timeline_frame)
+        scene, write_cache=write_cache, timeline_frame=timeline_frame,
+        publish_outputs=publish_outputs)
     if reconciled is False:
         error = sess.current_error(scene)
         if error:
             scene.fluidsim.status = f"Live settings error: {error}"
     return result
-
-
-def play_cache_frame(scene, frame: int | None = None):
-    """Load one cached timeline frame into the regular output objects."""
-    return session().play_cache_frame(scene, frame)
 
 
 def reset_simulation(scene, depsgraph=None):
@@ -1371,89 +1141,8 @@ def request_scene_update(scene, action: SceneUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Handlers (interactive playback)
+# Pending Settings handlers (remain here until Phase 4)
 # ---------------------------------------------------------------------------
-
-
-def ensure_session_before_frames(scene, reason):
-    """Build the solver before the first frame change of a playback or render.
-
-    Without this the first live frame reaches Session.initialize() from inside
-    frame_change_post -- a full CUDA allocation plus object/collection creation
-    against a depsgraph that is still being evaluated. animation_playback_pre
-    and render_init both fire once, ahead of that frame change, and outside the
-    frame-evaluation cycle.
-
-    Deliberately a no-op on a bare timeline scrub: nothing fires ahead of
-    frame_change_pre there, so the lazy-init path in handle_frame_change stays
-    the fallback and keeps working exactly as before.
-    """
-    fs = getattr(scene, "fluidsim", None) if scene is not None else None
-    if fs is None or not getattr(fs, "live", False):
-        # Not live -- must not allocate VRAM just because playback started.
-        return
-    if getattr(fs, "cache_playback_enabled", False):
-        # Cache playback never builds a solver; handle_frame_change returns
-        # ahead of the lazy-init path for it too.
-        return
-    sess = session()
-    if sess.active:
-        return
-    try:
-        sess.initialize(scene)
-    except Exception as exc:  # noqa: BLE001 - never break playback or a render
-        # Same wording as the lazy-init path below: panels.py string-matches the
-        # message to offer the memory-safeguard recovery buttons.
-        set_error(scene, repr(exc))
-        fs.status = f"Solver initialization error: {exc}"
-        print(f"FluidSim {reason} initialization failed: {exc!r}")
-
-
-@persistent
-def _on_playback_pre(scene, *_args):
-    ensure_session_before_frames(scene, "playback")
-
-
-# The render-side call lives in render._on_render_init: that module clears every
-# add-on callback off bpy.app.handlers.render_init when it registers, so a second
-# handler here would be silently removed depending on registration order.
-
-
-def arm_render_frame_restore(frame):
-    """Ignore the frame change Blender fires to restore the pre-render frame.
-
-    Blender jumps back to the frame the render started from once the job ends.
-    That frame change is Blender's own bookkeeping, not a user gesture, but it
-    reaches the frame handler like any other: after a 1-4 animation render from
-    frame 5 it stepped the solver one more time and wrote that state into the
-    cache at index 5 -- a frame the user never simulated. One-shot and matched
-    on the exact frame, so a user scrub that happens to come next is untouched.
-    """
-    global _RENDER_RESTORE_FRAME
-    _RENDER_RESTORE_FRAME = int(frame)
-
-
-@persistent
-def _on_frame_change(scene, depsgraph):
-    global _IN_FRAME_HANDLER
-    global _RENDER_RESTORE_FRAME
-    restore_frame, _RENDER_RESTORE_FRAME = _RENDER_RESTORE_FRAME, None
-    if (restore_frame is not None and scene is not None
-            and scene.frame_current == restore_frame):
-        # Keep the bookkeeping level with the timeline so the next real frame
-        # change steps once per frame instead of catching up over the render.
-        session().last_frame = restore_frame
-        return
-    if _IN_FRAME_HANDLER:
-        # A nested frame change (scene.frame_set from inside the handler, or
-        # another add-on's handler driving the timeline) would step the solver
-        # recursively against a depsgraph the outer call still owns.
-        return
-    _IN_FRAME_HANDLER = True
-    try:
-        session().handle_frame_change(scene, depsgraph)
-    finally:
-        _IN_FRAME_HANDLER = False
 
 
 @persistent
@@ -1475,41 +1164,25 @@ def _on_load_pre(_filepath):
 
 
 def register_handlers():
-    # Deduplicate only -- registering must not release a live session.
+    """Register only the Pending Settings handlers still owned here."""
     _remove_handlers()
-    bpy.app.handlers.frame_change_post.append(_on_frame_change)
     if hasattr(bpy.app.handlers, "depsgraph_update_post"):
         bpy.app.handlers.depsgraph_update_post.append(_on_interaction_state_update)
     if hasattr(bpy.app.handlers, "undo_post"):
         bpy.app.handlers.undo_post.append(_on_interaction_state_update)
     if hasattr(bpy.app.handlers, "load_pre"):
         bpy.app.handlers.load_pre.append(_on_load_pre)
-    # Build the solver ahead of the first frame change instead of from inside
-    # frame_change_post. The render side is handled in render._on_render_init.
-    if hasattr(bpy.app.handlers, "animation_playback_pre"):
-        bpy.app.handlers.animation_playback_pre.append(_on_playback_pre)
 
 
 def _remove_handlers():
-    handler_lists = [bpy.app.handlers.frame_change_post]
-    # render_init is deliberately absent: render.py owns that list, and clearing
-    # it here would drop render._on_render_init depending on register order.
-    for name in (
-            "depsgraph_update_post", "undo_post", "load_pre",
-            "animation_playback_pre"):
-        if hasattr(bpy.app.handlers, name):
-            handler_lists.append(getattr(bpy.app.handlers, name))
-    for handlers in handler_lists:
+    for name in ("depsgraph_update_post", "undo_post", "load_pre"):
+        handlers = getattr(bpy.app.handlers, name, None)
+        if handlers is None:
+            continue
         for fn in list(handlers):
-            if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
+            if getattr(fn, "__module__", "") == __name__:
                 handlers.remove(fn)
 
 
 def unregister_handlers():
-    # Reload Scripts reaches this without going through unregister(), so
-    # without the release the whole GPU allocation is orphaned with no owner
-    # left to free it short of restarting Blender. Handlers come off first:
-    # releasing while _on_frame_change is still registered would let a frame
-    # change re-enter a half-torn-down session.
     _remove_handlers()
-    session().release()

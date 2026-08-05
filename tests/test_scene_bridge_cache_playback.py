@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import types
@@ -64,8 +65,13 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    sys.modules.pop("fluidSim_warp_blender51.blender.playback", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    return scene_bridge
 
 
 def _scene(frame=7, *, playback=True):
@@ -100,6 +106,73 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
+
+
+def test_phase3_deep_modules_own_playback_and_production_bake(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    bridge_source = inspect.getsource(scene_bridge)
+    bake_source = inspect.getsource(cache_bake.bake)
+    assert "def handle_frame_change" not in bridge_source
+    assert "def export_cache_sequence" not in bridge_source
+    assert scene_bridge.playback._on_frame_change.__module__.endswith(".playback")
+    assert scene_bridge.playback._on_playback_pre.__module__.endswith(".playback")
+    assert "output_publication" not in bake_source
+    assert "_on_frame_change" not in bake_source
+    assert "publish_outputs=False" in bake_source
+
+
+def _authoritative_payload(particle_count=2, whitewater_count=0):
+    payload = {
+        "positions": np.ones((particle_count, 3), np.float32),
+        "velocities": np.ones((particle_count, 3), np.float32),
+        "particle_age": np.ones(particle_count, np.float32),
+        "particle_life": np.ones(particle_count, np.float32),
+        "particle_temperature": np.ones(particle_count, np.float32),
+        "particle_viscosity": np.ones(particle_count, np.float32),
+        "particle_density": np.ones(particle_count, np.float32),
+        "particle_time_offset": np.ones(particle_count, np.float32),
+        "whitewater": np.ones((whitewater_count, 3), np.float32),
+        "whitewater_velocities": np.ones((whitewater_count, 3), np.float32),
+        "whitewater_age": np.ones(whitewater_count, np.float32),
+        "whitewater_life": np.ones(whitewater_count, np.float32),
+    }
+    return payload
+
+
+def test_authoritative_payload_counts_validate_schema_alignment_and_finiteness():
+    from fluidSim_warp_blender51.io import cache
+
+    payload = _authoritative_payload(particle_count=2, whitewater_count=1)
+    counts = cache.authoritative_payload_counts(payload)
+    assert set(counts["particles"].values()) == {2}
+    assert set(counts["whitewater"].values()) == {1}
+
+    payload["particle_age"] = payload["particle_age"][:1]
+    with pytest.raises(ValueError, match="attribute lengths do not match"):
+        cache.authoritative_payload_counts(payload)
+
+    payload = _authoritative_payload(particle_count=2, whitewater_count=1)
+    payload["whitewater_life"][0] = np.nan
+    with pytest.raises(ValueError, match="non-finite fields"):
+        cache.authoritative_payload_counts(payload)
+
+
+def test_preview_decimated_payload_counts_fail_solver_count_contract():
+    from fluidSim_warp_blender51.io import cache
+
+    solver_particle_count = 8
+    full = _authoritative_payload(
+        particle_count=solver_particle_count, whitewater_count=2)
+    decimated = {
+        name: (value[::2] if value.ndim else value)
+        for name, value in full.items()
+    }
+    counts = cache.authoritative_payload_counts(decimated)
+
+    assert set(counts["particles"].values()) == {4}
+    assert set(counts["particles"].values()) != {solver_particle_count}
 
 
 def test_nearest_values_native_and_fallback_agree(monkeypatch):
@@ -159,7 +232,7 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     scene_bridge.session().solver = solver
     scene_bridge.session().last_frame = -1
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == [(7, 7)]
     assert scene.fluidsim.stat_particles == 2
@@ -176,7 +249,7 @@ def test_live_property_cache_playback_does_not_initialize_solver(monkeypatch):
     ))
 
     scene_bridge.release_session()
-    scene_bridge.set_live_enabled(scene, True)
+    scene_bridge.playback.set_live_enabled(scene, True)
 
     assert not scene_bridge.session().active
     assert scene.fluidsim.status == "Cache playback enabled - press play"
@@ -189,7 +262,7 @@ def test_enabling_cache_playback_releases_live_solver(monkeypatch):
     scene_bridge.session().solver = object()
 
     scene.fluidsim.cache_playback_enabled = True
-    scene_bridge.set_cache_playback_enabled(scene, True)
+    scene_bridge.playback.set_cache_playback_enabled(scene, True)
 
     assert not scene_bridge.session().active
     assert scene.fluidsim.status == "Cache playback enabled - press play"
@@ -231,12 +304,12 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         "whitewater": np.zeros((1, 3), dtype=np.float32),
     })
 
-    scene_bridge.session().play_cache_frame(scene, 7)
+    scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]
 
     voxel_size[0] = 0.2
     with pytest.raises(ValueError, match="different scene settings"):
-        scene_bridge.session().play_cache_frame(scene, 7)
+        scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]
 
 
@@ -258,7 +331,7 @@ def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monk
     scene_bridge.session().solver = solver
     scene_bridge.session().last_frame = -1
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert scene.fluidsim.status.startswith("Cache playback error:")
     assert "missing or corrupt" in scene_bridge.current_error(scene)
@@ -838,7 +911,7 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
         lambda scene_arg, **kwargs: calls.append((scene_arg, kwargs)))
     depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=depsgraph)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=depsgraph)
 
     assert calls == [(scene, {"depsgraph": depsgraph})]
     assert sess.last_frame == 3
@@ -865,7 +938,7 @@ def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: observed.append(
         (sess.solver.settings.flip_ratio, sess.solver.settings.cfl)))
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert observed == [(0.3, 2.5)]
 
@@ -886,7 +959,7 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
     monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: stepped.append(True))
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert stepped == [True]
     assert scene.fluidsim.live is True
@@ -898,6 +971,7 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
 
 def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.flip_ratio = 0.9
     scene.fluidsim.cfl = 1.0
@@ -936,7 +1010,7 @@ def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeyp
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
-    sess.export_cache_sequence(scene, 2, 4)
+    cache_bake.bake(scene, sess, 2, 4)
 
     expected = [values[2], values[3], values[4]]
     assert observed == expected
@@ -958,7 +1032,7 @@ def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeyp
     sess.solver.settings.cfl = 1.0
     for frame in range(2, 5):
         frame_set(frame)
-        scene_bridge._on_frame_change(scene, depsgraph=object())
+        scene_bridge.playback._on_frame_change(scene, depsgraph=object())
     assert observed == expected
 
 
@@ -985,7 +1059,7 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
             ("step", kwargs.get("timeline_frame", scene.frame_current))))
     depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=depsgraph)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=depsgraph)
 
     assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
     assert depsgraphs == [depsgraph]
@@ -1011,7 +1085,7 @@ def test_playback_pre_initializes_before_any_frame_change(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert len(calls) == 1
     assert sess.active
@@ -1023,9 +1097,9 @@ def test_playback_pre_is_idempotent_once_the_session_is_active(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge.ensure_session_before_frames(scene, "render")
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     assert len(calls) == 1
 
@@ -1037,8 +1111,8 @@ def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge.ensure_session_before_frames(scene, "render")
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     # Pressing play on a non-live scene must not build a GPU solver.
     assert calls == []
@@ -1050,7 +1124,7 @@ def test_playback_pre_does_not_allocate_for_cache_playback(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert calls == []
 
@@ -1067,7 +1141,7 @@ def test_playback_pre_reports_init_failure_without_breaking_playback(monkeypatch
 
     monkeypatch.setattr(sess, "initialize", initialize)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert "world box (19.5, 19.5, 19.5)" in scene_bridge.current_error(scene)
     assert sess.solver is None
@@ -1097,8 +1171,8 @@ def test_frame_change_after_playback_pre_does_not_reinitialize(monkeypatch):
         lambda _scene, **kwargs: calls.append(
             ("step", kwargs.get("timeline_frame", scene.frame_current))))
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     # The inverse of the lazy-init test above: the solver already exists, so the
     # handler never reaches initialize() with the depsgraph mid-evaluation.
@@ -1129,8 +1203,8 @@ def test_render_frame_restore_does_not_touch_the_solver(monkeypatch):
 
     # Blender jumps back to the pre-render frame when the job ends; that step
     # wrote a cache frame the user never simulated.
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == []
     assert sess.last_frame == 5
@@ -1143,10 +1217,10 @@ def test_render_frame_restore_is_one_shot(monkeypatch):
     calls = _record_solver_work(monkeypatch, scene, sess)
     sess.last_frame = 4
 
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
     scene.frame_current = 6
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     # The frame after the restore is a real user frame again.
     assert calls == ["sync", ("step", 6)]
@@ -1161,14 +1235,15 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
 
     # Render ended at frame 5, but the user scrubbed elsewhere first: that is a
     # real gesture and must still simulate.
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == ["sync", ("step", 6)]
 
 
-def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
+def test_cache_export_restores_only_blender_transients_after_failure(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.live = True
     frames = []
@@ -1194,9 +1269,14 @@ def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
+    original_suppression = scene_bridge.playback._SUPPRESS_FRAME_HANDLERS
     with pytest.raises(RuntimeError, match="step failed"):
-        sess.export_cache_sequence(scene, 2, 4)
+        cache_bake.bake(scene, sess, 2, 4)
 
     assert frames == [2, 7]
     assert scene.frame_current == 7
     assert scene.fluidsim.live is True
+    assert scene_bridge.playback._SUPPRESS_FRAME_HANDLERS == original_suppression
+    # The bake is not a transaction: solver state intentionally remains at the
+    # point reached before the failure, matching the established behavior.
+    assert sess.solver.frame == 1

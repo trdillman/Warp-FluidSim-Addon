@@ -198,9 +198,9 @@ def _on_live_changed(self, context):
     if scene is None:
         return
     try:
-        from .blender import scene_bridge
+        from .blender import playback
 
-        scene_bridge.set_live_enabled(scene, bool(self.live))
+        playback.set_live_enabled(scene, bool(self.live))
     except Exception as exc:  # noqa: BLE001
         self.status = f"Live toggle failed: {exc}"
 
@@ -210,9 +210,9 @@ def _on_cache_playback_changed(self, context):
     if scene is None:
         return
     try:
-        from .blender import scene_bridge
+        from .blender import playback
 
-        scene_bridge.set_cache_playback_enabled(
+        playback.set_cache_playback_enabled(
             scene, bool(self.cache_playback_enabled))
     except Exception as exc:  # noqa: BLE001
         self.status = f"Cache playback toggle failed: {exc}"

@@ -1484,7 +1484,9 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
             return {"CANCELLED"}
 
         try:
-            base = bridge.session().export_cache_sequence(scene, start, end)
+            from .blender import cache_bake
+
+            base = cache_bake.bake(scene, bridge.session(), start, end)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Cache sequence export failed: {exc}")
             fs.status = f"Cache export failed: {exc}"

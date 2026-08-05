@@ -878,9 +878,11 @@ def prepare_cache_payload(scene, frame_data):
 def prepare_outputs(scene):
     """Output Preparation: create enabled IDs/schema without geometry writes."""
     _require_bpy()
-    from . import materials
-
     fs = scene.fluidsim
+    materials = None
+    if (fs.show_surface and fs.surface_enabled) or fs.show_particles or (
+            fs.show_whitewater and fs.whitewater_enabled):
+        from . import materials
     if fs.show_surface and fs.surface_enabled:
         _ensure_material(materials.ensure_surface_material, scene, _ensure_object(
             scene, SURFACE_NAME,
@@ -905,7 +907,10 @@ def publish_payload(scene, payload):
     to ``_swap_points`` and is separately observable by reason.
     """
     _require_bpy()
-    from . import materials
+    materials = None
+    if (payload.surface_visible or payload.particles_visible
+            or payload.whitewater_visible):
+        from . import materials
 
     if payload.surface_visible:
         if payload.publish_surface:

@@ -20,7 +20,7 @@ This glossary names the domain concepts used by architecture reviews and impleme
 
 - **Preview Playback** — non-authoritative viewport feedback driven by Blender timeline events. Its current catch-up, desynchronization, error, and backend-status behavior is preserved by the architecture program.
 - **Cache Playback** — visual publication of already cached frames without stepping or initializing a live solver.
-- **Production Cache Bake** — deterministic sequential solver advancement and cache writing independent of viewport event delivery. Production output comes from this path, not from Preview Playback.
+- **Production Cache Bake** — control-flow deterministic sequential frame advancement, scene synchronization, solver stepping, cache writing, and metadata recording independent of viewport event delivery and preview/display settings. Control-flow determinism does **not** mean repeat-bake numerical equality: CUDA atomic accumulation, compaction/emission ordering, and derived marching-cubes surfaces are nondeterministic, so no bitwise or particle-corresponded match is claimed. Exact payload hashes, particle/surface counts, and surface topology are diagnostics only. Acceptance instead proves at each real write seam that full non-preview-decimated liquid and non-empty whitewater arrays and attributes equal the immediate solver counts, and proves frame handlers and Output Publication are bypassed. The bake restores Blender frame/live and temporary handler suppression, but intentionally leaves solver state advanced; it is not a solver rollback transaction. Production output comes from this path, not from Preview Playback.
 
 ## Settings interaction
 

@@ -6,6 +6,7 @@ Run:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -23,12 +24,48 @@ from tools.repo_addon_loader import enable_repo_addon
 
 FAILURES = []
 
-
 def check(name, cond, detail=""):
     ok = bool(cond)
     print(f"[{'PASS' if ok else 'FAIL'}] {name} {detail}")
     if not ok:
         FAILURES.append(name)
+
+
+def surface_evidence(payload):
+    verts = np.asarray(payload["surface_verts"])
+    tris = np.asarray(payload["surface_tris"])
+    valid = bool(
+        verts.ndim == 2 and verts.shape[1:] == (3,)
+        and tris.ndim == 2 and tris.shape[1:] == (3,)
+        and np.issubdtype(verts.dtype, np.floating)
+        and np.issubdtype(tris.dtype, np.integer)
+        and len(verts) > 0 and len(tris) > 0
+        and np.all(np.isfinite(verts))
+        and int(np.min(tris)) >= 0 and int(np.max(tris)) < len(verts)
+    )
+    digest = hashlib.sha256()
+    digest.update(np.ascontiguousarray(verts).tobytes())
+    digest.update(np.ascontiguousarray(tris).tobytes())
+    return {
+        "valid": valid,
+        "vertices": int(len(verts)),
+        "triangles": int(len(tris)),
+        # Diagnostic only: CUDA marching-cubes order/topology equality is not
+        # an acceptance invariant.
+        "diagnostic_hash": digest.hexdigest(),
+    }
+
+
+def payload_diagnostic_hash(payload):
+    """Hash exact payload bytes for reporting, never for acceptance."""
+    digest = hashlib.sha256()
+    for name in sorted(payload):
+        value = np.ascontiguousarray(payload[name])
+        digest.update(name.encode("utf-8"))
+        digest.update(value.dtype.str.encode("ascii"))
+        digest.update(repr(tuple(value.shape)).encode("ascii"))
+        digest.update(value.tobytes())
+    return digest.hexdigest()
 
 
 def point_count(obj):
@@ -65,9 +102,13 @@ def main():
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.voxel_size = 0.12
-    fs.max_particles = 80_000
+    fs.max_particles = 100_000
+    fs.auto_grow_particles = False
     fs.max_whitewater = 5_000
-    fs.whitewater_enabled = False
+    fs.whitewater_enabled = True
+    fs.ww_churn_threshold = 0.0
+    fs.ww_emission_rate = 2_000.0
+    fs.ww_min_speed = 0.0
     fs.surface_enabled = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
@@ -79,13 +120,109 @@ def main():
 
     cache_dir = tempfile.mkdtemp(prefix="fluidsim_cache_pipeline_")
     fs.cache_path = cache_dir
+    original_cache_write = None
+    original_handle_frame_change = None
+    original_update_outputs = None
     try:
         check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+        # Give the short three-frame fixture an explicit energetic continuous
+        # inflow so authoritative whitewater coverage cannot pass vacuously.
+        source = bpy.data.objects.get("FluidSim Source")
+        check("cache fixture source exists", source is not None)
+        source_peer = None
+        if source is not None:
+            # Two deterministic one-shot source records with opposing velocity
+            # create immediate churn without relying on a top-up race.
+            source.fluidsim.emission_mode = "INITIAL_FILL"
+            source.fluidsim.use_object_velocity = False
+            source.fluidsim.initial_velocity = (4.0, 0.0, 1.0)
+            source.location.x -= 0.5
+            source_peer = source.copy()
+            source_peer.data = source.data.copy()
+            source_peer.name = "FluidSim Cache Whitewater Peer"
+            source_peer.location.x += 1.0
+            source_peer.fluidsim.initial_velocity = (-4.0, 0.0, 1.0)
+            scene.collection.objects.link(source_peer)
+
+        def normalize_source_diagnostics():
+            # Status mirrors are outputs, not canonical source inputs. Restore
+            # their pre-bake values when reconstructing the same fixture.
+            for item in (source, source_peer):
+                if item is None:
+                    continue
+                item.fluidsim.source_status_code = ""
+                item.fluidsim.source_status_message = ""
+                item.fluidsim.source_status_emitted = 0
+                item.fluidsim.source_status_capacity_limited = False
+
+        normalize_source_diagnostics()
+        from fluidSim_warp_blender51.blender import output_publication, playback
+        from fluidSim_warp_blender51.io import cache
+
+        # Poison the two preview paths at their real runtime seams. Production
+        # Bake must suppress timeline interpretation and step without Output
+        # Publication even though scene.frame_set() delivers Blender events.
+        bypass_calls = {"frame_handler": 0, "output_publication": 0}
+        original_handle_frame_change = playback.handle_frame_change
+        original_update_outputs = output_publication.update_outputs
+
+        def forbidden_frame_handler(*_args, **_kwargs):
+            bypass_calls["frame_handler"] += 1
+            raise AssertionError("Production Cache Bake entered Preview Playback")
+
+        def forbidden_output_publication(*_args, **_kwargs):
+            bypass_calls["output_publication"] += 1
+            raise AssertionError("Production Cache Bake entered Output Publication")
+
+        playback.handle_frame_change = forbidden_frame_handler
+        output_publication.update_outputs = forbidden_output_publication
+
+        # Observe the real production write seam.  This proves each on-disk
+        # payload has the same full counts as the solver immediately before the
+        # write, rather than merely proving that a self-consistent decimated
+        # payload was written.
+        write_observations = []
+        active_bake = ["first"]
+        original_cache_write = cache.write_frame
+
+        def observed_cache_write(scene_arg, sess_arg, frame=None):
+            solver = sess_arg.solver
+            solver_particles = int(solver.particles.refresh_host_count())
+            solver_whitewater = int(solver.whitewater.refresh_host_count())
+            path = original_cache_write(scene_arg, sess_arg, frame)
+            payload = cache.read_frame(os.path.dirname(path), int(frame))
+            write_observations.append({
+                "bake": active_bake[0],
+                "frame": int(frame),
+                "solver_frame": int(solver.frame),
+                "preview_policy": {
+                    "fraction": float(scene_arg.fluidsim.particle_display_fraction),
+                    "scale": float(scene_arg.fluidsim.particle_display_scale),
+                    "show_particles": bool(scene_arg.fluidsim.show_particles),
+                    "show_surface": bool(scene_arg.fluidsim.show_surface),
+                    "show_whitewater": bool(scene_arg.fluidsim.show_whitewater),
+                    "particle_attribute": str(
+                        scene_arg.fluidsim.particle_attribute_mode),
+                    "surface_attribute": str(
+                        scene_arg.fluidsim.surface_attribute_mode),
+                    "surface_cadence": int(
+                        scene_arg.fluidsim.live_surface_publish_cadence),
+                },
+                "solver_particles": solver_particles,
+                "solver_whitewater": solver_whitewater,
+                "cache_counts": cache.authoritative_payload_counts(payload),
+            })
+            return path
+
+        cache.write_frame = observed_cache_write
         check(
             "export cache sequence",
             bpy.ops.fluidsim.export_cache_sequence() == {"FINISHED"},
             fs.status,
         )
+        first_bake_bypass_calls = dict(bypass_calls)
+        playback.handle_frame_change = original_handle_frame_change
+        output_publication.update_outputs = original_update_outputs
 
         metadata_path = os.path.join(cache_dir, "fluidsim_sequence.json")
         check("sequence metadata exists", os.path.exists(metadata_path), metadata_path)
@@ -114,12 +251,19 @@ def main():
         )
 
         frame_data = []
+        first_payload_hashes = []
+        first_payload_schemas = []
+        first_surfaces = []
         for frame, path in enumerate(frame_paths, start=1):
             if not os.path.exists(path):
                 continue
             with np.load(path, allow_pickle=False) as data:
                 positions = data["positions"]
                 surface_verts = data["surface_verts"]
+                payload = {name: data[name] for name in data.files}
+                first_payload_hashes.append(payload_diagnostic_hash(payload))
+                first_payload_schemas.append(tuple(sorted(data.files)))
+                first_surfaces.append(surface_evidence(payload))
                 frame_data.append(
                     {
                         "frame": int(np.asarray(data["frame"]).item()),
@@ -135,6 +279,10 @@ def main():
                         and int(np.asarray(data["frame"]).item()) == frame
                         and len(positions) > 1_000
                         and len(data["velocities"]) == len(positions)
+                        and len(data["whitewater_velocities"])
+                        == len(data["whitewater"])
+                        and len(data["whitewater_age"]) == len(data["whitewater"])
+                        and len(data["whitewater_life"]) == len(data["whitewater"])
                         and "voxel_size" in data.files
                     ),
                     f"{len(positions)} particles, {len(surface_verts)} verts",
@@ -148,8 +296,195 @@ def main():
             )
             check("cache frames differ over time", changed)
 
+        first_metadata = cache.read_sequence_metadata(cache_dir)
+        # These are Output Publication policy only. A deterministic Production
+        # Cache Bake must neither consume them nor acquire published outputs.
+        fs.particle_display_fraction = 0.25
+        fs.particle_display_scale = 2.5
+        fs.show_particles = False
+        fs.show_surface = False
+        fs.show_whitewater = True
+        fs.particle_attribute_mode = "HEIGHT"
+        fs.surface_attribute_mode = "SPEED"
+        fs.live_surface_publish_cadence = 7
+        # A bake intentionally leaves its solver advanced.  Release/recreate
+        # here so this is a genuine repeat from the same canonical initial
+        # scene, rather than a continuation mislabeled as repeatability.
         from fluidSim_warp_blender51.blender.scene_bridge import session
 
+        normalize_source_diagnostics()
+        # Reset is explicitly outside Production Cache Bake and may publish its
+        # initialized state, so suspend the bake-only poison around it.
+        playback.handle_frame_change = original_handle_frame_change
+        output_publication.update_outputs = original_update_outputs
+        session().reset(scene)
+        check("reset advanced solver before second production run",
+              session().solver.frame == 0)
+        bypass_calls.update(frame_handler=0, output_publication=0)
+        playback.handle_frame_change = forbidden_frame_handler
+        output_publication.update_outputs = forbidden_output_publication
+        active_bake[0] = "second"
+        check(
+            "repeat export with changed preview policy",
+            bpy.ops.fluidsim.export_cache_sequence() == {"FINISHED"},
+            fs.status,
+        )
+        second_payload_hashes = []
+        second_payload_schemas = []
+        second_surfaces = []
+        for path in frame_paths:
+            if not os.path.exists(path):
+                continue
+            with np.load(path, allow_pickle=False) as data:
+                payload = {name: data[name] for name in data.files}
+                second_payload_hashes.append(payload_diagnostic_hash(payload))
+                second_payload_schemas.append(tuple(sorted(data.files)))
+                second_surfaces.append(surface_evidence(payload))
+        second_metadata = cache.read_sequence_metadata(cache_dir)
+
+        check(
+            "exact payload hashes recorded as diagnostics only",
+            (len(first_payload_hashes) == len(second_payload_hashes) == 3
+             and all(len(value) == 64
+                     for value in first_payload_hashes + second_payload_hashes)),
+            "no cross-bake hash or numerical equality is an acceptance condition; "
+            f"first={first_payload_hashes}, second={second_payload_hashes}",
+        )
+
+        expected_schema = {
+            "format_version", "settings_signature", "scene_key", "positions",
+            "velocities", "whitewater", "surface_verts", "surface_tris", "frame",
+            "voxel_size", "surface_voxel_size", "surface_resolution_multiplier",
+            "surface_resolution_mode", "surface_update_cadence",
+            "surface_smooth_iterations", "particle_age", "particle_life",
+            "particle_temperature", "particle_viscosity", "particle_density",
+            "particle_time_offset", "whitewater_velocities", "whitewater_age",
+            "whitewater_life",
+        }
+        schema_valid = bool(
+            len(first_payload_schemas) == len(second_payload_schemas) == 3
+            and all(set(schema) == expected_schema
+                    for schema in first_payload_schemas + second_payload_schemas))
+        check(
+            "production payload schemas independently valid",
+            schema_valid,
+            f"expected={sorted(expected_schema)}, first={first_payload_schemas}, "
+            f"second={second_payload_schemas}",
+        )
+
+        first_write = [item for item in write_observations
+                       if item["bake"] == "first"]
+        second_write = [item for item in write_observations
+                        if item["bake"] == "second"]
+
+        def counts_match_solver(observation):
+            counts = observation["cache_counts"]
+            return bool(
+                set(counts["particles"].values())
+                == {observation["solver_particles"]}
+                and set(counts["whitewater"].values())
+                == {observation["solver_whitewater"]})
+
+        count_evidence = {
+            "first": first_write,
+            "second": second_write,
+        }
+        check(
+            "each bake writes full solver particle/whitewater attribute counts",
+            (len(first_write) == len(second_write) == 3
+             and all(counts_match_solver(item)
+                     for item in first_write + second_write)),
+            json.dumps(count_evidence, sort_keys=True),
+        )
+        check(
+            "every production write contains non-empty authoritative whitewater",
+            all(item["solver_whitewater"] > 0
+                for item in first_write + second_write),
+            json.dumps(count_evidence, sort_keys=True),
+        )
+        sequential_control_flow = bool(
+            [item["frame"] for item in first_write] == [1, 2, 3]
+            and [item["solver_frame"] for item in first_write] == [1, 2, 3]
+            and [item["frame"] for item in second_write] == [1, 2, 3]
+            and [item["solver_frame"] for item in second_write] == [1, 2, 3])
+        preview_varied = bool(
+            first_write and second_write
+            and {item["preview_policy"]["fraction"] for item in first_write}
+            == {1.0}
+            and {item["preview_policy"]["fraction"] for item in second_write}
+            == {0.25}
+            and first_write[0]["preview_policy"]
+            != second_write[0]["preview_policy"])
+        check(
+            "control flow is sequential under varied preview settings",
+            sequential_control_flow and preview_varied,
+            json.dumps(count_evidence, sort_keys=True),
+        )
+        second_bake_bypass_calls = dict(bypass_calls)
+        check(
+            "Production Cache Bake bypasses handlers and Output Publication",
+            (first_bake_bypass_calls
+             == {"frame_handler": 0, "output_publication": 0}
+             and second_bake_bypass_calls
+             == {"frame_handler": 0, "output_publication": 0}),
+            f"first={first_bake_bypass_calls}, second={second_bake_bypass_calls}",
+        )
+
+        surfaces_valid = bool(
+            len(first_surfaces) == len(second_surfaces) == 3
+            and all(item["valid"] for item in first_surfaces + second_surfaces))
+        same_surface_counts = [
+            (item["vertices"], item["triangles"]) for item in first_surfaces
+        ] == [
+            (item["vertices"], item["triangles"]) for item in second_surfaces
+        ]
+        same_surface_topology_bytes = [
+            item["diagnostic_hash"] for item in first_surfaces
+        ] == [
+            item["diagnostic_hash"] for item in second_surfaces
+        ]
+        check(
+            "derived surfaces independently structurally valid",
+            surfaces_valid,
+            f"first={first_surfaces}, second={second_surfaces}",
+        )
+        check(
+            "CUDA derived surface nondeterminism reported without equality claim",
+            len(first_surfaces) == len(second_surfaces) == 3,
+            f"count_equality_observed={same_surface_counts}, "
+            f"topology_byte_equality_observed={same_surface_topology_bytes}; "
+            f"first={first_surfaces}, second={second_surfaces}",
+        )
+        check(
+            "production metadata independently records the sequential range",
+            all(
+                (metadata or {}).get("source") == "simulation"
+                and (metadata or {}).get("frame_start") == 1
+                and (metadata or {}).get("frame_end") == 3
+                and (metadata or {}).get("frame_count") == 3
+                for metadata in (first_metadata, second_metadata)),
+            f"first={first_metadata}, second={second_metadata}",
+        )
+
+        # Restore poisoned preview seams before cache-playback assertions.
+        playback.handle_frame_change = original_handle_frame_change
+        output_publication.update_outputs = original_update_outputs
+        original_handle_frame_change = None
+        original_update_outputs = None
+
+        # Restore presentation for the cache-playback output assertions below.
+        fs.particle_display_fraction = 1.0
+        fs.particle_display_scale = 1.0
+        fs.show_particles = True
+        fs.show_surface = True
+        fs.show_whitewater = False
+        fs.particle_attribute_mode = "NONE"
+        fs.surface_attribute_mode = "NONE"
+        fs.live_surface_publish_cadence = 1
+
+        from fluidSim_warp_blender51.blender.scene_bridge import session
+
+        normalize_source_diagnostics()
         bpy.ops.fluidsim.release()
         check("solver released before cache playback", not session().active)
         fs.live = True
@@ -174,6 +509,12 @@ def main():
             check("cache playback changes visible output", count_1 != count_3)
         check("cache playback status", fs.status.startswith("Cache frame 3"), fs.status)
     finally:
+        if original_cache_write is not None:
+            cache.write_frame = original_cache_write
+        if original_handle_frame_change is not None:
+            playback.handle_frame_change = original_handle_frame_change
+        if original_update_outputs is not None:
+            output_publication.update_outputs = original_update_outputs
         shutil.rmtree(cache_dir, ignore_errors=True)
 
 

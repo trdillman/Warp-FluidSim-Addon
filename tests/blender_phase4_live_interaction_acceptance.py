@@ -116,7 +116,9 @@ def main():
         fs.cache_use_custom_range = True
         fs.cache_frame_start = 1
         fs.cache_frame_end = 2
-        sess.export_cache_sequence(scene, 1, 2)
+        from fluidSim_warp_blender51.blender import cache_bake
+
+        cache_bake.bake(scene, sess, 1, 2)
         metadata = cache.read_sequence_metadata(cache_dir)
         frame_one = cache.read_frame(cache_dir, 1)
         frame_two = cache.read_frame(cache_dir, 2)

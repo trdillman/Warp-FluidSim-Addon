@@ -38,8 +38,13 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    sys.modules.pop("fluidSim_warp_blender51.blender.playback", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    return scene_bridge
 
 
 def _stub_viewport(monkeypatch):
@@ -140,13 +145,13 @@ def test_cache_playback_clears_the_clamp_flag(monkeypatch):
     # test in the same process may already have populated with the real module.
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
     monkeypatch.setattr(
-        scene_bridge, "_check_cache_scene_key",
+        scene_bridge.playback, "_check_cache_scene_key",
         lambda scene, base, data: None)
 
     sess = scene_bridge.Session()
     scene = _scene()
     scene.fluidsim.stat_cfl_clamped = True
 
-    sess.play_cache_frame(scene, frame=5)
+    scene_bridge.playback.play_cache_frame(sess, scene, frame=5)
 
     assert scene.fluidsim.stat_cfl_clamped is False

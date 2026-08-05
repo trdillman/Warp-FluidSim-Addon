@@ -160,7 +160,8 @@ def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
 
     monkeypatch.setattr(sess, "initialize", initialize)
     scene.frame_current = scene.frame_start
-    sess.handle_frame_change(scene, depsgraph=None)
+    from fluidSim_warp_blender51.blender import playback
+    playback.handle_frame_change(sess, scene, depsgraph=None)
 
     assert calls == [0.04]
     assert bridge.pending_presentation(scene)["action"] == "NONE"
@@ -274,7 +275,8 @@ def test_rewind_without_pending_resets_once(monkeypatch):
         sess, "reset", lambda actual, **_kwargs: calls.append(actual))
     scene.frame_current = scene.frame_start
 
-    sess.handle_frame_change(scene, depsgraph=None)
+    from fluidSim_warp_blender51.blender import playback
+    playback.handle_frame_change(sess, scene, depsgraph=None)
 
     assert calls == [scene]
     assert sess.last_frame == scene.frame_start
@@ -290,7 +292,8 @@ def test_rewind_apply_failure_stops_playback_and_retains_solver(monkeypatch):
         RuntimeError("allocation failed")))
     scene.frame_current = scene.frame_start
 
-    sess.handle_frame_change(scene, depsgraph=None)
+    from fluidSim_warp_blender51.blender import playback
+    playback.handle_frame_change(sess, scene, depsgraph=None)
 
     assert scene.fluidsim.live is False
     assert sess.solver is solver

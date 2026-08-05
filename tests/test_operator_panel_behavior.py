@@ -1160,6 +1160,7 @@ def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
 def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    playback = _reload_module("fluidSim_warp_blender51.blender.playback")
 
     init_calls = []
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
@@ -1173,36 +1174,37 @@ def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch
 
     monkeypatch.setattr(sess, "initialize", fake_initialize)
 
-    scene_bridge.set_live_enabled(scene, True)
-    scene_bridge.set_live_enabled(scene, True)
-    scene_bridge.set_live_enabled(scene, False)
+    playback.set_live_enabled(scene, True)
+    playback.set_live_enabled(scene, True)
+    playback.set_live_enabled(scene, False)
 
     assert init_calls == [scene]
     assert sess.active
     assert scene.fluidsim.status == "Live simulation disabled"
 
 
-def test_live_property_callback_toggles_scene_bridge_directly(monkeypatch):
+def test_live_property_callback_toggles_playback_directly(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
     calls = []
     scene = SimpleNamespace()
-    fake_bridge = SimpleNamespace(
+    fake_playback = SimpleNamespace(
         set_live_enabled=lambda scene, enabled: calls.append((scene, enabled))
     )
     import fluidSim_warp_blender51.blender as blender_pkg
 
-    monkeypatch.setattr(blender_pkg, "scene_bridge", fake_bridge, raising=False)
+    monkeypatch.setattr(blender_pkg, "playback", fake_playback, raising=False)
 
     properties._on_live_changed(SimpleNamespace(live=True, status=""), SimpleNamespace(scene=scene))
 
     assert calls == [(scene, True)]
 
 
-def test_scene_bridge_set_live_enabled_updates_status(monkeypatch):
+def test_playback_set_live_enabled_updates_status(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    playback = _reload_module("fluidSim_warp_blender51.blender.playback")
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
     sess = scene_bridge.session()
 
@@ -1212,16 +1214,17 @@ def test_scene_bridge_set_live_enabled_updates_status(monkeypatch):
 
     monkeypatch.setattr(sess, "initialize", fake_initialize)
 
-    scene_bridge.set_live_enabled(scene, True)
+    playback.set_live_enabled(scene, True)
     assert scene.fluidsim.status == "Live simulation enabled - press play"
 
-    scene_bridge.set_live_enabled(scene, False)
+    playback.set_live_enabled(scene, False)
     assert scene.fluidsim.status == "Live simulation disabled"
 
 
 def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    playback = _reload_module("fluidSim_warp_blender51.blender.playback")
     scene = SimpleNamespace(
         frame_current=2,
         fluidsim=SimpleNamespace(
@@ -1242,7 +1245,7 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    playback._on_frame_change(scene, depsgraph=object())
 
     assert scene.fluidsim.live is False
     assert scene_bridge.session().active is False
@@ -1283,6 +1286,7 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     )
     addon = _reload_module("fluidSim_warp_blender51")
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    playback = _reload_module("fluidSim_warp_blender51.blender.playback")
     render = _reload_module("fluidSim_warp_blender51.blender.render")
     viewport_overlay = _reload_module("fluidSim_warp_blender51.blender.viewport_overlay")
     operators = _reload_module("fluidSim_warp_blender51.operators")
@@ -1295,8 +1299,8 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
         viewport_overlay, "unregister_overlay",
         lambda: calls.append("viewport"))
     monkeypatch.setattr(render, "unregister_handlers", lambda: calls.append("render"))
+    monkeypatch.setattr(playback, "unregister_handlers", lambda: calls.append("playback"))
     monkeypatch.setattr(scene_bridge, "unregister_handlers", lambda: calls.append("scene_handlers"))
-    monkeypatch.setattr(scene_bridge, "release_session", lambda: calls.append("release"))
     monkeypatch.setattr(panels, "unregister", lambda: calls.append("panels"))
     monkeypatch.setattr(operators, "unregister", lambda: calls.append("operators"))
     monkeypatch.setattr(preferences, "unregister", lambda: calls.append("preferences"))
@@ -1307,8 +1311,8 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     assert calls == [
         "viewport",
         "render",
+        "playback",
         "scene_handlers",
-        "release",
         "panels",
         "operators",
         "preferences",

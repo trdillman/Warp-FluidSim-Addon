@@ -208,12 +208,14 @@ def test_source_compiler_releases_when_compile_raises(monkeypatch):
         domain_max=(1.0, 1.0, 1.0), voxel_size=0.1,
         leaf_capacity=8, max_particles=8,
     )
+    depsgraph = SimpleNamespace(updates=[])
+    _install_bpy_depsgraph_stub(monkeypatch, depsgraph)
 
     with pytest.raises(RuntimeError, match="compile fault"):
         admission.capture_snapshot(
             scene, settings,
             {"gpu_total_bytes": 1024, "gpu_free_bytes": 1024},
-            depsgraph=SimpleNamespace(updates=[]), scene_identity=1,
+            depsgraph=depsgraph, scene_identity=1,
             snippet_builder=lambda _scene: ())
 
     assert released == [True]
@@ -237,6 +239,7 @@ def test_snapshot_captures_one_owned_scene_evaluation(monkeypatch):
     plan = SimpleNamespace(blockers=())
     monkeypatch.setattr(admission, "_plan_capacity", lambda *_args: plan)
     depsgraph = SimpleNamespace(updates=[])
+    _install_bpy_depsgraph_stub(monkeypatch, depsgraph)
     scene = SimpleNamespace(
         frame_current=7, frame_start=2, objects=[],
         fluidsim=SimpleNamespace(

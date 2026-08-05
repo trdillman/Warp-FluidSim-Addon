@@ -40,7 +40,7 @@ Archived native-interop, rendering-API, and ST-FLIP experiment worktrees are exc
 10. Existing structural point-cloud replacement for capacity growth, capacity shrink, or attribute-schema change is preserved and measured; the plan does not falsely claim that all allocation is eliminated.
 11. Live and cached inputs produce equivalent published output where their data overlaps. Missing cache data follows explicit, characterized fallback.
 12. Preview Playback is non-authoritative visual feedback.
-13. Production Cache Bake is deterministic and independent of Blender viewport event delivery.
+13. Production Cache Bake is **control-flow deterministic**: frame order, synchronization, stepping, writes, and metadata are sequential and independent of Blender viewport event delivery and preview/display settings. Nondeterministic CUDA numerics are explicitly outside this claim.
 14. Preserve current playback behavior, catch-up behavior, desynchronization behavior, status strings, and backend-status presentation. Do not introduce lag, progress, recovery, or authority states.
 
 ## 3. Truth contract
@@ -54,7 +54,7 @@ Archived native-interop, rendering-API, and ST-FLIP experiment worktrees are exc
 - Direct particle injection admits against the refreshed device particle count and reports any short commit as an invariant failure rather than claiming success.
 - Successful admission installs sources, colliders, force fields, height source, snippets, initial particles, and initially enabled output state before interactive stepping.
 - Preview Playback and Cache Playback create real Blender output datablocks and attributes.
-- Production Cache Bake advances frames sequentially and writes full authoritative cache data without consuming preview-decimated output.
+- Production Cache Bake advances frames sequentially and writes full authoritative cache data without consuming preview-decimated output. CUDA atomics, GPU compaction/emission order, and derived marching-cubes surfaces may vary between runs; no bitwise or particle-corresponded repeat equality is required.
 - Persistent Blender handlers remain deduplicated, persistent across save/reopen, and safely removed.
 - Pending reset/reinitialize state remains per-scene and preserves current undo, script, depsgraph, and rewind behavior.
 - Existing statuses and playback side effects remain unchanged unless the targeted-change rule is satisfied.
@@ -71,6 +71,7 @@ Archived native-interop, rendering-API, and ST-FLIP experiment worktrees are exc
 - Do not infer behavior from module names, UI labels, shared helper calls, or non-crash tests.
 - Do not route Production Cache Bake through viewport-decimated particles, retained preview surfaces, display colors, or frame-handler cadence.
 - Do not claim that publication performs no allocation under all conditions; preserve and disclose the existing growth fallback.
+- Do not use cross-bake numeric tolerances, particle correspondence, hashes, counts, or topology as proof of Production Cache Bake determinism. Do not add persistent particle IDs or change solver/cache schema to manufacture repeat equality.
 - Do not leave shallow compatibility wrappers after all internal callers migrate.
 - Do not modify or extract code from archived experimental worktrees.
 
@@ -84,7 +85,7 @@ Archived native-interop, rendering-API, and ST-FLIP experiment worktrees are exc
 | Output Publication owns persistent Blender output state | Source inspection plus live/cache Blender acceptance | `viewport.py` mostly owns it but mixes extraction, publication, preparation, materials, and overlay | Partial | Deepen publication; separate payload adapters and overlay |
 | Refactor adds no hot-path sync/copy/ID allocation | Instrumented baseline and profile comparison | Existing prewarm helps; residual point growth may reallocate | Partial | Freeze baseline; reject deltas; preserve documented fallback |
 | Live/cache output is equivalent where data overlaps | Normalized payload and real Blender comparisons | Paths converge late and differ in cadence/fallback details | Partial | Normalize shared facts before publication and test differences explicitly |
-| Production Cache Bake is independent of preview policy | Source inspection, repeat-bake hashes, cache acceptance | Deterministic export exists as a broad `Session` method | Partial | Move to `cache_bake.py` without changing output |
+| Production Cache Bake has deterministic control flow independent of preview policy | Source inspection; real write-seam solver/payload count and attribute alignment under varied preview settings; poisoned handler/publication seams | Sequential export exists as a broad `Session` method; CUDA numerics are nondeterministic | Partial | Move to `cache_bake.py` without changing output or schema |
 | Playback/status behavior remains unchanged | Exact transition-matrix characterization | Behavior is real but spread across session methods, globals, and handlers | Conformant but fragile | Freeze before moving ownership |
 | One Pending Settings module owns transition policy | Exhaustive registry plus Blender Phase 4 acceptance | Classification, snapshots, timers, operators, and presentation are distributed | Partial | Deepen behind `pending_settings.py` |
 | Architecture report proves implementation | No such evidence is sufficient | Temporary HTML report exists | Review artifact only | Use only as design context |
@@ -155,9 +156,9 @@ Owns current Preview/Cache Playback policy:
 
 Solver Session remains responsible for direct synchronization and stepping. Playback is non-authoritative, but its current behavior is frozen.
 
-### 5.6 `blender/cache_bake.py` — deep deterministic runner
+### 5.6 `blender/cache_bake.py` — deep control-flow-deterministic runner
 
-Owns sequential production frame advancement, cache writes, metadata, scene-frame restoration, temporary live-state changes, and failure cleanup. It cannot depend on frame-change delivery or Output Publication state.
+Owns sequential production frame advancement, cache writes, metadata, scene-frame restoration, temporary live-state changes, and failure cleanup. It cannot depend on frame-change delivery or Output Publication state. “Deterministic” here describes ordered control flow only; CUDA atomic accumulation, compaction/emission order, particle values, and derived marching-cubes geometry are not promised repeatable.
 
 ### 5.7 `blender/pending_settings.py` — deep module
 
@@ -556,7 +557,7 @@ Do not add preview-lag, progress, recovery, or authority states.
 - `scene_bridge.py` contains no timeline-gap interpretation, render-restore global, or playback handler ownership.
 - Playback uses Simulation Admission and Output Publication through their established seams.
 
-### Task 3.3 — Separate deterministic Production Cache Bake
+### Task 3.3 — Separate control-flow-deterministic Production Cache Bake
 
 **Files**
 
@@ -580,9 +581,10 @@ Do not add preview-lag, progress, recovery, or authority states.
 
 **Add evidence**
 
-- two identical production bakes produce identical frame payload hashes and semantically identical metadata, excluding intentionally variable timestamps;
-- changing preview stride, display attributes, retained-surface cadence, or visibility cannot change production cache hashes;
-- Production Cache Bake does not call frame-change handlers or Output Publication.
+- each production run records sequential frame/write order and independently valid metadata without asserting cross-bake numerical, count, hash, or topology equality; exact hashes, counts, and topology remain diagnostics only;
+- for every production write, cached full liquid and non-empty whitewater arrays and every aligned attribute equal the authoritative solver counts sampled immediately before that write, including when preview stride, display attributes, retained-surface cadence, and visibility vary; a preview-decimated payload must fail this contract;
+- Production Cache Bake bypasses frame-change interpretation and Output Publication at real runtime seams; it restores Blender frame/live and temporary handler suppression while intentionally leaving the solver at the state reached (including on failure), preserving the existing non-transactional contract rather than claiming solver rollback;
+- no persistent particle IDs, solver schema changes, or cache schema changes are introduced. CUDA atomic accumulation, compaction/emission ordering, and derived marching-cubes results remain numerically nondeterministic.
 
 ### Task 3.4 — Rewire handler ownership
 
@@ -610,7 +612,7 @@ blender --background --factory-startup --python tests/blender_cache_export_pipel
 blender --background --factory-startup --python tests/blender_viewport_2frame_gate.py
 ```
 
-**Rollback point:** commit Playback and Cache Bake extraction only after handler persistence, exact behavior characterization, and repeat-bake determinism pass.
+**Rollback point:** commit Playback and Cache Bake extraction only after handler persistence, exact behavior characterization, and Production Cache Bake control-flow/write-seam acceptance pass.
 
 ## 10. Phase 4 — Pending Settings
 
@@ -723,7 +725,7 @@ Deleting any proposed deep module must spread its complexity back across multipl
 
 - module ownership and dependency direction;
 - Preview Playback is visual feedback;
-- Production Cache Bake is deterministic and separate;
+- Production Cache Bake is control-flow deterministic and separate; CUDA repeat numerics are explicitly not claimed;
 - current playback/backend status remains unchanged;
 - focused acceptance commands;
 - review artifacts do not certify core behavior.
@@ -769,7 +771,7 @@ Run policy-drift validation only after a GUI-inclusive pass and intentional repo
 - Default headless production gate passes.
 - GUI-inclusive production gate passes.
 - Policy-drift validation passes against the validated HEAD and checked-in artifacts.
-- Repeat Production Cache Bake hashes match.
+- Production Cache Bake follows sequential frame/write/metadata control flow independent of event delivery and preview/display settings; every write has full liquid and non-empty whitewater schemas/attributes matching immediate solver counts. Cross-bake hashes, counts, topology, and numerical values are diagnostic only and are not completion gates.
 - No added publication sync/copy/host acquisition/ID allocation relative to baseline.
 - Exact current playback/backend-status characterization remains green.
 - Implementation-start dirty-file hashes remain unchanged unless the user explicitly reassigns those files.
@@ -863,7 +865,7 @@ Do not parallelize overlapping writes to:
 | Output refactor adds readback or host acquisition | Separate payload preparation from publisher; instrument calls |
 | Output refactor adds ID/depsgraph churn | Baseline each structural case; initial/property preparation outside handler; preserve existing growth, shrink, and schema-change fallbacks only |
 | Live/cache equivalence hides real cadence differences | Equivalence matrix with explicit retained-surface and missing-data exceptions |
-| Production cache consumes preview data | Repeat-bake hashes; prohibit Output Publication dependency |
+| Production cache consumes preview data | Compare each write payload/attribute length with immediate solver counts under varied preview settings; poison frame-handler interpretation and Output Publication; never gate on repeat hashes/numerics |
 | Status behavior drifts during extraction | Exact transition characterization before Phase 3 |
 | Pending registry misses a property | Exhaustive/disjoint registry test with explicit exceptions |
 | Two scenes share output collection state unexpectedly | Characterize shared/distinct collection names, publication, visibility, unlinking, and removal in focused Blender tests; preserve results unless defect evidence + red test authorizes change |

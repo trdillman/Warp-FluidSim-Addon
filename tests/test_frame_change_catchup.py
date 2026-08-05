@@ -35,8 +35,13 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    sys.modules.pop("fluidSim_warp_blender51.blender.playback", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    return scene_bridge
 
 
 def _scene(frame, *, catchup=8):
@@ -84,7 +89,7 @@ def test_dropped_playback_frames_step_the_whole_gap_at_the_right_indices(
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     sess, steps = _live_session(scene_bridge, last_frame=3)
 
-    sess.handle_frame_change(_scene(7), None)
+    scene_bridge.playback.handle_frame_change(sess, _scene(7), None)
 
     assert steps == [4, 5, 6, 7]
     assert sess.last_frame == 7
@@ -99,7 +104,7 @@ def test_first_frame_of_a_fresh_session_is_a_single_step(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     sess, steps = _live_session(scene_bridge, last_frame=-1)
 
-    sess.handle_frame_change(_scene(5), None)
+    scene_bridge.playback.handle_frame_change(sess, _scene(5), None)
 
     assert steps == [5]
 
@@ -115,7 +120,7 @@ def test_a_jump_past_the_catchup_bound_reports_desync_and_takes_no_step(
     sess, steps = _live_session(scene_bridge, last_frame=3)
     scene = _scene(50)
 
-    sess.handle_frame_change(scene, None)
+    scene_bridge.playback.handle_frame_change(sess, scene, None)
 
     assert steps == []
     assert sess.last_frame == 50
@@ -131,11 +136,13 @@ def test_the_catchup_bound_is_the_scene_property_not_a_constant(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
     sess, steps = _live_session(scene_bridge, last_frame=3)
-    sess.handle_frame_change(_scene(20, catchup=2), None)
+    scene_bridge.playback.handle_frame_change(
+        sess, _scene(20, catchup=2), None)
     assert steps == []
 
     sess, steps = _live_session(scene_bridge, last_frame=3)
-    sess.handle_frame_change(_scene(20, catchup=32), None)
+    scene_bridge.playback.handle_frame_change(
+        sess, _scene(20, catchup=32), None)
     assert steps == list(range(4, 21))
 
 
@@ -194,12 +201,12 @@ def test_unregister_handlers_releases_the_session(monkeypatch):
         lambda self, *args, **kwargs: released.append(True))
     handlers = sys.modules["bpy"].app.handlers.frame_change_post
 
-    scene_bridge.register_handlers()
-    scene_bridge.register_handlers()
+    scene_bridge.playback.register_handlers()
+    scene_bridge.playback.register_handlers()
     assert len(handlers) == 1
     assert released == []
 
-    scene_bridge.unregister_handlers()
+    scene_bridge.playback.unregister_handlers()
     assert handlers == []
     assert released == [True]
 
@@ -215,18 +222,18 @@ def test_a_nested_frame_change_takes_no_second_pass(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     seen = []
 
-    def _handle(self, scn, depsgraph):
+    def _handle(_sess, scn, depsgraph):
         seen.append(scn.frame_current)
         if len(seen) == 1:
-            scene_bridge._on_frame_change(_scene(6), depsgraph)
+            scene_bridge.playback._on_frame_change(_scene(6), depsgraph)
 
-    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+    monkeypatch.setattr(scene_bridge.playback, "handle_frame_change", _handle)
 
-    scene_bridge._on_frame_change(_scene(5), None)
+    scene_bridge.playback._on_frame_change(_scene(5), None)
 
     assert seen == [5]
     # The guard resets, so the next real frame change is served normally.
-    scene_bridge._on_frame_change(_scene(7), None)
+    scene_bridge.playback._on_frame_change(_scene(7), None)
     assert seen == [5, 7]
 
 
@@ -235,16 +242,16 @@ def test_the_guard_resets_when_the_handler_raises(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     calls = []
 
-    def _handle(self, scn, depsgraph):
+    def _handle(_sess, scn, depsgraph):
         calls.append(scn.frame_current)
         if len(calls) == 1:
             raise RuntimeError("handler exploded")
 
-    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+    monkeypatch.setattr(scene_bridge.playback, "handle_frame_change", _handle)
 
     with pytest.raises(RuntimeError):
-        scene_bridge._on_frame_change(_scene(5), None)
-    scene_bridge._on_frame_change(_scene(6), None)
+        scene_bridge.playback._on_frame_change(_scene(5), None)
+    scene_bridge.playback._on_frame_change(_scene(6), None)
 
     assert calls == [5, 6]
 
@@ -265,21 +272,21 @@ def test_a_live_write_from_inside_the_handler_cannot_re_enter_the_session(
         lambda self, scn, **kwargs: initialized.append(True))
     scene = _scene(5)
 
-    def _handle(self, scn, depsgraph):
+    def _handle(_sess, scn, depsgraph):
         # Stands in for properties._on_live_changed, which Blender runs
         # inline on the fs.live assignment at the end of the error path.
-        scene_bridge.set_live_enabled(scn, True)
-        scene_bridge.set_live_enabled(scn, False)
+        scene_bridge.playback.set_live_enabled(scn, True)
+        scene_bridge.playback.set_live_enabled(scn, False)
 
-    monkeypatch.setattr(scene_bridge.Session, "handle_frame_change", _handle)
+    monkeypatch.setattr(scene_bridge.playback, "handle_frame_change", _handle)
 
-    scene_bridge._on_frame_change(scene, None)
+    scene_bridge.playback._on_frame_change(scene, None)
 
     assert initialized == []
     assert scene.fluidsim.status == ""
 
     # Outside the handler the same call does its normal work.
-    scene_bridge.set_live_enabled(scene, False)
+    scene_bridge.playback.set_live_enabled(scene, False)
     assert scene.fluidsim.status == "Live simulation disabled"
 
 
