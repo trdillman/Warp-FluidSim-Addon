@@ -55,6 +55,29 @@ The commit is preserved under the annotated tag `retired/addon-st-flip-review-71
 which carries the same rationale. Recover with
 `git switch -c <name> retired/addon-st-flip-review-717052`.
 
+## Completed on 2026-08-06
+
+The Phase-4 landing worktree was re-verified live (`736f584` master at the time)
+and removed:
+
+- `git worktree remove` on `liquid_warp_blender51_phase4_commit` (clean, 0 commits
+  ahead/behind master — its payload had already landed as `dcf4d27` per
+  `reviews/WORKTREE_ROI_INTEGRATION_PLAN_2026-07-29.md`).
+- The branch ref `phase4/live-interaction-merge-20260728` was retained, per this
+  task's own instruction above.
+
+Alongside it, a repository-wide branch sweep (unrelated to the two orphan
+directories below) deleted 29 fully-merged local branch refs with no worktree:
+26 via plain `git branch -d` (git's own merge check, self-verifying) and 3 via
+`git branch -D` (`codex/deepen-pressure-module`, `-snippets-module`,
+`-sourcing-module` — content-identical to commits already on master under
+different SHAs `3dd2d05`/`ade8ead`/`4005a6b`, re-confirmed as ancestors of
+master immediately before deletion). Full list and rationale: see the prior
+chat turn's audit. Note: an earlier draft of the deletion list incorrectly
+included `codex/native-gpu-interop-main-20260715` among the "zero-ahead"
+candidates; caught before execution and excluded, since it is one of the four
+experiments below.
+
 ## Known blocker
 
 `.claude/worktrees/addon-st-flip-review-717052` is an empty, unregistered orphan

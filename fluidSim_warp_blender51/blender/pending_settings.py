@@ -75,7 +75,7 @@ class SettingTier(str, Enum):
 
 _LIVE_REGISTRY_FIELDS = frozenset({
     "time_scale", "cfl", "min_substeps", "max_substeps", "gravity",
-    "use_scene_gravity", "particles_per_voxel", "sample_type", "flip_ratio",
+    "use_scene_gravity", "sample_type", "flip_ratio",
     "trace_mode", "relax_enabled", "relax_strength", "relax_mode",
     "max_speed", "limit_behavior", "limit_percent", "directional_force",
     "omnidirectional_force_center", "omnidirectional_force_strength",
@@ -118,18 +118,18 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_smooth_strength",
 })
 _RESET_REGISTRY_FIELDS = frozenset({
-    "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",
 })
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity", "max_whitewater",
+    "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
-    "max_particles", "snippets", "active_snippet", "snippet_library_selection",
+    "snippets", "active_snippet", "snippet_library_selection",
     "snippet_editor_lines", "shortcut_field", "shortcut_constant_name",
     "shortcut_constant_value", "report_path", "benchmark_frames",
     "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
@@ -143,7 +143,9 @@ _PRESENTATION_FIELDS = frozenset({
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
-    "stat_cfl_clamped",
+    "stat_cfl_clamped", "stat_whitewater_admitted",
+    "stat_whitewater_dropped", "stat_whitewater_policy",
+    "stat_whitewater_required", "stat_whitewater_status",
 })
 
 _TIER_FIELDS = {
@@ -219,11 +221,11 @@ _HOT_SETTING_FIELDS = frozenset({
     "ww_bubble_drag", "ww_spray_drag",
 })
 
-_LIVE_REFRESH_SETTING_FIELDS = frozenset({"particles_per_voxel"})
+_LIVE_REFRESH_SETTING_FIELDS = frozenset()
 _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
-    "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
 })
 
@@ -243,7 +245,7 @@ _SURFACE_SETTING_FIELDS = frozenset({
 
 
 _REINIT_SETTING_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity",
+    "domain_object", "voxel_size", "leaf_capacity", "max_particles",
     "max_whitewater", "profiling_enabled", "profiling_sync",
 })
 _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
@@ -276,6 +278,7 @@ class SceneInteractionState:
     blocked_reason: str = ""
     suppress_callbacks: bool = False
     timer_scheduled: bool = False
+    capacity_plan_timer_scheduled: bool = False
 
 
 _INTERACTION_STATES = {}
@@ -791,19 +794,52 @@ def _schedule_disposable_apply(scene):
     timers.register(flush_scene_pending, first_interval=0.05)
 
 
+def _schedule_capacity_plan_refresh(scene):
+    """Debounce heavyweight source/GPU planning outside RNA callbacks."""
+    state = _interaction_state(scene)
+    if state.capacity_plan_timer_scheduled:
+        return
+    timers = getattr(getattr(bpy, "app", None), "timers", None)
+    if timers is None or not hasattr(timers, "register"):
+        return
+    state.capacity_plan_timer_scheduled = True
+
+    def flush_capacity_plan():
+        state.capacity_plan_timer_scheduled = False
+        sess = session()
+        if sess.owns_scene(scene):
+            try:
+                sess.refresh_capacity_plan(scene)
+            except Exception as exc:  # noqa: BLE001 - timer boundary
+                sess.set_error(scene, repr(exc))
+                scene.fluidsim.status = f"Capacity plan refresh failed: {exc}"
+        _tag_view3d_redraw()
+        return None
+
+    timers.register(flush_capacity_plan, first_interval=0.10)
+
+
 def update_particle_capacity_policy(scene):
-    """Apply growth policy live; keep the authored reserve separate from runtime capacity."""
+    """Apply growth policy live and keep capacity plan/pending truth scene-owned."""
     sess = session()
     fs = scene.fluidsim
     if sess.owns_scene(scene):
         sess.solver.settings.auto_grow_particles = bool(fs.auto_grow_particles)
         sess.solver.settings.particle_growth_failure_policy = str(
             fs.particle_growth_failure_policy)
-        fs.status = (
-            "Particle growth policy updated; Initial Particle Reserve applies "
-            "the next time a solver starts")
+        sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
+        fs.status = sess.particle_capacity_notice_for_scene(scene)
+        had_scene_plan = (
+            sess.capacity_plan is not None
+            and sess.capacity_plan_scene_identity == _scene_identity(scene))
+        sess.invalidate_capacity_plan_for_scene(scene)
+        refresh_pending_state(scene, sess)
+        if had_scene_plan:
+            _schedule_capacity_plan_refresh(scene)
     else:
-        fs.status = "Particle capacity settings stored for the next solver"
+        sess.invalidate_capacity_plan_for_scene(scene)
+        sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
+        fs.status = sess.particle_capacity_notice_for_scene(scene)
     _tag_view3d_redraw()
 
 

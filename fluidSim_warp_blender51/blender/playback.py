@@ -127,6 +127,18 @@ def play_cache_frame(sess, scene, frame=None):
     output_publication.update_outputs_from_cache_frame(scene, frame_data)
     fs.stat_particles = len(frame_data.get("positions", ()))
     fs.stat_whitewater = len(frame_data.get("whitewater", ()))
+
+    def scalar(key, default=0):
+        value = frame_data.get(key, default)
+        return value.item() if hasattr(value, "item") else value
+
+    fs.stat_whitewater_required = int(scalar("whitewater_required"))
+    fs.stat_whitewater_admitted = int(scalar("whitewater_admitted"))
+    fs.stat_whitewater_dropped = int(scalar("whitewater_dropped"))
+    fs.stat_whitewater_policy = str(
+        scalar("whitewater_policy", "UNAVAILABLE_OLD_CACHE"))
+    fs.stat_whitewater_status = str(
+        scalar("whitewater_status", "UNAVAILABLE_OLD_CACHE"))
     fs.stat_voxels = 0
     fs.stat_step_ms = 0.0
     fs.stat_substeps = 0
@@ -210,6 +222,7 @@ def handle_frame_change(sess, scene, depsgraph):
         fs.status = f"Solver desync: {message}"
         return
 
+    previous_last_frame = sess.last_frame
     sess.last_frame = frame
     try:
         for offset in range(gap - 1, -1, -1):
@@ -218,6 +231,17 @@ def handle_frame_change(sess, scene, depsgraph):
                 scene, sess, refresh_pending=False,
                 timeline_frame=frame - offset)
     except Exception as exc:  # noqa: BLE001 - never break playback
+        from ..sim.fields import TopologyCapacityError
+
+        if isinstance(exc, TopologyCapacityError):
+            sess.last_frame = previous_last_frame
+            sess.set_error(scene, repr(exc))
+            fs.live = False
+            fs.status = (
+                "Topology capacity blocked; Live paused, solver preserved "
+                f"(need {int(exc.required):,}, capacity {int(exc.capacity):,})")
+            print(f"fluidSim topology step blocked: {exc!r}")
+            return
         sess.set_error(scene, repr(exc))
         fs.live = False
         fs.status = f"Solver error: {exc}"

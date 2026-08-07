@@ -58,6 +58,23 @@ def test_initial_plan_aggregates_seed_and_source_demand_before_admission():
     assert plan.blockers[0].available == 10
 
 
+def test_transaction_residency_is_included_in_peak_plan_and_signature():
+    base = plan_initialization(settings(), (), (), (), resources())
+    resident_bytes = 14 * 1024**3
+    transactional = plan_initialization(
+        settings(), (), (), (), resources(),
+        additional_transaction_bytes=resident_bytes)
+
+    assert transactional.additional_transaction_bytes == resident_bytes
+    assert transactional.transaction_scratch_bytes == (
+        base.transaction_scratch_bytes + resident_bytes)
+    assert transactional.estimated_bytes == base.estimated_bytes + resident_bytes
+    assert transactional.scene_signature != base.scene_signature
+    assert any(
+        blocker.code == "MEMORY_ESTIMATE"
+        for blocker in transactional.blockers)
+
+
 def test_unknown_particle_demand_fails_closed_without_inventing_a_count():
     plan = plan_initialization(
         settings(),
@@ -70,7 +87,7 @@ def test_unknown_particle_demand_fails_closed_without_inventing_a_count():
     assert plan.particle_demand.value is None
     assert plan.particle_demand.quality is DemandQuality.UNKNOWN
     assert any(blocker.code == "PARTICLE_DEMAND_UNKNOWN" for blocker in plan.blockers)
-    assert suggest_configurations(plan, settings(), resources()) == ()
+    assert suggest_configurations(plan, settings()) == ()
 
 
 def test_leaf_union_is_deduplicated_and_expanded_within_domain():
@@ -117,7 +134,7 @@ def test_suggestions_are_immutable_estimates_and_do_not_mutate_settings():
         (), (), resources(),
     )
 
-    suggestions = suggest_configurations(plan, authored, resources())
+    suggestions = suggest_configurations(plan, authored)
 
     assert authored == original
     assert suggestions
@@ -142,7 +159,7 @@ def test_planner_exposes_domain_margin_and_balanced_alternatives_without_applyin
         (), (), resources(),
     )
 
-    suggestions = suggest_configurations(plan, authored, resources())
+    suggestions = suggest_configurations(plan, authored)
     labels = {item.label for item in suggestions}
 
     assert "Tighten empty X/Y/Z domain margins" in labels

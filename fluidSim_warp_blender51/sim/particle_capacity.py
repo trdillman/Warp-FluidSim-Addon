@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from .memory_safety import PARTICLE_BYTES, safe_memory_budget
+from .memory_safety import (
+    PARTICLE_BYTES,
+    WHITEWATER_EMISSION_BYTES_PER_LIQUID,
+    safe_memory_budget,
+)
 
 
 DEFAULT_GROWTH_FACTOR = 1.5
@@ -69,13 +73,15 @@ def plan_particle_growth(
 
     The old and new particle pools coexist until copying succeeds, so the peak
     guard charges the complete target pool rather than only the capacity delta.
-    ``PARTICLE_BYTES`` already includes conservative particle and bin storage.
+    ``PARTICLE_BYTES`` includes conservative particle and bin storage; the
+    whitewater candidate flag/offset workspace grows in the same transaction.
     """
     current = max(1, int(current))
     required = max(0, int(required))
     target = growth_target(current, required, hard_limit=hard_limit)
     budget = int(safe_memory_budget(gpu_total_bytes, gpu_free_bytes))
-    peak = int(target * PARTICLE_BYTES)
+    peak = int(target * (
+        PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID))
     if required <= current:
         return ParticleGrowthPlan(
             current, required, current, 0, budget, True, "already sufficient")

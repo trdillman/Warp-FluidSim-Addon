@@ -81,7 +81,7 @@ def test_special_particle_capacity_policy_is_explicit(monkeypatch):
     _properties, pending, _bridge = _modules(monkeypatch)
 
     assert pending.SETTING_TRANSITION_REGISTRY["max_particles"] is (
-        pending.SettingTier.AUTHORED_NEXT_RUN)
+        pending.SettingTier.REINITIALIZE)
     assert pending.SETTING_TRANSITION_REGISTRY["auto_grow_particles"] is (
         pending.SettingTier.LIVE)
     assert pending.SETTING_TRANSITION_REGISTRY[

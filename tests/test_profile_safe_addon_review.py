@@ -225,6 +225,10 @@ def test_bootstrap_is_nonpersistent_and_copies_after_conflict_disable():
     )
     assert "bpy.ops.wm.open_mainfile" not in source
     assert "bpy.ops.wm.quit_blender" not in source
+    # Blender 5.1 has already begun RNA teardown when Python atexit runs;
+    # addon_utils.disable() there can dereference destroyed RNA collections.
+    assert "atexit.register" not in source
+    assert "def runtime_cleanup" not in source
 
 
 def test_success_report_has_complete_safety_schema_and_cleans_only_owned_process(

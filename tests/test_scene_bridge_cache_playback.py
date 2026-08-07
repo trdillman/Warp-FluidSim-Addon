@@ -91,6 +91,11 @@ def _scene(frame=7, *, playback=True):
             stat_particles=0,
             stat_voxels=0,
             stat_whitewater=0,
+            stat_whitewater_required=0,
+            stat_whitewater_admitted=0,
+            stat_whitewater_dropped=0,
+            stat_whitewater_policy="",
+            stat_whitewater_status="",
             stat_step_ms=0.0,
             stat_substeps=0,
         ),
@@ -222,6 +227,11 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
         "frame": np.array(frame, dtype=np.int32),
         "positions": np.zeros((2, 3), dtype=np.float32),
         "whitewater": np.zeros((1, 3), dtype=np.float32),
+        "whitewater_required": np.array(6, dtype=np.int64),
+        "whitewater_admitted": np.array(5, dtype=np.int64),
+        "whitewater_dropped": np.array(1, dtype=np.int64),
+        "whitewater_policy": np.array("CLAMP"),
+        "whitewater_status": np.array("DROPPED"),
     }
     fake_cache.resolve_frame_range = lambda *args, **kwargs: (1, 10)
     fake_cache.read_sequence_metadata = lambda base: None
@@ -237,6 +247,11 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     assert calls == [(7, 7)]
     assert scene.fluidsim.stat_particles == 2
     assert scene.fluidsim.stat_whitewater == 1
+    assert scene.fluidsim.stat_whitewater_required == 6
+    assert scene.fluidsim.stat_whitewater_admitted == 5
+    assert scene.fluidsim.stat_whitewater_dropped == 1
+    assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
+    assert scene.fluidsim.stat_whitewater_status == "DROPPED"
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
 
 
@@ -806,7 +821,7 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
         lambda *_args, **_kwargs: (
             snapshot, {"safe": True, "estimated_bytes": 0}, None))
     monkeypatch.setattr(
-        simulation_admission.SimulationAdmission, "_configure_solver",
+        simulation_admission.SimulationAdmission, "_configure_candidate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("sync failed")))
 

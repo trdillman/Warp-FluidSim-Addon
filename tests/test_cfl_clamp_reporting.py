@@ -83,7 +83,11 @@ def _scene():
 
 def _stats(clamped):
     return SimpleNamespace(
-        active_particles=7, active_voxels=8, whitewater_particles=0,
+        active_particles=7, active_voxels=8, whitewater_particles=3,
+        whitewater_required=5, whitewater_admitted=3,
+        whitewater_dropped=2, whitewater_policy="CLAMP",
+        whitewater_status="DROPPED",
+        whitewater_message="Whitewater admitted 3/5; dropped 2",
         step_time=0.002, substeps=4, cfl_substeps_clamped=clamped,
         as_dict=lambda: {})
 
@@ -123,6 +127,26 @@ def test_the_clamp_flag_reaches_the_panel_and_does_not_latch(monkeypatch):
     reported[0] = False
     sess.step(scene)
     assert scene.fluidsim.stat_cfl_clamped is False
+
+
+def test_whitewater_truth_reaches_live_scene_status(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _stub_viewport(monkeypatch)
+
+    sess = scene_bridge.Session()
+    sess.solver = SimpleNamespace(
+        frame=5, sourcing=None, step_frame=lambda: _stats(False))
+    scene = _scene()
+
+    sess.step(scene)
+
+    assert scene.fluidsim.stat_whitewater == 3
+    assert scene.fluidsim.stat_whitewater_required == 5
+    assert scene.fluidsim.stat_whitewater_admitted == 3
+    assert scene.fluidsim.stat_whitewater_dropped == 2
+    assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
+    assert scene.fluidsim.stat_whitewater_status == "DROPPED"
+    assert "Whitewater admitted 3/5; dropped 2" in scene.fluidsim.status
 
 
 def test_cache_playback_clears_the_clamp_flag(monkeypatch):

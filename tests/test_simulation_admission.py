@@ -15,6 +15,8 @@ class _Runtime:
     def __init__(self, name):
         self.name = name
         self.released = False
+        self.device = "cuda:0"
+        self.settings = SimpleNamespace(device="cuda:0")
 
     def release(self):
         self.released = True
@@ -29,6 +31,20 @@ class _Session:
         self.capacity_plan_memory_bypassed = False
         self.scene_inputs = SimpleNamespace(clear=lambda: None)
         self.last_reported_growth_capacity = 0
+        self.profiler = None
+        self.device = "cuda:0"
+        self.memory_assessment = {}
+        self.scene_identity = 101
+        self.scene_key = "old-key"
+        self.start_frame = 1
+        self.cache_written_start = None
+        self.cache_written_end = None
+        self.cache_settings_records = {}
+        self.last_frame = -1
+        self.frame_stats = []
+
+    def owns_scene(self, _scene):
+        return self.solver is not None
 
     def release(self, _scene=None, *, preserve_error=False):
         self.release_calls.append(preserve_error)
@@ -41,18 +57,27 @@ class _Session:
     def set_error(self, _scene, message):
         self.error = str(message)
 
+    def clear_error(self, _scene=None):
+        self.error = ""
+
 
 class _Snapshot:
     configured_device = "cuda:0"
     profiling_enabled = False
     profiling_sync = False
     capacity_plan = SimpleNamespace(blockers=())
+    settings = SimpleNamespace(device="cuda:0")
     scene_identity = 101
     scene_key = "key"
     frame_start = 1
 
     def __init__(self):
         self.released = 0
+        self.scene_inputs = SimpleNamespace(clear=lambda: None)
+
+    def transfer_scene_inputs(self):
+        value, self.scene_inputs = self.scene_inputs, None
+        return value
 
     def release_transients(self):
         self.released += 1
@@ -93,7 +118,7 @@ def test_preflight_failure_preserves_existing_solver(monkeypatch):
 
 
 @pytest.mark.parametrize("failure_phase", ("allocate", "configure", "seed", "output"))
-def test_post_cutover_failure_leaves_clean_inactive_session(
+def test_candidate_failures_preserve_live_session_and_post_cutover_failure_cleans(
         monkeypatch, failure_phase):
     session = _Session()
     old_solver = session.solver
@@ -107,18 +132,18 @@ def test_post_cutover_failure_leaves_clean_inactive_session(
     def fail(name):
         raise RuntimeError(f"{name} failed")
 
-    monkeypatch.setattr(
-        owner, "_allocate_solver",
-        ((lambda *_args: fail("allocate")) if failure_phase == "allocate"
-         else (lambda *_args: _Runtime("replacement"))))
-    monkeypatch.setattr(
-        owner, "_configure_solver",
-        ((lambda *_args: fail("configure")) if failure_phase == "configure"
-         else (lambda *_args: ())))
-    monkeypatch.setattr(
-        owner, "_commit_seeds",
-        ((lambda *_args: fail("seed")) if failure_phase == "seed"
-         else (lambda *_args: None)))
+    candidate = _Runtime("replacement")
+
+    def prepare(*_args):
+        if failure_phase == "allocate":
+            fail("allocate")
+        if failure_phase == "configure":
+            fail("configure")
+        if failure_phase == "seed":
+            fail("seed")
+        return candidate, ()
+
+    monkeypatch.setattr(owner, "_prepare_solver_replacement", prepare)
     monkeypatch.setattr(
         owner, "_prepare_outputs",
         ((lambda *_args: fail("output")) if failure_phase == "output"
@@ -127,9 +152,15 @@ def test_post_cutover_failure_leaves_clean_inactive_session(
     with pytest.raises(RuntimeError, match=f"{failure_phase} failed"):
         owner.initialize(_scene())
 
-    assert old_solver.released is True
-    assert session.solver is None
-    assert session.release_calls == [False, True]
+    if failure_phase == "output":
+        assert old_solver.released is True
+        assert candidate.released is True
+        assert session.solver is None
+        assert session.release_calls == [True]
+    else:
+        assert old_solver.released is False
+        assert session.solver is old_solver
+        assert session.release_calls == []
     assert f"{failure_phase} failed" in session.error
     assert snapshot.released == 1
 
@@ -147,23 +178,21 @@ def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
         events.append("preflight")
         return snapshot, {"safe": True, "estimated_bytes": 1}, None
 
-    original_release = session.release
-
-    def release(*args, **kwargs):
-        events.append("cutover")
-        return original_release(*args, **kwargs)
-
-    session.release = release
     monkeypatch.setattr(owner, "_preflight", preflight)
-    monkeypatch.setattr(
-        owner, "_allocate_solver",
-        lambda *_args: events.append("allocate") or _Runtime("replacement"))
-    monkeypatch.setattr(
-        owner, "_configure_solver",
-        lambda *_args: events.append("configure") or ())
-    monkeypatch.setattr(
-        owner, "_commit_seeds",
-        lambda *_args: events.append("seeds"))
+    candidate = _Runtime("replacement")
+
+    def prepare(*_args):
+        events.extend(("allocate", "configure", "seeds"))
+        return candidate, ()
+
+    original_commit = owner._commit_solver_replacement
+
+    def commit(*args, **kwargs):
+        events.append("cutover")
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "_prepare_solver_replacement", prepare)
+    monkeypatch.setattr(owner, "_commit_solver_replacement", commit)
     monkeypatch.setattr(
         owner, "_prepare_outputs",
         lambda *_args: events.append("outputs"))
@@ -173,7 +202,7 @@ def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
     assert result is session
     assert calls == ["snapshot"]
     assert events == [
-        "preflight", "cutover", "allocate", "configure", "seeds",
+        "preflight", "allocate", "configure", "seeds", "cutover",
         "outputs", "applied",
     ]
     assert old_solver.released is True
@@ -237,7 +266,8 @@ def test_snapshot_captures_one_owned_scene_evaluation(monkeypatch):
 
     monkeypatch.setattr(source_regions, "SourceCompiler", Compiler)
     plan = SimpleNamespace(blockers=())
-    monkeypatch.setattr(admission, "_plan_capacity", lambda *_args: plan)
+    monkeypatch.setattr(
+        admission, "_plan_capacity", lambda *_args, **_kwargs: plan)
     depsgraph = SimpleNamespace(updates=[])
     _install_bpy_depsgraph_stub(monkeypatch, depsgraph)
     scene = SimpleNamespace(
@@ -288,7 +318,7 @@ def test_capacity_replan_reuses_original_owned_demand(monkeypatch):
     seen = []
     monkeypatch.setattr(
         admission, "_plan_capacity",
-        lambda settings, footprints, seeds, colliders, resources: (
+        lambda settings, footprints, seeds, colliders, resources, **_kwargs: (
             seen.append((settings, footprints, seeds, colliders, resources))
             or "candidate-plan"))
 
@@ -373,7 +403,7 @@ def test_capture_acquires_one_depsgraph_and_shares_it_with_every_gatherer(
     monkeypatch.setattr(source_regions, "SourceCompiler", Compiler)
     monkeypatch.setattr(
         admission, "_plan_capacity",
-        lambda *_args: SimpleNamespace(blockers=()))
+        lambda *_args, **_kwargs: SimpleNamespace(blockers=()))
     scene = SimpleNamespace(
         frame_current=2, frame_start=1, objects=[],
         fluidsim=SimpleNamespace(
@@ -452,7 +482,7 @@ def test_capture_rejects_depsgraph_generation_invalidation(monkeypatch):
     monkeypatch.setattr(source_regions, "SourceCompiler", Compiler)
     monkeypatch.setattr(
         admission, "_plan_capacity",
-        lambda *_args: SimpleNamespace(blockers=()))
+        lambda *_args, **_kwargs: SimpleNamespace(blockers=()))
     scene = SimpleNamespace(
         frame_current=1, frame_start=1, objects=[],
         fluidsim=SimpleNamespace(

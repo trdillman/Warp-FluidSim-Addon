@@ -5,6 +5,42 @@ from __future__ import annotations
 import numpy as np
 
 
+def _effective_source_target(scene, pg) -> int:
+    """Resolve one source occupancy through the shared 0..64 contract."""
+    from ..sim.quality_contract import (
+        AuthoredQualitySettings,
+        SourceSamplingMode,
+        SourceSamplingSettings,
+        resolve_quality,
+        resolve_source_sampling,
+    )
+
+    schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
+    fs = getattr(scene, "fluidsim", None)
+    quality = resolve_quality(
+        AuthoredQualitySettings(
+            voxel_size=float(getattr(fs, "voxel_size", 0.1)),
+            liquid_sampling=float(getattr(fs, "particles_per_voxel", 8.0))),
+        ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+    )
+    if schema < 4:
+        sampling = SourceSamplingSettings(
+            SourceSamplingMode.LEGACY_ABSOLUTE,
+            legacy_absolute=float(getattr(pg, "emit_rate", 8.0)))
+    else:
+        raw_mode = str(getattr(pg, "source_sampling_mode", "INHERIT"))
+        try:
+            mode = SourceSamplingMode(raw_mode)
+        except ValueError:
+            mode = SourceSamplingMode.LEGACY_ABSOLUTE
+        sampling = SourceSamplingSettings(
+            mode=mode,
+            multiplier=float(getattr(pg, "source_sampling_multiplier", 1.0)),
+            legacy_absolute=float(getattr(pg, "emit_rate", 8.0)),
+        )
+    return resolve_source_sampling(quality, sampling).target_per_voxel
+
+
 def _object_identity(obj):
     as_pointer = getattr(obj, "as_pointer", None)
     return int(as_pointer()) if as_pointer is not None else id(obj)
@@ -406,7 +442,7 @@ class SceneInputs:
                     velocity, self.object_velocity(obj, scene)))
             desc.velocity = velocity
             desc.blend_mode = BlendMode[pg.blend_mode]
-            desc.emit_rate = pg.emit_rate
+            desc.emit_rate = float(_effective_source_target(scene, pg))
             desc.emission_mode = SourceEmissionMode[pg.emission_mode]
             pointer = getattr(obj, "as_pointer", None)
             runtime_pointer = int(pointer()) if callable(pointer) else id(obj)
@@ -670,7 +706,8 @@ class SceneInputs:
                     lifespan=((float(pg.life_min) + float(pg.life_max)) * 0.5
                               if pg.use_lifespan else 0.0),
                     use_lifespan=bool(pg.use_lifespan),
-                    target_particles_per_voxel=float(pg.emit_rate),
+                    target_particles_per_voxel=float(
+                        _effective_source_target(scene, pg)),
                 )
                 plans.append(SourcePlan(
                     key, operation, lifecycle, cadence, region, payload,

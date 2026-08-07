@@ -10,6 +10,7 @@ from fluidSim_warp_blender51.sim.particle_capacity import (
     growth_target,
     plan_particle_growth,
 )
+from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
 
 
 def test_growth_target_adds_geometric_headroom_and_rounds_to_chunks():
@@ -28,7 +29,7 @@ def test_growth_guard_charges_full_atomic_replacement_pool():
 
     assert plan.allowed is True
     assert plan.target >= 2_000_000
-    assert plan.peak_allocation_bytes == plan.target * 128
+    assert plan.peak_allocation_bytes == plan.target * 136
     assert plan.budget_bytes == int(8 * unit * 0.90)
 
 
@@ -95,6 +96,7 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     owner = SimpleNamespace(
         particles=particles,
         bins=ParticleBins(4, 8, "cpu"),
+        whitewater=WhitewaterSystem(4, "cpu", candidate_capacity=4),
         grid=SimpleNamespace(voxel_capacity=8),
         device="cpu",
         settings=SolverSettings(max_particles=4),
@@ -110,6 +112,7 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     assert result.grew is True
     assert owner.particles.capacity == 8
     assert owner.bins.particle_capacity == 8
+    assert owner.whitewater.candidate_capacity == 8
     assert owner.settings.max_particles == 8
     np.testing.assert_allclose(owner.particles.position.numpy()[0], (1.0, 2.0, 3.0))
     assert owner.sourcing._compiled_batch is None
@@ -133,13 +136,16 @@ def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):
             4, 6, 8, 1024, 4096, True),
     )
     particles = ParticleSystem(4, "cpu")
+    whitewater = WhitewaterSystem(4, "cpu", candidate_capacity=4)
+    old_candidates = whitewater.candidates
     monkeypatch.setattr(
-        particles, "resized_copy",
+        whitewater, "allocate_candidate_workspace",
         lambda _capacity: (_ for _ in ()).throw(RuntimeError("synthetic OOM")),
     )
     owner = SimpleNamespace(
         particles=particles,
         bins=ParticleBins(4, 8, "cpu"),
+        whitewater=whitewater,
         grid=SimpleNamespace(voxel_capacity=8),
         device="cpu",
         settings=SolverSettings(max_particles=4),
@@ -153,6 +159,9 @@ def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):
     result = owner.ensure_particle_capacity(6)
 
     assert result.status == "FAILED"
+    assert owner.whitewater is whitewater
+    assert owner.whitewater.candidates is old_candidates
+    assert owner.whitewater.candidate_capacity == 4
     assert owner.particles is particles
     assert owner.particles.capacity == 4
     assert owner.settings.max_particles == 4

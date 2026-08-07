@@ -43,10 +43,15 @@ def test_gate_default_reports_headless_only(monkeypatch, capsys):
     assert "FULL-PRODUCTION-GATE-PASS" not in out
 
 
-def test_gate_include_gui_runs_gui_acceptance(monkeypatch, capsys):
+def test_gate_include_gui_runs_gui_acceptance(monkeypatch, capsys, tmp_path):
     labels = _stub_gate(monkeypatch)
+    report = tmp_path / "artifacts" / "gui_playback_probe.json"
+    report.parent.mkdir()
+    report.write_text("stale", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     assert run_production_gate.main(["--include-gui"]) == 0
+    assert not report.exists()
 
     out = capsys.readouterr().out
     assert "interactive GUI acceptance" in labels

@@ -102,7 +102,10 @@ def test_particle_capacity_policy_updates_live_without_restarting_or_rewriting_r
     assert solver.settings.max_particles == 1000
     assert solver.settings.auto_grow_particles is False
     assert solver.settings.particle_growth_failure_policy == "PAUSE"
-    assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
+    pending = bridge.pending.pending_presentation(scene)
+    assert pending["action"] == "REINIT_PENDING"
+    assert any("max_particles" in reason for reason in pending["reasons"])
+    assert "active pool never shrinks automatically" in scene.fluidsim.status
 
 
 def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
@@ -397,3 +400,44 @@ def test_revert_never_changes_device_preferences(monkeypatch):
     assert prefs.device == "cuda:1"
     assert "never changed automatically" in bridge.pending.pending_presentation(scene)[
         "blocked_reason"]
+
+
+def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    other = _scene()
+    sess, solver = _activate(bridge, scene)
+    solver.particles = SimpleNamespace(capacity=4096)
+    old_plan = SimpleNamespace(scene_signature="old")
+    new_plan = SimpleNamespace(scene_signature="new")
+    sess._set_capacity_plan(scene, old_plan, memory_bypassed=True)
+    refreshed = []
+    timer_callbacks = []
+    bridge.bpy.app.timers = SimpleNamespace(register=lambda callback, **_kwargs: (
+        timer_callbacks.append(callback)))
+
+    def refresh(actual):
+        refreshed.append(actual)
+        return sess._set_capacity_plan(actual, new_plan)
+
+    monkeypatch.setattr(sess, "refresh_capacity_plan", refresh)
+    scene.fluidsim.max_particles = 2048
+    bridge.pending.update_particle_capacity_policy(scene)
+    # Another slider tick invalidates state but must reuse the same timer.
+    scene.fluidsim.max_particles = 3072
+    bridge.pending.update_particle_capacity_policy(scene)
+
+    assert refreshed == []
+    assert len(timer_callbacks) == 1
+    assert sess.capacity_plan_for_scene(scene) is None
+    assert sess.capacity_plan_for_scene(other) is None
+    assert sess.capacity_plan_memory_bypassed is False
+    assert solver.particles.capacity == 4096
+    pending = bridge.pending.pending_presentation(scene)
+    assert pending["action"] == "REINIT_PENDING"
+    assert any("max_particles" in reason for reason in pending["reasons"])
+
+    timer_callbacks[0]()
+
+    assert refreshed == [scene]
+    assert sess.capacity_plan_for_scene(scene) is new_plan

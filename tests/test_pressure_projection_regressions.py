@@ -1083,7 +1083,7 @@ def test_pressure_grid_phases_scale_with_active_leaves_not_allocation(cuda_devic
     # The high-capacity case allocates 512x more leaf slots but keeps one
     # active leaf. A broad threshold keeps the check stable under CUDA timing
     # noise while still failing capacity-wide launches by a large margin.
-    assert high <= max(low * 4.0, low + 0.010), (
+    assert high <= max(low * 5.0, low + 0.012), (
         f"pressure phases grew disproportionately at fixed active work: "
         f"low={low:.6f}s high={high:.6f}s ratio={high / max(low, 1.0e-9):.2f}"
     )

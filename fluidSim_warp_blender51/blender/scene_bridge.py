@@ -42,9 +42,14 @@ class Session:
         self.memory_assessment = {}
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
+        self.capacity_plan_operation = None
+        self.capacity_plan_scene_identity = None
+        self.capacity_plan_scene_signature = ""
+        self.particle_capacity_notice_scene_identity = None
         self.last_reported_growth_capacity = 0
         self.scene_inputs = SceneInputs()
         self.scene_identity = None
+        self._admission_owner = None
         # Content digest stamped into cache frames/metadata.
         self.scene_key = ""
 
@@ -55,6 +60,85 @@ class Session:
     @property
     def collider_mesh_cache_stats(self):
         return self.scene_inputs.collider_mesh_cache_stats
+
+    def _clear_capacity_plan(self):
+        self.capacity_plan = None
+        self.capacity_plan_memory_bypassed = False
+        self.capacity_plan_operation = None
+        self.capacity_plan_scene_identity = None
+        self.capacity_plan_scene_signature = ""
+
+    @staticmethod
+    def _capacity_plan_binding_signature(scene, plan, operation):
+        plan_signature = str(getattr(plan, "scene_signature", ""))
+        binding = f"{plan_signature}|operation={operation}"
+        fs = getattr(scene, "fluidsim", None)
+        authored_reserve = getattr(fs, "max_particles", None)
+        if authored_reserve is None:
+            return binding
+        return f"{binding}|initial-reserve={int(authored_reserve)}"
+
+    def _set_capacity_plan(
+            self, scene, plan, *, operation=None, memory_bypassed=False):
+        if operation is None:
+            operation = "REINITIALIZE" if self.owns_scene(scene) else "INITIALIZE"
+        self.capacity_plan = plan
+        self.capacity_plan_memory_bypassed = bool(memory_bypassed)
+        self.capacity_plan_operation = str(operation)
+        self.capacity_plan_scene_identity = _scene_identity(scene)
+        self.capacity_plan_scene_signature = self._capacity_plan_binding_signature(
+            scene, plan, self.capacity_plan_operation)
+        return plan
+
+    def capacity_plan_for_scene(self, scene):
+        plan = self.capacity_plan
+        if plan is None or scene is None:
+            return None
+        if self.capacity_plan_scene_identity != _scene_identity(scene):
+            return None
+        if self.capacity_plan_scene_signature != self._capacity_plan_binding_signature(
+                scene, plan, self.capacity_plan_operation):
+            return None
+        return plan
+
+    def capacity_plan_signature_for_scene(self, scene):
+        if self.capacity_plan_for_scene(scene) is None:
+            return ""
+        return self.capacity_plan_scene_signature
+
+    def invalidate_capacity_plan_for_scene(self, scene):
+        if (scene is not None and self.capacity_plan_scene_identity
+                == _scene_identity(scene)):
+            self._clear_capacity_plan()
+
+    def particle_capacity_notice_for_scene(self, scene):
+        if (scene is None or self.particle_capacity_notice_scene_identity
+                != _scene_identity(scene)):
+            return ""
+        fs = getattr(scene, "fluidsim", None)
+        authored = getattr(fs, "max_particles", None)
+        if authored is None:
+            return ""
+        authored = int(authored)
+        if self.owns_scene(scene):
+            runtime = int(self.solver.particles.capacity)
+            if authored < runtime:
+                return (
+                    f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                    "Reset keeps the active pool; Reinitialize applies the smaller "
+                    "reserve. The active pool never shrinks automatically.")
+            if authored > runtime:
+                return (
+                    f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                    "Reset uses the active pool; Reinitialize applies the larger "
+                    "reserve.")
+            return (
+                f"Active pool {runtime:,}; Initial Reserve {authored:,}. "
+                "Growth policy applies live; Reinitialize recreates the pool.")
+        from ..sim.particle_capacity import MAX_AUTO_PARTICLES
+        return (
+            f"Initial Reserve {authored:,} will be allocated on Initialize; "
+            f"the auto-growth hard limit remains {MAX_AUTO_PARTICLES:,}.")
 
     def _clear_runtime(self):
         solver = self.solver
@@ -75,6 +159,8 @@ class Session:
         self.last_reported_growth_capacity = 0
         self.scene_identity = None
         self.scene_key = ""
+        self._clear_capacity_plan()
+        self.particle_capacity_notice_scene_identity = None
         del solver
         from ..sim.memory_safety import release_cuda_memory
         release_cuda_memory(device)
@@ -100,19 +186,22 @@ class Session:
             self.clear_error(scene)
 
     def _admission(self):
-        from . import pending_settings, snippets
-        from .simulation_admission import SimulationAdmission
+        if self._admission_owner is None:
+            from . import pending_settings, snippets
+            from .simulation_admission import SimulationAdmission
 
-        return SimulationAdmission(
-            self, scene_identity=_scene_identity,
-            snippet_builder=snippets.build_snippets,
-            applied_state_capture=pending_settings.capture_applied_state,
-            reset_settings_apply=pending_settings.apply_reset_solver_settings,
-        )
+            self._admission_owner = SimulationAdmission(
+                self, scene_identity=_scene_identity,
+                snippet_builder=snippets.build_snippets,
+                applied_state_capture=pending_settings.capture_applied_state,
+                reset_settings_apply=pending_settings.apply_reset_solver_settings,
+            )
+        return self._admission_owner
 
-    def refresh_capacity_plan(self, scene, depsgraph=None):
+    def refresh_capacity_plan(self, scene, depsgraph=None, *, operation=None):
         """Recompute admission options without mutating authored settings."""
-        return self._admission().refresh_capacity_plan(scene, depsgraph)
+        return self._admission().refresh_capacity_plan(
+            scene, depsgraph, operation=operation)
 
     def initialize(self, scene, *, depsgraph=None,
                    ignore_memory_safeguard=False):
@@ -210,6 +299,16 @@ class Session:
         fs.stat_particles = stats.active_particles
         fs.stat_voxels = stats.active_voxels
         fs.stat_whitewater = stats.whitewater_particles
+        fs.stat_whitewater_required = int(
+            getattr(stats, "whitewater_required", 0))
+        fs.stat_whitewater_admitted = int(
+            getattr(stats, "whitewater_admitted", 0))
+        fs.stat_whitewater_dropped = int(
+            getattr(stats, "whitewater_dropped", 0))
+        fs.stat_whitewater_policy = str(
+            getattr(stats, "whitewater_policy", ""))
+        fs.stat_whitewater_status = str(
+            getattr(stats, "whitewater_status", "OK"))
         fs.stat_step_ms = stats.step_time * 1000.0
         fs.stat_substeps = stats.substeps
         fs.stat_cfl_clamped = stats.cfl_substeps_clamped
@@ -220,10 +319,14 @@ class Session:
             capacity_notice = (
                 f"Particle capacity grew {int(growth.previous):,} → "
                 f"{int(growth.current):,}")
+        whitewater_notice = str(
+            getattr(stats, "whitewater_message", "") or "")
+        notices = [
+            notice for notice in (capacity_notice, whitewater_notice) if notice]
         fs.status = (
             f"Frame {self.solver.frame}: {stats.active_particles:,} particles, "
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
-            + (f" — {capacity_notice}" if capacity_notice else "")
+            + (f" — {'; '.join(notices)}" if notices else "")
         )
         if publish_outputs:
             from . import output_publication
@@ -320,9 +423,25 @@ def current_error(scene) -> str:
 # ---------------------------------------------------------------------------
 
 
-def refresh_capacity_plan(scene, depsgraph=None):
+def refresh_capacity_plan(scene, depsgraph=None, *, operation=None):
     """Refresh actionable capacity options without mutating scene settings."""
-    return session().refresh_capacity_plan(scene, depsgraph)
+    return session().refresh_capacity_plan(
+        scene, depsgraph, operation=operation)
+
+
+def capacity_plan_for_scene(scene):
+    sess = session()
+    getter = getattr(sess, "capacity_plan_for_scene", None)
+    return getter(scene) if callable(getter) else getattr(sess, "capacity_plan", None)
+
+
+def capacity_plan_signature_for_scene(scene):
+    sess = session()
+    getter = getattr(sess, "capacity_plan_signature_for_scene", None)
+    if callable(getter):
+        return getter(scene)
+    plan = getattr(sess, "capacity_plan", None)
+    return str(getattr(plan, "scene_signature", ""))
 
 
 def initialize_session(

@@ -41,13 +41,17 @@ PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
 
 PANEL_IDS = [
     "FLUIDSIM_PT_interaction_popover",
-    "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
-    "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-    "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
-    "FLUIDSIM_PT_advanced_field_sources",
+    "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_quality", "FLUIDSIM_PT_inputs",
+    "FLUIDSIM_PT_physics", "FLUIDSIM_PT_advanced",
+    "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
+    "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
+    "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders",
+    "FLUIDSIM_PT_forces", "FLUIDSIM_PT_domain_height_fill",
+    "FLUIDSIM_PT_point_particle_injection", "FLUIDSIM_PT_advanced_field_sources",
     "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
     "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output",
-    "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_diagnostics",
+    "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_snippet_editor",
+    "FLUIDSIM_PT_snippet_shortcuts", "FLUIDSIM_PT_diagnostics",
     "FLUIDSIM_PT_validation",
 ]
 
@@ -197,11 +201,27 @@ def _draw_all_panels_smoke(state_name, active_object_name=None):
 
     missing = [p for p in PANEL_IDS if not hasattr(bpy.types, p)]
     call_failures = []
+    expected_visible = []
     before_hits = len(STATE["panel_draw_hits"])
     before_errors = len(STATE["panel_draw_errors"])
 
     if not missing:
         for panel_id in PANEL_IDS:
+            panel_cls = getattr(bpy.types, panel_id)
+            poll = getattr(panel_cls, "poll", None)
+            override = _view3d_override()
+            try:
+                if override:
+                    with bpy.context.temp_override(**override):
+                        visible = poll(bpy.context) if callable(poll) else True
+                else:
+                    visible = poll(bpy.context) if callable(poll) else True
+            except Exception as exc:  # noqa: BLE001
+                call_failures.append(f"{panel_id}.poll: {exc!r}")
+                continue
+            if not visible:
+                continue
+            expected_visible.append(panel_id)
             try:
                 result = _call_panel(panel_id)
                 if result not in PANEL_CALL_SUCCESS:
@@ -218,7 +238,7 @@ def _draw_all_panels_smoke(state_name, active_object_name=None):
     hits = STATE["panel_draw_hits"][before_hits:]
     errors = STATE["panel_draw_errors"][before_errors:]
     seen = {hit["panel"] for hit in hits}
-    undrawn = [p for p in PANEL_IDS if p not in seen]
+    undrawn = [p for p in expected_visible if p not in seen]
     details = []
     if missing:
         details.append(f"missing={missing}")

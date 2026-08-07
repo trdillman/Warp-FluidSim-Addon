@@ -211,7 +211,8 @@ def main():
     approved_result = set(bpy.ops.fluidsim.apply_capacity_suggestion(
         "EXEC_DEFAULT",
         suggestion_key=recommended.key,
-        expected_scene_signature=addon_plan.scene_signature,
+        expected_scene_signature=(
+            scene_bridge.session().capacity_plan_signature_for_scene(scene)),
     ))
     assert approved_result == {"FINISHED"}
     assert int(fs.max_particles) == required_particles
@@ -227,8 +228,10 @@ def main():
     })
     scene_bridge.release_session(scene)
 
-    # Default UX: runtime capacity grows without rewriting the authored reserve.
-    fs.max_particles = 1
+    # A Reinitialize warning must recheck its authored-reserve model even when
+    # the owned runtime pool has grown far beyond it. Reset is the operation
+    # that uses runtime capacity; suggestion approval here recreates the pool.
+    fs.max_particles = 1024
     fs.auto_grow_particles = True
     authored_reserve = int(fs.max_particles)
     auto_result = set(bpy.ops.fluidsim.initialize())
@@ -236,14 +239,48 @@ def main():
     assert auto_result == {"FINISHED"}
     assert auto_session.active
     assert int(fs.max_particles) == authored_reserve
-    assert auto_session.solver.particles.capacity >= required_particles
-    assert auto_session.solver.particles.capacity > authored_reserve
+    growth = auto_session.solver.ensure_particle_capacity(65_536)
+    assert growth.status in {"GROWN", "SUFFICIENT"}
+    assert auto_session.solver.particles.capacity == 65_536
+    assert int(fs.max_particles) == authored_reserve
+
+    fs.auto_grow_particles = False
+    blocked_result = set(bpy.ops.fluidsim.initialize())
+    blocked_plan = auto_session.capacity_plan_for_scene(scene)
+    assert blocked_result == {"CANCELLED"}
+    assert auto_session.active
+    assert auto_session.solver.particles.capacity == 65_536
+    assert auto_session.capacity_plan_operation == "REINITIALIZE"
+    assert any(
+        blocker.code == "PARTICLE_CAPACITY"
+        for blocker in blocked_plan.blockers)
+    assert blocked_plan.suggestions
+    blocked_signature = auto_session.capacity_plan_signature_for_scene(scene)
+    refreshed_plan = scene_bridge.refresh_capacity_plan(scene)
+    assert auto_session.capacity_plan_signature_for_scene(scene) == blocked_signature
+    assert any(
+        blocker.code == "PARTICLE_CAPACITY"
+        for blocker in refreshed_plan.blockers)
+    assert refreshed_plan.suggestions
+    recommended = refreshed_plan.suggestions[0]
+    assert recommended.key == "preserve_simulation"
+    approved_result = set(bpy.ops.fluidsim.apply_capacity_suggestion(
+        "EXEC_DEFAULT",
+        suggestion_key=recommended.key,
+        expected_scene_signature=blocked_signature,
+    ))
+    assert approved_result == {"FINISHED"}
+    assert int(fs.max_particles) == int(refreshed_plan.particle_demand.value)
     cases.append({
-        "name": "automatic_runtime_growth_preserves_authored_reserve",
-        "operator": sorted(auto_result),
+        "name": "grown_pool_reinitialize_recheck_uses_authored_reserve",
+        "initial_operator": sorted(auto_result),
+        "blocked_operator": sorted(blocked_result),
+        "approved_operator": sorted(approved_result),
         "authored_reserve": authored_reserve,
-        "runtime_capacity": auto_session.solver.particles.capacity,
-        "required": required_particles,
+        "grown_runtime_capacity": 65_536,
+        "required": int(refreshed_plan.particle_demand.value),
+        "recommended_key": recommended.key,
+        "signature_stable": True,
     })
     scene_bridge.release_session(scene)
 

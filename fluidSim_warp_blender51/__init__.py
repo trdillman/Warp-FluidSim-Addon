@@ -25,7 +25,7 @@ ensure_warp_discoverable()
 
 def register():
     from . import operators, panels, preferences, properties
-    from .blender import pending_settings, playback, render, viewport_overlay
+    from .blender import pending_settings, playback, render, sources, viewport_overlay
 
     # register()/unregister() must be idempotent in both directions: if a
     # later step raises, Blender's add-on enable path leaves everything
@@ -38,6 +38,8 @@ def register():
         ("preferences", preferences.register, preferences.unregister),
         ("operators", operators.register, operators.unregister),
         ("panels", panels.register, panels.unregister),
+        ("source migration handlers", sources.register_handlers,
+         sources.unregister_handlers),
         ("playback handlers", playback.register_handlers,
          playback.unregister_handlers),
         ("pending handlers", pending_settings.register_handlers,
@@ -63,7 +65,7 @@ def register():
 
 def unregister():
     from . import operators, panels, preferences, properties
-    from .blender import pending_settings, playback, render, viewport_overlay
+    from .blender import pending_settings, playback, render, sources, viewport_overlay
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a
@@ -74,6 +76,7 @@ def unregister():
         ("render handlers", render.unregister_handlers),
         ("pending handlers", pending_settings.unregister_handlers),
         ("playback handlers", playback.unregister_handlers),
+        ("source migration handlers", sources.unregister_handlers),
         ("panels", panels.unregister),
         ("operators", operators.unregister),
         ("preferences", preferences.unregister),

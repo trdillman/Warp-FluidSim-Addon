@@ -406,7 +406,7 @@ def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
     assert any(op["id"] == "fluidsim.clear_error" for op in layout.operators)
 
 
-def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatch):
+def test_simulation_panel_uses_only_verified_capacity_recommendation_flow(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
@@ -423,12 +423,18 @@ def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatc
 
     panel.draw(SimpleNamespace(scene=scene))
 
-    assert any(
+    assert not any(
         op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators
     )
+    assert not any(
+        op["id"] == "fluidsim.initialize"
+        and op.get("text") == "Ignore Estimate & Initialize"
+        for op in layout.operators
+    )
+    assert any("verified" in label["text"] for label in layout.labels)
 
 
-def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monkeypatch):
+def test_simulation_panel_hides_unverified_memory_bypass(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
@@ -445,7 +451,7 @@ def test_simulation_panel_offers_explicit_run_anyway_for_gpu_capacity_error(monk
 
     panel.draw(SimpleNamespace(scene=scene))
 
-    assert any(
+    assert not any(
         op["id"] == "fluidsim.initialize"
         and op.get("text") == "Ignore Estimate & Initialize"
         for op in layout.operators
@@ -888,7 +894,7 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
     assert scene.fluidsim.status.startswith("Live settings error:")
 
 
-def test_particles_per_voxel_live_refresh_rescales_automatic_st_mass(monkeypatch):
+def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     settings = SimpleNamespace(
@@ -910,12 +916,14 @@ def test_particles_per_voxel_live_refresh_rescales_automatic_st_mass(monkeypatch
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = scene_bridge._scene_identity(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
-    assert settings.particles_per_voxel == 12.0
-    assert solver._st_reference_mass_cached == 6.0
-    assert scene.fluidsim.status == "Frame 4"
+    assert settings.particles_per_voxel == 8.0
+    assert solver._st_reference_mass_cached == 4.0
+    assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
+    assert "particles_per_voxel" not in _pending_module()._LIVE_SETTING_FIELDS
 
 
 def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
@@ -976,6 +984,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         set_height_source=lambda value: events.append(("height", value)),
         set_custom_snippets=lambda values: events.append(
             ("snippets", tuple(values))) or (),
+        release=lambda: events.append("old-release"),
     )
     sess = scene_bridge.session()
     sess.solver = solver
@@ -1033,9 +1042,17 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
 
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_preflight", preflight)
+    candidate = SimpleNamespace(
+        device="cuda:0", settings=snapshot.settings,
+        particles=SimpleNamespace(capacity=4096),
+    )
     monkeypatch.setattr(
-        sources, "commit_prepared_seeds",
-        lambda owner, seeds: events.append(("seeds", owner, tuple(seeds))))
+        simulation_admission.SimulationAdmission,
+        "_prepare_solver_replacement",
+        lambda *_args, **_kwargs: (
+            events.extend(("candidate-configure", "candidate-seeds"))
+            or (candidate, ())),
+    )
     monkeypatch.setattr(
         output_publication, "update_outputs",
         lambda actual_scene, owner: events.append(
@@ -1060,17 +1077,14 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     assert preflight_calls == [{
         "depsgraph": depsgraph,
         "runtime_capacity": 4096,
-        "ignore_memory_safeguard": True,
-        "defer_particle_growth": True,
+        "operation": "RESET",
     }]
-    assert ("reset", 0.2, 77) in events
-    assert ("sources", ("source",)) in events
-    assert ("plans", ("plan",)) in events
-    assert ("colliders", ("collider",)) in events
-    assert ("forces", ("force",)) in events
-    assert ("height", "height-source") in events
-    assert ("snippets", ("snippet",)) in events
-    assert any(event[0] == "seeds" for event in events if isinstance(event, tuple))
+    assert "candidate-configure" in events
+    assert "candidate-seeds" in events
+    assert "old-release" in events
+    assert sess.solver is candidate
+    assert sess.solver.settings.flip_ratio == 0.2
+    assert sess.solver.settings.spacetime_seed == 77
     assert any(event[0] == "outputs" for event in events if isinstance(event, tuple))
     assert sess.start_frame == 3
     assert sess.cache_written_start is None
@@ -1127,7 +1141,8 @@ def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypat
     }
     assert _pending_module()._HOT_SETTING_FIELDS.isdisjoint(_pending_module()._RESET_SETTING_FIELDS)
     assert _pending_module()._HOT_SETTING_FIELDS.isdisjoint(_pending_module()._SURFACE_SETTING_FIELDS)
-    assert _pending_module()._LIVE_REFRESH_SETTING_FIELDS == {"particles_per_voxel"}
+    assert _pending_module()._LIVE_REFRESH_SETTING_FIELDS == set()
+    assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
     enum_sources = {source for source, _enum in _pending_module()._enum_setting_fields().values()}
     appliable = set(_pending_module()._DIRECT_SETTING_FIELDS) | enum_sources
     assert (_pending_module()._LIVE_SETTING_FIELDS | _pending_module()._RESET_SETTING_FIELDS).issubset(
@@ -1551,7 +1566,9 @@ def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monke
 
     panel.draw(SimpleNamespace(scene=scene, active_object=source))
 
-    assert {"emission_mode", "emit_rate", "geometry_mode"}.issubset(layout.props)
+    assert {
+        "emission_mode", "source_sampling_mode", "emit_rate", "geometry_mode"
+    }.issubset(layout.props)
     assert {
         ("ANALYTIC", "Analytic Volume"),
         ("MESH", "Mesh Surface Shell"),
@@ -1559,7 +1576,7 @@ def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monke
                 for call in layout.prop_enum_calls})
     assert "source_mode" not in layout.props
     assert "height_back_mode" not in layout.props
-    assert any(call == {"name": "emit_rate", "text": "Target Particles / Voxel"}
+    assert any(call == {"name": "emit_rate", "text": "Legacy Absolute Target"}
                for call in layout.prop_calls)
     assert any(op["id"] == "fluidsim.tag_liquid_emitter"
                for op in layout.operators)
@@ -1727,3 +1744,270 @@ def test_phase1_point_injection_poll_is_truthful(monkeypatch):
     assert not operators.FLUIDSIM_OT_inject_particles.poll(
         SimpleNamespace(active_object=mesh))
     assert "Initialize the solver" in operators.FLUIDSIM_OT_inject_particles._poll_message
+
+
+def test_phase1_point_injection_capacity_refusal_is_recoverable_cancel(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import output_publication, sources
+
+    result = SimpleNamespace(
+        admitted=False, emitted=0, required=5, available=4,
+        capacity_limited=True, total=1)
+    solver = SimpleNamespace(sourcing=SimpleNamespace(
+        last_injection_result=result))
+    sess = SimpleNamespace(active=True, solver=solver)
+    fatal_errors = []
+    bridge = SimpleNamespace(
+        session=lambda: sess,
+        set_error=lambda *_args: fatal_errors.append(_args))
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    monkeypatch.setattr(sources, "inject_object_particles", lambda *_args: 0)
+    viewport_updates = []
+    monkeypatch.setattr(
+        output_publication, "update_outputs",
+        lambda *_args: viewport_updates.append(_args))
+
+    reports = []
+    op = operators.FLUIDSIM_OT_inject_particles()
+    op.report = lambda level, message: reports.append((level, message))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status="Solver ready"))
+    obj = SimpleNamespace(name="Seed", type="MESH", particle_systems=[])
+
+    assert op.execute(SimpleNamespace(
+        scene=scene, active_object=obj)) == {"CANCELLED"}
+    assert not viewport_updates
+    assert not fatal_errors
+    assert scene.fluidsim.status == "Solver ready"
+    assert "5 slots" in reports[-1][1]
+    assert "4" in reports[-1][1]
+    assert "Max Particles" in reports[-1][1]
+
+
+def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import output_publication, sources
+
+    sourcing_state = SimpleNamespace(last_injection_result=SimpleNamespace(
+        admitted=False, required=5, available=4))
+
+    class Solver:
+        sourcing = sourcing_state
+
+        def inject_particle_packets_exact(self, packets):
+            assert tuple(packets) == ()
+            result = SimpleNamespace(
+                admitted=True, emitted=0, required=0, available=4,
+                capacity_limited=False, total=0)
+            self.sourcing.last_injection_result = result
+            return result
+
+    sess = SimpleNamespace(active=True, solver=Solver())
+    monkeypatch.setattr(
+        operators, "_bridge", lambda: SimpleNamespace(session=lambda: sess))
+    monkeypatch.setattr(sources, "prepare_object_particles", lambda *_args: None)
+    viewport_updates = []
+    monkeypatch.setattr(
+        output_publication, "update_outputs",
+        lambda *_args: viewport_updates.append(_args))
+
+    reports = []
+    op = operators.FLUIDSIM_OT_inject_particles()
+    op.report = lambda level, message: reports.append((level, message))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status="Solver ready"))
+    obj = SimpleNamespace(name="Empty", type="MESH", particle_systems=[])
+
+    assert op.execute(SimpleNamespace(
+        scene=scene, active_object=obj)) == {"FINISHED"}
+    assert len(viewport_updates) == 1
+    assert reports[-1][0] == {"INFO"}
+    assert "Injected 0 particles" in reports[-1][1]
+
+
+def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="safe", label="Safe", changes={"max_particles": 12},
+        estimated_bytes=1, budget_bytes=2)
+    plan = SimpleNamespace(
+        scene_signature="identical-content", suggestions=(suggestion,), blockers=())
+    first = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
+    second = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
+    bridge.session()._set_capacity_plan(first, plan)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+
+    assert operators.FLUIDSIM_OT_apply_capacity_suggestion.poll(
+        SimpleNamespace(scene=first)) is True
+    assert operators.FLUIDSIM_OT_apply_capacity_suggestion.poll(
+        SimpleNamespace(scene=second)) is False
+
+    dialogs = []
+    context_first = SimpleNamespace(
+        scene=first,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda op, width: (
+                dialogs.append((op, width)) or {"RUNNING_MODAL"})),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "safe"
+    assert op.invoke(context_first, None) == {"RUNNING_MODAL"}
+
+    refreshed = []
+    monkeypatch.setattr(
+        bridge, "refresh_capacity_plan",
+        lambda scene: refreshed.append(scene) or plan)
+    assert op.execute(SimpleNamespace(scene=second)) == {"CANCELLED"}
+    assert refreshed == []
+    assert second.fluidsim.max_particles == 8
+
+
+def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
+        monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    fs = SimpleNamespace(max_particles=1024, status="")
+    scene = SimpleNamespace(fluidsim=fs)
+    sess = bridge.session()
+    sess.solver = SimpleNamespace(
+        settings=SimpleNamespace(device="cuda:0", max_particles=65_536),
+        particles=SimpleNamespace(capacity=65_536),
+        device="cuda:0",
+    )
+    sess.scene_identity = bridge._scene_identity(scene)
+    from fluidSim_warp_blender51.blender import simulation_admission
+    monkeypatch.setattr(
+        simulation_admission, "build_settings",
+        lambda _scene: SimpleNamespace(
+            device="cuda:0", max_particles=int(fs.max_particles)))
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 16 * 1024**3,
+        "gpu_free_bytes": 12 * 1024**3,
+    })
+    planned = []
+
+    def plan_scene(
+            _scene, settings, _resources, *,
+            additional_transaction_bytes=0):
+        capacity = int(settings.max_particles)
+        planned.append((capacity, additional_transaction_bytes))
+        suggestion = SimpleNamespace(
+            key="preserve_simulation", label="Preserve Simulation",
+            changes={"max_particles": 2048}, estimated_bytes=1,
+            budget_bytes=2)
+        blocked = capacity < 2048
+        return SimpleNamespace(capacity_plan=SimpleNamespace(
+            scene_signature=f"capacity-{capacity}",
+            suggestions=(suggestion,) if blocked else (),
+            blockers=((SimpleNamespace(code="PARTICLE_CAPACITY"),)
+                      if blocked else ()),
+        ))
+
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
+    original = plan_scene(
+        scene, SimpleNamespace(max_particles=1024), {}).capacity_plan
+    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    expected_signature = sess.capacity_plan_signature_for_scene(scene)
+    initialized = []
+    monkeypatch.setattr(
+        bridge, "initialize_session",
+        lambda actual: initialized.append(actual) or sess)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda _op, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "preserve_simulation"
+
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert op.expected_scene_signature == expected_signature
+    assert op.execute(context) == {"FINISHED"}
+    assert planned[-1][0] == 1024
+    assert planned[-1][1] == memory_safety.estimate_solver_bytes(
+        sess.solver.settings)
+    assert fs.max_particles == 2048
+    assert initialized == [scene]
+
+
+def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="safe", label="Safe", changes={"max_particles": 12},
+        estimated_bytes=1, budget_bytes=2)
+    original = SimpleNamespace(
+        scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    changed = SimpleNamespace(
+        scene_signature="scene-v2", suggestions=(suggestion,), blockers=())
+    fs = SimpleNamespace(max_particles=8, status="")
+    scene = SimpleNamespace(fluidsim=fs)
+    bridge.session()._set_capacity_plan(scene, original)
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda _op, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "safe"
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    monkeypatch.setattr(
+        bridge, "refresh_capacity_plan",
+        lambda actual: bridge.session()._set_capacity_plan(actual, changed))
+
+    assert op.execute(context) == {"CANCELLED"}
+    assert fs.max_particles == 8
+    assert "changed" in fs.status.lower()
+
+
+def test_panel_hierarchy_has_seven_task_groups_and_advanced_capacities(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    expected_top = {
+        "Simulation", "Quality", "Inputs", "Physics",
+        "Surface & Whitewater", "Output & Cache", "Advanced",
+    }
+    actual_top = {
+        cls.bl_label for cls in panels.CLASSES
+        if issubclass(cls, panels.FluidSimPanel)
+        and "bl_parent_id" not in cls.__dict__
+    }
+    assert actual_top == expected_top
+    assert panels.FLUIDSIM_PT_advanced.bl_options == {"DEFAULT_CLOSED"}
+    assert panels.FLUIDSIM_PT_domain.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert panels.FLUIDSIM_PT_particles.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert panels.FLUIDSIM_PT_liquid_emitters.bl_parent_id == "FLUIDSIM_PT_inputs"
+    assert panels.FLUIDSIM_PT_pressure.bl_parent_id == "FLUIDSIM_PT_physics"
+    assert panels.FLUIDSIM_PT_realtime_display.bl_parent_id == "FLUIDSIM_PT_surface"
+
+
+def test_basic_quality_panel_exposes_only_semantic_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    source = inspect.getsource(panels.FLUIDSIM_PT_quality.draw)
+    for field in (
+            "voxel_size", "particles_per_voxel", "sample_type", "flip_ratio",
+            "cfl", "max_substeps"):
+        assert f'prop(fs, "{field}"' in source
+    for technical_capacity in ("max_particles", "max_active_leaves", "max_whitewater"):
+        assert technical_capacity not in source
+    assert "Requires Reinitialize" in source
+    assert "Requires Reset" in source
+
+
+def test_long_capacity_copy_wraps_instead_of_truncating(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    text = "This capacity warning contains enough detail to exceed one narrow panel line."
+    panels._draw_wrapped(layout, text, icon="INFO", width=30)
+    assert len(layout.labels) >= 2
+    assert "".join(label["text"] for label in layout.labels).replace(" ", "") == text.replace(" ", "")

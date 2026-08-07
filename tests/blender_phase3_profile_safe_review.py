@@ -10,7 +10,7 @@ import bpy
 
 RESULT_PATH = Path(os.environ["FLUIDSIM_PROFILE_SAFE_REVIEW_RESULT"]).resolve()
 RESULT = {
-    "schema": "fluidsim-phase3-source-ui-review-v1",
+    "schema": "fluidsim-resolution-quality-ui-review-v2",
     "ok": False,
     "checks": [],
     "roles": {},
@@ -58,8 +58,23 @@ def run():
     )
     check("all role panels registered", all(hasattr(bpy.types, item) for item in panel_ids))
     check("mixed legacy source panel absent", not hasattr(bpy.types, "FLUIDSIM_PT_sources"))
+    top_groups = (
+        "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_quality", "FLUIDSIM_PT_inputs",
+        "FLUIDSIM_PT_physics", "FLUIDSIM_PT_surface", "FLUIDSIM_PT_output",
+        "FLUIDSIM_PT_advanced",
+    )
+    check("seven task-oriented top groups registered",
+          all(hasattr(bpy.types, item) for item in top_groups))
+    check("technical capacity panels are under Advanced",
+          bpy.types.FLUIDSIM_PT_domain.bl_parent_id == "FLUIDSIM_PT_advanced"
+          and bpy.types.FLUIDSIM_PT_particles.bl_parent_id == "FLUIDSIM_PT_advanced")
 
     scene = bpy.context.scene
+    bpy.ops.fluidsim.setup_scene()
+    first_setup = tuple(sorted(obj.name for obj in scene.objects))
+    second_setup_result = bpy.ops.fluidsim.setup_scene()
+    check("Quick Setup is idempotent", second_setup_result == {"FINISHED"}
+          and tuple(sorted(obj.name for obj in scene.objects)) == first_setup)
     specs = [
         ("Emitter", (0.0, 0.0, 1.5), "fluidsim.tag_liquid_emitter", "SOURCE"),
         ("Sink", (0.6, 0.0, 1.5), "fluidsim.tag_liquid_sink", "SINK"),
@@ -117,6 +132,26 @@ def run():
     check("multi-frame playback advances", step_result == {"FINISHED"}
           and end_frame >= start_frame + 3, RESULT["playback"])
     check("Blender remains responsive after playback", session.active)
+
+    committed_sampling = session.solver.settings.particles_per_voxel
+    scene.fluidsim.particles_per_voxel = min(64, int(committed_sampling) + 1)
+    sampling_pending = scene_bridge.pending_presentation(scene)
+    check("Liquid Sampling presents a pending Reset",
+          sampling_pending["action"] == "RESET_PENDING"
+          and session.solver.settings.particles_per_voxel == committed_sampling,
+          sampling_pending)
+    check("pending sampling can be discarded",
+          bpy.ops.fluidsim.revert_pending() == {"FINISHED"})
+
+    committed_voxel = session.solver.settings.voxel_size
+    scene.fluidsim.voxel_size = committed_voxel * 1.1
+    voxel_pending = scene_bridge.pending_presentation(scene)
+    check("Simulation Resolution presents pending Reinitialize",
+          voxel_pending["action"] == "REINIT_PENDING"
+          and session.solver.settings.voxel_size == committed_voxel,
+          voxel_pending)
+    check("pending resolution can be discarded",
+          bpy.ops.fluidsim.revert_pending() == {"FINISHED"})
     RESULT["ok"] = not RESULT["errors"]
 
 
@@ -124,13 +159,17 @@ def finish():
     try:
         from fluidSim_warp_blender51.blender import scene_bridge
         scene_bridge.release_session(bpy.context.scene)
+        import fluidSim_warp_blender51 as addon
+        addon.unregister()
     except Exception as exc:
-        RESULT["errors"].append(f"release failed: {exc}")
+        RESULT["errors"].append(f"release/unregister failed: {exc}")
     RESULT["ok"] = bool(not RESULT["errors"])
     RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULT_PATH.write_text(json.dumps(RESULT, indent=2, default=str), encoding="utf8")
     print("PHASE3-PROFILE-SAFE-REVIEW-PASS" if RESULT["ok"] else "PHASE3-PROFILE-SAFE-REVIEW-FAIL")
-    bpy.app.timers.register(lambda: bpy.ops.wm.quit_blender(), first_interval=0.1)
+    # Let viewport/depsgraph callbacks observe the released GPU session before
+    # the owned GUI process exits; immediate quit can race Blender teardown.
+    bpy.app.timers.register(lambda: bpy.ops.wm.quit_blender(), first_interval=1.0)
 
 
 try:
