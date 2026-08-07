@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-07T19:55:00.500341+00:00
+generated_at: 2026-08-07T20:08:29.062185+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port_architecture_resolution_integration_20260807'
-git_head: 524960a9f5e5def6fca75a93dd70d690e8479649
-gate_run_at: 2026-08-07T19:55:00.500341+00:00
+git_head: ffd642e5edaf5e3fa8b2b0deff08d9e7f29a60d6
+gate_run_at: 2026-08-07T20:08:29.062185+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7da42d5
+demo_artifact_sha256: f132a9d50033db9d2068c61dceb645b5a2b8b8369b697ed8b516ec9bda38497a
 ---
 
 # Policy Drift Report — root unit
@@ -15,7 +15,7 @@ demo_artifact_sha256: 18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7
 ## Strongest live evidence
 
 - `python tools/run_production_gate.py --include-gui` passed at integrated HEAD
-  `524960a9f5e5def6fca75a93dd70d690e8479649`; the run wrote
+  `ffd642e5edaf5e3fa8b2b0deff08d9e7f29a60d6`; the run wrote
   `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (38/38)`,
   `CAPACITY-PLANNER-ACCEPTANCE-PASS`, `DEMO-ANALYSIS-PASS (18/18)`, and
   `SAVED-DEMO-GUI-PLAYBACK-PASS`.
@@ -27,7 +27,7 @@ demo_artifact_sha256: 18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7
   sampling migration, handler persistence, and Phase 4 live interaction.
 - Current generated demo analysis and checked-in `demos/analysis_report.json`
   are synchronized at `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7da42d5`.
+  `f132a9d50033db9d2068c61dceb645b5a2b8b8369b697ed8b516ec9bda38497a`.
 
 ## Findings
 
@@ -49,13 +49,13 @@ gate clears the manifest and validation fails closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-07T19:55:00.500341+00:00
+generated_at: 2026-08-07T20:08:29.062185+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port_architecture_resolution_integration_20260807'
-git_head: 524960a9f5e5def6fca75a93dd70d690e8479649
-gate_run_at: 2026-08-07T19:55:00.500341+00:00
+git_head: ffd642e5edaf5e3fa8b2b0deff08d9e7f29a60d6
+gate_run_at: 2026-08-07T20:08:29.062185+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7da42d5
+demo_artifact_sha256: f132a9d50033db9d2068c61dceb645b5a2b8b8369b697ed8b516ec9bda38497a
 freshness: fresh
 status: fresh
 blocking_criticality: none
