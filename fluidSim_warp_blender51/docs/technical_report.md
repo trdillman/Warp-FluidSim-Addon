@@ -362,13 +362,13 @@ never crash the suite.
 
 The current generated source evidence comes from
 `artifacts/demo_analysis/analysis_report.json`, produced by the real GUI-inclusive production
-gate at `2026-08-05T15:23:58.988102+00:00` under HEAD `afbdf0e0f902a3e6205420aca3e31b04defe9749`. The
+gate at `2026-08-07T19:55:00.500341+00:00` under HEAD `524960a9f5e5def6fca75a93dd70d690e8479649`. The
 demo-analysis lane passes **18 / 18** with exact promoted metrics
-`front_speed_over_c0=1.0113339117`,
-`column_height_end=0.0854480267`,
-`crown_sqrt_t_corr=0.9715337333`, and
-`max_crown_height=0.2854394317`. Artifact SHA-256 is
-`d1a0cd12233a3a7c92ecac177fa9b3c1c1f3514dcc1ea464c798c6d153310242`. These are bounded generated-run metrics, not arbitrary-scale claims.
+`front_speed_over_c0=1.0055844619`,
+`column_height_end=0.0796965957`,
+`crown_sqrt_t_corr=0.9715342740`, and
+`max_crown_height=0.3352001905`. Artifact SHA-256 is
+`18819facff53e167f2eb16acb61c6a93571b720fe8b79aafa40f5a3ad7da42d5`. These are bounded generated-run metrics, not arbitrary-scale claims.
 
 Generated source evidence is separate from review evidence:
 `artifacts/gui_playback_probe.json` records live CUDA playback on `cuda:0`
