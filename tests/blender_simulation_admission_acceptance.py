@@ -56,8 +56,8 @@ def main():
     owner_type = simulation_admission.SimulationAdmission
     original_preflight = owner_type._preflight
     original_allocate = owner_type._allocate_solver
-    original_configure = owner_type._configure_solver
-    original_seeds = owner_type._commit_seeds
+    original_configure = owner_type._configure_candidate
+    original_seeds = sources.commit_prepared_seeds
     original_outputs = owner_type._prepare_outputs
     original_seed_gather = sources.prepare_auto_seeds
     original_release_cuda_memory = memory_safety.release_cuda_memory
@@ -94,7 +94,7 @@ def main():
 
     memory_safety.release_cuda_memory = release_cuda_memory
 
-    def observe_configuration(owner, snapshot):
+    def observe_configuration(owner, candidate, snapshot):
         installed.update({
             "sources": len(snapshot.descriptors) + len(snapshot.extra_plans),
             "colliders": len(snapshot.colliders),
@@ -107,19 +107,19 @@ def main():
             "seeds": len(snapshot.seeds),
             "snippets": len(snapshot.snippets),
         })
-        result = original_configure(owner, snapshot)
+        result = original_configure(owner, candidate, snapshot)
         materialized_meshes.append(sum(
-            1 for entry in owner.session.scene_inputs._evaluated_mesh_cache.values()
+            1 for entry in snapshot.scene_inputs._evaluated_mesh_cache.values()
             if str(entry.get("device", "")).startswith("cuda")
             and entry.get("mesh") is not None))
         return result
 
-    owner_type._configure_solver = observe_configuration
+    owner_type._configure_candidate = observe_configuration
     try:
         check("successful admission",
               bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
     finally:
-        owner_type._configure_solver = original_configure
+        owner_type._configure_candidate = original_configure
     sess = session()
     initial_gathers = gathered_depsgraphs[:6]
     check("all admission gatherers observed", len(initial_gathers) == 6,
@@ -137,7 +137,7 @@ def main():
           and sess.solver.particles.refresh_host_count() >= 1)
     check("snippet captured", installed.get("snippets", 0) >= 1)
     check("outputs prepared", any(obj.type == "POINTCLOUD" for obj in scene.objects))
-    check("CUDA meshes materialized only after cutover",
+    check("CUDA meshes materialized only after preflight on candidate",
           materialized_meshes and materialized_meshes[-1] >= 1,
           repr(materialized_meshes))
 
@@ -159,23 +159,25 @@ def main():
         finally:
             owner_type._preflight = original_preflight
 
-    # Every named post-cutover phase fault releases the partial replacement and
-    # leaves an inactive session.  A successful admission between faults proves
-    # deterministic recovery without resurrecting an old GPU solver.
+    # Allocation, configuration, and seed failures occur while the candidate
+    # is staged and must preserve the authoritative solver. Output preparation
+    # follows the authority swap, so its failure leaves a clean inactive
+    # session. A successful admission between faults proves recovery.
     phase_methods = (
-        ("allocate", "_allocate_solver", original_allocate),
-        ("configure", "_configure_solver", original_configure),
-        ("seed", "_commit_seeds", original_seeds),
-        ("output", "_prepare_outputs", original_outputs),
+        ("allocate", owner_type, "_allocate_solver", original_allocate, False),
+        ("configure", owner_type, "_configure_candidate", original_configure, False),
+        ("seed", sources, "commit_prepared_seeds", original_seeds, False),
+        ("output", owner_type, "_prepare_outputs", original_outputs, True),
     )
-    for label, method_name, original in phase_methods:
+    for label, target, method_name, original, post_cutover in phase_methods:
         flush_count = len(cleanup_flushes)
+        old = sess.solver
 
         def fail(*args, _label=label, _method=method_name, **kwargs):
-            if _method == "_configure_solver":
+            if _method == "_configure_candidate":
                 original_configure(*args, **kwargs)
             raise RuntimeError(f"injected {_label} failure")
-        setattr(owner_type, method_name, fail)
+        setattr(target, method_name, fail)
         try:
             try:
                 sess.initialize(scene)
@@ -183,17 +185,17 @@ def main():
                 check(f"{label} fault surfaced", label in str(exc), repr(exc))
             else:
                 raise RuntimeError(f"{label} fault did not fail")
-            check(f"{label} leaves inactive session", not sess.active)
+            if post_cutover:
+                check(f"{label} leaves inactive session", not sess.active)
+            else:
+                check(f"{label} preserves authoritative solver",
+                      sess.active and sess.solver is old)
             check(f"{label} flushes released CUDA ownership",
                   len(cleanup_flushes) > flush_count,
                   repr(cleanup_flushes[flush_count:]))
-            if label in {"configure", "seed", "output"}:
-                check(f"{label} clears installed device meshes",
-                      sess.scene_inputs.last_clear_device_resource_count >= 1,
-                      str(sess.scene_inputs.last_clear_device_resource_count))
             wp.synchronize()
         finally:
-            setattr(owner_type, method_name, original)
+            setattr(target, method_name, original)
         check(f"recovery after {label}",
               bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
 
