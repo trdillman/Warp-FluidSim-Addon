@@ -359,7 +359,9 @@ def main():
             "surface_smooth_iterations", "particle_age", "particle_life",
             "particle_temperature", "particle_viscosity", "particle_density",
             "particle_time_offset", "whitewater_velocities", "whitewater_age",
-            "whitewater_life",
+            "whitewater_life", "whitewater_required", "whitewater_available",
+            "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
+            "whitewater_status",
         }
         schema_valid = bool(
             len(first_payload_schemas) == len(second_payload_schemas) == 3
