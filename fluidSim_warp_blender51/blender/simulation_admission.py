@@ -605,44 +605,6 @@ class SimulationAdmission:
             from ..sim.memory_safety import release_cuda_memory
             release_cuda_memory(device)
 
-    def _configure_solver(self, snapshot):
-        solver = self.session.solver
-        previous_inputs = self.session.scene_inputs
-        self.session.scene_inputs = snapshot.transfer_scene_inputs()
-        if previous_inputs is not self.session.scene_inputs:
-            previous_inputs.clear()
-        # This is the first mesh/BVH allocation on the configured CUDA device.
-        # Ownership is already in the Session, so a materialization or later
-        # configuration failure is released by Session.release before its
-        # allocator-pool cleanup.
-        self.session.scene_inputs.materialize_device_meshes(
-            snapshot.descriptors, snapshot.colliders,
-            snapshot.configured_device)
-        solver.set_sources(snapshot.descriptors)
-        if snapshot.extra_plans:
-            solver.set_source_plans(
-                tuple(solver.sourcing.plans) + snapshot.extra_plans)
-        solver.set_colliders(snapshot.colliders)
-        solver.set_force_fields(snapshot.force_fields)
-        solver.set_height_source(snapshot.height_source)
-        errors = solver.set_custom_snippets(snapshot.snippets)
-        return errors
-
-    def _commit_seeds(self, snapshot):
-        from . import sources
-
-        sources.commit_prepared_seeds(self.session, snapshot.seeds)
-        result = getattr(
-            getattr(self.session.solver, "sourcing", None),
-            "last_apply_result", {},
-        )
-        if result and not result.get("admitted", True):
-            raise RuntimeError(capacity_blocking_message((SimpleNamespace(
-                code="PARTICLE_CAPACITY",
-                required=result.get("required"),
-                available=result.get("available"),
-            ),)))
-
     def _prepare_outputs(self, scene):
         from . import output_publication
 
