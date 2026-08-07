@@ -86,7 +86,7 @@ def main():
           f"{hot_values}; {live_apply_ms:.2f} ms")
     check("live edits preserve particle allocation", sess.solver is solver
           and solver.particles is particle_state)
-    sampling_pending = scene_bridge.pending_presentation(scene)
+    sampling_pending = pending_settings.pending_presentation(scene)
     check("liquid sampling stages Reset without mutating live rest density",
           initial_reference > 0.0
           and solver.settings.particles_per_voxel == 8
