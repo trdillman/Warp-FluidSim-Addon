@@ -1,0 +1,57 @@
+{
+  "dimension": "Architecture",
+  "agent_type": "general-purpose",
+  "files_reviewed": 21,
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "file": "fluidSim_warp_blender51/blender_manifest.toml",
+      "line": 6,
+      "severity": "medium",
+      "title": "Manifest version desynchronized from bl_info after uncommitted version bump",
+      "description": "blender_manifest.toml line 6 declares version = \"1.0.241\" while __init__.py line 13 declares \"version\": (1, 0, 242). The uncommitted git diff bumps __init__.py from (1, 0, 241) to (1, 0, 242) but the manifest was not updated. The manifest's own comment on line 3 states: 'Mirrors the legacy bl_info dict in __init__.py; keep the two in sync.' The Blender extensions platform uses the manifest version (not bl_info) for update tracking and display, so users and the platform will see a stale version.",
+      "impact": "Blender extensions platform reports an incorrect (lower) version. Update detection and changelog display are wrong. The 'keep in sync' contract documented in the manifest comment is violated.",
+      "fix": "Bump blender_manifest.toml version to \"1.0.242\" to match bl_info. Consider a single source-of-truth pattern (e.g., reading version from one location at build time) to prevent future drift."
+    },
+    {
+      "id": "ARCH-002",
+      "file": "fluidSim_warp_blender51/operators.py",
+      "line": 1573,
+      "severity": "medium",
+      "title": "operators.py and panels.py unregister() cannot tolerate partial registration, leaking classes on rollback",
+      "description": "operators.py unregister() (lines 1571-1573) and panels.py unregister() (lines 1310-1311) call bpy.utils.unregister_class(cls) in a bare loop with no error handling. In contrast, properties.py unregister() (lines 1312-1318) correctly wraps each unregister_class in try/except (RuntimeError, ValueError). The __init__.py register() rollback (lines 48-59) only calls the undo function for steps that fully completed (completed.append happens AFTER do_register() succeeds). If operators.register() or panels.register() fails partway through their CLASSES tuple, the module is never added to the completed list, so its unregister() is not called during rollback. Even if it were called, the bare unregister_class loop would crash on the first never-registered class, leaving all remaining registered classes leaked. operators.py has 42 classes and panels.py has 26 classes, so a mid-loop failure leaks a significant number of Blender RNA types that persist until Blender restart.",
+      "impact": "A failed add-on enable leaves orphaned Blender RNA classes (operators, panels) registered with no owner. Subsequent enable attempts hit 'already registered' errors. The user must restart Blender to recover.",
+      "fix": "Wrap each bpy.utils.unregister_class(cls) call in try/except (RuntimeError, ValueError) in operators.py and panels.py, matching the pattern already in properties.py. Additionally, consider having each module's register() use an internal try/except that unwinds its own partial registrations before re-raising."
+    },
+    {
+      "id": "ARCH-003",
+      "file": "fluidSim_warp_blender51/sim/custom.py",
+      "line": 824,
+      "severity": "low",
+      "title": "Absolute intra-package imports in sim/custom.py instead of relative imports",
+      "description": "sim/custom.py uses absolute imports at lines 824-825 and 863: 'from fluidSim_warp_blender51.sim import constants as C' and 'from fluidSim_warp_blender51.sim.fields import voxel_coord_of_flat, voxel_center_world'. These are the only absolute intra-package imports in the entire addon; every other module uses relative imports (e.g., 'from ..sim.memory_safety import ...' in scene_bridge.py, 'from . import scene_inputs' in scene_bridge.py). Blender extensions can be installed under modified package names, and the absolute form breaks if the top-level package directory is renamed or the module is loaded outside the expected package context.",
+      "impact": "If the package is renamed (e.g., during Blender extension installation or test harness loading), these imports fail with ModuleNotFoundError while all other modules continue working. Inconsistent with the rest of the codebase.",
+      "fix": "Replace with relative imports: 'from . import constants as C' and 'from .fields import voxel_coord_of_flat, voxel_center_world'."
+    },
+    {
+      "id": "ARCH-004",
+      "file": "fluidSim_warp_blender51/blender_manifest.toml",
+      "line": 18,
+      "severity": "low",
+      "title": "Manifest missing wheels and permissions declarations for Warp dependency and filesystem access",
+      "description": "blender_manifest.toml (18 lines total) declares no [wheels] section and no permissions. The add-on depends on NVIDIA Warp (a native CUDA Python package), which is discovered at runtime via warp_discovery.py using subprocess calls, sys.path manipulation, and filesystem traversal. For Blender 5.1 extensions distributed via the extensions platform, the manifest is the mechanism for declaring external dependencies and required permissions. Without a wheels declaration, the extensions platform cannot bundle or validate the Warp dependency. Without a permissions declaration, filesystem and subprocess access may be restricted on locked-down Blender configurations.",
+      "impact": "Users installing from the extensions platform get no dependency resolution for Warp. The add-on silently fails at runtime if Warp is not pre-installed in a discoverable location. Subprocess-based discovery in warp_discovery.py may be blocked by Blender's sandbox on some configurations.",
+      "fix": "Add a [wheels] section bundling or referencing the Warp wheel for target platforms, or document the external dependency in the manifest. Add appropriate permissions declarations if the extensions platform supports them for filesystem/subprocess access."
+    },
+    {
+      "id": "ARCH-005",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 99,
+      "severity": "low",
+      "title": "scene_bridge.py is a 2440-line god-object mixing session lifecycle, scene translation, handler management, and schema migration",
+      "description": "scene_bridge.py at 2440 lines contains: the Session class (lines 99-1159, ~1060 lines), ScenePlanningSnapshot, SceneUpdate enum, SceneInteractionState, ~40 module-level functions, 5 @persistent handler callbacks, schema migration logic (migrate_source_sampling_schema at line 2376), cache validation (_check_cache_scene_key at line 1171), error management (set_error/clear_error/current_error), and handler registration/removal. This single module owns solver lifecycle, Blender scene-to-solver data translation, frame-change/depsgraph/undo/load handler registration, cache key validation, source schema migration, and the module-level singleton session instance. The Session class alone is ~1060 lines.",
+      "impact": "High cognitive load for maintenance. Changes to handler logic risk unintended side effects on session management or scene translation. Difficult to test components in isolation. Ownership boundaries are unclear -- a bug in schema migration could affect handler registration.",
+      "fix": "Split into focused modules: session.py (Session class + singleton), handlers.py (callbacks + register/unregister), scene_sync.py (scene-to-solver translation), and schema_migration.py (migrate_source_sampling_schema). Keep scene_bridge.py as a thin re-export facade for backward compatibility with existing callers."
+    }
+  ]
+}

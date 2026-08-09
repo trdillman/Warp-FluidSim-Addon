@@ -1,0 +1,57 @@
+{
+  "dimension": "Particle Pipeline",
+  "agent_type": "general-purpose",
+  "files_reviewed": 7,
+  "findings": [
+    {
+      "id": "PIPE-001",
+      "file": "fluidSim_warp_blender51/sim/sourcing.py",
+      "line": 1900,
+      "severity": "high",
+      "title": "Hard-coded 64 particles-per-voxel cap in compiled emission silently truncates user density settings",
+      "description": "The compiled emission kernel k_emit_compiled_source_particles uses a compile-time constant loop `for sample in range(64)` (line 1900) that limits emission to at most 64 particles per voxel per pass. This cap is reinforced by normalized_liquid_target() in source_regions.py (line 465: `return max(0, min(64, int(round(float(plan.payload.target_particles_per_voxel)))))`), which clamps the target before passing it to the kernel. If a user sets particles_per_voxel > 64 in the Blender UI, the compiled source pipeline will silently emit only 64 particles per voxel. No warning or error is raised. The legacy shape/mesh emission path (k_source_shapes_particles line 763: `want = int(s.emit_rate)`) does NOT have this cap, creating an inconsistency between compiled and legacy source paths for the same authored density setting.",
+      "impact": "The simulation cannot reach fluid densities above 64 particles per voxel through the compiled (primary) source path, regardless of available GPU memory or particle capacity. Users setting higher density values get silently fewer particles than authored, degrading simulation fidelity without any diagnostic signal. This directly conflicts with the project mandate that behavior must be robust as particle counts and resolution scale up.",
+      "fix": "Make the compile-time loop bound a module-level constant (e.g., MAX_PPV = 128 or 256) and have normalized_liquid_target clamp to that constant rather than a literal 64. Alternatively, restructure the emission kernel to use a dynamic loop bound (wp.while_loop) so the cap can be configured at runtime. At minimum, emit a diagnostic warning when the authored particles_per_voxel exceeds the effective cap."
+    },
+    {
+      "id": "PIPE-002",
+      "file": "fluidSim_warp_blender51/sim/whitewater.py",
+      "line": 378,
+      "severity": "medium",
+      "title": "Whitewater collision SDF gradient uses fixed 0.5-voxel forward differences that produce garbage normals at sparse-grid boundaries",
+      "description": "In k_advect_whitewater, the collision response computes a surface normal via forward differences (lines 378-383): `gx = sample_scalar_trilinear(collision_sdf, ..., cvp + wp.vec3(0.5, 0.0, 0.0), 1.0e6) - csdf`. The offset is exactly 0.5 voxels in voxel-space coordinates. When the sample point (cvp + offset) falls outside the sparse topology, sample_scalar_trilinear returns its fallback value of 1.0e6. This makes the gradient component approximately 1e6 - csdf, which dominates the normal direction and forces it toward a fixed diagonal regardless of actual collider geometry. The normal magnitude check at line 385 (`wp.length(n) > 1.0e-8`) passes because the garbage gradient is huge, so the incorrect normal is used for the push-out `p = p - n * csdf`.",
+      "impact": "Whitewater particles colliding near the edge of the sparse topology boundary (where topology_expand is 0 or insufficient to cover the 0.5-voxel sample offset) receive collision responses in arbitrary diagonal directions instead of along the true collider surface normal. This causes visible deflection artifacts and incorrect bounce trajectories for foam, spray, and bubble particles near collider edges.",
+      "fix": "Use centered differences with a smaller offset (e.g., 1 voxel) and check whether each sample's flat index is valid (>= 0) before incorporating it into the gradient. Fall back to a zero gradient (skip collision response) if any sample is out-of-grid, rather than using the 1.0e6 fallback in the gradient computation."
+    },
+    {
+      "id": "PIPE-003",
+      "file": "fluidSim_warp_blender51/sim/whitewater.py",
+      "line": 692,
+      "severity": "low",
+      "title": "k_ww_compact_scatter declares out_count as an output parameter but never writes to it",
+      "description": "The kernel k_ww_compact_scatter (lines 680-701) lists `out_count: wp.array(dtype=wp.int32)` as a parameter and WhitewaterSystem.compact() passes `self._count2` as this output (line 652). However, the kernel body never assigns to `out_count`. The actual compacted count is written by a separate k_ww_final_count kernel launched afterward (lines 656-662) which overwrites self._count2. The dead output parameter creates a false signal that the scatter kernel owns the count, which could mask a regression if the k_ww_final_count launch is accidentally removed in future refactoring.",
+      "impact": "No runtime impact currently because k_ww_final_count always runs after the scatter and overwrites the value. However, the misleading parameter declaration makes the code harder to maintain and could lead to a silent count-corruption bug if k_ww_final_count is removed without also removing the out_count parameter.",
+      "fix": "Remove the out_count parameter from k_ww_compact_scatter and remove self._count2 from its outputs list. The count is solely owned by k_ww_final_count."
+    },
+    {
+      "id": "PIPE-004",
+      "file": "fluidSim_warp_blender51/sim/surface.py",
+      "line": 718,
+      "severity": "low",
+      "title": "SurfaceExtractor default max_dense_dim=256 inconsistent with capacity planner and pipeline defaults of 512",
+      "description": "SurfaceExtractor.__init__ (line 718) defaults max_dense_dim to 256. However, capacity_planner.py _settings_dict (line 110) defaults surface_max_dense_dim to 512, and SurfacePipeline.ensure_resources (line 122) reads the setting with default 512. While ensure_resources updates the extractor's max_dense_dim after construction (line 125: `self.render_extractor.max_dense_dim = max_dense`), the initial constructor default of 256 means that any code path calling extract() before ensure_resources() would use a smaller limit than what the capacity planner estimated memory for. This creates a window where the capacity planner allows a configuration that the extractor would reject at runtime with 'dense span exceeds Surface Max Dense Dim'.",
+      "impact": "Minimal in the current code because ensure_resources() is always called before extract(). The inconsistency is a latent maintenance hazard: if a future code path calls extract() without ensure_resources() first, it would use 256 instead of the capacity-planner-assumed 512, potentially raising a RuntimeError for fluid extents between 256 and 512 voxels that were budgeted as safe.",
+      "fix": "Align the SurfaceExtractor.__init__ default to 512 to match capacity_planner.py and SurfacePipeline.ensure_resources. Better yet, make the default a module-level constant imported from a shared location."
+    },
+    {
+      "id": "PIPE-005",
+      "file": "fluidSim_warp_blender51/sim/source_regions.py",
+      "line": 465,
+      "severity": "medium",
+      "title": "normalized_liquid_target and _legacy_liquid_target clamp to 64 but SourceShapeDesc.to_struct bakes raw emit_rate into the GPU struct",
+      "description": "normalized_liquid_target() (line 465) returns `max(0, min(64, ...))` and _legacy_liquid_target() (sourcing.py:2329) returns `max(0, min(64, ...))`. Both are used to compute demand and decide whether emission should proceed. However, SourceShapeDesc.to_struct() (sourcing.py:227) copies the raw, unclamped emit_rate into the SourceShape struct: `shape.emit_rate = float(self.emit_rate)`. The legacy emission kernel k_source_shapes_particles (sourcing.py:763) reads `want = int(s.emit_rate)` directly from the struct, bypassing the 64 clamp entirely. MeshSourceDesc.to_struct() (sourcing.py:312) has the same pattern. This means legacy shape/mesh sources can emit more than 64 particles per voxel when emit_rate > 64, while compiled sources are capped at 64. The demand counting kernels (k_count_source_shapes_particles:2000, k_count_mesh_source_particles:2039) also read raw emit_rate, so demand and emission are internally consistent within the legacy path, but the two paths have different effective density limits for the same authored setting.",
+      "impact": "If the same particles_per_voxel setting drives both compiled and legacy sources, the legacy sources will achieve higher density than compiled sources, producing visually inconsistent fluid density in mixed-source scenes. The 64 cap in _legacy_liquid_target is documented as preserving historical truncation behavior, but the actual struct baking does not truncate, contradicting the stated intent.",
+      "fix": "Either clamp emit_rate in to_struct() to match normalized_liquid_target (both paths capped at 64), or document that legacy sources intentionally have no cap and remove the misleading min(64) from _legacy_liquid_target, making it a simple max(0, int(...)) zero-check."
+    }
+  ]
+}

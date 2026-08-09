@@ -1,0 +1,77 @@
+{
+  "dimension": "Trust & Safety",
+  "agent_type": "general-purpose",
+  "files_reviewed": 17,
+  "findings": [
+    {
+      "id": "SEC-001",
+      "file": "fluidSim_warp_blender51/sim/custom.py",
+      "line": 935,
+      "severity": "high",
+      "title": "Predictable temp directory and exec_module on pre-existing files enables local arbitrary code execution",
+      "description": "CompiledSnippet._compile() writes generated Python source to a fixed-name directory os.path.join(tempfile.gettempdir(), \"fluidsim_warp_snippets\") (line 935) with a filename derived from a SHA1 content hash (line 933-934). The guard 'if not os.path.exists(path)' on line 938 means that if a file already exists at the computed path, the add-on skips writing its own content and proceeds to load and exec_module the existing file (line 948: spec.loader.exec_module(module)). On multi-user Linux systems where /tmp is world-writable and shared, a local attacker can pre-create the directory and plant a file or symlink at the predicted filename. The module name is deterministic for any built-in preset because both the template and the preset code are public in the source tree, allowing the SHA1 hash to be computed in advance. exec_module executes all module-level code in the file, giving the attacker arbitrary Python execution within the Blender process.",
+      "impact": "Local arbitrary code execution in the Blender process on multi-user systems. An attacker who shares a /tmp directory can achieve code execution by pre-planting a file whose name matches a content hash computed from known built-in preset code.",
+      "fix": "Use tempfile.mkdtemp(prefix='fluidsim_snippet_') to create a private per-compile directory instead of a shared fixed name, or verify file ownership/permissions before loading. Alternatively, write the file with mkstemp (which creates the file atomically with O_CREAT|O_EXCL) and always overwrite rather than skipping when the file exists."
+    },
+    {
+      "id": "SEC-002",
+      "file": "fluidSim_warp_blender51/sim/cuda_reduction.py",
+      "line": 62,
+      "severity": "medium",
+      "title": "CUDA cubin binary loaded from user-writable cache directory without integrity verification",
+      "description": "_load_kernel() constructs a cubin cache path under wp.config.kernel_cache_dir / 'fluidSim_cuda_reduction' (line 62) and loads the binary with build.load_cuda(str(cubin_path), device) on line 88. The only integrity check is a filename containing a SHA256 hash of the source identity (line 56-61). The cubin file itself is not cryptographically authenticated. An attacker with write access to the Warp kernel cache directory (which is user-writable by design) can replace the cubin with a modified binary that executes arbitrary GPU-side code when launched. The cubin is loaded without verifying it matches the source hash beyond the filename.",
+      "impact": "An attacker with write access to the kernel cache directory can substitute a malicious cubin that runs arbitrary code on the GPU at kernel launch time, potentially corrupting simulation data or crashing the GPU context.",
+      "fix": "After building the cubin, compute a hash of the binary content and embed it in the filename or a sidecar metadata file. Verify the hash after loading and before use. Alternatively, store the expected cubin hash in the _MODULES cache and reject mismatched cubins."
+    },
+    {
+      "id": "SEC-003",
+      "file": "fluidSim_warp_blender51/blender_manifest.toml",
+      "line": 1,
+      "severity": "medium",
+      "title": "Extension manifest is missing all required fields including permissions declarations",
+      "description": "blender_manifest.toml contains only 'schema_version = \"1.0.0\"' (line 1). It is missing id, version, name, tagline, maintainer, type, license, and permissions. Blender 5.1's extension system requires declared permissions for filesystem access, network access, and subprocess execution. The add-on performs filesystem writes (cache.py write_frame, export.py), subprocess execution (memory_safety.py nvidia-smi, warp_discovery.py python discovery), and ctypes FFI (cuda_reduction.py, memory_safety.py), none of which are declared. The empty manifest means Blender's trust boundary cannot inform users what the extension accesses.",
+      "impact": "Users installing this extension receive no permission warnings. The extension system cannot enforce sandboxing or alert users to the filesystem, subprocess, and native code access the add-on performs. This breaks the trust model Blender 5.1 extensions are designed to provide.",
+      "fix": "Populate blender_manifest.toml with all required fields. Declare permissions for filesystem access (e.g., 'files' for cache/export), and document subprocess/native access. At minimum: id, version, name, tagline, maintainer, type='add-on', license=['SPDX:GPL-3.0-or-later'], and permissions = { files = 'Cache and export file access' }."
+    },
+    {
+      "id": "SEC-004",
+      "file": "fluidSim_warp_blender51/io/cache.py",
+      "line": 340,
+      "severity": "medium",
+      "title": "cache_path RNA property used without sanitization against directory traversal",
+      "description": "write_frame() resolves the cache directory via 'base = bpy.path.abspath(fs.cache_path)' (line 340) and immediately calls os.makedirs(base, exist_ok=True) and writes files like fluidsim_00000.npz to that location. The cache_path StringProperty (properties.py:1250) is stored in the .blend file and can be set to any string including '../../' traversal sequences or absolute system paths. bpy.path.abspath resolves '//' prefixes relative to the blend file but does not sanitize '..' components. A crafted .blend file could direct cache writes to arbitrary filesystem locations.",
+      "impact": "Opening a malicious .blend file and running the simulation could write cache files (fluidsim_NNNNN.npz, sequence_metadata.json) to unintended directories. While the filenames are fixed and content is simulation data, this could overwrite identically-named files or fill disk in sensitive locations.",
+      "fix": "After resolving with bpy.path.abspath, normalize the path with os.path.normpath and validate it is within an expected root (e.g., the blend file directory or user home). Reject paths containing '..' after normalization, or confine writes to a sandboxed subdirectory."
+    },
+    {
+      "id": "SEC-005",
+      "file": "fluidSim_warp_blender51/sim/cuda_reduction.py",
+      "line": 114,
+      "severity": "low",
+      "title": "CUDA kernel launch passes raw device pointers without array size validation",
+      "description": "CudaDotProduct.launch() (line 114) wraps a.ptr, b.ptr, and output.ptr as ctypes.c_void_p and passes them directly to wp_cuda_launch_kernel along with a count parameter. There is no validation that arrays a and b have at least 'count' elements, or that output has space for the result. The CUDA kernel iterates 'for (int i = index; i < count; i += stride)' reading a[i]*b[i], so a mismatched count causes out-of-bounds GPU memory reads. The output pointer receives an atomicAdd with no bounds check.",
+      "impact": "If callers pass arrays smaller than count, the kernel reads or writes past the end of the GPU allocation, corrupting GPU memory or crashing the context. This is a safety gap in the FFI boundary, exploitable by any code path that miscalculates the count.",
+      "fix": "Add assertions that len(a) >= count, len(b) >= count, and output has at least 1 element before launching. Alternatively, clamp count to min(len(a), len(b)) defensively."
+    },
+    {
+      "id": "SEC-006",
+      "file": "fluidSim_warp_blender51/sim/custom.py",
+      "line": 905,
+      "severity": "low",
+      "title": "Snippet code from preset JSON bypasses validate_snippet at compile boundary",
+      "description": "CompiledSnippet._compile() (line 905) generates source from sn.code and writes/loads it without calling validate_snippet(). The validate_snippet function (line 191) enforces a _FORBIDDEN_NODES denylist (no imports, no exec, no function defs, etc.) and an allowed-names check. However, validation is only a UI pre-flight step; it is not enforced in the compile path. A preset JSON dropped into the user snippet directory (custom.py load_user_presets, line 613) can contain arbitrary code in its 'code' field that reaches _compile() without validation. The template structure (textwrap.indent on line 912) currently prevents module-level breakout, but the missing validation at the compile boundary means new template changes could silently introduce an execution path.",
+      "impact": "Defense-in-depth gap. Currently mitigated by template indentation keeping user code inside a Warp kernel body, but the validation boundary is fragile. If the template or indentation logic changes, unvalidated preset code could execute at module level during exec_module.",
+      "fix": "Call validate_snippet(sn.code, sn.run_over, sn.argument_names()) at the top of _compile() and refuse to compile if any ERROR-level issues are found. This enforces the security boundary at the point of code execution, not just in the UI."
+    },
+    {
+      "id": "SEC-007",
+      "file": "fluidSim_warp_blender51/operators.py",
+      "line": 1109,
+      "severity": "low",
+      "title": "User snippet selection path built with unsanitized enum suffix",
+      "description": "On line 1109, the path is constructed as os.path.join(user_snippet_dir(), selection[4:]) where selection is a string like 'USR:filename.json'. While the enum items are built with os.path.basename (properties.py:272), a crafted .blend file could set the RNA enum value to 'USR:../../malicious.json'. The subsequent re-validation via load_user_presets (line 1110-1112) mitigates this because load_user_presets only lists files directly in user_snippet_dir(), so a traversed path would not match. However, the traversal path itself is constructed before validation.",
+      "impact": "Currently mitigated by the found-list re-validation check, but the unsanitized path construction is a fragile defense-in-depth gap. A refactor that removes the re-validation step would expose the traversal.",
+      "fix": "Sanitize selection[4:] with os.path.basename before joining, or validate that the resulting path is within user_snippet_dir() using pathlib.Path.resolve() and relative_to()."
+    }
+  ]
+}

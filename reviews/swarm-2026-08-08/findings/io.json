@@ -1,0 +1,47 @@
+{
+  "dimension": "Serialization & IO",
+  "agent_type": "general-purpose",
+  "files_reviewed": 4,
+  "findings": [
+    {
+      "id": "SERIO-001",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 1184,
+      "severity": "medium",
+      "title": "Per-frame disk I/O and full scene hash recomputation during cache playback",
+      "description": "_check_cache_scene_key (called from play_cache_frame at line 876, invoked every frame from handle_frame_change at line 1079) reads the sequence metadata JSON from disk on every frame (line 1184: cache.read_sequence_metadata(base)) and fully recomputes the scene content hash (line 1190: cache.scene_key(scene)). scene_key builds a settings dataclass via build_settings, hashes every field, iterates all scene objects, and hashes RNA properties plus matrix_world transforms for each fluidsim-tagged object. This redundant O(n_settings + n_objects) computation plus file I/O runs at playback framerate (24-60 fps).",
+      "impact": "Stuttering or frame drops during cache playback on complex scenes due to repeated disk reads and expensive hash recomputation per frame, degrading the user experience for the primary cache playback workflow.",
+      "fix": "Cache the computed scene_key for the duration of a cache playback session (compute once when cache_playback_enabled is toggled on, invalidate on scene edit or playback toggle). Cache the metadata scene_key after first read rather than re-reading the JSON file every frame."
+    },
+    {
+      "id": "SERIO-002",
+      "file": "fluidSim_warp_blender51/blender/sources.py",
+      "line": 118,
+      "severity": "low",
+      "title": "Evaluated mesh leak on exception in object_points_world",
+      "description": "In object_points_world, the MESH branch calls eval_obj.to_mesh() at line 118 to allocate an evaluated mesh, but eval_obj.to_mesh_clear() at line 124 is only reached on the success path. If mesh.vertices.foreach_get('co', pts) at line 121, pts.reshape at line 122, or the matrix multiply at line 123 raises an exception, to_mesh_clear() is never called, leaking the evaluated mesh data in Blender's memory for the remainder of the session.",
+      "impact": "Leaked mesh data accumulates in Blender memory. The trigger is low probability since the operations rarely fail on valid meshes, but each occurrence leaks permanently until the .blend file is closed.",
+      "fix": "Wrap the mesh operations in a try/finally block to guarantee eval_obj.to_mesh_clear() is called regardless of exceptions."
+    },
+    {
+      "id": "SERIO-003",
+      "file": "fluidSim_warp_blender51/io/cache.py",
+      "line": 319,
+      "severity": "low",
+      "title": "read_sequence_metadata silently swallows corrupt metadata files",
+      "description": "read_sequence_metadata catches (OSError, json.JSONDecodeError) at line 319 and returns None, treating a corrupt metadata file identically to a missing one. In _check_cache_scene_key (scene_bridge.py line 1184), None is coerced to an empty dict via the `or {}` fallback, so metadata_key becomes an empty string. This silently weakens the sequence-level scene_key validation rather than alerting the user. If the per-frame scene_key is also absent (old cache format or empty scene_key), all validation is bypassed without any warning.",
+      "impact": "A corrupt metadata file silently disables cache integrity validation instead of surfacing the problem, potentially allowing playback of a stale or mismatched cache without warning.",
+      "fix": "Log a warning when a metadata file exists but cannot be parsed (distinguishing corruption from a simple missing file). Optionally raise rather than return None for corrupt-but-present files."
+    },
+    {
+      "id": "SERIO-004",
+      "file": "fluidSim_warp_blender51/blender/scene_bridge.py",
+      "line": 831,
+      "severity": "low",
+      "title": "Non-atomic gap between frame write and metadata update in live cache path",
+      "description": "In Session.step, the live cache write path writes the frame NPZ (line 831: cache.write_frame) and then writes the sequence metadata JSON (lines 842-848: cache.write_sequence_metadata) as two separate atomic operations. If a crash occurs between them, the metadata's frame_end and settings_records are stale: the frame file exists on disk but the metadata does not reference it. The metadata's settings_segments, settings_baseline, and settings_changes would all be out of date.",
+      "impact": "After a crash, metadata reports a narrower or inconsistent range compared to what exists on disk. Practical impact is low because play_cache_frame reads frames by index directly and available_frames scans filenames, but metadata consumers see inconsistent state.",
+      "fix": "Accept the minor inconsistency for supplemental caching (current behavior is documented as best-effort), or write a preliminary metadata marker before the frame and a confirming one after, so post-crash recovery can detect the incomplete write."
+    }
+  ]
+}
