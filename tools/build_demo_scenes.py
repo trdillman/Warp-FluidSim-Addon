@@ -14,6 +14,9 @@ not become source-control assets.
 2. crown_splash    - droplet impact into a shallow pool (Worthington crown).
 3. force_fields    - all 13 native Blender force-field GPU proxies.
 4. adhesive_calender - twin-roll production shear cell with viscosity A/B lanes.
+5. paddle_stir      - keyframed rotating paddle in a cylindrical tank; the only
+                      scene exercising the moving-collider velocity-coupling path
+                      (build explicitly with `-- paddle_stir`).
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -176,8 +179,16 @@ def add_camera_light(scene, cam_loc, cam_rot):
     sun.rotation_euler = (0.7, 0.15, 0.4)
 
 
-def run_scene(name, frames, dump_velocities=True):
-    """Step the live session; export per-frame particle data + aggregates."""
+def run_scene(name, frames, dump_velocities=True, advance_timeline=False):
+    """Step the live session; export per-frame particle data + aggregates.
+
+    ``advance_timeline`` moves ``scene.frame_current`` in lockstep with the
+    solver. Scenes with keyframed (animated) colliders need this: without an
+    advancing frame the depsgraph never re-evaluates the animation, so the
+    collider sits frozen, and ``object_angular_velocity`` (scene_inputs.py)
+    returns zero every step because of its ``frame <= previous`` guard. Left
+    off by default so the static-collider scenes stay byte-identical.
+    """
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
     scene = bpy.context.scene
@@ -195,6 +206,8 @@ def run_scene(name, frames, dump_velocities=True):
     }
     t0 = time.perf_counter()
     for f in range(1, frames + 1):
+        if advance_timeline:
+            scene.frame_set(f)
         bpy.ops.fluidsim.step(frames=1)
         solver = sess.solver
         pos = solver.particle_positions()
@@ -1216,6 +1229,183 @@ def build_height_fill():
 
 
 # ---------------------------------------------------------------------------
+# Scene 5: paddle stir (moving-collider velocity coupling)
+# ---------------------------------------------------------------------------
+
+def build_paddle_stir():
+    """Keyframed rotating paddle in a cylindrical tank.
+
+    The only scene that drives the moving-collider path: the paddle's
+    rotation_euler.z is keyframed, run_scene advances the timeline so the
+    depsgraph re-evaluates the animation, and object_angular_velocity feeds
+    collision_vel = linear + cross(angular, p - center) into the solver.
+    Blades pierce the 0.32 m waterline so churn reaches the free-surface band
+    and emits whitewater.
+    """
+    import bmesh
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    scene = fresh_scene()
+    fs = scene.fluidsim
+    lo, hi = (-0.60, -0.60, 0.0), (0.60, 0.60, 0.90)
+    make_domain(scene, lo, hi, "PaddleStir Domain")
+    fs.voxel_size = 0.012
+    fs.max_particles = 900_000
+    fs.min_substeps = 1
+    fs.max_substeps = 24
+    fs.flip_ratio = 0.97
+    fs.whitewater_enabled = True
+    fs.ww_churn_gain = 2.5
+    fs.profiling_enabled = False
+    fs.show_particles = True
+    fs.particle_display_fraction = 1.0
+    fs.show_whitewater = True
+    scene.frame_start = 1
+    scene.frame_end = 96
+
+    # -- Tank: closed manifold tube, outward normals, open top, cavity R=0.45.
+    # SOLIDIFY offset=-1 keeps the original radius-0.49 surface as the outer
+    # wall and grows the 0.04 m shell inward to a 0.45 m inner radius (F2 fix:
+    # a plain solid cylinder is a plug that expels the pool on substep 1).
+    tank_inner_radius = 0.45
+    wall_thickness = 0.04
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=64, radius=tank_inner_radius + wall_thickness, depth=0.80,
+        location=(0.0, 0.0, 0.40))
+    tank = bpy.context.active_object
+    tank.name = "PaddleStir Tank"
+    bm = bmesh.new()
+    bm.from_mesh(tank.data)
+    bm.faces.ensure_lookup_table()
+    top_face = max(bm.faces, key=lambda fc: fc.calc_center_median().z)
+    bmesh.ops.delete(bm, geom=[top_face], context="FACES")
+    bm.to_mesh(tank.data)
+    bm.free()
+    tank.data.update()
+    wall = tank.modifiers.new("Tank Wall", type="SOLIDIFY")
+    wall.thickness = wall_thickness
+    wall.offset = -1.0
+    _colliders.tag_collider(tank, friction=0.3, restitution=0.0)
+
+    # -- Paddle: hub on the Z axis + 4 radial blade plates, joined, origin on
+    # the rotation axis (center = matrix_world.translation, so an off-axis
+    # origin would inject a spurious orbital term into cross(angular, p-center)).
+    blade_inner, blade_outer = 0.18, 0.38
+    blade_z_min, blade_z_max = 0.10, 0.42
+    blade_thickness = 0.03
+    blade_count = 4
+    r_mid = 0.5 * (blade_inner + blade_outer)
+    z_mid = 0.5 * (blade_z_min + blade_z_max)
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=24, radius=0.05, depth=0.50, location=(0.0, 0.0, z_mid))
+    paddle = bpy.context.active_object
+    paddle.name = "PaddleStir Paddle"
+    blades = []
+    for k in range(blade_count):
+        ang = k * (2.0 * math.pi / blade_count)
+        bpy.ops.mesh.primitive_cube_add(
+            size=1.0,
+            location=(r_mid * math.cos(ang), r_mid * math.sin(ang), z_mid))
+        blade = bpy.context.active_object
+        blade.dimensions = (blade_outer - blade_inner, blade_thickness,
+                            blade_z_max - blade_z_min)
+        bpy.context.view_layer.update()
+        blade.rotation_euler = (0.0, 0.0, ang)
+        blades.append(blade)
+    bpy.ops.object.select_all(action="DESELECT")
+    paddle.select_set(True)
+    for blade in blades:
+        blade.select_set(True)
+    bpy.context.view_layer.objects.active = paddle
+    bpy.ops.object.join()
+    scene.cursor.location = (0.0, 0.0, 0.0)
+    bpy.ops.object.origin_set(type="ORIGIN_CURSOR")
+    bpy.context.view_layer.update()
+    _colliders.tag_collider(paddle, friction=0.5, restitution=0.0)
+
+    # -- Keyframe rotation_euler.z: 0 -> ~100 RPM by f24, held to f72, back to
+    # 0 by f96. Every frame is a keyframe so the integer-frame solver samples
+    # equal the analyzer's np.interp reconstruction exactly; LINEAR keeps the
+    # per-frame angular velocity clean.
+    omega_peak = 2.0 * math.pi * 100.0 / 60.0
+    spinup_end, steady_end, total = 24, 72, 96
+    dt = 1.0 / FPS
+    prefs = bpy.context.preferences.edit
+    old_interp = prefs.keyframe_new_interpolation_type
+    prefs.keyframe_new_interpolation_type = "LINEAR"
+    angle = 0.0
+    rotation_keyframes = []
+    paddle.rotation_euler = (0.0, 0.0, 0.0)
+    try:
+        for f in range(1, total + 1):
+            if f <= spinup_end:
+                rate = omega_peak * (f - 1) / (spinup_end - 1)
+            elif f <= steady_end:
+                rate = omega_peak
+            else:
+                rate = omega_peak * (total - f) / (total - steady_end)
+            if f > 1:
+                angle += rate * dt
+            paddle.rotation_euler[2] = angle
+            paddle.keyframe_insert("rotation_euler", index=2, frame=f)
+            rotation_keyframes.append([f, angle])
+    finally:
+        prefs.keyframe_new_interpolation_type = old_interp
+
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    pool_depth = 0.32
+    pool = lattice((-tank_inner_radius, -tank_inner_radius, 0.05),
+                   (tank_inner_radius, tank_inner_radius, pool_depth), 0.010)
+    radial = np.hypot(pool[:, 0], pool[:, 1])
+    pool = pool[radial < (tank_inner_radius - 1.5 * fs.voxel_size)]
+    n_pool = sess.solver.inject_particles(pool)
+    log(f"paddle_stir: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
+    add_camera_light(scene, (0.95, -1.30, 1.05), (1.10, 0.0, 0.62))
+    run_scene("paddle_stir", total, advance_timeline=True)
+    add_text_block(
+        "README_Paddle_Stir",
+        "Keyframed rotating paddle (moving collider). run_scene advances the "
+        "timeline so object_angular_velocity is nonzero; blades pierce the "
+        "waterline to emit whitewater. Scrub 1-96 to see the paddle turn.")
+    save_scene("paddle_stir")
+    os.makedirs(os.path.join(DEMOS, "paddle_stir"), exist_ok=True)
+    meta = {
+        "scene": "paddle_stir",
+        "gravity": 9.81,
+        "fps": FPS,
+        "domain": [list(lo), list(hi)],
+        "voxel_size": 0.012,
+        "tank_center": [0.0, 0.0, 0.40],
+        "tank_inner_radius": tank_inner_radius,
+        "tank_height": 0.80,
+        "tank_wall_thickness": wall_thickness,
+        "pool_depth": pool_depth,
+        "pool_particles": int(n_pool),
+        "paddle_origin": [0.0, 0.0, 0.0],
+        "paddle_axis": [0.0, 0.0, 1.0],
+        "blade_count": blade_count,
+        "blade_inner_radius": blade_inner,
+        "blade_outer_radius": blade_outer,
+        "blade_z_min": blade_z_min,
+        "blade_z_max": blade_z_max,
+        "blade_thickness": blade_thickness,
+        "rotation_keyframes": rotation_keyframes,
+        "peak_rad_per_s": omega_peak,
+        "spinup_end_frame": spinup_end,
+        "steady_end_frame": steady_end,
+        "whitewater_churn_gain": 2.5,
+        "collider_objects": ["PaddleStir Tank", "PaddleStir Paddle"],
+    }
+    with open(os.path.join(DEMOS, "paddle_stir", "meta.json"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        json.dump(meta, fh, indent=2)
+        fh.write("\n")
+    bpy.ops.fluidsim.release()
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     os.makedirs(DEMOS, exist_ok=True)
@@ -1231,6 +1421,7 @@ def main():
         "volume_source": build_volume_source,
         "liquid_sink": build_liquid_sink,
         "height_fill": build_height_fill,
+        "paddle_stir": build_paddle_stir,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:

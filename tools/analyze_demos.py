@@ -16,9 +16,16 @@ crown_splash  - mass conservation, containment, impact detection, crown rise
                 above the pool, azimuthal crown symmetry (CV over 12
                 sectors), sqrt(t) crown-radius growth correlation
                 (Yarin-Weiss rim propagation), velocity boundedness.
+paddle_stir   - mass conservation, containment, floor/velocity checks,
+                blade-solid penetration, radial containment in the tank,
+                fluid corotation with the paddle, angular-momentum spin-up
+                and decay, rotational free-surface depression, whitewater
+                emission from surface-piercing blades.
 
 Writes artifacts/demo_analysis/analysis_report.json and
 artifacts/demo_analysis/ANALYSIS.md; exits nonzero on any failed check.
+Pass scene names on argv (e.g. `paddle_stir`) to run only those scenes and
+write suffixed report/markdown files instead of the canonical ones.
 """
 
 import json
@@ -36,6 +43,12 @@ ANALYSIS_OUT = os.path.join(REPO, "artifacts", "demo_analysis")
 
 CHECKS = []
 MARTIN_MOSES_FRONT_POSITION_RANGE = (2.5, 4.0)
+
+# UNCALIBRATED — no real paddle_stir bake has been measured yet. Placeholder
+# only; the orchestrator must tune this against real bake data and freeze it.
+# Fraction of the steady-window mean angular momentum that the early-window
+# (frames 1-5) mean must fall short by before spin-up counts as "meaningful".
+PADDLE_SPINUP_MOMENTUM_MARGIN = 0.3
 
 
 def check(scene, name, passed, detail):
@@ -267,12 +280,186 @@ def analyze_crown_splash():
 
 
 
+def analyze_paddle_stir():
+    name = "paddle_stir"
+    meta, series, frames = load_scene(name)
+    peak_tip_speed = meta["peak_rad_per_s"] * meta["blade_outer_radius"]
+    common_checks(name, meta, series, frames, vmax_limit=3.0 * peak_tip_speed)
+
+    h = meta["voxel_size"]
+    tx, ty = meta["tank_center"][0], meta["tank_center"][1]
+    px, py = meta["paddle_origin"][0], meta["paddle_origin"][1]
+    r_in, r_out = meta["blade_inner_radius"], meta["blade_outer_radius"]
+    z_lo, z_hi = meta["blade_z_min"], meta["blade_z_max"]
+    half_t = meta["blade_thickness"] / 2.0
+    blade_count = meta["blade_count"]
+    kf_frame = np.array([kf[0] for kf in meta["rotation_keyframes"]], dtype=np.float64)
+    kf_angle = np.array([kf[1] for kf in meta["rotation_keyframes"]], dtype=np.float64)
+
+    def paddle_angle(f):
+        return float(np.interp(f, kf_frame, kf_angle))
+
+    # 1) No paddle penetration: reconstruct the blade solid (paddle-axis
+    # frame, world-Z axis per the scene convention) at each frame's
+    # interpolated angle and measure how deep any particle sits inside it.
+    worst_pen = 0.0
+    for f, d in frames.items():
+        p = d["positions"]
+        rx, ry = p[:, 0] - px, p[:, 1] - py
+        r = np.hypot(rx, ry)
+        theta = np.arctan2(ry, rx)
+        in_bounds = (r >= r_in) & (r <= r_out) & (p[:, 2] >= z_lo) & (p[:, 2] <= z_hi)
+        if not in_bounds.any():
+            continue
+        angle = paddle_angle(f)
+        phi = angle + np.arange(blade_count) * (2 * math.pi / blade_count)
+        r_s, theta_s = r[in_bounds], theta[in_bounds]
+        dist = r_s[:, None] * np.abs(np.sin(theta_s[:, None] - phi[None, :]))
+        min_dist = dist.min(axis=1)
+        pen = half_t - min_dist
+        pen = pen[pen > 0]
+        if pen.size:
+            worst_pen = max(worst_pen, float(pen.max()))
+    check(name, "no paddle penetration", worst_pen <= h * 1.5,
+          f"max penetration {worst_pen * 1000:.1f} mm (limit {h * 1500:.0f} mm)")
+
+    # 2) Radial containment in the tank. The tank has no lid (open top by
+    # design), so a blade-driven splash legitimately leaves the wall's
+    # radius once it clears the rim -- nothing is meant to contain it there
+    # but gravity and the far simulation-domain wall, and it then lands
+    # somewhere in the open domain around the tank, same as a real splash
+    # landing on the floor. That is not a containment violation. A particle
+    # that exceeds the radius *without* ever having cleared the rim first
+    # would mean fluid leaked sideways through the solid wall instead --
+    # that is the actual defect this check exists to catch, so once a
+    # particle is seen above the rim it is exempted from then on, but not
+    # before.
+    tank_z_top = meta["tank_center"][2] + meta["tank_height"] / 2.0
+    r_limit = meta["tank_inner_radius"] + 1.5 * h
+    worst_r = 0.0
+    escaped = None
+    for f in sorted(frames):
+        d = frames[f]
+        p = d["positions"]
+        if escaped is None or escaped.shape[0] != p.shape[0]:
+            escaped = np.zeros(p.shape[0], dtype=bool)
+        escaped |= p[:, 2] > tank_z_top
+        contained = ~escaped
+        if not contained.any():
+            continue
+        r = np.hypot(p[contained, 0] - tx, p[contained, 1] - ty)
+        worst_r = max(worst_r, float(r.max()))
+    check(name, "radial containment in tank", worst_r <= r_limit,
+          f"max radius {worst_r * 1000:.1f} mm (limit {r_limit * 1000:.1f} mm)")
+
+    steady_frames = sorted(f for f in frames
+                            if meta["spinup_end_frame"] <= f <= meta["steady_end_frame"])
+
+    # 3) Fluid corotates with the paddle: mean tangential speed in the blade
+    # annulus, below the waterline, over the steady window.
+    vt_chunks = []
+    for f in steady_frames:
+        d = frames[f]
+        p, v = d["positions"], d["velocities"]
+        rx, ry = p[:, 0] - tx, p[:, 1] - ty
+        r = np.hypot(rx, ry)
+        theta = np.arctan2(ry, rx)
+        m = (r >= r_in) & (r <= r_out) & (p[:, 2] < meta["pool_depth"])
+        if m.any():
+            vt_chunks.append(-np.sin(theta[m]) * v[m, 0] + np.cos(theta[m]) * v[m, 1])
+    mean_vt = float(np.concatenate(vt_chunks).mean()) if vt_chunks else 0.0
+    paddle_sign = math.copysign(1.0, meta["peak_rad_per_s"]) if meta["peak_rad_per_s"] else 1.0
+    check(name, "fluid corotates with paddle",
+          mean_vt * paddle_sign > 0 and abs(mean_vt) < peak_tip_speed,
+          f"mean tangential speed {mean_vt:.3f} m/s "
+          f"(paddle direction sign {paddle_sign:+.0f}, tip speed limit {peak_tip_speed:.2f} m/s)")
+
+    # 4) Angular momentum (uniform particle mass, so this is really
+    # sum(x*vy - y*vx), i.e. specific angular momentum with mass omitted)
+    # spins up through the steady window and decays after the paddle stops.
+    lz_by_frame = {}
+    for f, d in frames.items():
+        p, v = d["positions"], d["velocities"]
+        rx, ry = p[:, 0] - tx, p[:, 1] - ty
+        lz_by_frame[f] = float(np.sum(rx * v[:, 1] - ry * v[:, 0]))
+    early_frames = sorted(f for f in frames if f <= 5)
+    late_frames = sorted(frames)[-5:]
+    steady_mean_lz = (float(np.mean([lz_by_frame[f] for f in steady_frames]))
+                       if steady_frames else 0.0)
+    early_mean_lz = (float(np.mean([lz_by_frame[f] for f in early_frames]))
+                      if early_frames else 0.0)
+    late_mean_lz = (float(np.mean([lz_by_frame[f] for f in late_frames]))
+                     if late_frames else 0.0)
+    spins_up = (steady_mean_lz - early_mean_lz) > \
+        PADDLE_SPINUP_MOMENTUM_MARGIN * abs(steady_mean_lz)
+    decays = late_mean_lz < steady_mean_lz
+    check(name, "angular momentum spins up and decays", spins_up and decays,
+          f"mean Lz (mass omitted, uniform particle mass): "
+          f"early(1-5)={early_mean_lz:.4f}, steady={steady_mean_lz:.4f}, "
+          f"late(last 5)={late_mean_lz:.4f}")
+
+    # 5) Rotational depression of the free surface: axis column sits lower
+    # than the near-wall annulus during the steady window.
+    axis_z, wall_z = [], []
+    for f in steady_frames:
+        p = frames[f]["positions"]
+        r = np.hypot(p[:, 0] - tx, p[:, 1] - ty)
+        axis_z.append(p[r < 0.10, 2])
+        wall_z.append(p[(r >= 0.35) & (r <= 0.44), 2])
+    axis_z = np.concatenate(axis_z) if axis_z else np.array([0.0])
+    wall_z = np.concatenate(wall_z) if wall_z else np.array([0.0])
+    axis_p95 = float(np.percentile(axis_z, 95)) if axis_z.size else 0.0
+    wall_p95 = float(np.percentile(wall_z, 95)) if wall_z.size else 0.0
+    depression_mm = (wall_p95 - axis_p95) * 1000
+    check(name, "free surface forms rotational depression", axis_p95 < wall_p95,
+          f"axis p95 z={axis_p95:.3f} m, wall p95 z={wall_p95:.3f} m, "
+          f"depression {depression_mm:.1f} mm")
+
+    # 6) Whitewater emitted by surface-piercing blades once spinning, absent
+    # at frame 1 before the paddle has done anything.
+    ww_by_frame = dict(zip(series["frames"], series["whitewater_count"]))
+    steady_ww = {f: ww_by_frame[f] for f in steady_frames if f in ww_by_frame}
+    peak_ww = max(steady_ww.values()) if steady_ww else 0
+    peak_ww_frame = max(steady_ww, key=steady_ww.get) if steady_ww else None
+    frame1_ww = ww_by_frame.get(1, 0)
+    check(name, "whitewater emitted by surface-piercing blades",
+          peak_ww > 0 and frame1_ww == 0,
+          f"peak whitewater {peak_ww:,} at frame {peak_ww_frame}, "
+          f"frame 1 whitewater {frame1_ww:,}")
+
+    return {"peak_angular_momentum": max((lz_by_frame[f] for f in steady_frames),
+                                          default=0.0),
+            "steady_mean_tangential_speed": mean_vt,
+            "surface_depression_mm": depression_mm,
+            "peak_whitewater": peak_ww,
+            "max_paddle_penetration_mm": worst_pen * 1000}
+
+
+# ---------------------------------------------------------------------------
+
+ANALYZERS = {"dam_break": analyze_dam_break,
+             "crown_splash": analyze_crown_splash,
+             "paddle_stir": analyze_paddle_stir}
+DEFAULT_SCENES = ("dam_break", "crown_splash")
+
+
 def main():
+    if len(sys.argv) > 1:
+        scenes = sys.argv[1:]
+        unknown = [s for s in scenes if s not in ANALYZERS]
+        if unknown:
+            print(f"Unknown scene(s): {', '.join(unknown)}. "
+                  f"Valid names: {', '.join(ANALYZERS)}", file=sys.stderr)
+            return 2
+        suffix = "_" + "_".join(scenes)
+    else:
+        scenes = list(DEFAULT_SCENES)
+        suffix = ""
+
     metrics = {}
-    for fn, key in ((analyze_dam_break, "dam_break"),
-                    (analyze_crown_splash, "crown_splash")):
+    for key in scenes:
         try:
-            metrics[key] = fn()
+            metrics[key] = ANALYZERS[key]()
         except Exception as exc:  # noqa: BLE001
             import traceback
 
@@ -283,14 +470,14 @@ def main():
               "passed": passed, "total": len(CHECKS),
               "checks": CHECKS, "metrics": metrics}
     os.makedirs(ANALYSIS_OUT, exist_ok=True)
-    with open(os.path.join(ANALYSIS_OUT, "analysis_report.json"), "w",
+    with open(os.path.join(ANALYSIS_OUT, f"analysis_report{suffix}.json"), "w",
               encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
 
     lines = ["# FluidSim Warp — Demo Scene Analysis", "",
              f"Verdict: **{report['result'].upper()}** "
              f"({passed}/{len(CHECKS)} checks)", ""]
-    for scene in ("dam_break", "crown_splash"):
+    for scene in scenes:
         lines.append(f"## {scene}")
         lines.append("")
         lines.append("| Check | Result | Detail |")
@@ -301,7 +488,7 @@ def main():
                              f"{'PASS' if c['passed'] else 'FAIL'} | "
                              f"{c['detail']} |")
         lines.append("")
-    with open(os.path.join(ANALYSIS_OUT, "ANALYSIS.md"), "w",
+    with open(os.path.join(ANALYSIS_OUT, f"ANALYSIS{suffix}.md"), "w",
               encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     print(f"\nDEMO-ANALYSIS-{report['result'].upper()} "
