@@ -243,6 +243,20 @@ def k_rasterize_collider_material(
 
 
 @wp.kernel
+def k_transform_collider_points(
+    base_points: wp.array(dtype=wp.vec3),
+    center: wp.vec3,
+    axis: wp.vec3,
+    angle: float,
+    linear_disp: wp.vec3,
+    out_points: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    q = wp.quat_from_axis_angle(axis, angle)
+    out_points[tid] = center + wp.quat_rotate(q, base_points[tid] - center) + linear_disp
+
+
+@wp.kernel
 def k_copy_float(src: wp.array(dtype=float), dst: wp.array(dtype=float)):
     tid = wp.tid()
     dst[tid] = src[tid]
@@ -339,6 +353,10 @@ class ColliderDesc:
     aabb_max: tuple = (0.0, 0.0, 0.0)
     friction: float = 0.0
     restitution: float = 0.0
+    # Solver-internal: frame-start copy of mesh.points, set by set_colliders()
+    # only when this collider is moving. Non-None marks it eligible for
+    # per-substep re-transform; the Blender bridge never sets this field.
+    base_points: object = None
 
 
 @dataclass
@@ -720,6 +738,11 @@ class FluidSolver:
 
     def set_colliders(self, colliders):
         self.colliders = list(colliders)
+        for col in self.colliders:
+            moving = col.mesh is not None and (
+                any(abs(v) > 1.0e-9 for v in col.linear_velocity)
+                or any(abs(v) > 1.0e-9 for v in col.angular_velocity))
+            col.base_points = wp.clone(col.mesh.points) if moving else None
 
     def set_force_fields(self, force_fields):
         self.force_fields = list(force_fields)
@@ -1048,6 +1071,30 @@ class FluidSolver:
                         self.collision_sdf.data],
                 device=self.device,
             )
+
+    def _update_moving_colliders(self, elapsed):
+        """Re-pose moving colliders to their sub-frame transform and refit.
+
+        Extrapolates each collider's frame-start pose with the same constant
+        linear/angular velocity already used for collision_vel, so the SDF a
+        fast-spinning collider presents to the fluid stops lagging the whole
+        frame behind its true position between rebuilds.
+        """
+        for col in self.colliders:
+            if col.base_points is None:
+                continue
+            av = col.angular_velocity
+            mag = math.sqrt(sum(v * v for v in av))
+            axis = tuple(v / mag for v in av) if mag > 1.0e-9 else (0.0, 0.0, 1.0)
+            angle = mag * elapsed
+            linear_disp = tuple(v * elapsed for v in col.linear_velocity)
+            wp.launch(
+                k_transform_collider_points, dim=col.base_points.shape[0],
+                inputs=[col.base_points, wp.vec3(*col.center), wp.vec3(*axis),
+                        angle, wp.vec3(*linear_disp)],
+                outputs=[col.mesh.points], device=self.device,
+            )
+            col.mesh.refit()
 
     def _apply_collisions(self):
         g = self.grid
@@ -1630,6 +1677,36 @@ class FluidSolver:
 
     # -- CFL ----------------------------------------------------------------
 
+    def _collider_max_speed(self):
+        """Max collider surface speed this frame: |linear| + |angular| * tip radius.
+
+        Fluid-only CFL is blind to a fast collider meeting still fluid: the
+        substep count is sized before any collision response has happened,
+        so a rotating paddle can leave the pool's frame-start velocity near
+        zero while its blade tip moves several m/s. Folding collider tip
+        speed into the CFL vmax keeps the substep dt fine enough that the
+        segment-based collision resolve (kernels_fluid.py resolve_collision)
+        can actually contain the impact, instead of a single oversized
+        substep overshooting the domain.
+        """
+        vmax = 0.0
+        for col in self.colliders:
+            lin = math.sqrt(sum(v * v for v in col.linear_velocity))
+            av = col.angular_velocity
+            amag = math.sqrt(sum(v * v for v in av))
+            tip_speed = lin
+            if amag > 0.0:
+                cx, cy, cz = col.center
+                radius = 0.0
+                for x in (col.aabb_min[0], col.aabb_max[0]):
+                    for y in (col.aabb_min[1], col.aabb_max[1]):
+                        for z in (col.aabb_min[2], col.aabb_max[2]):
+                            d = math.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2)
+                            radius = max(radius, d)
+                tip_speed += amag * radius
+            vmax = max(vmax, tip_speed)
+        return vmax
+
     def _compute_substeps(self, frame_dt):
         """Return (substeps, cfl_clamped) for one frame.
 
@@ -1658,6 +1735,7 @@ class FluidSolver:
         vmax = float(self.max_speed_dev.numpy()[0])
         gmag = math.sqrt(sum(x * x for x in s.gravity))
         vmax = vmax + gmag * frame_dt
+        vmax = max(vmax, self._collider_max_speed())
         if vmax < 1.0e-6:
             return min_substeps, False
         dt_cfl = s.cfl * s.voxel_size / vmax
@@ -1700,6 +1778,8 @@ class FluidSolver:
         }
 
         rebuild_each_substep = self.snippets.has_any()
+        moving_colliders = any(
+            col.base_points is not None for col in self.colliders)
         frame_topology_expand = max(
             int(s.topology_expand),
             int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
@@ -1710,13 +1790,16 @@ class FluidSolver:
         for substep_index in range(substeps):
             self.snippets.run(CustomKernelOrder.FIRST_STEP, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
+            collision_rebuild = rebuild or moving_colliders
             with self._phase("misc"):
                 if rebuild:
                     self._rebuild_topology(
                         frame_topology_expand if not rebuild_each_substep else None)
-                self._clear_grid_fields(clear_collision=rebuild)
+                self._clear_grid_fields(clear_collision=collision_rebuild)
             with self._phase("collision"):
-                if rebuild:
+                if collision_rebuild:
+                    if moving_colliders and substep_index > 0:
+                        self._update_moving_colliders(substep_index * dt)
                     self._apply_collisions()
             self.snippets.run(CustomKernelOrder.BEFORE_SOURCING, self, time_ctx)
             with self._phase("indexing"):

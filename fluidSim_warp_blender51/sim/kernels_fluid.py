@@ -1,7 +1,6 @@
 """FluidSim liquid kernels: PIC/FLIP transfer, advection, forces, particle
 indexing/sorting/relaxation and lifecycle (``fluidSim*`` family).
 
-Original source namespace was ``paradigm*``; the registry maintains aliases.
 No bpy imports allowed here.
 """
 
@@ -576,8 +575,17 @@ def resolve_collision(
         if ln > 1.0e-8:
             n = n / ln
             # Central differences span one voxel, so ln / voxel_size is the
-            # world-space gradient magnitude. Do not assume a perfect SDF.
-            p_out = p - n * phi * (voxel_size / ln) * 1.001
+            # world-space gradient magnitude. Do not assume a perfect SDF,
+            # but near a medial axis / thin feature (e.g. a paddle blade a
+            # couple of voxels thick) that magnitude can collapse toward
+            # zero even though phi itself is a modest, valid penetration
+            # depth. voxel_size / ln then blows up and teleports the
+            # particle. Clamp the correction to a bounded multiple of the
+            # raw penetration depth: exact for a proper unit-gradient SDF
+            # (factor 1), still corrects real gradient-magnitude error, but
+            # can't diverge from a degenerate estimate.
+            grad_correction = wp.clamp(voxel_size / ln, 0.25, 4.0)
+            p_out = p - n * phi * grad_correction * 1.001
             vcol = sample_vec3_trilinear(
                 collision_vel, leaf_table, voxels_dim, leaves_dim,
                 vp, wp.vec3(0.0))
