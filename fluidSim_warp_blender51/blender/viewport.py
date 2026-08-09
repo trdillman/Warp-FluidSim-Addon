@@ -12,10 +12,6 @@ import sys
 
 import numpy as np
 
-# Retained as a compatibility hook for Blender-free tests. Nearest-value
-# lookup now always uses the batched NumPy grid path below.
-_KDTree = None
-
 from ..sim.constants import TIMER_PHASE_SLOTS
 
 SURFACE_NAME = "FluidSim Surface"

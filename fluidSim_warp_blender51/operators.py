@@ -303,6 +303,20 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 if rna_property is not None and rna_property.type == "INT":
                     value = int(value)
                 setattr(fs, name, value)
+                # RNA clamps out-of-range assignments to the declared
+                # [min, max] silently, so a write can succeed while storing a
+                # different number than the one the dialog costed. Reporting
+                # that as approved would break the budget promise this whole
+                # flow exists to keep -- read back and fail into the rollback.
+                stored = getattr(fs, name)
+                if isinstance(value, float):
+                    matches = math.isclose(stored, value, rel_tol=1e-6)
+                else:
+                    matches = stored == value
+                if not matches:
+                    raise RuntimeError(
+                        f"setting {name!r} was stored as {stored!r} instead of "
+                        f"{value!r}; it is outside the range this build allows")
                 changed.append(name)
             if domain_min is not None or domain_max is not None:
                 settings = bridge.build_settings(scene)

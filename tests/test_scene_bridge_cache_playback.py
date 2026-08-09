@@ -102,37 +102,121 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
 
-def test_nearest_values_native_and_fallback_agree(monkeypatch):
+MAX_LOOKUP_SAMPLES = 120_000  # mirrors viewport._nearest_values
+
+
+def _import_viewport(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    return importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+
+
+def _nearest_values_reference(points, sample_points, sample_values, cell_size):
+    """Brute-force oracle for `_nearest_values`, stated as a specification.
+
+    This is deliberately NOT a second copy of the implementation: no grid, no
+    linear keys, no searchsorted, no batching.  It restates the contract -
+    "nearest sample whose cell is within the 3x3x3 neighbourhood of the query
+    cell, else the mean of the sample values" - in the most direct terms
+    available, and pays O(n*m) for the privilege.  A test double is only worth
+    having when it is derived independently of the code it judges.
+    """
+    points = np.asarray(points, dtype=np.float32)
+    sample_points = np.asarray(sample_points, dtype=np.float32)
+    sample_values = np.asarray(sample_values, dtype=np.float32)
+    if len(points) == 0:
+        return np.zeros(0, dtype=np.float32)
+    if len(sample_points) == 0:
+        return np.zeros(len(points), dtype=np.float32)
+
+    if len(sample_points) > MAX_LOOKUP_SAMPLES:
+        step = int(np.ceil(len(sample_points) / MAX_LOOKUP_SAMPLES))
+        sample_points = sample_points[::step]
+        sample_values = sample_values[::step]
+
+    cell_size = max(float(cell_size), 1.0e-5)
+    sample_cells = np.floor(sample_points / cell_size).astype(np.int64)
+    point_cells = np.floor(points / cell_size).astype(np.int64)
+
+    out = np.full(len(points), float(np.nanmean(sample_values)), dtype=np.float32)
+    for index in range(len(points)):
+        adjacent = np.all(
+            np.abs(sample_cells - point_cells[index]) <= 1, axis=1)
+        if not adjacent.any():
+            continue
+        candidates = np.flatnonzero(adjacent)
+        delta = sample_points[candidates] - points[index]
+        out[index] = sample_values[candidates[
+            np.argmin(np.einsum("ij,ij->i", delta, delta))]]
+    return out
+
+
+def test_nearest_values_picks_nearest_sample(monkeypatch):
+    viewport = _import_viewport(monkeypatch)
     points = np.array([[0.1, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float32)
     samples = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
     values = np.array([2.0, 7.0], dtype=np.float32)
 
-    class FakeKDTree:
-        def __init__(self, _size):
-            self.items = []
+    np.testing.assert_array_equal(
+        viewport._nearest_values(points, samples, values, 0.5), [2.0, 7.0])
 
-        def insert(self, point, index):
-            self.items.append((np.asarray(point), index))
 
-        def balance(self):
-            pass
+@pytest.mark.parametrize("cell_size", [0.05, 0.25, 1.0])
+def test_nearest_values_matches_bruteforce_reference(monkeypatch, cell_size):
+    """Cover cell binning across the origin, where floor() is asymmetric."""
+    viewport = _import_viewport(monkeypatch)
+    rng = np.random.default_rng(20260809)
+    # Straddle the origin: floor() rounds toward -inf, so negative coordinates
+    # exercise a different branch of the key arithmetic than positive ones.
+    samples = rng.uniform(-2.0, 2.0, size=(300, 3)).astype(np.float32)
+    values = rng.uniform(-10.0, 10.0, size=300).astype(np.float32)
+    points = rng.uniform(-2.5, 2.5, size=(400, 3)).astype(np.float32)
 
-        def find(self, point):
-            point = np.asarray(point)
-            sample, index = min(
-                self.items, key=lambda item: np.sum((item[0] - point) ** 2))
-            return sample, index, float(np.linalg.norm(sample - point))
+    np.testing.assert_allclose(
+        viewport._nearest_values(points, samples, values, cell_size),
+        _nearest_values_reference(points, samples, values, cell_size),
+        rtol=0, atol=0)
 
-    monkeypatch.setattr(viewport, "_KDTree", FakeKDTree)
-    native = viewport._nearest_values(points, samples, values, 0.5)
-    monkeypatch.setattr(viewport, "_KDTree", None)
-    fallback = viewport._nearest_values(points, samples, values, 0.5)
 
-    np.testing.assert_array_equal(native, [2.0, 7.0])
-    np.testing.assert_array_equal(fallback, native)
+def test_nearest_values_falls_back_to_mean_outside_neighbourhood(monkeypatch):
+    viewport = _import_viewport(monkeypatch)
+    samples = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
+    values = np.array([2.0, 8.0], dtype=np.float32)
+    # 40 cells away at cell_size 0.25 - far outside the 3x3x3 search.
+    points = np.array([[10.0, 10.0, 10.0]], dtype=np.float32)
+
+    np.testing.assert_allclose(
+        viewport._nearest_values(points, samples, values, 0.25), [5.0])
+
+
+def test_nearest_values_decimates_above_sample_cap(monkeypatch):
+    """Above the cap the sample set is strided, and the stride must hold.
+
+    This path had no coverage: every sample below the cap is retained, so a
+    decimation defect (wrong stride, dropped tail, values desynchronised from
+    points) is invisible until the input exceeds 120k.
+    """
+    viewport = _import_viewport(monkeypatch)
+    count = MAX_LOOKUP_SAMPLES + 1  # forces step == 2
+    samples = np.zeros((count, 3), dtype=np.float32)
+    samples[:, 0] = np.arange(count, dtype=np.float32) * 0.1
+    values = np.arange(count, dtype=np.float32)
+    # Probe near samples 0, 2, 4 (kept) and 1, 3 (dropped by the stride).
+    # The 0.01 nudge breaks the exact ties that sitting on a dropped sample
+    # would create - it is equidistant from both neighbours, and which one
+    # wins is not part of the contract.
+    points = samples[np.array([0, 1, 2, 3, 4], dtype=np.intp)] + np.array(
+        [0.01, 0.0, 0.0], dtype=np.float32)
+
+    result = viewport._nearest_values(points, samples, values, 0.25)
+
+    np.testing.assert_allclose(
+        result, _nearest_values_reference(points, samples, values, 0.25))
+    # Kept samples resolve to themselves; dropped ones must never be returned,
+    # which is what pins the stride rather than merely "some subsampling".
+    assert result[0] == 0.0 and result[2] == 2.0 and result[4] == 4.0
+    assert 1.0 not in set(result.tolist())
+    assert 3.0 not in set(result.tolist())
 
 
 def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(monkeypatch):

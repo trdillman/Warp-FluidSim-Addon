@@ -6,14 +6,76 @@ import ast
 import importlib
 import inspect
 import os
+import struct
 import sys
 import textwrap
 import time
 import types
 from types import SimpleNamespace
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+class _RnaProperty:
+    """One registered RNA property's introspectable metadata."""
+
+    def __init__(self, type, hard_min=None, hard_max=None):
+        self.type = type
+        self.hard_min = hard_min
+        self.hard_max = hard_max
+
+
+class _RnaPropertyGroup:
+    """Model `bpy.types.PropertyGroup` assignment semantics.
+
+    Real `IntProperty`/`FloatProperty` **silently clamp** an assignment into
+    `[min, max]` and then fire `update=` with the *clamped* value.  Verified
+    against Blender 5.1 with this add-on's own declarations:
+
+        fs.max_particles = 120  -> 1024   (IntProperty(min=1024))
+        fs.leaf_capacity  =  4  ->   64   (IntProperty(min=64))
+
+    A `SimpleNamespace` stores whatever it is handed and fires nothing, so any
+    production defect of the form "wrote a setting and never read it back" is
+    invisible - the test asserts the value it just supplied.  Doubles for a
+    library must reproduce the library's *surprising* behaviour; reproducing
+    only the expected behaviour asserts nothing.
+    """
+
+    def __init__(self, properties, **values):
+        object.__setattr__(self, "_rna_properties", dict(properties))
+        object.__setattr__(self, "update_calls", [])
+        object.__setattr__(
+            self, "bl_rna", SimpleNamespace(properties=dict(properties)))
+        for name, value in values.items():
+            setattr(self, name, value)
+
+    def __setattr__(self, name, value):
+        prop = self._rna_properties.get(name)
+        if prop is None:  # unregistered attribute: plain Python storage
+            object.__setattr__(self, name, value)
+            return
+        if prop.type == "INT":
+            value = int(value)
+        elif prop.type == "FLOAT":
+            # RNA floats are single precision.
+            value = struct.unpack("f", struct.pack("f", float(value)))[0]
+        if prop.hard_min is not None:
+            value = max(value, prop.hard_min)
+        if prop.hard_max is not None:
+            value = min(value, prop.hard_max)
+        object.__setattr__(self, name, value)
+        self.update_calls.append((name, value))
+
+
+# Mirrors fluidSim_warp_blender51/properties.py:729 and :750.
+CAPACITY_RNA = {
+    "leaf_capacity": _RnaProperty("INT", 64, 262_144),
+    "max_particles": _RnaProperty("INT", 1024, 50_000_000),
+}
 
 
 def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
@@ -210,8 +272,41 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
         assert "UNDO" not in getattr(cls, "bl_options", set()), cls.__name__
 
 
+class _PermissiveSettings:
+    """Settings stand-in that answers any property read.
+
+    Panel greyout tests care about one toggle at a time; enumerating every
+    unrelated property a panel happens to read would bury the assertion and
+    break on every new control.  Unnamed properties read as ``0`` -- falsy, and
+    safe for the ``> 0`` comparisons panels make.
+    """
+
+    def __init__(self, values):
+        self.__dict__.update(values)
+
+    def __getattr__(self, name):
+        return 0
+
+
 class _Layout:
-    def __init__(self, _root=None, _box_scope=()):
+    """Model `bpy.types.UILayout`, including greyout inheritance.
+
+    `uiLayoutRow` / `uiLayoutColumn` copy the parent's `enabled` and `redalert`
+    into the new sub-layout at *creation* time ("Children of disabled items
+    automatically get disabled", `ui_item_init_from_parent`).  The consequence
+    that matters for panel code is that greyout is a property of the layout a
+    control was drawn into, not of the control -- so a master toggle drawn into
+    the layout it disables locks itself off permanently, and no amount of
+    reading `layout.props` will reveal that.  `prop_states` records the
+    effective state each control was drawn under so tests can assert on it.
+
+    Because inheritance is snapshotted at creation, the fake is only faithful
+    for panels that set `enabled` before drawing into a sub-layout.  Every site
+    in `panels.py` does; `test_panels_set_greyout_before_drawing_into_it`
+    pins that so this fake cannot quietly drift out of agreement with Blender.
+    """
+
+    def __init__(self, _root=None, _box_scope=(), _enabled=True, _alert=False):
         if _root is None:
             self.labels = []
             self.operators = []
@@ -219,6 +314,7 @@ class _Layout:
             self.prop_calls = []
             self.prop_enum_calls = []
             self.prop_scopes = []
+            self.prop_states = []
             self.popovers = []
             self._root = self
             self._next_box_id = 0
@@ -229,22 +325,38 @@ class _Layout:
             self.prop_calls = _root.prop_calls
             self.prop_enum_calls = _root.prop_enum_calls
             self.prop_scopes = _root.prop_scopes
+            self.prop_states = _root.prop_states
             self.popovers = _root.popovers
             self._root = _root
         self._box_scope = _box_scope
-        self.enabled = True
+        self.enabled = _enabled
+        self.alert = _alert
+
+    def _record_state(self, name):
+        self.prop_states.append(
+            {"name": name, "enabled": self.enabled, "alert": self.alert})
+
+    def drawn_enabled(self, name):
+        """Effective greyout of `name`, or None if it was never drawn."""
+        states = [s["enabled"] for s in self.prop_states if s["name"] == name]
+        if not states:
+            return None
+        assert len(set(states)) == 1, f"{name} drawn with conflicting greyout"
+        return states[0]
 
     def column(self, align=False):
-        return _Layout(self._root, self._box_scope)
+        return _Layout(self._root, self._box_scope, self.enabled, self.alert)
 
     def row(self, align=False):
-        return _Layout(self._root, self._box_scope)
+        return _Layout(self._root, self._box_scope, self.enabled, self.alert)
 
     def box(self):
         self._root._next_box_id += 1
         return _Layout(
             self._root,
             self._box_scope + (self._root._next_box_id,),
+            self.enabled,
+            self.alert,
         )
 
     def separator(self):
@@ -256,12 +368,14 @@ class _Layout:
             self.prop_calls.append({"name": args[1], **kwargs})
             self.prop_scopes.append({
                 "name": args[1], "boxes": self._box_scope})
+            self._record_state(args[1])
         return None
 
     def prop_enum(self, _data, name, value, **kwargs):
         self.props.append(name)
         self.prop_enum_calls.append({"name": name, "value": value, **kwargs})
         self.prop_scopes.append({"name": name, "boxes": self._box_scope})
+        self._record_state(name)
         return None
 
     def label(self, text="", icon="NONE"):
@@ -532,22 +646,18 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
     suggestion = SimpleNamespace(
         key="preserve_simulation",
         label="Preserve authored domain and resolution",
-        changes={"max_particles": 120, "leaf_capacity": 4},
+        changes={"max_particles": 4_000_000, "leaf_capacity": 16_384},
         estimated_bytes=1024,
         budget_bytes=2048,
     )
     plan = SimpleNamespace(
         scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
-    int_property = SimpleNamespace(type="INT")
-    fs = SimpleNamespace(
-        max_particles=100,
-        leaf_capacity=2,
+    fs = _RnaPropertyGroup(
+        CAPACITY_RNA,
+        max_particles=2_000_000,
+        leaf_capacity=8192,
         domain_object=None,
         status="Capacity warning",
-        bl_rna=SimpleNamespace(properties={
-            "max_particles": int_property,
-            "leaf_capacity": int_property,
-        }),
     )
     scene = SimpleNamespace(fluidsim=fs)
     initialized = []
@@ -572,13 +682,66 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
 
     assert op.invoke(context, None) == {"RUNNING_MODAL"}
     assert dialogs == [(op, 560)]
-    assert fs.max_particles == 100
-    assert fs.leaf_capacity == 2
+    assert fs.max_particles == 2_000_000
+    assert fs.leaf_capacity == 8192
     assert op.expected_scene_signature == "scene-v1"
     assert op.execute(context) == {"FINISHED"}
-    assert fs.max_particles == 120
-    assert fs.leaf_capacity == 4
+    assert fs.max_particles == 4_000_000
+    assert fs.leaf_capacity == 16_384
     assert initialized == [scene]
+    # RNA fires update= on every accepted write; approval must not skip them.
+    assert ("max_particles", 4_000_000) in fs.update_calls
+    assert ("leaf_capacity", 16_384) in fs.update_calls
+
+
+def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch):
+    """A silently clamped write must not be reported as an approved change.
+
+    `capacity_planner` can propose a `leaf_capacity` below the RNA floor of 64
+    (`balanced` takes `min(base, prod(leaf_dims))`, which is small on a compact
+    domain).  RNA clamps the write upward, so the scene ends up reserving MORE
+    memory than the dialog's estimate promised - the exact quantity the
+    approval flow exists to bound.  Applying the option must fail loudly and
+    roll back, not report success against a value that was never stored.
+    """
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="balanced", label="Balanced",
+        changes={"leaf_capacity": 32},  # below the declared min of 64
+        estimated_bytes=1024, budget_bytes=2048)
+    plan = SimpleNamespace(
+        scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    fs = _RnaPropertyGroup(
+        CAPACITY_RNA, max_particles=2_000_000, leaf_capacity=8192,
+        domain_object=None, status="Capacity warning")
+    scene = SimpleNamespace(fluidsim=fs)
+    initialized = []
+    bridge = SimpleNamespace(
+        session=lambda: SimpleNamespace(capacity_plan=plan),
+        refresh_capacity_plan=lambda actual: plan,
+        clear_error=lambda actual: None,
+        initialize_session=lambda actual: (
+            initialized.append(actual) or SimpleNamespace(
+                solver=SimpleNamespace(device="cuda:0"))),
+    )
+    monkeypatch.setattr(operators, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda actual, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "balanced"
+
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert op.execute(context) == {"CANCELLED"}
+    # Rolled back to the authored value, and no solver started against a
+    # capacity the user never approved.
+    assert fs.leaf_capacity == 8192
+    assert initialized == []
+    assert "not applied" in fs.status.lower()
+    assert "leaf_capacity" in fs.status
 
 
 def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
@@ -776,13 +939,133 @@ def test_panels_move_static_help_to_tooltips_but_keep_structural_tiers(monkeypat
         panels.FLUIDSIM_PT_pressure.draw)
 
 
-def test_unrelated_height_fill_keeps_original_disabled_controls_visible(monkeypatch):
+@pytest.mark.parametrize("height_enabled", [False, True])
+def test_unrelated_height_fill_keeps_original_disabled_controls_visible(
+        monkeypatch, height_enabled):
+    """Height-fill settings must grey out, never vanish.
+
+    Hiding them behind `if not fs.height_enabled: return` would make the panel
+    change height as the toggle flips and hide the authored values; greying
+    keeps them readable.  Asserted on the drawn layout rather than on the
+    source text, so a rewrite that still greys correctly stays green.
+    """
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
-    source = inspect.getsource(panels.FLUIDSIM_PT_domain_height_fill.draw)
+    fs = SimpleNamespace(
+        height_enabled=height_enabled, height_back_mode="FLAT",
+        height_error="")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_domain_height_fill()
+    panel.layout = layout
 
-    assert "col.enabled = fs.height_enabled" in source
-    assert "if not fs.height_enabled:" not in source
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    governed = ("height_base", "height_emission_mode", "height_velocity",
+                "height_emit_particles", "particles_per_voxel",
+                "height_back_mode")
+    for name in governed:
+        assert layout.drawn_enabled(name) is height_enabled, name
+    # The master toggle lives outside the layout it governs, so it can always
+    # be switched back on.
+    assert layout.drawn_enabled("height_enabled") is True
+
+
+@pytest.mark.parametrize(
+    "panel_name, toggle, fs_fields",
+    [
+        ("FLUIDSIM_PT_domain_height_fill", "height_enabled",
+         {"height_back_mode": "FLAT", "height_error": ""}),
+        ("FLUIDSIM_PT_surface", "whitewater_enabled",
+         {"show_whitewater": False}),
+        ("FLUIDSIM_PT_surface", "show_whitewater",
+         {"whitewater_enabled": False}),
+        ("FLUIDSIM_PT_realtime_display", "surface_enabled",
+         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
+          "show_surface": False, "show_particles": False,
+          "surface_advanced_expanded": True}),
+        ("FLUIDSIM_PT_realtime_display", "show_surface",
+         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
+          "surface_enabled": False, "show_particles": False,
+          "surface_advanced_expanded": False}),
+        ("FLUIDSIM_PT_realtime_display", "show_particles",
+         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
+          "surface_enabled": False, "show_surface": False,
+          "surface_advanced_expanded": False}),
+    ],
+)
+def test_master_toggles_are_not_self_locking(
+        monkeypatch, panel_name, toggle, fs_fields):
+    """A toggle drawn into the sub-layout it disables can never be undone.
+
+    Greyout is inherited by the layout, not evaluated per control, so
+    `col.enabled = fs.x; col.prop(fs, "x")` renders `x` unclickable the moment
+    it goes false -- a one-way door with no keyboard escape.  Every master
+    toggle must be drawn into a layout its own value does not govern.
+    """
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    fs = _PermissiveSettings({**fs_fields, toggle: False})
+    layout = _Layout()
+    panel = getattr(panels, panel_name)()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(
+        fluidsim=fs, fluidsim_pending_action="", fluidsim_pending_count=0,
+        fluidsim_pending_reasons="", fluidsim_pending_blocked="")))
+
+    assert layout.drawn_enabled(toggle) is True, (
+        f"{panel_name}.{toggle} greys itself out when off")
+
+
+def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
+    """Guard the assumption `_Layout` is built on.
+
+    Blender snapshots `enabled` into a sub-layout when the sub-layout is
+    created, so `sub = col.column(); sub.prop(...); sub.enabled = False` does
+    not behave like the same three statements reordered.  `_Layout` models the
+    snapshot; if panel code ever assigns greyout after drawing into the target,
+    the fake and Blender part ways and the greyout tests above go quietly
+    wrong.  Fail here instead, where the cause is legible.
+    """
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    tree = ast.parse(inspect.getsource(panels))
+    offenders = []
+    for func in ast.walk(tree):
+        if not isinstance(func, ast.FunctionDef):
+            continue
+        # ast.walk is breadth-first, so collect (line, event) and replay in
+        # source order -- the whole point of this check is the ordering.
+        # Rank orders events sharing a line: a name rebound to a fresh
+        # sub-layout (`row = layout.row()`, reused several times per function)
+        # starts a new layout with a clean slate, exactly as in Blender.
+        events = []
+        for node in ast.walk(func):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                target = node.func.value
+                if (node.func.attr in {"prop", "prop_enum", "operator", "label"}
+                        and isinstance(target, ast.Name)):
+                    events.append((node.lineno, 1, "draw", target.id, None))
+            elif isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        events.append((node.lineno, 0, "rebind", tgt.id, None))
+                    elif (isinstance(tgt, ast.Attribute)
+                            and tgt.attr in {"enabled", "alert"}
+                            and isinstance(tgt.value, ast.Name)):
+                        events.append(
+                            (node.lineno, 2, "set", tgt.value.id, tgt.attr))
+        drawn_into = set()
+        for lineno, _rank, kind, name, attr in sorted(events):
+            if kind == "rebind":
+                drawn_into.discard(name)
+            elif kind == "draw":
+                drawn_into.add(name)
+            elif name in drawn_into:
+                offenders.append(
+                    f"{func.name}: {name}.{attr} set at line {lineno}, "
+                    "after drawing into it")
+    assert offenders == []
 
 
 def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
