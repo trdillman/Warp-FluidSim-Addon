@@ -73,22 +73,62 @@ class _FakeVector:
 
 
 class _FakeQuaternion:
-    def __init__(self, angle):
-        self.angle = angle
-        self.x = 0.0
-        self.y = 0.0
-        self.z = math.sin(angle * 0.5)
-        self.w = math.cos(angle * 0.5)
+    """Mirror mathutils.Quaternion semantics for a Z-axis rotation.
+
+    Faithfulness matters here, because three real mathutils behaviors combine
+    into a defect that a convenience stub cannot express:
+
+    * ``Matrix.to_quaternion()`` returns the canonical ``w >= 0``
+      representative, so samples straddling a half-turn (where
+      ``w = cos(z / 2)`` changes sign) land in opposite hemispheres.
+    * ``rotation_difference`` is ``conj(self) * other`` with no hemisphere
+      normalization, so such a pair yields the *negated* delta.
+    * ``.angle`` is ``2 * acos(w)`` over ``[0, 2 * pi]`` - not the shortest arc.
+
+    The previous stub returned ``abs(euler_delta)`` with a hand-picked axis,
+    which silently asserts the answer the caller is supposed to compute.
+    """
+
+    def __init__(self, angle=0.0):
+        w, z = math.cos(angle * 0.5), math.sin(angle * 0.5)
+        if w < 0.0:  # canonical w >= 0, exactly as Matrix.to_quaternion() does
+            w, z = -w, -z
+        self.w, self.x, self.y, self.z = w, 0.0, 0.0, z
+
+    @classmethod
+    def _from_components(cls, w, x, y, z):
+        quat = cls.__new__(cls)
+        quat.w, quat.x, quat.y, quat.z = w, x, y, z
+        return quat
+
+    @property
+    def angle(self):
+        return 2.0 * math.acos(max(-1.0, min(1.0, self.w)))
+
+    @property
+    def axis(self):
+        length = math.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2)
+        if length < 1.0e-9:
+            return _FakeVector(0.0, 0.0, 1.0)
+        return _FakeVector(self.x / length, self.y / length, self.z / length)
+
+    def negate(self):
+        self.w, self.x, self.y, self.z = -self.w, -self.x, -self.y, -self.z
 
     def rotation_difference(self, other):
-        delta = other.angle - self.angle
-        return SimpleNamespace(
-            angle=abs(delta),
-            axis=_FakeVector(0.0, 0.0, 1.0 if delta >= 0.0 else -1.0),
+        # conj(self) * other, matching Blender's rotation_between_quats_to_quat:
+        # the result is NOT normalized into the w >= 0 hemisphere.
+        aw, ax, ay, az = self.w, -self.x, -self.y, -self.z
+        bw, bx, by, bz = other.w, other.x, other.y, other.z
+        return _FakeQuaternion._from_components(
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
         )
 
     def copy(self):
-        return _FakeQuaternion(self.angle)
+        return _FakeQuaternion._from_components(self.w, self.x, self.y, self.z)
 
 
 class _FakeEvalObject:
@@ -405,6 +445,48 @@ def test_animated_collider_reports_angular_velocity(monkeypatch):
     angular = colliders.gather_colliders(scene, sess, depsgraph=object())[0].angular_velocity
 
     assert angular == (0.0, 0.0, pytest.approx(12.0 * math.pi))
+
+
+@pytest.mark.parametrize(
+    "z_prev, z_cur, label",
+    [
+        (2.8416, 3.2779, "straddles pi"),
+        (9.0000, 9.4363, "straddles 3pi"),
+        (5.9000, 6.3363, "straddles 2pi (control)"),
+        (1.0000, 1.4363, "no crossing (control)"),
+    ],
+)
+def test_angular_velocity_survives_quaternion_hemisphere_flip(
+    monkeypatch, z_prev, z_cur, label
+):
+    """A collider spinning past a half-turn keeps its true angular velocity.
+
+    ``w = cos(z / 2)`` changes sign at ``z = pi + 2 * pi * k``, so two samples
+    straddling a half-turn come back from ``to_quaternion()`` in opposite
+    hemispheres.  Read naively, the delta is the long way round: the reported
+    rate becomes ``2 * pi / dt - omega`` with a flipped axis - here 13x too
+    large and pointing backwards, which slams the collision velocity field and
+    launches particles for exactly one frame per revolution.
+    """
+    scene_bridge, colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.fluidsim.transfer_velocity = True
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1),
+    )
+
+    obj.evaluated_matrix_world = _FakeMatrix(angle=z_prev)
+    colliders.gather_colliders(scene, sess, depsgraph=object())
+    scene.frame_current = 2
+    obj.evaluated_matrix_world = _FakeMatrix(angle=z_cur)
+    angular = colliders.gather_colliders(scene, sess, depsgraph=object())[0].angular_velocity
+
+    expected_z = (z_cur - z_prev) * 24.0
+    assert angular[0] == pytest.approx(0.0, abs=1e-9), label
+    assert angular[1] == pytest.approx(0.0, abs=1e-9), label
+    assert angular[2] == pytest.approx(expected_z, rel=1e-6), label
 
 
 def test_animated_collider_reports_linear_velocity(monkeypatch):

@@ -1,12 +1,19 @@
 # Issue: velocity impulse at every pi-crossing of collider rotation (`paddle_stir`)
 
-Status: **open, root-cause narrowed to a single trigger condition, not fixed.**
-Blocks `paddle_stir` at 9/10 analyzer checks.
+Status: **RESOLVED.** Cause was quaternion double-cover in
+`SceneInputs.object_angular_velocity`; fixed by shortest-arc canonicalization
+(`blender/scene_inputs.py:311`). `paddle_stir` now passes **10/10**.
 
 Scope: moving-collider path. **Pre-existing** - not introduced by any fix in this session.
 Does not affect the shipped static demos (`dam_break`, `crown_splash` remain 18/18).
 
-Date: 2026-08-09
+Date: 2026-08-09 (opened and resolved)
+
+> **Reading note.** Sections 2-3 are the original, still-accurate observations.
+> Section 4.1 recorded a *false* elimination and section 5 ranked a candidate that
+> turned out to be wrong; both are retained, corrected in place, because the way they
+> misled the investigation is the most transferable lesson here. **Section 10 is the
+> actual root cause.**
 
 ---
 
@@ -19,8 +26,10 @@ rotation angle itself, not blade geometry, not collision timing, and not a fixed
 cadence.
 
 pi is precisely where the `w` component of the orientation quaternion changes sign
-(`w = cos(z/2)`). That coincidence is the strongest available lead, but the obvious
-consumer of that quaternion has been tested and cleared (section 4.1).
+(`w = cos(z/2)`). That coincidence was the strongest available lead, and it was the
+right one: `object_angular_velocity` reported **-140.32 rad/s instead of +10.47** on the
+crossing frame - 13x too large and reversed. Section 4.1 originally cleared that code,
+incorrectly; see section 10.
 
 ## 2. Symptom
 
@@ -165,7 +174,15 @@ reverted; the working tree is back to 100 RPM with the fix enabled.
 
 ## 4. Hypotheses eliminated (with evidence)
 
-### 4.1 Quaternion double-cover in `object_angular_velocity` - ELIMINATED
+### 4.1 Quaternion double-cover in `object_angular_velocity` - ~~ELIMINATED~~ **THIS WAS THE CAUSE**
+
+> **This elimination was wrong, and it cost the investigation most of its time.** The
+> table below was produced by a *reimplementation* of the angular-velocity math written
+> for the experiment, not by calling the shipped function. The reimplementation assumed
+> `rotation_difference` returns the shortest arc. It does not. The claim
+> "`rotation_difference` returns the shortest-arc quaternion" in the last paragraph is
+> **false** - see section 10. The original text follows unaltered.
+
 
 The natural reading of section 3.5 is that a naive finite difference of `to_quaternion()`
 across the hemisphere boundary yields one enormous spurious angular velocity per
@@ -191,6 +208,9 @@ the shortest-arc quaternion, so the hemisphere flip is already handled here.
 This is the central open puzzle: the trigger sits exactly on the quaternion sign boundary,
 but the one place that obviously converts orientation to a quaternion is clean. Some
 *other* stage must be orientation-sensitive at pi.
+
+> **Correction.** There was no other stage. That place was not clean; the experiment
+> could not see it. Section 10 has the measured numbers from the live path.
 
 ### 4.2 Fixed-cadence infrastructure (graph cache, rebuild interval) - ELIMINATED
 
@@ -223,11 +243,29 @@ spike is present with that fix both enabled and disabled.
 4.4, 4.5 and 4.6 are real robustness improvements, verified to cause no regression on the
 static demos. None is the mechanism here.
 
-## 5. Remaining candidates
+## 5. Remaining candidates (all three DISPROVEN - see section 10)
 
 Must explain: fires on the pi-crossing of accumulated rotation, at any rotation rate,
 affecting the collider's whole neighbourhood, for exactly one frame, without corrupting
 `angular_velocity`.
+
+> **All three were wrong, and the last clause of that sentence is why.** It smuggles in
+> section 4.1's false result as a constraint, which excluded the true cause by
+> construction.
+>
+> Candidates 1 and 2 are both refuted by one argument that needs no measurement: **the
+> paddle is exactly 4-fold symmetric** (a 24-gon hub plus four identical blades at
+> `k * pi/2`, centered on the world origin and spinning about its own axis). Its
+> world-space geometry is therefore **pi/2-periodic**, so *any* function of that geometry -
+> SDF sign, mesh winding, evaluated normals, transform handedness - must repeat every
+> quarter revolution. The defect is **2*pi-periodic**. No geometric quantity can produce
+> it. This also generalizes section 3.1's blade-count observation from "must repeat every
+> quarter revolution" to "cannot be geometric at all", which is what redirected the
+> search to orientation carried as a *number* rather than as a shape.
+>
+> Candidate 3 was half right: `collision_vel` really is the corrupted field, and the
+> whole-neighbourhood extent really does come from the `cross(angular, p - center)` term.
+> But `center` was fine; `angular` was the input that was wrong.
 
 1. **Orientation-dependent collider SDF sign test.** Colliders use the orientation-
    *dependent* sign query with `strict_degenerate=False` (`blender/scene_inputs.py:848`),
@@ -251,7 +289,7 @@ affecting the collider's whole neighbourhood, for exactly one frame, without cor
    over the whole neighbourhood. Weaker fit - does not obviously key on pi.
    *Test:* log `center` and `angular` per substep and confirm same-frame sourcing.
 
-## 6. Impact
+## 6. Impact (as assessed while open)
 
 - **Shipped demos unaffected.** `dam_break` and `crown_splash` use static colliders and
   remain `DEMO-ANALYSIS-PASS (18/18)`.
@@ -274,10 +312,21 @@ blender --background --factory-startup --python tools/build_demo_scenes.py -- pa
 python tools/analyze_demos.py paddle_stir
 ```
 
-Expect `DEMO-ANALYSIS-FAIL (9/10)`. Fast frames at the shipped 100 RPM: 19, 34, 49, 63, 78.
+Before the fix: `DEMO-ANALYSIS-FAIL (9/10)`, fast frames at the shipped 100 RPM 19, 34,
+49, 63, 78. After the fix: `DEMO-ANALYSIS-PASS (10/10)`, no frame above 20 m/s.
 To vary the rate, change `omega_peak` at `tools/build_demo_scenes.py:1331`.
 
-## 8. Related fixes already landed (uncommitted, in working tree)
+The cheap check is now the unit test, which needs no GPU and no Blender:
+
+```bash
+python -m pytest tests/test_scene_bridge_collider_cache.py -k hemisphere -q
+```
+
+## 8. Related fixes already landed
+
+Committed as `e13945b` (`sim/`) and with the `paddle_stir` demo in `d5ce823`
+(`tools/analyze_demos.py`). None is the cause of this issue, but the analyzer change is
+load-bearing for the 10/10 result reported in section 10.3.
 
 - `sim/solver.py` - per-substep collider re-rasterization (staleness fix); collider tip
   speed folded into CFL `vmax` via new `_collider_max_speed()`.
@@ -294,3 +343,91 @@ To vary the rate, change `omega_peak` at `tools/build_demo_scenes.py:1331`.
 Cached velocities are stored as float16. Summing squared speeds in that dtype overflows to
 `inf` during analysis. Harmless for stored values (50 m/s is well inside float16 range), but
 analysis scripts must cast to float32 or float64 before accumulating.
+
+## 10. Root cause and fix
+
+### 10.1 Mechanism
+
+Three `mathutils` behaviours compose into the defect. Each is individually documented and
+individually reasonable; the combination is not obvious from any one call site.
+
+1. **`Matrix.to_quaternion()` returns the canonical `w >= 0` representative.** Since
+   `w = cos(z/2)`, the continuous branch goes negative just past `z = pi`, so mathutils
+   hands back the *antipodal* quaternion instead. `q` and `-q` are the same rotation, so
+   this is correct - but it means consecutive samples straddling a half-turn land in
+   **opposite hemispheres**.
+2. **`Quaternion.rotation_difference` is `conj(q1) * q2` with no hemisphere
+   normalization.** Given such a pair, the delta comes back negated.
+3. **`Quaternion.angle` is `2 * acos(w)` over `[0, 2*pi]`, not the shortest arc.** A
+   negated delta therefore reads as the long way round, with `.axis` flipped.
+
+Measured on the live path in Blender 5.1 at the crossing frame:
+
+```
+q_prev (z=2.8416)   w=+0.149435  z=+0.988772
+q_cur  (z=3.2779)   w=+0.068101  z=-0.997678   <-- hemisphere flip
+delta               w=-0.976300  angle=5.846886  axis=(0, 0, -1)
+omega_z = -140.3244 rad/s        (true +10.4712)
+```
+
+The error is exact: `2*pi/dt - omega_true` = `2*pi*24 - 10.472` = **140.3244**. This is
+why the event is worse at 50 RPM (section 3.4) - the error *grows* as the true rate
+shrinks.
+
+That `angular_velocity` feeds `collision_vel = linear + cross(angular, p - center)`
+(`k_rasterize_collider_material`, `sim/solver.py:240`), so a single bad scalar corrupts
+the collision velocity field across the collider's **entire neighbourhood** for exactly
+one frame - reproducing section 3.2's impulse signature and section 3.3's spatial extent
+without any contact event. Measured `max|collision_vel| = 127.40` on the grid.
+
+Every observation in sections 2-3 follows: 2*pi period keyed at pi (that is where the
+`w` sign changes; `3*pi` fires, `2*pi` does not), one frame only (the next frame's two
+samples share a hemisphere again), and indifference to the section 3.6 re-rasterization
+control (the bad `omega` feeds `collision_vel` either way).
+
+### 10.2 Fix
+
+`blender/scene_inputs.py:311` - canonicalize the delta to the shortest arc before reading
+`.angle` / `.axis`:
+
+```python
+if delta.w < 0.0:
+    delta.negate()
+```
+
+### 10.3 Verification
+
+| Check | Before | After |
+|---|---|---|
+| `analyze_demos.py paddle_stir` velocity gate | 36.33 m/s | **4.64 m/s** (limit 11.94) |
+| `analyze_demos.py paddle_stir` | FAIL 9/10 | **PASS 10/10** |
+| `dam_break` + `crown_splash` | PASS 18/18 | **PASS 18/18** |
+| `tests/test_scene_bridge_collider_cache.py` | 27 passed | **29 passed** |
+
+4.64 m/s is not merely under the limit - it is the physically right magnitude for a
+3.98 m/s blade tip. Four unrelated failures in
+`tests/test_pressure_projection_regressions.py` (PCG `cuda_conditional` vs
+`host_batched` classification) were confirmed pre-existing by re-running with this change
+stashed.
+
+### 10.4 Why the test suite did not catch it
+
+`tests/test_scene_bridge_collider_cache.py` already covered `object_angular_velocity`.
+Its `_FakeQuaternion.rotation_difference` returned `abs(other.angle - self.angle)` with a
+hand-picked axis - it computed the answer the production code was supposed to derive, so
+it asserted its own arithmetic and was **structurally incapable** of expressing this bug
+class. Combined with the section 4.1 reimplementation, which made the same assumption,
+the codebase held two independent copies of the wrong mental model and no copy of
+mathutils' actual semantics.
+
+The fake is now faithful (real quaternion algebra, `w >= 0` canonicalization on
+`to_quaternion()`, no hemisphere fix in `rotation_difference`, `.angle` as
+`2 * acos(w)`). It reproduces the live Blender number to 5 significant figures
+(-140.3252 vs -140.3244; the residual is `Matrix.Rotation`'s matrix round-trip) in
+**0.65 s with no GPU**. The regression test
+`test_angular_velocity_survives_quaternion_hemisphere_flip` covers crossings at `pi` and
+`3*pi` with controls at `2*pi` and a no-crossing case.
+
+**Transferable rule: a fake that reimplements the logic under test asserts nothing.** The
+value of a library fake is in reproducing the library's *surprising* behaviour, not its
+expected behaviour.

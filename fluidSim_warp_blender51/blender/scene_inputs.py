@@ -309,6 +309,16 @@ class SceneInputs:
             return (0.0, 0.0, 0.0)
         dt = (frame - previous[1]) / fps
         delta = previous[0].rotation_difference(current)
+        # rotation_difference is conj(prev) * current with no hemisphere
+        # normalization, and Quaternion.angle is 2 * acos(w) over [0, 2 * pi]
+        # rather than the shortest arc.  matrix_world.to_quaternion() hands back
+        # the canonical w >= 0 representative, so consecutive samples straddling
+        # a half-turn (where w = cos(z / 2) changes sign) land in opposite
+        # hemispheres and the delta comes back negated -- the long way round,
+        # with a flipped axis.  Pick the antipode, which is the same rotation
+        # expressed as the shortest arc.
+        if delta.w < 0.0:
+            delta.negate()
         scale = float(delta.angle) / dt
         axis = delta.axis
         return (float(axis.x) * scale, float(axis.y) * scale, float(axis.z) * scale)
