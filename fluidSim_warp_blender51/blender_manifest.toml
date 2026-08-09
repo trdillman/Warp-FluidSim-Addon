@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 # Mirrors the legacy bl_info dict in __init__.py; keep the two in sync.
 id = "fluidSim_warp_blender51"
 name = "FluidSim Warp"
-version = "1.0.241"
+version = "1.0.242"
 tagline = "Interactive GPU liquid simulation with beta ST-FLIP"
 maintainer = "FluidSim port (synthesized reference)"
 type = "add-on"
