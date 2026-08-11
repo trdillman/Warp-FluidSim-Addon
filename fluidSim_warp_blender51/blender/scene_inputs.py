@@ -161,12 +161,35 @@ class SceneInputs:
         self.clear()
 
     def clear(self):
+        # Break every descriptor reference before dropping the cache owner.  A
+        # CUDA ``wp.Mesh`` owns its BVH plus point/index arrays, so merely
+        # replacing the cache dictionary is not sufficient when installed
+        # source/collider descriptors still reference the same mesh.
+        owned_meshes = set()
+        device_meshes = set()
+        for entry in getattr(self, "_evaluated_mesh_cache", {}).values():
+            mesh = entry.get("mesh")
+            if mesh is not None:
+                owned_meshes.add(id(mesh))
+                if str(entry.get("device", "")).startswith("cuda"):
+                    device_meshes.add(id(mesh))
+            entry["mesh"] = None
+        for consumer in getattr(self, "_mesh_consumers", ()):
+            if id(getattr(consumer, "mesh", None)) in owned_meshes:
+                consumer.mesh = None
+        self.last_clear_device_resource_count = len(device_meshes)
+        self.total_device_resource_releases = (
+            getattr(self, "total_device_resource_releases", 0)
+            + len(device_meshes)
+        )
+
         # A clear denotes Initialize/Reset/load and creates a fresh host-only
         # lifecycle namespace. It is deliberately not saved in RNA.
         self._session_generation = getattr(self, "_session_generation", 0) + 1
         self._collider_prev = {}
         self._collider_rotation_prev = {}
         self._evaluated_mesh_cache = {}
+        self._mesh_consumers = []
         self._source_mesh_cache_keys = set()
         self._collider_mesh_cache_keys = set()
         self._sync_generation = 0
@@ -283,6 +306,44 @@ class SceneInputs:
         self._evaluated_mesh_cache[cache_key] = entry
         self.collider_mesh_cache_stats["rebuilds"] += 1
         return entry, ""
+
+    def materialize_device_meshes(self, descriptors, colliders, device):
+        """Retarget staged mesh descriptors after Replacement Cutover.
+
+        Admission gathers evaluated geometry on CPU.  Only the committed
+        replacement may allocate CUDA BVHs, and this owner keeps bindings so
+        :meth:`clear` can break every descriptor reference before the CUDA
+        allocator pool is flushed.
+        """
+        import warp as wp
+
+        device = str(device)
+        replacements = {}
+        for entry in self._evaluated_mesh_cache.values():
+            previous = entry.get("mesh")
+            if entry.get("device") == device and previous is not None:
+                continue
+            points = wp.array(
+                entry["vertices"], dtype=wp.vec3, device=device)
+            indices = wp.array(
+                entry["triangles"].reshape(-1), dtype=wp.int32, device=device)
+            mesh = wp.Mesh(points=points, indices=indices)
+            if previous is not None:
+                replacements[id(previous)] = mesh
+            entry["mesh"] = mesh
+            entry["device"] = device
+
+        consumers = []
+        for consumer in tuple(descriptors) + tuple(colliders):
+            previous = getattr(consumer, "mesh", None)
+            replacement = replacements.get(id(previous))
+            if replacement is not None:
+                consumer.mesh = replacement
+            if getattr(consumer, "mesh", None) is not None:
+                consumers.append(consumer)
+        self._mesh_consumers = consumers
+        self.device = device
+        return len({id(consumer.mesh) for consumer in consumers})
 
     def object_velocity(self, obj, scene):
         fps = scene.render.fps / scene.render.fps_base
@@ -708,7 +769,7 @@ class SceneInputs:
                 except (AttributeError, TypeError):
                     pass
 
-    def gather_force_fields(self, scene):
+    def gather_force_fields(self, scene, depsgraph=None):
         """Translate native Blender force-field objects into GPU proxies."""
         from ..sim.enums import (
             BlenderForceFieldShape,
@@ -879,7 +940,7 @@ class SceneInputs:
         self._prune_evaluated_mesh_cache()
         return descriptors
 
-    def gather_height_source(self, scene):
+    def gather_height_source(self, scene, depsgraph=None):
         from ..sim.enums import SourceEmissionMode, SourceHeightBackMode
         from ..sim.solver import HeightSourceDesc
 

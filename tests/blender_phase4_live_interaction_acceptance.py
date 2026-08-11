@@ -35,7 +35,8 @@ def check(name, condition, detail=""):
 
 def main():
     enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=True)
-    from fluidSim_warp_blender51.blender import scene_bridge, viewport
+    from fluidSim_warp_blender51.blender import (
+        pending_settings, scene_bridge, viewport_overlay)
     from fluidSim_warp_blender51.io import cache
 
     scene = bpy.context.scene
@@ -85,7 +86,7 @@ def main():
           f"{hot_values}; {live_apply_ms:.2f} ms")
     check("live edits preserve particle allocation", sess.solver is solver
           and solver.particles is particle_state)
-    sampling_pending = scene_bridge.pending_presentation(scene)
+    sampling_pending = pending_settings.pending_presentation(scene)
     check("liquid sampling stages Reset without mutating live rest density",
           initial_reference > 0.0
           and solver.settings.particles_per_voxel == 8
@@ -123,7 +124,9 @@ def main():
         fs.cache_use_custom_range = True
         fs.cache_frame_start = 1
         fs.cache_frame_end = 2
-        sess.export_cache_sequence(scene, 1, 2)
+        from fluidSim_warp_blender51.blender import cache_bake
+
+        cache_bake.bake(scene, sess, 1, 2)
         metadata = cache.read_sequence_metadata(cache_dir)
         frame_one = cache.read_frame(cache_dir, 1)
         frame_two = cache.read_frame(cache_dir, 2)
@@ -148,7 +151,7 @@ def main():
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
     fs.voxel_size = 0.1
-    pending = scene_bridge.pending_presentation(scene)
+    pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
           pending)
@@ -156,20 +159,20 @@ def main():
     check("timeline rewind applies pending reinitialize", sess.active
           and sess.solver is not advanced_solver
           and abs(sess.solver.settings.voxel_size - 0.1) < 1e-8
-          and scene_bridge.pending_presentation(scene)["action"] == "NONE",
-          scene_bridge.pending_presentation(scene))
+          and pending_settings.pending_presentation(scene)["action"] == "NONE",
+          pending_settings.pending_presentation(scene))
 
     # Real Blender RNA/Scene instances keep independent cached pending state.
     first = scene
     first.fluidsim.leaf_capacity += 64
-    scene_bridge.request_scene_update(first, scene_bridge.SceneUpdate.REBUILD)
+    pending_settings.request_scene_update(first, pending_settings.SceneUpdate.REBUILD)
     second = first.copy()
     second.name = "Phase4 Pending Isolation"
-    scene_bridge._capture_applied_state(second, sess)
+    pending_settings.capture_applied_state(second, sess)
     second.fluidsim.voxel_size = 0.09
-    scene_bridge.request_scene_update(second, scene_bridge.SceneUpdate.REBUILD)
-    first_pending = scene_bridge.pending_presentation(first)
-    second_pending = scene_bridge.pending_presentation(second)
+    pending_settings.request_scene_update(second, pending_settings.SceneUpdate.REBUILD)
+    first_pending = pending_settings.pending_presentation(first)
+    second_pending = pending_settings.pending_presentation(second)
     check("multiple-scene pending state is isolated",
           first_pending["action"] == "REINIT_PENDING"
           and second_pending["action"] == "REINIT_PENDING"
@@ -178,7 +181,7 @@ def main():
 
     check("fixed header popover registered",
           hasattr(bpy.types, "FLUIDSIM_PT_interaction_popover"))
-    check("viewport pending overlay registered", viewport._OVERLAY_HANDLE is not None)
+    check("viewport pending overlay registered", viewport_overlay._OVERLAY_HANDLE is not None)
 
 
 try:

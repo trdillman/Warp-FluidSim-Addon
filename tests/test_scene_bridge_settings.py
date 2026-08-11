@@ -17,6 +17,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fluidSim_warp_blender51.sim.solver import SolverSettings
 
 
+def _build_settings(scene):
+    from fluidSim_warp_blender51.blender.solver_settings import build_settings
+
+    return build_settings(scene)
+
+
 def test_multigrid_feature_is_not_exposed_or_scene_configurable():
     root = Path(__file__).parents[1] / "fluidSim_warp_blender51"
 
@@ -46,11 +52,19 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     fake_solver = types.ModuleType("fluidSim_warp_blender51.sim.solver")
     fake_solver.SolverSettings = SolverSettings
+    fake_preferences = types.ModuleType("fluidSim_warp_blender51.preferences")
+    fake_preferences.configured_device = lambda: "cuda:0"
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.solver", fake_solver)
-    sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.preferences", fake_preferences)
+    for module in (
+        "fluidSim_warp_blender51.blender.scene_bridge",
+        "fluidSim_warp_blender51.blender.solver_settings",
+    ):
+        sys.modules.pop(module, None)
     return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
 
 
@@ -141,7 +155,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
 
     direct_fields = (
         "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
@@ -211,7 +225,7 @@ def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
     scene.fluidsim.directional_force = directional
     scene.fluidsim.omnidirectional_force_center = center
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
     directional.valid = False
     center.valid = False
 
@@ -225,10 +239,10 @@ def test_domain_collision_wall_setting_is_persisted(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    assert scene_bridge.build_settings(scene).domain_sdf_walls is True
+    assert _build_settings(scene).domain_sdf_walls is True
 
     scene.fluidsim.domain_sdf_walls = False
-    assert scene_bridge.build_settings(scene).domain_sdf_walls is False
+    assert _build_settings(scene).domain_sdf_walls is False
 
 
 def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
@@ -239,7 +253,7 @@ def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
     scene.fluidsim.ww_churn_decay = 2.75
     scene.fluidsim.ww_churn_gain = 3.25
 
-    settings = scene_bridge.build_settings(scene)
+    settings = _build_settings(scene)
 
     assert settings.speed_limit_percent == 0.37
     assert settings.speed_limit_behavior.name == "ACCELERATION"
@@ -250,21 +264,27 @@ def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
 
 def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import solver_settings
+
     settings = SolverSettings(voxel_size=9.0)
     monkeypatch.setattr(
-        scene_bridge, "_DIRECT_SETTING_FIELDS",
-        scene_bridge._DIRECT_SETTING_FIELDS + ("unknown_setting",),
+        solver_settings, "DIRECT_SETTING_FIELDS",
+        solver_settings.DIRECT_SETTING_FIELDS + ("unknown_setting",),
     )
+    monkeypatch.setattr(
+        solver_settings, "_SETTING_REGISTRY_VALIDATED", False)
 
     with pytest.raises(ValueError, match="unknown_setting"):
-        scene_bridge._apply_scene_settings(_scene().fluidsim, settings)
+        solver_settings.apply_scene_settings(_scene().fluidsim, settings)
     assert settings.voxel_size == 9.0
 
 
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
-    source = inspect.getsource(scene_bridge._apply_realtime_surface_settings)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    source = inspect.getsource(pending_settings._apply_realtime_surface_settings)
 
     assert "rebuild_surface()" in source
     assert "_surface_mesh_cache" not in source
@@ -275,6 +295,8 @@ def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
 def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
-    source = inspect.getsource(scene_bridge.request_scene_update)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    source = inspect.getsource(pending_settings.request_scene_update)
 
     assert source.count("force_surface=True") == 2

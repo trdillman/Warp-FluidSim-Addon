@@ -47,9 +47,33 @@ EXPECTED_HANDLERS = {
     "load_pre": {"_on_load_pre"},
     "load_post": {"_on_load_post"},
     "animation_playback_pre": {"_on_playback_pre"},
+    "depsgraph_update_post": {"_on_interaction_state_update"},
+    "undo_post": {"_on_interaction_state_update"},
     "render_init": {"_on_render_init"},
     "render_complete": {"_on_render_end"},
     "render_cancel": {"_on_render_end"},
+}
+EXPECTED_HANDLER_MODULES = {
+    "frame_change_post": {
+        "_on_frame_change": "fluidSim_warp_blender51.blender.playback",
+    },
+    "animation_playback_pre": {
+        "_on_playback_pre": "fluidSim_warp_blender51.blender.playback",
+    },
+    "depsgraph_update_post": {
+        "_on_interaction_state_update":
+            "fluidSim_warp_blender51.blender.pending_settings",
+    },
+    "undo_post": {
+        "_on_interaction_state_update":
+            "fluidSim_warp_blender51.blender.pending_settings",
+    },
+    "load_pre": {
+        "_on_load_pre": "fluidSim_warp_blender51.blender.pending_settings",
+    },
+    "render_init": {
+        "_on_render_init": "fluidSim_warp_blender51.blender.render",
+    },
 }
 
 
@@ -90,6 +114,20 @@ def assert_expected_handlers_registered(stage):
         raise RuntimeError(
             f"[{stage}] add-on handlers missing: {missing}; "
             f"registered: { {k: sorted(v) for k, v in found.items()} }")
+    wrong_owner = []
+    for list_name, callbacks in EXPECTED_HANDLER_MODULES.items():
+        for callback_name, expected_module in callbacks.items():
+            matches = [
+                fn for fn in addon_handlers().get(list_name, ())
+                if getattr(fn, "__name__", "") == callback_name
+            ]
+            if any(getattr(fn, "__module__", "") != expected_module
+                   for fn in matches):
+                wrong_owner.append(
+                    f"{list_name}.{callback_name} expected {expected_module}")
+    if wrong_owner:
+        raise RuntimeError(
+            f"[{stage}] add-on handler ownership mismatch: {wrong_owner}")
 
 
 def assert_all_addon_handlers_persistent(stage):

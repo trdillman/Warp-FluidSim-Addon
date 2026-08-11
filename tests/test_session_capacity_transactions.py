@@ -26,15 +26,18 @@ def _bridge(monkeypatch):
     bpy.path = SimpleNamespace(abspath=lambda value: value)
     mathutils = types.ModuleType("mathutils")
     mathutils.Vector = lambda value: value
-    viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
-    viewport.update_outputs = lambda *_args, **_kwargs: None
-    viewport.ensure_outputs = lambda *_args, **_kwargs: None
+    output_publication = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    output_publication.update_outputs = lambda *_args, **_kwargs: None
+    output_publication.ensure_outputs = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication",
+        output_publication)
     blender_package = importlib.import_module("fluidSim_warp_blender51.blender")
-    monkeypatch.setattr(blender_package, "viewport", viewport, raising=False)
+    monkeypatch.setattr(
+        blender_package, "output_publication", output_publication, raising=False)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
     bridge = importlib.import_module(
         "fluidSim_warp_blender51.blender.scene_bridge")
@@ -45,13 +48,17 @@ def _bridge(monkeypatch):
         "gpu_free_bytes": 12 * 1024**3,
     })
     monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda _device: None)
-    monkeypatch.setattr(bridge, "_capture_applied_state", lambda *_a, **_k: None)
+    from fluidSim_warp_blender51.blender import output_publication, pending_settings
+    monkeypatch.setattr(
+        pending_settings, "capture_applied_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        output_publication, "update_outputs", lambda *_a, **_k: None)
     return bridge
 
 
 def _active_reset(
         monkeypatch, *, authored, runtime, demand, auto_grow=False,
-        prepare_error=None, memory_blocked_at=None):
+        prepare_error=None, memory_blocked_at=None, patch_prepare=True):
     bridge = _bridge(monkeypatch)
     scene = SimpleNamespace(
         frame_start=1,
@@ -89,8 +96,9 @@ def _active_reset(
     old_inputs = SimpleNamespace(clear=lambda: None)
     sess.scene_inputs = old_inputs
 
+    from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
-        bridge, "build_settings",
+        simulation_admission, "build_settings",
         lambda _scene: _Settings(
             max_particles=authored,
             auto_grow_particles=auto_grow,
@@ -131,7 +139,7 @@ def _active_reset(
             scene_inputs=SimpleNamespace(clear=lambda: None),
         )
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     prepared = []
 
     def prepare(_scene, settings, _snapshot, _profiler):
@@ -146,7 +154,12 @@ def _active_reset(
         prepared.append(candidate)
         return candidate, ()
 
-    monkeypatch.setattr(sess, "_prepare_solver_replacement", prepare)
+    if patch_prepare:
+        monkeypatch.setattr(
+            simulation_admission.SimulationAdmission,
+            "_prepare_solver_replacement",
+            lambda _owner, *args, **kwargs: prepare(*args, **kwargs),
+        )
     return bridge, scene, sess, old_solver, released, planned, prepared
 
 
@@ -278,7 +291,8 @@ def test_failed_empty_reset_replacement_preserves_authoritative_session(
 
 def test_candidate_constructor_failure_cleans_candidate_pool_only(monkeypatch):
     bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
-        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
+        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False,
+        patch_prepare=False)
 
     class Candidate:
         def __init__(self, _settings, profiler=None):
@@ -295,9 +309,11 @@ def test_candidate_constructor_failure_cleans_candidate_pool_only(monkeypatch):
         memory_safety, "release_cuda_memory",
         lambda device: cuda_releases.append(device))
 
+    owner = sess._admission()
+    settings = _Settings(max_particles=8)
     with pytest.raises(RuntimeError, match="candidate allocation failed"):
-        bridge.Session._prepare_solver_replacement(
-            sess, scene, _Settings(max_particles=8), SimpleNamespace(), None)
+        owner._prepare_solver_replacement(
+            scene, settings, SimpleNamespace(settings=settings), None)
 
     assert sess.solver is old
     assert released == []
@@ -307,7 +323,8 @@ def test_candidate_constructor_failure_cleans_candidate_pool_only(monkeypatch):
 def test_prepared_seed_capacity_mismatch_discards_candidate_not_live_solver(
         monkeypatch):
     bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
-        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
+        monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False,
+        patch_prepare=False)
     candidates = []
 
     class Candidate:
@@ -340,15 +357,14 @@ def test_prepared_seed_capacity_mismatch_discards_candidate_not_live_solver(
         return 0
 
     monkeypatch.setattr(sources, "commit_prepared_seeds", refuse)
-    monkeypatch.setattr(
-        sess, "_apply_scene_snapshot", lambda *_a, **_k: None)
-    monkeypatch.setattr(bridge, "build_snippets", lambda _scene: ())
-    snapshot = SimpleNamespace(seeds=(object(),))
+    owner = sess._admission()
+    monkeypatch.setattr(owner, "_configure_candidate", lambda *_a, **_k: ())
     settings = _Settings(max_particles=8)
+    snapshot = SimpleNamespace(seeds=(object(),), settings=settings)
 
     with pytest.raises(RuntimeError, match="required 9, available 8"):
-        bridge.Session._prepare_solver_replacement(
-            sess, scene, settings, snapshot, None)
+        owner._prepare_solver_replacement(
+            scene, settings, snapshot, None)
 
     assert candidates
     assert sess.solver is old
@@ -381,9 +397,11 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
         planned_residencies.append(additional_transaction_bytes)
         return snapshot
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
+    from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
-        sess, "_prepare_solver_replacement",
+        simulation_admission.SimulationAdmission,
+        "_prepare_solver_replacement",
         lambda *_a, **_k: (_ for _ in ()).throw(
             RuntimeError("replacement allocation failed")),
     )
@@ -440,7 +458,8 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
 
     global_session = bridge.session()
     global_session._set_capacity_plan(first, plan, memory_bypassed=True)
-    bridge._on_load_pre("")
+    from fluidSim_warp_blender51.blender import pending_settings
+    pending_settings._on_load_pre("")
     assert global_session.capacity_plan is None
     assert global_session.capacity_plan_scene_identity is None
     assert global_session.capacity_plan_operation is None
@@ -458,8 +477,10 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
         ),
     )
     sess = bridge.Session()
+    from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
-        bridge, "build_settings", lambda _scene: _Settings(max_particles=8))
+        simulation_admission, "build_settings",
+        lambda _scene: _Settings(max_particles=8))
     blocker = SimpleNamespace(
         code="PARTICLE_DEMAND_UNKNOWN", required=None, available=8,
         message="unknown demand")
@@ -476,10 +497,11 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
             int(settings.max_particles), additional_transaction_bytes))
         return snapshot
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     prepared = []
     monkeypatch.setattr(
-        sess, "_prepare_solver_replacement",
+        simulation_admission.SimulationAdmission,
+        "_prepare_solver_replacement",
         lambda *_a, **_k: prepared.append(True))
     from fluidSim_warp_blender51.sim import memory_safety
 
@@ -520,8 +542,10 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
     )
     sess.scene_identity = bridge._scene_identity(scene_a)
     sess.scene_inputs = SimpleNamespace(clear=lambda: None)
+    from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
-        bridge, "build_settings", lambda _scene: _Settings(max_particles=64))
+        simulation_admission, "build_settings",
+        lambda _scene: _Settings(max_particles=64))
     blocker = SimpleNamespace(
         code="PARTICLE_DEMAND_UNKNOWN", required=None, available=64,
         message="unknown demand")
@@ -536,7 +560,7 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
         seen_residencies.append(additional_transaction_bytes)
         return SimpleNamespace(capacity_plan=plan, seeds=())
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     from fluidSim_warp_blender51.sim import memory_safety
 
     monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
@@ -574,7 +598,7 @@ def test_owned_reset_refresh_uses_runtime_capacity_and_exact_residency(monkeypat
         calls.append((int(settings.max_particles), additional_transaction_bytes))
         return SimpleNamespace(capacity_plan=plan)
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
 
     expected_signature = sess.capacity_plan_signature_for_scene(scene)
     assert sess.refresh_capacity_plan(scene) is plan
@@ -615,7 +639,7 @@ def test_owned_reinitialize_refresh_uses_authored_reserve_after_runtime_growth(
         )
         return SimpleNamespace(capacity_plan=plan)
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
 
     refreshed = sess.refresh_capacity_plan(scene)
 
@@ -698,9 +722,10 @@ def test_capacity_policy_edit_does_not_discard_another_scenes_plan(monkeypatch):
     plan = SimpleNamespace(scene_signature="owner", suggestions=())
     sess = bridge.session()
     sess._set_capacity_plan(owner, plan)
-    monkeypatch.setattr(bridge, "_tag_view3d_redraw", lambda: None)
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(pending_settings, "_tag_view3d_redraw", lambda: None)
 
-    bridge.update_particle_capacity_policy(edited)
+    pending_settings.update_particle_capacity_policy(edited)
 
     assert sess.capacity_plan_for_scene(owner) is plan
     assert "Initial Reserve 4" in edited.fluidsim.status
@@ -729,10 +754,12 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
         planned_residencies.append(additional_transaction_bytes)
         return snapshot
 
-    monkeypatch.setattr(sess, "_plan_scene", plan_scene)
+    monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     prepared = []
+    from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
-        sess, "_prepare_solver_replacement",
+        simulation_admission.SimulationAdmission,
+        "_prepare_solver_replacement",
         lambda *_a, **_k: prepared.append(True))
 
     cuda_releases = []

@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import numpy as np
+
+
+_HOST_OUTPUT_OPERATIONS = Counter()
+
+
+def host_output_operation_counts(*, reset=False):
+    """Count actual HostFrame construction/readback/extraction operations."""
+    counts = {
+        name: int(_HOST_OUTPUT_OPERATIONS[name])
+        for name in (
+            "host_frame_constructions", "device_readbacks",
+            "surface_extractions",
+        )
+    }
+    if reset:
+        _HOST_OUTPUT_OPERATIONS.clear()
+    return counts
 
 
 class HostFrame:
     """Materialize each requested solver output at most once."""
 
     def __init__(self, solver):
+        _HOST_OUTPUT_OPERATIONS["host_frame_constructions"] += 1
         self.solver = solver
         self.frame = int(getattr(solver, "frame", 0))
         self._values = {}
@@ -39,41 +59,54 @@ class HostFrame:
 
         def load():
             if not hasattr(self.solver, "particles"):
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return self.solver.particle_positions()[::stride]
             n = self.solver.particles.refresh_host_count()
-            return (self.solver.particles.position[:n:stride].numpy() if n else
-                    np.zeros((0, 3), dtype=np.float32))
+            if n:
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                return self.solver.particles.position[:n:stride].numpy()
+            return np.zeros((0, 3), dtype=np.float32)
         return self._get(("positions", stride), load)
 
     @property
     def velocities(self):
         def load():
             if not hasattr(self.solver, "particles"):
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return self.solver.particle_velocities()
             n = self.solver.particles.host_count
-            return (self.solver.particles.velocity[:n].numpy() if n else
-                    np.zeros((0, 3), dtype=np.float32))
+            if n:
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                return self.solver.particles.velocity[:n].numpy()
+            return np.zeros((0, 3), dtype=np.float32)
         return self._get("velocities", load)
 
     @property
     def whitewater(self):
         def load():
             if not hasattr(self.solver, "whitewater"):
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return self.solver.whitewater_positions()
             n = self.solver.whitewater.refresh_host_count()
-            return (self.solver.whitewater.position[:n].numpy() if n else
-                    np.zeros((0, 3), dtype=np.float32))
+            if n:
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                return self.solver.whitewater.position[:n].numpy()
+            return np.zeros((0, 3), dtype=np.float32)
         return self._get("whitewater", load)
 
     @property
     def surface_mesh(self):
-        return self._get("surface_mesh", self.solver.surface_mesh)
+        def load():
+            _HOST_OUTPUT_OPERATIONS["surface_extractions"] += 1
+            return self.solver.surface_mesh()
+        return self._get("surface_mesh", load)
 
     def particle_attr(self, name):
         def load():
             try:
                 n = self.solver.particles.host_count
                 # Warp 1.12.1 can fail converting sliced array views to NumPy.
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return self.solver.particles.attr(name).numpy()[:n]
             except AttributeError:
                 return np.zeros(0, dtype=np.float32)
@@ -84,6 +117,7 @@ class HostFrame:
             try:
                 n = self.solver.whitewater.host_count
                 # Warp 1.12.1 cannot convert sliced vec3 views to NumPy.
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return getattr(self.solver.whitewater, name).numpy()[:n]
             except AttributeError:
                 return np.zeros(0, dtype=np.float32)

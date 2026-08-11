@@ -26,7 +26,15 @@ CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
 SCENE_KEY_VERSION = "v1"
 # Settings that say where the solve runs, not what it computes: a cache baked
 # on cuda:0 replays correctly on cuda:1.
-_SCENE_KEY_IGNORED_SETTINGS = frozenset({"device"})
+_SCENE_KEY_IGNORED_SETTINGS = frozenset({
+    "device",
+    # Preview-only publication cadence must not invalidate or alter an
+    # authoritative Production Cache Bake.
+    "live_surface_publish_cadence",
+})
+_CACHE_METADATA_IGNORED_SETTINGS = frozenset({
+    "live_surface_publish_cadence",
+})
 # RNA property types with a stable value repr. POINTER/COLLECTION reprs embed
 # addresses and would change the key every session.
 _HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
@@ -72,7 +80,7 @@ def scene_key(scene) -> str:
     in place, without changing the count or the transform, is the known blind
     spot; hash ``obj.evaluated_get(depsgraph).to_mesh()`` here if it bites.
     """
-    from ..blender.scene_bridge import build_settings
+    from ..blender.solver_settings import build_settings
 
     h = hashlib.blake2b(digest_size=16)
     h.update(f"{SCENE_KEY_VERSION}|settings|".encode())
@@ -141,7 +149,9 @@ def settings_record(settings) -> dict:
     fields = getattr(settings, "__dataclass_fields__", None)
     names = sorted(fields) if fields is not None else sorted(vars(settings))
     values = {name: _jsonable_setting(getattr(settings, name)) for name in names
-              if not name.startswith("_") and hasattr(settings, name)}
+              if (not name.startswith("_")
+                  and name not in _CACHE_METADATA_IGNORED_SETTINGS
+                  and hasattr(settings, name))}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return {"signature": hashlib.sha256(encoded).hexdigest(), "settings": values}
@@ -216,6 +226,55 @@ def _frame_payload(solver, scene_key_value: str = ""):
         "whitewater_status": np.array(str(getattr(
             getattr(solver, "stats", None), "whitewater_status", "OK"))),
     }
+
+
+AUTHORITATIVE_PAYLOAD_FIELDS = {
+    "particles": (
+        "positions", "velocities", "particle_age", "particle_life",
+        "particle_temperature", "particle_viscosity", "particle_density",
+        "particle_time_offset",
+    ),
+    "whitewater": (
+        "whitewater", "whitewater_velocities", "whitewater_age",
+        "whitewater_life",
+    ),
+}
+
+
+def authoritative_payload_counts(frame_data: dict) -> dict:
+    """Return diagnostic payload lengths after schema/alignment validation.
+
+    This helper deliberately makes no comparison with another bake.  It exists
+    for cache-write seam diagnostics: every aligned field must be finite, and
+    callers compare these lengths with the solver counts sampled immediately
+    before that specific write.
+    """
+    counts = {}
+    for group, names in AUTHORITATIVE_PAYLOAD_FIELDS.items():
+        missing = [name for name in names if name not in frame_data]
+        if missing:
+            raise ValueError(f"{group} payload is missing fields {missing}")
+        arrays = {name: np.asanyarray(frame_data[name]) for name in names}
+        primary = arrays[names[0]]
+        if primary.ndim == 0:
+            raise ValueError(f"{names[0]} must have a particle dimension")
+        count = len(primary)
+        bad_lengths = {
+            name: (None if value.ndim == 0 else len(value))
+            for name, value in arrays.items()
+            if value.ndim == 0 or len(value) != count
+        }
+        if bad_lengths:
+            raise ValueError(
+                f"{group} attribute lengths do not match {count}: {bad_lengths}")
+        nonfinite = [
+            name for name, value in arrays.items()
+            if not np.all(np.isfinite(value))
+        ]
+        if nonfinite:
+            raise ValueError(f"{group} payload has non-finite fields {nonfinite}")
+        counts[group] = {name: int(len(value)) for name, value in arrays.items()}
+    return counts
 
 
 def resolve_frame_range(

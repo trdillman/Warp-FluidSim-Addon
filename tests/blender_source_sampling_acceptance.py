@@ -13,7 +13,7 @@ import fluidSim_warp_blender51 as addon  # noqa: E402
 from fluidSim_warp_blender51.blender.scene_inputs import (  # noqa: E402
     _effective_source_target,
 )
-from fluidSim_warp_blender51.blender.scene_bridge import (  # noqa: E402
+from fluidSim_warp_blender51.blender.sources import (  # noqa: E402
     migrate_source_sampling_schema,
 )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import types
@@ -64,8 +65,13 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    sys.modules.pop("fluidSim_warp_blender51.blender.playback", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    return scene_bridge
 
 
 def _scene(frame=7, *, playback=True):
@@ -85,6 +91,11 @@ def _scene(frame=7, *, playback=True):
             stat_particles=0,
             stat_voxels=0,
             stat_whitewater=0,
+            stat_whitewater_required=0,
+            stat_whitewater_admitted=0,
+            stat_whitewater_dropped=0,
+            stat_whitewater_policy="",
+            stat_whitewater_status="",
             stat_step_ms=0.0,
             stat_substeps=0,
         ),
@@ -96,31 +107,91 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     import fluidSim_warp_blender51.io as io_pkg
 
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
 
-MAX_LOOKUP_SAMPLES = 120_000  # mirrors viewport._nearest_values
+def test_phase3_deep_modules_own_playback_and_production_bake(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    bridge_source = inspect.getsource(scene_bridge)
+    bake_source = inspect.getsource(cache_bake.bake)
+    assert "def handle_frame_change" not in bridge_source
+    assert "def export_cache_sequence" not in bridge_source
+    assert scene_bridge.playback._on_frame_change.__module__.endswith(".playback")
+    assert scene_bridge.playback._on_playback_pre.__module__.endswith(".playback")
+    assert "output_publication" not in bake_source
+    assert "_on_frame_change" not in bake_source
+    assert "publish_outputs=False" in bake_source
 
 
-def _import_viewport(monkeypatch):
+def _authoritative_payload(particle_count=2, whitewater_count=0):
+    payload = {
+        "positions": np.ones((particle_count, 3), np.float32),
+        "velocities": np.ones((particle_count, 3), np.float32),
+        "particle_age": np.ones(particle_count, np.float32),
+        "particle_life": np.ones(particle_count, np.float32),
+        "particle_temperature": np.ones(particle_count, np.float32),
+        "particle_viscosity": np.ones(particle_count, np.float32),
+        "particle_density": np.ones(particle_count, np.float32),
+        "particle_time_offset": np.ones(particle_count, np.float32),
+        "whitewater": np.ones((whitewater_count, 3), np.float32),
+        "whitewater_velocities": np.ones((whitewater_count, 3), np.float32),
+        "whitewater_age": np.ones(whitewater_count, np.float32),
+        "whitewater_life": np.ones(whitewater_count, np.float32),
+    }
+    return payload
+
+
+def test_authoritative_payload_counts_validate_schema_alignment_and_finiteness():
+    from fluidSim_warp_blender51.io import cache
+
+    payload = _authoritative_payload(particle_count=2, whitewater_count=1)
+    counts = cache.authoritative_payload_counts(payload)
+    assert set(counts["particles"].values()) == {2}
+    assert set(counts["whitewater"].values()) == {1}
+
+    payload["particle_age"] = payload["particle_age"][:1]
+    with pytest.raises(ValueError, match="attribute lengths do not match"):
+        cache.authoritative_payload_counts(payload)
+
+    payload = _authoritative_payload(particle_count=2, whitewater_count=1)
+    payload["whitewater_life"][0] = np.nan
+    with pytest.raises(ValueError, match="non-finite fields"):
+        cache.authoritative_payload_counts(payload)
+
+
+def test_preview_decimated_payload_counts_fail_solver_count_contract():
+    from fluidSim_warp_blender51.io import cache
+
+    solver_particle_count = 8
+    full = _authoritative_payload(
+        particle_count=solver_particle_count, whitewater_count=2)
+    decimated = {
+        name: (value[::2] if value.ndim else value)
+        for name, value in full.items()
+    }
+    counts = cache.authoritative_payload_counts(decimated)
+
+    assert set(counts["particles"].values()) == {4}
+    assert set(counts["particles"].values()) != {solver_particle_count}
+
+
+MAX_LOOKUP_SAMPLES = 120_000  # mirrors output_publication._nearest_values
+
+
+def _import_output_publication(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    return importlib.import_module(
+        "fluidSim_warp_blender51.blender.output_publication")
 
 
 def _nearest_values_reference(points, sample_points, sample_values, cell_size):
-    """Brute-force oracle for `_nearest_values`, stated as a specification.
-
-    This is deliberately NOT a second copy of the implementation: no grid, no
-    linear keys, no searchsorted, no batching.  It restates the contract -
-    "nearest sample whose cell is within the 3x3x3 neighbourhood of the query
-    cell, else the mean of the sample values" - in the most direct terms
-    available, and pays O(n*m) for the privilege.  A test double is only worth
-    having when it is derived independently of the code it judges.
-    """
+    """Brute-force oracle for the neighbourhood-nearest-value contract."""
     points = np.asarray(points, dtype=np.float32)
     sample_points = np.asarray(sample_points, dtype=np.float32)
     sample_values = np.asarray(sample_values, dtype=np.float32)
@@ -152,68 +223,55 @@ def _nearest_values_reference(points, sample_points, sample_values, cell_size):
 
 
 def test_nearest_values_picks_nearest_sample(monkeypatch):
-    viewport = _import_viewport(monkeypatch)
+    output_publication = _import_output_publication(monkeypatch)
     points = np.array([[0.1, 0.0, 0.0], [1.1, 0.0, 0.0]], dtype=np.float32)
     samples = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32)
     values = np.array([2.0, 7.0], dtype=np.float32)
 
     np.testing.assert_array_equal(
-        viewport._nearest_values(points, samples, values, 0.5), [2.0, 7.0])
+        output_publication._nearest_values(points, samples, values, 0.5),
+        [2.0, 7.0])
 
 
 @pytest.mark.parametrize("cell_size", [0.05, 0.25, 1.0])
 def test_nearest_values_matches_bruteforce_reference(monkeypatch, cell_size):
-    """Cover cell binning across the origin, where floor() is asymmetric."""
-    viewport = _import_viewport(monkeypatch)
+    output_publication = _import_output_publication(monkeypatch)
     rng = np.random.default_rng(20260809)
-    # Straddle the origin: floor() rounds toward -inf, so negative coordinates
-    # exercise a different branch of the key arithmetic than positive ones.
     samples = rng.uniform(-2.0, 2.0, size=(300, 3)).astype(np.float32)
     values = rng.uniform(-10.0, 10.0, size=300).astype(np.float32)
     points = rng.uniform(-2.5, 2.5, size=(400, 3)).astype(np.float32)
 
     np.testing.assert_allclose(
-        viewport._nearest_values(points, samples, values, cell_size),
+        output_publication._nearest_values(points, samples, values, cell_size),
         _nearest_values_reference(points, samples, values, cell_size),
         rtol=0, atol=0)
 
 
 def test_nearest_values_falls_back_to_mean_outside_neighbourhood(monkeypatch):
-    viewport = _import_viewport(monkeypatch)
+    output_publication = _import_output_publication(monkeypatch)
     samples = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=np.float32)
     values = np.array([2.0, 8.0], dtype=np.float32)
-    # 40 cells away at cell_size 0.25 - far outside the 3x3x3 search.
     points = np.array([[10.0, 10.0, 10.0]], dtype=np.float32)
 
     np.testing.assert_allclose(
-        viewport._nearest_values(points, samples, values, 0.25), [5.0])
+        output_publication._nearest_values(points, samples, values, 0.25),
+        [5.0])
 
 
 def test_nearest_values_decimates_above_sample_cap(monkeypatch):
-    """Above the cap the sample set is strided, and the stride must hold.
-
-    This path had no coverage: every sample below the cap is retained, so a
-    decimation defect (wrong stride, dropped tail, values desynchronised from
-    points) is invisible until the input exceeds 120k.
-    """
-    viewport = _import_viewport(monkeypatch)
-    count = MAX_LOOKUP_SAMPLES + 1  # forces step == 2
+    output_publication = _import_output_publication(monkeypatch)
+    count = MAX_LOOKUP_SAMPLES + 1
     samples = np.zeros((count, 3), dtype=np.float32)
     samples[:, 0] = np.arange(count, dtype=np.float32) * 0.1
     values = np.arange(count, dtype=np.float32)
-    # Probe near samples 0, 2, 4 (kept) and 1, 3 (dropped by the stride).
-    # The 0.01 nudge breaks the exact ties that sitting on a dropped sample
-    # would create - it is equidistant from both neighbours, and which one
-    # wins is not part of the contract.
     points = samples[np.array([0, 1, 2, 3, 4], dtype=np.intp)] + np.array(
         [0.01, 0.0, 0.0], dtype=np.float32)
 
-    result = viewport._nearest_values(points, samples, values, 0.25)
+    result = output_publication._nearest_values(
+        points, samples, values, 0.25)
 
     np.testing.assert_allclose(
         result, _nearest_values_reference(points, samples, values, 0.25))
-    # Kept samples resolve to themselves; dropped ones must never be returned,
-    # which is what pins the stride rather than merely "some subsampling".
     assert result[0] == 0.0 and result[2] == 2.0 and result[4] == 4.0
     assert 1.0 not in set(result.tolist())
     assert 3.0 not in set(result.tolist())
@@ -224,7 +282,7 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     scene = _scene()
     calls = []
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs_from_cache_frame = (
         lambda scene_arg, data: calls.append((scene_arg.frame_current, int(data["frame"])))
     )
@@ -233,6 +291,11 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
         "frame": np.array(frame, dtype=np.int32),
         "positions": np.zeros((2, 3), dtype=np.float32),
         "whitewater": np.zeros((1, 3), dtype=np.float32),
+        "whitewater_required": np.array(6, dtype=np.int64),
+        "whitewater_admitted": np.array(5, dtype=np.int64),
+        "whitewater_dropped": np.array(1, dtype=np.int64),
+        "whitewater_policy": np.array("CLAMP"),
+        "whitewater_status": np.array("DROPPED"),
     }
     fake_cache.resolve_frame_range = lambda *args, **kwargs: (1, 10)
     fake_cache.read_sequence_metadata = lambda base: None
@@ -243,11 +306,16 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     scene_bridge.session().solver = solver
     scene_bridge.session().last_frame = -1
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == [(7, 7)]
     assert scene.fluidsim.stat_particles == 2
     assert scene.fluidsim.stat_whitewater == 1
+    assert scene.fluidsim.stat_whitewater_required == 6
+    assert scene.fluidsim.stat_whitewater_admitted == 5
+    assert scene.fluidsim.stat_whitewater_dropped == 1
+    assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
+    assert scene.fluidsim.stat_whitewater_status == "DROPPED"
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
 
 
@@ -260,7 +328,7 @@ def test_live_property_cache_playback_does_not_initialize_solver(monkeypatch):
     ))
 
     scene_bridge.release_session()
-    scene_bridge.set_live_enabled(scene, True)
+    scene_bridge.playback.set_live_enabled(scene, True)
 
     assert not scene_bridge.session().active
     assert scene.fluidsim.status == "Cache playback enabled - press play"
@@ -273,7 +341,7 @@ def test_enabling_cache_playback_releases_live_solver(monkeypatch):
     scene_bridge.session().solver = object()
 
     scene.fluidsim.cache_playback_enabled = True
-    scene_bridge.set_cache_playback_enabled(scene, True)
+    scene_bridge.playback.set_cache_playback_enabled(scene, True)
 
     assert not scene_bridge.session().active
     assert scene.fluidsim.status == "Cache playback enabled - press play"
@@ -295,11 +363,12 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     scene.fluidsim.cache_path = base
 
     voxel_size = [0.1]
+    from fluidSim_warp_blender51.blender import solver_settings
     monkeypatch.setattr(
-        scene_bridge, "build_settings",
+        solver_settings, "build_settings",
         lambda _scene: SimpleNamespace(device="cuda:0", voxel_size=voxel_size[0]))
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     drawn = []
     fake_viewport.update_outputs_from_cache_frame = (
         lambda _scene, data: drawn.append(int(data["frame"])))
@@ -315,12 +384,12 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         "whitewater": np.zeros((1, 3), dtype=np.float32),
     })
 
-    scene_bridge.session().play_cache_frame(scene, 7)
+    scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]
 
     voxel_size[0] = 0.2
     with pytest.raises(ValueError, match="different scene settings"):
-        scene_bridge.session().play_cache_frame(scene, 7)
+        scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]
 
 
@@ -328,7 +397,7 @@ def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monk
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs_from_cache_frame = (
         lambda *_args: (_ for _ in ()).throw(AssertionError("no snapshot to draw"))
     )
@@ -342,7 +411,7 @@ def test_frame_change_cache_playback_reports_missing_frame_without_fallback(monk
     scene_bridge.session().solver = solver
     scene_bridge.session().last_frame = -1
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert scene.fluidsim.status.startswith("Cache playback error:")
     assert "missing or corrupt" in scene_bridge.current_error(scene)
@@ -363,35 +432,37 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
     fake_materials.ensure_particle_material = lambda *_args: None
     fake_materials.ensure_whitewater_material = lambda *_args: None
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials)
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
     calls = []
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: SimpleNamespace(name=name, data=SimpleNamespace()),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "output_object",
         lambda _scene, name: None,
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_mesh",
         lambda obj, *_args, **_kwargs: calls.append(("mesh", obj.name)),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_points",
         lambda obj, _pos, radius, _colors=None, **_kwargs: calls.append(
             ("points", obj.name, radius)
         ),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_clear_points",
         lambda _scene, name: calls.append(("clear_points", name)),
     )
@@ -422,17 +493,17 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
         "surface_tris": np.array([[0, 1, 2]], dtype=np.int32),
     }
 
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
-    assert ("mesh", viewport.SURFACE_NAME) not in calls
-    assert ("clear_points", viewport.WHITEWATER_NAME) in calls
+    assert ("mesh", output_publication.SURFACE_NAME) not in calls
+    assert ("clear_points", output_publication.WHITEWATER_NAME) in calls
     assert any(
         call[0] == "points"
-        and call[1] == viewport.PARTICLES_NAME
+        and call[1] == output_publication.PARTICLES_NAME
         and abs(call[2] - 0.1) < 1e-6
         for call in calls
     )
-    assert all(call[:2] != ("points", viewport.WHITEWATER_NAME) for call in calls)
+    assert all(call[:2] != ("points", output_publication.WHITEWATER_NAME) for call in calls)
 
 
 def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
@@ -456,34 +527,36 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials
     )
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
     def values(array):
         if array is None:
             return None
         return np.asarray(array).round(6).tolist()
 
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: SimpleNamespace(name=name, data=SimpleNamespace()),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "output_object",
         lambda _scene, name: None,
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_mesh",
         lambda obj, verts, tris, colors=None: calls.append(
             ("mesh", obj.name, values(verts), values(tris), values(colors))
         ),
     )
     monkeypatch.setattr(
-        viewport,
+        output_publication,
         "_swap_points",
         lambda obj, positions, radius, colors=None, *, reuse_datablock=True: calls.append(
             ("points", obj.name, values(positions), round(radius, 6),
@@ -491,7 +564,7 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        viewport, "_clear_points",
+        output_publication, "_clear_points",
         lambda _scene, name: calls.append(("clear", name))
     )
 
@@ -534,10 +607,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
         "surface_tris": tris,
     }
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -556,10 +629,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     frame_data.pop("velocities")
     frame_data["whitewater"] = solver.whitewater_positions()
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -567,10 +640,10 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     solver.whitewater_positions = lambda: np.zeros((0, 3), dtype=np.float32)
     frame_data["whitewater"] = solver.whitewater_positions()
 
-    viewport.update_outputs(scene, session)
+    output_publication.update_outputs(scene, session)
     live_calls = list(calls)
     calls.clear()
-    viewport.update_outputs_from_cache_frame(scene, frame_data)
+    output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert live_calls == calls
 
@@ -600,18 +673,21 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials
     )
-    sys.modules.pop("fluidSim_warp_blender51.blender.viewport", None)
-    viewport = importlib.import_module("fluidSim_warp_blender51.blender.viewport")
+    import fluidSim_warp_blender51.blender as blender_pkg
+    monkeypatch.setattr(blender_pkg, "materials", fake_materials, raising=False)
+    sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
+    output_publication = importlib.import_module("fluidSim_warp_blender51.blender.output_publication")
 
-    monkeypatch.setattr(viewport, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output_publication, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(
-        viewport, "_ensure_object",
+        output_publication, "_ensure_object",
         lambda _scene, name, _factory, *_a, **_k: (
             calls.append(("object", name)) or SimpleNamespace(name=name)),
     )
     for name in ("_swap_mesh", "_swap_points", "_swap_vertex_cloud",
                  "_clear_points"):
-        monkeypatch.setattr(viewport, name, _no_geometry_write(name))
+        monkeypatch.setattr(
+            output_publication, name, _no_geometry_write(name))
 
     fs = SimpleNamespace(
         show_surface=True, surface_enabled=True,
@@ -620,12 +696,12 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     )
     scene = SimpleNamespace(fluidsim=fs, collection=_fake_scene_collection())
 
-    viewport.ensure_outputs(scene)
+    output_publication.prepare_outputs(scene)
 
     assert calls == [
-        ("object", viewport.SURFACE_NAME), ("material", "surface"),
-        ("object", viewport.PARTICLES_NAME), ("material", "particle"),
-        ("object", viewport.WHITEWATER_NAME), ("material", "whitewater"),
+        ("object", output_publication.SURFACE_NAME), ("material", "surface"),
+        ("object", output_publication.PARTICLES_NAME), ("material", "particle"),
+        ("object", output_publication.WHITEWATER_NAME), ("material", "whitewater"),
     ]
 
     # Disabled outputs stay unallocated -- toggling one on later goes through
@@ -633,9 +709,9 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     calls.clear()
     fs.surface_enabled = False
     fs.show_whitewater = False
-    viewport.ensure_outputs(scene)
+    output_publication.prepare_outputs(scene)
 
-    assert calls == [("object", viewport.PARTICLES_NAME),
+    assert calls == [("object", output_publication.PARTICLES_NAME),
                      ("material", "particle")]
 
 
@@ -653,14 +729,14 @@ def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
     capacity and only realloc when the count leaves the band.
     """
     _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
     def cloud(capacity, *, has_color=False, users=1, schema=True):
         attributes = {}
         if schema:
             attributes = {"position": object(), "radius": object()}
         if has_color:
-            attributes[viewport.COLOR_ATTR] = object()
+            attributes[output_publication.COLOR_ATTR] = object()
         return SimpleNamespace(
             users=users,
             resize=lambda _count: None,
@@ -668,35 +744,35 @@ def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
             attributes=attributes,
         )
 
-    cap = viewport._point_capacity_for(100_000)
+    cap = output_publication._point_capacity_for(100_000)
     assert cap > 100_000
 
     # In-band counts reuse the attached cloud, including a count that changed.
-    assert not viewport._needs_realloc(cloud(cap), 100_000, False)
-    assert not viewport._needs_realloc(cloud(cap), 99_000, False)
-    assert not viewport._needs_realloc(cloud(cap), cap, False)
+    assert not output_publication._needs_realloc(cloud(cap), 100_000, False)
+    assert not output_publication._needs_realloc(cloud(cap), 99_000, False)
+    assert not output_publication._needs_realloc(cloud(cap), cap, False)
     # ...and the reuse band is wide enough that ordinary FLIP drift stays in it.
-    assert not viewport._needs_realloc(cloud(cap), int(cap * 0.55), False)
+    assert not output_publication._needs_realloc(cloud(cap), int(cap * 0.55), False)
 
     # Structural changes force a fresh, detached cloud.
-    assert viewport._needs_realloc(cloud(cap), cap + 1, False)          # grow
-    assert viewport._needs_realloc(cloud(cap), cap // 8, False)         # shrink
-    assert viewport._needs_realloc(cloud(cap), 100_000, True)           # +color
-    assert viewport._needs_realloc(
+    assert output_publication._needs_realloc(cloud(cap), cap + 1, False)          # grow
+    assert output_publication._needs_realloc(cloud(cap), cap // 8, False)         # shrink
+    assert output_publication._needs_realloc(cloud(cap), 100_000, True)           # +color
+    assert output_publication._needs_realloc(
         cloud(cap, has_color=True), 100_000, False)                     # -color
-    assert viewport._needs_realloc(cloud(cap, users=2), 100_000, False)
-    assert viewport._needs_realloc(cloud(cap, schema=False), 100_000, False)
-    assert viewport._needs_realloc(None, 100_000, False)
+    assert output_publication._needs_realloc(cloud(cap, users=2), 100_000, False)
+    assert output_publication._needs_realloc(cloud(cap, schema=False), 100_000, False)
+    assert output_publication._needs_realloc(None, 100_000, False)
 
     # An empty frame must not realloc every time just for sitting under the
     # floor -- whitewater is empty for the whole start of a sim.
-    floor = viewport._point_capacity_for(0)
-    assert not viewport._needs_realloc(cloud(floor), 0, False)
+    floor = output_publication._point_capacity_for(0)
+    assert not output_publication._needs_realloc(cloud(floor), 0, False)
 
     # Shrinking settles: the capacity chosen for n is inside n's own band.
     for count in (0, 1, 5_000, 250_000):
-        assert not viewport._needs_realloc(
-            cloud(viewport._point_capacity_for(count)), count, False)
+        assert not output_publication._needs_realloc(
+            cloud(output_publication._point_capacity_for(count)), count, False)
 
 
 def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
@@ -794,24 +870,24 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
         "fluidSim_warp_blender51.diagnostics.profiler",
         fake_profiler_module,
     )
-    monkeypatch.setattr(
-        scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cuda:0"))
+    from fluidSim_warp_blender51.blender import simulation_admission
+
     sess = scene_bridge.session()
     capacity_plan = SimpleNamespace(
         blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
-    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
+    snapshot = SimpleNamespace(
+        configured_device="cuda:0", settings=SimpleNamespace(device="cuda:0"),
+        profiling_enabled=False, capacity_plan=capacity_plan,
+        scene_identity=1, scene_key="key",
+        frame_start=1, release_transients=lambda: None)
     monkeypatch.setattr(
-        sess, "_apply_scene_snapshot",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sync failed")),
-    )
-    from fluidSim_warp_blender51.sim import memory_safety
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
-        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
-        "resources": {}, "recommended": {},
-    })
+        simulation_admission.SimulationAdmission, "_preflight",
+        lambda *_args, **_kwargs: (
+            snapshot, {"safe": True, "estimated_bytes": 0}, None))
+    monkeypatch.setattr(
+        simulation_admission.SimulationAdmission, "_configure_candidate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("sync failed")))
 
     with pytest.raises(RuntimeError, match="sync failed"):
         sess.initialize(scene)
@@ -849,20 +925,20 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
         "fluidSim_warp_blender51.diagnostics.profiler",
         fake_profiler_module,
     )
-    monkeypatch.setattr(
-        scene_bridge, "build_settings", lambda _scene: SimpleNamespace(device="cpu"))
-    from fluidSim_warp_blender51.sim import memory_safety
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 1, "gpu_free_bytes": 1})
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_args: {
-        "safe": True, "estimated_bytes": 0, "budget_bytes": 1,
-        "resources": {}, "recommended": {},
-    })
+    from fluidSim_warp_blender51.blender import simulation_admission
+
     sess = scene_bridge.session()
     capacity_plan = SimpleNamespace(
         blockers=(), estimated_bytes=0, budget_bytes=1, suggestions=())
-    snapshot = SimpleNamespace(capacity_plan=capacity_plan, seeds=())
-    monkeypatch.setattr(sess, "_plan_scene", lambda *_args, **_kwargs: snapshot)
+    snapshot = SimpleNamespace(
+        configured_device="cpu", settings=SimpleNamespace(device="cpu"),
+        profiling_enabled=False, capacity_plan=capacity_plan,
+        scene_identity=1, scene_key="key",
+        frame_start=1, release_transients=lambda: None)
+    monkeypatch.setattr(
+        simulation_admission.SimulationAdmission, "_preflight",
+        lambda *_args, **_kwargs: (
+            snapshot, {"safe": True, "estimated_bytes": 0}, None))
 
     with pytest.raises(RuntimeError, match="constructor failed"):
         sess.initialize(scene)
@@ -887,13 +963,13 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
     )
     sess.solver = SimpleNamespace(frame=1001, step_frame=lambda: stats)
     sess.frame_stats = [{"frame": index} for index in range(1, 1001)]
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda *_args: None
     import fluidSim_warp_blender51.blender as blender_pkg
 
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
 
     scene_bridge.step_frame(scene, sess)
 
@@ -910,11 +986,14 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     sess.start_frame = 1
     sess.last_frame = 8
     calls = []
-    monkeypatch.setattr(sess, "reset", lambda scene_arg: calls.append(scene_arg))
+    monkeypatch.setattr(
+        sess, "reset",
+        lambda scene_arg, **kwargs: calls.append((scene_arg, kwargs)))
+    depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=depsgraph)
 
-    assert calls == [scene]
+    assert calls == [(scene, {"depsgraph": depsgraph})]
     assert sess.last_frame == 3
 
 
@@ -939,7 +1018,7 @@ def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: observed.append(
         (sess.solver.settings.flip_ratio, sess.solver.settings.cfl)))
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert observed == [(0.3, 2.5)]
 
@@ -960,7 +1039,7 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
     monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: stepped.append(True))
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert stepped == [True]
     assert scene.fluidsim.live is True
@@ -972,6 +1051,7 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
 
 def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.flip_ratio = 0.9
     scene.fluidsim.cfl = 1.0
@@ -1010,7 +1090,7 @@ def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeyp
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
-    sess.export_cache_sequence(scene, 2, 4)
+    cache_bake.bake(scene, sess, 2, 4)
 
     expected = [values[2], values[3], values[4]]
     assert observed == expected
@@ -1032,7 +1112,7 @@ def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeyp
     sess.solver.settings.cfl = 1.0
     for frame in range(2, 5):
         frame_set(frame)
-        scene_bridge._on_frame_change(scene, depsgraph=object())
+        scene_bridge.playback._on_frame_change(scene, depsgraph=object())
     assert observed == expected
 
 
@@ -1041,8 +1121,10 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
     scene = _scene(frame=2, playback=False)
     sess = scene_bridge.session()
     calls = []
+    depsgraphs = []
 
-    def initialize(scene_arg):
+    def initialize(scene_arg, **kwargs):
+        depsgraphs.append(kwargs.get("depsgraph"))
         calls.append(("initialize", scene_arg.frame_current))
         sess.solver = SimpleNamespace(frame=0)
         sess.start_frame = scene_arg.frame_start
@@ -1055,10 +1137,12 @@ def test_frame_change_reinitializes_saved_live_scene_without_step_button(monkeyp
         sess, "step",
         lambda _scene, **kwargs: calls.append(
             ("step", kwargs.get("timeline_frame", scene.frame_current))))
+    depsgraph = object()
 
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=depsgraph)
 
     assert calls == [("initialize", 2), ("sync", 2), ("step", 2)]
+    assert depsgraphs == [depsgraph]
 
 
 def _count_initialize(monkeypatch, sess):
@@ -1081,7 +1165,7 @@ def test_playback_pre_initializes_before_any_frame_change(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert len(calls) == 1
     assert sess.active
@@ -1093,9 +1177,9 @@ def test_playback_pre_is_idempotent_once_the_session_is_active(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge.ensure_session_before_frames(scene, "render")
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     assert len(calls) == 1
 
@@ -1107,8 +1191,8 @@ def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge.ensure_session_before_frames(scene, "render")
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     # Pressing play on a non-live scene must not build a GPU solver.
     assert calls == []
@@ -1120,7 +1204,7 @@ def test_playback_pre_does_not_allocate_for_cache_playback(monkeypatch):
     sess = scene_bridge.session()
     calls = _count_initialize(monkeypatch, sess)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert calls == []
 
@@ -1137,7 +1221,7 @@ def test_playback_pre_reports_init_failure_without_breaking_playback(monkeypatch
 
     monkeypatch.setattr(sess, "initialize", initialize)
 
-    scene_bridge._on_playback_pre(scene)
+    scene_bridge.playback._on_playback_pre(scene)
 
     assert "world box (19.5, 19.5, 19.5)" in scene_bridge.current_error(scene)
     assert sess.solver is None
@@ -1167,8 +1251,8 @@ def test_frame_change_after_playback_pre_does_not_reinitialize(monkeypatch):
         lambda _scene, **kwargs: calls.append(
             ("step", kwargs.get("timeline_frame", scene.frame_current))))
 
-    scene_bridge._on_playback_pre(scene)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_playback_pre(scene)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     # The inverse of the lazy-init test above: the solver already exists, so the
     # handler never reaches initialize() with the depsgraph mid-evaluation.
@@ -1199,8 +1283,8 @@ def test_render_frame_restore_does_not_touch_the_solver(monkeypatch):
 
     # Blender jumps back to the pre-render frame when the job ends; that step
     # wrote a cache frame the user never simulated.
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == []
     assert sess.last_frame == 5
@@ -1213,10 +1297,10 @@ def test_render_frame_restore_is_one_shot(monkeypatch):
     calls = _record_solver_work(monkeypatch, scene, sess)
     sess.last_frame = 4
 
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
     scene.frame_current = 6
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     # The frame after the restore is a real user frame again.
     assert calls == ["sync", ("step", 6)]
@@ -1231,14 +1315,15 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
 
     # Render ended at frame 5, but the user scrubbed elsewhere first: that is a
     # real gesture and must still simulate.
-    scene_bridge.arm_render_frame_restore(5)
-    scene_bridge._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == ["sync", ("step", 6)]
 
 
-def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
+def test_cache_export_restores_only_blender_transients_after_failure(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_bake
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.live = True
     frames = []
@@ -1264,9 +1349,14 @@ def test_cache_export_restores_frame_and_live_after_failure(monkeypatch):
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
+    original_suppression = scene_bridge.playback._SUPPRESS_FRAME_HANDLERS
     with pytest.raises(RuntimeError, match="step failed"):
-        sess.export_cache_sequence(scene, 2, 4)
+        cache_bake.bake(scene, sess, 2, 4)
 
     assert frames == [2, 7]
     assert scene.frame_current == 7
     assert scene.fluidsim.live is True
+    assert scene_bridge.playback._SUPPRESS_FRAME_HANDLERS == original_suppression
+    # The bake is not a transaction: solver state intentionally remains at the
+    # point reached before the failure, matching the established behavior.
+    assert sess.solver.frame == 1

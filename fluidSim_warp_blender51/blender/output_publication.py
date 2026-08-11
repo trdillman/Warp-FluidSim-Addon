@@ -1,13 +1,16 @@
-"""Viewport output: surface mesh, particle/whitewater point clouds, overlay.
+"""Deep owner of persistent Blender simulation output.
 
-Simulation results are written into real Blender datablocks inside a
-dedicated output collection, so they are visible in the viewport and in
-renders without any caching step.
+Output Preparation creates persistent IDs and schemas. Payload adapters perform
+live readback or normalize cache facts. Output Publication mutates Blender IDs
+from an owned payload and cannot reacquire solver or Warp state.
 """
 
 from __future__ import annotations
 
+from collections import Counter
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 import sys
 
 import numpy as np
@@ -25,8 +28,101 @@ _POINT_CAPACITY_HEADROOM = 1.15
 _POINT_CAPACITY_PAD = 256
 _MIN_POINT_CAPACITY = 1024
 
-_OVERLAY_HANDLE = None
+_STRUCTURAL_REPLACEMENTS = Counter()
+_COST_PHASES = (
+    "live_adaptation", "cache_adaptation",
+    "output_preparation", "output_publication",
+)
+_COST_EVENTS = (
+    "invocations", "host_frame_acquisitions", "device_readbacks",
+    "surface_extractions", "synchronizations", "blender_id_creations",
+    "blender_id_removals", "depsgraph_updates", "relation_changes",
+    "structural_replacements", "datablock_replacements",
+)
+_PHASE_COSTS = {phase: Counter() for phase in _COST_PHASES}
+_ACTIVE_COST_PHASE = ContextVar("fluidsim_output_cost_phase", default=None)
 bpy = sys.modules.get("bpy")
+
+
+def output_cost_counts(*, reset=False):
+    """Return stable, separately measurable Output Publication phase costs."""
+    counts = {
+        phase: {event: int(_PHASE_COSTS[phase][event])
+                for event in _COST_EVENTS}
+        for phase in _COST_PHASES
+    }
+    if reset:
+        for counter in _PHASE_COSTS.values():
+            counter.clear()
+    return counts
+
+
+def _record_cost(event, amount=1, *, phase=None):
+    phase = phase or _ACTIVE_COST_PHASE.get()
+    if phase in _PHASE_COSTS and amount:
+        _PHASE_COSTS[phase][event] += int(amount)
+
+
+def _host_output_counts():
+    from ..sim.frame_output import host_output_operation_counts
+    return host_output_operation_counts()
+
+
+def _cost_phase(phase):
+    def decorate(function):
+        @wraps(function)
+        def measured(*args, **kwargs):
+            token = _ACTIVE_COST_PHASE.set(phase)
+            before = _host_output_counts() if phase == "live_adaptation" else None
+            _record_cost("invocations")
+            try:
+                return function(*args, **kwargs)
+            finally:
+                if before is not None:
+                    after = _host_output_counts()
+                    _record_cost(
+                        "device_readbacks",
+                        after["device_readbacks"] - before["device_readbacks"])
+                    _record_cost(
+                        "surface_extractions",
+                        after["surface_extractions"]
+                        - before["surface_extractions"])
+                _ACTIVE_COST_PHASE.reset(token)
+        return measured
+    return decorate
+
+
+def _new_blender_id(factory, *args, **kwargs):
+    _record_cost("blender_id_creations")
+    return factory(*args, **kwargs)
+
+
+def _remove_blender_id(collection, datablock, *args, **kwargs):
+    _record_cost("blender_id_removals")
+    return collection.remove(datablock, *args, **kwargs)
+
+
+def _link_relation(linker, datablock):
+    _record_cost("relation_changes")
+    return linker.link(datablock)
+
+
+def _replace_datablock(obj, datablock):
+    _record_cost("datablock_replacements")
+    obj.data = datablock
+
+
+def _ensure_material(ensure, *args):
+    """Count IDs created inside the imported materials owner."""
+    try:
+        before = len(bpy.data.materials)
+    except (AttributeError, TypeError):
+        before = None
+    result = ensure(*args)
+    if before is not None:
+        _record_cost("blender_id_creations", max(
+            0, len(bpy.data.materials) - before))
+    return result
 
 
 def _require_bpy():
@@ -37,11 +133,11 @@ def _require_bpy():
             import bpy as blender_api
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Viewport datablock operations require Blender's Python runtime"
+                "Output publication requires Blender's Python runtime"
             ) from exc
         if not hasattr(blender_api, "data"):
             raise RuntimeError(
-                "Viewport datablock operations require Blender's bpy module"
+                "Output publication requires Blender's bpy module"
             )
         bpy = blender_api
     return bpy
@@ -57,10 +153,10 @@ def _output_collection(scene):
             or "FluidSim Output")
     coll = bpy.data.collections.get(name)
     if coll is None:
-        coll = bpy.data.collections.new(name)
+        coll = _new_blender_id(bpy.data.collections.new, name)
     if name not in {c.name for c in scene.collection.children}:
         try:
-            scene.collection.children.link(coll)
+            _link_relation(scene.collection.children, coll)
         except RuntimeError:
             pass
     return coll
@@ -95,13 +191,13 @@ def output_object(scene, kind):
 
 def _remove_output_object(obj):
     data = getattr(obj, "data", None)
-    bpy.data.objects.remove(obj, do_unlink=True)
+    _remove_blender_id(bpy.data.objects, obj, do_unlink=True)
     if data is not None and data.users == 0:
         if isinstance(data, bpy.types.Mesh):
-            bpy.data.meshes.remove(data)
+            _remove_blender_id(bpy.data.meshes, data)
         elif (hasattr(bpy.data, "pointclouds")
               and isinstance(data, bpy.types.PointCloud)):
-            bpy.data.pointclouds.remove(data)
+            _remove_blender_id(bpy.data.pointclouds, data)
 
 
 def _ensure_object(scene, name, data_factory, expected_type):
@@ -113,9 +209,9 @@ def _ensure_object(scene, name, data_factory, expected_type):
         _remove_output_object(obj)
         obj = None
     if obj is None:
-        obj = bpy.data.objects.new(name, data_factory())
+        obj = _new_blender_id(bpy.data.objects.new, name, data_factory())
         obj[OUTPUT_TAG] = name
-        _output_collection(scene).objects.link(obj)
+        _link_relation(_output_collection(scene).objects, obj)
     return obj
 
 
@@ -309,7 +405,7 @@ def _swap_mesh(obj, verts, tris, colors=None):
         mesh = old
         mesh.clear_geometry()
     else:
-        mesh = bpy.data.meshes.new(obj.name)
+        mesh = _new_blender_id(bpy.data.meshes.new, obj.name)
     verts = np.ascontiguousarray(verts, dtype=np.float32)
     tris = np.ascontiguousarray(tris, dtype=np.int32)
     nv = len(verts)
@@ -333,15 +429,15 @@ def _swap_mesh(obj, verts, tris, colors=None):
     mesh.update()
     if not reuse:
         mats = [m for m in getattr(previous, "materials", ())]
-        obj.data = mesh
+        _replace_datablock(obj, mesh)
         for m in mats:
             obj.data.materials.append(m)
         if previous is not None and previous.users == 0:
             if isinstance(previous, bpy.types.Mesh):
-                bpy.data.meshes.remove(previous)
+                _remove_blender_id(bpy.data.meshes, previous)
             elif (hasattr(bpy.data, "pointclouds")
                   and isinstance(previous, bpy.types.PointCloud)):
-                bpy.data.pointclouds.remove(previous)
+                _remove_blender_id(bpy.data.pointclouds, previous)
 
 
 def _supports_pointcloud():
@@ -359,7 +455,7 @@ def _new_prewarmed_pointcloud(name):
     ``ensure_outputs`` can just ``foreach_set`` into existing slots instead of
     reallocating from inside ``frame_change_post`` (see ensure_outputs).
     """
-    pc = bpy.data.pointclouds.new(name)
+    pc = _new_blender_id(bpy.data.pointclouds.new, name)
     pc.resize(_MIN_POINT_CAPACITY)
     _ensure_point_attributes(pc, wants_color=False)
     return pc
@@ -371,7 +467,8 @@ def _ensure_point_object(scene, name):
         return _ensure_object(
             scene, name, lambda: _new_prewarmed_pointcloud(name), "POINTCLOUD")
     return _ensure_object(
-        scene, name, lambda: bpy.data.meshes.new(name), "MESH")
+        scene, name,
+        lambda: _new_blender_id(bpy.data.meshes.new, name), "MESH")
 
 
 def _point_capacity_for(point_count):
@@ -400,31 +497,38 @@ def live_point_count(obj):
     return 0
 
 
-def _needs_realloc(pc, point_count, wants_color):
-    """Whether this write needs a fresh, detached point cloud.
-
-    Blender 5.1 faults inside ``rna_AttributeGroupID_new`` when a cloud that
-    is currently assigned to an object is resized (bisected in
-    ``artifacts/live_review/``; resizing a detached cloud is proven safe). So
-    both kinds of structural change -- capacity and attribute schema -- force
-    a realloc, and an attached cloud only ever gets ``foreach_set``.
-    """
+def _point_replacement_reason(pc, point_count, wants_color):
+    """Classify the existing detached-cloud structural fallback."""
     if (pc is None or getattr(pc, "users", 1) != 1
             or not hasattr(pc, "resize")):
-        return True
+        return "ownership"
     if (pc.attributes.get("position") is None
-            or pc.attributes.get("radius") is None):
-        return True
-    if (pc.attributes.get(COLOR_ATTR) is not None) != wants_color:
-        return True
+            or pc.attributes.get("radius") is None
+            or (pc.attributes.get(COLOR_ATTR) is not None) != wants_color):
+        return "schema"
     capacity = len(pc.points)
     if point_count > capacity:
-        return True
-    # Shrink only when the count has more than halved *and* a fresh cloud
-    # would actually be smaller -- otherwise an empty frame would realloc
-    # every time it sat below the minimum capacity.
-    return (point_count * 2 < capacity
-            and _point_capacity_for(point_count) < capacity)
+        return "growth"
+    if (point_count * 2 < capacity
+            and _point_capacity_for(point_count) < capacity):
+        return "shrink"
+    return None
+
+
+def _needs_realloc(pc, point_count, wants_color):
+    """Whether this write needs the characterized detached-cloud fallback."""
+    return _point_replacement_reason(pc, point_count, wants_color) is not None
+
+
+def structural_replacement_counts(*, reset=False):
+    """Return separately counted point-cloud structural replacements."""
+    counts = {
+        name: int(_STRUCTURAL_REPLACEMENTS[name])
+        for name in ("growth", "shrink", "schema", "ownership", "forced")
+    }
+    if reset:
+        _STRUCTURAL_REPLACEMENTS.clear()
+    return counts
 
 
 def _ensure_point_attributes(pc, wants_color):
@@ -458,9 +562,13 @@ def _swap_points(obj, positions, radius, colors=None, *, reuse_datablock=True):
     pc_old = previous if obj.type == "POINTCLOUD" else None
     n = len(positions)
     wants_color = colors is not None and len(colors) != 0
-    realloc = reuse_datablock is False or _needs_realloc(pc_old, n, wants_color)
+    reason = ("forced" if reuse_datablock is False else
+              _point_replacement_reason(pc_old, n, wants_color))
+    realloc = reason is not None
     if realloc:
-        pc = bpy.data.pointclouds.new(obj.name)
+        _STRUCTURAL_REPLACEMENTS[reason] += 1
+        _record_cost("structural_replacements")
+        pc = _new_blender_id(bpy.data.pointclouds.new, obj.name)
         pc.resize(_point_capacity_for(n))
         _ensure_point_attributes(pc, wants_color)
     else:
@@ -484,15 +592,15 @@ def _swap_points(obj, positions, radius, colors=None, *, reuse_datablock=True):
     pc.update_tag()
     if realloc:
         mats = [m for m in getattr(previous, "materials", ())]
-        obj.data = pc
+        _replace_datablock(obj, pc)
         for m in mats:
             obj.data.materials.append(m)
         if previous is not None and previous.users == 0:
             if isinstance(previous, bpy.types.Mesh):
-                bpy.data.meshes.remove(previous)
+                _remove_blender_id(bpy.data.meshes, previous)
             elif (hasattr(bpy.data, "pointclouds")
                   and isinstance(previous, bpy.types.PointCloud)):
-                bpy.data.pointclouds.remove(previous)
+                _remove_blender_id(bpy.data.pointclouds, previous)
 
 
 def _swap_vertex_cloud(obj, positions, colors=None):
@@ -603,17 +711,26 @@ def _cache_array(frame_data, name, shape):
 
 
 @dataclass(frozen=True)
-class _ViewportFrame:
+class PublicationPayload:
+    """Owned facts consumed by publication without solver/readback access."""
+
     voxel_size: float
     publish_surface: bool
+    surface_visible: bool
+    surface_attribute_mode: str
     surface_verts: np.ndarray
     surface_tris: np.ndarray
     surface_attributes: dict[str, np.ndarray]
+    particles_visible: bool
+    particle_attribute_mode: str
+    particle_radius: float
     particles: np.ndarray
     particle_attributes: dict[str, np.ndarray]
+    whitewater_visible: bool
+    whitewater_attribute_mode: str
+    whitewater_radius: float
     whitewater: np.ndarray
     whitewater_attributes: dict[str, np.ndarray]
-    particles_decimated: bool = False
 
 
 def _attribute_map(mode, values):
@@ -627,15 +744,13 @@ def _display_stride(fs):
     return max(1, int(round(1.0 / fraction)))
 
 
-def _solver_frame(scene, solver, publish_surface=True):
-    from ..sim.frame_output import HostFrame
-
+@_cost_phase("live_adaptation")
+def prepare_live_payload(scene, host, publish_surface=True):
+    """Perform the one live readback/adaptation stage from an acquired frame."""
     fs = scene.fluidsim
-    host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
-    # particle_display_fraction decimates on the device, so the particles the
-    # user asked not to display never cross PCIe. HostFrame keys the readback
-    # per stride, so cache/export still get the full-fidelity array from this
-    # same frame. Attribute values stride identically or colors misalign.
+    solver = host.solver
+    # particle_display_fraction decimates on the device, so omitted particles
+    # never cross PCIe. Attribute values stride identically or colors misalign.
     step = _display_stride(fs)
     indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
@@ -657,24 +772,37 @@ def _solver_frame(scene, solver, publish_surface=True):
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)
         surface_values = None
-    return _ViewportFrame(
-        voxel_size=float(solver.settings.voxel_size),
+    voxel_size = float(solver.settings.voxel_size)
+    return PublicationPayload(
+        voxel_size=voxel_size,
         publish_surface=publish_surface,
+        surface_visible=bool(fs.show_surface and fs.surface_enabled),
+        surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
         surface_attributes=_attribute_map(
             fs.surface_attribute_mode, surface_values),
+        particles_visible=bool(fs.show_particles),
+        particle_attribute_mode=str(fs.particle_attribute_mode),
+        particle_radius=(voxel_size * 0.25
+                         * getattr(fs, "particle_display_scale", 1.0)),
         particles=np.asarray(positions, dtype=np.float32),
         particle_attributes=_attribute_map(
             fs.particle_attribute_mode, particle_values),
+        whitewater_visible=bool(
+            fs.show_whitewater and fs.whitewater_enabled),
+        whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
+        whitewater_radius=(voxel_size * 0.15
+                           * getattr(fs, "whitewater_display_scale", 1.0)),
         whitewater=np.asarray(whitewater, dtype=np.float32),
         whitewater_attributes=_attribute_map(
             fs.whitewater_attribute_mode, whitewater_values),
-        particles_decimated=step > 1,
     )
 
 
-def _cached_frame(scene, frame_data):
+@_cost_phase("cache_adaptation")
+def prepare_cache_payload(scene, frame_data):
+    """Normalize cached arrays and characterized missing-field fallbacks."""
     fs = scene.fluidsim
     positions = np.asarray(
         _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
@@ -692,98 +820,106 @@ def _cached_frame(scene, frame_data):
     surface_values = _cached_values(fs.surface_attribute_mode, verts)
     if surface_values is None:
         particle_surface_values = _cached_named_values(
-            frame_data,
-            "particle",
-            fs.surface_attribute_mode,
-            positions,
-            velocities,
-        )
+            frame_data, "particle", fs.surface_attribute_mode,
+            positions, velocities)
         if particle_surface_values is not None:
             surface_values = _nearest_values(
                 verts, positions, particle_surface_values, voxel_size * 2.0)
     particle_values = _cached_named_values(
-        frame_data,
-        "particle",
-        fs.particle_attribute_mode,
-        positions,
-        velocities if len(velocities) == len(positions) else None,
-    )
+        frame_data, "particle", fs.particle_attribute_mode, positions,
+        velocities if len(velocities) == len(positions) else None)
     whitewater_velocities = frame_data.get("whitewater_velocities")
     if whitewater_velocities is not None:
-        whitewater_velocities = np.asarray(whitewater_velocities, dtype=np.float32)
+        whitewater_velocities = np.asarray(
+            whitewater_velocities, dtype=np.float32)
     whitewater_values = _cached_named_values(
-        frame_data,
-        "whitewater",
-        fs.whitewater_attribute_mode,
-        whitewater,
-        whitewater_velocities,
-    )
-    return _ViewportFrame(
+        frame_data, "whitewater", fs.whitewater_attribute_mode,
+        whitewater, whitewater_velocities)
+
+    # Cached frames are full-fidelity on disk. Apply their display stride once
+    # here. Live stride remains device-side in prepare_live_payload.
+    step = _display_stride(fs)
+    if step > 1 and len(positions):
+        positions = positions[::step]
+        if particle_values is not None:
+            particle_values = particle_values[::step]
+    return PublicationPayload(
         voxel_size=voxel_size,
         publish_surface=True,
+        surface_visible=bool(fs.show_surface and fs.surface_enabled),
+        surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=verts,
         surface_tris=tris,
         surface_attributes=_attribute_map(
             fs.surface_attribute_mode, surface_values),
+        particles_visible=bool(fs.show_particles),
+        particle_attribute_mode=str(fs.particle_attribute_mode),
+        particle_radius=(voxel_size * 0.25
+                         * getattr(fs, "particle_display_scale", 1.0)),
         particles=positions,
         particle_attributes=_attribute_map(
             fs.particle_attribute_mode, particle_values),
+        whitewater_visible=bool(
+            fs.show_whitewater and fs.whitewater_enabled),
+        whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
+        whitewater_radius=(voxel_size * 0.15
+                           * getattr(fs, "whitewater_display_scale", 1.0)),
         whitewater=whitewater,
         whitewater_attributes=_attribute_map(
             fs.whitewater_attribute_mode, whitewater_values),
     )
 
 
-def ensure_outputs(scene):
-    """Create the output collection, objects and materials up front.
-
-    Everything here allocates Blender IDs and, for the collection, changes
-    depsgraph relations. _render_outputs would otherwise do it on the first
-    live frame -- i.e. from inside frame_change_post, while the depsgraph the
-    handler was handed is still being evaluated. Doing it at initialize time
-    leaves the handler writing geometry into IDs that already exist.
-
-    Point clouds need one more thing meshes don't: _new_prewarmed_pointcloud
-    also gives them their attribute schema and starting capacity, because an
-    empty ``pointclouds.new()`` has neither and would still force a
-    detach/reallocate on the very first live write. A live sim that later
-    grows past that capacity still reallocates from inside the handler --
-    Blender 5.1 faults resizing a point cloud that is currently attached to
-    an object (see _needs_realloc), so that growth step cannot be pre-warmed
-    away, only made rare by the headroom in _point_capacity_for. Rendering
-    depends on this same synchronous handler (render.py), so that residual
-    case is not deferred to a timer either.
-    """
+@_cost_phase("output_preparation")
+def prepare_outputs(scene):
+    """Output Preparation: create enabled IDs/schema without geometry writes."""
     _require_bpy()
-    from . import materials
-
     fs = scene.fluidsim
+    materials = None
+    if (fs.show_surface and fs.surface_enabled) or fs.show_particles or (
+            fs.show_whitewater and fs.whitewater_enabled):
+        from . import materials
     if fs.show_surface and fs.surface_enabled:
-        materials.ensure_surface_material(scene, _ensure_object(
+        _ensure_material(materials.ensure_surface_material, scene, _ensure_object(
             scene, SURFACE_NAME,
-            lambda: bpy.data.meshes.new(SURFACE_NAME), "MESH"))
+            lambda: _new_blender_id(
+                bpy.data.meshes.new, SURFACE_NAME), "MESH"))
     if fs.show_particles:
-        materials.ensure_particle_material(
+        _ensure_material(
+            materials.ensure_particle_material,
             scene, _ensure_point_object(scene, PARTICLES_NAME))
     if fs.show_whitewater and fs.whitewater_enabled:
-        materials.ensure_whitewater_material(
+        _ensure_material(
+            materials.ensure_whitewater_material,
             scene, _ensure_point_object(scene, WHITEWATER_NAME))
 
 
-def _render_outputs(scene, frame):
-    _require_bpy()
-    from . import materials
+@_cost_phase("output_publication")
+def publish_payload(scene, payload):
+    """Output Publication: mutate persistent IDs from owned facts only.
 
-    fs = scene.fluidsim
-    if fs.show_surface and fs.surface_enabled:
-        if frame.publish_surface:
-            values = frame.surface_attributes.get(fs.surface_attribute_mode)
+    This function has no solver, HostFrame, Warp-array, surface extraction, or
+    synchronization access. Structural point-cloud fallback remains confined
+    to ``_swap_points`` and is separately observable by reason.
+    """
+    _require_bpy()
+    materials = None
+    if (payload.surface_visible or payload.particles_visible
+            or payload.whitewater_visible):
+        from . import materials
+
+    if payload.surface_visible:
+        if payload.publish_surface:
+            values = payload.surface_attributes.get(
+                payload.surface_attribute_mode)
             colors = _values_to_colors(values) if values is not None else None
             obj = _ensure_object(
                 scene, SURFACE_NAME,
-                lambda: bpy.data.meshes.new(SURFACE_NAME), "MESH")
-            _swap_mesh(obj, frame.surface_verts, frame.surface_tris, colors)
-            materials.ensure_surface_material(scene, obj)
+                lambda: _new_blender_id(
+                    bpy.data.meshes.new, SURFACE_NAME), "MESH")
+            _swap_mesh(
+                obj, payload.surface_verts, payload.surface_tris, colors)
+            _ensure_material(materials.ensure_surface_material, scene, obj)
     else:
         obj = output_object(scene, SURFACE_NAME)
         if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
@@ -793,42 +929,32 @@ def _render_outputs(scene, frame):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
-    if fs.show_particles:
-        positions = frame.particles
-        values = frame.particle_attributes.get(fs.particle_attribute_mode)
-        # The live path already decimated on the device; only cached frames
-        # (full-fidelity on disk) still need the host-side stride here.
-        step = 1 if frame.particles_decimated else _display_stride(fs)
-        if step > 1 and len(positions):
-            positions = positions[::step]
-            if values is not None:
-                values = values[::step]
+    if payload.particles_visible:
+        values = payload.particle_attributes.get(
+            payload.particle_attribute_mode)
         colors = _values_to_colors(values) if values is not None else None
-        radius = (frame.voxel_size * 0.25 *
-                  getattr(fs, "particle_display_scale", 1.0))
         obj = _ensure_point_object(scene, PARTICLES_NAME)
         if _supports_pointcloud():
-            _swap_points(obj, positions, radius, colors)
+            _swap_points(obj, payload.particles, payload.particle_radius, colors)
         else:
-            _swap_vertex_cloud(obj, positions, colors)
-        materials.ensure_particle_material(scene, obj)
+            _swap_vertex_cloud(obj, payload.particles, colors)
+        _ensure_material(materials.ensure_particle_material, scene, obj)
     else:
         _clear_points(scene, PARTICLES_NAME)
 
-    if fs.show_whitewater and fs.whitewater_enabled:
-        values = frame.whitewater_attributes.get(fs.whitewater_attribute_mode)
+    if payload.whitewater_visible:
+        values = payload.whitewater_attributes.get(
+            payload.whitewater_attribute_mode)
         colors = _values_to_colors(values) if values is not None else None
-        radius = (frame.voxel_size * 0.15 *
-                  getattr(fs, "whitewater_display_scale", 1.0))
         obj = _ensure_point_object(scene, WHITEWATER_NAME)
         if _supports_pointcloud():
-            _swap_points(obj, frame.whitewater, radius, colors)
+            _swap_points(
+                obj, payload.whitewater, payload.whitewater_radius, colors)
         else:
-            _swap_vertex_cloud(obj, frame.whitewater, colors)
-        materials.ensure_whitewater_material(scene, obj)
+            _swap_vertex_cloud(obj, payload.whitewater, colors)
+        _ensure_material(materials.ensure_whitewater_material, scene, obj)
     else:
         _clear_points(scene, WHITEWATER_NAME)
-
 
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
@@ -845,7 +971,8 @@ def refresh_existing_output_settings(scene):
         surface.hide_viewport = not visible
         surface.hide_render = not visible
         if visible:
-            materials.ensure_surface_material(scene, surface)
+            _ensure_material(
+                materials.ensure_surface_material, scene, surface)
 
     particles = output_object(scene, PARTICLES_NAME)
     if particles is not None:
@@ -855,7 +982,8 @@ def refresh_existing_output_settings(scene):
             radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
             _set_point_radius(particles, radius)
-            materials.ensure_particle_material(scene, particles)
+            _ensure_material(
+                materials.ensure_particle_material, scene, particles)
 
     whitewater = output_object(scene, WHITEWATER_NAME)
     if whitewater is not None:
@@ -866,7 +994,30 @@ def refresh_existing_output_settings(scene):
             radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(whitewater, radius)
-            materials.ensure_whitewater_material(scene, whitewater)
+            _ensure_material(
+                materials.ensure_whitewater_material, scene, whitewater)
+
+
+def ensure_render_visibility(scene):
+    """Apply render visibility to persistent simulation outputs."""
+    fs = scene.fluidsim
+    for name, show in (
+        (SURFACE_NAME, fs.show_surface),
+        (PARTICLES_NAME, fs.show_particles),
+        (WHITEWATER_NAME, fs.show_whitewater),
+    ):
+        obj = output_object(scene, name)
+        if obj is not None:
+            obj.hide_render = not show
+
+
+def configure_cycles_points(scene):
+    """Resolve prepared point-cloud outputs for Cycles rendering."""
+    for name in (PARTICLES_NAME, WHITEWATER_NAME):
+        obj = output_object(scene, name)
+        if obj is None or obj.type != "POINTCLOUD":
+            continue
+        # Cycles renders point clouds natively; no additional mutation needed.
 
 
 def update_outputs(scene, sess, *, force_surface=False):
@@ -879,6 +1030,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     has_surface = (surface is not None and surface.type == "MESH" and
                    len(surface.data.vertices) > 0)
     solver = sess.solver
+    _record_cost("host_frame_acquisitions", phase="live_adaptation")
     if hasattr(solver, "host_frame"):
         host = solver.host_frame()
     else:
@@ -889,14 +1041,15 @@ def update_outputs(scene, sess, *, force_surface=False):
         host.should_publish_surface(
             getattr(fs, "live_surface_publish_cadence", 1))
     )
-    _render_outputs(
-        scene, _solver_frame(scene, solver, publish_surface=publish_surface))
+    payload = prepare_live_payload(
+        scene, host, publish_surface=publish_surface)
+    publish_payload(scene, payload)
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
-    _render_outputs(scene, _cached_frame(scene, frame_data))
+    publish_payload(scene, prepare_cache_payload(scene, frame_data))
 
 
 def _clear_points(scene, name):
@@ -925,96 +1078,3 @@ def remove_outputs(scene=None):
     for obj in objects:
         if obj is not None:
             _remove_output_object(obj)
-
-
-# ---------------------------------------------------------------------------
-# Profiling overlay
-# ---------------------------------------------------------------------------
-
-
-def _draw_overlay():
-    _require_bpy()
-    import blf
-
-    context = bpy.context
-    scene = context.scene
-    fs = getattr(scene, "fluidsim", None)
-    if fs is None or not fs.show_overlay:
-        return
-    from .scene_bridge import pending_presentation, session
-
-    sess = session()
-    pending = pending_presentation(scene)
-    owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)(scene)
-    if not owns_scene and pending["action"] == "NONE":
-        return
-
-    font_id = 0
-    dpi_scale = context.preferences.system.ui_scale
-    size = int(12 * dpi_scale)
-    blf.size(font_id, size)
-    blf.color(font_id, 0.9, 0.95, 1.0, 1.0)
-    x = 20 * dpi_scale
-    y = 60 * dpi_scale
-    lh = size * 1.4
-
-    lines = [f"FluidSim Warp  |  {fs.status}"]
-    if owns_scene:
-        lines.append(
-            f"particles {fs.stat_particles:,}   whitewater {fs.stat_whitewater:,}   "
-            f"voxels {fs.stat_voxels:,}   substeps {fs.stat_substeps}   "
-            f"{fs.stat_step_ms:.1f} ms/frame")
-        if fs.whitewater_enabled:
-            lines.append(
-                f"whitewater {fs.stat_whitewater_status}: required "
-                f"{fs.stat_whitewater_required:,}, admitted "
-                f"{fs.stat_whitewater_admitted:,}, dropped "
-                f"{fs.stat_whitewater_dropped:,}")
-    if pending["action"] != "NONE":
-        label = ("REINITIALIZE REQUIRED" if pending["action"] == "REINIT_PENDING"
-                 else "RESTART REQUIRED")
-        lines.append(f"{label}: {pending['count']} pending change(s)")
-        if pending["reasons"]:
-            lines.append("pending: " + "; ".join(pending["reasons"][:2]))
-        if pending["blocked_reason"]:
-            lines.append("blocked: " + pending["blocked_reason"][:120])
-    if owns_scene and sess.profiler is not None:
-        summary = sess.profiler.summary(last_n=30)
-        phase_names = {
-            f"compute_{slot}": phase
-            for phase, slot in TIMER_PHASE_SLOTS.items()
-        }
-        parts = []
-        for slot, label in phase_names.items():
-            v = summary.get(slot, 0.0)
-            if v > 0.05:
-                parts.append(f"{label} {v:.1f}")
-        if parts:
-            lines.append("timers(ms): " + "  ".join(parts))
-    if owns_scene and sess.error:
-        lines.append(f"error: {sess.error}")
-
-    for i, line in enumerate(reversed(lines)):
-        blf.position(font_id, x, y + i * lh, 0)
-        blf.draw(font_id, line)
-
-
-def register_overlay():
-    global _OVERLAY_HANDLE
-    _require_bpy()
-    unregister_overlay()
-    _OVERLAY_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
-        _draw_overlay, (), "WINDOW", "POST_PIXEL")
-
-
-def unregister_overlay():
-    global _OVERLAY_HANDLE
-    if _OVERLAY_HANDLE is None:
-        return
-    _require_bpy()
-    if _OVERLAY_HANDLE is not None:
-        try:
-            bpy.types.SpaceView3D.draw_handler_remove(_OVERLAY_HANDLE, "WINDOW")
-        except Exception:
-            pass
-        _OVERLAY_HANDLE = None

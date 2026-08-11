@@ -10,7 +10,7 @@ user-kernel extensibility.
 bl_info = {
     "name": "FluidSim Warp",
     "author": "FluidSim port (synthesized reference)",
-    "version": (1, 0, 242),
+    "version": (1, 0, 243),
     "blender": (5, 1, 0),
     "location": "3D Viewport > Sidebar > FluidSim",
     "description": "Interactive GPU liquid simulation with beta ST-FLIP",
@@ -25,7 +25,7 @@ ensure_warp_discoverable()
 
 def register():
     from . import operators, panels, preferences, properties
-    from .blender import render, scene_bridge, viewport
+    from .blender import pending_settings, playback, render, sources, viewport_overlay
 
     # register()/unregister() must be idempotent in both directions: if a
     # later step raises, Blender's add-on enable path leaves everything
@@ -38,12 +38,16 @@ def register():
         ("preferences", preferences.register, preferences.unregister),
         ("operators", operators.register, operators.unregister),
         ("panels", panels.register, panels.unregister),
-        ("scene_bridge handlers", scene_bridge.register_handlers,
-         scene_bridge.unregister_handlers),
+        ("source migration handlers", sources.register_handlers,
+         sources.unregister_handlers),
+        ("playback handlers", playback.register_handlers,
+         playback.unregister_handlers),
+        ("pending handlers", pending_settings.register_handlers,
+         pending_settings.unregister_handlers),
         ("render handlers", render.register_handlers,
          render.unregister_handlers),
-        ("viewport overlay", viewport.register_overlay,
-         viewport.unregister_overlay),
+        ("viewport overlay", viewport_overlay.register_overlay,
+         viewport_overlay.unregister_overlay),
     )
     completed = []
     try:
@@ -61,17 +65,18 @@ def register():
 
 def unregister():
     from . import operators, panels, preferences, properties
-    from .blender import render, scene_bridge, viewport
+    from .blender import pending_settings, playback, render, sources, viewport_overlay
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a
     # Reload Scripts that re-enters unregister() twice), so one step's
     # failure never blocks the rest of teardown.
     steps = (
-        ("viewport overlay", viewport.unregister_overlay),
+        ("viewport overlay", viewport_overlay.unregister_overlay),
         ("render handlers", render.unregister_handlers),
-        ("scene_bridge handlers", scene_bridge.unregister_handlers),
-        ("session release", scene_bridge.release_session),
+        ("pending handlers", pending_settings.unregister_handlers),
+        ("playback handlers", playback.unregister_handlers),
+        ("source migration handlers", sources.unregister_handlers),
         ("panels", panels.unregister),
         ("operators", operators.unregister),
         ("preferences", preferences.unregister),

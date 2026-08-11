@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import bpy
 import numpy as np
 
+_handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+persistent = getattr(_handlers, "persistent", lambda fn: fn)
+
 
 @dataclass(frozen=True)
 class PreparedParticleSeed:
@@ -26,6 +29,47 @@ class PreparedParticleSeed:
         positions = positions.reshape((-1, 3))
         positions.setflags(write=False)
         object.__setattr__(self, "positions", positions)
+
+
+def migrate_source_sampling_schema(scene=None):
+    """Persist old source occupancy as LEGACY_ABSOLUTE without guessing intent."""
+    objects = (getattr(scene, "objects", ()) if scene is not None
+               else getattr(getattr(bpy, "data", None), "objects", ()))
+    migrated = 0
+    for obj in objects:
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or getattr(pg, "role", "NONE") != "SOURCE":
+            continue
+        if int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4:
+            continue
+        pg.source_sampling_mode = "LEGACY_ABSOLUTE"
+        pg.source_sampling_multiplier = 1.0
+        pg.source_ui_schema_version = 4
+        migrated += 1
+    return migrated
+
+
+@persistent
+def _on_load_post(_filepath):
+    migrate_source_sampling_schema()
+
+
+def register_handlers():
+    unregister_handlers()
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    load_post = getattr(handlers, "load_post", None)
+    if load_post is not None:
+        load_post.append(_on_load_post)
+    migrate_source_sampling_schema(getattr(bpy.context, "scene", None))
+
+
+def unregister_handlers():
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    load_post = getattr(handlers, "load_post", None)
+    if load_post is None:
+        return
+    while _on_load_post in load_post:
+        load_post.remove(_on_load_post)
 
 
 def tag_source(obj, shape="BOX", mode="PARTICLES"):

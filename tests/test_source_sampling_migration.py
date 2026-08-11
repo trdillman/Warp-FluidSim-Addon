@@ -1,5 +1,7 @@
 """Migration and effective-value contracts for source liquid sampling."""
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 from fluidSim_warp_blender51.blender.scene_inputs import _effective_source_target
@@ -54,3 +56,16 @@ def test_explicit_legacy_absolute_ignores_global_sampling():
     source = _source(
         source_sampling_mode="LEGACY_ABSOLUTE", emit_rate=5.0)
     assert _effective_source_target(_scene(32), source) == 5
+
+
+def test_blender_acceptance_imports_migration_from_its_deep_owner():
+    script = Path(__file__).with_name(
+        "blender_source_sampling_acceptance.py").read_text(encoding="utf-8")
+    imports = {
+        node.module
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.ImportFrom)
+        and any(alias.name == "migrate_source_sampling_schema"
+                for alias in node.names)
+    }
+    assert imports == {"fluidSim_warp_blender51.blender.sources"}

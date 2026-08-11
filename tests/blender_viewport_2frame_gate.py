@@ -74,6 +74,74 @@ def main():
     check_drifting_count_reuses_datablock()
 
     bpy.ops.fluidsim.release()
+    check_two_scene_collection_behavior()
+
+
+def check_two_scene_collection_behavior():
+    """Freeze current shared/distinct collection ownership semantics."""
+    import numpy as np
+    from fluidSim_warp_blender51.blender import output_publication
+
+    scenes = [bpy.data.scenes.new("FluidSim Publication A"),
+              bpy.data.scenes.new("FluidSim Publication B")]
+    distinct_names = ("FluidSim Distinct A", "FluidSim Distinct B")
+    shared_name = "FluidSim Shared Output"
+    try:
+        for scene, name in zip(scenes, distinct_names):
+            fs = scene.fluidsim
+            fs.output_collection_name = name
+            fs.show_surface = False
+            fs.show_particles = True
+            fs.show_whitewater = False
+            output_publication.prepare_outputs(scene)
+        distinct = [output_publication.output_object(
+            scene, output_publication.PARTICLES_NAME) for scene in scenes]
+        check("distinct collection tagged outputs are isolated",
+              distinct[0] is not None and distinct[1] is not None
+              and distinct[0] != distinct[1])
+        other_count = output_publication.live_point_count(distinct[1])
+        other_pointer = distinct[1].data.as_pointer()
+        output_publication._swap_points(
+            distinct[0], np.zeros((7, 3), dtype=np.float32), 0.05)
+        check("distinct publication does not mutate other scene",
+              output_publication.live_point_count(distinct[0]) == 7
+              and output_publication.live_point_count(distinct[1]) == other_count
+              and distinct[1].data.as_pointer() == other_pointer)
+        for scene in scenes:
+            output_publication.remove_outputs(scene)
+            scene.fluidsim.output_collection_name = shared_name
+            scene.fluidsim.show_particles = True
+            output_publication.prepare_outputs(scene)
+        shared = [output_publication.output_object(
+            scene, output_publication.PARTICLES_NAME) for scene in scenes]
+        check("shared collection resolves the same tagged output",
+              shared[0] is not None and shared[0] == shared[1])
+        scenes[1].fluidsim.show_particles = False
+        output_publication.refresh_existing_output_settings(scenes[1])
+        check("shared collection visibility is shared",
+              shared[0].hide_viewport and shared[0].hide_render)
+        shared_collection = bpy.data.collections.get(shared_name)
+        scenes[1].collection.children.unlink(shared_collection)
+        output_publication.output_object(
+            scenes[1], output_publication.PARTICLES_NAME)
+        check("tagged lookup relinks configured shared collection",
+              shared_collection in scenes[1].collection.children[:])
+        output_publication.remove_outputs(scenes[0])
+        check("scene-scoped removal removes shared tagged output",
+              output_publication.output_object(
+                  scenes[1], output_publication.PARTICLES_NAME) is None)
+    finally:
+        for scene in scenes:
+            if scene.name in bpy.data.scenes:
+                try:
+                    output_publication.remove_outputs(scene)
+                except Exception:
+                    pass
+                bpy.data.scenes.remove(scene)
+        for name in (*distinct_names, shared_name):
+            collection = bpy.data.collections.get(name)
+            if collection is not None and collection.users == 0:
+                bpy.data.collections.remove(collection)
 
 
 def check_drifting_count_reuses_datablock():
@@ -87,15 +155,15 @@ def check_drifting_count_reuses_datablock():
     """
     import numpy as np
 
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    parts = bpy.data.objects.get(viewport.PARTICLES_NAME)
+    parts = bpy.data.objects.get(output_publication.PARTICLES_NAME)
     if parts is None or parts.type != "POINTCLOUD":
         check("drifting count needs a particle cloud", False)
         return
 
     def write(count):
-        viewport._swap_points(
+        output_publication._swap_points(
             parts, np.zeros((count, 3), dtype=np.float32), 0.05)
         return parts.data.as_pointer(), live_point_count(parts)
 
@@ -132,7 +200,7 @@ def check_pointcloud_churn(scene, frames=10):
     object mid-evaluation. Padded capacity means the count can drift without
     one; a realloc only happens when the count leaves the band.
     """
-    from fluidSim_warp_blender51.blender.viewport import (
+    from fluidSim_warp_blender51.blender.output_publication import (
         PARTICLES_NAME, WHITEWATER_NAME)
 
     tracked = {}
@@ -179,9 +247,9 @@ def check_pointcloud_churn(scene, frames=10):
 
 
 def live_point_count(obj):
-    from fluidSim_warp_blender51.blender import viewport
+    from fluidSim_warp_blender51.blender import output_publication
 
-    reader = getattr(viewport, "live_point_count", None)
+    reader = getattr(output_publication, "live_point_count", None)
     if reader is not None:
         return reader(obj)
     # Unpadded build: the datablock length is the count. Keeps this gate a

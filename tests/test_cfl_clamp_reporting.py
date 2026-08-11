@@ -38,19 +38,24 @@ def _install_scene_bridge_stubs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    sys.modules.pop("fluidSim_warp_blender51.blender.playback", None)
     sys.modules.pop("fluidSim_warp_blender51.blender.scene_bridge", None)
-    return importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge = importlib.import_module(
+        "fluidSim_warp_blender51.blender.scene_bridge")
+    scene_bridge.playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    return scene_bridge
 
 
 def _stub_viewport(monkeypatch):
     import fluidSim_warp_blender51.blender as blender_pkg
 
-    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.viewport")
+    fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda scene, sess: None
     fake_viewport.update_outputs_from_cache_frame = lambda scene, data: None
     monkeypatch.setitem(
-        sys.modules, "fluidSim_warp_blender51.blender.viewport", fake_viewport)
-    monkeypatch.setattr(blender_pkg, "viewport", fake_viewport, raising=False)
+        sys.modules, "fluidSim_warp_blender51.blender.output_publication", fake_viewport)
+    monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
 
 
 def _scene():
@@ -78,7 +83,11 @@ def _scene():
 
 def _stats(clamped):
     return SimpleNamespace(
-        active_particles=7, active_voxels=8, whitewater_particles=0,
+        active_particles=7, active_voxels=8, whitewater_particles=3,
+        whitewater_required=5, whitewater_admitted=3,
+        whitewater_dropped=2, whitewater_policy="CLAMP",
+        whitewater_status="DROPPED",
+        whitewater_message="Whitewater admitted 3/5; dropped 2",
         step_time=0.002, substeps=4, cfl_substeps_clamped=clamped,
         as_dict=lambda: {})
 
@@ -120,6 +129,26 @@ def test_the_clamp_flag_reaches_the_panel_and_does_not_latch(monkeypatch):
     assert scene.fluidsim.stat_cfl_clamped is False
 
 
+def test_whitewater_truth_reaches_live_scene_status(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _stub_viewport(monkeypatch)
+
+    sess = scene_bridge.Session()
+    sess.solver = SimpleNamespace(
+        frame=5, sourcing=None, step_frame=lambda: _stats(False))
+    scene = _scene()
+
+    sess.step(scene)
+
+    assert scene.fluidsim.stat_whitewater == 3
+    assert scene.fluidsim.stat_whitewater_required == 5
+    assert scene.fluidsim.stat_whitewater_admitted == 3
+    assert scene.fluidsim.stat_whitewater_dropped == 2
+    assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
+    assert scene.fluidsim.stat_whitewater_status == "DROPPED"
+    assert "Whitewater admitted 3/5; dropped 2" in scene.fluidsim.status
+
+
 def test_cache_playback_clears_the_clamp_flag(monkeypatch):
     """A cached frame was integrated by some earlier run, maybe not this one.
 
@@ -140,13 +169,13 @@ def test_cache_playback_clears_the_clamp_flag(monkeypatch):
     # test in the same process may already have populated with the real module.
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
     monkeypatch.setattr(
-        scene_bridge, "_check_cache_scene_key",
+        scene_bridge.playback, "_check_cache_scene_key",
         lambda scene, base, data: None)
 
     sess = scene_bridge.Session()
     scene = _scene()
     scene.fluidsim.stat_cfl_clamped = True
 
-    sess.play_cache_frame(scene, frame=5)
+    scene_bridge.playback.play_cache_frame(sess, scene, frame=5)
 
     assert scene.fluidsim.stat_cfl_clamped is False

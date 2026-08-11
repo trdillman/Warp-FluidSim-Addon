@@ -10,7 +10,10 @@ PACKAGE_LAYOUT = {
         "constants.py", "enums.py", "fields.py", "particles.py", "kernels_core.py", "kernels_fluid.py",
         "pressure.py", "viscosity.py", "whitewater.py", "solver.py", "validation.py",
     ],
-    "blender": ["scene_bridge.py", "sources.py", "colliders.py", "materials.py", "viewport.py", "render.py"],
+    "blender": [
+        "scene_bridge.py", "sources.py", "colliders.py", "materials.py",
+        "output_publication.py", "viewport_overlay.py", "render.py",
+    ],
     "diagnostics": ["profiler.py", "benchmark.py", "report.py"],
     "io": ["cache.py", "export.py"],
     "docs": ["user_guide.md", "technical_report.md"],
