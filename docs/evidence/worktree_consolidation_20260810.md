@@ -9,12 +9,20 @@
 - Recovery bundle SHA-256: `ae90466d893d78f348a36f288fda82c311df72648562c90e98cc97daeaee5feb`
 - Curated ignored evidence: 87 records, 85 unique files after SHA-256 deduplication
 - Baseline Python suite: 564 passed and four pre-existing system-Warp CUDA conditional-graph failures
+- Integrated Python suite: 593 passed with the same four baseline failures and no new failures
 
 The sibling archive contains the verified Git bundle, baseline worktree and
 branch inventories, the complete baseline test receipt, a machine-readable
 curated evidence manifest, and `SHA256SUMS.txt`. Reproducible demo caches, NPZ
 frames, Python/pytest caches, agent inputs/transcripts, and build outputs were
 excluded.
+
+Fresh standalone `paddle_stir` rebuilds on both the frozen baseline and the
+integrated tree scored `DEMO-ANALYSIS-PASS (10/10)`. The documented 9/10
+pi-crossing velocity-bound failure did not reproduce on either checkout; the
+initial zero-particle result was isolated to invoking `paddle_stir` after the
+canonical demos in one Blender process and disappeared in the documented
+standalone paddle lane.
 
 ## Branch disposition
 
