@@ -343,17 +343,17 @@ never crash the suite.
 The current generated source evidence comes from
 `artifacts/demo_analysis/analysis_report.json`, produced by the headless/demo
 portion of the real `python tools/run_production_gate.py --include-gui` run
-and bound to audit run `2026-08-09T05:18:06.780758+00:00`, proof HEAD
-`e8a3c062270eaacb0f53e69f5b6246ad8695bb95`, using the checked-in
+and bound to audit run `2026-08-11T00:35:06.917651+00:00`, proof HEAD
+`aa40a3cd0c762503e886d52a9f1f427e0fb298e8`, using the checked-in
 `demos/dam_break/meta.json` and `demos/crown_splash/meta.json` profiles. The
 bounded profiles are 128,000 particles over 72 frames for `dam_break` and
 259,112 particles over 48 frames for `crown_splash`. The checked-in demo JSON
 and Markdown now match this artifact exactly: the standalone demo-analysis
 lane passes **18 / 18** with exact promoted metrics
-`front_speed_over_c0=1.0101384815`, `column_height_end=0.0822204947`,
-`crown_sqrt_t_corr=0.9715353735`, and `max_crown_height=0.2278393954`;
-peak whitewater is `3,278` and Worthington jet height is `183 mm`. Artifact
-SHA-256 is `913fb99f83cabb3657ab7f323235a1bac5e11f3c967b3d816768941f4acf894b`.
+`front_speed_over_c0=1.0132693700`, `column_height_end=0.0841247439`,
+`crown_sqrt_t_corr=0.9715353735`, and `max_crown_height=0.2764160037`;
+peak whitewater is `3,582` and Worthington jet height is `185 mm`. Artifact
+SHA-256 is `eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4`.
 These are bounded generated-run metrics, not arbitrary-scale claims.
 
 Generated source evidence is separate from review evidence:

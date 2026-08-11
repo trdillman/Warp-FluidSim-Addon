@@ -37,17 +37,17 @@ Verdict: **PASS** (18/18 checks)
 These 18 checks and metrics are synchronized from the selected generated
 source artifact at `artifacts/demo_analysis/analysis_report.json`, produced by
 the headless/demo portion of the real `python tools/run_production_gate.py
---include-gui` run. The gate run completed at `2026-08-05T18:33:06.664202Z`
-under proof HEAD `e8a3c062270eaacb0f53e69f5b6246ad8695bb95`.
+--include-gui` run. The gate run completed at `2026-08-11T00:35:06.917651+00:00`
+under proof HEAD `aa40a3cd0c762503e886d52a9f1f427e0fb298e8`.
 The bounded source profiles are the checked-in `demos/dam_break/meta.json`
 and `demos/crown_splash/meta.json`: 128,000 particles over 72 frames for
 `dam_break`, and 259,112 particles over 48 frames for `crown_splash`.
-This selected run is bound to gate run `2026-08-09T05:18:06.780758+00:00`,
-proof HEAD `e8a3c062270eaacb0f53e69f5b6246ad8695bb95`, and artifact SHA-256
-`913fb99f83cabb3657ab7f323235a1bac5e11f3c967b3d816768941f4acf894b`. Exact
-selected metrics are `front_speed_over_c0=1.0101384815`,
-`column_height_end=0.0822204947`, `crown_sqrt_t_corr=0.9715353735`, and
-`max_crown_height=0.2278393954`; the run passes all 18 bounded checks. Values
+This selected run is bound to gate run `2026-08-11T00:35:06.917651+00:00`,
+proof HEAD `aa40a3cd0c762503e886d52a9f1f427e0fb298e8`, and artifact SHA-256
+`eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4`. Exact
+selected metrics are `front_speed_over_c0=1.0132693700`,
+`column_height_end=0.0841247439`, `crown_sqrt_t_corr=0.9715353735`, and
+`max_crown_height=0.2764160037`; the run passes all 18 bounded checks. Values
 are bounded run evidence, not arbitrary-scale physical claims.
 
 ### Review evidence
