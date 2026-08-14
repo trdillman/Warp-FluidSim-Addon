@@ -363,7 +363,7 @@ never crash the suite.
 
 | Gate | Result in this environment |
 |---|---|
-| Pure-Python suite | **150 passed** |
+| Pure-Python suite | Upstream delivery: **150 passed**; Blender 5.1 integration: **613 passed** |
 | Python compilation | Passed |
 | Source/release verification | Passed; generated render asset present and no bundled Blender/Warp payload |
 | Supplied Blender | **5.2.0 LTS**; registration, attribute publication, cache round-trip, save/reopen, Geometry Nodes evaluation, typed modifier inputs, user-modifier protection, and Eevee F12 rendering passed |
@@ -371,11 +371,24 @@ never crash the suite.
 | Shader attribute survival | F12 point render contained independently detected red, green, and blue regions; surface render contained red/blue regions from `fluidsim_color` |
 | Cache/checkpoint transactions | Phase-2 manifest/checkpoint guarantees remain covered; Phase-3 inventory, dtype/shape/finiteness/alignment, optional persistent channels, and UID validation added |
 | Installed headless no-CUDA exit | Required process-level exit `12` remains the expected host result |
-| NVIDIA CUDA solver/render gate | **Open** — no usable CUDA driver/device was exposed |
+| Blender 5.1 integration gate | Windows x64, NVIDIA RTX 4080 SUPER, Warp 1.12.1: **FULL-PRODUCTION-GATE-PASS**, GUI **38/38**, saved-demo playback passed, solver validation **16/16** |
+| NVIDIA CUDA solver/render gate | Upstream 5.2/Linux evidence remained open; the Blender 5.1/Windows integration gate is closed by real CUDA execution |
 
-The CPU and Blender evidence proves surrounding data, cache, publication, asset,
-and render integration. It does not certify CUDA solver numerics, CUDA resume
-determinism, GPU memory/performance, or NVIDIA-specific render behavior.
+The upstream CPU and Blender evidence proves surrounding data, cache,
+publication, asset, and render integration. The repository integration run at
+proof HEAD `8a94f529fb52cd67afdeb19deb546578c195eb11` additionally exercises real
+CUDA solver numerics, GPU memory safeguards, performance profiling, viewport
+rendering, and saved-demo playback. Production output remains numerically
+nondeterministic where atomic accumulation, compaction, emission ordering, and
+derived marching-cubes output are involved.
+
+The bounded demo artifact
+`artifacts/demo_analysis/analysis_report.json` (SHA-256
+`aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6`)
+passed 18/18 checks at `2026-08-14T11:36:17.609519+00:00`. Its promoted
+metrics are `front_speed_over_c0=1.0127570428`,
+`column_height_end=0.0850219727`, `crown_sqrt_t_corr=0.9715359144`, and
+`max_crown_height=0.1751342863`.
 
 ## 13. Performance Notes
 

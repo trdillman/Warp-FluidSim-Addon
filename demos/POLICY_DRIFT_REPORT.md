@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-11T00:35:06.917651+00:00
+generated_at: 2026-08-14T11:36:17.609519+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: aa40a3cd0c762503e886d52a9f1f427e0fb298e8
-gate_run_at: 2026-08-11T00:35:06.917651+00:00
+git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
+gate_run_at: 2026-08-14T11:36:17.609519+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4
+demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
 ---
 
 # Policy Drift Report — demos unit
@@ -35,13 +35,13 @@ descendants remain valid; non-evidence drift makes validation fail closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-11T00:35:06.917651+00:00
+generated_at: 2026-08-14T11:36:17.609519+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: aa40a3cd0c762503e886d52a9f1f427e0fb298e8
-gate_run_at: 2026-08-11T00:35:06.917651+00:00
+git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
+gate_run_at: 2026-08-14T11:36:17.609519+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4
+demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
 freshness: fresh
 status: fresh
 blocking_criticality: none

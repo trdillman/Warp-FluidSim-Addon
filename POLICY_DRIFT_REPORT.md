@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-11T00:35:06.917651+00:00
+generated_at: 2026-08-14T11:36:17.609519+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: aa40a3cd0c762503e886d52a9f1f427e0fb298e8
-gate_run_at: 2026-08-11T00:35:06.917651+00:00
+git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
+gate_run_at: 2026-08-14T11:36:17.609519+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4
+demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
 ---
 
 # Policy Drift Report — root unit
@@ -15,13 +15,13 @@ demo_artifact_sha256: eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed12188
 ## Strongest live evidence
 
 - `python tools/run_production_gate.py --include-gui` passed at proof HEAD
-  `aa40a3cd0c762503e886d52a9f1f427e0fb298e8`; the run wrote the full-gate
+  `8a94f529fb52cd67afdeb19deb546578c195eb11`; the run wrote the full-gate
   manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (38/38)`,
   `GUI-PLAYBACK-PROBE-PASS`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - The generated demo analysis is `result: pass`, 18/18 bounded checks, and the
   checked-in `demos/analysis_report.json` is byte-for-byte synchronized with
   `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4`.
+  `aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6`.
 - The four promoted metrics moved within their bounded tolerances relative to
   the previous proof; the shift is GPU floating-point nondeterminism across
   bakes, not a behavioral change, and every bounded check still passes.
@@ -55,24 +55,21 @@ than to this unit.
 
 ## Known non-blocking exceptions
 
-- `python -m pytest -q` reports 4 failures in
-  `tests/test_pressure_projection_regressions.py` (`assert 'host_batched' ==
-  'cuda_conditional'`). Verified pre-existing by stashing the moving-collider
-  changes and re-running: identical failures. Tracked as TASK-REVIEW-016. These
-  are outside the gate's lanes and do not affect its verdict.
+- `rtk python -m pytest -q` passed all 613 tests before the committed-HEAD
+  production run. There is no repository-wide Python exception in this proof.
 - `demos/paddle_stir` is an opt-in moving-collider demo outside the canonical
   18/18 gate set. Fresh standalone rebuilds on both baseline and integration
   score 10/10; the documented pi-crossing velocity failure did not reproduce.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-11T00:35:06.917651+00:00
+generated_at: 2026-08-14T11:36:17.609519+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: aa40a3cd0c762503e886d52a9f1f427e0fb298e8
-gate_run_at: 2026-08-11T00:35:06.917651+00:00
+git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
+gate_run_at: 2026-08-14T11:36:17.609519+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4
+demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
 freshness: fresh
 status: fresh
 blocking_criticality: none
@@ -81,7 +78,7 @@ strongest_live_verification:
   - 'PASS: python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS.'
   - 'PASS: GUI-ACCEPTANCE-PASS (38/38) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
   - 'PASS: generated demo analysis result=pass, 18/18 bounded checks.'
-  - 'KNOWN-FAIL: python -m pytest -q; 593 passed, 4 baseline-matched PCG failures (TASK-REVIEW-016).'
+  - 'PASS: rtk python -m pytest -q; 613 passed.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:
