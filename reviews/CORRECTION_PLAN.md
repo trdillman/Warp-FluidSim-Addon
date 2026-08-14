@@ -106,7 +106,7 @@ snippets.
 
 ---
 
-## 2.5 Evidence from `dispatch_extraction_from_houdini_archive/`
+## 2.5 Evidence from `docs/references/houdini_dispatch/`
 
 You pointed me at the archive; it materially changed three things. **First, a correction to
 myself:** my initial grep suggested `paradigmResetSourceShapeTrackedVoxelType` was unimplemented
