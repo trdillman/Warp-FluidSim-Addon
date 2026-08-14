@@ -59,6 +59,9 @@ Keep source assets in Git:
 - reusable tools under `tools/`
 - documentation and contribution policy files
 - curated `.blend` demo scenes and preview images
+- curated historical scan reports under `backlog/reports/`
+- review records under `reviews/` when active tasks depend on them or they are
+  deliberately retained as archived provenance
 
 Keep generated output out of Git:
 
@@ -66,7 +69,11 @@ Keep generated output out of Git:
 - generated reports, OBJ/PLY exports, and temporary diagnostics
 - local snippet-library experiments
 - scratch Blender helper scripts
-- review/swarm output folders
+- unpromoted review/swarm working output
+
+Keep generated review and scan output under `artifacts/` while it is being
+produced. Promote only the small, curated record needed by an active task or
+historical provenance; do not commit reproducible scratch output wholesale.
 
 Use `artifacts/` for regenerated local outputs and `_quarantine/` for scratch
 or drift files that should be preserved locally but not distributed.

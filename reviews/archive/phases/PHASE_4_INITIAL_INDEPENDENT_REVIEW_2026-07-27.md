@@ -19,7 +19,7 @@ Paths below are worktree-relative to the phase-4 worktree.
 | `fluidSim_warp_blender51/properties.py` | +64 / -58 (58 props re-routed to `_request_live`) |
 | `tests/test_operator_panel_behavior.py` | +96 (4 new tests) |
 | `tests/test_scene_bridge_cache_playback.py` | +26 (1 new test) |
-| `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` | new (89 lines, untracked) |
+| Phase 4 live-interaction plan (then at the `reviews/` root; now `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md`) | new (89 lines, untracked) |
 
 Also read: `AGENTS.md`, `CONTRIBUTING.md`, plan + approved hybrid contract, `sim/solver.py`, `sim/pressure.py`, `sim/surface.py`.
 
