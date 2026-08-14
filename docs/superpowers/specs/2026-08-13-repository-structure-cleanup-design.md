@@ -1,6 +1,6 @@
 # Repository Structure Cleanup Design
 
-Date: 2026-08-13  
+Date: 2026-08-13
 Status: Approved design; implementation pending review of this written specification
 
 ## Goal
