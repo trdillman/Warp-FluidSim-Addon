@@ -1,7 +1,7 @@
 # Phase 4 — FILE GATE A: Initial-Review Follow-Up Independent Review (2026-07-27)
 
-**Gate required by:** `reviews/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` → "FILE GATE A — Initial review follow-up"
-**Findings under disposition:** `reviews/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md` (`S1–S6`, `T1–T6`)
+**Gate required by:** `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` → "FILE GATE A — Initial review follow-up"
+**Findings under disposition:** `reviews/archive/phases/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md` (`S1–S6`, `T1–T6`)
 **Worktree reviewed:** `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_phase4_interaction`
 (branch `phase4/live-property-interaction`, HEAD `695fad9`, Phase-4 work uncommitted in the working tree)
 **Original Phase-3/baseline worktree:** `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port` (branch `master`, HEAD `451f483`)

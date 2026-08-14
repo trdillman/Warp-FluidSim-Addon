@@ -4,8 +4,8 @@
 - Worktree: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_phase4_interaction`
 - Branch: `phase4/live-property-interaction` @ `695fad96072e` (working tree dirty; Phase 1–4 work unstaged, **no staged files**)
 - Reviewer role: fresh independent read-only reviewer. No implementation, test, doc, or tool file was modified by this review; only this report was authored.
-- Gate spec: `reviews/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` → "FILE GATE B — Final interaction acceptance"
-- Predecessor gates: `reviews/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md` (`PHASE4-INITIAL-REVIEW-FOLLOWUP-PASS`), plus the prior Gate-B pass whose residual notes `N-r1` / `N-r2` this pass re-verifies.
+- Gate spec: `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` → "FILE GATE B — Final interaction acceptance"
+- Predecessor gates: `reviews/archive/phases/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md` (`PHASE4-INITIAL-REVIEW-FOLLOWUP-PASS`), plus the prior Gate-B pass whose residual notes `N-r1` / `N-r2` this pass re-verifies.
 
 ---
 

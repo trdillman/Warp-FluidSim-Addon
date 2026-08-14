@@ -1,4 +1,4 @@
-# Independent Review — `reviews/WORKTREE_ROI_INTEGRATION_PLAN_2026-07-29.md`
+# Independent Review — `reviews/archive/worktrees/WORKTREE_ROI_INTEGRATION_PLAN_2026-07-29.md`
 
 Date: 2026-07-29
 Reviewer: independent review subagent (read-only; no repository modifications)

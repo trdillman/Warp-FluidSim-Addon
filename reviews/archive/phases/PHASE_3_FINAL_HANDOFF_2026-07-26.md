@@ -18,7 +18,7 @@ Delivered workflows:
 6. Point / Particle Injection compatibility utility.
 7. Advanced Field Sources, explicitly non-liquid.
 
-The approved P3.0 schema is `reviews/PHASE_3_CONTROL_SCHEMA_2026-07-26.md`.
+The approved P3.0 schema is `reviews/archive/phases/PHASE_3_CONTROL_SCHEMA_2026-07-26.md`.
 
 ## Final role/control map
 
@@ -215,7 +215,7 @@ The reviewer low about an exactly-full capacity result was also repaired: `capac
 - `tests/blender_background_acceptance.py`
 - `tests/blender_gui_acceptance.py`
 - `tests/blender_attribute_viz_acceptance.py`
-- `reviews/PHASE_3_CONTROL_SCHEMA_2026-07-26.md`
+- `reviews/archive/phases/PHASE_3_CONTROL_SCHEMA_2026-07-26.md`
 - this handoff
 
 The worktree was already heavily dirty. Ownership is path/hunk-level; aggregate diff is not attributed to Phase 3. No reset, clean, stash, stage, or unrelated rewrite occurred.

@@ -19,7 +19,7 @@ Paths below are worktree-relative to the phase-4 worktree.
 | `fluidSim_warp_blender51/properties.py` | +64 / -58 (58 props re-routed to `_request_live`) |
 | `tests/test_operator_panel_behavior.py` | +96 (4 new tests) |
 | `tests/test_scene_bridge_cache_playback.py` | +26 (1 new test) |
-| `reviews/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` | new (89 lines, untracked) |
+| `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` | new (89 lines, untracked) |
 
 Also read: `AGENTS.md`, `CONTRIBUTING.md`, plan + approved hybrid contract, `sim/solver.py`, `sim/pressure.py`, `sim/surface.py`.
 
@@ -42,7 +42,7 @@ Also read: `AGENTS.md`, `CONTRIBUTING.md`, plan + approved hybrid contract, `sim
    - `tests/test_operator_panel_behavior.py:516` asserts settings changed, `solver.particles` identity preserved, `sess.reset` *not* called, and status text — a regression that re-routed LIVE into `_schedule_rebuild` would trip `reset_calls`.
    - `tests/test_operator_panel_behavior.py:544` snapshots `settings` *inside* `solver.reset()` and asserts `(0.2, 77)` — this is exactly the wipe/no-op oracle: on baseline code the snapshot would be the stale `(0.95, 1)`.
    - `tests/test_scene_bridge_cache_playback.py:677` observes settings from inside `step`, catching a missing pre-frame reconcile (the keyframe/driver case).
-10. **Plan is honest.** `reviews/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` marks only the six implemented P1 items `[x]`, states "This is not final Phase 4 acceptance", and its `72 passed` claim reproduces exactly (see Commands).
+10. **Plan is honest.** `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md` marks only the six implemented P1 items `[x]`, states "This is not final Phase 4 acceptance", and its `72 passed` claim reproduces exactly (see Commands).
 11. **Hygiene.** No staged files in either worktree; the baseline worktree contains **zero** Phase-4 symbols (`SceneUpdate.LIVE`, `_HOT_SETTING_FIELDS`, `_RESET_SETTING_FIELDS`, `_request_live`, `_apply_realtime_solver_settings`).
 
 ---

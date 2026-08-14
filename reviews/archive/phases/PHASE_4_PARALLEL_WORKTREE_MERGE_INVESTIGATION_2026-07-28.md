@@ -115,11 +115,11 @@ The Phase-4 worktree is at `695fad9`, *before* `246fa90` tracked the test suite.
 | `tests/test_pressure_projection_regressions.py` | 0 | 10 |
 | `tests/test_memory_safety_recovery.py` | 0 | 5 |
 
-- **37 new-only paths** (exist nowhere in master): `reviews/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md`, `reviews/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md`, `reviews/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md`, `reviews/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md`, `tests/blender_phase4_live_interaction_acceptance.py`, `tests/test_phase4_pending_interaction.py`, plus 31 `.pi-subagents/artifacts/*` scratch files. The `.pi-subagents/` tree is agent scratch and should stay **untracked + gitignored**, not committed.
+- **37 new-only paths** (exist nowhere in master): `reviews/archive/phases/PHASE_4_LIVE_INTERACTION_PLAN_2026-07-27.md`, `reviews/archive/phases/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md`, `reviews/archive/phases/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md`, `reviews/archive/phases/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md`, `tests/blender_phase4_live_interaction_acceptance.py`, `tests/test_phase4_pending_interaction.py`, plus 31 `.pi-subagents/artifacts/*` scratch files. The `.pi-subagents/` tree is agent scratch and should stay **untracked + gitignored**, not committed.
 
 ### 3.4 Phase-4 gate evidence (as claimed in the worktree)
 
-`reviews/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md` records a **PASS** at `git_head: 695fad96072e`, `git_dirty: True`: `python -m pytest -q` → 377 passed; `tools/run_production_gate.py` → HEADLESS-GATE-PASS; `--include-gui` → FULL-PRODUCTION-GATE-PASS; `PHASE4-LIVE-INTERACTION-PASS (14/14)`.
+`reviews/archive/phases/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md` records a **PASS** at `git_head: 695fad96072e`, `git_dirty: True`: `python -m pytest -q` → 377 passed; `tools/run_production_gate.py` → HEADLESS-GATE-PASS; `--include-gui` → FULL-PRODUCTION-GATE-PASS; `PHASE4-LIVE-INTERACTION-PASS (14/14)`.
 **Caveat:** that evidence was produced against a tree *without* master's 14 commits. It is **not** valid for the merged result. Every gate must be re-run after integration.
 
 ---

@@ -59,7 +59,7 @@ Delivered user workflows:
 
 ### Evidence
 
-- `reviews/PHASE_1_SOURCE_UI_CLAIM_MATRIX_2026-07-26.md`
+- `reviews/archive/phases/PHASE_1_SOURCE_UI_CLAIM_MATRIX_2026-07-26.md`
 - `artifacts/profile_safe_source_review.json`
 - `artifacts/profile_safe_source_review.json.stdout.log`
 - `artifacts/profile_safe_source_review.json.stderr.log`

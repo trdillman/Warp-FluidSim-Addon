@@ -7,7 +7,7 @@
 - Worktree: `C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_phase4_interaction`
 - Branch: `phase4/live-property-interaction`
 - Approved product policy: **Hybrid pending + auto-on-rewind**
-- Initial independent review: `reviews/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md`
+- Initial independent review: `reviews/archive/phases/PHASE_4_INITIAL_INDEPENDENT_REVIEW_2026-07-27.md`
 - Initial review verdict: no blocker/high, but correctness and coverage follow-ups remain.
 
 This phase repairs an interaction-truth defect discovered after the three-phase source-system program: many live physics edits previously reset simulation state without reapplying the edited `SolverSettings` value.
@@ -150,7 +150,7 @@ Closes: review `T4`, `T5`.
 
 **Hard gate: P2 cannot begin until this exact file exists:**
 
-`reviews/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md`
+`reviews/archive/phases/PHASE_4_INITIAL_REVIEW_FOLLOWUP_GATE_2026-07-27.md`
 
 The file must be produced from a **fresh independent post-fix review** and contain all of the following:
 
@@ -271,7 +271,7 @@ Required Blender/CUDA lanes:
 
 Required file:
 
-`reviews/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md`
+`reviews/archive/phases/PHASE_4_FINAL_INTERACTION_REVIEW_2026-07-27.md`
 
 It must contain:
 

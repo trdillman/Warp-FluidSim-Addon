@@ -62,7 +62,7 @@ and removed:
 
 - `git worktree remove` on `liquid_warp_blender51_phase4_commit` (clean, 0 commits
   ahead/behind master — its payload had already landed as `dcf4d27` per
-  `reviews/WORKTREE_ROI_INTEGRATION_PLAN_2026-07-29.md`).
+  `reviews/archive/worktrees/WORKTREE_ROI_INTEGRATION_PLAN_2026-07-29.md`).
 - The branch ref `phase4/live-interaction-merge-20260728` was retained, per this
   task's own instruction above.
 
