@@ -1,7 +1,7 @@
 # Repository Structure Cleanup Design
 
 Date: 2026-08-13
-Status: Approved design; implementation pending review of this written specification
+Status: Approved and implemented on `codex/repo-structure-cleanup`
 
 ## Goal
 
