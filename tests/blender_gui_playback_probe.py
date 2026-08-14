@@ -1,6 +1,7 @@
 """Drive real Blender timeline playback and report solver advancement.
 
-Run without --background. The process closes itself after writing the report.
+Run without --background. A profile-safe launcher session stays open after the
+probe; standalone production-gate runs close after writing the report.
 """
 
 from __future__ import annotations
@@ -12,16 +13,24 @@ import time
 
 import bpy
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
+profile_safe_result_path = (
+    os.environ.get("FLUIDSIM_PROFILE_SAFE_REVIEW_RESULT")
+    if os.environ.get("FLUIDSIM_PROFILE_SAFE_REVIEW_CONFIG")
+    else None
+)
+if not profile_safe_result_path:
+    REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if REPO_ROOT not in sys.path:
+        sys.path.insert(0, REPO_ROOT)
+    from tools.repo_addon_loader import enable_repo_addon
 
-from tools.repo_addon_loader import enable_repo_addon
-
-blend_path = os.environ["FLUIDSIM_PLAYBACK_BLEND"]
-report_path = os.environ["FLUIDSIM_PLAYBACK_REPORT"]
-enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
-bpy.ops.wm.open_mainfile(filepath=blend_path)
+    blend_path = os.environ["FLUIDSIM_PLAYBACK_BLEND"]
+    report_path = os.environ["FLUIDSIM_PLAYBACK_REPORT"]
+    enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
+    bpy.ops.wm.open_mainfile(filepath=blend_path)
+else:
+    blend_path = bpy.data.filepath
+    report_path = profile_safe_result_path
 
 from fluidSim_warp_blender51.blender.scene_bridge import session
 
@@ -112,6 +121,7 @@ def finish():
         and report["viewport_changed"]
         and not report["error"]
     )
+    report["ok"] = report["passed"]
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2)
@@ -119,7 +129,8 @@ def finish():
     print(marker, flush=True)
     if bpy.context.screen and bpy.context.screen.is_animation_playing:
         bpy.ops.screen.animation_cancel(restore_frame=False)
-    bpy.ops.wm.quit_blender()
+    if not profile_safe_result_path:
+        bpy.ops.wm.quit_blender()
     return None
 
 

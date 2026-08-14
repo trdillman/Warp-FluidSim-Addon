@@ -414,6 +414,32 @@ def _wait_for_marker(marker: Path, process: subprocess.Popen[Any], timeout: floa
     raise TimeoutError(f"Blender did not become review-ready within {timeout:g}s")
 
 
+def _wait_for_review_result(
+    result_path: Path,
+    process: subprocess.Popen[Any],
+    timeout: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    malformed: Exception | None = None
+    while time.monotonic() < deadline:
+        if result_path.is_file():
+            try:
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise TypeError("visible-review result must be a JSON object")
+                return payload
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                malformed = exc
+        returncode = process.poll()
+        if returncode is not None:
+            break
+        time.sleep(0.1)
+    if malformed is not None:
+        raise RuntimeError(f"visible-review result is malformed: {malformed}")
+    raise RuntimeError(
+        "visible-review script did not write its required JSON result")
+
+
 def _stop_owned_process(process: subprocess.Popen[Any]) -> None:
     """Stop only the Popen handle created by this launcher."""
 
@@ -654,13 +680,37 @@ def run_review(args: argparse.Namespace) -> int:
             report["conflicting_addons"] = marker_payload.get(
                 "conflicting_addons", {}
             )
-            report["stage"] = "review_ready"
+            if review_script is not None:
+                try:
+                    visible_payload = _wait_for_review_result(
+                        visible_result_path, process, args.startup_timeout
+                    )
+                    report["visible_review"]["result"] = visible_payload
+                    report["visible_review"]["ok"] = visible_payload.get("ok") is True
+                    if not report["visible_review"]["ok"]:
+                        report["errors"].append(
+                            "RuntimeError: visible-review script reported failure: "
+                            + str(visible_payload.get("errors", visible_payload))
+                        )
+                except Exception as exc:  # noqa: BLE001 - retain profile proof
+                    report["errors"].append(f"{type(exc).__name__}: {exc}")
+                if report["visible_review"]["ok"]:
+                    report["stage"] = "review_ready"
+                    ready_marker = "FLUIDSIM-PROFILE-SAFE-REVIEW-READY"
+                else:
+                    report["stage"] = "runtime_review_failed"
+                    ready_marker = None
+                    _stop_owned_process(process)
+            else:
+                report["stage"] = "identity_ready"
+                ready_marker = "FLUIDSIM-PROFILE-SAFE-IDENTITY-READY"
             _atomic_write_json(report_path, report)
-            print(
-                "FLUIDSIM-PROFILE-SAFE-REVIEW-READY "
-                f"pid={process.pid} blend={blend}",
-                flush=True,
-            )
+            if ready_marker is not None:
+                print(
+                    ready_marker + " "
+                    f"pid={process.pid} blend={blend}",
+                    flush=True,
+                )
             report["process"]["returncode"] = process.wait()
             report["cleanup"]["owned_process_exited"] = True
 
@@ -687,29 +737,6 @@ def run_review(args: argparse.Namespace) -> int:
             )
             report["profile"]["evidence_path"] = str(evidence)
             report["errors"].append("persistent Blender profile drift: " + ", ".join(drift))
-
-        if review_script is not None:
-            if not visible_result_path.is_file():
-                raise RuntimeError(
-                    "visible-review script did not write its required JSON result"
-                )
-            try:
-                visible_payload = json.loads(
-                    visible_result_path.read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeError(
-                    f"visible-review result is malformed: {exc}"
-                ) from exc
-            if not isinstance(visible_payload, dict):
-                raise RuntimeError("visible-review result must be a JSON object")
-            report["visible_review"]["result"] = visible_payload
-            report["visible_review"]["ok"] = visible_payload.get("ok") is True
-            if not report["visible_review"]["ok"]:
-                raise RuntimeError(
-                    "visible-review script reported failure: "
-                    + str(visible_payload.get("errors", visible_payload))
-                )
 
     except KeyboardInterrupt:
         report["errors"].append("launcher interrupted by user")
@@ -761,8 +788,12 @@ def run_review(args: argparse.Namespace) -> int:
         report["finished_at"] = _utc_now()
         _atomic_write_json(report_path, report)
 
+    result_kind = (
+        "REVIEW" if report["visible_review"]["requested"] else "IDENTITY")
     print(
-        "FLUIDSIM-PROFILE-SAFE-REVIEW-"
+        "FLUIDSIM-PROFILE-SAFE-"
+        + result_kind
+        + "-"
         + ("PASS" if report["ok"] else "FAIL")
         + f" report={report_path}",
         flush=True,

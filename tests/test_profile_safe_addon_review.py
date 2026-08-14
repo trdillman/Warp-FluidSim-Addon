@@ -281,6 +281,94 @@ def test_optional_review_script_command_and_result_are_required(tmp_path, monkey
     assert launcher.VISIBLE_REVIEW_RESULT_ENV in process.env
 
 
+def test_failed_runtime_review_never_publishes_review_ready(tmp_path, monkeypatch):
+    stages = []
+    write_json = launcher._atomic_write_json
+
+    def record_stage(path, payload):
+        if Path(path).name == "review.json":
+            stages.append(payload.get("stage"))
+        write_json(path, payload)
+
+    monkeypatch.setattr(launcher, "_atomic_write_json", record_stage)
+    _FakeBlenderProcess.visible_review_payload = {
+        "ok": False,
+        "errors": ["viewport simulation did not advance"],
+    }
+
+    exit_code, _report_path, _config_dir = _run_fake_review(
+        tmp_path, monkeypatch, with_review_script=True)
+
+    assert exit_code == 1
+    assert "review_ready" not in stages
+
+
+def test_manual_launch_only_publishes_identity_ready(
+    tmp_path, monkeypatch, capsys
+):
+    stages = []
+    write_json = launcher._atomic_write_json
+
+    def record_stage(path, payload):
+        if Path(path).name == "review.json":
+            stages.append(payload.get("stage"))
+        write_json(path, payload)
+
+    monkeypatch.setattr(launcher, "_atomic_write_json", record_stage)
+
+    exit_code, _report_path, _config_dir = _run_fake_review(
+        tmp_path, monkeypatch)
+
+    assert exit_code == 0
+    assert "identity_ready" in stages
+    assert "review_ready" not in stages
+    output = capsys.readouterr().out
+    assert "FLUIDSIM-PROFILE-SAFE-IDENTITY-PASS" in output
+    assert "FLUIDSIM-PROFILE-SAFE-REVIEW-PASS" not in output
+
+
+def test_gui_playback_probe_supports_profile_safe_review_without_repo_reload():
+    source = Path(__file__).with_name(
+        "blender_gui_playback_probe.py").read_text(encoding="utf-8")
+
+    assert "FLUIDSIM_PROFILE_SAFE_REVIEW_RESULT" in source
+    assert "FLUIDSIM_PROFILE_SAFE_REVIEW_CONFIG" in source
+    assert 'report["ok"] = report["passed"]' in source
+    assert "enable_repo_addon" in source
+    assert "if not profile_safe_result_path:" in source
+
+
+def test_failed_runtime_review_still_captures_profile_drift(
+    tmp_path, monkeypatch
+):
+    def mutate_profile():
+        (tmp_path / "profile" / "config" / "userpref.blend").write_bytes(
+            b"changed by failed review"
+        )
+
+    _FakeBlenderProcess.visible_review_payload = {
+        "ok": False,
+        "errors": ["viewport simulation did not advance"],
+    }
+    _FakeBlenderProcess.mutate_on_wait = mutate_profile
+
+    exit_code, report_path, _config_dir = _run_fake_review(
+        tmp_path, monkeypatch, with_review_script=True
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert report["profile"]["unchanged"] is False
+    assert report["profile"]["drift"] == ["userpref.blend"]
+    evidence = Path(report["profile"]["evidence_path"])
+    assert (evidence / "before_userpref.blend").read_bytes() == b"preferences"
+    assert (evidence / "after_userpref.blend").read_bytes() == (
+        b"changed by failed review"
+    )
+    assert any("reported failure" in error for error in report["errors"])
+    assert any("profile drift" in error for error in report["errors"])
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
