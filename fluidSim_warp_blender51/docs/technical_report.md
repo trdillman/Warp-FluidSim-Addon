@@ -1,64 +1,59 @@
 # FluidSim Warp — Technical Report
 
-Native Blender 5.1 port of the synthesized `fluidSim` liquid solver
-(`fluidSim.cl`, version **1.0.226**, **188 canonical kernels**) onto
-**NVIDIA Warp / CUDA**. The solver is **GPU-resident** and **interactive**:
-surface mesh, liquid particles, and whitewater are written into Blender
-datablocks every frame for live viewport playback and rendering. There is no
-required cache-bake step; optional npz caching and OBJ/PLY export are
-supplemental tooling.
+FluidSim Warp 1.0.248 is a Blender 5.1+ extension around the existing sparse
+8³-leaf NVIDIA Warp PIC/FLIP solver. Blender 5.2.0 LTS/Linux x64 remains the
+certified release target. Live Preview remains interactive;
+Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
+checkpoint layer without rewriting the solver into a different architecture.
 
-- Package: `fluidSim_warp_blender51` · `bl_info` version `(1, 0, 227)`
-- Blender target: `5.1` · Category: `Physics`
-- Backend: NVIDIA Warp / CUDA · `enable_backward=False` everywhere
+- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.248`
+- Validated host: Blender `5.2.0 LTS` on Linux x64
+- Integration compatibility: Blender `5.1.0` on Windows x64 with Warp `1.12.1`
+- Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
+- Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
+  package/runtime smoke evidence
+- Persistent cache policy: v2 writes/resume; v1 playback compatibility
 
 ---
 
 ## 1. Architecture Tree
 
-```
-fluidSim_warp_blender51/
-├── __init__.py              bl_info + register()/unregister()
-├── properties.py            PropertyGroups + attribute-viz item tuples
-├── operators.py             31 fluidsim.* operators
-├── panels.py                16 sidebar panels
-├── preferences.py           add-on preferences
-├── blender/                 bpy integration layer
-│   ├── scene_bridge.py      Session, gather sources/colliders, frame handler
-│   ├── viewport.py          output datablocks + display_color + overlay
-│   ├── materials.py         liquid / particle / whitewater / attribute mats
-│   ├── sources.py           tag_source / tag_sink / inject_object_particles
-│   ├── colliders.py         tag_collider → wp.Mesh
-│   └── render.py            render handler
-├── sim/                     GPU core — NO bpy imports
-│   ├── constants.py         TOOL_*, voxel bits, LEAF_DIM=8, phase slots
-│   ├── enums.py             IntEnum mirrors of synthesized tables
-│   ├── fields.py            SparseGrid / ScalarField / MacVelocityField
-│   ├── particles.py         ParticleSystem / ParticleBins
-│   ├── pressure.py          PressureSolver frame projection transaction
-│   ├── viscosity.py         ViscositySolver
-│   ├── surface.py           SDF build / smoothing / marching cubes
-│   ├── whitewater.py        churn / emit / advect whitewater kernels
-│   ├── sourcing.py          SourcePipeline state + launch transaction
-│   ├── kernels_core.py      core kernels (registered)
-│   ├── kernels_fluid.py     fluid kernels (registered)
-│   ├── solver.py            FluidSolver + SolverSettings orchestration
-│   ├── validation.py        15-test GPU validation suite
-│   ├── registry.py          KERNEL_REGISTRY dispatch contract
-│   └── custom.py            complete custom Warp snippet lifecycle
-├── diagnostics/             bpy-free
-│   ├── profiler.py          fluidSim_profiler::1.0
-│   ├── benchmark.py         deterministic benchmark + comparison
-│   └── report.py            JSON report builder
-└── io/                      supplemental
-    ├── cache.py             optional npz cache
-    └── export.py            OBJ surface + PLY points
+```text
+fluidsim_warp/
+├── version.py                    canonical release identity
+├── properties.py / operators.py / panels.py
+├── runtime/warp_runtime.py       lazy external-Warp/CUDA preflight
+├── presets/
+│   ├── schema.py                 strict versioned allow-list schema
+│   └── library.py                built-in/user discovery and atomic writes
+├── resources/
+│   ├── presets/*.json            six built-in product presets
+│   ├── examples/*.blend          generated Phase 2 example scenes
+│   └── geometry_nodes/*.blend    generated immutable render-node asset
+├── blender/
+│   ├── scene_bridge.py           Blender/session integration
+│   ├── setup_wizard.py           selected-object setup transaction
+│   ├── production_bake.py        bake state machine and frame transactions
+│   ├── cache_manager.py          inspect/free/move/rename/orphan operations
+│   ├── command_line.py           headless contract and JSON reporting
+│   ├── geometry_nodes.py         revisioned asset installation/input sync
+│   └── output_publication.py     typed attribute-aware publication
+├── io/
+│   ├── cache_schema.py           strict cache-v2 manifest schema
+│   ├── checkpoint.py             strict pickle-free checkpoint I/O
+│   └── cache.py                  cache-v1 reader plus v2 frame adapter
+├── sim/
+│   ├── attributes.py             authoritative output/cache schema
+│   └── ...                       GPU solver core; no bpy imports
+└── release/
+    └── run_headless_bake.py      installed process-exit entry point
 ```
 
-**Boundary rule:** `sim/` and `diagnostics/` never import `bpy`. Only
-`__init__`, `properties`, `operators`, `panels`, `preferences`, `blender/`,
-and `io/cache.py` may. This keeps the core and validation suite runnable
-headlessly with only `warp`.
+The solver remains authoritative for simulation semantics. `io/` owns durable
+serialization, `blender/production_bake.py` owns transaction orchestration, and
+`blender/setup_wizard.py` owns product onboarding. The package boundary keeps
+`sim/` free of `bpy`; release-only build/smoke/example-generation tools are
+excluded from the installed archive except the headless entry point.
 
 ---
 
@@ -186,6 +181,37 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
   (`ww_bubble_drag`, `ww_spray_drag`).
 - `k_whitewater_set_grid_data` splats whitewater into `ww_density` for viz.
 
+### Phase-3 output attribute contract
+
+`sim/attributes.py` is the sole inventory for public names, Blender data types,
+`POINT` domains, component counts, cache fields, and checkpoint policy. Surface,
+liquid-particle, and whitewater inventories are ordered and signature-bound.
+The optional persistent liquid channels are `color` (`wp.vec4`), `source_id`
+(`wp.int32`), and `uid` (`wp.int32`); they are allocated only when required by
+an enabled surface or particle output. Fixed physical channels remain allocated
+for solver use.
+
+Emission kernels carry source color and deterministic source ID through analytic,
+mesh, compiled-region, height-fill, and direct-injection paths. UID assignment
+runs once after an admitted emission transaction and advances `next_particle_uid`
+only by the committed count. Capacity growth and scan compaction copy every
+enabled channel. Checkpoints serialize the optional inventory, each enabled
+prefix, and the next UID; restore validates inventory equality and UID
+monotonicity before accepting state.
+
+`HostFrame` derives speed on the host and samples projected MAC-field curl with
+a Warp kernel for particle vorticity. Surface vertices reuse one deterministic,
+memory-bounded nearest-particle index map across all enabled attributes. Motion
+output converts physical velocity to displacement per scene frame and is
+published as Blender `velocity`; physical velocity remains
+`fluidsim_velocity`.
+
+Cache-v2 frame payloads include `attribute_schema_version`, an ordered JSON
+inventory, and `surface_attribute_transfer_method`. Read and publication paths
+fail closed on missing fields, wrong shape/type/domain, non-finite values,
+misalignment, or invalid UID data. Frames without this metadata retain legacy
+playback compatibility.
+
 ---
 
 ## 6. Kernel Registry & Dispatch Contract
@@ -246,14 +272,13 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   (mesh → `wp.Mesh` via evaluated depsgraph, with linear/angular velocity from
   animation), calls `sync_scene_to_solver`, and registers the
   `frame_change_post` handler that steps the solver when `fs.live` is on.
-- **`blender/viewport.py` (`update_outputs`)** writes solver output into real
-  datablocks each frame: `FluidSim Surface` (mesh via fast bulk
-  `foreach_set`), `FluidSim Particles` and `FluidSim Whitewater` (PointCloud
-  objects with `position`/`radius`/`display_color` attributes, falling back to
-  a vertex cloud if `bpy.data.pointclouds` is absent). The `_draw_overlay`
-  handler renders the live status + per-phase timers via `blf`. Output object
-  colors and material diffuse colors are also written for Solid viewport
-  legibility without changing the user's global viewport shading mode.
+- **`blender/output_publication.py`** writes solver/cache facts into real
+  datablocks using bulk `foreach_set`: `FluidSim Surface` as a mesh and
+  `FluidSim Particles` / `FluidSim Whitewater` as padded PointCloud objects
+  where available. It recreates conflicting managed attributes, validates
+  Phase-3 values before mutation, preserves display-only `display_color`
+  separately, and tracks live point count independently of padded capacity.
+  `blender/viewport.py` remains the timeline/overlay adapter.
 - **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
   bridge for realtime UI edits. Its `SceneUpdate` enum owns the supported
   actions and default status reasons, so property callbacks do not exchange
@@ -263,10 +288,16 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   Inactive output/cache objects receive visibility/material refreshes only;
   geometry recomputation still requires an active solver frame or cached
   particles.
-- **`blender/materials.py`** provides default liquid / particle / whitewater
-  Principled BSDF materials, plus **attribute materials** that add a
-  `ShaderNodeAttribute` (`attribute_name = "display_color"`) linked into the
-  BSDF `Base Color`, so attribute coloring is visible in viewport and render.
+- **`blender/materials.py`** provides default production materials that read
+  `fluidsim_color`; the liquid material also maps `fluidsim_viscosity` to
+  roughness. Legacy debug materials read only `display_color`, so visualization
+  never overwrites simulation color.
+- **`blender/geometry_nodes.py`** appends three immutable revision-tagged groups
+  from `resources/geometry_nodes/fluidsim_render_nodes.blend`, attaches one
+  owned modifier per output, and synchronizes typed Blender 5.2 material/radius
+  inputs. Point groups realize instances before material assignment so named
+  point attributes reach F12 shaders. Explicit updates skip user-owned
+  modifiers and never mutate user node groups.
 - **`properties.py`** defines the scene + object PropertyGroups. Attribute-viz
   item tuples and the `liquid_view_mode` update callback live here.
 
@@ -328,43 +359,23 @@ never crash the suite.
 
 ---
 
-## 12. Verification Results
+## 12. Verification Results for 1.0.248
 
-| Check | Result |
+| Gate | Result in this environment |
 |---|---|
-| Kernel identity registration coverage | **188 / 188** canonical names registered (`KERNEL-COVERAGE-PASS`) |
-| GPU validation | **16 / 16** passing (`VALIDATION-PASS`) |
-| Pressure projection regressions | **5 / 5** passing (`pytest tests/test_pressure_projection_regressions.py`) |
-| Blender background acceptance | **34 / 34** checks (`BACKGROUND-ACCEPTANCE-PASS`) |
-| Attribute visualization acceptance | **pass** — surface + particle + whitewater `display_color` + attribute materials (`ATTRIBUTE-VIZ-ACCEPTANCE-PASS`) |
-| Demo `dam_break` | **9 / 9** (mass, containment, front speed 1.02·√(gH), Martin–Moses front `Z(T=2)=2.59`, column height `0.0799 m`, peak whitewater `3,278`) |
-| Demo `crown_splash` | **9 / 9** (mass, crown formation, √t radius corr 0.972, crown height `225 mm`, Worthington jet height `183 mm`, azimuthal symmetry CV 0.007) |
+| Pure-Python suite | **150 passed** |
+| Python compilation | Passed |
+| Source/release verification | Passed; generated render asset present and no bundled Blender/Warp payload |
+| Supplied Blender | **5.2.0 LTS**; registration, attribute publication, cache round-trip, save/reopen, Geometry Nodes evaluation, typed modifier inputs, user-modifier protection, and Eevee F12 rendering passed |
+| Supplied Warp | **1.16.0+cu12**, module `1.16.0`, loaded from the supplied external package; CPU kernels for source metadata, velocity preservation, optional compaction, checkpoint restore, and vorticity passed |
+| Shader attribute survival | F12 point render contained independently detected red, green, and blue regions; surface render contained red/blue regions from `fluidsim_color` |
+| Cache/checkpoint transactions | Phase-2 manifest/checkpoint guarantees remain covered; Phase-3 inventory, dtype/shape/finiteness/alignment, optional persistent channels, and UID validation added |
+| Installed headless no-CUDA exit | Required process-level exit `12` remains the expected host result |
+| NVIDIA CUDA solver/render gate | **Open** — no usable CUDA driver/device was exposed |
 
-The current generated source evidence comes from
-`artifacts/demo_analysis/analysis_report.json`, produced by the headless/demo
-portion of the real `python tools/run_production_gate.py --include-gui` run
-and bound to audit run `2026-08-11T00:35:06.917651+00:00`, proof HEAD
-`aa40a3cd0c762503e886d52a9f1f427e0fb298e8`, using the checked-in
-`demos/dam_break/meta.json` and `demos/crown_splash/meta.json` profiles. The
-bounded profiles are 128,000 particles over 72 frames for `dam_break` and
-259,112 particles over 48 frames for `crown_splash`. The checked-in demo JSON
-and Markdown now match this artifact exactly: the standalone demo-analysis
-lane passes **18 / 18** with exact promoted metrics
-`front_speed_over_c0=1.0132693700`, `column_height_end=0.0841247439`,
-`crown_sqrt_t_corr=0.9715353735`, and `max_crown_height=0.2764160037`;
-peak whitewater is `3,582` and Worthington jet height is `185 mm`. Artifact
-SHA-256 is `eb4c3f0e2a7104ec4da2129ad837052f76e9862a2d9f920f6deed121888c1ea4`.
-These are bounded generated-run metrics, not arbitrary-scale claims.
-
-Generated source evidence is separate from review evidence:
-`artifacts/gui_playback_probe.json` records live CUDA playback on `cuda:0`
-through solver frame 6 with 128,000 particles, a changed viewport, and
-`passed=true`; its validator reports `SAVED-DEMO-GUI-PLAYBACK-PASS`. The
-interactive GUI lane reports `GUI-ACCEPTANCE-PASS (38/38)`. Review evidence
-validates runtime execution and playback but does not replace the generated
-demo metrics or call stale prior values synchronized.
-
----
+The CPU and Blender evidence proves surrounding data, cache, publication, asset,
+and render integration. It does not certify CUDA solver numerics, CUDA resume
+determinism, GPU memory/performance, or NVIDIA-specific render behavior.
 
 ## 13. Performance Notes
 
@@ -378,12 +389,16 @@ demo metrics or call stale prior values synchronized.
 - The benchmark's exact-match on active voxels makes it a deterministic
   regression detector: a code change that alters the particle/grid pipeline
   will fail the exact fields even if it stays fast.
-- Surface attribute coloring performs a host-side nearest-neighbour sample from
-  particles to mesh vertices; sample counts are capped for interactive use.
+- Enabled surface attributes reuse one bounded spatial nearest-particle map per
+  frame. Very large particle pools use a stable sample stride to cap host work.
+- Point render groups realize instances so arbitrary named attributes reach
+  shaders. This intentionally trades render geometry/memory for correctness;
+  display fraction, output toggles, and attribute inventory control the cost.
+- Disabled optional color/source-ID/UID channels allocate no full-capacity pool.
 
 ## Decoupled render surfacing and ST-FLIP beta
 
-Version 1.0.235 adds a separate sparse render-surface grid with multiplier or
+Historical feature note: version 1.0.235 added a separate sparse render-surface grid with multiplier or
 custom voxel sizing, frame/manual rebuild cadence, filtering, bounded dense
 extraction, and shared viewport/cache/export mesh ownership. The simulation
 grid remains authoritative for physics and optional low-resolution surface

@@ -156,6 +156,13 @@ def _pending_module():
 def test_validation_operator_uses_configured_device(monkeypatch):
     _install_bpy_stub(monkeypatch, device="cuda:3")
     operators = _reload_module("fluidSim_warp_blender51.operators")
+    preferences = _reload_module("fluidSim_warp_blender51.preferences")
+    monkeypatch.setattr(
+        preferences,
+        "probe_runtime",
+        lambda: SimpleNamespace(
+            cuda_devices=(SimpleNamespace(alias="cuda:3"),)),
+    )
 
     seen = {}
 
@@ -456,6 +463,8 @@ def test_simulation_hides_playback_recovery_limit_in_advanced_foldout(monkeypatc
         stat_particles=0, stat_voxels=0, stat_step_ms=0.0, stat_substeps=0,
         time_scale=1.0, cfl=1.0, min_substeps=1, max_substeps=4,
         use_scene_gravity=True, gravity=(0.0, 0.0, -9.81),
+        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
+        active_preset_id="",
     )
     panel = panels.FLUIDSIM_PT_simulation()
     layout = _Layout()
@@ -506,6 +515,9 @@ def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
             max_substeps=4,
             use_scene_gravity=True,
             gravity=(0.0, 0.0, -9.81),
+            setup_mode="QUICK_LIQUID",
+            product_preset="BUILTIN:preview_water",
+            active_preset_id="",
         )
     )
     scene_bridge.set_error(scene, "frame failed")
@@ -528,6 +540,8 @@ def test_simulation_panel_uses_only_verified_capacity_recommendation_flow(monkey
         stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
         min_substeps=1, max_substeps=4, use_scene_gravity=True,
         gravity=(0.0, 0.0, -9.81),
+        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
+        active_preset_id="",
     ))
     scene_bridge.set_error(scene, "CUDA error 2: out of memory")
     panels = _reload_module("fluidSim_warp_blender51.panels")
@@ -556,6 +570,8 @@ def test_simulation_panel_hides_unverified_memory_bypass(monkeypatch):
         stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
         min_substeps=1, max_substeps=4, use_scene_gravity=True,
         gravity=(0.0, 0.0, -9.81),
+        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
+        active_preset_id="",
     ))
     scene_bridge.set_error(scene, "FluidSim memory safeguard stopped initialization")
     panels = _reload_module("fluidSim_warp_blender51.panels")
@@ -619,6 +635,8 @@ def test_capacity_warning_offers_approval_gated_recommended_option(monkeypatch):
         stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
         min_substeps=1, max_substeps=4, use_scene_gravity=True,
         gravity=(0.0, 0.0, -9.81),
+        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
+        active_preset_id="",
     ))
     scene_bridge.set_error(scene, "source capacity blocked")
     monkeypatch.setattr(
@@ -1556,26 +1574,83 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
     assert scene.fluidsim.status == "Solver error: boom"
 
 
-def test_preferences_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
+def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
     _install_bpy_stub(monkeypatch)
-    preferences = _reload_module("fluidSim_warp_blender51.preferences")
+    runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
     calls = []
     fake_warp = SimpleNamespace(
         init=lambda: calls.append("init"),
-        is_cuda_available=lambda: True,
-        get_device=lambda _name: SimpleNamespace(name="Test GPU"),
-        config=SimpleNamespace(version="test"),
+        get_devices=lambda: [SimpleNamespace(
+            alias="cuda:3",
+            name="Test GPU",
+            total_memory=8 * 1024**3,
+            is_cuda=True,
+        )],
+        __version__="1.16.0",
+        __file__="warp/__init__.py",
     )
-    monkeypatch.setitem(sys.modules, "warp", fake_warp)
-    preferences._WARP_PROBE_RESULT = None
+    monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
+    runtime._cached_probe.cache_clear()
 
-    first = preferences._probe_warp()
-    second = preferences._probe_warp()
-    assert first == second == (True, "Warp test - Test GPU")
+    first = runtime.probe_runtime()
+    second = runtime.probe_runtime()
+    assert first is second
+    assert first.available
+    assert first.cuda_devices[0].alias == "cuda:3"
     assert calls == ["init"]
 
-    preferences._probe_warp(force=True)
+    runtime.probe_runtime(force=True)
     assert calls == ["init", "init"]
+
+
+def test_runtime_warp_probe_accepts_supported_pre_certification_runtime(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
+    fake_warp = SimpleNamespace(
+        init=lambda: None,
+        get_devices=lambda: [SimpleNamespace(
+            alias="cuda:0",
+            name="Test GPU",
+            total_memory=8 * 1024**3,
+            is_cuda=True,
+        )],
+        __version__="1.12.1",
+        __file__="warp/__init__.py",
+    )
+    monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
+    runtime._cached_probe.cache_clear()
+
+    probe = runtime.probe_runtime()
+
+    assert probe.available
+    assert probe.warp_version == "1.12.1"
+    assert "certified" in probe.message
+
+
+@pytest.mark.parametrize("version", ["1.12.0", "1.17.0", "unknown"])
+def test_runtime_warp_probe_rejects_versions_outside_supported_range(
+    monkeypatch, version,
+):
+    _install_bpy_stub(monkeypatch)
+    runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
+    fake_warp = SimpleNamespace(
+        init=lambda: None,
+        get_devices=lambda: [SimpleNamespace(
+            alias="cuda:0",
+            name="Test GPU",
+            total_memory=8 * 1024**3,
+            is_cuda=True,
+        )],
+        __version__=version,
+        __file__="warp/__init__.py",
+    )
+    monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
+    runtime._cached_probe.cache_clear()
+
+    probe = runtime.probe_runtime()
+
+    assert not probe.available
+    assert "1.12.1 through 1.16.x" in probe.message
 
 
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):
@@ -1761,7 +1836,7 @@ def test_clear_error_operator_resets_session_and_scene_error(monkeypatch):
     assert scene.fluidsim.status == "Solver ready"
 
 
-def test_output_panel_exposes_cache_sequence_and_playback_controls(monkeypatch):
+def test_output_panel_exposes_production_bake_and_playback_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
@@ -1780,6 +1855,14 @@ def test_output_panel_exposes_cache_sequence_and_playback_controls(monkeypatch):
         cache_enabled=False,
         cache_playback_enabled=True,
         cache_path="//fluidsim_cache/",
+        cache_format="NPZ",
+        bake_start=3,
+        bake_end=5,
+        checkpoint_interval=1,
+        cache_compress=True,
+        bake_status="IDLE",
+        bake_progress=0.0,
+        bake_message="",
         cache_use_custom_range=True,
         cache_frame_start=3,
         cache_frame_end=5,
@@ -1792,10 +1875,18 @@ def test_output_panel_exposes_cache_sequence_and_playback_controls(monkeypatch):
 
     assert "cache_path" in layout.props
     assert "cache_playback_enabled" in layout.props
+    assert "bake_start" in layout.props
+    assert "bake_end" in layout.props
+    assert "checkpoint_interval" in layout.props
     assert "cache_use_custom_range" in layout.props
     assert "cache_frame_start" in layout.props
     assert "cache_frame_end" in layout.props
-    assert any(op["id"] == "fluidsim.export_cache_sequence" for op in layout.operators)
+    assert {op["id"] for op in layout.operators} >= {
+        "fluidsim.bake_start",
+        "fluidsim.bake_resume",
+        "fluidsim.bake_cancel",
+        "fluidsim.export_frame",
+    }
 
 
 def _phase1_object(role, **overrides):
@@ -2256,7 +2347,7 @@ def test_panel_hierarchy_has_seven_task_groups_and_advanced_capacities(monkeypat
     panels = _reload_module("fluidSim_warp_blender51.panels")
     expected_top = {
         "Simulation", "Quality", "Inputs", "Physics",
-        "Surface & Whitewater", "Output & Cache", "Advanced",
+        "Surface & Whitewater", "Output & Production Bake", "Advanced",
     }
     actual_top = {
         cls.bl_label for cls in panels.CLASSES

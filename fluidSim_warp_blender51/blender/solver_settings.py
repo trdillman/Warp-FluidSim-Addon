@@ -42,6 +42,18 @@ DIRECT_SETTING_FIELDS = (
     "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
     "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
     "ww_spray_drag",
+    "surface_attribute_velocity", "surface_attribute_speed",
+    "surface_attribute_vorticity", "surface_attribute_age",
+    "surface_attribute_lifetime", "surface_attribute_color",
+    "surface_attribute_source_id", "surface_attribute_viscosity",
+    "surface_attribute_density", "surface_attribute_motion",
+    "particles_attribute_velocity", "particles_attribute_speed",
+    "particles_attribute_vorticity", "particles_attribute_age",
+    "particles_attribute_lifetime", "particles_attribute_color",
+    "particles_attribute_source_id", "particles_attribute_uid",
+    "particles_attribute_viscosity", "particles_attribute_density",
+    "whitewater_attribute_velocity", "whitewater_attribute_speed",
+    "whitewater_attribute_age", "whitewater_attribute_lifetime",
 )
 
 VECTOR_SETTING_FIELDS = frozenset({

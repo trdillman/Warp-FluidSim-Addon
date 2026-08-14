@@ -569,7 +569,14 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
         force_strength=0.0,
         force_direction=(0.0, 0.0, 1.0),
     )
-    obj = SimpleNamespace(
+    class _SourceObject(SimpleNamespace):
+        def get(self, key, default=None):
+            return getattr(self, key, default)
+
+        def __setitem__(self, key, value):
+            setattr(self, key, value)
+
+    obj = _SourceObject(
         name="source",
         fluidsim=SimpleNamespace(**settings),
         hide_viewport=False,

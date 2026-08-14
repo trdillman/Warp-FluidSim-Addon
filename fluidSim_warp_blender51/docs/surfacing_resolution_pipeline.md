@@ -1,6 +1,6 @@
 # Surfacing Resolution Pipeline
 
-Version 1.0.233 separates simulation resolution from render/viewport surfacing resolution.
+Historical feature note: version 1.0.233 separated simulation resolution from render/viewport surfacing resolution.
 
 ## Why this exists
 
@@ -63,18 +63,16 @@ Smooth Type: Box or Mean Curvature Flow
 Smooth Iterations: 1 for viewport, higher for export tests
 ```
 
-## Acceptance tests
+## Release validation
 
-Primary surfacing test:
+P0 consolidates surfacing and ST-FLIP acceptance into the installed-package NVIDIA GPU gate:
 
-```powershell
-blender --background --factory-startup --python fluidSim_warp_blender51/tests/headless_surface_resolution_pipeline.py -- --device cuda:0 --particles 500000 --frames 24
+```bash
+python release/build_extension.py \
+  --blender /absolute/path/to/blender \
+  --output dist \
+  --gpu-regression-platform linux-x64 \
+  --json-report dist/gpu-build-report.json
 ```
 
-Regression tests:
-
-```powershell
-blender --background --factory-startup --python tests/headless_spatiotemporal_validation.py -- --device cuda:0
-blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 24 --particles 500000
-blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py -- --frames 24 --particles 500000
-```
+The gate builds and inspects both split-platform extension archives, installs the selected archive into an isolated Blender profile, runs every test registered by `sim.validation` (including surface SDF parity and ST-FLIP boundedness), and advances a ten-frame preview simulation. The JSON reports under `dist/` are the release evidence. Historical benchmark JSON under `demo_outputs/` remains source documentation and is excluded from shipping archives.

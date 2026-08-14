@@ -133,10 +133,18 @@ def main():
         check("cache records settings on every frame", frame_one is not None
               and frame_two is not None and "settings_signature" in frame_one
               and "settings_signature" in frame_two)
-        check("cache reports animated settings boundary", metadata is not None
-              and metadata.get("mixed_settings") is True
-              and len(metadata.get("settings_segments", ())) == 2,
-              json.dumps(metadata, default=str)[:500])
+        check(
+            "cache-v2 records a complete manifest transaction",
+            metadata is not None
+            and metadata.get("format_version") == 2
+            and metadata.get("frame_count") == 2
+            and metadata.get("last_committed_frame") == 2
+            and str(frame_one["settings_signature"])
+            == metadata.get("settings_signature")
+            and str(frame_two["settings_signature"])
+            == metadata.get("settings_signature"),
+            json.dumps(metadata, default=str)[:500],
+        )
 
     # Interactive frame-change playback uses the same pre-step seam.
     scene.frame_set(1)

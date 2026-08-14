@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "preview_water",
+  "name": "Preview Water",
+  "description": "Fast live-preview water for setup and blocking. Changes solver state and requires Reset after an active simulation.",
+  "expected_scale": "1 Blender unit = 1 metre; domains roughly 1-12 metres",
+  "performance_cost": "Low",
+  "requires_reset": true,
+  "source_version": "1.0.248",
+  "settings": {
+    "voxel_size": 0.12,
+    "leaf_capacity": 4096,
+    "max_particles": 500000,
+    "auto_grow_particles": true,
+    "particles_per_voxel": 8,
+    "sample_type": "FLIP",
+    "flip_ratio": 0.95,
+    "trace_mode": "MID_POINT",
+    "pressure_solver": "PCG",
+    "pressure_iterations": 120,
+    "pressure_tolerance": 0.0001,
+    "surface_enabled": true,
+    "surface_resolution_mode": "SIMULATION",
+    "surface_smooth_iterations": 1,
+    "surface_smooth_strength": 0.6,
+    "surface_update_cadence": "FRAME",
+    "live_surface_publish_cadence": 2,
+    "whitewater_enabled": false,
+    "checkpoint_interval": 1
+  }
+}

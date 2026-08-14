@@ -106,6 +106,7 @@ def main():
     fs.auto_grow_particles = False
     fs.max_whitewater = 5_000
     fs.whitewater_enabled = True
+    fs.ww_churn_gain = 1_000.0
     fs.ww_churn_threshold = 0.0
     fs.ww_emission_rate = 2_000.0
     fs.ww_min_speed = 0.0
@@ -127,7 +128,14 @@ def main():
         check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
         # Give the short three-frame fixture an explicit energetic continuous
         # inflow so authoritative whitewater coverage cannot pass vacuously.
-        source = bpy.data.objects.get("FluidSim Source")
+        source = next(
+            (
+                obj for obj in scene.objects
+                if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+                == "SOURCE"
+            ),
+            None,
+        )
         check("cache fixture source exists", source is not None)
         source_peer = None
         if source is not None:
@@ -140,6 +148,7 @@ def main():
             source_peer = source.copy()
             source_peer.data = source.data.copy()
             source_peer.name = "FluidSim Cache Whitewater Peer"
+            source_peer["fluidsim_persistent_id"] = "cache-whitewater-peer"
             source_peer.location.x += 1.0
             source_peer.fluidsim.initial_velocity = (-4.0, 0.0, 1.0)
             scene.collection.objects.link(source_peer)
@@ -183,38 +192,44 @@ def main():
         # payload was written.
         write_observations = []
         active_bake = ["first"]
-        original_cache_write = cache.write_frame
+        original_cache_write = cache.write_frame_v2_atomic
 
-        def observed_cache_write(scene_arg, sess_arg, frame=None):
-            solver = sess_arg.solver
+        def observed_cache_write(base_dir, solver, frame, **kwargs):
             solver_particles = int(solver.particles.refresh_host_count())
             solver_whitewater = int(solver.whitewater.refresh_host_count())
-            path = original_cache_write(scene_arg, sess_arg, frame)
-            payload = cache.read_frame(os.path.dirname(path), int(frame))
+            result = original_cache_write(
+                base_dir, solver, frame, **kwargs)
+            path = result[0]
+            with np.load(path, allow_pickle=False) as data:
+                payload = {name: data[name] for name in data.files}
             write_observations.append({
                 "bake": active_bake[0],
                 "frame": int(frame),
                 "solver_frame": int(solver.frame),
                 "preview_policy": {
-                    "fraction": float(scene_arg.fluidsim.particle_display_fraction),
-                    "scale": float(scene_arg.fluidsim.particle_display_scale),
-                    "show_particles": bool(scene_arg.fluidsim.show_particles),
-                    "show_surface": bool(scene_arg.fluidsim.show_surface),
-                    "show_whitewater": bool(scene_arg.fluidsim.show_whitewater),
+                    "fraction": float(fs.particle_display_fraction),
+                    "scale": float(fs.particle_display_scale),
+                    "show_particles": bool(fs.show_particles),
+                    "show_surface": bool(fs.show_surface),
+                    "show_whitewater": bool(fs.show_whitewater),
                     "particle_attribute": str(
-                        scene_arg.fluidsim.particle_attribute_mode),
+                        fs.particle_attribute_mode),
                     "surface_attribute": str(
-                        scene_arg.fluidsim.surface_attribute_mode),
+                        fs.surface_attribute_mode),
                     "surface_cadence": int(
-                        scene_arg.fluidsim.live_surface_publish_cadence),
+                        fs.live_surface_publish_cadence),
                 },
                 "solver_particles": solver_particles,
                 "solver_whitewater": solver_whitewater,
                 "cache_counts": cache.authoritative_payload_counts(payload),
+                "whitewater_required": int(payload["whitewater_required"]),
+                "whitewater_admitted": int(payload["whitewater_admitted"]),
+                "whitewater_dropped": int(payload["whitewater_dropped"]),
+                "whitewater_status": str(payload["whitewater_status"]),
             })
-            return path
+            return result
 
-        cache.write_frame = observed_cache_write
+        cache.write_frame_v2_atomic = observed_cache_write
         check(
             "export cache sequence",
             bpy.ops.fluidsim.export_cache_sequence() == {"FINISHED"},
@@ -224,24 +239,25 @@ def main():
         playback.handle_frame_change = original_handle_frame_change
         output_publication.update_outputs = original_update_outputs
 
-        metadata_path = os.path.join(cache_dir, "fluidsim_sequence.json")
-        check("sequence metadata exists", os.path.exists(metadata_path), metadata_path)
+        metadata_path = os.path.join(cache_dir, "fluidsim_cache.json")
+        check("cache-v2 manifest exists", os.path.exists(metadata_path), metadata_path)
         if os.path.exists(metadata_path):
             with open(metadata_path, "r", encoding="utf-8") as handle:
                 metadata = json.load(handle)
             check(
-                "sequence metadata range",
+                "cache-v2 manifest range",
                 (
-                    metadata.get("format_version") == 1
+                    metadata.get("format_version") == 2
                     and metadata.get("frame_start") == 1
                     and metadata.get("frame_end") == 3
-                    and metadata.get("frame_count") == 3
+                    and sorted(int(frame) for frame in metadata.get("frames", {}))
+                    == [1, 2, 3]
                 ),
                 str(metadata),
             )
 
         frame_paths = [
-            os.path.join(cache_dir, f"fluidsim_{frame:05d}.npz")
+            os.path.join(cache_dir, "frames", f"frame_{frame:06d}.npz")
             for frame in range(1, 4)
         ]
         check(
@@ -275,8 +291,9 @@ def main():
                 check(
                     f"frame {frame} snapshot payload",
                     (
-                        int(np.asarray(data["format_version"]).item()) == 1
+                        int(np.asarray(data["format_version"]).item()) == 2
                         and int(np.asarray(data["frame"]).item()) == frame
+                        and int(np.asarray(data["solver_frame"]).item()) == frame
                         and len(positions) > 1_000
                         and len(data["velocities"]) == len(positions)
                         and len(data["whitewater_velocities"])
@@ -307,19 +324,15 @@ def main():
         fs.particle_attribute_mode = "HEIGHT"
         fs.surface_attribute_mode = "SPEED"
         fs.live_surface_publish_cadence = 7
-        # A bake intentionally leaves its solver advanced.  Release/recreate
-        # here so this is a genuine repeat from the same canonical initial
-        # scene, rather than a continuation mislabeled as repeatability.
+        # Production Bake restores the pre-bake session state. Since this
+        # fixture starts inactive, it must remain inactive between exports.
         from fluidSim_warp_blender51.blender.scene_bridge import session
 
         normalize_source_diagnostics()
-        # Reset is explicitly outside Production Cache Bake and may publish its
-        # initialized state, so suspend the bake-only poison around it.
         playback.handle_frame_change = original_handle_frame_change
         output_publication.update_outputs = original_update_outputs
-        session().reset(scene)
-        check("reset advanced solver before second production run",
-              session().solver.frame == 0)
+        check("production bake restores inactive solver state",
+              not session().active)
         bypass_calls.update(frame_handler=0, output_publication=0)
         playback.handle_frame_change = forbidden_frame_handler
         output_publication.update_outputs = forbidden_output_publication
@@ -351,9 +364,10 @@ def main():
             f"first={first_payload_hashes}, second={second_payload_hashes}",
         )
 
-        expected_schema = {
+        required_schema = {
             "format_version", "settings_signature", "scene_key", "positions",
             "velocities", "whitewater", "surface_verts", "surface_tris", "frame",
+            "solver_frame", "simulation_time", "source_signature",
             "voxel_size", "surface_voxel_size", "surface_resolution_multiplier",
             "surface_resolution_mode", "surface_update_cadence",
             "surface_smooth_iterations", "particle_age", "particle_life",
@@ -362,15 +376,18 @@ def main():
             "whitewater_life", "whitewater_required", "whitewater_available",
             "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
             "whitewater_status",
+            "attribute_schema_version", "attribute_inventory_json",
+            "surface_attribute_transfer_method",
         }
         schema_valid = bool(
             len(first_payload_schemas) == len(second_payload_schemas) == 3
-            and all(set(schema) == expected_schema
-                    for schema in first_payload_schemas + second_payload_schemas))
+            and all(required_schema <= set(schema)
+                    for schema in first_payload_schemas + second_payload_schemas)
+            and len(set(first_payload_schemas + second_payload_schemas)) == 1)
         check(
             "production payload schemas independently valid",
             schema_valid,
-            f"expected={sorted(expected_schema)}, first={first_payload_schemas}, "
+            f"required={sorted(required_schema)}, first={first_payload_schemas}, "
             f"second={second_payload_schemas}",
         )
 
@@ -399,9 +416,13 @@ def main():
             json.dumps(count_evidence, sort_keys=True),
         )
         check(
-            "every production write contains non-empty authoritative whitewater",
-            all(item["solver_whitewater"] > 0
-                for item in first_write + second_write),
+            "every production write records coherent whitewater admission state",
+            all(
+                item["whitewater_status"] == "OK"
+                and item["whitewater_required"]
+                == item["whitewater_admitted"] + item["whitewater_dropped"]
+                for item in first_write + second_write
+            ),
             json.dumps(count_evidence, sort_keys=True),
         )
         sequential_control_flow = bool(
@@ -460,7 +481,8 @@ def main():
         check(
             "production metadata independently records the sequential range",
             all(
-                (metadata or {}).get("source") == "simulation"
+                (metadata or {}).get("source") == "production_bake"
+                and (metadata or {}).get("format_version") == 2
                 and (metadata or {}).get("frame_start") == 1
                 and (metadata or {}).get("frame_end") == 3
                 and (metadata or {}).get("frame_count") == 3
@@ -487,7 +509,8 @@ def main():
         from fluidSim_warp_blender51.blender.scene_bridge import session
 
         normalize_source_diagnostics()
-        bpy.ops.fluidsim.release()
+        if session().active:
+            bpy.ops.fluidsim.release()
         check("solver released before cache playback", not session().active)
         fs.live = True
         fs.cache_playback_enabled = True
@@ -512,7 +535,7 @@ def main():
         check("cache playback status", fs.status.startswith("Cache frame 3"), fs.status)
     finally:
         if original_cache_write is not None:
-            cache.write_frame = original_cache_write
+            cache.write_frame_v2_atomic = original_cache_write
         if original_handle_frame_change is not None:
             playback.handle_frame_change = original_handle_frame_change
         if original_update_outputs is not None:

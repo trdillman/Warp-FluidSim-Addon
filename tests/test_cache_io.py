@@ -55,7 +55,7 @@ def test_write_frame_stores_format_version_and_read_frame_loads_it(tmp_path, mon
     )
     solver = SimpleNamespace(
         frame=3,
-        settings=SimpleNamespace(surface_enabled=False),
+        settings=SimpleNamespace(surface_enabled=False, voxel_size=0.1),
         particle_positions=lambda: np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
         particle_velocities=lambda: np.array([[0.1, 0.2, 0.3]], dtype=np.float32),
         whitewater_positions=lambda: np.zeros((0, 3), dtype=np.float32),
@@ -86,7 +86,7 @@ def test_write_frame_explicit_timeline_index_overrides_solver_counter(
     )
     solver = SimpleNamespace(
         frame=1,
-        settings=SimpleNamespace(surface_enabled=False),
+        settings=SimpleNamespace(surface_enabled=False, voxel_size=0.1),
         particle_positions=lambda: np.zeros((0, 3), dtype=np.float32),
         particle_velocities=lambda: np.zeros((0, 3), dtype=np.float32),
         whitewater_positions=lambda: np.zeros((0, 3), dtype=np.float32),

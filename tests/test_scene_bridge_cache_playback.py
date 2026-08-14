@@ -115,17 +115,20 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
 
 def test_phase3_deep_modules_own_playback_and_production_bake(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.blender import cache_bake
+    from fluidSim_warp_blender51.blender import cache_bake, production_bake
 
     bridge_source = inspect.getsource(scene_bridge)
     bake_source = inspect.getsource(cache_bake.bake)
+    transaction_source = inspect.getsource(
+        production_bake.ProductionBakeBackend.step_and_commit)
     assert "def handle_frame_change" not in bridge_source
     assert "def export_cache_sequence" not in bridge_source
     assert scene_bridge.playback._on_frame_change.__module__.endswith(".playback")
     assert scene_bridge.playback._on_playback_pre.__module__.endswith(".playback")
     assert "output_publication" not in bake_source
     assert "_on_frame_change" not in bake_source
-    assert "publish_outputs=False" in bake_source
+    assert "run_synchronous" in bake_source
+    assert "publish_outputs=False" in transaction_source
 
 
 def _authoritative_payload(particle_count=2, whitewater_count=0):
@@ -457,7 +460,7 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
     monkeypatch.setattr(
         output_publication,
         "_swap_points",
-        lambda obj, _pos, radius, _colors=None, **_kwargs: calls.append(
+        lambda obj, _pos, radius, _colors=None, _attributes=None, **_kwargs: calls.append(
             ("points", obj.name, radius)
         ),
     )
@@ -551,14 +554,15 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     monkeypatch.setattr(
         output_publication,
         "_swap_mesh",
-        lambda obj, verts, tris, colors=None: calls.append(
+        lambda obj, verts, tris, colors=None, attributes=None: calls.append(
             ("mesh", obj.name, values(verts), values(tris), values(colors))
         ),
     )
     monkeypatch.setattr(
         output_publication,
         "_swap_points",
-        lambda obj, positions, radius, colors=None, *, reuse_datablock=True: calls.append(
+        lambda obj, positions, radius, colors=None, attributes=None, *,
+        reuse_datablock=True: calls.append(
             ("points", obj.name, values(positions), round(radius, 6),
              values(colors), reuse_datablock)
         ),
@@ -731,12 +735,25 @@ def test_padded_pointclouds_hold_capacity_across_a_drifting_count(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     from fluidSim_warp_blender51.blender import output_publication
 
+    class _AttributeMap(dict):
+        def __iter__(self):
+            return iter(self.values())
+
     def cloud(capacity, *, has_color=False, users=1, schema=True):
-        attributes = {}
+        attributes = _AttributeMap()
         if schema:
-            attributes = {"position": object(), "radius": object()}
+            attributes.update({
+                "position": SimpleNamespace(
+                    name="position", data_type="FLOAT_VECTOR", domain="POINT"),
+                "radius": SimpleNamespace(
+                    name="radius", data_type="FLOAT", domain="POINT"),
+            })
         if has_color:
-            attributes[output_publication.COLOR_ATTR] = object()
+            attributes[output_publication.COLOR_ATTR] = SimpleNamespace(
+                name=output_publication.COLOR_ATTR,
+                data_type="FLOAT_COLOR",
+                domain="POINT",
+            )
         return SimpleNamespace(
             users=users,
             resize=lambda _count: None,
@@ -1049,9 +1066,8 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
     assert scene.fluidsim.status.startswith("Live settings error:")
 
 
-def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeypatch):
+def test_playback_manual_and_production_share_post_evaluation_reconcile_seam(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.blender import cache_bake
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.flip_ratio = 0.9
     scene.fluidsim.cfl = 1.0
@@ -1083,18 +1099,20 @@ def test_playback_manual_and_export_share_post_evaluation_reconcile_seam(monkeyp
         sess.solver.settings.flip_ratio,
         sess.solver.settings.cfl,
         sess.solver.settings.gravity)))
-    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
-    fake_cache.write_frame = lambda *_args, **_kwargs: None
-    fake_cache.write_sequence_metadata = lambda *_args, **_kwargs: None
-    import fluidSim_warp_blender51.io as io_pkg
-    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
-    monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
-
-    cache_bake.bake(scene, sess, 2, 4)
+    for frame in range(2, 5):
+        frame_set(frame)
+        scene_bridge.step_frame(
+            scene,
+            sess,
+            write_cache=False,
+            refresh_pending=True,
+            timeline_frame=frame,
+            publish_outputs=False,
+        )
 
     expected = [values[2], values[3], values[4]]
     assert observed == expected
-    assert scene.frame_current == 7
+    assert scene.frame_current == 4
 
     observed.clear()
     sess.solver.settings.flip_ratio = 0.9
@@ -1321,42 +1339,32 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
     assert calls == ["sync", ("step", 6)]
 
 
-def test_cache_export_restores_only_blender_transients_after_failure(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    from fluidSim_warp_blender51.blender import cache_bake
-    scene = _scene(frame=7, playback=False)
-    scene.fluidsim.live = True
-    frames = []
-
-    def frame_set(frame):
-        frames.append(frame)
-        scene.frame_current = frame
-
-    scene.frame_set = frame_set
-    sess = scene_bridge.session()
-    sess.solver = SimpleNamespace(frame=0)
-    monkeypatch.setattr(sess, "initialize", lambda _scene: sess)
-    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        sess,
-        "step",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("step failed")),
+def test_production_bake_failure_runs_backend_cleanup_and_preserves_error():
+    from fluidSim_warp_blender51.blender.production_bake import (
+        BakeController,
+        BakeStatus,
     )
-    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
-    fake_cache.write_frame = lambda *_args: None
-    fake_cache.write_sequence_metadata = lambda *_args, **_kwargs: None
-    import fluidSim_warp_blender51.io as io_pkg
-    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
-    monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
 
-    original_suppression = scene_bridge.playback._SUPPRESS_FRAME_HANDLERS
-    with pytest.raises(RuntimeError, match="step failed"):
-        cache_bake.bake(scene, sess, 2, 4)
+    calls = []
 
-    assert frames == [2, 7]
-    assert scene.frame_current == 7
-    assert scene.fluidsim.live is True
-    assert scene_bridge.playback._SUPPRESS_FRAME_HANDLERS == original_suppression
-    # The bake is not a transaction: solver state intentionally remains at the
-    # point reached before the failure, matching the established behavior.
-    assert sess.solver.frame == 1
+    class Backend:
+        base_dir = "//cache"
+
+        def initialize(self, _scene, _start, _end, **_kwargs):
+            calls.append("initialize")
+
+        def step_and_commit(self, _scene, _frame):
+            raise RuntimeError("step failed")
+
+        def fail(self, _scene, error):
+            calls.append(("fail", str(error)))
+
+    controller = BakeController(backend=Backend())
+    scene = SimpleNamespace()
+    controller.start(scene, 2, 4)
+    controller.tick(scene)
+    controller.tick(scene)
+
+    assert controller.status is BakeStatus.FAILED
+    assert "step failed" in controller.error
+    assert calls == ["initialize", ("fail", "step failed")]

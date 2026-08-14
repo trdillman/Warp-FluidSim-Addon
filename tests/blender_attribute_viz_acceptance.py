@@ -47,15 +47,18 @@ def main():
     fs = scene.fluidsim
     fs.voxel_size = 0.08
     fs.max_particles = 500_000
+    bpy.ops.fluidsim.setup_scene()
     fs.whitewater_enabled = True
+    fs.ww_churn_gain = 10.0
     fs.ww_churn_threshold = 0.05
     fs.ww_emission_rate = 4.0
-
-    bpy.ops.fluidsim.setup_scene()
     # This gate validates whitewater color attributes, so configure an explicit
     # energetic Continuous Inflow instead of depending on the new P3 emitter
     # default (Initial Fill) to happen to generate whitewater.
-    source = bpy.data.objects.get("FluidSim Source")
+    source = next(
+        obj for obj in scene.objects
+        if getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
+    )
     source.fluidsim.emission_mode = "CONTINUOUS_INFLOW"
     source.fluidsim.initial_velocity = (2.0, 0.0, 1.0)
     bpy.ops.fluidsim.initialize()

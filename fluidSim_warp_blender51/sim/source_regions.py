@@ -32,6 +32,7 @@ from .enums import (
 
 SourceKey = NewType("SourceKey", str)
 Vec3 = tuple[float, float, float]
+Vec4 = tuple[float, float, float, float]
 
 
 @wp.kernel
@@ -308,6 +309,8 @@ class PayloadPlan:
     temperature: float = 0.0
     viscosity: float = 0.0
     density: float = 1.0
+    color: Vec4 = (0.1, 0.45, 1.0, 1.0)
+    source_id: int = 0
     lifespan: float = 0.0
     use_lifespan: bool = False
     target_particles_per_voxel: float = 8.0

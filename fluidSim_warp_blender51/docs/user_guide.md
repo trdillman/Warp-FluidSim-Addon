@@ -1,68 +1,113 @@
 # FluidSim Warp — User Guide
 
-GPU liquid simulation for Blender 5.1, powered by NVIDIA Warp / CUDA.
-The solver is a sparse-grid PIC/FLIP liquid simulator that runs entirely on
-the GPU and plays back **interactively in the viewport** — no cache baking is
-required. Timeline-driven **Preview Playback** is non-authoritative viewport
-feedback and preserves its bounded catch-up/desynchronization behavior. Use
-**Export Cache Sequence** for sequential authoritative production output;
-optional npz playback and OBJ/PLY export remain supplemental tools.
+FluidSim Warp 1.0.248 is a sparse-grid PIC/FLIP liquid simulator for Blender
+5.1 or newer using NVIDIA Warp / CUDA. The certified release target is Blender
+5.2.0 LTS on Linux x64. It has two distinct workflows:
 
-> Requirements: **Blender 5.1**, an **NVIDIA GPU with CUDA**, and `warp-lang`
-> importable from Blender's Python. Open the **FluidSim** tab in the 3D
-> Viewport sidebar (press **N**).
+- **Live Preview** advances from Blender timeline events for interactive setup
+  and look development. It is responsive but not an authoritative production
+  transaction log.
+- **Production Bake** advances every frame sequentially and commits cache-v2
+  frame output plus a deterministic restart checkpoint before the manifest
+  exposes that frame as playable or resumable.
+
+## Validated support matrix
+
+| Area | Validated target |
+|---|---|
+| FluidSim | 1.0.248 |
+| Compatible Blender | Blender 5.1 or newer |
+| Certified Blender | Blender 5.2.0 LTS |
+| Operating systems | Platform-neutral source package; Linux x64 certified; Windows x64 repository gate verified |
+| Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
+| Warp dependency | External NVIDIA Warp 1.12.1 through 1.16.x; 1.16.0+cu12 certified; FluidSim does not package, download, or install Warp |
+| Cache compatibility | Cache v2 write/playback/resume; cache v1 playback only |
+
+Provision a supported NVIDIA Warp build so Blender's Python environment can
+import `warp`; `1.16.0+cu12` is the certified distribution. The current extension never searches arbitrary Python
+installations, invokes `pip`, downloads dependencies, or bundles Blender/Warp
+runtimes.
 
 ---
 
-## 1. Quick Demo (30 seconds)
+## 1. Guided first run
 
-1. **FluidSim → Simulation** panel → click **Quick Setup**.
-   This creates a domain box, a box particle source, and a sphere collider.
-2. Click **Initialize Solver**. The status line shows the CUDA device, leaf
-   capacity, and particle allocation.
-3. Click **Live: Off** to turn live simulation **on**.
-4. Press **Spacebar** (Play). Liquid emits from the source, falls under
-   gravity, and splashes off the collider in real time.
-5. Use **Step 1** / **Step 10** to advance frames without playback.
+After selecting one or more mesh objects, the shortest workflow is:
 
-Three output objects appear in the **FluidSim Output** collection:
+1. Open **FluidSim → Simulation**, choose **Quick Liquid** and a preset, then
+   click **Configure Selected Object(s)**.
+2. Click **Initialize & Arm Live**. This uses the existing Live operator to run
+   runtime/capacity preflight and initialize the solver.
+3. Press Play.
 
-| Object | Type | Contents |
+Guided setup creates or reuses one owned collection tree without deleting or
+renaming unrelated user data:
+
+```text
+FluidSim
+├── Inputs
+├── Outputs
+└── Helpers
+```
+
+The selected mesh becomes an Initial Fill emitter, a gravity-aware
+voxel-aligned domain is created in `Helpers`, and three output shells with
+default materials appear in `Outputs`: `FluidSim Surface`,
+`FluidSim Particles`, and `FluidSim Whitewater`. The current bundled Geometry
+Nodes revision is attached to each owned output without replacing user-owned
+modifiers or node groups. Re-running the same setup is idempotent. The scene
+remains stopped; **Initialize & Arm Live** is an explicit second action and
+Play is the third.
+
+Other setup modes are **Quick Container**, **Quick Viscous Liquid**,
+**Add Collider**, **Add Inflow**, and **Add Outflow**. Quick Container tags the
+selected closed mesh as a collider and enables a height fill. Add modes preserve
+the existing domain.
+
+### Product presets
+
+| Preset | Purpose | Relative cost |
 |---|---|---|
-| `FluidSim Surface` | Mesh | Marching-cubes liquid surface |
-| `FluidSim Particles` | PointCloud | Liquid particles |
-| `FluidSim Whitewater` | PointCloud | Foam / spray / bubble particles |
+| Preview Water | Coarse interactive blocking; whitewater off | Low |
+| Production Water | General final-quality liquid and cache-v2 defaults | Medium/high |
+| Splash + Whitewater | Energetic shots with larger whitewater budgets | High |
+| Honey | Implicit high-viscosity liquid | High |
+| Thick Liquid | Stylized medium/high viscosity | Medium/high |
+| Thin Liquid | Lower-viscosity detailed motion | Medium |
+
+Built-ins are read-only JSON resources. **Save User Preset** captures only an
+explicit allow-list of solver properties and writes atomically to
+extension-managed user storage. Unknown fields and arbitrary RNA paths are
+rejected before scene mutation. Applying a preset reports its intended scale,
+performance cost, and Reset requirement.
 
 ---
 
 ## 2. Manual Scene Setup
 
-If you prefer to build the scene yourself instead of using Quick Setup:
+Manual setup remains available for authored pipelines:
 
-1. Create a **domain** object (any mesh) sized to your simulation volume.
-   In **Simulation**, assign it to **Domain**.
-2. Create an emitter object, select it, and in **Inputs → Liquid Emitters**
-   click **Tag Liquid Emitter**. Choose **Initial Fill** or **Continuous Inflow**,
-   an **Analytic Volume** or **Mesh Surface Shell**, inherited or multiplied
-   liquid sampling, and initial velocity.
-3. Create collider or sink objects, select them, and use the corresponding
-   collapsed section under **Inputs**.
-4. Set **Simulation Resolution** in **Quality**. Manual leaf and particle
-   capacities remain available under collapsed **Advanced** sections.
-5. Click **Initialize Solver**, then **Live: Off** to start, then Play.
+1. Assign a mesh object as **Domain** under Advanced → Domain.
+2. Tag selected meshes as Liquid Emitters, Sinks, Colliders, or Force inputs.
+3. Configure analytic/mesh/volume source regions and lifecycle settings.
+4. Choose a product preset or edit solver settings directly.
+5. Run capacity preflight, initialize the solver, and use Live Preview or
+   Production Bake as appropriate.
+
+Guided and manual workflows use the same object roles and solver settings; the
+setup wizard is a transaction service, not a separate solver architecture.
 
 ---
 
 ## 3. Panel Reference (7 task-oriented top-level groups)
 
 ### Simulation
-Core controls: **Quick Setup**, **Initialize Solver**, **Live** toggle,
-**Reset**, **Release**, **Step 1 / Step 10**. Live status mirrors particles,
-active voxels, step time, and substeps. Time Scale and gravity remain here.
-Quick Setup is idempotent when its complete domain/source/collider setup already
-exists. The collapsed **Advanced Playback** foldout contains **Maximum Playback
-Recovery Frames**, an expert safety limit for how many timeline frames live
-playback may recover synchronously after Blender drops frames.
+Core controls include the setup mode/preset selector, **Run Guided Setup**,
+**Initialize Solver**, **Live**, **Reset**, **Release**, and **Step 1 / Step 10**.
+Live status mirrors particles, active voxels, step time, and substeps. Time Scale
+and gravity remain here. The collapsed **Advanced Playback** foldout contains
+**Maximum Playback Recovery Frames**, the bounded catch-up limit used only by
+Live Preview.
 
 ### Quality
 
@@ -234,10 +279,22 @@ When a live solver is active, surface edits rebuild the current frame's surface
 SDF and output mesh without advancing the simulation frame. Visibility and
 material edits also apply to existing output or cache objects.
 
+#### Render Attributes & Geometry Nodes
+
+This panel controls the persistent production attribute inventory separately
+from viewport debug coloring. It reports the currently attached asset revision,
+provides **Install Missing** and **Update FluidSim Modifiers**, and estimates the
+uncompressed host/cache bytes for the currently published point and vertex
+counts. Inventory changes are Reset-tier because color, source ID, and UID are
+allocated only when selected and because cache/resume signatures include the
+full inventory.
+
 ### Output & Cache
-Output collection name and overlay toggle. **Optional Cache / Export** includes
-cache enablement, path and playback range, **Export Cache Sequence**, and
-**Export Current Frame**.
+Output collection name, overlay, viewport outputs, and export controls remain
+here. **Production Bake / Cache v2** exposes the authored frame range, cache
+path, Start, Cancel, Resume, integrity scan, Free, Move, Rename, and Open Folder.
+Progress/status are runtime-only values and are not saved as authored scene data.
+Legacy cache-v1 playback is labelled non-resumable.
 
 ### Advanced
 
@@ -261,32 +318,79 @@ report path, **Write Diagnostics Report**. Shows average per-phase timers
 Surface, Whitewater, Custom, Lifecycle, Topology).
 
 #### Validation / Benchmarks
-**Run Validation Suite** (13 GPU tests, ~30 s). Benchmark **Frames** and
+**Run Validation Suite** (the registered NVIDIA GPU suite; currently 16 tests). Benchmark **Frames** and
 **Baseline** path, **Run Benchmark** / **Save Baseline**. Shows avg step time,
 voxels/s, active voxels, and pass/regression vs baseline.
 
 ---
 
-## 4. Attribute Visualization
+## 4. Production render attributes and viewport visualization
 
-Each output can be colored by a simulation attribute. Selecting a non-Material
-mode writes a `display_color` color attribute and assigns an **attribute
-material** that binds `display_color` into the Principled BSDF base color (via
-`ShaderNodeAttribute`), so the coloring is visible in both the viewport and
-final renders.
+FluidSim has two deliberately separate attribute paths.
 
-| Output | Available attribute modes |
+### Persistent production attributes
+
+Enabled channels are written to live Blender outputs, cache-v2 frames, and—when
+restart-critical—solver checkpoints. Blender publication validates data type,
+domain, length, and finite values before mutating an output datablock. An old
+attribute with a conflicting type or domain is recreated rather than silently
+reused.
+
+| Output | Available persistent channels |
+|---|---|
+| **Surface** | velocity, speed, vorticity, age, lifetime, color, source ID, viscosity, density, motion blur |
+| **Liquid particles** | velocity, speed, vorticity, age, lifetime, color, source ID, UID, viscosity, density |
+| **Whitewater** | velocity, speed, age, lifetime |
+
+Stable Blender names include `fluidsim_velocity`, `fluidsim_speed`,
+`fluidsim_vorticity`, `fluidsim_age`, `fluidsim_lifetime`, `fluidsim_color`,
+`fluidsim_source_id`, `fluidsim_uid`, `fluidsim_viscosity`, and
+`fluidsim_density`. These use the `POINT` domain. Motion blur is the separate
+conventional Blender attribute `velocity`: it contains displacement per scene
+frame. `fluidsim_velocity` remains the physical world-units-per-second value.
+
+Speed is derived from velocity. Vorticity is sampled from the curl of the
+projected MAC velocity field. Surface channels are transferred from the nearest
+liquid particle with a deterministic, memory-bounded lookup. Color, source ID,
+and UID are optional persistent liquid channels; disabled channels do not
+allocate a full particle-capacity pool. UID values are unique positive int32
+values assigned monotonically at committed emission transactions.
+
+New cache frames carry an ordered attribute-inventory schema and transfer-method
+identifier. Declared-but-missing, misaligned, wrong-type, non-finite, duplicate
+UID, or unsupported data fails closed. Legacy cache-v1 and earlier cache-v2
+frames without an inventory remain readable, but they cannot synthesize channels
+that were never baked.
+
+### Bundled Geometry Nodes and materials
+
+The packaged asset installs three revision-tagged groups:
+
+- **FluidSim Surface Render [P3 v1]** assigns the selected surface material while preserving mesh attributes.
+- **FluidSim Liquid Particles [P3 v1]** applies point radius, lifespan culling, sphere instancing, attribute-preserving realization, and material assignment.
+- **FluidSim Whitewater [P3 v1]** applies the same point-render contract to the current combined whitewater pool.
+
+Installation is idempotent. **Update FluidSim Modifiers** repoints only modifiers
+previously tagged as FluidSim-owned; identically named user modifiers and
+user-edited node groups are skipped. The default liquid and particle materials
+read `fluidsim_color`; the liquid material also maps `fluidsim_viscosity` to
+roughness. Point groups realize render instances so point-domain named
+attributes are visible to shaders in F12 renders. Realization has a geometry and
+memory cost, so particle display fraction and output toggles remain relevant for
+heavy scenes.
+
+### Viewport debug coloring
+
+The existing non-Material display modes remain a presentation-only diagnostic.
+They write a separate `display_color` attribute and use the blue→cyan→green→
+yellow→red percentile ramp. They do not overwrite `fluidsim_color` and do not
+change persistent simulation channels.
+
+| Output | Debug color modes |
 |---|---|
 | **Surface** | Material · Height · Speed · Temperature · Viscosity · Density |
 | **Particles** | Material · Height · Speed · Temperature · Viscosity · Density · Age · Life |
 | **Whitewater** | Material · Height · Speed · Age · Life |
-
-Colors use a blue→cyan→green→yellow→red ramp, auto-ranged to the 5th–95th
-percentile of the visible values.
-
-**Tip:** surface attribute colors are sampled from the nearest particles onto
-the mesh vertices (a host-side nearest-neighbour lookup). For very large
-particle counts the lookup is subsampled to keep the viewport responsive.
 
 ---
 
@@ -416,7 +520,7 @@ tracks and device memory metadata.
 12. Whitewater churn/emission/advection behavior
 13. Benchmark profile schema compatibility
 
-Each test reports pass/fail with a detail line. 13/13 is the green bar.
+Each registered validation reports pass/fail with a detail line. Release reports record the exact suite count instead of embedding a stale count in this guide.
 
 ---
 
@@ -436,44 +540,84 @@ The benchmark implements the synthesized `BENCHMARK_FIELDS` schema
 
 ---
 
-## 9. Optional Cache & Export
+## 9. Production Bake, cache v2, and headless execution
 
-FluidSim Warp is interactive-first, but Preview Playback and Production Cache
-Bake have different authority:
+### Transaction authority
 
-- **Preview Playback** is timeline-event-driven visual feedback. Blender may
-  drop events, so the preserved bounded catch-up gate can report desynchronization
-  rather than pretending an over-limit scrub is authoritative. Enabling
-  **Cache Playback** publishes existing frames without initializing or stepping
-  a live solver.
-- **Enable Cache** records `source="live_simulation"` frames during Preview
-  Playback. These are useful for reloading that interactive run, but remain
-  distinct from production output.
-- **Export Cache Sequence** runs the dedicated Production Cache Bake over the
-  selected range. It advances and synchronizes every frame sequentially,
-  writes full non-preview-decimated liquid/whitewater/surface data with
-  `source="simulation"`, bypasses frame handlers and viewport publication, and
-  restores the Blender frame/live toggle afterward. Preview display fraction,
-  attributes, visibility, and retained-surface publication cadence cannot
-  decimate its cache writes.
-- Cache frames are compressed `fluidsim_NNNNN.npz` files containing positions,
-  velocities, whitewater, surface verts/tris, aligned attributes, settings
-  signatures, and scene identity. CUDA atomics, compaction/emission order, and
-  derived marching-cubes surfaces are not bitwise repeatable; exact hashes,
-  counts, and topology are diagnostics rather than a numerical-determinism
-  promise.
-- **Export Current Frame** writes the surface as `*_surface.obj` and particles
-  / whitewater as binary `*_particles.ply` / `*_whitewater.ply` (particles
-  include velocity).
-- Every cached frame stores its applied settings signature. Sequence metadata
-  records contiguous signature boundaries and marks `mixed_settings: true`
-  when a bake contains more than one applied parameter set; it never presents
-  that sequence as homogeneous. `settings_baseline` stores the first complete
-  setting set and `settings_changes` stores only changed/removed fields for
-  later signatures, avoiding repeated full snapshots during animation.
-  Non-finite diagnostic floats use an explicit
-  `__fluidsim_nonfinite_float__` JSON tag rather than non-standard JSON values
-  or ambiguous ordinary strings.
+Each cache-v2 frame uses this commit order:
+
+1. Advance the solver exactly one frame with Blender frame handlers suppressed.
+2. Write and fsync frame output to a temporary NPZ, then atomically replace the
+   final frame file.
+3. Capture the full restart checkpoint, write/fsync it, and atomically replace
+   the checkpoint file.
+4. Compute SHA-256 and byte size for both files.
+5. Append a `FrameEntry` to a copied manifest and atomically replace
+   `fluidsim_cache.json`.
+
+The manifest is authoritative. A frame/checkpoint file without a committed
+manifest entry is an orphan and is never playable or a resume point. Missing,
+non-contiguous, size-mismatched, checksum-mismatched, schema-invalid, or
+incompatible data fails closed. Cancellation is observed only between frame
+transactions, so the last visible frame is always fully committed.
+
+Cache layout:
+
+```text
+<cache>/
+├── fluidsim_cache.json
+├── frames/frame_000001.npz
+├── checkpoints/checkpoint_000001.npz
+└── logs/
+```
+
+### Resume and restart
+
+**Resume** restores only the last verified committed checkpoint, then starts at
+the next frame. Scene, solver-setting, source/evaluated-geometry, domain,
+capacity, and ST-FLIP compatibility signatures are checked before live state is
+replaced. Solver-affecting changes are rejected with a structured reason;
+render-only display/material changes remain resume-safe. **Restart** explicitly
+removes the prior v2 transaction set and begins at the authored start frame.
+
+Checkpointed state includes liquid and whitewater particles, sparse topology
+and persistent active fields, source one-shot/accumulation/RNG state, whitewater
+RNG, ST-FLIP temporal/RNG/reference-mass state, solver frame, and simulation
+time. Transient bins and scratch fields are rebuilt after restore.
+
+### Cache management
+
+- **Integrity Scan** reports committed, missing, corrupt, and orphan data without
+  mutating it. Orphan removal is a separate explicit action.
+- **Free** first renames the cache to a same-volume trash path before deleting.
+- **Move** copies to a temporary destination, verifies the full cache, then
+  atomically adopts it before optional source cleanup.
+- **Rename** accepts only a leaf directory name.
+- **Open Folder** uses path APIs rather than shell-string interpolation.
+
+Cache v1 (`fluidsim_sequence.json` plus legacy NPZ frames) remains readable for
+playback but has no checkpoint contract and cannot resume. Rebake as v2 to gain
+transactional resume. **Export Current Frame** continues to write OBJ/PLY output.
+
+### Headless command
+
+The installed package includes `release/run_headless_bake.py`:
+
+```bash
+blender --background scene.blend \
+  --python /installed/fluidsim_warp/release/run_headless_bake.py -- \
+  --scene Scene --start 1 --end 250 \
+  --cache /absolute/path/cache --device cuda:0 \
+  --resume auto --checkpoint-interval 1 \
+  --report-json /absolute/path/report.json --save-after-bake
+```
+
+One compact JSON object is written to stdout per committed frame. The final
+report is atomic. Stable process exit codes are: `0` success, `2` argument
+error, `10` Warp import/version failure, `11` requested device unavailable,
+`12` no CUDA device, `13` invalid scene, `14` incompatible/missing required
+resume, `15` bake failure, and `16` safe cancellation. SIGINT/SIGTERM request
+cancellation at the next transaction boundary.
 
 ---
 
@@ -572,3 +716,18 @@ the NVIDIA driver, plus Windows CPU and RAM pressure. It stays as close as
 possible to the scene configuration while adjusting the largest cost drivers:
 leaf capacity, voxel size, particle and whitewater capacities, particles per
 voxel, topology expansion, and secondary surface-grid settings.
+---
+
+## 12. Validation limits for this build
+
+Release 1.0.248 was exercised with the supplied Blender 5.2.0 LTS package and
+the supplied NVIDIA Warp 1.16.0+cu12 package. The available host exposed Warp
+CPU only and no usable NVIDIA driver/device. The evidence includes 150
+pure-Python tests, source/package verification, external-Warp CPU kernels,
+optional-channel compaction and checkpoint restoration, Blender attribute type/
+domain/value checks, cache round-trip, `.blend` save/reopen, Geometry Nodes
+modifier evaluation, typed input synchronization, user-modifier protection,
+and Eevee F12 renders proving surface and point color attributes reach shaders.
+CUDA solver numerics, CUDA deterministic resume, GPU memory behavior, GPU
+performance, and NVIDIA-specific render regressions remain mandatory hardware
+gates and are not claimed by this evidence.

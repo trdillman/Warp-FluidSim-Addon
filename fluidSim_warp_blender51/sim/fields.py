@@ -572,6 +572,57 @@ class SparseGrid:
         self.active_leaf_count = count
         return self.active_leaf_count
 
+    def restore_topology(self, leaf_coords) -> int:
+        """Restore an audited slot-ordered topology without partial mutation."""
+        coords = np.asarray(leaf_coords)
+        if coords.ndim != 2 or coords.shape[1:] != (3,):
+            raise ValueError("grid_leaf_coords must have shape (N, 3)")
+        if coords.dtype.kind not in "iu":
+            raise ValueError("grid_leaf_coords must contain integers")
+        coords = np.ascontiguousarray(coords, dtype=np.int32)
+        count = int(len(coords))
+        if count > self.capacity:
+            raise TopologyCapacityError(count, self.capacity)
+        dimensions = tuple(int(self.leaves_dim[index]) for index in range(3))
+        if count:
+            if np.any(coords < 0):
+                raise ValueError("grid_leaf_coords contains a negative coordinate")
+            for axis, dimension in enumerate(dimensions):
+                if np.any(coords[:, axis] >= dimension):
+                    raise ValueError(
+                        f"grid_leaf_coords exceeds leaf dimension on axis {axis}")
+            if len({tuple(int(value) for value in row) for row in coords}) != count:
+                raise ValueError("grid_leaf_coords contains duplicate leaves")
+
+        table = np.full(self.num_leaf_cells, -1, dtype=np.int32)
+        for slot, (x, y, z) in enumerate(coords):
+            linear = int(x) + dimensions[0] * (
+                int(y) + dimensions[1] * int(z))
+            table[linear] = slot
+        padded_coords = np.zeros((self.capacity, 3), dtype=np.int32)
+        if count:
+            padded_coords[:count] = coords
+
+        # All validation and host construction completed before the first live
+        # device write. Keep array identities stable just like normal topology
+        # admission does.
+        table_dev = wp.array(table, dtype=wp.int32, device=self.device)
+        coords_dev = wp.array(padded_coords, dtype=wp.vec3i, device=self.device)
+        count_dev = wp.array([count], dtype=wp.int32, device=self.device)
+        wp.copy(self.leaf_table, table_dev)
+        wp.copy(self.leaf_coords, coords_dev)
+        wp.copy(self.num_leaves, count_dev)
+        self.overflow.zero_()
+        wp.copy(self._candidate_leaf_table, table_dev)
+        wp.copy(self._candidate_leaf_coords, coords_dev)
+        wp.copy(self._candidate_num_leaves, count_dev)
+        self._candidate_overflow.zero_()
+        self.leaf_flags.zero_()
+        self.leaf_flags_tmp.zero_()
+        self._candidate_pending = False
+        self.active_leaf_count = count
+        return count
+
 
 class ScalarField:
     """Scalar field stored over sparse leaf slots (float32/float16/int32)."""

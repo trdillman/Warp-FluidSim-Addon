@@ -94,14 +94,29 @@ def main():
     result = bpy.ops.fluidsim.setup_scene()
     check("setup_scene operator", result == {"FINISHED"})
     check("domain object assigned", fs.domain_object is not None)
-    src = bpy.data.objects.get("FluidSim Source")
+    src = next(
+        (
+            obj for obj in scene.objects
+            if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+            == "SOURCE"
+        ),
+        None,
+    )
     check("source tagged", src is not None and src.fluidsim.role == "SOURCE")
     if src is not None:
         src.fluidsim.force_type = "SPIN"
         src.fluidsim.force_strength = 0.05
         src.fluidsim.force_direction = (0.0, 0.0, 1.0)
-    col = bpy.data.objects.get("FluidSim Collider")
-    check("collider tagged", col is not None and col.fluidsim.role == "COLLIDER")
+    implicit_colliders = [
+        obj for obj in scene.objects
+        if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+        == "COLLIDER"
+    ]
+    check(
+        "quick liquid does not invent an implicit collider",
+        not implicit_colliders,
+        str([obj.name for obj in implicit_colliders]),
+    )
 
     force_specs = (
         ("FORCE", -0.03), ("WIND", 0.02), ("VORTEX", 0.01),

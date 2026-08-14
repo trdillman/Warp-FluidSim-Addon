@@ -394,8 +394,16 @@ def _run_phase(phase, scene):
         fs.limit_behavior = "PERCENT"
         bpy.ops.fluidsim.setup_scene()
         check("setup_scene", fs.domain_object is not None)
-        src = bpy.data.objects.get("FluidSim Source")
+        src = next(
+            (
+                obj for obj in scene.objects
+                if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+                == "SOURCE"
+            ),
+            None,
+        )
         if src is not None:
+            STATE["source_name"] = src.name
             if src.fluidsim.emission_mode != "INITIAL_FILL":
                 raise RuntimeError(
                     "new Phase 3 source did not use Initial Fill: "
@@ -438,8 +446,8 @@ def _run_phase(phase, scene):
             bpy.context.view_layer.objects.active = src
         bpy.ops.fluidsim.snippet_add()
         fs.snippets[-1].enabled = False
-        _draw_all_panels_smoke("demo configured, solver inactive",
-                               "FluidSim Source")
+        _draw_all_panels_smoke(
+            "demo configured, solver inactive", STATE.get("source_name"))
 
         # Camera + light for the render check.
         cam_data = bpy.data.cameras.new("FluidSim Cam")
@@ -460,7 +468,8 @@ def _run_phase(phase, scene):
               scene.fluidsim.status)
         check("cuda device", sess.active
               and str(sess.solver.device).startswith("cuda"))
-        _draw_all_panels_smoke("solver initialized", "FluidSim Collider")
+        _draw_all_panels_smoke(
+            "solver initialized", STATE.get("source_name"))
         _assert_panel_state(
             "FLUIDSIM_PT_simulation",
             "initialized stats",
@@ -534,8 +543,8 @@ def _run_phase(phase, scene):
         result = bpy.ops.fluidsim.step(frames=3)
         check("manual step after reset", result == {"FINISHED"},
               scene.fluidsim.status)
-        _draw_all_panels_smoke("post-playback manual step",
-                               "FluidSim Source")
+        _draw_all_panels_smoke(
+            "post-playback manual step", STATE.get("source_name"))
         _assert_panel_state(
             "FLUIDSIM_PT_simulation",
             "stepped status",
@@ -651,8 +660,8 @@ def _run_phase(phase, scene):
             "benchmark result",
             label_contains="Avg step:",
         )
-        _draw_all_panels_smoke("diagnostics populated",
-                               "FluidSim Source")
+        _draw_all_panels_smoke(
+            "diagnostics populated", STATE.get("source_name"))
         finish()
         return None
 

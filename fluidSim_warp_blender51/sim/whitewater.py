@@ -7,6 +7,7 @@ Ports of the fluid_whitewater group + fluidSimAdvectWhiteWater:
 
 from __future__ import annotations
 
+import numpy as np
 import warp as wp
 
 wp.set_module_options({"enable_backward": False})
@@ -614,6 +615,66 @@ class WhitewaterSystem:
         self.clamp_count()
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
+
+    def restore_checkpoint_prefix(self, arrays, count: int) -> None:
+        """Validate and restore all persistent whitewater channels."""
+        count = int(count)
+        if count < 0 or count > self.capacity:
+            raise ValueError(
+                f"whitewater checkpoint count {count} exceeds capacity {self.capacity}")
+        specifications = {
+            "whitewater_position": ((count, 3), np.float32),
+            "whitewater_velocity": ((count, 3), np.float32),
+            "whitewater_age": ((count,), np.float32),
+            "whitewater_life": ((count,), np.float32),
+            "whitewater_alive": ((count,), np.int32),
+        }
+        normalized = {}
+        for name, (shape, dtype) in specifications.items():
+            if name not in arrays:
+                raise ValueError(f"whitewater checkpoint is missing {name}")
+            value = np.asarray(arrays[name])
+            if value.shape != shape:
+                raise ValueError(f"{name} has shape {value.shape}; expected {shape}")
+            value = np.ascontiguousarray(value, dtype=dtype)
+            if value.dtype.kind == "f" and not np.all(np.isfinite(value)):
+                raise ValueError(f"{name} contains non-finite values")
+            normalized[name] = value
+        alive = normalized["whitewater_alive"]
+        if np.any((alive != 0) & (alive != 1)):
+            raise ValueError("whitewater_alive must contain only 0 or 1")
+
+        for value in (
+                self.position, self.velocity, self.age, self.life, self.alive,
+                self.free_slots, self._position2, self._velocity2, self._age2,
+                self._life2, self._scan):
+            value.zero_()
+        if count:
+            wp.copy(
+                self.position,
+                wp.array(normalized["whitewater_position"], dtype=wp.vec3,
+                         device=self.device), count=count)
+            wp.copy(
+                self.velocity,
+                wp.array(normalized["whitewater_velocity"], dtype=wp.vec3,
+                         device=self.device), count=count)
+            for name, target in (("whitewater_age", self.age),
+                                 ("whitewater_life", self.life)):
+                wp.copy(
+                    target,
+                    wp.array(normalized[name], dtype=float, device=self.device),
+                    count=count)
+            wp.copy(
+                self.alive,
+                wp.array(alive, dtype=wp.int32, device=self.device),
+                count=count)
+        wp.copy(
+            self.count,
+            wp.array([count], dtype=wp.int32, device=self.device), count=1)
+        self._count2.zero_()
+        self.free_count.zero_()
+        self.host_count = count
+        self.reset_frame_diagnostics()
 
     def compact(self, count_hint: int | None = None):
         """Stream-compact live particles without any host synchronization.

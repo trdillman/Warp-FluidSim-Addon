@@ -23,13 +23,24 @@ def check(label, condition, detail=""):
 def main():
     scene = fresh_scene()
     fs = scene.fluidsim
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.8))
+    bpy.context.object.name = "Admission Setup Source"
+    check("setup", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+    # Guided Setup applies its product preset; admission-specific authored
+    # values belong after that transaction and before snapshot capture.
     fs.voxel_size = 0.15
     fs.max_particles = 20_000
     fs.max_whitewater = 1
     fs.whitewater_enabled = False
     fs.surface_enabled = False
     fs.show_particles = True
-    check("setup", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+    bpy.ops.mesh.primitive_cube_add(
+        size=0.5, location=(0.0, 0.0, -0.25))
+    bpy.context.object.name = "Admission Collider"
+    check(
+        "tag collider",
+        bpy.ops.fluidsim.tag_collider() == {"FINISHED"},
+    )
     seed = make_particle_seed(
         scene, ((0.0, 0.0, 0.8),), "Admission Seed")
     seed.fluidsim.enabled = True

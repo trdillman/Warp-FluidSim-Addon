@@ -73,6 +73,8 @@ def _seed(sources, name, count):
         temperature=0.0,
         viscosity=0.0,
         density=1.0,
+        color=(0.1, 0.45, 1.0, 1.0),
+        source_id=0,
         life=0.0,
         use_lifespan=False,
     )

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
+
+from ..sim.attributes import stable_source_id
 
 
 def _effective_source_target(scene, pg) -> int:
@@ -44,6 +48,38 @@ def _effective_source_target(scene, pg) -> int:
 def _object_identity(obj):
     as_pointer = getattr(obj, "as_pointer", None)
     return int(as_pointer()) if as_pointer is not None else id(obj)
+
+def persistent_source_key(obj) -> str:
+    """Return a process-independent source identity stored with the object.
+
+    Local objects receive a UUID custom property that survives save/reopen.
+    Read-only linked objects fall back to their library path and full name.
+    """
+    try:
+        existing = str(obj.get("fluidsim_persistent_id", "") or "")
+    except (AttributeError, TypeError):
+        existing = ""
+    if existing:
+        return existing
+    name = str(getattr(obj, "name_full", getattr(obj, "name", "object")))
+    library = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
+    if library:
+        basis = f"library:{library}:{name}"
+    else:
+        try:
+            import bpy
+
+            blend_path = str(getattr(bpy.data, "filepath", "") or "")
+        except (ImportError, AttributeError):
+            blend_path = ""
+        data_name = str(getattr(getattr(obj, "data", None), "name_full", "") or "")
+        basis = f"local:{blend_path}:{name}:{data_name}"
+    value = f"object:{hashlib.sha256(basis.encode('utf-8')).hexdigest()}"
+    try:
+        obj["fluidsim_persistent_id"] = value
+        return value
+    except (AttributeError, TypeError, RuntimeError):
+        return f"object-name:{getattr(obj, 'name_full', getattr(obj, 'name', 'object'))}"
 
 
 def _data_identity(obj):
@@ -454,14 +490,15 @@ class SceneInputs:
             desc.blend_mode = BlendMode[pg.blend_mode]
             desc.emit_rate = float(_effective_source_target(scene, pg))
             desc.emission_mode = SourceEmissionMode[pg.emission_mode]
-            pointer = getattr(obj, "as_pointer", None)
-            runtime_pointer = int(pointer()) if callable(pointer) else id(obj)
-            desc.source_id = f"blender-object:{runtime_pointer}"
+            runtime_pointer = _object_identity(obj)
+            desc.source_id = persistent_source_key(obj)
             desc.runtime_source_key = (
                 f"session:{self._session_generation}:object:{runtime_pointer}")
             desc.temperature = pg.temperature
             desc.viscosity = pg.viscosity
             desc.density = pg.density
+            desc.color = tuple(float(value) for value in getattr(
+                pg, "source_color", (0.1, 0.45, 1.0, 1.0)))
             desc.use_lifespan = pg.use_lifespan
             desc.life_min = pg.life_min
             desc.life_max = pg.life_max
@@ -645,7 +682,7 @@ class SceneInputs:
             if not needs_plan:
                 continue
             _set_source_status(pg)
-            key = SourceKey(self._runtime_source_key(obj))
+            key = SourceKey(persistent_source_key(obj))
             cadence = (SourceEvaluationCadence.EVERY_SIM_FRAME
                        if getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
                        == "EVERY_SIM_FRAME" else SourceEvaluationCadence.FIRST_SIM_FRAME)
@@ -713,6 +750,9 @@ class SceneInputs:
                         pg, "field_vector_value", (0.0, 0.0, 0.0))),
                     temperature=float(pg.temperature),
                     viscosity=float(pg.viscosity), density=float(pg.density),
+                    color=tuple(float(value) for value in getattr(
+                        pg, "source_color", (0.1, 0.45, 1.0, 1.0))),
+                    source_id=stable_source_id(persistent_source_key(obj)),
                     lifespan=((float(pg.life_min) + float(pg.life_max)) * 0.5
                               if pg.use_lifespan else 0.0),
                     use_lifespan=bool(pg.use_lifespan),
@@ -737,6 +777,7 @@ class SceneInputs:
             if pg is None:
                 continue
             objects[self._runtime_source_key(obj)] = pg
+            objects[persistent_source_key(obj)] = pg
             if getattr(pg, "source_status_code", "") != "SOURCE_INPUT_INVALID":
                 _set_source_status(pg)
             try:
@@ -756,7 +797,8 @@ class SceneInputs:
             # truthful to attribute that count only when exactly one liquid
             # source is active; broadcasting it to every source/field panel
             # would present scene-global telemetry as per-object truth.
-            active_liquid = [pg for pg in objects.values()
+            unique_objects = {id(pg): pg for pg in objects.values()}
+            active_liquid = [pg for pg in unique_objects.values()
                              if getattr(pg, "role", "NONE") == "SOURCE"
                              and getattr(pg, "source_mode", "PARTICLES") != "FIELD"
                              and getattr(pg, "enabled", False)]

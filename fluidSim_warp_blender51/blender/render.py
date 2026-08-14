@@ -75,11 +75,17 @@ def register_handlers():
             getattr(bpy.app.handlers, name).append(_on_render_end)
 
 
+def _remove_all(handler_list, function):
+    """Remove every registration of one function without touching other add-ons."""
+    while function in handler_list:
+        handler_list.remove(function)
+
+
 def unregister_handlers():
-    for name in _HANDLER_LISTS:
+    render_init = getattr(bpy.app.handlers, "render_init", None)
+    if render_init is not None:
+        _remove_all(render_init, _on_render_init)
+    for name in ("render_complete", "render_cancel"):
         handlers = getattr(bpy.app.handlers, name, None)
-        if handlers is None:
-            continue
-        for fn in list(handlers):
-            if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
-                handlers.remove(fn)
+        if handlers is not None:
+            _remove_all(handlers, _on_render_end)

@@ -13,6 +13,11 @@ import warp as wp
 from .constants import LEAF_VOLUME
 
 
+PHYSICAL_ATTR_NAMES = ("age", "life", "temperature", "viscosity", "density")
+OPTIONAL_VEC4_ATTR_NAMES = ("color",)
+OPTIONAL_INT_ATTR_NAMES = ("source_id", "uid")
+
+
 @wp.kernel
 def k_clamp_count(
     count: wp.array(dtype=wp.int32),
@@ -84,6 +89,32 @@ def k_compact_alive_scatter(
 
 
 @wp.kernel
+def k_compact_vec4_scatter(
+    alive: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    count_in: wp.array(dtype=wp.int32),
+    source: wp.array(dtype=wp.vec4),
+    target: wp.array(dtype=wp.vec4),
+):
+    tid = wp.tid()
+    if tid < count_in[0] and alive[tid] != 0:
+        target[offsets[tid]] = source[tid]
+
+
+@wp.kernel
+def k_compact_int_scatter(
+    alive: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    count_in: wp.array(dtype=wp.int32),
+    source: wp.array(dtype=wp.int32),
+    target: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    if tid < count_in[0] and alive[tid] != 0:
+        target[offsets[tid]] = source[tid]
+
+
+@wp.kernel
 def k_last_offset_count(
     alive: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
@@ -98,53 +129,96 @@ def k_last_offset_count(
 
 
 class ParticleSystem:
-    """Double-buffered liquid particle set with named float attributes.
+    """Double-buffered liquid particles with an explicit optional inventory.
 
-    Attribute channels (fixed inventory, matching the original solver's
-    particle attribute surface): age, life, temperature, viscosity, density.
+    Physical float channels are always allocated because solver kernels own
+    them.  Product channels (color/source identity/UID) are allocated only when
+    selected before initialization, preserving the preview memory contract.
     """
 
-    ATTR_NAMES = ("age", "life", "temperature", "viscosity", "density")
+    ATTR_NAMES = PHYSICAL_ATTR_NAMES
+    OPTIONAL_VEC4_ATTR_NAMES = OPTIONAL_VEC4_ATTR_NAMES
+    OPTIONAL_INT_ATTR_NAMES = OPTIONAL_INT_ATTR_NAMES
 
-    def __init__(self, capacity: int, device):
+    def __init__(self, capacity: int, device, optional_channels=()):
         self.capacity = int(capacity)
         self.device = device
+        selected = frozenset(str(name) for name in optional_channels)
+        unknown = selected - set(OPTIONAL_VEC4_ATTR_NAMES) - set(OPTIONAL_INT_ATTR_NAMES)
+        if unknown:
+            raise ValueError(f"unsupported optional particle channels: {sorted(unknown)}")
+        self.optional_channels = tuple(
+            name for name in (*OPTIONAL_VEC4_ATTR_NAMES, *OPTIONAL_INT_ATTR_NAMES)
+            if name in selected)
         n = self.capacity
         self.position = wp.zeros(n, dtype=wp.vec3, device=device)
         self.velocity = wp.zeros(n, dtype=wp.vec3, device=device)
         self.attrs = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
         }
-        # ST-FLIP residual: delta_t = t_global - t_particle.  Stored as
-        # float32 for broad Warp-device compatibility; the paper notes that
-        # half precision is sufficient, but Blender/Warp builds vary in
-        # float16 atomic/indexing support.
+        self.vec4_attrs = {
+            name: wp.zeros(n, dtype=wp.vec4, device=device)
+            for name in OPTIONAL_VEC4_ATTR_NAMES if name in selected
+        }
+        self.int_attrs = {
+            name: wp.zeros(n, dtype=wp.int32, device=device)
+            for name in OPTIONAL_INT_ATTR_NAMES if name in selected
+        }
+        # Kernels receive stable typed placeholders when a channel is disabled.
+        self._dummy_vec4 = wp.zeros(1, dtype=wp.vec4, device=device)
+        self._dummy_int = wp.zeros(1, dtype=wp.int32, device=device)
+        # ST-FLIP residual: delta_t = t_global - t_particle.
         self.time_offset = wp.zeros(n, dtype=float, device=device)
-        # scratch (compaction targets)
         self._position2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._velocity2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._attrs2 = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
+        }
+        self._vec4_attrs2 = {
+            name: wp.zeros(n, dtype=wp.vec4, device=device)
+            for name in self.vec4_attrs
+        }
+        self._int_attrs2 = {
+            name: wp.zeros(n, dtype=wp.int32, device=device)
+            for name in self.int_attrs
         }
         self._time_offset2 = wp.zeros(n, dtype=float, device=device)
         self.alive = wp.zeros(n, dtype=wp.int32, device=device)
         self.scan_tmp = wp.zeros(n, dtype=wp.int32, device=device)
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
         self._count2 = wp.zeros(1, dtype=wp.int32, device=device)
-        # per-particle voxel index cache (fluidSimUpdateParticleVoxelIndex)
         self.voxel_index = wp.zeros(n, dtype=wp.int32, device=device)
         self.host_count = 0
+        self.next_uid = 1
+
+    def has_optional_channel(self, name: str) -> bool:
+        return name in self.vec4_attrs or name in self.int_attrs
+
+    def optional_array(self, name: str):
+        if name in self.vec4_attrs:
+            return self.vec4_attrs[name]
+        if name in self.int_attrs:
+            return self.int_attrs[name]
+        if name in OPTIONAL_VEC4_ATTR_NAMES:
+            return self._dummy_vec4
+        if name in OPTIONAL_INT_ATTR_NAMES:
+            return self._dummy_int
+        raise KeyError(name)
 
     def attr(self, name: str) -> wp.array:
         if name in {"time_offset", "st_time_offset"}:
             return self.time_offset
-        return self.attrs[name]
+        if name in self.attrs:
+            return self.attrs[name]
+        if name in self.vec4_attrs:
+            return self.vec4_attrs[name]
+        if name in self.int_attrs:
+            return self.int_attrs[name]
+        raise KeyError(name)
 
     def clamp_count(self):
-        wp.launch(
-            k_clamp_count, dim=1, inputs=[self.count, self.capacity],
-            device=self.device,
-        )
+        wp.launch(k_clamp_count, dim=1, inputs=[self.count, self.capacity],
+                  device=self.device)
 
     def refresh_host_count(self) -> int:
         self.clamp_count()
@@ -154,49 +228,132 @@ class ParticleSystem:
     def clear(self):
         self.count.zero_()
         self.time_offset.zero_()
+        for value in (*self.vec4_attrs.values(), *self.int_attrs.values()):
+            value.zero_()
         self.host_count = 0
+        self.next_uid = 1
 
     def resized_copy(self, capacity: int) -> "ParticleSystem":
-        """Allocate a larger pool and copy the live prefix without swapping it.
-
-        Callers own the final atomic swap.  If allocation or copying raises,
-        this object remains the authoritative particle pool.
-        """
+        """Allocate a larger pool and copy the complete live prefix."""
         capacity = int(capacity)
         if capacity <= self.capacity:
             raise ValueError("resized particle capacity must be larger")
         count = self.refresh_host_count()
-        grown = ParticleSystem(capacity, self.device)
+        grown = ParticleSystem(capacity, self.device, self.optional_channels)
         if count:
             wp.copy(grown.position, self.position, count=count)
             wp.copy(grown.velocity, self.velocity, count=count)
             for name in self.ATTR_NAMES:
                 wp.copy(grown.attrs[name], self.attrs[name], count=count)
+            for name in self.vec4_attrs:
+                wp.copy(grown.vec4_attrs[name], self.vec4_attrs[name], count=count)
+            for name in self.int_attrs:
+                wp.copy(grown.int_attrs[name], self.int_attrs[name], count=count)
             wp.copy(grown.time_offset, self.time_offset, count=count)
             wp.copy(grown.alive, self.alive, count=count)
             wp.copy(grown.voxel_index, self.voxel_index, count=count)
         wp.copy(grown.count, self.count, count=1)
         grown.host_count = count
+        grown.next_uid = int(self.next_uid)
         return grown
 
-    def compact(self, count_hint: int | None = None):
-        """Remove dead particles (alive==0) with a GPU scan + scatter.
+    def checkpoint_arrays(self, count: int) -> dict[str, np.ndarray]:
+        """Return enabled product channels as owned checkpoint arrays."""
+        result = {}
+        for name, value in self.vec4_attrs.items():
+            result[f"particle_attr_{name}"] = np.ascontiguousarray(
+                value.numpy()[:count], dtype=np.float32)
+        for name, value in self.int_attrs.items():
+            result[f"particle_attr_{name}"] = np.ascontiguousarray(
+                value.numpy()[:count], dtype=np.int32)
+        return result
 
-        Args:
-            count_hint: Optional upper bound for the live particle prefix. When
-                provided by the solver, scan and scatter only that active range.
-        """
-        n = self.capacity if count_hint is None else max(0, min(int(count_hint), self.capacity))
+    def restore_checkpoint_prefix(self, arrays, count: int) -> None:
+        """Validate and restore the complete persistent liquid prefix."""
+        count = int(count)
+        if count < 0 or count > self.capacity:
+            raise ValueError(
+                f"particle checkpoint count {count} exceeds capacity {self.capacity}")
+        required = {
+            "particle_position": ((count, 3), np.float32),
+            "particle_velocity": ((count, 3), np.float32),
+            "particle_alive": ((count,), np.int32),
+            "particle_time_offset": ((count,), np.float32),
+        }
+        for name in self.ATTR_NAMES:
+            required[f"particle_attr_{name}"] = ((count,), np.float32)
+        for name in self.vec4_attrs:
+            required[f"particle_attr_{name}"] = ((count, 4), np.float32)
+        for name in self.int_attrs:
+            required[f"particle_attr_{name}"] = ((count,), np.int32)
+        normalized = {}
+        for name, (shape, dtype) in required.items():
+            if name not in arrays:
+                raise ValueError(f"particle checkpoint is missing {name}")
+            value = np.asarray(arrays[name])
+            if value.shape != shape:
+                raise ValueError(f"{name} has shape {value.shape}; expected {shape}")
+            value = np.ascontiguousarray(value, dtype=dtype)
+            if value.dtype.kind == "f" and not np.all(np.isfinite(value)):
+                raise ValueError(f"{name} contains non-finite values")
+            normalized[name] = value
+        alive = normalized["particle_alive"]
+        if np.any((alive != 0) & (alive != 1)):
+            raise ValueError("particle_alive must contain only 0 or 1")
+        if "uid" in self.int_attrs:
+            uid = normalized["particle_attr_uid"]
+            if np.any(uid <= 0) or len(np.unique(uid)) != count:
+                raise ValueError("particle_attr_uid must contain unique positive IDs")
+
+        for value in (
+                self.position, self.velocity, self.time_offset, self.alive,
+                self.voxel_index, self.scan_tmp, self._position2,
+                self._velocity2, self._time_offset2):
+            value.zero_()
+        for value in (
+                *self.attrs.values(), *self._attrs2.values(),
+                *self.vec4_attrs.values(), *self._vec4_attrs2.values(),
+                *self.int_attrs.values(), *self._int_attrs2.values()):
+            value.zero_()
+        if count:
+            wp.copy(self.position, wp.array(
+                normalized["particle_position"], dtype=wp.vec3, device=self.device),
+                count=count)
+            wp.copy(self.velocity, wp.array(
+                normalized["particle_velocity"], dtype=wp.vec3, device=self.device),
+                count=count)
+            wp.copy(self.alive, wp.array(
+                alive, dtype=wp.int32, device=self.device), count=count)
+            wp.copy(self.time_offset, wp.array(
+                normalized["particle_time_offset"], dtype=float, device=self.device),
+                count=count)
+            for name in self.ATTR_NAMES:
+                wp.copy(self.attrs[name], wp.array(
+                    normalized[f"particle_attr_{name}"], dtype=float,
+                    device=self.device), count=count)
+            for name in self.vec4_attrs:
+                wp.copy(self.vec4_attrs[name], wp.array(
+                    normalized[f"particle_attr_{name}"], dtype=wp.vec4,
+                    device=self.device), count=count)
+            for name in self.int_attrs:
+                wp.copy(self.int_attrs[name], wp.array(
+                    normalized[f"particle_attr_{name}"], dtype=wp.int32,
+                    device=self.device), count=count)
+        wp.copy(self.count, wp.array([count], dtype=wp.int32, device=self.device),
+                count=1)
+        self._count2.zero_()
+        self.host_count = count
+
+    def compact(self, count_hint: int | None = None):
+        """Remove dead particles while keeping every enabled channel aligned."""
+        n = self.capacity if count_hint is None else max(
+            0, min(int(count_hint), self.capacity))
         if n <= 0:
             self.count.zero_()
             self.time_offset.zero_()
             self.host_count = 0
             return
         self.clamp_count()
-
-        # The solver keeps host_count as an upper bound on device count. Use
-        # that bound here so compaction does not silently return to capacity
-        # scans after active-work launch bounds have trimmed the hot path.
         alive = self.alive if count_hint is None else self.alive[:n]
         scan_tmp = self.scan_tmp if count_hint is None else self.scan_tmp[:n]
         count_in = self.count
@@ -207,40 +364,44 @@ class ParticleSystem:
             count_in = self._count2
             count_out = self.count
         wp.utils.array_scan(alive, scan_tmp, inclusive=False)
-        wp.launch(
-            k_last_offset_count,
-            dim=1,
-            inputs=[self.alive, self.scan_tmp, count_in, count_out],
-            device=self.device,
-        )
-        wp.launch(
-            k_compact_alive_scatter,
-            dim=n,
-            inputs=[
+        wp.launch(k_last_offset_count, dim=1,
+                  inputs=[self.alive, self.scan_tmp, count_in, count_out],
+                  device=self.device)
+        wp.launch(k_compact_alive_scatter, dim=n, inputs=[
+            self.alive, self.scan_tmp, count_in,
+            self.position, self.velocity,
+            self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
+            self.attrs["viscosity"], self.attrs["density"], self.time_offset,
+            self._position2, self._velocity2,
+            self._attrs2["age"], self._attrs2["life"],
+            self._attrs2["temperature"], self._attrs2["viscosity"],
+            self._attrs2["density"], self._time_offset2, count_out,
+        ], device=self.device)
+        for name in self.vec4_attrs:
+            wp.launch(k_compact_vec4_scatter, dim=n, inputs=[
                 self.alive, self.scan_tmp, count_in,
-                self.position, self.velocity,
-                self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
-                self.attrs["viscosity"], self.attrs["density"],
-                self.time_offset,
-                self._position2, self._velocity2,
-                self._attrs2["age"], self._attrs2["life"], self._attrs2["temperature"],
-                self._attrs2["viscosity"], self._attrs2["density"],
-                self._time_offset2,
-                count_out,
-            ],
-            device=self.device,
-        )
-        # swap buffers
+                self.vec4_attrs[name], self._vec4_attrs2[name],
+            ], device=self.device)
+        for name in self.int_attrs:
+            wp.launch(k_compact_int_scatter, dim=n, inputs=[
+                self.alive, self.scan_tmp, count_in,
+                self.int_attrs[name], self._int_attrs2[name],
+            ], device=self.device)
         self.position, self._position2 = self._position2, self.position
         self.velocity, self._velocity2 = self._velocity2, self.velocity
         self.time_offset, self._time_offset2 = self._time_offset2, self.time_offset
-        for k in self.ATTR_NAMES:
-            self.attrs[k], self._attrs2[k] = self._attrs2[k], self.attrs[k]
+        for name in self.ATTR_NAMES:
+            self.attrs[name], self._attrs2[name] = self._attrs2[name], self.attrs[name]
+        for name in self.vec4_attrs:
+            self.vec4_attrs[name], self._vec4_attrs2[name] = (
+                self._vec4_attrs2[name], self.vec4_attrs[name])
+        for name in self.int_attrs:
+            self.int_attrs[name], self._int_attrs2[name] = (
+                self._int_attrs2[name], self.int_attrs[name])
         if count_out is self._count2:
             wp.copy(self.count, self._count2)
-        # Re-mark the surviving prefix as alive so the next scan is valid.
-        wp.launch(k_reset_alive, dim=n,
-                  inputs=[self.count, self.alive], device=self.device)
+        wp.launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
+                  device=self.device)
 
 
 class ParticleBins:

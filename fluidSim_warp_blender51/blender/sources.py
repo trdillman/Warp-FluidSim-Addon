@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import bpy
 import numpy as np
 
+from ..sim.attributes import stable_source_id
+from .scene_inputs import persistent_source_key
+
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
@@ -21,6 +24,8 @@ class PreparedParticleSeed:
     temperature: float
     viscosity: float
     density: float
+    color: tuple[float, float, float, float]
+    source_id: int
     life: float
     use_lifespan: bool
 
@@ -178,8 +183,7 @@ def prepare_object_particles(scene, obj, velocity=(0.0, 0.0, 0.0),
     if not len(points):
         return None
     pg = obj.fluidsim
-    pointer = getattr(obj, "as_pointer", None)
-    identity = int(pointer()) if callable(pointer) else id(obj)
+    identity = persistent_source_key(obj)
     return PreparedParticleSeed(
         stable_id=f"blender-seed:{identity}",
         positions=points,
@@ -188,6 +192,9 @@ def prepare_object_particles(scene, obj, velocity=(0.0, 0.0, 0.0),
         temperature=float(pg.temperature),
         viscosity=float(pg.viscosity),
         density=float(pg.density),
+        color=tuple(float(value) for value in getattr(
+            pg, "source_color", (0.1, 0.45, 1.0, 1.0))),
+        source_id=stable_source_id(f"blender-seed:{identity}"),
         life=((float(pg.life_min) + float(pg.life_max)) * 0.5
               if pg.use_lifespan else 0.0),
         use_lifespan=bool(pg.use_lifespan),

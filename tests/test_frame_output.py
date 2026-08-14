@@ -98,9 +98,16 @@ def test_solver_reset_invalidates_frame_zero_host_snapshot():
     solver = FluidSolver.__new__(FluidSolver)
     solver.frame = 0
     solver._host_frame_cache = None
+    solver.settings = SimpleNamespace(
+        spacetime_seed=0,
+        spacetime_reference_mass=0.0,
+        spacetime_enabled=False,
+    )
     solver.particles = SimpleNamespace(
         clear=lambda: None, host_count=1, refresh_host_count=lambda: 1,
-        position=_Array([[1, 2, 3]], calls, "positions"))
+        position=_Array([[1, 2, 3]], calls, "positions"),
+        optional_channels=(),
+    )
     solver.whitewater = SimpleNamespace(clear=lambda: None)
     solver.churn = SimpleNamespace(zero=lambda: None)
     solver.grid = SimpleNamespace(
@@ -171,7 +178,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
         "particle_time_offset", "whitewater_velocities", "whitewater_age",
         "whitewater_life", "whitewater_required", "whitewater_available",
         "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
-        "whitewater_status"}
+        "whitewater_status", "attribute_schema_version",
+        "attribute_inventory_json", "surface_attribute_transfer_method"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
     for name in ("age", "life", "temperature", "viscosity", "density",
                  "time_offset", "whitewater", "whitewater_velocity",

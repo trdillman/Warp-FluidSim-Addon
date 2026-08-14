@@ -60,11 +60,16 @@ def test_solver_reset_clears_surface_extractor_buffers():
 
     solver = object.__new__(FluidSolver)
     solver.particles = Clearable()
+    solver.particles.optional_channels = ()
     solver.whitewater = Clearable()
     solver.churn = Clearable()
     solver.grid = Grid()
     extractor = Extractor()
-    solver.settings = SimpleNamespace(spacetime_enabled=False, spacetime_seed=1729)
+    solver.settings = SimpleNamespace(
+        spacetime_enabled=False,
+        spacetime_seed=1729,
+        spacetime_reference_mass=0.0,
+    )
     calibration_calls = []
     solver._calibrate_st_reference_mass = lambda: calibration_calls.append("calibrated")
     solver.surface = SimpleNamespace(reset=lambda: extractor.reset_buffers())

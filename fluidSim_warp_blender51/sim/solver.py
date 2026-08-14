@@ -38,6 +38,7 @@ from .fields import (
     voxel_center_world,
 )
 from .particles import ParticleSystem, ParticleBins
+from .attributes import persistent_particle_channels
 from .quality_contract import resolve_quality
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
@@ -525,6 +526,33 @@ class SolverSettings:
     surface_smooth_iterations: int = 1
     surface_smooth_strength: float = 0.7
 
+    # Artist-ready output inventory.  These fields are signature-bound and
+    # selected before initialization so optional particle channels stay opt-in.
+    surface_attribute_velocity: bool = True
+    surface_attribute_speed: bool = False
+    surface_attribute_vorticity: bool = False
+    surface_attribute_age: bool = False
+    surface_attribute_lifetime: bool = False
+    surface_attribute_color: bool = False
+    surface_attribute_source_id: bool = False
+    surface_attribute_viscosity: bool = False
+    surface_attribute_density: bool = False
+    surface_attribute_motion: bool = True
+    particles_attribute_velocity: bool = False
+    particles_attribute_speed: bool = False
+    particles_attribute_vorticity: bool = False
+    particles_attribute_age: bool = True
+    particles_attribute_lifetime: bool = True
+    particles_attribute_color: bool = False
+    particles_attribute_source_id: bool = False
+    particles_attribute_uid: bool = False
+    particles_attribute_viscosity: bool = False
+    particles_attribute_density: bool = False
+    whitewater_attribute_velocity: bool = False
+    whitewater_attribute_speed: bool = False
+    whitewater_attribute_age: bool = True
+    whitewater_attribute_lifetime: bool = True
+
     whitewater_enabled: bool = False
     churn_decay: float = 1.0
     churn_gain: float = 1.0
@@ -610,6 +638,21 @@ class FrameStats:
         }
 
 
+_CHECKPOINT_FIELD_NAMES = (
+    "vel.u", "vel.v", "vel.w", "vel.wu", "vel.wv", "vel.ww",
+    "vel_saved_u", "vel_saved_v", "vel_saved_w",
+    "voxel_type.data", "temperature.data", "viscosity_field.data",
+    "density.data", "churn.data",
+)
+
+
+def _resolve_attr(root, dotted_name: str):
+    value = root
+    for component in dotted_name.split("."):
+        value = getattr(value, component)
+    return value
+
+
 class FluidSolver:
     """GPU-resident FLIP/PIC liquid solver."""
 
@@ -682,7 +725,9 @@ class FluidSolver:
             g.num_leaf_cells, -1, dtype=wp.int32, device=self.device
         )
 
-        self.particles = ParticleSystem(settings.max_particles, self.device)
+        self.particles = ParticleSystem(
+            settings.max_particles, self.device,
+            persistent_particle_channels(settings))
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
         self.whitewater = WhitewaterSystem(
             settings.max_whitewater, self.device,
@@ -855,6 +900,14 @@ class FluidSolver:
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing.reset()
+        expected_channels = persistent_particle_channels(self.settings)
+        if tuple(self.particles.optional_channels) != tuple(expected_channels):
+            # Reset is the explicit transaction boundary for persistent output
+            # inventory changes.  No live state is copied across this swap.
+            old_particles = self.particles
+            self.particles = ParticleSystem(
+                old_particles.capacity, self.device, expected_channels)
+            del old_particles
         self.particles.clear()
         self.whitewater.clear()
         self.churn.zero()
@@ -875,6 +928,257 @@ class FluidSolver:
         self._nvox = max(1, self.grid.active_voxel_count)
         if settings is not None:
             self.surface.reset()
+
+    def export_checkpoint_state(self):
+        """Synchronize once and return host-owned deterministic restart state.
+
+        Scratch pressure, collision, binning, surface-extraction, and temporary
+        reduction arrays are omitted because ``import_checkpoint_state`` clears
+        or rebuilds them before the next source/P2G transaction.
+        """
+        wp.synchronize_device(self.device)
+        leaf_count = int(self.grid.refresh_topology_counts())
+        particle_count = int(self.particles.refresh_host_count())
+        whitewater_count = int(self.whitewater.refresh_host_count())
+        active_voxels = leaf_count * C.LEAF_VOLUME
+
+        arrays = {
+            "grid_leaf_coords": np.ascontiguousarray(
+                self.grid.leaf_coords.numpy()[:leaf_count], dtype=np.int32),
+            "grid_old_leaf_table": np.ascontiguousarray(
+                self.old_leaf_table.numpy(), dtype=np.int32),
+            "particle_position": np.ascontiguousarray(
+                self.particles.position.numpy()[:particle_count], dtype=np.float32),
+            "particle_velocity": np.ascontiguousarray(
+                self.particles.velocity.numpy()[:particle_count], dtype=np.float32),
+            "particle_alive": np.ascontiguousarray(
+                self.particles.alive.numpy()[:particle_count], dtype=np.int32),
+            "particle_time_offset": np.ascontiguousarray(
+                self.particles.time_offset.numpy()[:particle_count], dtype=np.float32),
+            "whitewater_position": np.ascontiguousarray(
+                self.whitewater.position.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_velocity": np.ascontiguousarray(
+                self.whitewater.velocity.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_age": np.ascontiguousarray(
+                self.whitewater.age.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_life": np.ascontiguousarray(
+                self.whitewater.life.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_alive": np.ascontiguousarray(
+                self.whitewater.alive.numpy()[:whitewater_count], dtype=np.int32),
+        }
+        for name in self.particles.ATTR_NAMES:
+            arrays[f"particle_attr_{name}"] = np.ascontiguousarray(
+                self.particles.attrs[name].numpy()[:particle_count],
+                dtype=np.float32)
+        arrays.update(self.particles.checkpoint_arrays(particle_count))
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
+                _resolve_attr(self, dotted_name).numpy()[:active_voxels])
+
+        return {
+            "arrays": arrays,
+            "scalars": {
+                "frame": int(self.frame),
+                "sim_time": float(self.sim_time),
+                "leaf_count": leaf_count,
+                "particle_count": particle_count,
+                "whitewater_count": whitewater_count,
+                "leaf_capacity": int(self.grid.capacity),
+                "particle_capacity": int(self.particles.capacity),
+                "whitewater_capacity": int(self.whitewater.capacity),
+                "whitewater_emit_seed": int(self._whitewater_emit_seed),
+                "st_step_seed": int(self._st_step_seed),
+                "st_previous_dt": float(self._st_previous_dt),
+                "st_reference_mass_cached": float(
+                    self._st_reference_mass_cached),
+                "next_particle_uid": int(self.particles.next_uid),
+                "particle_optional_channels": ",".join(
+                    self.particles.optional_channels),
+            },
+            "source_state": self.sourcing.export_checkpoint_state(),
+        }
+
+    def _validate_checkpoint_state(self, state):
+        if not isinstance(state, dict) or set(state) != {
+                "arrays", "scalars", "source_state"}:
+            raise ValueError("solver checkpoint state has an invalid schema")
+        arrays = state["arrays"]
+        scalars = state["scalars"]
+        if not isinstance(arrays, dict) or not isinstance(scalars, dict):
+            raise ValueError("solver checkpoint arrays/scalars must be mappings")
+        required_scalars = {
+            "frame", "sim_time", "leaf_count", "particle_count",
+            "whitewater_count", "leaf_capacity", "particle_capacity",
+            "whitewater_capacity", "whitewater_emit_seed", "st_step_seed",
+            "st_previous_dt", "st_reference_mass_cached",
+        }
+        missing = required_scalars - set(scalars)
+        if missing:
+            raise ValueError(f"solver checkpoint is missing scalars {sorted(missing)}")
+        counts = {
+            name: int(scalars[name])
+            for name in ("leaf_count", "particle_count", "whitewater_count")
+        }
+        if any(value < 0 for value in counts.values()):
+            raise ValueError("solver checkpoint counts must be non-negative")
+        if counts["leaf_count"] > self.grid.capacity:
+            raise ValueError("checkpoint leaf count exceeds current capacity")
+        if counts["whitewater_count"] > self.whitewater.capacity:
+            raise ValueError("checkpoint whitewater count exceeds current capacity")
+        required_arrays = {
+            "grid_leaf_coords", "grid_old_leaf_table",
+            "particle_position", "particle_velocity", "particle_alive",
+            "particle_time_offset", "whitewater_position",
+            "whitewater_velocity", "whitewater_age", "whitewater_life",
+            "whitewater_alive",
+        }
+        required_arrays.update(
+            f"particle_attr_{name}" for name in self.particles.ATTR_NAMES)
+        required_arrays.update(
+            f"particle_attr_{name}" for name in self.particles.optional_channels)
+        if (self.particles.optional_channels
+                and "particle_optional_channels" not in scalars):
+            raise ValueError(
+                "checkpoint is missing optional particle inventory metadata")
+        saved_channels = str(scalars.get("particle_optional_channels", ""))
+        saved_channels = tuple(filter(None, saved_channels.split(",")))
+        if saved_channels != tuple(self.particles.optional_channels):
+            raise ValueError(
+                "checkpoint optional particle inventory does not match settings")
+        if "uid" in self.particles.optional_channels:
+            if "next_particle_uid" not in scalars:
+                raise ValueError("UID-enabled checkpoint is missing next_particle_uid")
+            if int(scalars["next_particle_uid"]) <= 0:
+                raise ValueError("next_particle_uid must be positive")
+        required_arrays.update(
+            f"field_{name.replace('.', '_')}" for name in _CHECKPOINT_FIELD_NAMES)
+        missing_arrays = required_arrays - set(arrays)
+        if missing_arrays:
+            raise ValueError(
+                f"solver checkpoint is missing arrays {sorted(missing_arrays)}")
+        for name in required_arrays:
+            value = np.asarray(arrays[name])
+            if value.dtype.hasobject:
+                raise ValueError(f"checkpoint array {name} uses object dtype")
+            if value.dtype.kind in "fc" and not np.all(np.isfinite(value)):
+                raise ValueError(f"checkpoint array {name} is non-finite")
+        if np.asarray(arrays["grid_leaf_coords"]).shape != (
+                counts["leaf_count"], 3):
+            raise ValueError("grid_leaf_coords shape does not match leaf_count")
+        if np.asarray(arrays["grid_old_leaf_table"]).shape != (
+                self.grid.num_leaf_cells,):
+            raise ValueError("grid_old_leaf_table has the wrong shape")
+        active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            key = f"field_{dotted_name.replace('.', '_')}"
+            if np.asarray(arrays[key]).shape != (active_voxels,):
+                raise ValueError(f"{key} shape does not match active topology")
+        return arrays, scalars, counts
+
+    def import_checkpoint_state(self, state):
+        """Restore into a newly initialized, signature-compatible solver."""
+        arrays, scalars, counts = self._validate_checkpoint_state(state)
+        particle_count = counts["particle_count"]
+        if particle_count > self.particles.capacity:
+            growth = self.ensure_particle_capacity(particle_count)
+            if str(getattr(growth, "status", "")) not in {
+                    "GROWN", "SUFFICIENT"}:
+                raise ValueError(
+                    "checkpoint particle count cannot be admitted: "
+                    f"{getattr(growth, 'reason', growth)}")
+
+        self.grid.restore_topology(arrays["grid_leaf_coords"])
+        active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            target = _resolve_attr(self, dotted_name)
+            target.zero_()
+            if active_voxels:
+                source = np.ascontiguousarray(
+                    arrays[f"field_{dotted_name.replace('.', '_')}"])
+                dtype = wp.int32 if source.dtype.kind in "iu" else float
+                wp.copy(
+                    target,
+                    wp.array(source, dtype=dtype, device=self.device),
+                    count=active_voxels)
+        old_table = np.ascontiguousarray(
+            arrays["grid_old_leaf_table"], dtype=np.int32)
+        wp.copy(
+            self.old_leaf_table,
+            wp.array(old_table, dtype=wp.int32, device=self.device))
+        self.particles.restore_checkpoint_prefix(arrays, particle_count)
+        if "uid" in self.particles.optional_channels:
+            self.particles.next_uid = int(scalars["next_particle_uid"])
+            if particle_count:
+                maximum_uid = int(np.max(np.asarray(
+                    arrays["particle_attr_uid"], dtype=np.int64)))
+                if self.particles.next_uid <= maximum_uid:
+                    raise ValueError(
+                        "next_particle_uid must exceed every restored UID")
+        else:
+            self.particles.next_uid = int(scalars.get("next_particle_uid", 1))
+        self.whitewater.restore_checkpoint_prefix(
+            arrays, counts["whitewater_count"])
+        self.sourcing.import_checkpoint_state(state["source_state"])
+
+        self.frame = int(scalars["frame"])
+        self.sim_time = float(scalars["sim_time"])
+        self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
+        self._st_step_seed = int(scalars["st_step_seed"])
+        self._st_previous_dt = float(scalars["st_previous_dt"])
+        self._st_reference_mass_cached = float(
+            scalars["st_reference_mass_cached"])
+        self._rebuild_transient_state_after_restore()
+        self.assert_checkpoint_invariants()
+
+    def _rebuild_transient_state_after_restore(self):
+        """Clear/rebuild every intentionally omitted scratch subsystem."""
+        self.bins.zero()
+        self.voxel_counts.zero()
+        for value in (
+                self.tmp_u, self.tmp_v, self.tmp_w,
+                self.collision_impact_u, self.collision_impact_v,
+                self.collision_impact_w, self.collision_vel,
+                self.collision_friction, self.collision_restitution):
+            value.zero_()
+        self.collision_sdf.zero()
+        self.churn_tmp.zero()
+        self.attr_weight.zero()
+        self.ww_density.zero()
+        self._force_fields_dev = None
+        self._host_frame_cache = None
+        self._nvox = max(1, self.grid.active_voxel_count)
+        self.surface.reset()
+        self.whitewater.reset_frame_diagnostics()
+        self.stats = FrameStats()
+        wp.synchronize_device(self.device)
+
+    def assert_checkpoint_invariants(self):
+        leaf_count = int(self.grid.refresh_topology_counts())
+        particle_count = int(self.particles.refresh_host_count())
+        whitewater_count = int(self.whitewater.refresh_host_count())
+        if not 0 <= leaf_count <= self.grid.capacity:
+            raise ValueError("restored leaf count violates capacity")
+        if not 0 <= particle_count <= self.particles.capacity:
+            raise ValueError("restored particle count violates capacity")
+        if not 0 <= whitewater_count <= self.whitewater.capacity:
+            raise ValueError("restored whitewater count violates capacity")
+        for name, value in (
+                ("particle_position", self.particles.position.numpy()[:particle_count]),
+                ("particle_velocity", self.particles.velocity.numpy()[:particle_count]),
+                ("whitewater_position", self.whitewater.position.numpy()[:whitewater_count]),
+                ("whitewater_velocity", self.whitewater.velocity.numpy()[:whitewater_count])):
+            if not np.all(np.isfinite(value)):
+                raise ValueError(f"restored {name} contains non-finite values")
+        if "uid" in self.particles.optional_channels and particle_count:
+            uid = self.particles.int_attrs["uid"].numpy()[:particle_count]
+            if np.any(uid <= 0) or len(np.unique(uid)) != particle_count:
+                raise ValueError("restored particle UIDs are invalid")
+            if int(self.particles.next_uid) <= int(np.max(uid)):
+                raise ValueError("restored next_particle_uid is not monotonic")
+        if not math.isfinite(self.sim_time) or not math.isfinite(
+                self._st_previous_dt):
+            raise ValueError("restored timing state is non-finite")
+        return True
 
     def release(self):
         """Break GPU-owning backreferences before the session drops this solver."""
@@ -1887,15 +2191,18 @@ class FluidSolver:
 
     def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
                                velocities=None, temperature=0.0, viscosity=0.0,
-                               density=1.0, life=0.0, use_lifespan=False):
+                               density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                               source_id=0, life=0.0, use_lifespan=False):
         return self.sourcing.inject_particles_exact(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
+            color=color, source_id=source_id,
             life=life, use_lifespan=use_lifespan)
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
-                         density=1.0, life=0.0, use_lifespan=False):
+                         density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                         source_id=0, life=0.0, use_lifespan=False):
         """Append external world-space points as liquid particles.
 
         ``positions``: (N,3) array-like. Optional per-particle ``velocities``
@@ -1908,6 +2215,8 @@ class FluidSolver:
             temperature=temperature,
             viscosity=viscosity,
             density=density,
+            color=color,
+            source_id=source_id,
             life=life,
             use_lifespan=use_lifespan,
         )

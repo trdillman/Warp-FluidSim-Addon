@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "thick_liquid",
+  "name": "Thick Liquid",
+  "description": "Stylized medium-viscosity liquid with a broad, smooth surface. Changes solver state and requires Reset.",
+  "expected_scale": "1 Blender unit = 0.25-1 metre; product pours and stylized shots",
+  "performance_cost": "High",
+  "requires_reset": true,
+  "source_version": "1.0.248",
+  "settings": {
+    "voxel_size": 0.055,
+    "leaf_capacity": 12288,
+    "max_particles": 2000000,
+    "particles_per_voxel": 9,
+    "sample_type": "FLIP",
+    "flip_ratio": 0.75,
+    "trace_mode": "RK3",
+    "min_substeps": 2,
+    "max_substeps": 10,
+    "pressure_solver": "PCG",
+    "viscosity_enabled": true,
+    "viscosity_solver": "PCG",
+    "viscosity_constant": 8.0,
+    "viscosity_iterations": 250,
+    "particle_radius_scale": 1.2,
+    "surface_resolution_mode": "MULTIPLIER",
+    "surface_resolution_multiplier": 1.5,
+    "surface_smooth_iterations": 3,
+    "surface_smooth_strength": 0.7,
+    "whitewater_enabled": false,
+    "checkpoint_interval": 1
+  }
+}

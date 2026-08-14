@@ -23,6 +23,17 @@ class FluidSimPanel:
     bl_category = "FluidSim"
 
 
+def _runtime_ui_state():
+    """Return the cached runtime probe, selection, readiness, and UI message."""
+    from .preferences import configured_device
+    from .runtime.warp_runtime import probe_runtime, runtime_status_for_device
+
+    probe = probe_runtime()
+    selected = configured_device()
+    runtime_ready, message = runtime_status_for_device(selected, probe=probe)
+    return probe, selected, runtime_ready, message
+
+
 def _draw_interaction_tier(layout, text, icon="INFO"):
     """Draw a structural update-timing label, not explanatory guidance."""
     row = layout.row() if hasattr(layout, "row") else layout
@@ -80,6 +91,49 @@ def _draw_wrapped(layout, text, *, icon="NONE", width=48):
     lines = textwrap.wrap(str(text), width=max(24, int(width))) or [""]
     for index, line in enumerate(lines):
         layout.label(text=line, icon=icon if index == 0 else "NONE")
+
+
+def _format_bytes(value):
+    value = max(0, int(value))
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    amount = float(value)
+    for unit in units:
+        if amount < 1024.0 or unit == units[-1]:
+            return f"{amount:.2f} {unit}"
+        amount /= 1024.0
+    return f"{amount:.2f} TiB"
+
+
+def _published_attribute_counts(scene):
+    from .blender import output_publication
+
+    result = {"surface": 0, "particles": 0, "whitewater": 0}
+    surface = output_publication.output_object(scene, output_publication.SURFACE_NAME)
+    if surface is not None and getattr(surface, "type", "") == "MESH":
+        result["surface"] = len(getattr(surface.data, "vertices", ()))
+    for kind, output_name in (
+        ("particles", output_publication.PARTICLES_NAME),
+        ("whitewater", output_publication.WHITEWATER_NAME),
+    ):
+        obj = output_publication.output_object(scene, output_name)
+        if obj is None:
+            continue
+        try:
+            result[kind] = int(obj.get(output_publication.POINT_COUNT_TAG, 0))
+        except (AttributeError, TypeError, ValueError):
+            result[kind] = len(getattr(getattr(obj, "data", None), "points", ()))
+    return result
+
+
+def _draw_attribute_group(layout, fs, output_kind, title, icon):
+    from .sim.attributes import OUTPUT_ATTRIBUTE_KEYS, OUTPUT_TOGGLE_NAMES
+
+    box = layout.box()
+    box.label(text=title, icon=icon)
+    grid = box.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+    for key in OUTPUT_ATTRIBUTE_KEYS[output_kind]:
+        grid.prop(fs, OUTPUT_TOGGLE_NAMES[output_kind][key])
+    return box
 
 
 def _draw_header_interaction(self, context):
@@ -205,24 +259,61 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
 
         sess = session()
         owned_capacity_plan = capacity_plan_for_scene(context.scene)
+        runtime_probe, selected_device, runtime_ready, runtime_message = (
+            _runtime_ui_state())
         _draw_pending_banner(layout, context.scene, show_actions=True)
 
+        runtime_box = layout.box()
+        runtime_box.label(
+            text=runtime_message,
+            icon="CHECKMARK" if runtime_ready else "ERROR",
+        )
+        runtime_row = runtime_box.row(align=True)
+        runtime_row.label(
+            text=(f"Selected: {selected_device}" if selected_device
+                  else "No CUDA device selected"))
+        runtime_row.operator("fluidsim.refresh_runtime_probe",
+                             text="Refresh", icon="FILE_REFRESH")
+        if runtime_probe.module_file:
+            runtime_box.label(text=f"Warp module: {runtime_probe.module_file}")
+
+        setup = layout.box()
+        setup.label(text="Guided Setup", icon="MOD_FLUIDSIM")
+        setup.prop(fs, "setup_mode", text="Mode")
+        setup.prop(fs, "product_preset", text="Preset")
+        preset_row = setup.row(align=True)
+        preset_row.operator(
+            "fluidsim.apply_product_preset", text="Apply Preset", icon="PRESET")
+        preset_row.operator(
+            "fluidsim.save_product_preset", text="Save User Preset", icon="FILE_TICK")
+        run_setup = setup.operator(
+            "fluidsim.setup_scene", text="Configure Selected Object(s)", icon="CHECKMARK")
+        run_setup.mode = fs.setup_mode
+        run_setup.preset_id = fs.product_preset
+        if fs.active_preset_id:
+            setup.label(text=f"Active preset: {fs.active_preset_id}", icon="INFO")
+
         col = layout.column(align=True)
-        col.operator("fluidsim.setup_scene", icon="MOD_FLUIDSIM")
-        col.operator("fluidsim.initialize", icon="PLAY",
-                     text="Initialize Solver" if not sess.active
-                     else "Reinitialize Solver")
+        init_col = col.column(align=True)
+        init_col.enabled = runtime_ready
+        init_col.operator("fluidsim.initialize", icon="PLAY",
+                          text="Initialize Solver" if not sess.active
+                          else "Reinitialize Solver")
 
         row = layout.row(align=True)
-        row.enabled = sess.active
+        row.enabled = runtime_ready
         icon = "PAUSE" if fs.live else "PLAY"
-        row.operator("fluidsim.toggle_live", icon=icon,
-                     text="Live: On" if fs.live else "Live: Off")
+        live_text = (
+            "Initialize & Arm Live"
+            if not sess.active and not fs.live
+            else ("Live: On" if fs.live else "Live: Off")
+        )
+        row.operator("fluidsim.toggle_live", icon=icon, text=live_text)
         row.operator("fluidsim.reset", text="", icon="FILE_REFRESH")
         row.operator("fluidsim.release", text="", icon="X")
 
         row = layout.row(align=True)
-        row.enabled = sess.active
+        row.enabled = sess.active and runtime_ready
         op = row.operator("fluidsim.step", text="Step 1")
         op.frames = 1
         op = row.operator("fluidsim.step", text="Step 10")
@@ -616,6 +707,7 @@ class FLUIDSIM_PT_liquid_emitter_attributes(FluidSimPanel, bpy.types.Panel):
         col.prop(pg, "temperature")
         col.prop(pg, "viscosity")
         col.prop(pg, "density", text="Density Attribute")
+        col.prop(pg, "source_color", text="Simulation Color")
         col.prop(pg, "use_lifespan")
         if pg.use_lifespan:
             row = col.row(align=True)
@@ -985,7 +1077,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Output & Cache"
+    bl_label = "Output & Production Bake"
     bl_idname = "FLUIDSIM_PT_output"
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -995,20 +1087,110 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         col = layout.column(align=True)
         col.prop(fs, "output_collection_name")
         col.prop(fs, "show_overlay")
-        layout.separator()
+
+        playback = layout.box()
+        playback.label(text="Cache Playback", icon="PLAY")
+        playback.prop(fs, "cache_playback_enabled")
+        playback.prop(fs, "cache_enabled", text="Record v1 During Live Playback (Legacy)")
+
         box = layout.box()
-        box.label(text="Cache / Export", icon="DISK_DRIVE")
+        box.label(text="Production Bake", icon="RENDER_ANIMATION")
         box.prop(fs, "cache_path")
-        box.prop(fs, "cache_enabled")
-        box.prop(fs, "cache_playback_enabled")
-        box.prop(fs, "cache_use_custom_range")
-        sub = box.column(align=True)
+        box.prop(fs, "cache_format")
+        row = box.row(align=True)
+        row.prop(fs, "bake_start")
+        row.prop(fs, "bake_end")
+        row = box.row(align=True)
+        row.prop(fs, "checkpoint_interval")
+        row.prop(fs, "cache_compress")
+
+        active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+        box.prop(fs, "bake_progress", text=fs.bake_status.title())
+        if fs.bake_message:
+            _draw_wrapped(box, fs.bake_message, icon="INFO")
+        bake_row = box.row(align=True)
+        bake_row.enabled = runtime_ready
+        bake_row.active = not active
+        start_op = bake_row.operator("fluidsim.bake_start", text="Start", icon="PLAY")
+        start_op.restart_existing = False
+        bake_row.operator("fluidsim.bake_resume", text="Resume", icon="RECOVER_LAST")
+        cancel = box.row()
+        cancel.enabled = active
+        cancel.operator("fluidsim.bake_cancel", text="Cancel at Safe Boundary", icon="CANCEL")
+        restart = box.row()
+        restart.enabled = runtime_ready and not active
+        restart_op = restart.operator(
+            "fluidsim.bake_start", text="Restart Cache Explicitly", icon="FILE_REFRESH")
+        restart_op.restart_existing = True
+        box.operator("fluidsim.copy_bake_command", icon="COPYDOWN")
+
+        cache = layout.box()
+        cache.label(text="Cache Management", icon="DISK_DRIVE")
+        row = cache.row(align=True)
+        row.operator("fluidsim.cache_integrity_scan", text="Verify", icon="CHECKMARK")
+        row.operator("fluidsim.cache_remove_orphans", text="Remove Orphans", icon="TRASH")
+        row = cache.row(align=True)
+        row.operator("fluidsim.cache_open_folder", text="Open", icon="FILE_FOLDER")
+        row.operator("fluidsim.cache_move", text="Move", icon="FILE_PARENT")
+        row.operator("fluidsim.cache_rename", text="Rename", icon="GREASEPENCIL")
+        cache.operator("fluidsim.cache_free", text="Free Cache", icon="TRASH")
+
+        legacy = layout.box()
+        legacy.label(text="Legacy / Single Frame Export", icon="EXPORT")
+        legacy.prop(fs, "cache_use_custom_range")
+        sub = legacy.column(align=True)
         sub.enabled = fs.cache_use_custom_range
         row = sub.row(align=True)
         row.prop(fs, "cache_frame_start")
         row.prop(fs, "cache_frame_end")
-        box.operator("fluidsim.export_cache_sequence", icon="RENDER_ANIMATION")
-        box.operator("fluidsim.export_frame", icon="EXPORT")
+        legacy.operator("fluidsim.export_frame", icon="EXPORT")
+
+class FLUIDSIM_PT_render_attributes(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Render Attributes & Geometry Nodes"
+    bl_idname = "FLUIDSIM_PT_render_attributes"
+    bl_parent_id = "FLUIDSIM_PT_output"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        fs = scene.fluidsim
+        from .blender.geometry_nodes import ASSET_REVISION, installed_state
+        from .sim.attributes import estimate_attribute_bytes
+
+        _draw_pending_banner(layout, scene)
+        nodes = layout.box()
+        nodes.label(text="Bundled Render Setup", icon="GEOMETRY_NODES")
+        state = installed_state(scene)
+        ready = sum(revision == ASSET_REVISION for revision in state.values())
+        nodes.label(text=f"Current revision attached to {ready}/3 outputs")
+        row = nodes.row(align=True)
+        row.operator("fluidsim.install_render_nodes", text="Install Missing", icon="IMPORT")
+        update = row.operator(
+            "fluidsim.install_render_nodes", text="Update FluidSim Modifiers",
+            icon="FILE_REFRESH")
+        update.force = True
+        nodes.label(text="User node groups and user modifiers are never overwritten.")
+
+        _draw_interaction_tier(layout, "Attribute inventory applies after Reset", "FILE_REFRESH")
+        _draw_attribute_group(layout, fs, "surface", "Surface", "MESH_DATA")
+        _draw_attribute_group(layout, fs, "particles", "Liquid Particles", "PARTICLE_DATA")
+        _draw_attribute_group(layout, fs, "whitewater", "Whitewater", "MOD_FLUIDSIM")
+
+        counts = _published_attribute_counts(scene)
+        cost = estimate_attribute_bytes(fs, counts)
+        estimate = layout.box()
+        estimate.label(text="Current Published-Frame Attribute Cost", icon="MEMORY")
+        estimate.label(text=f"Surface: {_format_bytes(cost['surface'])}")
+        estimate.label(text=f"Liquid particles: {_format_bytes(cost['particles'])}")
+        estimate.label(text=f"Whitewater: {_format_bytes(cost['whitewater'])}")
+        estimate.label(text=f"Total uncompressed: {_format_bytes(cost['total'])}")
+        estimate.label(text=(
+            "fluidsim_velocity is world units/second; velocity is Blender "
+            "displacement per scene frame."
+        ))
+
 
 def _snippet_state_icon(snip):
     """Icon reflecting validation state of a snippet's current source."""
@@ -1268,6 +1450,7 @@ CLASSES = (
     FLUIDSIM_PT_physics,
     FLUIDSIM_PT_surface,
     FLUIDSIM_PT_output,
+    FLUIDSIM_PT_render_attributes,
     FLUIDSIM_PT_advanced,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,

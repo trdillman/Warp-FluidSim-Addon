@@ -89,12 +89,17 @@ def _check_cache_scene_key(scene, base, frame_data):
     from ..io import cache
 
     frame = int(frame_data.get("frame", -1))
-    metadata_key = str((cache.read_sequence_metadata(base) or {}).get("scene_key", ""))
+    metadata = cache.read_sequence_metadata(base) or {}
+    metadata_key = str(metadata.get("scene_key", ""))
     frame_key = (str(np.asarray(frame_data["scene_key"]).item())
                  if "scene_key" in frame_data else "")
     if not (metadata_key or frame_key):
         return
-    current = cache.scene_key(scene)
+    current = (
+        cache.signature_bundle(scene)["scene_key"]
+        if metadata.get("format_version") == 2
+        else cache.scene_key(scene)
+    )
     for candidate in (metadata_key, frame_key):
         if candidate and candidate != current:
             raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(

@@ -1,26 +1,9 @@
-"""FluidSim Warp - GPU liquid simulation for Blender 5.1.
+"""FluidSim Warp Blender extension registration.
 
-Native Blender port of the FluidSim OpenCL tool (fluidSim.cl 1.0.226) on
-NVIDIA Warp/CUDA. Interactive viewport simulation with sparse tiled leaf-grid fields,
-PIC/FLIP transfer, beta ST-FLIP, pressure projection (Jacobi/PCG), viscosity,
-decoupled-resolution surface extraction, whitewater, profiling, validation, and custom
-user-kernel extensibility.
+Release metadata is owned by ``blender_manifest.toml`` and runtime identity by
+``version.py``. Dependency probing is deliberately excluded from import-time
+registration so installed extensions use only package-declared wheels.
 """
-
-bl_info = {
-    "name": "FluidSim Warp",
-    "author": "FluidSim port (synthesized reference)",
-    "version": (1, 0, 243),
-    "blender": (5, 1, 0),
-    "location": "3D Viewport > Sidebar > FluidSim",
-    "description": "Interactive GPU liquid simulation with beta ST-FLIP",
-    "category": "Physics",
-}
-
-
-from .warp_discovery import ensure_warp_discoverable
-
-ensure_warp_discoverable()
 
 
 def register():

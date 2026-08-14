@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 import re
 
 import bpy
@@ -38,6 +39,16 @@ def _configured_device():
     from .preferences import configured_device
 
     return configured_device()
+
+
+def _runtime_poll(cls) -> bool:
+    """Block GPU actions until external Warp and the selected CUDA GPU are ready."""
+    from .runtime.warp_runtime import runtime_status_for_device
+
+    ready, message = runtime_status_for_device(_configured_device())
+    if not ready:
+        cls.poll_message_set(message)
+    return ready
 
 
 def _scene_identity_token(scene):
@@ -76,6 +87,8 @@ class _FLUIDSIM_OT_session_base:
 
     @classmethod
     def poll(cls, context):
+        if not _runtime_poll(cls):
+            return False
         if not _bridge().session().active:
             cls.poll_message_set("Initialize the solver first")
             return False
@@ -88,6 +101,10 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
     bl_idname = "fluidsim.initialize"
     bl_label = "Initialize Solver"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime_poll(cls)
 
     ignore_memory_safeguard: BoolProperty(
         name="Run Anyway",
@@ -543,6 +560,10 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
     bl_idname = "fluidsim.toggle_live"
     bl_label = "Toggle Live Simulation"
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime_poll(cls)
+
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
@@ -565,82 +586,48 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
-    """Create a ready-to-play demo setup: domain, source, and collider"""
+    """Turn selected mesh geometry into a runnable FluidSim setup"""
 
     bl_idname = "fluidsim.setup_scene"
-    bl_label = "Quick Setup"
+    bl_label = "Run Guided Setup"
     bl_options = {"REGISTER", "UNDO"}
 
+    mode: EnumProperty(
+        name="Mode",
+        items=(
+            ("QUICK_LIQUID", "Quick Liquid", "Selected mesh becomes an initial-fill emitter"),
+            ("QUICK_CONTAINER", "Quick Container", "Selected mesh becomes a collider with a height fill"),
+            ("QUICK_VISCOUS", "Quick Viscous Liquid", "Selected mesh becomes a thick-liquid emitter"),
+            ("ADD_COLLIDER", "Add Collider", "Tag selected meshes as colliders"),
+            ("ADD_INFLOW", "Add Inflow", "Tag selected meshes as continuous inflows"),
+            ("ADD_OUTFLOW", "Add Outflow", "Tag selected meshes as liquid sinks"),
+        ),
+        default="QUICK_LIQUID",
+        options={"SKIP_SAVE"},
+    )
+    preset_id: StringProperty(default="", options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        selected = getattr(context, "selected_objects", ())
+        if not any(getattr(obj, "type", None) == "MESH" for obj in selected):
+            cls.poll_message_set("Select at least one mesh object")
+            return False
+        return True
+
     def execute(self, context):
-        scene = context.scene
-        fs = scene.fluidsim
-        objects = tuple(getattr(scene, "objects", ()))
-        existing_domain = getattr(fs, "domain_object", None)
-        existing_source = any(
-            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
-            for obj in objects)
-        existing_collider = any(
-            getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "COLLIDER"
-            for obj in objects)
-        if existing_domain is not None and existing_source and existing_collider:
-            self.report(
-                {"INFO"},
-                "Quick Setup already exists; existing domain and inputs were preserved")
-            return {"FINISHED"}
+        from .blender.setup_wizard import setup_selected
 
-        # Domain box - extended horizontally (X) and slightly taller (Z)
-        # so the released water has room to spread and fall.
-        # X range: -6..+6, Y range: -2..+2, Z range: 0..+6.
-        mesh = bpy.data.meshes.new("FluidSim Domain")
-        domain = bpy.data.objects.new("FluidSim Domain", mesh)
-        scene.collection.objects.link(domain)
-        import bmesh
-
-        bm = bmesh.new()
-        bmesh.ops.create_cube(bm, size=1.0)
-        bm.to_mesh(mesh)
-        bm.free()
-        domain.scale = (12.0, 4.0, 6.0)
-        domain.location = (0.0, 0.0, 3.0)
-        domain.display_type = "WIRE"
-        domain.hide_render = True
-        fs.domain_object = domain
-        fs.relax_mode = "LOCAL_VOXEL"
-
-        # Particle source box - kept inside the extended domain.
-        # Higher up so the water has drop potential; offset in -X so it
-        # spreads toward +X after splash.
-        src_mesh = bpy.data.meshes.new("FluidSim Source")
-        src = bpy.data.objects.new("FluidSim Source", src_mesh)
-        scene.collection.objects.link(src)
-        bm = bmesh.new()
-        bmesh.ops.create_cube(bm, size=1.0)
-        bm.to_mesh(src_mesh)
-        bm.free()
-        src.location = (-4.0, 0.0, 4.0)
-        src.scale = (1.2, 3.2, 2.2)
-        from .blender import sources as _sources
-
-        _sources.tag_source(src, shape="BOX", mode="PARTICLES")
-
-        # Sphere collider - repositioned under the source so the stream
-        # hits it and splashes outward into the longer +X run.
-        col_mesh = bpy.data.meshes.new("FluidSim Collider")
-        col = bpy.data.objects.new("FluidSim Collider", col_mesh)
-        scene.collection.objects.link(col)
-        bm = bmesh.new()
-        bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=16, radius=0.75)
-        bm.to_mesh(col_mesh)
-        bm.free()
-        col.location = (-2.0, 0.0, 0.75)
-        from .blender import colliders as _colliders
-
-        _colliders.tag_collider(col)
-
-        scene.frame_start = 1
-        scene.frame_end = 250
-        scene.frame_set(1)
-        self.report({"INFO"}, "Demo scene created - Initialize Solver, then play")
+        try:
+            result = setup_selected(context, self.mode, self.preset_id)
+        except Exception as exc:  # noqa: BLE001
+            context.scene.fluidsim.status = f"Guided setup failed: {exc}"
+            self.report({"ERROR"}, context.scene.fluidsim.status)
+            return {"CANCELLED"}
+        context.scene.fluidsim.status = result.message
+        for warning in result.warnings[:3]:
+            self.report({"WARNING"}, warning)
+        self.report({"INFO"}, result.message)
         return {"FINISHED"}
 
 
@@ -842,7 +829,7 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_run_validation(_FLUIDSIM_OT_session_base, bpy.types.Operator):
-    """Run the 13-test GPU validation suite (may take ~30s)"""
+    """Run the GPU validation suite (may take ~30s)"""
 
     bl_idname = "fluidsim.run_validation"
     bl_label = "Run Validation Suite"
@@ -917,7 +904,7 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_write_report(_FLUIDSIM_OT_session_base, bpy.types.Operator):
+class FLUIDSIM_OT_write_report(bpy.types.Operator):
     """Write profiling / validation / benchmark data to a JSON report"""
 
     bl_idname = "fluidsim.write_report"
@@ -932,6 +919,12 @@ class FLUIDSIM_OT_write_report(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
         path = bpy.path.abspath(fs.report_path)
         try:
+            from .io import cache as cache_mod
+
+            settings_signature = ""
+            if sess.active and getattr(sess, "solver", None) is not None:
+                settings_signature = cache_mod.settings_record(
+                    sess.solver.settings)["signature"]
             rep = report_mod.build_report(
                 profiler=sess.profiler,
                 frame_stats=sess.frame_stats,
@@ -939,6 +932,12 @@ class FLUIDSIM_OT_write_report(_FLUIDSIM_OT_session_base, bpy.types.Operator):
                 validation=sess.validation_results,
                 extra={"benchmark_comparison": sess.benchmark_compare}
                 if sess.benchmark_compare else None,
+                package_name=__package__,
+                blender_version=".".join(str(value) for value in bpy.app.version[:3]),
+                selected_device=_configured_device(),
+                cache_path=bpy.path.abspath(fs.cache_path),
+                scene_signature=str(getattr(sess, "scene_key", "")),
+                settings_signature=settings_signature,
             )
             report_mod.write_report(path, rep)
         except Exception as exc:  # noqa: BLE001
@@ -1508,6 +1507,10 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
     bl_idname = "fluidsim.export_cache_sequence"
     bl_label = "Export Cache Sequence"
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime_poll(cls)
+
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
@@ -1541,6 +1544,456 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
         return {"FINISHED"}
 
 
+# ---------------------------------------------------------------------------
+# Product presets and guided workflow
+# ---------------------------------------------------------------------------
+
+
+class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
+    """Apply a validated built-in or user product preset"""
+
+    bl_idname = "fluidsim.apply_product_preset"
+    bl_label = "Apply FluidSim Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from .presets import library
+
+        identifier = str(context.scene.fluidsim.product_preset or "")
+        try:
+            preset = library.load_preset(identifier)
+            result = library.apply_preset(context.scene, preset)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Preset could not be applied: {exc}")
+            return {"CANCELLED"}
+        context.scene.fluidsim.status = result.message
+        self.report({"INFO"}, result.message)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
+    """Capture allow-listed scene settings as an atomic user preset"""
+
+    bl_idname = "fluidsim.save_product_preset"
+    bl_label = "Save User Preset"
+    bl_options = {"REGISTER"}
+
+    preset_id: StringProperty(
+        name="Identifier",
+        default="my_water",
+        description="Lowercase stable identifier using letters, numbers, and underscores",
+    )
+    preset_name: StringProperty(name="Name", default="My Water")
+    description: StringProperty(name="Description", default="Custom FluidSim settings")
+    expected_scale: StringProperty(name="Expected Scale", default="1 Blender unit = 1 metre")
+    performance_cost: EnumProperty(
+        name="Performance Cost",
+        items=(("Low", "Low", ""), ("Medium", "Medium", ""),
+               ("High", "High", ""), ("Very High", "Very High", "")),
+        default="Medium",
+    )
+    overwrite: BoolProperty(name="Overwrite Existing", default=False)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def execute(self, context):
+        from .presets import library
+
+        try:
+            preset = library.capture_scene_preset(
+                context.scene,
+                identifier=self.preset_id,
+                name=self.preset_name,
+                description=self.description,
+                expected_scale=self.expected_scale,
+                performance_cost=self.performance_cost,
+            )
+            path = library.save_user_preset(
+                preset, overwrite=bool(self.overwrite)
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"User preset could not be saved: {exc}")
+            return {"CANCELLED"}
+        context.scene.fluidsim.status = f"Saved user preset: {path.name}"
+        self.report({"INFO"}, context.scene.fluidsim.status)
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# Responsive production bake and cache operations
+# ---------------------------------------------------------------------------
+
+_ACTIVE_BAKE = None
+
+
+def _update_bake_rna(scene, controller) -> None:
+    fs = scene.fluidsim
+    fs.bake_status = controller.status.value
+    fs.bake_progress = float(controller.progress)
+    fs.bake_message = str(controller.message)
+    fs.status = str(controller.message)
+
+
+class _FLUIDSIM_OT_production_bake_modal:
+    resume_existing = False
+    restart_existing = False
+    _timer = None
+    _controller = None
+
+    @classmethod
+    def poll(cls, context):
+        global _ACTIVE_BAKE
+        if _ACTIVE_BAKE is not None:
+            cls.poll_message_set("A production bake is already active")
+            return False
+        return _runtime_poll(cls)
+
+    def execute(self, context):
+        global _ACTIVE_BAKE
+        from .blender.production_bake import BakeController, ProductionBakeBackend
+
+        scene = context.scene
+        fs = scene.fluidsim
+        backend = ProductionBakeBackend(
+            checkpoint_interval=int(fs.checkpoint_interval),
+            compressed=bool(fs.cache_compress),
+        )
+        controller = BakeController(backend=backend)
+        try:
+            if self.resume_existing:
+                controller.resume(scene, end=int(fs.bake_end))
+            else:
+                controller.start(
+                    scene,
+                    int(fs.bake_start),
+                    int(fs.bake_end),
+                    restart=bool(self.restart_existing),
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Production bake could not start: {exc}")
+            return {"CANCELLED"}
+        self._controller = controller
+        _ACTIVE_BAKE = controller
+        _update_bake_rna(scene, controller)
+        window_manager = context.window_manager
+        self._timer = window_manager.event_timer_add(0.05, window=context.window)
+        window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def _finish(self, context):
+        global _ACTIVE_BAKE
+        from .blender.production_bake import BakeStatus
+
+        controller = self._controller
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        _ACTIVE_BAKE = None
+        _update_bake_rna(context.scene, controller)
+        if controller.status is BakeStatus.COMPLETE:
+            self.report({"INFO"}, controller.message)
+            return {"FINISHED"}
+        if controller.status is BakeStatus.CANCELLED:
+            self.report({"WARNING"}, controller.message)
+            return {"CANCELLED"}
+        self.report({"ERROR"}, controller.error or controller.message)
+        return {"CANCELLED"}
+
+    def modal(self, context, event):
+        from .blender.production_bake import BakeStatus
+
+        if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
+            self._controller.request_cancel()
+            _update_bake_rna(context.scene, self._controller)
+            return {"RUNNING_MODAL"}
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        self._controller.tick(context.scene)
+        _update_bake_rna(context.scene, self._controller)
+        if self._controller.status in {
+            BakeStatus.COMPLETE, BakeStatus.CANCELLED, BakeStatus.FAILED
+        }:
+            return self._finish(context)
+        return {"RUNNING_MODAL"}
+
+    def cancel(self, context):
+        if self._controller is not None:
+            self._controller.request_cancel()
+            self._controller.tick(context.scene)
+        return self._finish(context)
+
+
+class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
+    """Start a fresh one-frame-transaction production bake"""
+
+    bl_idname = "fluidsim.bake_start"
+    bl_label = "Start Production Bake"
+    bl_options = {"REGISTER"}
+    resume_existing = False
+    restart_existing: BoolProperty(
+        name="Restart Existing Cache",
+        default=False,
+        options={"SKIP_SAVE"},
+        description="Delete only FluidSim cache-v2 artifacts before baking",
+    )
+
+
+class FLUIDSIM_OT_bake_resume(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
+    """Resume from the last verified committed checkpoint"""
+
+    bl_idname = "fluidsim.bake_resume"
+    bl_label = "Resume Production Bake"
+    bl_options = {"REGISTER"}
+    resume_existing = True
+
+
+class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
+    """Request cancellation at the next manifest-committed frame boundary"""
+
+    bl_idname = "fluidsim.bake_cancel"
+    bl_label = "Cancel Production Bake"
+
+    @classmethod
+    def poll(cls, _context):
+        if _ACTIVE_BAKE is None:
+            cls.poll_message_set("No production bake is active")
+            return False
+        return True
+
+    def execute(self, context):
+        _ACTIVE_BAKE.request_cancel()
+        _update_bake_rna(context.scene, _ACTIVE_BAKE)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
+    """Verify the manifest-authoritative cache and report orphan files"""
+
+    bl_idname = "fluidsim.cache_integrity_scan"
+    bl_label = "Scan Cache Integrity"
+
+    def execute(self, context):
+        from .blender.cache_manager import inspect_cache
+
+        path = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
+        inspection = inspect_cache(path)
+        context.scene.fluidsim.status = inspection.message
+        severity = {"INFO"} if inspection.healthy else {"ERROR"}
+        detail = inspection.message
+        if inspection.orphan_files:
+            detail += f"; {len(inspection.orphan_files)} orphan(s)"
+        self.report(severity, detail)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
+    """Remove only files not referenced by the committed cache-v2 manifest"""
+
+    bl_idname = "fluidsim.cache_remove_orphans"
+    bl_label = "Remove Cache Orphans"
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        from .blender.cache_manager import remove_orphans
+
+        path = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
+        removed = remove_orphans(path)
+        self.report({"INFO"}, f"Removed {len(removed)} orphan cache file(s)")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_free(bpy.types.Operator):
+    """Transactionally free the configured FluidSim cache"""
+
+    bl_idname = "fluidsim.cache_free"
+    bl_label = "Free Cache"
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        from .blender.cache_manager import free_cache
+
+        path = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
+        try:
+            retained = free_cache(path)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache could not be freed: {exc}")
+            return {"CANCELLED"}
+        if retained is not None:
+            self.report({"ERROR"}, f"Cache deletion failed; data remains at {retained}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, "Cache freed")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_move(bpy.types.Operator):
+    """Copy, verify, publish, and then remove a cache"""
+
+    bl_idname = "fluidsim.cache_move"
+    bl_label = "Move Cache"
+    bl_options = {"REGISTER"}
+
+    destination: StringProperty(name="Destination", subtype="DIR_PATH")
+
+    def invoke(self, context, event):
+        if not self.destination:
+            source = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
+            self.destination = str(source.with_name(source.name + "_moved"))
+        return context.window_manager.invoke_props_dialog(self, width=520)
+
+    def execute(self, context):
+        from .blender.cache_manager import move_cache
+
+        fs = context.scene.fluidsim
+        source = Path(bpy.path.abspath(fs.cache_path))
+        destination = Path(bpy.path.abspath(self.destination))
+        try:
+            moved = move_cache(source, destination)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache move failed: {exc}")
+            return {"CANCELLED"}
+        fs.cache_path = str(moved)
+        self.report({"INFO"}, f"Cache moved to {moved}")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
+    """Rename only the cache directory leaf"""
+
+    bl_idname = "fluidsim.cache_rename"
+    bl_label = "Rename Cache"
+    bl_options = {"REGISTER"}
+
+    name: StringProperty(name="New Directory Name", default="fluidsim_cache")
+
+    def invoke(self, context, event):
+        source = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
+        self.name = source.name
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        from .blender.cache_manager import rename_cache
+
+        fs = context.scene.fluidsim
+        source = Path(bpy.path.abspath(fs.cache_path))
+        try:
+            renamed = rename_cache(source, self.name)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache rename failed: {exc}")
+            return {"CANCELLED"}
+        fs.cache_path = str(renamed)
+        self.report({"INFO"}, f"Cache renamed to {renamed.name}")
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_open_folder(bpy.types.Operator):
+    """Open the configured cache folder without shell interpolation"""
+
+    bl_idname = "fluidsim.cache_open_folder"
+    bl_label = "Open Cache Folder"
+
+    def execute(self, context):
+        from .blender.cache_manager import open_cache_folder
+
+        try:
+            open_cache_folder(Path(bpy.path.abspath(context.scene.fluidsim.cache_path)))
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Could not open cache folder: {exc}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_install_render_nodes(bpy.types.Operator):
+    """Install or explicitly refresh bundled FluidSim render node groups"""
+
+    bl_idname = "fluidsim.install_render_nodes"
+    bl_label = "Install FluidSim Render Nodes"
+    bl_options = {"REGISTER", "UNDO"}
+
+    force: BoolProperty(
+        name="Update FluidSim-owned Modifiers",
+        default=False,
+        options={"SKIP_SAVE"},
+        description=(
+            "Repoint only FluidSim-owned modifiers to the bundled revision; "
+            "user node groups and user modifiers are never overwritten"
+        ),
+    )
+
+    def execute(self, context):
+        from .blender import geometry_nodes, output_publication
+
+        try:
+            outputs = output_publication.ensure_output_shells(context.scene)
+            result = geometry_nodes.install_render_nodes(
+                context.scene,
+                force=bool(self.force),
+                output_objects={
+                    str(obj.get(output_publication.OUTPUT_TAG, obj.name)): obj
+                    for obj in outputs
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Render-node installation failed: {exc}")
+            return {"CANCELLED"}
+        for warning in result.warnings[:3]:
+            self.report({"WARNING"}, warning)
+        context.scene.fluidsim.status = result.message
+        self.report({"INFO"}, result.message)
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_copy_bake_command(bpy.types.Operator):
+    """Copy a shell-safe headless bake command for the current scene"""
+
+    bl_idname = "fluidsim.copy_bake_command"
+    bl_label = "Copy Headless Bake Command"
+
+    def execute(self, context):
+        import os
+        import shlex
+        import subprocess
+
+        blend_path = str(bpy.data.filepath or "")
+        if not blend_path:
+            self.report({"ERROR"}, "Save the .blend file before copying a bake command")
+            return {"CANCELLED"}
+        runner = Path(__file__).resolve().parent / "release" / "run_headless_bake.py"
+        fs = context.scene.fluidsim
+        args = [
+            bpy.app.binary_path,
+            "--background",
+            blend_path,
+            "--python",
+            str(runner),
+            "--",
+            "--scene",
+            context.scene.name,
+            "--start",
+            str(fs.bake_start),
+            "--end",
+            str(fs.bake_end),
+            "--cache",
+            str(Path(bpy.path.abspath(fs.cache_path)).resolve()),
+            "--device",
+            _configured_device(),
+            "--resume",
+            "auto",
+            "--checkpoint-interval",
+            str(fs.checkpoint_interval),
+        ]
+        command = subprocess.list2cmdline(args) if os.name == "nt" else shlex.join(args)
+        context.window_manager.clipboard = command
+        self.report({"INFO"}, "Headless production-bake command copied")
+        return {"FINISHED"}
+
+
 CLASSES = (
     FLUIDSIM_OT_initialize,
     FLUIDSIM_OT_release,
@@ -1554,6 +2007,19 @@ CLASSES = (
     FLUIDSIM_OT_step,
     FLUIDSIM_OT_toggle_live,
     FLUIDSIM_OT_setup_scene,
+    FLUIDSIM_OT_apply_product_preset,
+    FLUIDSIM_OT_save_product_preset,
+    FLUIDSIM_OT_bake_start,
+    FLUIDSIM_OT_bake_resume,
+    FLUIDSIM_OT_bake_cancel,
+    FLUIDSIM_OT_cache_integrity_scan,
+    FLUIDSIM_OT_cache_remove_orphans,
+    FLUIDSIM_OT_cache_free,
+    FLUIDSIM_OT_cache_move,
+    FLUIDSIM_OT_cache_rename,
+    FLUIDSIM_OT_cache_open_folder,
+    FLUIDSIM_OT_copy_bake_command,
+    FLUIDSIM_OT_install_render_nodes,
     FLUIDSIM_OT_tag_object,
     FLUIDSIM_OT_tag_liquid_emitter,
     FLUIDSIM_OT_tag_liquid_sink,

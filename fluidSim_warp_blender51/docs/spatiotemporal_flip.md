@@ -34,26 +34,22 @@ Important controls:
 - **Local CFL / Max Local Substeps**: particle trajectory substepping inside each global step.
 - **Resync Surface**: un-jitters particles for surface extraction only.
 
-## Headless validation
+## Headless release validation
 
-From an unpacked add-on directory:
+Run the installed-package NVIDIA GPU gate from the source checkout:
 
 ```bash
-blender --background --python fluidSim_warp_blender51/tests/headless_spatiotemporal_validation.py -- --device cuda:0
+python release/build_extension.py \
+  --blender /absolute/path/to/blender \
+  --output dist \
+  --gpu-regression-platform linux-x64 \
+  --json-report dist/gpu-build-report.json
 ```
 
-The same test is also part of **FluidSim > Diagnostics / Validation** as
-`spatiotemporal FLIP jitter, phase, and residual boundedness`.
+This installs the built archive into an isolated Blender profile, executes all tests registered by `sim.validation`, including `spatiotemporal FLIP jitter, phase, and residual boundedness`, and advances a ten-frame preview simulation.
 
-## Version 1.0.231 calibration and acceptance additions
+## Historical version 1.0.231 calibration and acceptance additions
 
 The ST-FLIP phase reference mass `m0` is now calibrated at solver construction when `spacetime_reference_mass <= 0`. The calibration follows the paper's practical prescription: estimate the expected space-time mass at a MAC face under a uniform particle-filled patch, with `tau` uniformly sampled in `[-1/2, 1/2]`, using the exact host equivalents of the Warp spatial and temporal kernels. A positive manual `spacetime_reference_mass` still overrides calibration for experiments.
 
-Additional headless acceptance tests are included:
-
-```bash
-blender --background --factory-startup --python tests/headless_stflip_benchmark.py -- --device cuda:0 --frames 6
-blender --background --factory-startup --python tests/headless_stflip_timeline_viewport.py
-```
-
-The benchmark writes `fluidSim_warp_blender51/demo_outputs/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. The timeline viewport test writes `fluidSim_warp_blender51/demo_outputs/stflip_timeline_viewport_acceptance.json` and verifies that the persistent frame-change handler drives visible `FluidSim Surface` and `FluidSim Particles` output objects from timeline frame advancement.
+The historical benchmark evidence is retained in `demo_outputs/stflip_headless_benchmark.json` and checks substep reduction, high-CFL status, ST residual boundedness, phase/weight activation, particle retention, and finite pressure. `demo_outputs/stflip_timeline_viewport_acceptance.json` records the earlier timeline viewport acceptance. These files are excluded from shipping archives; the installed-package GPU gate above is now the release acceptance path.

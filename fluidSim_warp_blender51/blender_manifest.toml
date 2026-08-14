@@ -1,17 +1,42 @@
 schema_version = "1.0.0"
 
-# Mirrors the legacy bl_info dict in __init__.py; keep the two in sync.
-id = "fluidSim_warp_blender51"
+id = "fluidsim_warp"
 name = "FluidSim Warp"
-version = "1.0.243"
-tagline = "Interactive GPU liquid simulation with beta ST-FLIP"
-maintainer = "FluidSim port (synthesized reference)"
+version = "1.0.248"
+tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
+maintainer = "FluidSim"
 type = "add-on"
 
 blender_version_min = "5.1.0"
-
-# Blender extensions must ship a GPL-compatible license; the repository
-# carries no LICENSE file, so this is the Blender add-on default.
-license = ["SPDX:GPL-2.0-or-later"]
-
+license = ["SPDX:GPL-3.0-or-later"]
 tags = ["Physics"]
+
+[permissions]
+files = "Read and write simulation caches, exports, and user presets"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "*.zip",
+  "*.whl",
+  "wheels/",
+  "tests/",
+  "release/build_extension.py",
+  "release/delivery_policy.py",
+  "release/fetch_warp_wheels.py",
+  "release/generate_examples.py",
+  "release/generate_geometry_nodes.py",
+  "release/gpu_regression_blender.py",
+  "release/smoke_test_blender.py",
+  "release/validate_examples_blender.py",
+  "release/validate_phase3_blender.py",
+  "release/validate_phase3_warp.py",
+  "release/wheels.lock.json",
+  "demo_outputs/",
+  "artifacts/",
+  "pyproject.toml",
+  "requirements-dev.txt",
+  "build/",
+  "dist/",
+]

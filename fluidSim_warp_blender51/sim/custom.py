@@ -818,11 +818,24 @@ class CustomSnippet:
         return decls, binders
 
 
-_VOXEL_TEMPLATE = """
-import warp as wp
-wp.set_module_options({{"enable_backward": False}})
-from fluidSim_warp_blender51.sim import constants as C
-from fluidSim_warp_blender51.sim.fields import voxel_coord_of_flat, voxel_center_world
+def addon_root_package(package: str) -> str:
+    """Return the installed add-on root for a package ending in ``.sim``."""
+    suffix = ".sim"
+    if not package.endswith(suffix):
+        raise ValueError(f"expected a .sim package, got {package!r}")
+    return package[:-len(suffix)]
+
+
+_ADDON_ROOT = addon_root_package(__package__)
+
+_VOXEL_IMPORT_PREAMBLE = (
+    "import warp as wp\n"
+    'wp.set_module_options({{"enable_backward": False}})\n'
+    f"from {_ADDON_ROOT}.sim import constants as C\n"
+    f"from {_ADDON_ROOT}.sim.fields import voxel_coord_of_flat, voxel_center_world\n"
+)
+
+_VOXEL_TEMPLATE_BODY = """
 
 @wp.kernel
 def {name}(
@@ -857,10 +870,15 @@ def {name}(
 {body}
 """
 
-_PARTICLE_TEMPLATE = """
-import warp as wp
-wp.set_module_options({{"enable_backward": False}})
-from fluidSim_warp_blender51.sim import constants as C
+_VOXEL_TEMPLATE = _VOXEL_IMPORT_PREAMBLE + _VOXEL_TEMPLATE_BODY
+
+_PARTICLE_IMPORT_PREAMBLE = (
+    "import warp as wp\n"
+    'wp.set_module_options({{"enable_backward": False}})\n'
+    f"from {_ADDON_ROOT}.sim import constants as C\n"
+)
+
+_PARTICLE_TEMPLATE_BODY = """
 
 @wp.kernel
 def {name}(
@@ -887,6 +905,8 @@ def {name}(
     velocity = _velocities[_tid]
 {body}
 """
+
+_PARTICLE_TEMPLATE = _PARTICLE_IMPORT_PREAMBLE + _PARTICLE_TEMPLATE_BODY
 
 
 class CompiledSnippet:

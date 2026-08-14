@@ -50,11 +50,14 @@ def test_particle_emission_saturates_device_and_host_counts():
     wp.launch(
         k_source_shapes_particles, dim=512,
         inputs=[shapes, 1, leaf_coords, num_leaves, wp.vec3(0.0), 0.1,
-                voxel_counts, 1, particles.capacity],
+                voxel_counts, 1, 0, 0, particles.capacity],
         outputs=[particles.position, particles.velocity,
                  particles.attr("age"), particles.attr("life"),
                  particles.attr("temperature"), particles.attr("viscosity"),
-                 particles.attr("density"), particles.time_offset,
+                 particles.attr("density"),
+                 particles.optional_array("color"),
+                 particles.optional_array("source_id"),
+                 particles.time_offset,
                  particles.alive, particles.count, emission_state],
         device=device,
     )

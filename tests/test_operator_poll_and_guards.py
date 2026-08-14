@@ -23,11 +23,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 #   export_cache_sequence  - Session.export_cache_sequence calls
 #                            self.initialize(scene) internally, so it
 #                            legitimately runs with no live session
+#   write_report           - reports available diagnostics even when no solver
+#                            session is active
 _NO_POLL_REQUIRED = {
     "FLUIDSIM_OT_initialize",
     "FLUIDSIM_OT_clear_error",
     "FLUIDSIM_OT_toggle_live",
     "FLUIDSIM_OT_export_cache_sequence",
+    "FLUIDSIM_OT_write_report",
     # Explicit reinitialize is also a no-session recovery path when a scene
     # retains a per-scene pending snapshot after its solver was released.
     "FLUIDSIM_OT_apply_pending_reinitialize",
@@ -141,9 +144,9 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
             missing.append(cls.__name__)
     assert missing == []
 
-    # export_cache_sequence is excluded on purpose: it bakes a range through
-    # Session.export_cache_sequence, which initializes the solver itself.
-    assert "poll" not in vars(operators.FLUIDSIM_OT_export_cache_sequence)
+    # Legacy export initializes the solver itself but still requires a ready
+    # external Warp runtime.
+    assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
     assert not issubclass(operators.FLUIDSIM_OT_export_cache_sequence,
                           operators._FLUIDSIM_OT_session_base)
 

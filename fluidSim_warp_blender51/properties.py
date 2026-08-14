@@ -228,8 +228,7 @@ def user_snippet_dir(create=False) -> str:
     import os
 
     try:
-        base = bpy.utils.user_resource("CONFIG", path="fluidsim_snippets",
-                                       create=create)
+        base = bpy.utils.extension_path_user(__package__, path="snippets", create=create)
     except Exception:  # headless/stub environments
         base = os.path.join(os.path.expanduser("~"), ".fluidsim_snippets")
         if create:
@@ -279,6 +278,34 @@ def _snippet_library_items(self, context):
 _SHORTCUT_FIELD_ITEMS = [
     (name, name, f"Solver field '{name}'") for name in custom.KNOWN_FIELDS
 ]
+
+
+# Blender retains pointers to dynamic EnumProperty strings; keep one module
+# cache just as the snippet library does.
+_PRODUCT_PRESET_ITEMS = []
+
+
+def _product_preset_items(_self, _context):
+    global _PRODUCT_PRESET_ITEMS
+    try:
+        from .presets.library import discover_presets
+
+        records = discover_presets()
+        items = [
+            (
+                f"{record.source}:{record.preset.id}",
+                record.preset.name,
+                f"{record.preset.description} Cost: {record.preset.performance_cost}. "
+                f"Scale: {record.preset.expected_scale}.",
+            )
+            for record in records
+        ]
+    except Exception as exc:  # invalid user data must not break RNA drawing
+        items = [("BUILTIN:preview_water", "Preview Water", f"Preset scan failed: {exc}")]
+    _PRODUCT_PRESET_ITEMS = items or [
+        ("BUILTIN:preview_water", "Preview Water", "Fast live-preview defaults")
+    ]
+    return _PRODUCT_PRESET_ITEMS
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +649,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Density Attribute", default=1.0, min=0.0,
         description="Set the density attribute on emitted particles, not physical liquid mass; higher or lower values affect density-based visualization and ST-FLIP weighting",
         update=_request_sync)
+    source_color: FloatVectorProperty(
+        name="Source Color", size=4, subtype="COLOR",
+        default=(0.1, 0.45, 1.0, 1.0), min=0.0, max=1.0,
+        update=_request_sync,
+        description="Set the persistent color assigned to particles emitted by this source")
     use_lifespan: BoolProperty(
         name="Use Lifespan", default=False, update=_request_sync,
         description="Enable to remove emitted particles after a randomized lifetime; disable to keep them until another sink or boundary removes them")
@@ -1178,6 +1210,84 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Color whitewater particles by a simulation attribute",
     )
+    # -- Production render attributes -------------------------------------------
+    # Inventory changes are reset-tier because color/source/UID channels are
+    # allocated only when selected and cache signatures include every toggle.
+    surface_attribute_velocity: BoolProperty(
+        name="Velocity", default=True, update=_request_reset,
+        description="Publish world-units-per-second liquid velocity on surface vertices")
+    surface_attribute_speed: BoolProperty(
+        name="Speed", default=False, update=_request_reset,
+        description="Publish scalar liquid speed on surface vertices")
+    surface_attribute_vorticity: BoolProperty(
+        name="Vorticity", default=False, update=_request_reset,
+        description="Sample projected-grid curl onto surface vertices")
+    surface_attribute_age: BoolProperty(
+        name="Age", default=False, update=_request_reset,
+        description="Transfer nearest liquid-particle age to surface vertices")
+    surface_attribute_lifetime: BoolProperty(
+        name="Lifetime", default=False, update=_request_reset,
+        description="Transfer nearest liquid-particle lifetime to surface vertices")
+    surface_attribute_color: BoolProperty(
+        name="Color", default=False, update=_request_reset,
+        description="Allocate source color and transfer it to surface vertices")
+    surface_attribute_source_id: BoolProperty(
+        name="Source ID", default=False, update=_request_reset,
+        description="Allocate deterministic source identity and transfer it to the surface")
+    surface_attribute_viscosity: BoolProperty(
+        name="Viscosity", default=False, update=_request_reset,
+        description="Transfer liquid-particle viscosity to surface vertices")
+    surface_attribute_density: BoolProperty(
+        name="Density", default=False, update=_request_reset,
+        description="Transfer liquid-particle density to surface vertices")
+    surface_attribute_motion: BoolProperty(
+        name="Motion Blur", default=True, update=_request_reset,
+        description="Publish Blender's conventional per-frame velocity attribute")
+
+    particles_attribute_velocity: BoolProperty(
+        name="Velocity", default=False, update=_request_reset,
+        description="Publish liquid-particle velocity")
+    particles_attribute_speed: BoolProperty(
+        name="Speed", default=False, update=_request_reset,
+        description="Publish liquid-particle speed")
+    particles_attribute_vorticity: BoolProperty(
+        name="Vorticity", default=False, update=_request_reset,
+        description="Sample projected-grid curl at liquid particles")
+    particles_attribute_age: BoolProperty(
+        name="Age", default=True, update=_request_reset,
+        description="Publish liquid-particle age")
+    particles_attribute_lifetime: BoolProperty(
+        name="Lifetime", default=True, update=_request_reset,
+        description="Publish liquid-particle lifetime")
+    particles_attribute_color: BoolProperty(
+        name="Color", default=False, update=_request_reset,
+        description="Allocate and publish source color per liquid particle")
+    particles_attribute_source_id: BoolProperty(
+        name="Source ID", default=False, update=_request_reset,
+        description="Allocate and publish deterministic source identity")
+    particles_attribute_uid: BoolProperty(
+        name="UID", default=False, update=_request_reset,
+        description="Allocate and publish a monotonic deterministic particle identifier")
+    particles_attribute_viscosity: BoolProperty(
+        name="Viscosity", default=False, update=_request_reset,
+        description="Publish liquid-particle viscosity")
+    particles_attribute_density: BoolProperty(
+        name="Density", default=False, update=_request_reset,
+        description="Publish liquid-particle density")
+
+    whitewater_attribute_velocity: BoolProperty(
+        name="Velocity", default=False, update=_request_reset,
+        description="Publish whitewater velocity")
+    whitewater_attribute_speed: BoolProperty(
+        name="Speed", default=False, update=_request_reset,
+        description="Publish whitewater speed")
+    whitewater_attribute_age: BoolProperty(
+        name="Age", default=True, update=_request_reset,
+        description="Publish whitewater age")
+    whitewater_attribute_lifetime: BoolProperty(
+        name="Lifetime", default=True, update=_request_reset,
+        description="Publish whitewater lifetime")
+
     whitewater_display_scale: FloatProperty(
         name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
         update=_request_output_refresh,
@@ -1220,6 +1330,70 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     shortcut_constant_value: FloatProperty(
         name="Value", default=1.0,
         description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
+
+    # -- Guided setup / product presets -------------------------------------------
+    setup_mode: EnumProperty(
+        name="Setup Mode",
+        items=(
+            ("QUICK_LIQUID", "Quick Liquid", "Selected mesh becomes an initial-fill liquid emitter"),
+            ("QUICK_CONTAINER", "Quick Container", "Selected mesh becomes a collider/container with a height fill"),
+            ("QUICK_VISCOUS", "Quick Viscous Liquid", "Selected mesh becomes a thick-liquid emitter"),
+            ("ADD_COLLIDER", "Add Collider", "Tag selected meshes as colliders"),
+            ("ADD_INFLOW", "Add Inflow", "Tag selected meshes as continuous liquid inflows"),
+            ("ADD_OUTFLOW", "Add Outflow", "Tag selected meshes as liquid sinks"),
+        ),
+        default="QUICK_LIQUID",
+        description="Choose the selected-object setup transaction",
+    )
+    product_preset: EnumProperty(
+        name="Preset",
+        items=_product_preset_items,
+        description="Apply a validated built-in or user FluidSim preset",
+    )
+    active_preset_id: StringProperty(
+        name="Active Preset",
+        default="",
+        description="Identifier of the last successfully applied product preset",
+    )
+
+    # -- Production bake -----------------------------------------------------------
+    cache_format: EnumProperty(
+        name="Cache Format",
+        items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
+        default="V2",
+        description="Choose the authoritative production-cache schema",
+    )
+    bake_start: IntProperty(
+        name="Bake Start", default=1, min=-1048574, max=1048574,
+        description="First production-bake frame",
+    )
+    bake_end: IntProperty(
+        name="Bake End", default=250, min=-1048574, max=1048574,
+        description="Last production-bake frame",
+    )
+    checkpoint_interval: IntProperty(
+        name="Checkpoint Interval", default=1, min=1, max=100,
+        description="Set checkpoint cadence; cache v2 currently commits one restart checkpoint per frame",
+    )
+    bake_status: EnumProperty(
+        name="Bake Status",
+        items=tuple((value, value.title(), "") for value in (
+            "IDLE", "PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING",
+            "CANCELLED", "COMPLETE", "FAILED",
+        )),
+        default="IDLE",
+        options={"SKIP_SAVE"},
+        description="Show the current transactional production-bake state",
+    )
+    bake_progress: FloatProperty(
+        name="Bake Progress", default=0.0, min=0.0, max=1.0,
+        subtype="FACTOR", options={"SKIP_SAVE"},
+        description="Display the fraction of the requested production-bake range committed",
+    )
+    bake_message: StringProperty(
+        name="Bake Message", default="", options={"SKIP_SAVE"},
+        description="Show the latest production-bake status or actionable failure message",
+    )
 
     # -- Diagnostics ---------------------------------------------------------------
     profiling_enabled: BoolProperty(
