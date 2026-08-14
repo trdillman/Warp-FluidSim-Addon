@@ -74,6 +74,7 @@ def _load_kernel(device):
                 str(source_path),
                 device.arch,
                 temporary,
+                pch_dir=context.runtime.get_nvrtc_pch_dir(),
             )
             os.replace(temporary, cubin_path)
         finally:
@@ -128,9 +129,12 @@ class CudaDotProduct:
             count,
             self._max_blocks,
             256,
+            1,
+            0,
             0,
             params,
             self.device.stream.cuda_stream,
+            None,
         )
         if result != 0:
             raise RuntimeError(f"Native CUDA dot-product launch failed: {result}")
