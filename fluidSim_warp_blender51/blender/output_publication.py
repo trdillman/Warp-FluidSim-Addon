@@ -865,10 +865,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
     particle_values = (_particle_values(
         solver, fs.particle_attribute_mode, positions, indices=indices,
         host=host) if fs.show_particles else None)
-    particle_attributes = (host.output_attributes(
-        solver.settings, "particles", stride=step) if fs.show_particles else {})
-    if particle_values is not None:
-        particle_attributes[str(fs.particle_attribute_mode)] = particle_values
+    particle_attributes = _attribute_map(
+        fs.particle_attribute_mode, particle_values)
 
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
@@ -876,11 +874,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
     whitewater_values = (_whitewater_values(
         solver, fs.whitewater_attribute_mode, whitewater, host=host)
         if fs.show_whitewater and fs.whitewater_enabled else None)
-    whitewater_attributes = (host.output_attributes(
-        solver.settings, "whitewater")
-        if fs.show_whitewater and fs.whitewater_enabled else {})
-    if whitewater_values is not None:
-        whitewater_attributes[str(fs.whitewater_attribute_mode)] = whitewater_values
+    whitewater_attributes = _attribute_map(
+        fs.whitewater_attribute_mode, whitewater_values)
 
     if publish_surface and fs.show_surface and fs.surface_enabled:
         verts, tris = host.surface_mesh

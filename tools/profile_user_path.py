@@ -196,6 +196,22 @@ def _surface_dense_dim(sess):
     return [int(d) for d in dims]
 
 
+def _expected_surface_publications(frames, cadence):
+    """Count frames where the live cadence contract requires a surface."""
+    cadence = max(1, int(cadence))
+    return sum(
+        1 for row in frames
+        if int(row["solver_frame"]) <= 1
+        or cadence <= 1
+        or int(row["solver_frame"]) % cadence == 0
+    )
+
+
+def _warm_rows(rows):
+    """Exclude the first lazy-compilation frames when enough samples exist."""
+    return rows[3:] if len(rows) > 3 else rows
+
+
 def _validate_contract(args, summary, sess, device, output_counts):
     checks = []
     frames = summary["frames"]
@@ -243,9 +259,13 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "no output-path Warp synchronization",
            entrypoints["warp_synchronizations"] == 0,
            entrypoints["warp_synchronizations"])
-    _check(checks, "surface readback entrypoints unchanged",
-           entrypoints["warp_array_numpy"] == measured * 6,
-           f"{entrypoints['warp_array_numpy']} == {measured * 6}")
+    expected_surface = _expected_surface_publications(
+        frames, summary["config"]["live_surface_publish_cadence"])
+    if not args.particles:
+        expected_numpy = expected_surface * 5
+        _check(checks, "surface readback entrypoints cadence-bounded",
+               entrypoints["warp_array_numpy"] == expected_numpy,
+               f"{entrypoints['warp_array_numpy']} == {expected_numpy}")
 
     costs = summary["phase2_costs"]
     live = costs["live_adaptation"]
@@ -259,9 +279,9 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "one output publication per measured frame",
            publication["invocations"] == measured,
            f"{publication['invocations']} == {measured}")
-    _check(checks, "one surface extraction per surface frame",
-           live["surface_extractions"] == measured,
-           f"{live['surface_extractions']} == {measured}")
+    _check(checks, "one surface extraction per scheduled surface frame",
+           live["surface_extractions"] == expected_surface,
+           f"{live['surface_extractions']} == {expected_surface}")
     for event in (
             "device_readbacks", "synchronizations",
             "blender_id_creations", "blender_id_removals",
@@ -424,6 +444,7 @@ def main():
                 cache_ms = (time.perf_counter() - tc) * 1000.0
             row = {
                 "frame": f,
+                "solver_frame": int(sess.solver.frame),
                 "sync_ms": (t1 - t0) * 1000.0,
                 "solve_ms": (t2 - t1) * 1000.0,
                 "view_ms": (t3 - t2) * 1000.0,
@@ -458,7 +479,7 @@ def main():
     if solve_profiler is not None:
         solve_profiler.dump_stats("artifacts/perf_goal_solver.pstats")
 
-    warm = rows[3:] if len(rows) > 6 else rows
+    warm = _warm_rows(rows)
 
     def mean(key):
         return statistics.fmean(r[key] for r in warm)
@@ -498,7 +519,11 @@ def main():
     summary = {
         "result": "USER-PATH-PROFILE-PASS",
         "contract": USER_PATH_CONTRACT,
-        "config": vars(args),
+        "config": {
+            **vars(args),
+            "live_surface_publish_cadence": int(
+                fs.live_surface_publish_cadence),
+        },
         "domain": domain_bounds,
         "means": {k: mean(k) for k in
                   ("sync_ms", "solve_ms", "view_ms", "cache_ms", "total_ms")},

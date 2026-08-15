@@ -147,20 +147,27 @@ def test_live_payload_excludes_unselected_production_attributes():
 
     class LiveHost:
         solver = SimpleNamespace(settings=SimpleNamespace(voxel_size=0.1))
+        whitewater = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
         surface_mesh = (
             np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
             np.zeros((0, 3), dtype=np.int32),
         )
+
+        def positions_strided(self, _step):
+            return np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 
         def output_attributes(self, *_args, **_kwargs):
             raise AssertionError(
                 "live viewport adaptation must not capture production attributes")
 
     fs = SimpleNamespace(
-        show_particles=False,
+        show_particles=True,
+        particle_display_fraction=1.0,
+        particle_display_scale=1.0,
         particle_attribute_mode="NONE",
-        show_whitewater=False,
-        whitewater_enabled=False,
+        show_whitewater=True,
+        whitewater_enabled=True,
+        whitewater_display_scale=1.0,
         whitewater_attribute_mode="NONE",
         show_surface=True,
         surface_enabled=True,
@@ -171,6 +178,8 @@ def test_live_payload_excludes_unselected_production_attributes():
         SimpleNamespace(fluidsim=fs), LiveHost())
 
     assert payload.surface_attributes == {}
+    assert payload.particle_attributes == {}
+    assert payload.whitewater_attributes == {}
 
 
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
