@@ -332,34 +332,6 @@ class Session:
             from . import output_publication
 
             output_publication.update_outputs(scene, self)
-        if write_cache and fs.cache_enabled:
-            from ..io import cache
-
-            try:
-                timeline_frame = int(
-                    scene.frame_current if timeline_frame is None
-                    else timeline_frame)
-                cache.write_frame(scene, self, timeline_frame)
-                record_settings = getattr(cache, "settings_record", None)
-                if callable(record_settings):
-                    self.cache_settings_records[timeline_frame] = record_settings(
-                        self.solver.settings)
-                self.cache_written_start = (
-                    timeline_frame if self.cache_written_start is None
-                    else min(self.cache_written_start, timeline_frame))
-                self.cache_written_end = (
-                    timeline_frame if self.cache_written_end is None
-                    else max(self.cache_written_end, timeline_frame))
-                cache.write_sequence_metadata(
-                    bpy.path.abspath(fs.cache_path),
-                    self.cache_written_start,
-                    self.cache_written_end,
-                    source="live_simulation",
-                    settings_records=self.cache_settings_records,
-                    scene_key_value=self.scene_key,
-                )
-            except Exception as exc:  # noqa: BLE001 - cache is supplemental
-                print(f"fluidSim cache write failed: {exc!r}")
         return stats
 
     def reset(self, scene, *, depsgraph=None):

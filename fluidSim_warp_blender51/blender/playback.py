@@ -234,7 +234,8 @@ def handle_frame_change(sess, scene, depsgraph):
             sess.sync_scene(scene, depsgraph)
             bridge.step_frame(
                 scene, sess, refresh_pending=False,
-                timeline_frame=frame - offset)
+                timeline_frame=frame - offset,
+                publish_outputs=(offset == 0))
     except Exception as exc:  # noqa: BLE001 - never break playback
         from ..sim.fields import TopologyCapacityError
 

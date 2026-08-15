@@ -995,6 +995,39 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
     assert sess.frame_stats[-1] == {"frame": 1001}
 
 
+def test_live_step_never_writes_legacy_cache(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=7, playback=False)
+    scene.fluidsim.cache_enabled = True
+    sess = scene_bridge.session()
+    stats = SimpleNamespace(
+        active_particles=3,
+        active_voxels=4,
+        whitewater_particles=0,
+        step_time=0.01,
+        substeps=1,
+        cfl_substeps_clamped=False,
+        as_dict=lambda: {"frame": 7},
+    )
+    sess.solver = SimpleNamespace(
+        frame=7,
+        settings=SimpleNamespace(),
+        step_frame=lambda: stats,
+    )
+    writes = []
+    from fluidSim_warp_blender51.io import cache
+
+    monkeypatch.setattr(
+        cache, "write_frame",
+        lambda *_args, **_kwargs: writes.append(scene.frame_current))
+    monkeypatch.setattr(cache, "settings_record", lambda _settings: {})
+
+    scene_bridge.step_frame(
+        scene, sess, timeline_frame=scene.frame_current, publish_outputs=False)
+
+    assert writes == []
+
+
 def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=3, playback=False)
@@ -1012,6 +1045,30 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
 
     assert calls == [(scene, {"depsgraph": depsgraph})]
     assert sess.last_frame == 3
+
+
+def test_frame_change_catchup_publishes_only_final_timeline_frame(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=4, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(
+        frame=1,
+        settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0),
+    )
+    sess.start_frame = 1
+    sess.last_frame = 1
+    calls = []
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sess,
+        "step",
+        lambda _scene, **kwargs: calls.append((
+            kwargs["timeline_frame"], kwargs["publish_outputs"])),
+    )
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert calls == [(2, False), (3, False), (4, True)]
 
 
 def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
