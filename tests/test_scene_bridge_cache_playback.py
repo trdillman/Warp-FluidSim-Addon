@@ -350,6 +350,32 @@ def test_enabling_cache_playback_releases_live_solver(monkeypatch):
     assert scene.fluidsim.status == "Cache playback enabled - press play"
 
 
+def test_active_production_bake_rejects_live_and_cache_playback(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = _scene(playback=False)
+    scene.fluidsim.live = True
+    scene.fluidsim.cache_playback_enabled = True
+    sess = scene_bridge.session()
+    owned_solver = object()
+    sess.solver = owned_solver
+    controller = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
+    production_bake.register_active_bake(scene, controller)
+    try:
+        assert scene_bridge.playback.set_live_enabled(scene, True) is False
+        assert scene.fluidsim.live is False
+        assert sess.solver is owned_solver
+        assert "Production Bake" in scene.fluidsim.status
+
+        assert scene_bridge.playback.set_cache_playback_enabled(scene, True) is False
+        assert scene.fluidsim.cache_playback_enabled is False
+        assert sess.solver is owned_solver
+        assert "Production Bake" in scene.fluidsim.status
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
 def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         monkeypatch, tmp_path):
     """A cache is only an answer to the scene it was baked from.
@@ -1425,3 +1451,27 @@ def test_production_bake_failure_runs_backend_cleanup_and_preserves_error():
     assert controller.status is BakeStatus.FAILED
     assert "step failed" in controller.error
     assert calls == ["initialize", ("fail", "step failed")]
+
+
+def test_production_bake_registry_is_scene_owned_and_compare_cleared():
+    from fluidSim_warp_blender51.blender import production_bake
+
+    first_scene = SimpleNamespace()
+    second_scene = SimpleNamespace()
+    first = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
+    second = SimpleNamespace(status=production_bake.BakeStatus.CANCELLING)
+
+    production_bake.register_active_bake(first_scene, first)
+    production_bake.register_active_bake(second_scene, second)
+    try:
+        assert production_bake.active_bake(first_scene) is first
+        assert production_bake.active_bake(second_scene) is second
+        assert production_bake.bake_is_active(first_scene)
+        production_bake.clear_active_bake(first_scene, second)
+        assert production_bake.active_bake(first_scene) is first
+        production_bake.clear_active_bake(first_scene, first)
+        assert production_bake.active_bake(first_scene) is None
+        assert production_bake.active_bake(second_scene) is second
+    finally:
+        production_bake.clear_active_bake(first_scene)
+        production_bake.clear_active_bake(second_scene)

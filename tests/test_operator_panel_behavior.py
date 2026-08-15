@@ -1889,6 +1889,64 @@ def test_output_panel_exposes_production_bake_and_playback_controls(monkeypatch)
     }
 
 
+def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        checkpoint_interval=1,
+        cache_compress=False,
+        bake_start=1,
+        bake_end=2,
+        bake_status="IDLE",
+        bake_progress=0.0,
+        bake_message="",
+        status="",
+    ))
+    window_manager = SimpleNamespace(
+        event_timer_add=lambda *_args, **_kwargs: object(),
+        event_timer_remove=lambda _timer: None,
+        modal_handler_add=lambda _operator: None,
+    )
+    context = SimpleNamespace(
+        scene=scene, window_manager=window_manager, window=object())
+    production_bake.clear_active_bake(scene)
+    operator = operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = False
+
+    assert operator.execute(context) == {"RUNNING_MODAL"}
+    assert production_bake.active_bake(scene) is operator._controller
+
+    operator._controller.status = production_bake.BakeStatus.COMPLETE
+    operator._controller.message = "Production bake complete"
+    assert operator._finish(context) == {"FINISHED"}
+    assert production_bake.active_bake(scene) is None
+
+
+def test_solver_mutation_operators_are_disabled_during_production_bake(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    context = SimpleNamespace(scene=scene)
+    operators._bridge().session().solver = object()
+    controller = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
+    production_bake.register_active_bake(scene, controller)
+    monkeypatch.setattr(operators, "_runtime_poll", lambda _cls: True)
+    try:
+        for operator_type in (
+                operators.FLUIDSIM_OT_initialize,
+                operators.FLUIDSIM_OT_release,
+                operators.FLUIDSIM_OT_reset,
+                operators.FLUIDSIM_OT_step,
+                operators.FLUIDSIM_OT_toggle_live):
+            assert operator_type.poll(context) is False, operator_type.__name__
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
 def _phase1_object(role, **overrides):
     values = dict(
         role=role,

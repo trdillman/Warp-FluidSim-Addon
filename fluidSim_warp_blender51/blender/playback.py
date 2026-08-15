@@ -18,6 +18,7 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 _IN_FRAME_HANDLER = False
 _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
+_IN_MODE_TRANSITION = False
 
 _CACHE_SCENE_KEY_MESSAGE = (
     "Cache frame {frame} was baked from different scene settings "
@@ -52,12 +53,26 @@ def suppress_frame_handlers():
 
 def set_live_enabled(scene, enabled: bool):
     """Apply the characterized live enable/disable transition."""
+    global _IN_MODE_TRANSITION
+    if _IN_MODE_TRANSITION:
+        return True
     if _IN_FRAME_HANDLER:
         # fs.live writes from the handler invoke the RNA callback inline.  The
         # outer handler owns teardown and must not allocate or touch IDs again.
         return
     sess = _bridge().session()
     fs = scene.fluidsim
+    if enabled:
+        from . import production_bake
+
+        if production_bake.bake_is_active(scene):
+            _IN_MODE_TRANSITION = True
+            try:
+                fs.live = False
+            finally:
+                _IN_MODE_TRANSITION = False
+            fs.status = "Production Bake is active - Live Playback is unavailable"
+            return False
     if enabled:
         if getattr(fs, "cache_playback_enabled", False):
             fs.status = "Cache playback enabled - press play"
@@ -68,18 +83,34 @@ def set_live_enabled(scene, enabled: bool):
             fs.status = "Live simulation enabled - press play"
     else:
         fs.status = "Live simulation disabled"
+    return True
 
 
 def set_cache_playback_enabled(scene, enabled: bool):
     """Apply the characterized mutually-exclusive cache playback transition."""
+    global _IN_MODE_TRANSITION
+    if _IN_MODE_TRANSITION:
+        return True
     sess = _bridge().session()
     fs = scene.fluidsim
+    if enabled:
+        from . import production_bake
+
+        if production_bake.bake_is_active(scene):
+            _IN_MODE_TRANSITION = True
+            try:
+                fs.cache_playback_enabled = False
+            finally:
+                _IN_MODE_TRANSITION = False
+            fs.status = "Production Bake is active - Cache Playback is unavailable"
+            return False
     if enabled:
         sess.release(scene)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
     elif getattr(fs, "live", False):
         set_live_enabled(scene, True)
+    return True
 
 
 def _check_cache_scene_key(scene, base, frame_data):

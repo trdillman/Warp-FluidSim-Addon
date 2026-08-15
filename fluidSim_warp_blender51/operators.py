@@ -51,6 +51,17 @@ def _runtime_poll(cls) -> bool:
     return ready
 
 
+def _production_bake_idle_poll(cls, context) -> bool:
+    from .blender import production_bake
+
+    scene = getattr(context, "scene", None)
+    if scene is not None and production_bake.bake_is_active(scene):
+        cls.poll_message_set(
+            "Production Bake owns the solver until it finishes or cancels")
+        return False
+    return True
+
+
 def _scene_identity_token(scene):
     pointer = getattr(scene, "as_pointer", None)
     if callable(pointer):
@@ -89,6 +100,8 @@ class _FLUIDSIM_OT_session_base:
     def poll(cls, context):
         if not _runtime_poll(cls):
             return False
+        if not _production_bake_idle_poll(cls, context):
+            return False
         if not _bridge().session().active:
             cls.poll_message_set("Initialize the solver first")
             return False
@@ -104,7 +117,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime_poll(cls)
+        return _runtime_poll(cls) and _production_bake_idle_poll(cls, context)
 
     ignore_memory_safeguard: BoolProperty(
         name="Run Anyway",
@@ -562,7 +575,7 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime_poll(cls)
+        return _runtime_poll(cls) and _production_bake_idle_poll(cls, context)
 
     def execute(self, context):
         scene = context.scene
@@ -1624,9 +1637,6 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
 # Responsive production bake and cache operations
 # ---------------------------------------------------------------------------
 
-_ACTIVE_BAKE = None
-
-
 def _update_bake_rna(scene, controller) -> None:
     fs = scene.fluidsim
     fs.bake_status = controller.status.value
@@ -1643,23 +1653,23 @@ class _FLUIDSIM_OT_production_bake_modal:
 
     @classmethod
     def poll(cls, context):
-        global _ACTIVE_BAKE
-        if _ACTIVE_BAKE is not None:
+        from .blender import production_bake
+
+        if production_bake.active_bake(context.scene) is not None:
             cls.poll_message_set("A production bake is already active")
             return False
         return _runtime_poll(cls)
 
     def execute(self, context):
-        global _ACTIVE_BAKE
-        from .blender.production_bake import BakeController, ProductionBakeBackend
+        from .blender import production_bake
 
         scene = context.scene
         fs = scene.fluidsim
-        backend = ProductionBakeBackend(
+        backend = production_bake.ProductionBakeBackend(
             checkpoint_interval=int(fs.checkpoint_interval),
             compressed=bool(fs.cache_compress),
         )
-        controller = BakeController(backend=backend)
+        controller = production_bake.BakeController(backend=backend)
         try:
             if self.resume_existing:
                 controller.resume(scene, end=int(fs.bake_end))
@@ -1670,11 +1680,11 @@ class _FLUIDSIM_OT_production_bake_modal:
                     int(fs.bake_end),
                     restart=bool(self.restart_existing),
                 )
+            production_bake.register_active_bake(scene, controller)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Production bake could not start: {exc}")
             return {"CANCELLED"}
         self._controller = controller
-        _ACTIVE_BAKE = controller
         _update_bake_rna(scene, controller)
         window_manager = context.window_manager
         self._timer = window_manager.event_timer_add(0.05, window=context.window)
@@ -1682,19 +1692,18 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"RUNNING_MODAL"}
 
     def _finish(self, context):
-        global _ACTIVE_BAKE
-        from .blender.production_bake import BakeStatus
+        from .blender import production_bake
 
         controller = self._controller
         if self._timer is not None:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
-        _ACTIVE_BAKE = None
+        production_bake.clear_active_bake(context.scene, controller)
         _update_bake_rna(context.scene, controller)
-        if controller.status is BakeStatus.COMPLETE:
+        if controller.status is production_bake.BakeStatus.COMPLETE:
             self.report({"INFO"}, controller.message)
             return {"FINISHED"}
-        if controller.status is BakeStatus.CANCELLED:
+        if controller.status is production_bake.BakeStatus.CANCELLED:
             self.report({"WARNING"}, controller.message)
             return {"CANCELLED"}
         self.report({"ERROR"}, controller.error or controller.message)
@@ -1755,15 +1764,22 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
     bl_label = "Cancel Production Bake"
 
     @classmethod
-    def poll(cls, _context):
-        if _ACTIVE_BAKE is None:
+    def poll(cls, context):
+        from .blender import production_bake
+
+        if production_bake.active_bake(context.scene) is None:
             cls.poll_message_set("No production bake is active")
             return False
         return True
 
     def execute(self, context):
-        _ACTIVE_BAKE.request_cancel()
-        _update_bake_rna(context.scene, _ACTIVE_BAKE)
+        from .blender import production_bake
+
+        controller = production_bake.active_bake(context.scene)
+        if controller is None:
+            return {"CANCELLED"}
+        controller.request_cancel()
+        _update_bake_rna(context.scene, controller)
         return {"FINISHED"}
 
 
