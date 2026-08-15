@@ -170,13 +170,8 @@ def test_the_catchup_bound_is_the_scene_property_not_a_constant(monkeypatch):
     assert steps == list(range(4, 21))
 
 
-def test_step_writes_the_cache_at_the_named_timeline_index(monkeypatch):
-    """Catch-up steps must not all land on ``scene.frame_current``.
-
-    That is the other half of the fix: without the explicit index, N steps
-    inside one frame change overwrite one cache entry and leave the frames
-    they were meant to fill missing.
-    """
+def test_step_never_implicitly_writes_legacy_cache(monkeypatch):
+    """Live and catch-up stepping never capture authoritative cache data."""
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     import fluidSim_warp_blender51.blender as blender_pkg
     import fluidSim_warp_blender51.io as io_pkg
@@ -208,7 +203,7 @@ def test_step_writes_the_cache_at_the_named_timeline_index(monkeypatch):
     sess.step(scene, timeline_frame=4)
     sess.step(scene)
 
-    assert written == [4, 9]
+    assert written == []
 
 
 def test_unregister_handlers_releases_the_session(monkeypatch):
