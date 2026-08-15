@@ -319,16 +319,9 @@ class FLUIDSIM_PT_simulation(FluidSimPanel, bpy.types.Panel):
         op = row.operator("fluidsim.step", text="Step 10")
         op.frames = 10
 
-        row = layout.row(align=True)
-        expanded = getattr(fs, "playback_advanced_expanded", False)
-        row.prop(
-            fs, "playback_advanced_expanded", text="Advanced Playback",
-            icon=("TRIA_DOWN" if expanded else "TRIA_RIGHT"), emboss=False)
-        if expanded:
-            advanced = layout.column(align=True)
-            advanced.prop(
-                fs, "max_frame_catchup",
-                text="Maximum Playback Recovery Frames")
+        playback_settings = layout.column(align=True)
+        playback_settings.prop(
+            fs, "max_frame_catchup", text="Playback Recovery Frames")
 
         box = layout.box()
         box.label(text=fs.status, icon="INFO")
@@ -402,6 +395,7 @@ class FLUIDSIM_PT_quality(FluidSimPanel, bpy.types.Panel):
         flip.prop(fs, "flip_ratio")
         temporal = layout.column(align=True)
         temporal.prop(fs, "cfl", text="Adaptive CFL")
+        temporal.prop(fs, "min_substeps", text="Min Substeps")
         temporal.prop(fs, "max_substeps", text="Max Substeps")
 
         from .blender.solver_settings import domain_bounds
@@ -448,13 +442,13 @@ class FLUIDSIM_PT_advanced(FluidSimPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         col = self.layout.column(align=True)
         col.label(text="Manual Capacity Overrides and implementation controls")
-        col.prop(fs, "min_substeps", text="Min Substeps")
+        col.prop(fs, "leaf_capacity")
+        col.prop(fs, "topology_expand")
 
 
 class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
     bl_label = "Domain / Sparse Grid"
     bl_idname = "FLUIDSIM_PT_domain"
-    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -462,9 +456,6 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
-        col.prop(fs, "voxel_size")
-        col.prop(fs, "leaf_capacity")
-        col.prop(fs, "topology_expand")
         col.prop(fs, "open_boundaries")
         col.prop(fs, "domain_sdf_walls")
         from .blender.scene_bridge import session
@@ -495,7 +486,6 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
 class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
     bl_label = "Particles"
     bl_idname = "FLUIDSIM_PT_particles"
-    bl_parent_id = "FLUIDSIM_PT_advanced"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -538,12 +528,19 @@ class FLUIDSIM_PT_particles(FluidSimPanel, bpy.types.Panel):
             sub.prop(fs, "limit_percent")
         col.prop(fs, "count_stiffness")
 
-        box = layout.box()
-        box.label(text="ST-FLIP (Beta)", icon="EXPERIMENTAL")
+class FLUIDSIM_PT_stflip(FluidSimPanel, bpy.types.Panel):
+    bl_label = "ST-FLIP (Beta)"
+    bl_idname = "FLUIDSIM_PT_stflip"
+    bl_parent_id = "FLUIDSIM_PT_advanced"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
         _draw_interaction_tier(
-            box, "Enable/Reference/Seed: Restart Required", "FILE_REFRESH")
-        box.prop(fs, "spacetime_enabled")
-        sub = box.column(align=True)
+            layout, "Enable/Reference/Seed: Restart Required", "FILE_REFRESH")
+        layout.prop(fs, "spacetime_enabled")
+        sub = layout.column(align=True)
         sub.enabled = fs.spacetime_enabled
         sub.prop(fs, "spacetime_jitter_strength")
         sub.prop(fs, "spacetime_adaptive_jitter")
@@ -881,9 +878,9 @@ class FLUIDSIM_PT_point_particle_injection(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Advanced Field Sources"
+    bl_label = "Field Sources"
     bl_idname = "FLUIDSIM_PT_advanced_field_sources"
-    bl_parent_id = "FLUIDSIM_PT_advanced"
+    bl_parent_id = "FLUIDSIM_PT_inputs"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -1014,6 +1011,7 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
 
         _draw_interaction_tier(layout, "Live / Targeted Refresh")
         layout.prop(fs, "liquid_view_mode")
+        layout.prop(fs, "show_overlay")
 
         surface = layout.box()
         surface.label(text="Surface Mesh", icon="MESH_DATA")
@@ -1077,41 +1075,56 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
-    bl_label = "Output & Production Bake"
+    bl_label = "Cache & Bake"
     bl_idname = "FLUIDSIM_PT_output"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
-        fs = context.scene.fluidsim
-        col = layout.column(align=True)
-        col.prop(fs, "output_collection_name")
-        col.prop(fs, "show_overlay")
+        scene = context.scene
+        fs = scene.fluidsim
+        from .blender import playback
 
-        playback = layout.box()
-        playback.label(text="Cache Playback", icon="PLAY")
-        playback.prop(fs, "cache_playback_enabled")
-        playback.prop(fs, "cache_enabled", text="Record v1 During Live Playback (Legacy)")
+        screen = getattr(context, "screen", None)
+        activity = playback.activity_snapshot(
+            scene,
+            is_animation_playing=bool(
+                getattr(screen, "is_animation_playing", False)),
+        )
+
+        state = layout.box()
+        state.alert = activity.state == "FAILED"
+        state.label(text=activity.label, icon=activity.icon)
+        if activity.detail:
+            _draw_wrapped(state, activity.detail, icon="INFO")
+        if activity.state in {"BAKING", "CANCELLING", "COMPLETE", "FAILED"}:
+            state.prop(fs, "bake_progress", text="Progress")
+
+        playback_box = layout.box()
+        playback_box.label(text="Cache Playback", icon="PLAY")
+        if fs.cache_playback_enabled:
+            playback_box.operator(
+                "fluidsim.cache_playback_stop", text="Stop Cache Playback",
+                icon="PAUSE")
+        else:
+            playback_row = playback_box.row()
+            playback_row.enabled = not activity.busy
+            playback_row.operator(
+                "fluidsim.cache_playback_start", text="Use Baked Cache",
+                icon="PLAY")
 
         box = layout.box()
         box.label(text="Production Bake", icon="RENDER_ANIMATION")
         box.prop(fs, "cache_path")
-        box.prop(fs, "cache_format")
         row = box.row(align=True)
         row.prop(fs, "bake_start")
         row.prop(fs, "bake_end")
-        row = box.row(align=True)
-        row.prop(fs, "checkpoint_interval")
-        row.prop(fs, "cache_compress")
 
-        active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
+        active = activity.state in {"BAKING", "CANCELLING"}
         _probe, _selected, runtime_ready, _message = _runtime_ui_state()
-        box.prop(fs, "bake_progress", text=fs.bake_status.title())
-        if fs.bake_message:
-            _draw_wrapped(box, fs.bake_message, icon="INFO")
         bake_row = box.row(align=True)
-        bake_row.enabled = runtime_ready
-        bake_row.active = not active
+        bake_row.enabled = (
+            runtime_ready and not active and not fs.cache_playback_enabled)
         start_op = bake_row.operator("fluidsim.bake_start", text="Start", icon="PLAY")
         start_op.restart_existing = False
         bake_row.operator("fluidsim.bake_resume", text="Resume", icon="RECOVER_LAST")
@@ -1119,11 +1132,29 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         cancel.enabled = active
         cancel.operator("fluidsim.bake_cancel", text="Cancel at Safe Boundary", icon="CANCEL")
         restart = box.row()
-        restart.enabled = runtime_ready and not active
+        restart.enabled = (
+            runtime_ready and not active and not fs.cache_playback_enabled)
         restart_op = restart.operator(
             "fluidsim.bake_start", text="Restart Cache Explicitly", icon="FILE_REFRESH")
         restart_op.restart_existing = True
-        box.operator("fluidsim.copy_bake_command", icon="COPYDOWN")
+
+
+class FLUIDSIM_PT_cache_utilities(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Cache Utilities"
+    bl_idname = "FLUIDSIM_PT_cache_utilities"
+    bl_parent_id = "FLUIDSIM_PT_output"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+
+        storage = layout.box()
+        storage.label(text="Bake Storage", icon="DISK_DRIVE")
+        storage.prop(fs, "cache_format")
+        storage.prop(fs, "cache_compress")
+        storage.prop(fs, "checkpoint_interval")
+        storage.operator("fluidsim.copy_bake_command", icon="COPYDOWN")
 
         cache = layout.box()
         cache.label(text="Cache Management", icon="DISK_DRIVE")
@@ -1135,16 +1166,6 @@ class FLUIDSIM_PT_output(FluidSimPanel, bpy.types.Panel):
         row.operator("fluidsim.cache_move", text="Move", icon="FILE_PARENT")
         row.operator("fluidsim.cache_rename", text="Rename", icon="GREASEPENCIL")
         cache.operator("fluidsim.cache_free", text="Free Cache", icon="TRASH")
-
-        legacy = layout.box()
-        legacy.label(text="Legacy / Single Frame Export", icon="EXPORT")
-        legacy.prop(fs, "cache_use_custom_range")
-        sub = legacy.column(align=True)
-        sub.enabled = fs.cache_use_custom_range
-        row = sub.row(align=True)
-        row.prop(fs, "cache_frame_start")
-        row.prop(fs, "cache_frame_end")
-        legacy.operator("fluidsim.export_frame", icon="EXPORT")
 
 class FLUIDSIM_PT_render_attributes(FluidSimPanel, bpy.types.Panel):
     bl_label = "Render Attributes & Geometry Nodes"
@@ -1162,6 +1183,7 @@ class FLUIDSIM_PT_render_attributes(FluidSimPanel, bpy.types.Panel):
         _draw_pending_banner(layout, scene)
         nodes = layout.box()
         nodes.label(text="Bundled Render Setup", icon="GEOMETRY_NODES")
+        nodes.prop(fs, "output_collection_name")
         state = installed_state(scene)
         ready = sum(revision == ASSET_REVISION for revision in state.values())
         nodes.label(text=f"Current revision attached to {ready}/3 outputs")
@@ -1450,10 +1472,12 @@ CLASSES = (
     FLUIDSIM_PT_physics,
     FLUIDSIM_PT_surface,
     FLUIDSIM_PT_output,
+    FLUIDSIM_PT_cache_utilities,
     FLUIDSIM_PT_render_attributes,
     FLUIDSIM_PT_advanced,
     FLUIDSIM_PT_domain,
     FLUIDSIM_PT_particles,
+    FLUIDSIM_PT_stflip,
     FLUIDSIM_PT_liquid_emitters,
     FLUIDSIM_PT_liquid_emitter_attributes,
     FLUIDSIM_PT_liquid_sinks,

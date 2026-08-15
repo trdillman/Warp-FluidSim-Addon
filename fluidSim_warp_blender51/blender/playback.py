@@ -9,6 +9,7 @@ synchronization, stepping, reset, error storage, and teardown.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import bpy
 
@@ -27,6 +28,16 @@ _CACHE_SCENE_KEY_MESSAGE = (
 )
 
 
+@dataclass(frozen=True)
+class ActivitySnapshot:
+    state: str
+    label: str
+    detail: str
+    icon: str
+    busy: bool = False
+    progress: float = 0.0
+
+
 def _bridge():
     # Lazy at the Blender seam: scene_bridge owns the singleton Solver Session
     # and imports this module only from adapter entry points.
@@ -38,6 +49,60 @@ def _bridge():
 def in_frame_handler() -> bool:
     """Whether the playback callback currently owns Blender evaluation."""
     return _IN_FRAME_HANDLER
+
+
+def activity_snapshot(
+        scene, *, is_animation_playing: bool = False) -> ActivitySnapshot:
+    """Describe the authoritative user-visible simulation/cache activity."""
+    from . import production_bake
+
+    fs = scene.fluidsim
+    controller = production_bake.active_bake(scene)
+    if controller is not None and production_bake.bake_is_active(scene):
+        status = controller.status
+        if status is production_bake.BakeStatus.CANCELLING:
+            return ActivitySnapshot(
+                "CANCELLING", "Cancelling Bake", str(controller.message),
+                "CANCEL", True, float(controller.progress))
+        label = (
+            "Baking" if status is production_bake.BakeStatus.RUNNING
+            else "Preparing Bake")
+        return ActivitySnapshot(
+            "BAKING", label, str(controller.message), "RENDER_ANIMATION",
+            True, float(controller.progress))
+
+    if bool(getattr(fs, "cache_playback_enabled", False)):
+        return ActivitySnapshot(
+            "CACHE_PLAYBACK",
+            "Playing Cache" if is_animation_playing else "Cache Playback Ready",
+            str(getattr(fs, "status", "")),
+            "PLAY",
+            bool(is_animation_playing),
+        )
+
+    if bool(getattr(fs, "live", False)):
+        return ActivitySnapshot(
+            "LIVE_PLAYING" if is_animation_playing else "LIVE_READY",
+            "Playing Live" if is_animation_playing else "Live Ready",
+            str(getattr(fs, "status", "")),
+            "PLAY",
+            bool(is_animation_playing),
+        )
+
+    terminal = str(getattr(fs, "bake_status", "IDLE"))
+    detail = str(getattr(fs, "bake_message", ""))
+    progress = float(getattr(fs, "bake_progress", 0.0))
+    if terminal == "COMPLETE":
+        return ActivitySnapshot(
+            "COMPLETE", "Bake Complete", detail, "CHECKMARK", False, progress)
+    if terminal == "FAILED":
+        return ActivitySnapshot(
+            "FAILED", "Bake Failed", detail, "ERROR", False, progress)
+    if terminal == "CANCELLED":
+        return ActivitySnapshot(
+            "IDLE", "Bake Cancelled", detail, "CANCEL", False, progress)
+    return ActivitySnapshot(
+        "IDLE", "Idle", str(getattr(fs, "status", "")), "PAUSE")
 
 
 @contextmanager

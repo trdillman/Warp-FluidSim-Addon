@@ -1475,3 +1475,66 @@ def test_production_bake_registry_is_scene_owned_and_compare_cleared():
     finally:
         production_bake.clear_active_bake(first_scene)
         production_bake.clear_active_bake(second_scene)
+
+
+def test_activity_snapshot_prioritizes_active_production_bake(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = _scene(playback=True)
+    scene.fluidsim.bake_status = "IDLE"
+    scene.fluidsim.bake_progress = 0.0
+    scene.fluidsim.bake_message = ""
+    controller = SimpleNamespace(
+        status=production_bake.BakeStatus.RUNNING,
+        progress=0.5,
+        message="Committed frame 4",
+    )
+    production_bake.register_active_bake(scene, controller)
+    try:
+        snapshot = scene_bridge.playback.activity_snapshot(
+            scene, is_animation_playing=True)
+        assert snapshot.state == "BAKING"
+        assert snapshot.label == "Baking"
+        assert snapshot.detail == "Committed frame 4"
+        assert snapshot.busy is True
+        assert snapshot.progress == 0.5
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
+def test_activity_snapshot_distinguishes_live_and_cache_playback(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    scene.fluidsim.bake_status = "IDLE"
+    scene.fluidsim.bake_progress = 0.0
+    scene.fluidsim.bake_message = ""
+    scene.fluidsim.live = True
+
+    ready = scene_bridge.playback.activity_snapshot(
+        scene, is_animation_playing=False)
+    playing = scene_bridge.playback.activity_snapshot(
+        scene, is_animation_playing=True)
+    scene.fluidsim.cache_playback_enabled = True
+    cached = scene_bridge.playback.activity_snapshot(
+        scene, is_animation_playing=True)
+
+    assert (ready.state, ready.label) == ("LIVE_READY", "Live Ready")
+    assert (playing.state, playing.label) == ("LIVE_PLAYING", "Playing Live")
+    assert (cached.state, cached.label) == ("CACHE_PLAYBACK", "Playing Cache")
+
+
+def test_activity_snapshot_shows_terminal_bake_state_when_idle(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    scene.fluidsim.live = False
+    scene.fluidsim.bake_status = "COMPLETE"
+    scene.fluidsim.bake_progress = 1.0
+    scene.fluidsim.bake_message = "Production bake complete"
+
+    snapshot = scene_bridge.playback.activity_snapshot(scene)
+
+    assert snapshot.state == "COMPLETE"
+    assert snapshot.label == "Bake Complete"
+    assert snapshot.detail == "Production bake complete"
+    assert snapshot.progress == 1.0

@@ -1783,6 +1783,42 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
+    """Arm cache playback without allocating or stepping the live solver."""
+
+    bl_idname = "fluidsim.cache_playback_start"
+    bl_label = "Start Cache Playback"
+
+    @classmethod
+    def poll(cls, context):
+        return _production_bake_idle_poll(cls, context)
+
+    def execute(self, context):
+        fs = context.scene.fluidsim
+        fs.cache_playback_enabled = True
+        fs.live = True
+        fs.status = "Cache Playback ready - press Timeline Play"
+        return {"FINISHED"}
+
+
+class FLUIDSIM_OT_cache_playback_stop(bpy.types.Operator):
+    """Leave cache playback without initializing a replacement live solver."""
+
+    bl_idname = "fluidsim.cache_playback_stop"
+    bl_label = "Stop Cache Playback"
+
+    @classmethod
+    def poll(cls, context):
+        return bool(context.scene.fluidsim.cache_playback_enabled)
+
+    def execute(self, context):
+        fs = context.scene.fluidsim
+        fs.live = False
+        fs.cache_playback_enabled = False
+        fs.status = "Cache Playback stopped"
+        return {"FINISHED"}
+
+
 class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
     """Verify the manifest-authoritative cache and report orphan files"""
 
@@ -2028,6 +2064,8 @@ CLASSES = (
     FLUIDSIM_OT_bake_start,
     FLUIDSIM_OT_bake_resume,
     FLUIDSIM_OT_bake_cancel,
+    FLUIDSIM_OT_cache_playback_start,
+    FLUIDSIM_OT_cache_playback_stop,
     FLUIDSIM_OT_cache_integrity_scan,
     FLUIDSIM_OT_cache_remove_orphans,
     FLUIDSIM_OT_cache_free,

@@ -453,7 +453,7 @@ def test_header_registration_is_symmetric(monkeypatch):
     assert Header.callbacks == []
 
 
-def test_simulation_hides_playback_recovery_limit_in_advanced_foldout(monkeypatch):
+def test_simulation_exposes_playback_recovery_limit_without_foldout(monkeypatch):
     _install_bpy_stub(monkeypatch)
     _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     panels = _reload_module("fluidSim_warp_blender51.panels")
@@ -472,30 +472,12 @@ def test_simulation_hides_playback_recovery_limit_in_advanced_foldout(monkeypatc
 
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
 
-    assert "playback_advanced_expanded" in layout.props
-    assert "max_frame_catchup" not in layout.props
-    toggle = next(
-        call for call in layout.prop_calls
-        if call["name"] == "playback_advanced_expanded")
-    assert toggle["text"] == "Advanced Playback"
-    assert toggle["icon"] == "TRIA_RIGHT"
-    assert toggle["emboss"] is False
-
-    fs.playback_advanced_expanded = True
-    expanded = _Layout()
-    panel.layout = expanded
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-
-    assert expanded.props.index("playback_advanced_expanded") < (
-        expanded.props.index("max_frame_catchup"))
+    assert "playback_advanced_expanded" not in layout.props
+    assert "max_frame_catchup" in layout.props
     recovery = next(
-        call for call in expanded.prop_calls
+        call for call in layout.prop_calls
         if call["name"] == "max_frame_catchup")
-    assert recovery["text"] == "Maximum Playback Recovery Frames"
-    expanded_toggle = next(
-        call for call in expanded.prop_calls
-        if call["name"] == "playback_advanced_expanded")
-    assert expanded_toggle["icon"] == "TRIA_DOWN"
+    assert recovery["text"] == "Playback Recovery Frames"
 
 
 def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
@@ -1836,7 +1818,7 @@ def test_clear_error_operator_resets_session_and_scene_error(monkeypatch):
     assert scene.fluidsim.status == "Solver ready"
 
 
-def test_output_panel_exposes_production_bake_and_playback_controls(monkeypatch):
+def test_cache_and_bake_panel_shows_activity_and_primary_actions(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
@@ -1871,22 +1853,66 @@ def test_output_panel_exposes_production_bake_and_playback_controls(monkeypatch)
     panel = panels.FLUIDSIM_PT_output()
     panel.layout = layout
 
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+    panel.draw(SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=fs),
+        screen=SimpleNamespace(is_animation_playing=True),
+    ))
 
+    assert panel.bl_label == "Cache & Bake"
+    assert any(label["text"] == "Playing Cache" for label in layout.labels)
     assert "cache_path" in layout.props
-    assert "cache_playback_enabled" in layout.props
     assert "bake_start" in layout.props
     assert "bake_end" in layout.props
-    assert "checkpoint_interval" in layout.props
-    assert "cache_use_custom_range" in layout.props
-    assert "cache_frame_start" in layout.props
-    assert "cache_frame_end" in layout.props
+    assert {
+        "cache_enabled",
+        "cache_playback_enabled",
+        "cache_use_custom_range",
+        "cache_frame_start",
+        "cache_frame_end",
+    }.isdisjoint(layout.props)
     assert {op["id"] for op in layout.operators} >= {
+        "fluidsim.cache_playback_stop",
+        "fluidsim.bake_start",
+        "fluidsim.bake_resume",
+        "fluidsim.bake_cancel",
+    }
+    assert "fluidsim.export_frame" not in {op["id"] for op in layout.operators}
+
+
+def test_cache_utilities_panel_contains_management_only(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    fs = SimpleNamespace(
+        cache_format="NPZ",
+        checkpoint_interval=1,
+        cache_compress=True,
+    )
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_cache_utilities()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert panel.bl_parent_id == "FLUIDSIM_PT_output"
+    assert {"cache_format", "checkpoint_interval", "cache_compress"} <= set(layout.props)
+    operator_ids = {op["id"] for op in layout.operators}
+    assert operator_ids >= {
+        "fluidsim.cache_integrity_scan",
+        "fluidsim.cache_remove_orphans",
+        "fluidsim.cache_open_folder",
+        "fluidsim.cache_move",
+        "fluidsim.cache_rename",
+        "fluidsim.cache_free",
+        "fluidsim.copy_bake_command",
+    }
+    assert {
+        "fluidsim.cache_playback_start",
+        "fluidsim.cache_playback_stop",
         "fluidsim.bake_start",
         "fluidsim.bake_resume",
         "fluidsim.bake_cancel",
         "fluidsim.export_frame",
-    }
+    }.isdisjoint(operator_ids)
 
 
 def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
@@ -1945,6 +1971,29 @@ def test_solver_mutation_operators_are_disabled_during_production_bake(monkeypat
             assert operator_type.poll(context) is False, operator_type.__name__
     finally:
         production_bake.clear_active_bake(scene, controller)
+
+
+def test_cache_playback_operators_arm_and_stop_timeline_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        live=False,
+        cache_playback_enabled=False,
+        status="Idle",
+    ))
+    context = SimpleNamespace(scene=scene)
+
+    assert operators.FLUIDSIM_OT_cache_playback_start().execute(context) == {
+        "FINISHED"}
+    assert scene.fluidsim.cache_playback_enabled is True
+    assert scene.fluidsim.live is True
+    assert scene.fluidsim.status == "Cache Playback ready - press Timeline Play"
+
+    assert operators.FLUIDSIM_OT_cache_playback_stop().execute(context) == {
+        "FINISHED"}
+    assert scene.fluidsim.cache_playback_enabled is False
+    assert scene.fluidsim.live is False
+    assert scene.fluidsim.status == "Cache Playback stopped"
 
 
 def _phase1_object(role, **overrides):
@@ -2400,12 +2449,13 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert "changed" in fs.status.lower()
 
 
-def test_panel_hierarchy_has_seven_task_groups_and_advanced_capacities(monkeypatch):
+def test_panel_hierarchy_promotes_common_settings_and_keeps_specialists_nested(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
     expected_top = {
         "Simulation", "Quality", "Inputs", "Physics",
-        "Surface & Whitewater", "Output & Production Bake", "Advanced",
+        "Surface & Whitewater", "Cache & Bake", "Advanced",
+        "Domain / Sparse Grid", "Particles",
     }
     actual_top = {
         cls.bl_label for cls in panels.CLASSES
@@ -2414,25 +2464,46 @@ def test_panel_hierarchy_has_seven_task_groups_and_advanced_capacities(monkeypat
     }
     assert actual_top == expected_top
     assert panels.FLUIDSIM_PT_advanced.bl_options == {"DEFAULT_CLOSED"}
-    assert panels.FLUIDSIM_PT_domain.bl_parent_id == "FLUIDSIM_PT_advanced"
-    assert panels.FLUIDSIM_PT_particles.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert "bl_parent_id" not in panels.FLUIDSIM_PT_domain.__dict__
+    assert "bl_parent_id" not in panels.FLUIDSIM_PT_particles.__dict__
     assert panels.FLUIDSIM_PT_liquid_emitters.bl_parent_id == "FLUIDSIM_PT_inputs"
+    assert panels.FLUIDSIM_PT_advanced_field_sources.bl_parent_id == "FLUIDSIM_PT_inputs"
     assert panels.FLUIDSIM_PT_pressure.bl_parent_id == "FLUIDSIM_PT_physics"
     assert panels.FLUIDSIM_PT_realtime_display.bl_parent_id == "FLUIDSIM_PT_surface"
+    assert panels.FLUIDSIM_PT_stflip.bl_parent_id == "FLUIDSIM_PT_advanced"
+    assert panels.FLUIDSIM_PT_cache_utilities.bl_parent_id == "FLUIDSIM_PT_output"
 
 
 def test_basic_quality_panel_exposes_only_semantic_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")
-    source = inspect.getsource(panels.FLUIDSIM_PT_quality.draw)
-    for field in (
-            "voxel_size", "particles_per_voxel", "sample_type", "flip_ratio",
-            "cfl", "max_substeps"):
-        assert f'prop(fs, "{field}"' in source
-    for technical_capacity in ("max_particles", "max_active_leaves", "max_whitewater"):
-        assert technical_capacity not in source
-    assert "Requires Reinitialize" in source
-    assert "Requires Reset" in source
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_quality(); panel.layout = layout
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(sample_type="FLIP"))
+
+    panel.draw(SimpleNamespace(scene=scene))
+
+    assert {
+        "voxel_size", "particles_per_voxel", "sample_type", "flip_ratio",
+        "cfl", "min_substeps", "max_substeps",
+    } <= set(layout.props)
+    assert {"max_particles", "max_active_leaves", "max_whitewater"}.isdisjoint(
+        layout.props)
+    label_text = {label["text"] for label in layout.labels}
+    assert "Changes spatial resolution; Requires Reinitialize" in label_text
+    assert "Changes liquid rest density and inherited fill; Requires Reset" in label_text
+
+
+def test_advanced_panel_owns_only_manual_capacity_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_advanced(); panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
+
+    assert {"leaf_capacity", "topology_expand"} <= set(layout.props)
+    assert "min_substeps" not in layout.props
 
 
 def test_long_capacity_copy_wraps_instead_of_truncating(monkeypatch):
