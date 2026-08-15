@@ -886,10 +886,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
         verts, tris = host.surface_mesh
         surface_values = _surface_values(
             solver, fs.surface_attribute_mode, verts, host=host)
-        surface_attributes = host.output_attributes(
-            solver.settings, "surface", positions=verts)
-        if surface_values is not None:
-            surface_attributes[str(fs.surface_attribute_mode)] = surface_values
+        surface_attributes = _attribute_map(
+            fs.surface_attribute_mode, surface_values)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)

@@ -142,6 +142,37 @@ def test_viewport_frame_module_does_not_require_blender_runtime(monkeypatch):
     assert output_publication.prepare_live_payload.__name__ == "prepare_live_payload"
 
 
+def test_live_payload_excludes_unselected_production_attributes():
+    from fluidSim_warp_blender51.blender import output_publication
+
+    class LiveHost:
+        solver = SimpleNamespace(settings=SimpleNamespace(voxel_size=0.1))
+        surface_mesh = (
+            np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+            np.zeros((0, 3), dtype=np.int32),
+        )
+
+        def output_attributes(self, *_args, **_kwargs):
+            raise AssertionError(
+                "live viewport adaptation must not capture production attributes")
+
+    fs = SimpleNamespace(
+        show_particles=False,
+        particle_attribute_mode="NONE",
+        show_whitewater=False,
+        whitewater_enabled=False,
+        whitewater_attribute_mode="NONE",
+        show_surface=True,
+        surface_enabled=True,
+        surface_attribute_mode="NONE",
+    )
+
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=fs), LiveHost())
+
+    assert payload.surface_attributes == {}
+
+
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
     import sys
     from fluidSim_warp_blender51.blender import output_publication
