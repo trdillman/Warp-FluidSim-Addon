@@ -434,5 +434,9 @@
   "collider_objects": [
     "PaddleStir Tank",
     "PaddleStir Paddle"
+  ],
+  "playable_live_setup": true,
+  "seed_objects": [
+    "Paddle Stir Pool Seed"
   ]
 }

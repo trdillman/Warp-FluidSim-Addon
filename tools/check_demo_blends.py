@@ -21,9 +21,17 @@ from tools.repo_addon_loader import enable_repo_addon
 DEMOS = os.path.join(REPO, "demos")
 SCENES = (
     "dam_break", "crown_splash", "force_fields", "adhesive_calender",
+    "cache_export_playback_review", "paddle_stir",
     "mesh_solid_source", "mesh_shell_source", "point_source",
     "volume_source", "liquid_sink", "height_fill",
 )
+EXPECTED_AUTO_SEEDS = {
+    "crown_splash": {"Crown Pool Seed", "Crown Droplet Seed"},
+    "force_fields": {"Force Fields Particle Seed"},
+    "adhesive_calender": {
+        "Low Viscosity Adhesive Seed", "High Viscosity Adhesive Seed"},
+    "paddle_stir": {"Paddle Stir Pool Seed"},
+}
 
 
 def point_count(obj):
@@ -31,6 +39,73 @@ def point_count(obj):
     from fluidSim_warp_blender51.blender import output_publication
 
     return output_publication.live_point_count(obj)
+
+
+def output_snapshot(limit=32):
+    """Return a bounded sample of whichever owned viewport outputs exist."""
+    snapshot = []
+    visible_count = 0
+    for name in ("FluidSim Particles", "FluidSim Whitewater", "FluidSim Surface"):
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        if obj.type == "POINTCLOUD":
+            count = point_count(obj)
+            position = obj.data.attributes.get("position")
+            values = (() if position is None else tuple(
+                round(float(value), 6)
+                for item in position.data[:min(limit, count)]
+                for value in item.vector
+            ))
+        elif obj.type == "MESH":
+            count = len(obj.data.vertices)
+            values = tuple(
+                round(float(value), 6)
+                for vertex in obj.data.vertices[:min(limit, count)]
+                for value in vertex.co
+            )
+        else:
+            continue
+        visible_count += count
+        snapshot.append((name, count, values))
+    return visible_count, tuple(snapshot)
+
+
+def check_playback_contract(scene, fs, *, cache_mode=False):
+    """Exercise the saved timeline contract through real frame handlers."""
+    result = {"ready": False, "advances": False}
+    if fs is None:
+        return result
+    expected_mode = bool(fs.live and bool(fs.cache_playback_enabled) == cache_mode)
+    result["ready"] = bool(
+        expected_mode
+        and scene.frame_current == scene.frame_start
+        and scene.get("fluidsim_playback_ready") is True)
+    if not result["ready"]:
+        return result
+
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    _before_count, before = output_snapshot()
+    try:
+        scene.frame_set(scene.frame_start + 1)
+        middle_count, middle = output_snapshot()
+        scene.frame_set(scene.frame_start + 2)
+        after_count, after = output_snapshot()
+        sess = session()
+        if cache_mode:
+            state_valid = not sess.active
+        else:
+            state_valid = bool(
+                sess.active
+                and sess.solver.particles.refresh_host_count() > 0)
+        result["advances"] = bool(
+            state_valid
+            and max(middle_count, after_count) > 0
+            and (middle != before or after != middle))
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = repr(exc)
+    return result
 
 
 def check_scene(name):
@@ -60,7 +135,22 @@ def check_scene(name):
         "fluidsim_settings": fs is not None,
         "domain_object": bool(fs and fs.domain_object),
         "camera": bool(scene.camera),
+        "valid_domain_boundary_policy": bool(
+            fs and (fs.open_boundaries or fs.domain_sdf_walls)),
     }
+    actual_auto_seeds = {
+        obj.name for obj in scene.objects
+        if getattr(getattr(obj, "fluidsim", None), "auto_inject_seed", False)
+    }
+    checks["owned_auto_seeds"] = (
+        actual_auto_seeds == EXPECTED_AUTO_SEEDS.get(name, set()))
+    if not checks["owned_auto_seeds"]:
+        result["actual_auto_seeds"] = sorted(actual_auto_seeds)
+    playback = check_playback_contract(scene, fs, cache_mode=False)
+    checks["playback_ready"] = playback["ready"]
+    checks["playback_advances"] = playback["advances"]
+    if playback.get("error"):
+        result["playback_contract_error"] = playback["error"]
     if name == "dam_break":
         domain = bpy.data.objects.get("DamBreak Domain")
         source = bpy.data.objects.get("DamBreak Source Column")
@@ -87,6 +177,49 @@ def check_scene(name):
             "no_redundant_empties": not any(
                 obj.type == "EMPTY" for obj in scene.objects),
         })
+    elif name == "crown_splash":
+        pool_seed = bpy.data.objects.get("Crown Pool Seed")
+        drop_seed = bpy.data.objects.get("Crown Droplet Seed")
+        seed_contract = bool(
+            pool_seed and drop_seed
+            and pool_seed.type == drop_seed.type == "MESH"
+            and pool_seed.fluidsim.enabled
+            and drop_seed.fluidsim.enabled
+            and pool_seed.fluidsim.auto_inject_seed
+            and drop_seed.fluidsim.auto_inject_seed
+            and abs(float(pool_seed.fluidsim.initial_velocity.z)) < 1.0e-6
+            and abs(float(drop_seed.fluidsim.initial_velocity.z) + 3.5) < 1.0e-6
+        )
+        checks.update({
+            "restartable_seed_contract": seed_contract,
+            "live_playback_saved": bool(
+                fs and fs.live and saved_frame == 1
+                and scene.get("fluidsim_playback_ready") is True),
+        })
+        if seed_contract and checks["live_playback_saved"]:
+            try:
+                from fluidSim_warp_blender51.blender.scene_bridge import session
+
+                scene.frame_set(2)
+                sess = session()
+                before = sess.solver.particles.position[:1024].numpy().copy()
+                scene.frame_set(3)
+                after = sess.solver.particles.position[:1024].numpy()
+                delta = float(np.max(np.linalg.norm(after - before, axis=1)))
+                checks["viewport_playback_advances"] = bool(
+                    sess.active
+                    and sess.solver.particles.refresh_host_count() > 0
+                    and point_count(bpy.data.objects.get("FluidSim Particles")) > 0
+                    and delta > 1.0e-6)
+                result["playback_position_delta"] = delta
+            except Exception as exc:  # noqa: BLE001
+                checks["viewport_playback_advances"] = False
+                result["playback_error"] = repr(exc)
+            finally:
+                fs.live = False
+                bpy.ops.fluidsim.release()
+        else:
+            checks["viewport_playback_advances"] = False
     elif name == "force_fields":
         force_fields = [
             obj for obj in scene.objects
@@ -114,7 +247,9 @@ def check_scene(name):
             "curve_guide_has_controls": bool(
                 guide and guide.type == "CURVE" and guide.data.splines
                 and len(guide.data.splines[0].points) == 4),
-            "saved_prestepped_frame": scene.frame_current == 19,
+            "saved_live_frame": bool(
+                saved_frame == 1
+                and scene.get("fluidsim_playback_ready") is True),
         })
     elif name in {
             "mesh_solid_source", "mesh_shell_source", "point_source",
@@ -235,6 +370,9 @@ def check_scene(name):
             checks["viewport_playback_advances"] = False
 
     result["checks"] = checks
+    surface = bpy.data.objects.get("FluidSim Surface")
+    particles = bpy.data.objects.get("FluidSim Particles")
+    whitewater = bpy.data.objects.get("FluidSim Whitewater")
     result["surface_vertices"] = len(surface.data.vertices) if surface and surface.type == "MESH" else 0
     result["particle_points"] = point_count(particles)
     result["whitewater_points"] = point_count(whitewater)
@@ -242,6 +380,18 @@ def check_scene(name):
 
 
 def main():
+    disk_scenes = {
+        os.path.splitext(filename)[0]
+        for filename in os.listdir(DEMOS)
+        if filename.endswith(".blend")
+    }
+    declared_scenes = set(SCENES)
+    if disk_scenes != declared_scenes:
+        print(json.dumps({
+            "undeclared_demo_blends": sorted(disk_scenes - declared_scenes),
+            "missing_demo_blends": sorted(declared_scenes - disk_scenes),
+        }, indent=2))
+        raise SystemExit("DEMO-BLEND-CHECK-FAIL (scene inventory mismatch)")
     results = [check_scene(name) for name in SCENES]
     passed = all(
         item["exists"] and item["opened"] and all(item["checks"].values())

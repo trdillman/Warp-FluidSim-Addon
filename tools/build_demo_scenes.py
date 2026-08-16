@@ -42,6 +42,7 @@ FPS = 24
 STANDARD_CACHE_SCENES = ("dam_break", "crown_splash")
 DEFAULT_SCENES = (
     "dam_break", "crown_splash", "force_fields",
+    "cache_export_playback_review",
     "mesh_solid_source", "mesh_shell_source", "point_source",
     "volume_source", "liquid_sink", "height_fill",
 )
@@ -92,8 +93,18 @@ def fresh_scene():
     # background mode with heavy third-party startup add-ons installed.
     if not hasattr(bpy.context.scene, "fluidsim"):
         enable_repo_addon(REPO, default_set=False, persistent=False)
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=True)
+    from fluidSim_warp_blender51.blender.scene_bridge import release_session
+
+    scene = bpy.context.scene
+    release_session(scene)
+    # The scene datablock is intentionally reused, so reset the full pointer
+    # group to RNA defaults before the next builder authors its settings.
+    scene.property_unset("fluidsim")
+    # Operator deletion skips hidden objects. Demo playback seeds are hidden,
+    # so leaving them behind silently injects one demo's particles into every
+    # later scene built in the same Blender process.
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
     for block in (bpy.data.meshes, bpy.data.cameras, bpy.data.lights,
                   bpy.data.pointclouds):
         for datablock in list(block):
@@ -101,10 +112,8 @@ def fresh_scene():
                 block.remove(datablock)
     while bpy.data.libraries:
         bpy.data.libraries.remove(bpy.data.libraries[0])
-    scene = bpy.context.scene
     scene.render.fps = 24
     scene.render.fps_base = 1.0
-    scene.fluidsim.domain_sdf_walls = False
     return scene
 
 
@@ -254,6 +263,36 @@ def save_scene(name, preview=True):
     log(f"saved {path}")
 
 
+def save_live_playback_ready(name, *, preview=False):
+    """Save a source-driven demo at frame 1 with real live output ready."""
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    scene = bpy.context.scene
+    fs = scene.fluidsim
+    fs.live = False
+    fs.cache_playback_enabled = False
+    scene.frame_set(scene.frame_start)
+    if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
+        raise RuntimeError(f"{name}: failed to initialize live playback solver")
+    sess = session()
+    count = sess.solver.particles.refresh_host_count()
+    for _ in range(3):
+        if count > 0:
+            break
+        if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+            raise RuntimeError(f"{name}: failed to seed live playback output")
+        count = sess.solver.particles.refresh_host_count()
+    if count <= 0:
+        raise RuntimeError(f"{name}: live playback starts with zero particles")
+    output_publication.update_outputs(scene, sess, force_surface=True)
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    save_scene(name, preview=preview)
+    log(f"{name}: saved live-playback-ready frame 1 with {count:,} particles")
+    bpy.ops.fluidsim.release()
+
+
 # ---------------------------------------------------------------------------
 # Scene 1: dam break
 # ---------------------------------------------------------------------------
@@ -345,6 +384,24 @@ def build_dam_break():
               encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, indent=2)
         fh.write("\n")
+    fs.live = False
+    scene.frame_set(1)
+    sess.reset(scene)
+    restored = sess.solver.particles.refresh_host_count()
+    if restored == 0:
+        if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+            raise RuntimeError("dam_break playback seed step failed")
+        restored = sess.solver.particles.refresh_host_count()
+    if restored != n:
+        raise RuntimeError(
+            f"dam_break playback reset restored {restored:,}, expected {n:,}")
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    scene["fluidsim_simulated_frames"] = 72
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, "dam_break.blend"),
+        check_existing=False)
+    log(f"dam_break: saved live-playback-ready frame 1 with {restored:,} particles")
     bpy.ops.fluidsim.release()
 
 
@@ -369,6 +426,9 @@ def build_crown_splash():
     fs.profiling_enabled = False
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
+    scene.frame_start = 1
+    scene.frame_end = 120
+    scene.frame_set(1)
     bpy.ops.fluidsim.initialize()
     sess = session()
     pool_depth = 0.05
@@ -398,8 +458,34 @@ def build_crown_splash():
     }
     with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
               encoding="utf-8", newline="\n") as fh:
+        meta["playable_live_setup"] = True
+        meta["seed_objects"] = ["Crown Pool Seed", "Crown Droplet Seed"]
         json.dump(meta, fh, indent=2)
         fh.write("\n")
+    pool_seed = make_particle_seed(scene, pool, "Crown Pool Seed")
+    drop_seed = make_particle_seed(scene, drop, "Crown Droplet Seed")
+    for seed in (pool_seed, drop_seed):
+        seed.fluidsim.enabled = True
+        seed.fluidsim.auto_inject_seed = True
+        seed.hide_set(True)
+    drop_seed.fluidsim.initial_velocity = (0.0, 0.0, -drop_speed)
+    fs.live = False
+    scene.frame_set(1)
+    sess.reset(scene)
+    restored = sess.solver.particles.refresh_host_count()
+    if restored != n_all:
+        raise RuntimeError(
+            f"crown_splash playback reset restored {restored:,}, "
+            f"expected {n_all:,}")
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    scene["fluidsim_simulated_frames"] = 48
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, "crown_splash.blend"),
+        check_existing=False)
+    log(
+        "crown_splash: saved manual-playback-ready frame 1 with "
+        f"{restored:,} particles")
     bpy.ops.fluidsim.release()
 
 
@@ -619,6 +705,26 @@ def build_force_fields():
     magnetic.select_set(True)
     bpy.context.view_layer.objects.active = magnetic
     save_scene("force_fields")
+    seed = make_particle_seed(scene, points, "Force Fields Particle Seed")
+    seed.fluidsim.enabled = True
+    seed.fluidsim.auto_inject_seed = True
+    seed.fluidsim.initial_velocity = (0.6, 0.15, 0.1)
+    seed.hide_set(True)
+    fs.live = False
+    scene.frame_set(1)
+    sess.reset(scene)
+    restored = sess.solver.particles.refresh_host_count()
+    if restored != injected:
+        raise RuntimeError(
+            f"force_fields playback reset restored {restored:,}, "
+            f"expected {injected:,}")
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    scene["fluidsim_simulated_frames"] = 18
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, "force_fields.blend"),
+        check_existing=False)
+    log(f"force_fields: saved live-playback-ready frame 1 with {restored:,} particles")
     bpy.ops.fluidsim.release()
 
 
@@ -1137,6 +1243,9 @@ def _workflow_scene(name, title):
     scene.fluidsim.max_particles = 100_000
     scene.fluidsim.whitewater_enabled = False
     scene.fluidsim.live = False
+    scene.frame_start = 1
+    scene.frame_end = 120
+    scene.frame_set(1)
     add_camera_light(scene, (4.2, -5.0, 3.4), (1.15, 0.0, 0.7))
     scene["fluidsim_phase3_workflow"] = name
     return scene
@@ -1150,7 +1259,7 @@ def build_mesh_solid_source():
     _sources.tag_source(source); source.fluidsim.source_region_kind = "MESH_SOLID"
     source.fluidsim.mesh_object = source; source.fluidsim.emission_mode = "INITIAL_FILL"
     add_text_block("README_Mesh_Solid_Source", "Watertight Mesh Solid Volume Initial Fill. No shell fallback.")
-    save_scene("mesh_solid_source", preview=False)
+    save_live_playback_ready("mesh_solid_source", preview=False)
 
 
 def build_mesh_shell_source():
@@ -1162,7 +1271,7 @@ def build_mesh_shell_source():
     source.fluidsim.mesh_object = source; source.fluidsim.mesh_surface_thickness = 0.12
     source.fluidsim.emission_mode = "CONTINUOUS_INFLOW"
     add_text_block("README_Mesh_Shell_Source", "Open mesh Surface Shell emitter with explicit half-width.")
-    save_scene("mesh_shell_source", preview=False)
+    save_live_playback_ready("mesh_shell_source", preview=False)
 
 
 def build_point_source():
@@ -1177,7 +1286,7 @@ def build_point_source():
     source.fluidsim.point_source_representation = "RASTERIZED_REGION"
     source.fluidsim.point_rasterize_radius = 0.18
     add_text_block("README_Point_Source", "Rasterized point top-up. Direct injection remains a separate compatibility utility.")
-    save_scene("point_source", preview=False)
+    save_live_playback_ready("point_source", preview=False)
 
 
 def build_volume_source():
@@ -1198,7 +1307,8 @@ def build_volume_source():
     _sources.tag_source(source); source.fluidsim.source_region_kind = "VOLUME_GRID"
     source.fluidsim.volume_input_object = source; source.fluidsim.volume_mask_grid = "density"
     add_text_block("README_Volume_Source", "Blender Volume density grid flattened into source leaves for Initial Fill.")
-    save_scene("volume_source", preview=False)
+    source.fluidsim.emission_mode = "INITIAL_FILL"
+    save_live_playback_ready("volume_source", preview=False)
 
 
 def build_liquid_sink():
@@ -1210,7 +1320,7 @@ def build_liquid_sink():
     sink = bpy.context.object; sink.name = "Mesh Solid Liquid Sink"
     _sources.tag_sink(sink); sink.fluidsim.sink_region_kind = "MESH_SOLID"; sink.fluidsim.mesh_object = sink
     add_text_block("README_Liquid_Sink", "Mesh Solid Interior sink; no emitter lifecycle or payload controls.")
-    save_scene("liquid_sink", preview=False)
+    save_live_playback_ready("liquid_sink", preview=False)
 
 
 def build_height_fill():
@@ -1225,7 +1335,36 @@ def build_height_fill():
     scene.fluidsim.height_profile_image = image; scene.fluidsim.height_profile_scale = 0.6
     scene.fluidsim.height_emission_mode = "INITIAL_FILL"
     add_text_block("README_Height_Fill", "Profile Image height Initial Fill. Infinite mode is unsupported and absent.")
-    save_scene("height_fill", preview=False)
+    save_live_playback_ready("height_fill", preview=False)
+
+
+def build_cache_export_playback_review():
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    scene = _workflow_scene(
+        "cache_export_playback_review", "Cache Export Playback Review")
+    fs = scene.fluidsim
+    fs.cache_enabled = False
+    fs.cache_playback_enabled = False
+    fs.cache_path = os.path.join(DEMOS, "cache_export_playback_review_cache")
+    fs.cache_use_custom_range = True
+    fs.cache_frame_start = 1
+    fs.cache_frame_end = 48
+    source = make_source_box(
+        scene, (-0.8, -0.5, 0.2), (-0.2, 0.5, 1.4),
+        "Cache Review Initial Fill", emit_rate=8.0,
+        emission_mode="INITIAL_FILL")
+    source.fluidsim.initial_velocity = (0.7, 0.0, 0.0)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.35, location=(0.55, 0.0, 0.55))
+    collider = bpy.context.object
+    collider.name = "Cache Review Collider"
+    _colliders.tag_collider(collider, friction=0.2, restitution=0.0)
+    add_text_block(
+        "README_Cache_Export_Playback_Review",
+        "Live playback is ready at frame 1. Use Production Cache Bake to "
+        "capture frames, then Use Baked Cache to review the authoritative "
+        "sequence without stepping the live solver.")
+    save_live_playback_ready("cache_export_playback_review", preview=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1363,7 +1502,9 @@ def build_paddle_stir():
     n_pool = sess.solver.inject_particles(pool)
     log(f"paddle_stir: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
     add_camera_light(scene, (0.95, -1.30, 1.05), (1.10, 0.0, 0.62))
-    run_scene("paddle_stir", total, advance_timeline=True)
+    series = run_scene("paddle_stir", total, advance_timeline=True)
+    if not series["particle_count"] or min(series["particle_count"]) <= 0:
+        raise RuntimeError("paddle_stir measured run lost its seeded pool")
     add_text_block(
         "README_Paddle_Stir",
         "Keyframed rotating paddle (moving collider). run_scene advances the "
@@ -1400,8 +1541,29 @@ def build_paddle_stir():
     }
     with open(os.path.join(DEMOS, "paddle_stir", "meta.json"), "w",
               encoding="utf-8", newline="\n") as fh:
+        meta["playable_live_setup"] = True
+        meta["seed_objects"] = ["Paddle Stir Pool Seed"]
         json.dump(meta, fh, indent=2)
         fh.write("\n")
+    seed = make_particle_seed(scene, pool, "Paddle Stir Pool Seed")
+    seed.fluidsim.enabled = True
+    seed.fluidsim.auto_inject_seed = True
+    seed.hide_set(True)
+    fs.live = False
+    scene.frame_set(1)
+    sess.reset(scene)
+    restored = sess.solver.particles.refresh_host_count()
+    if restored != n_pool:
+        raise RuntimeError(
+            f"paddle_stir playback reset restored {restored:,}, "
+            f"expected {n_pool:,}")
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    scene["fluidsim_simulated_frames"] = total
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, "paddle_stir.blend"),
+        check_existing=False)
+    log(f"paddle_stir: saved live-playback-ready frame 1 with {restored:,} particles")
     bpy.ops.fluidsim.release()
 
 
@@ -1414,6 +1576,7 @@ def main():
         "dam_break": build_dam_break,
         "crown_splash": build_crown_splash,
         "force_fields": build_force_fields,
+        "cache_export_playback_review": build_cache_export_playback_review,
         "adhesive_calender": build_adhesive_calender,
         "mesh_solid_source": build_mesh_solid_source,
         "mesh_shell_source": build_mesh_shell_source,

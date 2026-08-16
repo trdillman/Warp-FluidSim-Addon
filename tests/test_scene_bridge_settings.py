@@ -235,14 +235,17 @@ def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
     assert isinstance(settings.omnidirectional_force_center, tuple)
 
 
-def test_domain_collision_wall_setting_is_persisted(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+def test_closed_domain_projects_required_collision_walls(monkeypatch):
+    _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
-
-    assert _build_settings(scene).domain_sdf_walls is True
-
     scene.fluidsim.domain_sdf_walls = False
-    assert _build_settings(scene).domain_sdf_walls is False
+
+    settings = _build_settings(scene)
+
+    assert settings.open_boundaries is False
+    assert settings.domain_sdf_walls is True
+    # Projection must not mutate legacy scene data during read-only preflight.
+    assert scene.fluidsim.domain_sdf_walls is False
 
 
 def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):

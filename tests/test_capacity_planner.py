@@ -106,6 +106,30 @@ def test_leaf_union_is_deduplicated_and_expanded_within_domain():
     assert plan.verdict is CapacityVerdict.ADMITTED
 
 
+def test_seed_leaf_classification_deduplicates_and_clips_vectorized_payloads():
+    plan = plan_initialization(
+        settings(domain_max=(24.0, 8.0, 8.0)),
+        (),
+        (
+            np.array([
+                [-0.01, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [7.99, 0.0, 0.0],
+                [8.0, 0.0, 0.0],
+            ], np.float32),
+            np.array([
+                [8.0, 0.0, 0.0],
+                [15.99, 0.0, 0.0],
+                [24.0, 0.0, 0.0],
+            ], np.float32),
+        ),
+        (),
+        resources(),
+    )
+
+    assert plan.required_leaf_coords == ((0, 0, 0), (1, 0, 0))
+
+
 def test_leaf_capacity_is_reported_independently_from_particles():
     plan = plan_initialization(
         settings(domain_max=(16.0, 8.0, 8.0), leaf_capacity=1),

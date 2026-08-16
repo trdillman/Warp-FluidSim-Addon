@@ -57,3 +57,27 @@ def test_recommend_omits_unreevaluated_semantic_candidates(monkeypatch):
         1, 2, (), (object(),), "sig")
 
     assert capacity_service.recommend(plan, _settings()) == (capacity,)
+
+
+def test_resource_refresh_reuses_prepared_demand_and_updates_only_memory(monkeypatch):
+    prepared = capacity_service.PreparedCapacityInput((), (), ())
+    original = capacity_service.assess(
+        _settings(), prepared, _resources()).plan
+    monkeypatch.setattr(
+        capacity_service, "plan_initialization",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("resource refresh repeated capacity planning")))
+
+    blocked = capacity_service.refresh_resources(
+        original, _settings(), {"gpu_total_bytes": 0, "gpu_free_bytes": 0})
+    restored = capacity_service.refresh_resources(
+        blocked, _settings(), _resources())
+
+    assert blocked.verdict is CapacityVerdict.BLOCKED
+    assert [item.code for item in blocked.blockers] == ["MEMORY_ESTIMATE"]
+    assert blocked.particle_demand is original.particle_demand
+    assert blocked.leaf_demand is original.leaf_demand
+    assert blocked.required_leaf_coords is original.required_leaf_coords
+    assert blocked.scene_signature == original.scene_signature
+    assert restored.verdict is CapacityVerdict.ADMITTED
+    assert restored.blockers == ()

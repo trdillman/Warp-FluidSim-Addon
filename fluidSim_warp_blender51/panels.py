@@ -457,7 +457,9 @@ class FLUIDSIM_PT_domain(FluidSimPanel, bpy.types.Panel):
         layout.prop(fs, "domain_object")
         col = layout.column(align=True)
         col.prop(fs, "open_boundaries")
-        col.prop(fs, "domain_sdf_walls")
+        col.label(text=(
+            "Particles may leave the domain" if fs.open_boundaries
+            else "Closed domain walls are enabled"), icon="INFO")
         from .blender.scene_bridge import session
         from .blender.solver_settings import domain_bounds
 

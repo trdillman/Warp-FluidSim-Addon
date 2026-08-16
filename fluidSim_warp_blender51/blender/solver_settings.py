@@ -176,6 +176,13 @@ def apply_gravity(scene, settings):
     return settings
 
 
+def normalize_domain_boundary_settings(settings):
+    """Enforce the solver invariant required by closed particle bounds."""
+    if not settings.open_boundaries:
+        settings.domain_sdf_walls = True
+    return settings
+
+
 def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
@@ -188,4 +195,7 @@ def build_settings(scene):
     settings.frame_rate = float(scene.render.fps) / float(scene.render.fps_base)
     apply_gravity(scene, settings)
     apply_scene_settings(fs, settings)
-    return settings
+    # Closed particle bounds require matching pressure/collision walls.  Old
+    # files may store the internal switch as false, so normalize the solver
+    # projection without mutating Blender data during read-only preflight.
+    return normalize_domain_boundary_settings(settings)

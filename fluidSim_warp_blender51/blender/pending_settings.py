@@ -20,6 +20,7 @@ from .solver_settings import (
     apply_scene_settings as _apply_scene_settings,
     domain_bounds as _domain_bounds,
     enum_setting_fields as _enum_setting_fields,
+    normalize_domain_boundary_settings as _normalize_domain_boundaries,
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -622,6 +623,7 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
         scene.fluidsim, sess.solver.settings,
         _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
     _apply_gravity(scene, sess.solver.settings)
+    _normalize_domain_boundaries(sess.solver.settings)
     return True
 
 

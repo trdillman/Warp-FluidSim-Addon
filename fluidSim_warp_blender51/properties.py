@@ -773,10 +773,8 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     domain_sdf_walls: BoolProperty(
         name="Domain Collision Walls", default=True,
         update=_request_reset,
-        description="Build collision SDF walls around the domain bounds "
-                     "(recommended for closed domains; without this the "
-                     "pressure solve treats sparse-grid padding beyond the "
-                     "domain box as open space)")
+        description="Compatibility value for older files; closed domains "
+                    "always project collision walls into solver settings")
 
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(

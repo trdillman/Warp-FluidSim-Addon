@@ -10,7 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
-from .capacity_planner import CapacityPlan, plan_initialization, suggest_configurations
+from .capacity_planner import (
+    CapacityBlocker,
+    CapacityPlan,
+    CapacityVerdict,
+    plan_initialization,
+    suggest_configurations,
+)
+from .memory_safety import safe_memory_budget
 from .quality_contract import ResolvedQuality, resolve_quality
 
 
@@ -50,6 +57,33 @@ def assess(settings: Any, prepared: PreparedCapacityInput,
         resources=dict(resources),
         plan=plan,
     )
+
+
+def refresh_resources(plan: CapacityPlan, settings: Any,
+                      resources: Mapping[str, Any]) -> CapacityPlan:
+    """Refresh only the live VRAM verdict for an unchanged prepared plan."""
+    budget = int(safe_memory_budget(
+        int(resources.get("gpu_total_bytes", 0)),
+        int(resources.get("gpu_free_bytes", 0)),
+        plan.additional_transaction_bytes,
+    ))
+    blockers = [item for item in plan.blockers
+                if item.code != "MEMORY_ESTIMATE"]
+    if budget <= 0 or plan.estimated_bytes > budget:
+        blockers.append(CapacityBlocker(
+            "MEMORY_ESTIMATE", plan.estimated_bytes, budget,
+            tuple(item.stable_id for item in plan.source_demands),
+            "Conservative estimated allocation exceeds the live VRAM budget.",
+        ))
+    refreshed = replace(
+        plan,
+        verdict=(CapacityVerdict.BLOCKED if blockers
+                 else CapacityVerdict.ADMITTED),
+        budget_bytes=budget,
+        blockers=tuple(blockers),
+        suggestions=(),
+    )
+    return replace(refreshed, suggestions=recommend(refreshed, settings))
 
 
 def recommend(plan: CapacityPlan, settings: Any):

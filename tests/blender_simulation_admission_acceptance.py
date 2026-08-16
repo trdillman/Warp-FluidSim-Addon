@@ -34,6 +34,11 @@ def main():
     fs.whitewater_enabled = False
     fs.surface_enabled = False
     fs.show_particles = True
+    # Reproduce a legacy scene authored with the unsafe independent wall
+    # switch disabled. Admission must normalize the runtime without mutating
+    # the saved scene during preflight.
+    fs.open_boundaries = False
+    fs.domain_sdf_walls = False
     bpy.ops.mesh.primitive_cube_add(
         size=0.5, location=(0.0, 0.0, -0.25))
     bpy.context.object.name = "Admission Collider"
@@ -140,6 +145,12 @@ def main():
           and all(item[1] is initial_gathers[0][1]
                   for item in initial_gathers), repr(initial_gathers))
     check("active CUDA solver", sess.active and str(sess.solver.device).startswith("cuda"))
+    check(
+        "closed-domain wall invariant",
+        not fs.open_boundaries
+        and not fs.domain_sdf_walls
+        and sess.solver.settings.domain_sdf_walls,
+    )
     check("sources installed", installed.get("sources", 0) >= 1)
     check("collider installed", installed.get("colliders", 0) >= 1)
     check("force installed", installed.get("analytic_forces", 0) >= 1)

@@ -2474,6 +2474,20 @@ def test_panel_hierarchy_promotes_common_settings_and_keeps_specialists_nested(m
     assert panels.FLUIDSIM_PT_cache_utilities.bl_parent_id == "FLUIDSIM_PT_output"
 
 
+def test_domain_panel_exposes_one_boundary_policy_control(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_domain(); panel.layout = layout
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(domain_object=None, open_boundaries=False))
+
+    panel.draw(SimpleNamespace(scene=scene))
+
+    assert "open_boundaries" in layout.props
+    assert "domain_sdf_walls" not in layout.props
+
+
 def test_basic_quality_panel_exposes_only_semantic_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     panels = _reload_module("fluidSim_warp_blender51.panels")

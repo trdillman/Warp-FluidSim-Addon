@@ -215,10 +215,15 @@ def _seed_leaf_coords(settings: Any, payloads: Iterable[Any]) -> set[tuple[int, 
         if points is None:
             continue
         leaves = np.floor((points.astype(np.float64) - lo) / h / 8.0).astype(np.int64)
-        for coord in leaves:
-            item = tuple(int(axis) for axis in coord)
-            if all(0 <= item[i] < dims[i] for i in range(3)):
-                result.add(item)
+        valid = np.all(
+            (leaves >= 0) & (leaves < np.asarray(dims, dtype=np.int64)),
+            axis=1,
+        )
+        if not np.any(valid):
+            continue
+        flat = np.unique(np.ravel_multi_index(leaves[valid].T, dims))
+        result.update(zip(*(axis.tolist()
+                            for axis in np.unravel_index(flat, dims))))
     return result
 
 
