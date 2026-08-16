@@ -84,6 +84,60 @@ def test_an_unregistered_addon_falls_back_rather_than_raising(monkeypatch):
     assert preferences.configured_device() == "cuda:0"
 
 
+def test_preferences_helper_accepts_the_operator_context(monkeypatch):
+    preferences = _install_bpy_stub(
+        monkeypatch, prefs=SimpleNamespace(device="cuda:0"))
+    custom_prefs = SimpleNamespace(device="cuda:7")
+    custom_context = SimpleNamespace(
+        preferences=SimpleNamespace(addons={
+            "fluidSim_warp_blender51": SimpleNamespace(
+                preferences=custom_prefs)
+        }))
+
+    assert preferences._preferences(custom_context) is custom_prefs
+
+
+def test_refresh_operators_tolerate_missing_transient_preferences(monkeypatch):
+    """Nonpersistent enables may have no Blender preferences entry."""
+    preferences = _install_bpy_stub(monkeypatch, prefs=None)
+    refreshed = []
+
+    def fake_refresh(prefs):
+        refreshed.append(prefs)
+        return None, (True, "runtime ready")
+
+    monkeypatch.setattr(preferences, "_refresh_runtime", fake_refresh)
+
+    for operator_type in (
+        preferences.FLUIDSIM_OT_refresh_runtime_probe,
+        preferences.FLUIDSIM_OT_redetect_device,
+    ):
+        operator = operator_type()
+        operator.report = lambda *_args: None
+        assert operator.execute(preferences.bpy.context) == {"FINISHED"}
+
+    assert refreshed == [None, None]
+
+
+def test_refresh_runtime_does_not_write_missing_preferences(monkeypatch):
+    preferences = _install_bpy_stub(monkeypatch, prefs=None)
+    probe = SimpleNamespace(
+        cuda_devices=(SimpleNamespace(alias="cuda:0"),))
+    monkeypatch.setattr(
+        preferences, "probe_runtime", lambda force=False: probe)
+    monkeypatch.setattr(
+        preferences,
+        "runtime_status_for_device",
+        lambda device, probe=None: (True, f"ready: {device}"),
+    )
+
+    refreshed, (ready, message) = preferences._refresh_runtime(None)
+
+    assert refreshed is probe
+    assert ready
+    assert message == "ready: cuda:0"
+
+
 def test_the_runtime_status_reports_the_device_actually_in_use(monkeypatch):
     preferences = _install_bpy_stub(
         monkeypatch, prefs=SimpleNamespace(device="cuda:3"))
@@ -124,6 +178,11 @@ def test_nothing_else_reaches_into_the_addon_preferences(monkeypatch):
         and lookup.search(path.read_text(encoding="utf-8")))
 
     assert offenders == []
+    owner_source = (_PACKAGE_ROOT / "preferences.py").read_text(encoding="utf-8")
+    helper_source = owner_source.split("def _preferences", 1)[1].split(
+        "def configured_device", 1)[0]
+    assert len(lookup.findall(helper_source)) == 1
+    assert len(lookup.findall(owner_source)) == 1
 
 
 def test_the_owner_does_not_hardcode_the_package_name():

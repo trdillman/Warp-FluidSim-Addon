@@ -19,7 +19,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
 
 FAILURES = []
 
@@ -42,6 +42,13 @@ def main():
     check("addon enable", ok)
     if not ok:
         return
+
+    check("persistent addon preferences entry registered",
+          ADDON_NAME in bpy.context.preferences.addons)
+    check("persistent runtime refresh operator completes",
+          bpy.ops.fluidsim.refresh_runtime_probe() == {"FINISHED"})
+    check("persistent device redetect operator completes",
+          bpy.ops.fluidsim.redetect_device() == {"FINISHED"})
 
     scene = bpy.context.scene
     check("scene properties registered", hasattr(scene, "fluidsim"))

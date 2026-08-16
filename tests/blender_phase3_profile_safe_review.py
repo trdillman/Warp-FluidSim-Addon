@@ -48,6 +48,10 @@ def run():
     from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
 
     check("temporary addon active", addon_utils.check("fluidSim_warp_blender51")[1])
+    check("transient runtime refresh operator completes",
+          bpy.ops.fluidsim.refresh_runtime_probe() == {"FINISHED"})
+    check("transient device redetect operator completes",
+          bpy.ops.fluidsim.redetect_device() == {"FINISHED"})
     check("active blend is dam_break", Path(bpy.data.filepath).name == "dam_break.blend",
           bpy.data.filepath)
     panel_ids = (
