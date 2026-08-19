@@ -80,6 +80,25 @@ def test_new_host_frame_rereads_requested_outputs():
     assert calls == {"positions": 2}
 
 
+def test_each_attribute_refreshes_stale_host_count_when_requested_first():
+    calls = {}
+    solver = _solver(calls)
+    solver.particles.host_count = 0
+    solver.whitewater.host_count = 0
+    refreshes = {"particles": 0, "whitewater": 0}
+    solver.particles.refresh_host_count = lambda: (
+        refreshes.__setitem__("particles", refreshes["particles"] + 1) or 2)
+    solver.whitewater.refresh_host_count = lambda: (
+        refreshes.__setitem__("whitewater", refreshes["whitewater"] + 1) or 2)
+
+    frame = HostFrame(solver)
+
+    assert len(frame.velocities) == 2
+    assert len(frame.particle_attr("age")) == 2
+    assert len(frame.whitewater_attr("age")) == 2
+    assert refreshes == {"particles": 1, "whitewater": 1}
+
+
 def test_host_frame_owns_live_surface_publication_cadence():
     solver = _solver({})
 

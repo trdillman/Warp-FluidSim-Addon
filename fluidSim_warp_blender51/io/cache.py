@@ -248,9 +248,21 @@ def settings_record(settings) -> dict:
 
 def compact_settings_segments(settings_records: dict) -> list[dict]:
     """Compact frame->record data into contiguous signature boundaries."""
+    # Metadata loaded from JSON has string keys, while records assembled during
+    # a bake use integer keys.  Normalize once before indexing; converting only
+    # in the ``sorted`` expression leaves string-keyed mappings inaccessible.
+    normalized = {}
+    for raw_frame, record in settings_records.items():
+        frame = int(raw_frame)
+        if frame in normalized:
+            raise ValueError(
+                f"Duplicate settings record for frame {frame} after key normalization"
+            )
+        normalized[frame] = record
+
     segments = []
-    for frame in sorted(int(value) for value in settings_records):
-        signature = settings_records[frame]["signature"]
+    for frame in sorted(normalized):
+        signature = normalized[frame]["signature"]
         if (segments and segments[-1]["signature"] == signature
                 and segments[-1]["frame_end"] + 1 == frame):
             segments[-1]["frame_end"] = frame
@@ -583,6 +595,11 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        # Valid JSON can still be corrupt sequence metadata.  Treat it like a
+        # truncated/unparseable supplemental cache rather than leaking an
+        # AttributeError from the playback handler.
         return None
     if data.get("format_version") != CACHE_FORMAT_VERSION:
         raise ValueError(

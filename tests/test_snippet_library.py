@@ -136,6 +136,13 @@ def test_assigned_locals_are_usable():
     assert lib.is_valid("a = 1.0\nb = a * 2.0", "PARTICLES")
 
 
+def test_local_must_be_bound_before_it_is_read():
+    assert not lib.is_valid("a = a + 1.0", "PARTICLES")
+    assert not lib.is_valid("b = a\na = 1.0", "PARTICLES")
+    assert not lib.is_valid("a += 1.0", "PARTICLES")
+    assert lib.is_valid("a = 1.0; b = a", "PARTICLES")
+
+
 # ---------------------------------------------------------------------------
 # Auto-fix
 # ---------------------------------------------------------------------------

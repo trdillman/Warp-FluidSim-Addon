@@ -258,7 +258,9 @@ def ensure_session_before_frames(scene, reason):
         return
     bridge = _bridge()
     sess = bridge.session()
-    if sess.active:
+    # A singleton session may be active for a different Blender scene.  Only
+    # ownership, not mere activity, makes it safe to reuse for this callback.
+    if sess.owns_scene(scene):
         return
     try:
         sess.initialize(scene)
@@ -277,9 +279,11 @@ def handle_frame_change(sess, scene, depsgraph):
     if frame == sess.last_frame:
         return
     if getattr(fs, "cache_playback_enabled", False):
-        sess.last_frame = frame
         try:
             play_cache_frame(sess, scene, frame)
+            # Do not consume a timeline frame until publication succeeds.  A
+            # repaired/replaced cache can then be retried at the same frame.
+            sess.last_frame = frame
         except Exception as exc:  # noqa: BLE001 - never break playback
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"

@@ -322,6 +322,23 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
 
 
+def test_failed_cache_publication_does_not_consume_timeline_frame(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_frame = lambda _base, _frame: None
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+    sess = scene_bridge.session()
+    sess.last_frame = 3
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert sess.last_frame == 3
+    assert "Cache playback error" in scene.fluidsim.status
+
+
 def test_live_property_cache_playback_does_not_initialize_solver(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(playback=True)
@@ -1283,6 +1300,20 @@ def test_playback_pre_is_idempotent_once_the_session_is_active(monkeypatch):
     scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     assert len(calls) == 1
+
+
+def test_playback_pre_replaces_session_owned_by_another_scene(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    other_scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=0)
+    sess.scene_identity = id(other_scene)
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge.playback.ensure_session_before_frames(scene, "playback")
+
+    assert calls == [scene]
 
 
 def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):

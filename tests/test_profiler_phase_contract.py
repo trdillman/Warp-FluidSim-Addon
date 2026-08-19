@@ -24,6 +24,16 @@ def test_unknown_profiler_phase_fails_instead_of_using_misc_slot():
             pass
 
 
+def test_unknown_named_track_and_nonpositive_summary_window_fail_closed():
+    profiler = Profiler(device="cpu", sync=False)
+
+    with pytest.raises(KeyError, match="unknown profiler track"):
+        with profiler.track_track("typo"):
+            pass
+    with pytest.raises(ValueError, match="last_n must be positive"):
+        profiler.summary(0)
+
+
 def test_profile_tool_derives_labels_from_canonical_slots():
     assert _phase_labels() == {
         f"compute_{slot}": phase

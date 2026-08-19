@@ -8,6 +8,7 @@ import pytest
 
 from fluidSim_warp_blender51.io.cache import (
     available_frames,
+    compact_settings_segments,
     read_frame,
     read_sequence_metadata,
     resolve_frame_range,
@@ -16,6 +17,36 @@ from fluidSim_warp_blender51.io.cache import (
     write_frame,
     write_sequence_metadata,
 )
+
+
+def test_compact_settings_segments_accepts_json_string_frame_keys():
+    records = {
+        "10": {"signature": "first"},
+        "11": {"signature": "first"},
+        "12": {"signature": "second"},
+    }
+
+    assert compact_settings_segments(records) == [
+        {"frame_start": 10, "frame_end": 11, "signature": "first"},
+        {"frame_start": 12, "frame_end": 12, "signature": "second"},
+    ]
+
+
+def test_compact_settings_segments_rejects_duplicate_normalized_frames():
+    records = {
+        1: {"signature": "first"},
+        "1": {"signature": "second"},
+    }
+
+    with pytest.raises(ValueError, match="Duplicate settings record for frame 1"):
+        compact_settings_segments(records)
+
+
+def test_read_sequence_metadata_treats_non_object_json_as_corrupt(tmp_path):
+    (tmp_path / "fluidsim_sequence.json").write_text(
+        '["not", "metadata"]', encoding="utf-8")
+
+    assert read_sequence_metadata(str(tmp_path)) is None
 
 
 class _PicklePayload:
