@@ -11,27 +11,28 @@ def _workflow() -> str:
     )
 
 
-def test_release_workflow_has_static_linux_package_and_gpu_gates():
+def test_release_workflow_has_static_dual_package_and_gpu_gates():
     source = _workflow()
     assert "static:" in source
     assert "blender-package:" in source
     assert "gpu-regression:" in source
     assert "ubuntu-latest" in source
     assert "self-hosted" in source and "nvidia" in source
-    assert "BLENDER_5_2_EXECUTABLE" in source
+    assert "BLENDER_5_1_EXECUTABLE" in source
     assert "WARP_1_16_WHEEL_SOURCE" in source
     assert "release/fetch_warp_wheels.py" in source
     assert "--source" in source
     assert "release/build_extension.py" in source
     assert "release/gpu_regression_blender.py" in source
     assert "windows-latest" not in source
-    assert "windows_x64" not in source
+    assert "windows_x64" in source
 
 
-def test_workflow_uploads_linux_package_checksums_and_reports():
+def test_workflow_uploads_both_platform_packages_checksums_and_reports():
     source = _workflow()
     assert "SHA256SUMS.txt" in source
-    assert "fluidsim_warp-1.0.252-linux_x64.zip" in source
+    assert "fluidsim_warp-1.0.253-linux_x64.zip" in source
+    assert "fluidsim_warp-1.0.253-windows_x64.zip" in source
     assert "smoke-test-report.json" in source
     assert "gpu-regression-report.json" in source
     assert "custom-effects-warp-cpu-validation.json" in source

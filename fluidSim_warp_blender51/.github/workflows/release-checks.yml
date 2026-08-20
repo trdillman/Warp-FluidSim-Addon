@@ -45,11 +45,11 @@ jobs:
           if-no-files-found: warn
 
   blender-package:
-    name: Blender 5.2.0 Linux package and installed-runtime smoke test
+    name: Blender 5.1 Linux validation and dual-platform package smoke test
     needs: static
     runs-on: [self-hosted, linux, x64, fluidsim-release]
     env:
-      BLENDER: ${{ vars.BLENDER_5_2_EXECUTABLE }}
+      BLENDER: ${{ vars.BLENDER_5_1_EXECUTABLE }}
       WARP_WHEEL_SOURCE: ${{ vars.WARP_1_16_WHEEL_SOURCE }}
     steps:
       - uses: actions/checkout@v6
@@ -138,9 +138,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: fluidsim-linux-x64-package
+          name: fluidsim-dual-platform-packages
           path: |
-            dist/fluidsim_warp-1.0.252-linux_x64.zip
+            dist/fluidsim_warp-1.0.253-linux_x64.zip
+            dist/fluidsim_warp-1.0.253-windows_x64.zip
             dist/SHA256SUMS.txt
             dist/linux-build-report.json
             dist/smoke-test-report.json
@@ -157,7 +158,7 @@ jobs:
     needs: blender-package
     runs-on: [self-hosted, linux, x64, nvidia]
     env:
-      BLENDER: ${{ vars.BLENDER_5_2_EXECUTABLE }}
+      BLENDER: ${{ vars.BLENDER_5_1_EXECUTABLE }}
       WARP_WHEEL_SOURCE: ${{ vars.WARP_1_16_WHEEL_SOURCE }}
     steps:
       - uses: actions/checkout@v6
@@ -235,7 +236,8 @@ jobs:
             dist/gpu-regression-report.json
             dist/gpu-build-report.json
             dist/SHA256SUMS.txt
-            dist/fluidsim_warp-1.0.252-linux_x64.zip
+            dist/fluidsim_warp-1.0.253-linux_x64.zip
+            dist/fluidsim_warp-1.0.253-windows_x64.zip
             dist/phase4-warp-cuda-validation.json
             dist/phase5-warp-cuda-validation.json
             dist/custom-effects-warp-cuda-validation.json
