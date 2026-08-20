@@ -257,10 +257,11 @@ def main():
           and reopened_legacy.emit_rate == 5.0)
 
     required_panels = (
-        "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
-        "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-        "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
-        "FLUIDSIM_PT_advanced_field_sources",
+        "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_status",
+        "FLUIDSIM_PT_object_region", "FLUIDSIM_PT_object_source",
+        "FLUIDSIM_PT_object_lifespan", "FLUIDSIM_PT_object_blending",
+        "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
+        "FLUIDSIM_PT_object_field", "FLUIDSIM_PT_object_volume",
     )
     check("role panels registered", all(hasattr(bpy.types, name) for name in required_panels))
     check("legacy mixed source panel absent", not hasattr(bpy.types, "FLUIDSIM_PT_sources"))
