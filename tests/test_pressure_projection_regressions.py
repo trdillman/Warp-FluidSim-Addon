@@ -1195,6 +1195,38 @@ def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device
     assert solver._compute_substeps(1.0 / 24.0) == (3, False)
 
 
+def test_fixed_substeps_preserve_capillary_diagnostics_without_cfl_readback(cuda_device):
+    settings = SolverSettings(
+        domain_min=(0.0, 0.0, 0.0),
+        domain_max=(0.4, 0.4, 0.4),
+        voxel_size=0.1,
+        leaf_capacity=1,
+        max_particles=8,
+        max_whitewater=8,
+        min_substeps=3,
+        max_substeps=3,
+        surface_tension_enabled=True,
+        surface_tension_coefficient=1.0e12,
+        device=cuda_device,
+    )
+    solver = FluidSolver(settings)
+    solver.particles.host_count = 1
+
+    class _NoCflReduction:
+        def zero_(self):
+            raise AssertionError("fixed substeps should not reduce max speed")
+
+        def numpy(self):
+            raise AssertionError("fixed substeps should not read max speed")
+
+    solver.max_speed_dev = _NoCflReduction()
+    assert solver._compute_substeps(1.0 / 24.0) == (3, False)
+    diagnostics = solver._last_substep_diagnostics
+    assert diagnostics["capillary_substeps_required"] > 3
+    assert diagnostics["capillary_substeps_clamped"] is True
+    assert diagnostics["substep_limiter"] == "CAPILLARY"
+
+
 def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
     settings = SolverSettings(
         domain_min=(0.0, 0.0, 0.0),

@@ -147,10 +147,15 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
     swaps = []
     monkeypatch.setattr(output_publication, "_swap_mesh", lambda *args: swaps.append(args))
     monkeypatch.setattr(output_publication, "_clear_points", lambda _scene, _name: None)
+    monkeypatch.setattr(
+        output_publication, "_hide_and_clear_output",
+        lambda _scene, _name: None,
+    )
     scene = SimpleNamespace(fluidsim=SimpleNamespace())
     payload = SimpleNamespace(
         surface_visible=True, publish_surface=False,
         particles_visible=False, whitewater_visible=False,
+        whitewater_output_mode="COMBINED",
     )
 
     output_publication.publish_payload(scene, payload)
@@ -203,12 +208,16 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
             self.count = object()
             self._counts = iter((before_compaction, after_compaction))
             self.compact_hints = []
+            self.type_count_hints = []
 
         def refresh_host_count(self):
             return next(self._counts)
 
         def compact(self, count_hint):
             self.compact_hints.append(count_hint)
+
+        def update_type_counts(self, count_hint):
+            self.type_count_hints.append(count_hint)
 
     results = []
     for capacity in (128, 131_072):
@@ -227,9 +236,15 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
         )
 
         active_count = FluidSolver._finalize_whitewater(solver)
-        results.append((active_count, ww.compact_hints, launches.copy()))
+        results.append((
+            active_count, ww.compact_hints, ww.type_count_hints,
+            launches.copy(),
+        ))
 
-    assert results == [(11, [19], [11]), (11, [19], [11])]
+    assert results == [
+        (11, [19], [11], [11]),
+        (11, [19], [11], [11]),
+    ]
 
 
 def test_whitewater_topology_budget_covers_ballistic_motion():
@@ -280,8 +295,13 @@ def test_whitewater_emission_reuses_dead_slot_at_capacity():
         emission_rate=100.0,
         surface_band=10.0,
         min_speed=0.0,
+        foam_band=1.0,
+        min_spray_speed=2.0,
         life_min=1.0,
         life_max=1.0,
+        foam_life_multiplier=1.0,
+        bubble_life_multiplier=1.0,
+        spray_life_multiplier=1.0,
         seed=123,
     )
 

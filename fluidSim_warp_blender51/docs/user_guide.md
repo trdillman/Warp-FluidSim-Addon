@@ -247,6 +247,9 @@ remain explicit operator dialogs.
 
 ### Object Properties
 
+Analytic Volume provides the six analytic signed-distance shapes. Cone and
+Pyramid preserve their exact Euclidean boundary distance.
+
 **FluidSim Role — Selected Objects** is the role assignment surface. Its action
 labels state that they operate on the selected set. Detailed child panels use
 the active object only.

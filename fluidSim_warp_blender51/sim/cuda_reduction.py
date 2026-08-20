@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import inspect
 import os
 import tempfile
 from pathlib import Path
@@ -47,6 +48,13 @@ extern "C" __global__ void fluid_dot_reduce(
 _MODULES = {}
 
 
+def _build_cuda(cu_path, arch, output_path):
+    kwargs = {}
+    if "pch_dir" in inspect.signature(build.build_cuda).parameters:
+        kwargs["pch_dir"] = context.runtime.get_nvrtc_pch_dir()
+    build.build_cuda(cu_path, arch, output_path, **kwargs)
+
+
 def _load_kernel(device):
     key = (id(device), int(device.context), device.arch)
     cached = _MODULES.get(key)
@@ -70,11 +78,7 @@ def _load_kernel(device):
             prefix=f"dot_{digest}_", suffix=".cubin", dir=cache_dir)
         os.close(handle)
         try:
-            build.build_cuda(
-                str(source_path),
-                device.arch,
-                temporary,
-            )
+            _build_cuda(str(source_path), device.arch, temporary)
             os.replace(temporary, cubin_path)
         finally:
             try:
@@ -122,7 +126,8 @@ class CudaDotProduct:
             ctypes.addressof(count_value),
             ctypes.addressof(output_ptr),
         )
-        result = context.runtime.core.wp_cuda_launch_kernel(
+        launch = context.runtime.core.wp_cuda_launch_kernel
+        args = (
             self.device.context,
             self._kernel,
             count,
@@ -132,5 +137,8 @@ class CudaDotProduct:
             params,
             self.device.stream.cuda_stream,
         )
+        if len(getattr(launch, "argtypes", ()) or ()) >= 11:
+            args = args[:5] + (1, 0, 0) + args[6:] + (None,)
+        result = launch(*args)
         if result != 0:
             raise RuntimeError(f"Native CUDA dot-product launch failed: {result}")

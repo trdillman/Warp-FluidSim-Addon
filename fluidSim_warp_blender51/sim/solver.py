@@ -2174,7 +2174,21 @@ class FluidSolver:
         capillary_required = 1
         capillary_limit = float("inf")
 
-        if self.particles.host_count > 0:
+        if (bool(getattr(s, "surface_tension_enabled", False))
+                and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0):
+            capillary_limit = capillary_dt(
+                float(s.surface_tension_density),
+                float(s.voxel_size),
+                float(s.surface_tension_coefficient),
+                float(s.surface_tension_safety),
+            )
+            capillary_required = required_capillary_substeps(
+                frame_dt, capillary_limit)
+
+        # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
+        # device reduction/readback entirely. Capillary demand is still
+        # calculated above so its clamp diagnostics remain truthful.
+        if min_substeps < max_substeps and self.particles.host_count > 0:
             self.max_speed_dev.zero_()
             wp.launch(
                 k_max_vec3_magnitude, dim=self.particles.host_count,
@@ -2188,17 +2202,6 @@ class FluidSolver:
                 dt_cfl = s.cfl * s.voxel_size / vmax
                 cfl_required = max(
                     1, int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6))))
-
-        if (bool(getattr(s, "surface_tension_enabled", False))
-                and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0):
-            capillary_limit = capillary_dt(
-                float(s.surface_tension_density),
-                float(s.voxel_size),
-                float(s.surface_tension_coefficient),
-                float(s.surface_tension_safety),
-            )
-            capillary_required = required_capillary_substeps(
-                frame_dt, capillary_limit)
 
         required = max(min_substeps, cfl_required, capillary_required)
         selected = min(max_substeps, required)
