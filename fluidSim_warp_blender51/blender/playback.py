@@ -8,7 +8,9 @@ synchronization, stepping, reset, error storage, and teardown.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import bpy
 
@@ -18,6 +20,7 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 _IN_FRAME_HANDLER = False
 _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
+_IN_MODE_TRANSITION = False
 
 _ACTIVE_BAKE_STATUSES = frozenset({
     "PREFLIGHT",
@@ -27,7 +30,46 @@ _ACTIVE_BAKE_STATUSES = frozenset({
 })
 
 
-def activity_snapshot(scene, *, owns_scene=None):
+@dataclass(frozen=True)
+class ActivitySnapshot(Mapping):
+    """One activity model compatible with both Properties UI and legacy callers."""
+
+    state: str
+    label: str
+    detail: str
+    icon: str
+    busy: bool = False
+    progress: float = 0.0
+    id: str = "IDLE"
+    owns_scene: bool = False
+    bake_status: str = "IDLE"
+
+    def _mapping(self):
+        return {
+            "id": self.id,
+            "label": self.label,
+            "icon": self.icon,
+            "owns_scene": self.owns_scene,
+            "bake_status": self.bake_status,
+            "state": self.state,
+            "detail": self.detail,
+            "busy": self.busy,
+            "progress": self.progress,
+        }
+
+    def __getitem__(self, key):
+        return self._mapping()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._mapping())
+
+    def __len__(self) -> int:
+        return len(self._mapping())
+
+
+def activity_snapshot(
+        scene, *, owns_scene=None,
+        is_animation_playing: bool = False) -> ActivitySnapshot:
     """Return the single public FluidSim activity state for ``scene``.
 
     Raw live/cache flags remain transport details.  The snapshot is deliberately
@@ -36,42 +78,67 @@ def activity_snapshot(scene, *, owns_scene=None):
     """
     fs = getattr(scene, "fluidsim", None) if scene is not None else None
     if fs is None:
-        return {
-            "id": "IDLE",
-            "label": "Idle",
-            "icon": "PAUSE",
-            "owns_scene": False,
-            "bake_status": "IDLE",
-        }
+        return ActivitySnapshot(
+            "IDLE", "Idle", "", "PAUSE", id="IDLE",
+            owns_scene=False, bake_status="IDLE")
     if owns_scene is None:
         try:
             owns_scene = bool(_bridge().session().owns_scene(scene))
         except Exception:
             owns_scene = False
+    from . import production_bake
+
     bake_status = str(getattr(fs, "bake_status", "IDLE") or "IDLE")
+    controller = production_bake.active_bake(scene)
+    if controller is not None and production_bake.bake_is_active(scene):
+        status = controller.status
+        if status is production_bake.BakeStatus.CANCELLING:
+            return ActivitySnapshot(
+                "CANCELLING", "Cancelling Bake", str(controller.message),
+                "CANCEL", True, float(controller.progress),
+                "PRODUCTION_BAKE", bool(owns_scene), status.value)
+        label = "Baking" if status is production_bake.BakeStatus.RUNNING else "Preparing Bake"
+        return ActivitySnapshot(
+            "BAKING", label, str(controller.message), "RENDER_ANIMATION",
+            True, float(controller.progress), "PRODUCTION_BAKE",
+            bool(owns_scene), status.value)
     if bake_status in _ACTIVE_BAKE_STATUSES:
-        activity_id = "PRODUCTION_BAKE"
-        label = "Production Bake"
-        icon = "RENDER_ANIMATION"
-    elif bool(getattr(fs, "cache_playback_enabled", False)):
-        activity_id = "CACHE_PLAYBACK"
-        label = "Cache Playback"
-        icon = "PLAY"
-    elif bool(getattr(fs, "live", False)):
-        activity_id = "LIVE_PREVIEW"
-        label = "Live Preview"
-        icon = "PLAY"
-    else:
-        activity_id = "IDLE"
-        label = "Idle"
-        icon = "PAUSE"
-    return {
-        "id": activity_id,
-        "label": label,
-        "icon": icon,
-        "owns_scene": bool(owns_scene),
-        "bake_status": bake_status,
-    }
+        return ActivitySnapshot(
+            "CANCELLING" if bake_status == "CANCELLING" else "BAKING",
+            "Cancelling Bake" if bake_status == "CANCELLING" else "Production Bake",
+            str(getattr(fs, "bake_message", "")),
+            "CANCEL" if bake_status == "CANCELLING" else "RENDER_ANIMATION",
+            True, float(getattr(fs, "bake_progress", 0.0)),
+            "PRODUCTION_BAKE", bool(owns_scene), bake_status)
+    if bool(getattr(fs, "cache_playback_enabled", False)):
+        return ActivitySnapshot(
+            "CACHE_PLAYBACK",
+            "Playing Cache" if is_animation_playing else "Cache Playback Ready",
+            str(getattr(fs, "status", "")), "PLAY", bool(is_animation_playing),
+            0.0, "CACHE_PLAYBACK", bool(owns_scene), bake_status)
+    if bool(getattr(fs, "live", False)):
+        return ActivitySnapshot(
+            "LIVE_PLAYING" if is_animation_playing else "LIVE_READY",
+            "Playing Live" if is_animation_playing else "Live Ready",
+            str(getattr(fs, "status", "")), "PLAY", bool(is_animation_playing),
+            0.0, "LIVE_PREVIEW", bool(owns_scene), bake_status)
+    detail = str(getattr(fs, "bake_message", ""))
+    progress = float(getattr(fs, "bake_progress", 0.0))
+    if bake_status == "COMPLETE":
+        return ActivitySnapshot(
+            "COMPLETE", "Bake Complete", detail, "CHECKMARK", False, progress,
+            "IDLE", bool(owns_scene), bake_status)
+    if bake_status == "FAILED":
+        return ActivitySnapshot(
+            "FAILED", "Bake Failed", detail, "ERROR", False, progress,
+            "IDLE", bool(owns_scene), bake_status)
+    if bake_status == "CANCELLED":
+        return ActivitySnapshot(
+            "IDLE", "Bake Cancelled", detail, "CANCEL", False, progress,
+            "IDLE", bool(owns_scene), bake_status)
+    return ActivitySnapshot(
+        "IDLE", "Idle", str(getattr(fs, "status", "")), "PAUSE",
+        id="IDLE", owns_scene=bool(owns_scene), bake_status=bake_status)
 
 
 _CACHE_SCENE_KEY_MESSAGE = (
@@ -107,12 +174,26 @@ def suppress_frame_handlers():
 
 def set_live_enabled(scene, enabled: bool):
     """Apply the characterized live enable/disable transition."""
+    global _IN_MODE_TRANSITION
+    if _IN_MODE_TRANSITION:
+        return True
     if _IN_FRAME_HANDLER:
         # fs.live writes from the handler invoke the RNA callback inline.  The
         # outer handler owns teardown and must not allocate or touch IDs again.
         return
     sess = _bridge().session()
     fs = scene.fluidsim
+    if enabled:
+        from . import production_bake
+
+        if production_bake.bake_is_active(scene):
+            _IN_MODE_TRANSITION = True
+            try:
+                fs.live = False
+            finally:
+                _IN_MODE_TRANSITION = False
+            fs.status = "Production Bake is active - Live Playback is unavailable"
+            return False
     if enabled:
         if getattr(fs, "cache_playback_enabled", False):
             fs.status = "Cache playback enabled - press play"
@@ -123,18 +204,34 @@ def set_live_enabled(scene, enabled: bool):
             fs.status = "Live simulation enabled - press play"
     else:
         fs.status = "Live simulation disabled"
+    return True
 
 
 def set_cache_playback_enabled(scene, enabled: bool):
     """Apply the characterized mutually-exclusive cache playback transition."""
+    global _IN_MODE_TRANSITION
+    if _IN_MODE_TRANSITION:
+        return True
     sess = _bridge().session()
     fs = scene.fluidsim
+    if enabled:
+        from . import production_bake
+
+        if production_bake.bake_is_active(scene):
+            _IN_MODE_TRANSITION = True
+            try:
+                fs.cache_playback_enabled = False
+            finally:
+                _IN_MODE_TRANSITION = False
+            fs.status = "Production Bake is active - Cache Playback is unavailable"
+            return False
     if enabled:
         sess.release(scene)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
     elif getattr(fs, "live", False):
         set_live_enabled(scene, True)
+    return True
 
 
 def _check_cache_scene_key(scene, base, frame_data):
@@ -236,7 +333,7 @@ def ensure_session_before_frames(scene, reason):
         return
     bridge = _bridge()
     sess = bridge.session()
-    if sess.active:
+    if sess.owns_scene(scene):
         return
     try:
         sess.initialize(scene)
@@ -255,9 +352,11 @@ def handle_frame_change(sess, scene, depsgraph):
     if frame == sess.last_frame:
         return
     if getattr(fs, "cache_playback_enabled", False):
-        sess.last_frame = frame
         try:
             play_cache_frame(sess, scene, frame)
+            # Do not consume a timeline frame until publication succeeds. A
+            # repaired/replaced cache can then be retried at the same frame.
+            sess.last_frame = frame
         except Exception as exc:  # noqa: BLE001 - never break playback
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"
@@ -308,7 +407,8 @@ def handle_frame_change(sess, scene, depsgraph):
             sess.sync_scene(scene, depsgraph)
             bridge.step_frame(
                 scene, sess, refresh_pending=False,
-                timeline_frame=frame - offset)
+                timeline_frame=frame - offset,
+                publish_outputs=(offset == 0))
     except Exception as exc:  # noqa: BLE001 - never break playback
         from ..sim.fields import TopologyCapacityError
 

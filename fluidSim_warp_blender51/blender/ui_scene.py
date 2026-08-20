@@ -1072,9 +1072,16 @@ class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
             summary = sess.profiler.summary(last_n=30)
             box = layout.box()
             box.label(text="Average phase times", icon="TIME")
-            for key, value in sorted(summary.items()):
+            from ..sim.constants import TIMER_PHASE_SLOTS
+
+            phase_names = {
+                f"compute_{slot}": phase.replace("_", " ").title()
+                for phase, slot in TIMER_PHASE_SLOTS.items()
+            }
+            for key, label in phase_names.items():
+                value = summary.get(key, 0.0)
                 if float(value) > 0.01:
-                    box.label(text=f"{key.replace('_', ' ').title()}: {float(value):.2f} ms")
+                    box.label(text=f"{label}: {float(value):.2f} ms")
 
 
 class FLUIDSIM_PT_diagnostics_benchmark(FluidSimScenePanel, bpy.types.Panel):

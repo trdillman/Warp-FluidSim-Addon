@@ -43,7 +43,7 @@ def test_profile_tool_derives_labels_from_canonical_slots():
 
 def test_blender_profiler_labels_derive_from_canonical_slots():
     root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
-    for relative_path in ("blender/viewport_overlay.py", "panels.py"):
+    for relative_path in ("blender/viewport_overlay.py", "blender/ui_scene.py"):
         source = (root / relative_path).read_text(encoding="utf-8")
         assert "TIMER_PHASE_SLOTS.items()" in source
         assert '"compute_0"' not in source

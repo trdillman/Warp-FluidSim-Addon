@@ -95,6 +95,13 @@ class HostFrame:
             if isinstance(key, tuple) and key and key[0] == "surface_attributes":
                 self._values.pop(key, None)
 
+    def _live_count(self, owner_name):
+        key = (owner_name, "count")
+        return self._get(
+            key,
+            lambda: getattr(self.solver, owner_name).refresh_host_count(),
+        )
+
     def should_publish_surface(self, cadence):
         cadence = max(1, int(cadence))
         return self.frame <= 1 or cadence <= 1 or self.frame % cadence == 0
@@ -112,7 +119,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_positions()[::stride], dtype=np.float32)
-            n = self.solver.particles.refresh_host_count()
+            n = self._live_count("particles")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -127,7 +134,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_velocities(), dtype=np.float32)
-            n = self.solver.particles.refresh_host_count()
+            n = self._live_count("particles")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -170,7 +177,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.whitewater_positions(), dtype=np.float32)
-            n = self.solver.whitewater.refresh_host_count()
+            n = self._live_count("whitewater")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -190,7 +197,7 @@ class HostFrame:
     def particle_attr(self, name):
         def load():
             try:
-                n = self.solver.particles.refresh_host_count()
+                n = self._live_count("particles")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particles.attr(name).numpy()[:n])
@@ -201,11 +208,17 @@ class HostFrame:
     def whitewater_attr(self, name):
         def load():
             try:
-                n = self.solver.whitewater.refresh_host_count()
+                n = self._live_count("whitewater")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     getattr(self.solver.whitewater, name).numpy()[:n])
             except AttributeError:
+                if name == "type":
+                    from .whitewater_types import LEGACY_UNCLASSIFIED
+
+                    return np.full(
+                        len(self.whitewater), LEGACY_UNCLASSIFIED,
+                        dtype=ATTRIBUTE_SPECS["type"].numpy_dtype)
                 return np.zeros(0, dtype=np.float32)
         return self._get(("whitewater", name), load)
 

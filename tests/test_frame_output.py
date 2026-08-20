@@ -38,6 +38,7 @@ def _solver(calls):
         velocity=_Array([[.1, .2, .3], [.4, .5, .6]], calls, "whitewater_velocity"),
         age=_Array([1, 2], calls, "whitewater_age"),
         life=_Array([3, 4], calls, "whitewater_life"),
+        type=_Array([0, 1], calls, "whitewater_type"),
     )
     solver = SimpleNamespace(frame=4, particles=particles, whitewater=whitewater)
     solver.surface_mesh = lambda: calls.__setitem__(
@@ -237,12 +238,12 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
         "particle_time_offset", "whitewater_velocities", "whitewater_age",
         "whitewater_life", "whitewater_required", "whitewater_available",
         "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
-        "whitewater_status", "attribute_schema_version",
+        "whitewater_status", "whitewater_type", "attribute_schema_version",
         "attribute_inventory_json", "surface_attribute_transfer_method"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
     for name in ("age", "life", "temperature", "viscosity", "density",
                  "time_offset", "whitewater", "whitewater_velocity",
-                 "whitewater_age", "whitewater_life"):
+                 "whitewater_age", "whitewater_life", "whitewater_type"):
         assert calls[name] == 1
     assert calls.get("unused", 0) == 0
     sys.modules.pop("fluidSim_warp_blender51.blender.output_publication", None)
@@ -369,6 +370,7 @@ def test_publisher_only_path_poisons_actual_solver_warp_and_blender_entrypoints(
         particles_visible=False, particle_attribute_mode="NONE",
         particle_radius=.01, particles=np.zeros((0, 3), np.float32),
         particle_attributes={}, whitewater_visible=False,
+        whitewater_output_mode="COMBINED",
         whitewater_attribute_mode="NONE", whitewater_radius=.01,
         whitewater=np.zeros((0, 3), np.float32), whitewater_attributes={})
     calls = []
@@ -388,6 +390,13 @@ def test_publisher_only_path_poisons_actual_solver_warp_and_blender_entrypoints(
         ("lookup", output_publication.SURFACE_NAME),
         ("clear", output_publication.PARTICLES_NAME),
         ("clear", output_publication.WHITEWATER_NAME),
+        ("lookup", output_publication.WHITEWATER_NAME),
+        ("clear", output_publication.FOAM_NAME),
+        ("lookup", output_publication.FOAM_NAME),
+        ("clear", output_publication.BUBBLES_NAME),
+        ("lookup", output_publication.BUBBLES_NAME),
+        ("clear", output_publication.SPRAY_NAME),
+        ("lookup", output_publication.SPRAY_NAME),
     ]
 
 

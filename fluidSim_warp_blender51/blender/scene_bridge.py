@@ -188,13 +188,23 @@ class Session:
 
     def _admission(self):
         if self._admission_owner is None:
-            from . import effects, pending_settings, snippets
+            from . import pending_settings, snippets
             from .simulation_admission import SimulationAdmission
+
+            def build_effect_stack(scene):
+                # Host-Python contract tests intentionally provide a minimal
+                # bpy seam. Custom Effects are a Blender adapter and are only
+                # importable when Blender's property API is present.
+                if not hasattr(bpy, "props"):
+                    return ()
+                from . import effects
+
+                return effects.build_effect_stack_for_admission(scene)
 
             self._admission_owner = SimulationAdmission(
                 self, scene_identity=_scene_identity,
                 snippet_builder=snippets.build_snippets,
-                effect_builder=effects.build_effect_stack_for_admission,
+                effect_builder=build_effect_stack,
                 applied_state_capture=pending_settings.capture_applied_state,
                 reset_settings_apply=pending_settings.apply_reset_solver_settings,
             )
@@ -362,34 +372,6 @@ class Session:
             from . import output_publication
 
             output_publication.update_outputs(scene, self)
-        if write_cache and fs.cache_enabled:
-            from ..io import cache
-
-            try:
-                timeline_frame = int(
-                    scene.frame_current if timeline_frame is None
-                    else timeline_frame)
-                cache.write_frame(scene, self, timeline_frame)
-                record_settings = getattr(cache, "settings_record", None)
-                if callable(record_settings):
-                    self.cache_settings_records[timeline_frame] = record_settings(
-                        self.solver.settings)
-                self.cache_written_start = (
-                    timeline_frame if self.cache_written_start is None
-                    else min(self.cache_written_start, timeline_frame))
-                self.cache_written_end = (
-                    timeline_frame if self.cache_written_end is None
-                    else max(self.cache_written_end, timeline_frame))
-                cache.write_sequence_metadata(
-                    bpy.path.abspath(fs.cache_path),
-                    self.cache_written_start,
-                    self.cache_written_end,
-                    source="live_simulation",
-                    settings_records=self.cache_settings_records,
-                    scene_key_value=self.scene_key,
-                )
-            except Exception as exc:  # noqa: BLE001 - cache is supplemental
-                print(f"fluidSim cache write failed: {exc!r}")
         return stats
 
     def reset(self, scene, *, depsgraph=None):

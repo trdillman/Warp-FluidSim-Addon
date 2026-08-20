@@ -882,10 +882,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
     particle_values = (_particle_values(
         solver, fs.particle_attribute_mode, positions, indices=indices,
         host=host) if fs.show_particles else None)
-    particle_attributes = (host.output_attributes(
-        solver.settings, "particles", stride=step) if fs.show_particles else {})
-    if particle_values is not None:
-        particle_attributes[str(fs.particle_attribute_mode)] = particle_values
+    particle_attributes = _attribute_map(
+        str(fs.particle_attribute_mode), particle_values)
 
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
@@ -893,20 +891,21 @@ def prepare_live_payload(scene, host, publish_surface=True):
     whitewater_values = (_whitewater_values(
         solver, fs.whitewater_attribute_mode, whitewater, host=host)
         if fs.show_whitewater and fs.whitewater_enabled else None)
-    whitewater_attributes = (host.output_attributes(
-        solver.settings, "whitewater")
-        if fs.show_whitewater and fs.whitewater_enabled else {})
-    if whitewater_values is not None:
-        whitewater_attributes[str(fs.whitewater_attribute_mode)] = whitewater_values
+    whitewater_attributes = _attribute_map(
+        str(fs.whitewater_attribute_mode), whitewater_values)
+    whitewater_output_mode = str(
+        getattr(fs, "whitewater_output_mode", "COMBINED"))
+    if (fs.show_whitewater and fs.whitewater_enabled
+            and whitewater_output_mode.upper() in {"SEPARATE", "BOTH"}
+            and "type" not in whitewater_attributes):
+        whitewater_attributes["type"] = host.whitewater_attribute("type")
 
     if publish_surface and fs.show_surface and fs.surface_enabled:
         verts, tris = host.surface_mesh
         surface_values = _surface_values(
             solver, fs.surface_attribute_mode, verts, host=host)
-        surface_attributes = host.output_attributes(
-            solver.settings, "surface", positions=verts)
-        if surface_values is not None:
-            surface_attributes[str(fs.surface_attribute_mode)] = surface_values
+        surface_attributes = _attribute_map(
+            str(fs.surface_attribute_mode), surface_values)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)
@@ -928,8 +927,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
         particle_attributes=particle_attributes,
         whitewater_visible=bool(
             fs.show_whitewater and fs.whitewater_enabled),
-        whitewater_output_mode=str(
-            getattr(fs, "whitewater_output_mode", "COMBINED")),
+        whitewater_output_mode=whitewater_output_mode,
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
         whitewater_radius=(voxel_size * 0.15
                            * getattr(fs, "whitewater_display_scale", 1.0)),
@@ -1093,12 +1091,18 @@ def prepare_outputs(scene):
             scene, _ensure_point_object(
                 scene, PARTICLES_NAME, enabled_attribute_keys(fs, "particles")))
     if fs.show_whitewater and fs.whitewater_enabled:
-        for name, ensure_material in (
-            (WHITEWATER_NAME, materials.ensure_whitewater_material),
-            (FOAM_NAME, materials.ensure_foam_material),
-            (BUBBLES_NAME, materials.ensure_bubble_material),
-            (SPRAY_NAME, materials.ensure_spray_material),
-        ):
+        combined_enabled, separate_enabled = _whitewater_mode_flags(
+            getattr(fs, "whitewater_output_mode", "COMBINED"))
+        targets = []
+        if combined_enabled:
+            targets.append((WHITEWATER_NAME, materials.ensure_whitewater_material))
+        if separate_enabled:
+            targets.extend((
+                (FOAM_NAME, materials.ensure_foam_material),
+                (BUBBLES_NAME, materials.ensure_bubble_material),
+                (SPRAY_NAME, materials.ensure_spray_material),
+            ))
+        for name, ensure_material in targets:
             _ensure_material(
                 ensure_material,
                 scene, _ensure_point_object(
@@ -1138,7 +1142,10 @@ def _publish_whitewater_points(
         _swap_vertex_cloud(obj, positions, colors, attributes)
     obj.hide_viewport = False
     obj.hide_render = False
-    obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = int(legacy_unclassified_count)
+    try:
+        obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = int(legacy_unclassified_count)
+    except (AttributeError, TypeError):
+        pass
     _ensure_material(ensure_material, scene, obj)
     return obj
 

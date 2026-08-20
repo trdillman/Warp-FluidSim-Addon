@@ -217,6 +217,52 @@ class BakeController:
         )
 
 
+_ACTIVE_BAKES: dict[int, BakeController] = {}
+
+
+def _scene_key(scene) -> int:
+    pointer = getattr(scene, "as_pointer", None)
+    if callable(pointer):
+        try:
+            return int(pointer())
+        except (ReferenceError, TypeError, ValueError):
+            pass
+    return id(scene)
+
+
+def register_active_bake(scene, controller: BakeController) -> None:
+    """Give one controller authoritative bake ownership for ``scene``."""
+    key = _scene_key(scene)
+    existing = _ACTIVE_BAKES.get(key)
+    if existing is not None and existing is not controller:
+        raise RuntimeError("A Production Bake is already active for this scene")
+    _ACTIVE_BAKES[key] = controller
+
+
+def active_bake(scene) -> BakeController | None:
+    """Return the controller that currently owns ``scene``'s bake workflow."""
+    return _ACTIVE_BAKES.get(_scene_key(scene))
+
+
+def bake_is_active(scene) -> bool:
+    controller = active_bake(scene)
+    return bool(controller is not None and controller.status in {
+        BakeStatus.PREFLIGHT,
+        BakeStatus.INITIALIZING,
+        BakeStatus.RUNNING,
+        BakeStatus.CANCELLING,
+    })
+
+
+def clear_active_bake(scene, controller: BakeController | None = None) -> None:
+    """Release bake ownership, optionally only for the expected controller."""
+    key = _scene_key(scene)
+    existing = _ACTIVE_BAKES.get(key)
+    if existing is None or (controller is not None and existing is not controller):
+        return
+    _ACTIVE_BAKES.pop(key, None)
+
+
 class ProductionBakeBackend:
     """Blender/session adapter for one-frame cache-v2 transactions."""
 
@@ -612,19 +658,23 @@ def run_synchronous(
     )
     controller = BakeController(
         backend=backend, progress_callback=progress_callback)
-    if resume:
-        controller.resume(scene, end=end)
-    else:
-        controller.start(scene, start, end, restart=restart)
-    while controller.status in {
-        BakeStatus.INITIALIZING,
-        BakeStatus.RUNNING,
-        BakeStatus.CANCELLING,
-    }:
-        controller.tick(scene)
-    if controller.status is BakeStatus.FAILED:
-        raise RuntimeError(controller.error or controller.message)
-    return controller.result()
+    register_active_bake(scene, controller)
+    try:
+        if resume:
+            controller.resume(scene, end=end)
+        else:
+            controller.start(scene, start, end, restart=restart)
+        while controller.status in {
+            BakeStatus.INITIALIZING,
+            BakeStatus.RUNNING,
+            BakeStatus.CANCELLING,
+        }:
+            controller.tick(scene)
+        if controller.status is BakeStatus.FAILED:
+            raise RuntimeError(controller.error or controller.message)
+        return controller.result()
+    finally:
+        clear_active_bake(scene, controller)
 
 
 class SignalCancellation:

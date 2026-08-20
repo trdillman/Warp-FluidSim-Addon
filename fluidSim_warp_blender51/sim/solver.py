@@ -1020,8 +1020,13 @@ class FluidSolver:
         self.grid.finalize_topology()
         self._nvox = max(1, self.grid.active_voxel_count)
         if settings is not None:
-            self.surface.reset()
-            self.surface_tension.reset()
+            surface = getattr(self, "surface", None)
+            if surface is not None:
+                surface.reset()
+            surface_tension = getattr(self, "surface_tension", None)
+            if surface_tension is not None:
+                surface_tension.reset()
+        self._host_frame_cache = None
 
     def export_checkpoint_state(self):
         """Synchronize once and return host-owned deterministic restart state.
