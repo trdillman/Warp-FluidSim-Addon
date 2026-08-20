@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-14T11:36:17.609519+00:00
-audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
-gate_run_at: 2026-08-14T11:36:17.609519+00:00
+generated_at: 2026-08-20T20:52:33.484554+00:00
+audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree\demos'
+git_head: c683da2e79da1fe515518f522f858f503d87c443
+gate_run_at: 2026-08-20T20:52:33.484554+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
+demo_artifact_sha256: 5f31152e5b5f82a96efcadc7b370e288f08862056b5381e1eb9f12e584ce8565
 ---
 
 # Policy Drift Report — demos unit
@@ -15,7 +15,7 @@ demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194
 ## Strongest live evidence
 
 - The parent full gate passed with real Blender/Warp execution and wrote the
-  current manifest: `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (38/38)`,
+  current manifest: `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (40/40)`,
   and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - `demos/analysis_report.json` is synchronized byte-for-byte with
   `artifacts/demo_analysis/analysis_report.json`; the same SHA-256 and proof HEAD
@@ -35,20 +35,20 @@ descendants remain valid; non-evidence drift makes validation fail closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-14T11:36:17.609519+00:00
-audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: 8a94f529fb52cd67afdeb19deb546578c195eb11
-gate_run_at: 2026-08-14T11:36:17.609519+00:00
+generated_at: 2026-08-20T20:52:33.484554+00:00
+audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree\demos'
+git_head: c683da2e79da1fe515518f522f858f503d87c443
+gate_run_at: 2026-08-20T20:52:33.484554+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6
+demo_artifact_sha256: 5f31152e5b5f82a96efcadc7b370e288f08862056b5381e1eb9f12e584ce8565
 freshness: fresh
 status: fresh
 blocking_criticality: none
 human_decision_required: false
 strongest_live_verification:
   - 'PASS: parent full gate; DEMO-ANALYSIS-PASS (18/18).'
-  - 'PASS: GUI-ACCEPTANCE-PASS (38/38) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
+  - 'PASS: GUI-ACCEPTANCE-PASS (40/40) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:

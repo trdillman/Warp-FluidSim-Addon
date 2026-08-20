@@ -527,3 +527,13 @@ spatiotemporal P2G deposition, phase-field activation, optional
 variable-coefficient pressure projection, local particle CFL substeps, and
 temporary render-surface re-synchronization. Default FLIP remains unchanged
 and retains its recorded-launch/CUDA-graph PCG path.
+
+## Current promoted demo evidence
+
+The GUI-inclusive 1.0.253 production gate at proof HEAD
+`c683da2e79da1fe515518f522f858f503d87c443` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0113339117`,
+`column_height_end=0.5062112808`, `crown_sqrt_t_corr=0.9713672681`, and
+`max_crown_height=0.2835742235`. The authoritative source is
+`artifacts/demo_analysis/analysis_report.json`, SHA-256
+`5f31152e5b5f82a96efcadc7b370e288f08862056b5381e1eb9f12e584ce8565`.
