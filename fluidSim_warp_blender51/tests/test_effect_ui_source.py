@@ -70,6 +70,14 @@ def test_legacy_public_panels_are_removed_and_v2_ui_registered():
     assert "effect_ui.unregister" in root
 
 
+def test_panel_draw_path_never_mutates_the_active_effect_index():
+    source = UI.read_text(encoding="utf-8")
+    active_helper = source.split("def _active_effect", 1)[1].split(
+        "def _normalize_orders", 1
+    )[0]
+    assert "stack.active_index =" not in active_helper
+
+
 def test_package_import_reads_the_validated_installed_archive_not_report_metadata():
     source = UI.read_text(encoding="utf-8")
     assert "read_effect_package(report.path)" in source

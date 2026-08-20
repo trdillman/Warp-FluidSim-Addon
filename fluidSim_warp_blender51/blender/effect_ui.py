@@ -36,7 +36,6 @@ def _active_effect(scene):
     if stack is None or not stack.items:
         return None
     index = max(0, min(int(stack.active_index), len(stack.items) - 1))
-    stack.active_index = index
     return stack.items[index]
 
 
