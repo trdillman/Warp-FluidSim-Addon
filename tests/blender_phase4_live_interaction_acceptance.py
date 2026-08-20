@@ -187,8 +187,10 @@ def main():
           and first_pending["reasons"] != second_pending["reasons"],
           f"first={first_pending}; second={second_pending}")
 
-    check("fixed header popover registered",
-          hasattr(bpy.types, "FLUIDSIM_PT_interaction_popover"))
+    check("Properties pending panel registered",
+          hasattr(bpy.types, "FLUIDSIM_PT_scene_pending"))
+    check("legacy fixed header popover absent",
+          not hasattr(bpy.types, "FLUIDSIM_PT_interaction_popover"))
     check("viewport pending overlay registered", viewport_overlay._OVERLAY_HANDLE is not None)
 
 

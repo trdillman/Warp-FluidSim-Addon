@@ -40,7 +40,6 @@ PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_scene_control"
 PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
 
 PANEL_IDS = [
-    "FLUIDSIM_PT_interaction_popover",
     "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_quality", "FLUIDSIM_PT_inputs",
     "FLUIDSIM_PT_physics", "FLUIDSIM_PT_advanced",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
