@@ -17,7 +17,9 @@ def test_warp_lock_is_validation_metadata_only():
     lock = json.loads((ROOT / "release" / "wheels.lock.json").read_text(encoding="utf-8"))
     assert lock["warp_version"] == "1.16.0"
     assert lock["distribution_version"] == "1.16.0+cu12"
-    assert {item["platform"] for item in lock["files"].values()} == set(manifest["platforms"])
+    runtime_platforms = {item["platform"] for item in lock["files"].values()}
+    assert runtime_platforms == {"linux-x64"}
+    assert runtime_platforms < set(manifest["platforms"])
     assert not list((ROOT / "wheels").glob("*.whl"))
 
 

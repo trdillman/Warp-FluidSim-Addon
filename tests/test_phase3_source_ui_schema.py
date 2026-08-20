@@ -3,23 +3,24 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
-PANELS = ROOT / "fluidSim_warp_blender51" / "panels.py"
+PANELS = ROOT / "fluidSim_warp_blender51" / "blender" / "ui_object.py"
 PROPERTIES = ROOT / "fluidSim_warp_blender51" / "properties.py"
 OPERATORS = ROOT / "fluidSim_warp_blender51" / "operators.py"
 SCENE_INPUTS = ROOT / "fluidSim_warp_blender51" / "blender" / "scene_inputs.py"
 
 
 EXPECTED_PANEL_ORDER = [
-    "FLUIDSIM_PT_liquid_emitters",
-    "FLUIDSIM_PT_liquid_emitter_attributes",
-    "FLUIDSIM_PT_liquid_sinks",
-    "FLUIDSIM_PT_colliders",
-    "FLUIDSIM_PT_forces",
-    "FLUIDSIM_PT_domain_height_fill",
-    "FLUIDSIM_PT_point_particle_injection",
-    "FLUIDSIM_PT_advanced_field_sources",
+    "FLUIDSIM_PT_object_role",
+    "FLUIDSIM_PT_object_status",
+    "FLUIDSIM_PT_object_region",
+    "FLUIDSIM_PT_object_source",
+    "FLUIDSIM_PT_object_lifespan",
+    "FLUIDSIM_PT_object_blending",
+    "FLUIDSIM_PT_object_collider",
+    "FLUIDSIM_PT_object_force",
+    "FLUIDSIM_PT_object_field",
+    "FLUIDSIM_PT_object_volume",
 ]
 
 
@@ -31,11 +32,11 @@ def test_role_panels_exist_in_approved_order_without_mixed_legacy_registration()
     source = _source(PANELS)
     positions = [source.index(f"class {name}") for name in EXPECTED_PANEL_ORDER]
     assert positions == sorted(positions)
-    classes_block = source[source.index("CLASSES = ("):]
+    classes_block = source[source.index("OBJECT_PANEL_CLASSES = ("):]
     registered = [name for name in EXPECTED_PANEL_ORDER if name in classes_block]
     assert registered == EXPECTED_PANEL_ORDER
-    assert "FLUIDSIM_PT_sources," not in classes_block
-    assert "FLUIDSIM_PT_source_particle_attributes," not in classes_block
+    assert "FLUIDSIM_PT_liquid_emitters," not in classes_block
+    assert "FLUIDSIM_PT_advanced_field_sources," not in classes_block
 
 
 def test_presentation_rna_preserves_legacy_and_adds_only_approved_axes():
@@ -63,10 +64,11 @@ def test_presentation_rna_preserves_legacy_and_adds_only_approved_axes():
 def test_ui_never_presents_height_infinite_or_legacy_source_mode_as_liquid():
     source = _source(PANELS)
     assert 'prop_enum(fs, "height_back_mode", "INFINITE"' not in source
-    assert '.prop(pg, "source_mode"' not in source
-    assert 'prop_enum(pg, "source_region_kind", "MESH_SOLID"' in source
-    assert 'prop_enum(pg, "source_region_kind", "VOLUME_GRID"' in source
-    assert 'prop_enum(pg, "source_region_kind", "POINTS"' in source
+    assert '.prop(settings, "source_mode"' not in source
+    assert 'layout.prop(settings, "source_region_kind")' in source
+    properties = _source(PROPERTIES)
+    for region in ("MESH_SOLID", "VOLUME_GRID", "POINTS"):
+        assert f'("{region}",' in properties
 
 
 def test_role_specific_operators_and_plan_translator_are_real_entry_points():

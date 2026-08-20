@@ -39,7 +39,7 @@ def test_support_report_contains_release_runtime_and_scene_fields(monkeypatch, t
         scene_signature="scene-abc",
         settings_signature="settings-def",
     )
-    assert payload["fluidsim"]["version"] == "1.0.252"
+    assert payload["fluidsim"]["version"] == "1.0.253"
     assert payload["fluidsim"]["package"] == "bl_ext.local.fluidsim_warp"
     assert payload["host"]["blender"] == "5.1.2"
     assert payload["runtime"]["warp_version"] == "1.15.0"

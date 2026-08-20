@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-import re
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
@@ -238,7 +237,8 @@ def _apply_domain_bounds(scene, minimum, maximum):
     delta_rotations = tuple(
         float(value) for value in getattr(
             domain, "delta_rotation_euler", (0.0, 0.0, 0.0)))
-    angle_distance = lambda value: abs((value + math.pi) % (2.0 * math.pi) - math.pi)
+    def angle_distance(value):
+        return abs((value + math.pi) % (2.0 * math.pi) - math.pi)
     if any(angle_distance(value) > 1.0e-6
            for value in rotations + delta_rotations):
         raise RuntimeError(
@@ -897,8 +897,8 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         if obj is None:
             self.report({"ERROR"}, "No active object")
             return {"CANCELLED"}
-        from .blender import sources as _sources
         from .blender import output_publication
+        from .blender import sources as _sources
 
         scene = context.scene
         try:
@@ -1104,7 +1104,7 @@ class FLUIDSIM_OT_snippet_argument_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class FLUIDSIM_OT_snippet_apply(_FLUIDSIM_OT_session_base, bpy.types.Operator):
+class FLUIDSIM_OT_snippet_apply(bpy.types.Operator):
     """deprecated compatibility adapter that applies the Custom Effects v2 stack."""
 
     bl_idname = "fluidsim.snippet_apply"
@@ -1217,7 +1217,6 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
         text.write(data.get("code", ""))
         pg.text_block = text
         fs.active_snippet = len(fs.snippets) - 1
-        bridge = _bridge()
         _snippets().validate_snippet_pg(pg)
         self.report({"INFO"}, f"Loaded '{data.get('label', base_name)}' - "
                               f"press Apply Snippets to run it")
@@ -1235,7 +1234,6 @@ class FLUIDSIM_OT_snippet_validate(bpy.types.Operator):
         if pg is None:
             self.report({"ERROR"}, "No active snippet")
             return {"CANCELLED"}
-        bridge = _bridge()
         issues = _snippets().validate_snippet_pg(pg)
         errors = [i for i in issues if i.level == "ERROR"]
         warnings = [i for i in issues if i.level == "WARNING"]
@@ -1268,7 +1266,6 @@ class FLUIDSIM_OT_snippet_autofix(bpy.types.Operator):
         fixed, fixes = custom.autofix_snippet(code)
         if fixed != code:
             _set_snippet_code(pg, fixed)
-        bridge = _bridge()
         _snippets().validate_snippet_pg(pg)
         if fixes:
             self.report({"INFO"}, f"Applied {len(fixes)} fix(es): "
