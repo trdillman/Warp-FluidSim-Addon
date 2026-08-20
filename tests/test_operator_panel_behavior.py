@@ -1,7 +1,7 @@
 """Operator and runtime regressions retained after the Properties UI migration.
 
 Scene/Object authoring and compact View3D launcher behavior are exercised by
-the 1.0.252 Properties UI suites and ``test_release_1_0_252_integration.py``.
+the 1.0.253 Properties UI suites and ``test_release_1_0_253_integration.py``.
 """
 
 from __future__ import annotations
@@ -1701,7 +1701,6 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert op.execute(context) == {"CANCELLED"}
     assert fs.max_particles == 8
     assert "changed" in fs.status.lower()
-
 
 
 

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import tomllib
 
-
 ROOT = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
 COLLISION_GUARD = ROOT / "release" / "candidate_collision_guard_1_0_253.json"
 

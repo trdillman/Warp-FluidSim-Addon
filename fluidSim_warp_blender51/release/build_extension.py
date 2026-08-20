@@ -21,13 +21,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_EXTENSION_ID = "fluidsim_warp"
 REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
-REQUIRED_PLATFORMS = ("linux-x64",)
+REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
 REQUIRED_WARP_VERSION = "1.16.0"
 REQUIRED_WARP_DISTRIBUTION = "1.16.0+cu12"
 REQUIRED_BLENDER_MIN = "5.1.0"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS = {
     "release/build_extension.py",
+    "release/candidate_collision_guard_1_0_253.json",
     "release/delivery_policy.py",
     "release/fetch_warp_wheels.py",
     "release/custom_effect_demo_runtime.py",
@@ -139,6 +140,51 @@ def _sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _collision_guard(root: Path) -> dict[str, str]:
+    guard_path = root / "release" / "candidate_collision_guard_1_0_253.json"
+    guard = _read_json(guard_path)
+    candidate_sha256 = guard.get("candidate_sha256")
+    if (
+        not isinstance(candidate_sha256, str)
+        or len(candidate_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in candidate_sha256)
+    ):
+        raise RuntimeError("candidate collision guard has an invalid archive SHA-256")
+    forbidden = guard.get("forbidden_sha256")
+    if not isinstance(forbidden, dict) or not forbidden:
+        raise RuntimeError("candidate collision guard must protect at least one owner")
+    result: dict[str, str] = {}
+    for relative, digest in forbidden.items():
+        if not isinstance(relative, str):
+            raise RuntimeError("candidate collision guard paths must be strings")
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts or str(path) != relative:
+            raise RuntimeError(f"unsafe candidate collision guard path: {relative!r}")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            raise RuntimeError(f"invalid stale candidate SHA-256 for {relative}")
+        result[relative] = digest
+    return result
+
+
+def _verify_source_collision_guard(root: Path, forbidden: Mapping[str, str]) -> None:
+    for relative, stale_sha256 in forbidden.items():
+        path = root / PurePosixPath(relative)
+        if not path.is_file():
+            raise RuntimeError(f"protected integration owner is missing: {relative}")
+        if _sha256_path(path) == stale_sha256:
+            raise RuntimeError(
+                f"stale candidate implementation replaced adjudicated owner: {relative}"
+            )
+
+
 def _locked_files(lock: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     files = lock.get("files")
     if not isinstance(files, dict) or not files:
@@ -181,6 +227,7 @@ def verify_source_tree(root: Path) -> SourceVerification:
         "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
         "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
         "release/wheels.lock.json",
+        "release/candidate_collision_guard_1_0_253.json",
     )
     missing_required = [name for name in required if not (root / name).is_file()]
     if missing_required:
@@ -195,6 +242,7 @@ def verify_source_tree(root: Path) -> SourceVerification:
 
     manifest = _read_toml(root / "blender_manifest.toml")
     lock = _read_json(root / "release" / "wheels.lock.json")
+    collision_guard = _collision_guard(root)
     files = _locked_files(lock)
     if lock.get("warp_version") != REQUIRED_WARP_VERSION:
         raise RuntimeError(f"Warp version lock must be {REQUIRED_WARP_VERSION}")
@@ -222,12 +270,14 @@ def verify_source_tree(root: Path) -> SourceVerification:
             f"supported platforms must be {list(REQUIRED_PLATFORMS)}, got {list(platforms)}"
         )
     lock_platforms = {str(item.get("platform", "")) for item in files.values()}
-    if lock_platforms != set(platforms):
-        raise RuntimeError("locked wheel platforms do not match manifest platforms")
+    if not lock_platforms or not lock_platforms.issubset(platforms):
+        raise RuntimeError("locked wheel platforms must be a supported platform subset")
 
     manifest_wheels = manifest.get("wheels")
     if manifest_wheels not in (None, []):
         raise RuntimeError("FluidSim deliverables must not declare bundled wheels")
+    if "generated" in manifest.get("build", {}):
+        raise RuntimeError("tracked source manifest must not contain generated metadata")
 
     build_patterns = set(manifest.get("build", {}).get("paths_exclude_pattern", ()))
     required_patterns = {
@@ -235,6 +285,7 @@ def verify_source_tree(root: Path) -> SourceVerification:
         "tests/", "demo_outputs/", "artifacts/",
         "pyproject.toml", "requirements-dev.txt",
         "release/build_extension.py", "release/delivery_policy.py",
+        "release/candidate_collision_guard_1_0_253.json",
         "release/fetch_warp_wheels.py", "release/generate_examples.py",
         "release/custom_effect_demo_runtime.py",
         "release/generate_custom_effect_demos.py",
@@ -287,6 +338,8 @@ def verify_source_tree(root: Path) -> SourceVerification:
             "runtime binary payloads must not be stored in the deliverable source tree: "
             f"{sorted(forbidden_source_wheels)}"
         )
+
+    _verify_source_collision_guard(root, collision_guard)
 
     for filename, metadata in sorted(files.items()):
         expected_sha = str(metadata.get("sha256", ""))
@@ -371,6 +424,7 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
     """Inspect split archives and reject Blender/Warp binary payloads."""
     root = Path(root).resolve()
     source = verify_source_tree(root)
+    collision_guard = _collision_guard(root)
     package_paths = sorted((Path(path).resolve() for path in packages), key=lambda path: path.name)
     if not package_paths:
         raise RuntimeError("no split-platform packages were provided for inspection")
@@ -385,6 +439,8 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
         raise RuntimeError("duplicate split-platform package paths were provided")
 
     records: list[ArtifactRecord] = []
+    reference_payloads: dict[str, str] | None = None
+    reference_manifest: dict[str, Any] | None = None
     for package in package_paths:
         if not package.is_file():
             raise RuntimeError(f"missing built package: {package}")
@@ -436,6 +492,17 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
             missing = sorted(required - set(names))
             if missing:
                 raise RuntimeError(f"package {package.name} is missing files: {missing}")
+            for relative, stale_sha256 in collision_guard.items():
+                archive_name = names.get(relative)
+                if archive_name is None:
+                    raise RuntimeError(
+                        f"package {package.name} is missing protected integration owner: {relative}"
+                    )
+                if _sha256_bytes(archive.read(archive_name)) == stale_sha256:
+                    raise RuntimeError(
+                        "stale candidate implementation replaced adjudicated owner in "
+                        f"{package.name}: {relative}"
+                    )
             if any(PurePosixPath(name).suffix == ".blend1" for name in names):
                 raise RuntimeError(f"Blender backup asset leaked into {package.name}")
             effect_json = [
@@ -476,6 +543,23 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
                 raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
             if generated.get("wheels", []) != []:
                 raise RuntimeError(f"generated package declares bundled wheels: {package.name}")
+
+            normalized_manifest = dict(embedded)
+            normalized_build = dict(normalized_manifest.get("build", {}))
+            normalized_build.pop("generated", None)
+            normalized_manifest["build"] = normalized_build
+            payloads = {
+                relative: _sha256_bytes(archive.read(archive_name))
+                for relative, archive_name in names.items()
+                if relative != "blender_manifest.toml"
+            }
+            if reference_payloads is None:
+                reference_payloads = payloads
+                reference_manifest = normalized_manifest
+            elif payloads != reference_payloads or normalized_manifest != reference_manifest:
+                raise RuntimeError(
+                    "split-platform payloads differ outside generated platform metadata"
+                )
 
         records.append(
             ArtifactRecord(

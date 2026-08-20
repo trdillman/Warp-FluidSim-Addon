@@ -11,8 +11,8 @@ NVIDIA Warp `warp-lang 1.16.0+cu12` is the certified external runtime. The suppl
 | NVIDIA Warp (`warp-lang`) | 1.16.0+cu12 | Apache License, Version 2.0 | No |
 | CUDA runtime/compiler components used by Warp | As provided by the separately installed Warp distribution | NVIDIA Software License Agreement | No |
 | NVIDIA libmathdx components used by Warp | As provided by the separately installed Warp distribution | NVIDIA upstream terms | No |
-| NumPy | Version supplied by Blender 5.2.0 LTS | BSD 3-Clause License | No separate FluidSim copy |
-| Blender Python API | Blender 5.2.0 LTS | GNU General Public License | No |
+| NumPy | Version supplied by Blender 5.1.0 or newer | BSD 3-Clause License | No separate FluidSim copy |
+| Blender Python API | Blender 5.1.0 or newer | GNU General Public License | No |
 
 The upstream Warp distribution carries its own complete license inventory, including `LICENSE.md`, `cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. Those files remain with the separately provisioned Warp runtime and are **not copied into FluidSim deliverables**.
 

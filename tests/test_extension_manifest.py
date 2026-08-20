@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
-from fluidSim_warp_blender51 import version as release_version
+import tomllib
 
+from fluidSim_warp_blender51 import version as release_version
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "fluidSim_warp_blender51" / "blender_manifest.toml"
