@@ -9,7 +9,7 @@ def test_blender_smoke_proves_external_warp_cpu_execution_and_lifecycle():
     source = (ROOT / "release" / "smoke_test_blender.py").read_text(encoding="utf-8")
     assert 'EXPECTED_WARP_VERSION = "1.16.0"' in source
     assert "EXPECTED_BLENDER_VERSION = (5, 1, 0)" in source
-    assert "EXPECTED_FLUIDSIM_VERSION = (1, 0, 252)" in source
+    assert "EXPECTED_FLUIDSIM_VERSION = (1, 0, 253)" in source
     assert "bpy.app.version[:3]" in source
     assert "warp.__file__" in source or "wp.__file__" in source
     assert "BLENDER_USER_EXTENSIONS" in source

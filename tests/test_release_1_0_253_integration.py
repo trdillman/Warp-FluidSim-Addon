@@ -37,6 +37,7 @@ def test_release_identity_targets_blender_51_without_bundled_runtimes():
         "linux-x64",
     )
     assert _assigned(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS") == (
+        "windows-x64",
         "linux-x64",
     )
     for forbidden in ("wheels", "runtimes", "vendor", "python"):
