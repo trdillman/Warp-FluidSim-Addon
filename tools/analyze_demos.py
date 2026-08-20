@@ -111,6 +111,18 @@ def common_checks(name, meta, series, frames, vmax_limit):
 
 # ---------------------------------------------------------------------------
 
+def left_wall_collapse_height(frames, frame_numbers, *, x_limit=0.2):
+    """Return the minimum left-wall height before reflected waves return."""
+    heights = []
+    for frame in frame_numbers:
+        positions = frames[int(frame)]["positions"]
+        column = positions[positions[:, 0] < x_limit]
+        heights.append(
+            float(np.percentile(column[:, 2], 99)) if len(column) else 0.0
+        )
+    return min(heights, default=float("inf"))
+
+
 def analyze_dam_break():
     name = "dam_break"
     meta, series, frames = load_scene(name)
@@ -121,11 +133,12 @@ def analyze_dam_break():
 
     # Front position: leading edge of near-floor fluid (containment is
     # verified above, so the max is trustworthy).
-    ts, fronts = [], []
+    front_frames, ts, fronts = [], [], []
     for f in sorted(frames):
         p = frames[f]["positions"]
         low = p[p[:, 2] < 0.15]
         if len(low):
+            front_frames.append(f)
             ts.append(f / fps)
             fronts.append(float(low[:, 0].max()))
     ts, fronts = np.array(ts), np.array(fronts)
@@ -165,13 +178,13 @@ def analyze_dam_break():
         check(name, "Martin-Moses front position at T=2", False,
               "front never reached T=2")
 
-    # Column collapse: residual height at the left wall drops below 0.55*H.
-    first, last = min(frames), max(frames)
-    p_last = frames[last]["positions"]
-    col = p_last[p_last[:, 0] < 0.2]
-    h_end = float(np.percentile(col[:, 2], 99)) if len(col) else 0.0
+    # Column collapse is an early, pre-reflection event.  Sampling only the
+    # final frame confuses a returning slosh wave with an uncollapsed column.
+    collapse_frames = np.asarray(front_frames, dtype=np.int32)[pre_wall]
+    h_end = left_wall_collapse_height(frames, collapse_frames)
     check(name, "column collapses", h_end < 0.55 * H,
-          f"left-wall height {h_end:.2f} m from {H:.2f} m")
+          f"minimum pre-reflection left-wall height {h_end:.2f} m "
+          f"from {H:.2f} m")
 
     ww = np.array(series["whitewater_count"])
     check(name, "whitewater emitted by turbulent bore", ww.max() > 100,
