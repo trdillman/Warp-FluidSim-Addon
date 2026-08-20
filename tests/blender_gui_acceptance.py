@@ -38,6 +38,8 @@ RENDER_PATH = os.path.join(ARTIFACTS, "phase3_gui_render.png")
 PANEL_DRAW_FAILURE_ENV = "FLUIDSIM_PANEL_DRAW_INJECT_FAILURE"
 PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_scene_control"
 PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
+PLAYBACK_MIN_FRAMES = 3
+PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
 
 PANEL_IDS = [
     "FLUIDSIM_PT_viewport_status",
@@ -538,6 +540,16 @@ def _run_phase(phase, scene):
 
     if phase == "playing":
         sess = session()
+        elapsed = time.perf_counter() - STATE["t_play_start"]
+        scene_frames = bpy.context.scene.frame_current - STATE["frame_at_play"]
+        solver_advanced = sess.solver.frame - STATE["solver_frame_at_play"]
+        if (min(scene_frames, solver_advanced) < PLAYBACK_MIN_FRAMES
+                and elapsed < PLAYBACK_PROGRESS_TIMEOUT_SECONDS):
+            # A new Blender process can spend tens of seconds capturing the
+            # first CUDA graphs.  Keep the timeline owner active until it has
+            # produced the required live frames; a fixed one-shot timer would
+            # otherwise cancel immediately after that cold first frame.
+            return 0.2
         # Stop playback.
         if bpy.context.screen and bpy.context.screen.is_animation_playing:
             override = _view3d_override()
@@ -546,13 +558,11 @@ def _run_phase(phase, scene):
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             else:
                 bpy.ops.screen.animation_cancel(restore_frame=False)
-        elapsed = time.perf_counter() - STATE["t_play_start"]
-        frames_advanced = scene_frames = bpy.context.scene.frame_current - \
-            STATE["frame_at_play"]
-        solver_advanced = sess.solver.frame - STATE["solver_frame_at_play"]
-        check("playback advanced timeline", scene_frames >= 3,
+        check("playback advanced timeline",
+              scene_frames >= PLAYBACK_MIN_FRAMES,
               f"{scene_frames} frames in {elapsed:.1f}s")
-        check("solver stepped during playback", solver_advanced >= 3,
+        check("solver stepped during playback",
+              solver_advanced >= PLAYBACK_MIN_FRAMES,
               f"{solver_advanced} solver frames")
         fs = bpy.context.scene.fluidsim
         check("particles during playback", fs.stat_particles > 1000,
