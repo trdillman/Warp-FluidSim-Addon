@@ -279,6 +279,8 @@ class HostFrame:
         """Return every enabled channel for one output with strict alignment."""
         output_kind = str(output_kind).lower()
         keys = enabled_attribute_keys(settings, output_kind)
+        if not keys:
+            return {}
         if output_kind == "particles":
             count = len(self.positions_strided(stride))
             values = {

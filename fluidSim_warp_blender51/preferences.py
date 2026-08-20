@@ -23,9 +23,10 @@ def _device_items(_self, _context):
     return _DEVICE_ITEMS_CACHE
 
 
-def _preferences():
+def _preferences(context=None):
+    context = bpy.context if context is None else context
     try:
-        return bpy.context.preferences.addons[__package__].preferences
+        return context.preferences.addons[__package__].preferences
     except (KeyError, AttributeError):
         return None
 
@@ -39,6 +40,15 @@ def configured_device() -> str:
     if selected in aliases:
         return selected
     return aliases[0] if aliases else ""
+
+
+def set_configured_device(device: str) -> bool:
+    """Store one selected CUDA alias through the sole preferences owner."""
+    prefs = _preferences()
+    if prefs is None:
+        return False
+    prefs.device = str(device)
+    return True
 
 
 def _apply_developer_override(prefs) -> None:
@@ -56,7 +66,7 @@ def _refresh_runtime(prefs):
     _apply_developer_override(prefs)
     probe = probe_runtime(force=True)
     aliases = tuple(device.alias for device in probe.cuda_devices)
-    if aliases and getattr(prefs, "device", "") not in aliases:
+    if prefs is not None and aliases and getattr(prefs, "device", "") not in aliases:
         prefs.device = aliases[0]
     selected = configured_device()
     return probe, runtime_status_for_device(selected, probe=probe)
@@ -70,7 +80,7 @@ class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__package__].preferences
+        prefs = _preferences(context)
         _probe, (ready, message) = _refresh_runtime(prefs)
         self.report({"INFO" if ready else "WARNING"}, message)
         return {"FINISHED"}
@@ -84,7 +94,7 @@ class FLUIDSIM_OT_redetect_device(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__package__].preferences
+        prefs = _preferences(context)
         _probe, (ready, message) = _refresh_runtime(prefs)
         self.report({"INFO" if ready else "WARNING"}, message)
         return {"FINISHED"}

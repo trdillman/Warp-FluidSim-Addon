@@ -12,11 +12,60 @@ from fluidSim_warp_blender51.io.cache import (
     read_frame,
     read_sequence_metadata,
     resolve_frame_range,
+    source_signature,
     settings_record,
     validate_contiguous_frames,
     write_frame,
     write_sequence_metadata,
 )
+
+
+class _SourceObject(dict):
+    def __init__(self):
+        super().__init__(fluidsim_persistent_id="stored-source-id")
+        properties = {
+            "role": SimpleNamespace(type="ENUM", is_array=False),
+            "source_status_message": SimpleNamespace(type="STRING", is_array=False),
+        }
+        self.name = "Source"
+        self.name_full = "Source"
+        self.library = None
+        self.type = "EMPTY"
+        self.data = SimpleNamespace(points=())
+        self.matrix_world = (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        self.fluidsim = SimpleNamespace(
+            role="SOURCE",
+            source_status_message="",
+            bl_rna=SimpleNamespace(properties=properties),
+        )
+
+
+def test_source_signature_ignores_runtime_presentation_status():
+    source = _SourceObject()
+    scene = SimpleNamespace(objects=(source,))
+    before = source_signature(scene)
+
+    source.fluidsim.source_status_message = "Emitted 42 particles"
+
+    assert source_signature(scene) == before
+
+
+def test_source_signature_routes_identity_through_persistent_source_owner(monkeypatch):
+    from fluidSim_warp_blender51.blender import scene_inputs
+
+    source = _SourceObject()
+    source.pop("fluidsim_persistent_id")
+    scene = SimpleNamespace(objects=(source,))
+    monkeypatch.setattr(scene_inputs, "persistent_source_key", lambda _obj: "key-A")
+    first = source_signature(scene)
+    monkeypatch.setattr(scene_inputs, "persistent_source_key", lambda _obj: "key-B")
+
+    assert source_signature(scene) != first
 
 
 def test_compact_settings_segments_accepts_json_string_frame_keys():

@@ -81,6 +81,14 @@ def test_new_host_frame_rereads_requested_outputs():
     assert calls == {"positions": 2}
 
 
+def test_disabled_attribute_inventory_performs_no_host_readback():
+    calls = {}
+    frame = HostFrame(_solver(calls))
+
+    assert frame.output_attributes(SimpleNamespace(), "particles") == {}
+    assert calls == {}
+
+
 def test_each_attribute_refreshes_stale_host_count_when_requested_first():
     calls = {}
     solver = _solver(calls)

@@ -266,13 +266,10 @@ def run(options: CliOptions) -> int:
             report["message"] = f"Bake end {end} is before start {start}"
             return code
 
-        # Bind the selected alias to the installed extension preferences where
-        # possible; the solver settings bridge reads this same preference.
-        try:
-            prefs = bpy.context.preferences.addons[__package__.split(".blender")[0]].preferences
-            prefs.device = selected_device
-        except (KeyError, AttributeError, TypeError):
-            pass
+        # Bind the alias through the sole preferences-registry owner.
+        from ..preferences import set_configured_device
+
+        set_configured_device(selected_device)
 
         backend = ProductionBakeBackend(
             checkpoint_interval=options.checkpoint_interval,

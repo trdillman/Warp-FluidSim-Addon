@@ -65,6 +65,7 @@ def main() -> None:
     started = time.time()
     module = _installed_module()
     runtime = importlib.import_module(f"{module}.runtime.warp_runtime")
+    preferences = importlib.import_module(f"{module}.preferences")
     validation = importlib.import_module(f"{module}.sim.validation")
     probe = runtime.probe_runtime(force=True)
     if probe.warp_version != EXPECTED_WARP_VERSION:
@@ -79,7 +80,8 @@ def main() -> None:
         )
     _assert_packaged_runtime(module, probe)
     device = probe.cuda_devices[0].alias
-    bpy.context.preferences.addons[module].preferences.device = device
+    if not preferences.set_configured_device(device):
+        raise AssertionError("installed FluidSim preferences are unavailable")
 
     expected_validation_count = len(validation.VALIDATION_TESTS)
     results = validation.run_all(device=device)

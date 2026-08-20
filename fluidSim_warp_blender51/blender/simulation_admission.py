@@ -483,10 +483,17 @@ class SimulationAdmission:
                     "then retry. This estimate is not an OOM guarantee.")
 
             resources = vram_snapshot(settings.device)
-            snapshot = self._replan_snapshot(
-                snapshot, settings, resources, scene=scene,
-                depsgraph=depsgraph,
-                additional_transaction_bytes=live_solver_bytes)
+            from ..sim.capacity_service import refresh_resources
+            from ..sim.capacity_planner import CapacityPlan
+            if isinstance(snapshot.capacity_plan, CapacityPlan):
+                snapshot.resources = resources
+                snapshot.capacity_plan = refresh_resources(
+                    snapshot.capacity_plan, settings, resources)
+            else:
+                snapshot = self._replan_snapshot(
+                    snapshot, settings, resources, scene=scene,
+                    depsgraph=depsgraph,
+                    additional_transaction_bytes=live_solver_bytes)
             snapshot.settings = settings
             if not hasattr(snapshot, "frame_start"):
                 snapshot.frame_start = int(getattr(scene, "frame_start", 1))

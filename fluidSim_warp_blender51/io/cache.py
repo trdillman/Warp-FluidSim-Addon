@@ -51,6 +51,13 @@ _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
 # RNA property types with a stable value repr. POINTER/COLLECTION reprs embed
 # addresses and would change the key every session.
 _HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
+_SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
+    "source_status_severity",
+    "source_status_code",
+    "source_status_message",
+    "source_status_emitted",
+    "source_status_capacity_limited",
+})
 
 
 def _digest(h, value):
@@ -67,9 +74,13 @@ def _digest(h, value):
     h.update(b"|")
 
 
-def _digest_rna(h, group):
+def _digest_rna(h, group, *, ignored=frozenset()):
     for name, prop in sorted(group.bl_rna.properties.items()):
-        if name == "rna_type" or prop.type not in _HASHABLE_RNA_TYPES:
+        if (
+            name == "rna_type"
+            or name in ignored
+            or prop.type not in _HASHABLE_RNA_TYPES
+        ):
             continue
         value = getattr(group, name)
         h.update(f"{name}=".encode())
@@ -124,6 +135,8 @@ def source_signature(scene, depsgraph=None) -> str:
     sufficient to keep one-shot source identity stable across reopened files
     and to reject resume after materially changing sources/colliders/forces.
     """
+    from ..blender.scene_inputs import persistent_source_key
+
     h = hashlib.sha256()
     h.update(b"fluidsim-source-signature-v2|")
     for obj in sorted(scene.objects, key=lambda value: value.name_full):
@@ -131,10 +144,10 @@ def source_signature(scene, depsgraph=None) -> str:
         role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
         if role == "NONE":
             continue
-        identity = str(obj.get("fluidsim_persistent_id", "") or obj.name_full)
+        identity = persistent_source_key(obj)
         library = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
         h.update(f"{identity}|{obj.name_full}|{library}|{role}|".encode("utf-8"))
-        _digest_rna(h, group)
+        _digest_rna(h, group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA)
         _digest(h, tuple(tuple(float(component) for component in row)
                          for row in obj.matrix_world))
         evaluated = None
