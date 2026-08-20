@@ -121,6 +121,50 @@ def test_stage_order_and_every_substep_launches(monkeypatch):
     assert calls == ["first", "second", "first", "second"]
 
 
+def test_frame_stats_snapshot_reports_deltas_without_resetting_totals(
+        monkeypatch):
+    _instance_value, compiled = _instance("profile")
+
+    monkeypatch.setattr(
+        "fluidsim_testpkg.sim.effects.runtime.launch_compiled_kernel",
+        lambda *_args, **_kwargs: (5, 0.002),
+    )
+    manager = EffectRuntimeManager(device="cpu")
+    manager.swap_candidate(FakeCandidate(True, (compiled,)))
+
+    manager.begin_frame()
+    manager.run(
+        EffectStage.AFTER_PARTICLE_TRANSFER,
+        object(),
+        {"frame": 1, "substep_index": 0},
+    )
+    manager.run(
+        EffectStage.AFTER_PARTICLE_TRANSFER,
+        object(),
+        {"frame": 1, "substep_index": 1},
+    )
+    first = manager.frame_stats_snapshot()
+
+    manager.begin_frame()
+    manager.run(
+        EffectStage.AFTER_PARTICLE_TRANSFER,
+        object(),
+        {"frame": 2, "substep_index": 0},
+    )
+    second = manager.frame_stats_snapshot()
+    cumulative = next(iter(manager.stats.values()))
+
+    assert first[0]["calls"] == 2
+    assert first[0]["elements"] == 10
+    assert first[0]["submissionSeconds"] == pytest.approx(0.004)
+    assert second[0]["calls"] == 1
+    assert second[0]["elements"] == 5
+    assert second[0]["submissionSeconds"] == pytest.approx(0.002)
+    assert cumulative.calls == 3
+    assert cumulative.elements == 15
+    assert cumulative.submission_seconds == pytest.approx(0.006)
+
+
 def test_once_per_frame_and_initialization_cadence(monkeypatch):
     once, compiled_once = _instance("once", cadence=EffectCadence.ONCE_PER_FRAME)
     init, compiled_init = _instance("init", cadence=EffectCadence.INITIALIZATION, order=1)

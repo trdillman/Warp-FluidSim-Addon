@@ -645,6 +645,7 @@ class FrameStats:
         self.surface_tension_submission_seconds = 0.0
         self.surface_tension_status = "DISABLED"
         self.surface_tension_message = ""
+        self.custom_effects = []
         self.pressure_iterations = 0
         self.pressure_residual = 0.0
         self.timers = {}
@@ -688,6 +689,7 @@ class FrameStats:
             "surfaceTensionSubmissionSeconds": self.surface_tension_submission_seconds,
             "surfaceTensionStatus": self.surface_tension_status,
             "surfaceTensionMessage": self.surface_tension_message,
+            "customEffects": [dict(item) for item in self.custom_effects],
             "pressureIterations": self.pressure_iterations,
             "pressureResidual": self.pressure_residual,
             "voxelsPerSecond": vps,
@@ -2270,6 +2272,7 @@ class FluidSolver:
         frame_dt = s.time_scale / s.frame_rate
         if self.profiler is not None:
             self.profiler.begin_frame()
+        self.effects.begin_frame()
         self.surface_tension.begin_frame()
 
         substeps, cfl_clamped = self._compute_substeps(frame_dt)
@@ -2418,6 +2421,7 @@ class FluidSolver:
         st.surface_voxel_size = float(surface_metadata["voxel_size"])
         st.surface_active_leaves = surface_metadata["active_leaves"]
         st.surface_active_voxels = surface_metadata["active_voxels"]
+        st.custom_effects = self.effects.frame_stats_snapshot()
         if self.profiler is not None:
             st.timers = self.profiler.collect()
         return st

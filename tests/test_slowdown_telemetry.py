@@ -101,6 +101,12 @@ def test_frame_stats_exports_slowdown_diagnostics():
     stats.substeps = 3
     stats.pressure_iterations = 11
     stats.pressure_residual = 0.125
+    stats.custom_effects = [{
+        "key": "effect:kernel:0",
+        "calls": 1,
+        "elements": 128,
+        "submissionSeconds": 0.001,
+    }]
 
     data = stats.as_dict()
 
@@ -108,11 +114,13 @@ def test_frame_stats_exports_slowdown_diagnostics():
     assert data["substeps"] == 3
     assert data["pressureIterations"] == 11
     assert data["pressureResidual"] == 0.125
+    assert data["customEffects"] == stats.custom_effects
     for field in (
         "whitewaterParticles",
         "substeps",
         "pressureIterations",
         "pressureResidual",
+        "customEffects",
     ):
         assert field in PROFILE_FRAME_FIELDS
 

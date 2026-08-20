@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .enums import EffectCadence, EffectDomain, EffectStage
@@ -22,7 +22,7 @@ class EffectRuntimeRequirements:
     collision: bool = False
     rebuild_topology_each_substep: bool = False
 
-    def merged(self, other: "EffectRuntimeRequirements") -> "EffectRuntimeRequirements":
+    def merged(self, other: EffectRuntimeRequirements) -> EffectRuntimeRequirements:
         return EffectRuntimeRequirements(
             particles=self.particles or other.particles,
             topology=self.topology or other.topology,
@@ -195,6 +195,7 @@ class EffectRuntimeManager:
         self.failed_error: EffectRuntimeError | None = None
         self._once_per_frame: dict[str, int] = {}
         self._initialized: set[str] = set()
+        self._frame_baseline: dict[str, tuple[int, int, float]] = {}
 
     @property
     def entry_count(self) -> int:
@@ -226,6 +227,7 @@ class EffectRuntimeManager:
         self.failed_error = None
         self._once_per_frame = {}
         self._initialized = set()
+        self._frame_baseline = {}
         return True
 
     def clear(self) -> None:
@@ -234,6 +236,48 @@ class EffectRuntimeManager:
             compiled_effects = ()
 
         self.swap_candidate(_Empty())
+
+    def begin_frame(self) -> None:
+        """Freeze cumulative counters so the frame report can expose deltas."""
+        self._frame_baseline = {
+            key: (stats.calls, stats.elements, stats.submission_seconds)
+            for key, stats in self.stats.items()
+        }
+
+    def frame_stats_snapshot(self) -> list[dict[str, object]]:
+        """Return stable per-frame and cumulative telemetry for each kernel."""
+        requirements = {
+            entry.key: _requirements_for_entry(entry)
+            for entries in self.by_stage.values()
+            for entry in entries
+        }
+        records = []
+        for key, stats in sorted(self.stats.items()):
+            calls, elements, seconds = self._frame_baseline.get(
+                key, (0, 0, 0.0))
+            required = requirements.get(key, EffectRuntimeRequirements())
+            records.append({
+                "key": key,
+                "effectId": stats.effect_id,
+                "instanceId": stats.instance_id,
+                "kernelId": stats.kernel_id,
+                "calls": stats.calls - calls,
+                "elements": stats.elements - elements,
+                "submissionSeconds": stats.submission_seconds - seconds,
+                "totalCalls": stats.calls,
+                "totalElements": stats.elements,
+                "totalSubmissionSeconds": stats.submission_seconds,
+                "requirements": {
+                    "particles": required.particles,
+                    "topology": required.topology,
+                    "surfaceSdf": required.surface_sdf,
+                    "collision": required.collision,
+                    "rebuildTopologyEachSubstep": (
+                        required.rebuild_topology_each_substep),
+                },
+                "lastError": stats.last_error,
+            })
+        return records
 
     def _should_run(self, entry: EffectRuntimeEntry, frame: int) -> bool:
         instance = entry.instance
