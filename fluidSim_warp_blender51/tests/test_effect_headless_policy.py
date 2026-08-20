@@ -69,7 +69,7 @@ def test_disabled_or_muted_effects_do_not_execute_under_policy(tmp_path):
     assert decision.active_effects == ()
 
 
-def test_cli_contract_exposes_explicit_custom_code_policy():
+def test_cli_contract_exposes_explicit_custom_code_policy(tmp_path):
     from fluidsim_testpkg.blender.command_line import (
         CliOptions,
         EXIT_CUSTOM_CODE_POLICY,
@@ -77,7 +77,8 @@ def test_cli_contract_exposes_explicit_custom_code_policy():
     )
 
     options = parse_args([
-        "--cache", "/tmp/cache", "--custom-code-policy", "trusted"
+        "--cache", str(tmp_path / "cache"),
+        "--custom-code-policy", "trusted"
     ])
     assert options.custom_code_policy == "trusted"
     assert EXIT_CUSTOM_CODE_POLICY == 17

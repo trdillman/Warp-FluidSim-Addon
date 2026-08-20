@@ -11,7 +11,7 @@ from fluidsim_testpkg.release import build_extension
 
 EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 PAYLOAD = b"external-wheel-payload"
-VERSION = "1.0.248"
+VERSION = "1.0.252"
 
 
 def _manifest() -> str:
@@ -22,7 +22,7 @@ version = "{VERSION}"
 tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
 maintainer = "FluidSim"
 type = "add-on"
-blender_version_min = "5.2.0"
+blender_version_min = "5.1.0"
 license = ["SPDX:GPL-3.0-or-later"]
 platforms = ["linux-x64"]
 tags = ["Physics"]
@@ -72,7 +72,7 @@ def _write_project(root: Path) -> None:
     (root / "wheels").mkdir()
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
-        'VERSION = (1, 0, 248)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 2, 0)\n',
+        'VERSION = (1, 0, 252)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
         encoding="utf-8",
     )
     (root / "__init__.py").write_text(
@@ -285,7 +285,7 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
 
     def fake_run(command: list[str], cwd: Path, *, env=None):
         commands.append(command)
-        if command[:4] == ["/opt/blender", "--command", "extension", "build"]:
+        if command[1:4] == ["--command", "extension", "build"]:
             _write_package(output / f"fluidsim_warp-{VERSION}-linux_x64.zip")
 
     packages = build_extension.build(tmp_path, Path("/opt/blender"), output, runner=fake_run)

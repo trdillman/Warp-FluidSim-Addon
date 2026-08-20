@@ -20,6 +20,12 @@ def _probe() -> RuntimeProbe:
 
 def test_redact_path_replaces_home_prefix():
     assert report.redact_path("/home/alice/cache/run", home="/home/alice") == "~/cache/run"
+    assert report.redact_path(
+        r"C:\Users\Alice\cache\run", home=r"C:\Users\Alice"
+    ) == "~/cache/run"
+    assert report.redact_path(
+        "/Users/alice/cache/run", home="/Users/alice"
+    ) == "~/cache/run"
     assert report.redact_path("relative/cache", home="/home/alice") == "relative/cache"
 
 

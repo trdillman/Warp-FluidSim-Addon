@@ -60,9 +60,11 @@ def test_phase5_solver_settings_and_projection_are_declared():
     assert fields - {"surface_tension_enabled"} <= assignments["_LIVE_REGISTRY_FIELDS"]
 
 
-def test_phase5_presets_are_strict_and_physically_labelled():
-    physical = library.load_preset("BUILTIN:water_surface_tension")
-    stylized = library.load_preset("BUILTIN:stylized_high_tension")
+def test_phase5_presets_are_strict_and_physically_labelled(tmp_path):
+    physical = library.load_preset(
+        "BUILTIN:water_surface_tension", directory=tmp_path)
+    stylized = library.load_preset(
+        "BUILTIN:stylized_high_tension", directory=tmp_path)
     assert physical.settings["surface_tension_enabled"] is True
     assert physical.settings["surface_tension_coefficient"] == 0.072
     assert physical.settings["surface_tension_density"] == 1000.0

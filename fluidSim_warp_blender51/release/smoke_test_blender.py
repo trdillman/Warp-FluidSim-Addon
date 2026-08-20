@@ -12,7 +12,7 @@ import bpy
 import warp as wp
 
 EXPECTED_WARP_VERSION = "1.16.0"
-EXPECTED_BLENDER_VERSION = (5, 2, 0)
+EXPECTED_BLENDER_VERSION = (5, 1, 0)
 EXPECTED_FLUIDSIM_VERSION = (1, 0, 252)
 EXPECTED_PRESETS = {
     "preview_water",

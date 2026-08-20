@@ -1,4 +1,8 @@
-"""Focused UI/operator regression tests for Wave 2 remediation."""
+"""Operator and runtime regressions retained after the Properties UI migration.
+
+Scene/Object authoring and compact View3D launcher behavior are exercised by
+the 1.0.252 Properties UI suites and ``test_release_1_0_252_integration.py``.
+"""
 
 from __future__ import annotations
 
@@ -402,172 +406,16 @@ class _Layout:
         return None
 
 
-def test_pending_banner_and_fixed_header_expose_real_actions(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(live=True),
-        fluidsim_pending_action="REINIT_PENDING",
-        fluidsim_pending_count=2,
-        fluidsim_pending_reasons="Reinitialize: voxel_size\nReinitialize: max_particles",
-        fluidsim_pending_blocked="",
-    )
-    layout = _Layout()
-
-    panels._draw_pending_banner(layout, scene, show_actions=True)
-    header = SimpleNamespace(layout=layout)
-    panels._draw_header_interaction(header, SimpleNamespace(scene=scene))
-
-    assert any(label["text"] == "2 change(s) staged for restart"
-               for label in layout.labels)
-    assert {op["id"] for op in layout.operators} >= {
-        "fluidsim.apply_pending_reinitialize", "fluidsim.revert_pending"}
-    assert any(op.get("text") == "Restart Now" for op in layout.operators)
-    assert any(op.get("text") == "Discard Changes" for op in layout.operators)
-    assert getattr(layout, "alert", False) is False
-    assert layout.popovers == [{
-        "panel": "FLUIDSIM_PT_interaction_popover", "text": "2", "icon": "INFO"}]
 
 
-def test_header_registration_is_symmetric(monkeypatch):
-    bpy = _install_bpy_stub(monkeypatch)
-
-    class Header:
-        callbacks = []
-
-        @classmethod
-        def append(cls, callback):
-            cls.callbacks.append(callback)
-
-        @classmethod
-        def remove(cls, callback):
-            if callback in cls.callbacks:
-                cls.callbacks.remove(callback)
-
-    bpy.types.VIEW3D_HT_header = Header
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-
-    panels.register()
-    assert Header.callbacks == [panels._draw_header_interaction]
-    panels.unregister()
-    assert Header.callbacks == []
 
 
-def test_simulation_exposes_playback_recovery_limit_without_foldout(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        status="Solver ready", live=False, max_frame_catchup=8,
-        playback_advanced_expanded=False,
-        stat_particles=0, stat_voxels=0, stat_step_ms=0.0, stat_substeps=0,
-        time_scale=1.0, cfl=1.0, min_substeps=1, max_substeps=4,
-        use_scene_gravity=True, gravity=(0.0, 0.0, -9.81),
-        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
-        active_preset_id="",
-    )
-    panel = panels.FLUIDSIM_PT_simulation()
-    layout = _Layout()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-
-    assert "playback_advanced_expanded" not in layout.props
-    assert "max_frame_catchup" in layout.props
-    recovery = next(
-        call for call in layout.prop_calls
-        if call["name"] == "max_frame_catchup")
-    assert recovery["text"] == "Playback Recovery Frames"
 
 
-def test_simulation_panel_shows_persistent_error_with_clear_action(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
-            status="Solver error: boom",
-            live=False,
-            stat_particles=0,
-            stat_voxels=0,
-            stat_step_ms=0.0,
-            stat_substeps=0,
-            time_scale=1.0,
-            cfl=3.0,
-            min_substeps=1,
-            max_substeps=4,
-            use_scene_gravity=True,
-            gravity=(0.0, 0.0, -9.81),
-            setup_mode="QUICK_LIQUID",
-            product_preset="BUILTIN:preview_water",
-            active_preset_id="",
-        )
-    )
-    scene_bridge.set_error(scene, "frame failed")
-
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_simulation()
-    panel.layout = layout
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert {"text": "frame failed", "icon": "ERROR"} in layout.labels
-    assert any(op["id"] == "fluidsim.clear_error" for op in layout.operators)
 
 
-def test_simulation_panel_uses_only_verified_capacity_recommendation_flow(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        status="Init failed", live=False, stat_particles=0, stat_voxels=0,
-        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
-        min_substeps=1, max_substeps=4, use_scene_gravity=True,
-        gravity=(0.0, 0.0, -9.81),
-        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
-        active_preset_id="",
-    ))
-    scene_bridge.set_error(scene, "CUDA error 2: out of memory")
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_simulation()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert not any(
-        op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators
-    )
-    assert not any(
-        op["id"] == "fluidsim.initialize"
-        and op.get("text") == "Ignore Estimate & Initialize"
-        for op in layout.operators
-    )
-    assert any("verified" in label["text"] for label in layout.labels)
 
 
-def test_simulation_panel_hides_unverified_memory_bypass(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        status="Init failed", live=False, stat_particles=0, stat_voxels=0,
-        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
-        min_substeps=1, max_substeps=4, use_scene_gravity=True,
-        gravity=(0.0, 0.0, -9.81),
-        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
-        active_preset_id="",
-    ))
-    scene_bridge.set_error(scene, "FluidSim memory safeguard stopped initialization")
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_simulation()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert not any(
-        op["id"] == "fluidsim.initialize"
-        and op.get("text") == "Ignore Estimate & Initialize"
-        for op in layout.operators
-    )
 
 
 def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
@@ -593,56 +441,6 @@ def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
     assert seen == [(scene, {"ignore_memory_safeguard": True})]
 
 
-def test_capacity_warning_offers_approval_gated_recommended_option(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    suggestion = SimpleNamespace(
-        key="preserve_simulation",
-        label="Preserve authored domain and resolution",
-        changes={"max_particles": 120},
-        tradeoffs=("Raises only fixed GPU capacity.",),
-    )
-    plan = SimpleNamespace(
-        particle_demand=SimpleNamespace(value=120, quality=SimpleNamespace(value="exact")),
-        leaf_demand=SimpleNamespace(value=1, quality=SimpleNamespace(value="exact")),
-        estimated_bytes=1024,
-        budget_bytes=2048,
-        blockers=(SimpleNamespace(
-            code="PARTICLE_CAPACITY", required=120, available=100,
-            message="particle capacity"),),
-        suggestions=(suggestion,),
-    )
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        status="Capacity warning", live=False, stat_particles=0, stat_voxels=0,
-        stat_step_ms=0.0, stat_substeps=0, time_scale=1.0, cfl=3.0,
-        min_substeps=1, max_substeps=4, use_scene_gravity=True,
-        gravity=(0.0, 0.0, -9.81),
-        setup_mode="QUICK_LIQUID", product_preset="BUILTIN:preview_water",
-        active_preset_id="",
-    ))
-    scene_bridge.set_error(scene, "source capacity blocked")
-    monkeypatch.setattr(
-        scene_bridge, "session",
-        lambda: SimpleNamespace(
-            active=False, capacity_plan=plan,
-            current_error=lambda actual: "source capacity blocked"),
-    )
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_simulation()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert any(
-        op["id"] == "fluidsim.apply_capacity_suggestion"
-        and op.get("text") == "Review Recommended Changes & Run"
-        for op in layout.operators
-    )
-    assert not any(
-        op["id"] == "fluidsim.apply_safe_settings" for op in layout.operators)
-    assert any("Nothing has been changed" in label["text"]
-               for label in layout.labels)
 
 
 def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch):
@@ -749,277 +547,14 @@ def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch)
     assert "leaf_capacity" in fs.status
 
 
-def test_realtime_display_groups_surface_and_liquid_particles(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        liquid_view_mode="SURFACE_PARTICLES",
-        show_surface=True,
-        surface_enabled=True,
-        particle_radius_scale=1.2,
-        surface_splat_radius=2,
-        surface_resolution_mode="MULTIPLIER",
-        surface_resolution_multiplier=2.0,
-        surface_voxel_size=0.0,
-        surface_leaf_capacity_scale=8.0,
-        surface_max_dense_dim=512,
-        surface_update_cadence="FRAME",
-        live_surface_publish_cadence=1,
-        surface_build_lowres_sdf=False,
-        surface_advanced_expanded=False,
-        surface_filter_type="BOX",
-        surface_filter_iterations=1,
-        surface_filter_strength=0.7,
-        surface_dilate_iterations=0,
-        surface_dilate_strength=1.0,
-        surface_erode_iterations=0,
-        surface_erode_strength=1.0,
-        surface_smooth_type="BOX",
-        surface_smooth_iterations=1,
-        surface_smooth_strength=0.7,
-        surface_attribute_mode="NONE",
-        surface_material=None,
-        show_particles=True,
-        particle_display_fraction=1.0,
-        particle_display_scale=1.0,
-        particle_attribute_mode="NONE",
-        particle_material=None,
-    )
-    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_realtime_display()
-    panel.layout = layout
-
-    panel.draw(context)
-
-    main_controls = {
-        "liquid_view_mode",
-        "surface_enabled",
-        "particle_radius_scale",
-        "surface_splat_radius",
-        "surface_resolution_mode",
-        "surface_resolution_multiplier",
-        "surface_update_cadence",
-        "live_surface_publish_cadence",
-        "surface_filter_type",
-        "surface_filter_iterations",
-        "surface_filter_strength",
-        "surface_dilate_iterations",
-        "surface_dilate_strength",
-        "surface_erode_iterations",
-        "surface_erode_strength",
-        "surface_smooth_type",
-        "surface_smooth_iterations",
-        "surface_smooth_strength",
-        "show_surface",
-        "surface_attribute_mode",
-        "surface_material",
-        "show_particles",
-        "particle_display_fraction",
-        "particle_display_scale",
-        "particle_attribute_mode",
-        "particle_material",
-    }
-    advanced_controls = {
-        "surface_leaf_capacity_scale",
-        "surface_max_dense_dim",
-        "surface_build_lowres_sdf",
-    }
-    assert layout.props[0] == "liquid_view_mode"
-    assert main_controls.issubset(layout.props)
-    assert advanced_controls.isdisjoint(layout.props)
-    assert layout.labels == [
-        {"text": "Live / Targeted Refresh", "icon": "INFO"},
-        {"text": "Surface Mesh", "icon": "MESH_DATA"},
-        {"text": "Liquid Particles", "icon": "PARTICLE_DATA"},
-    ]
-    advanced_toggle = next(
-        call for call in layout.prop_calls
-        if call["name"] == "surface_advanced_expanded")
-    assert advanced_toggle["text"] == "Advanced Surface"
-    assert advanced_toggle["icon"] == "TRIA_RIGHT"
-    assert advanced_toggle["emboss"] is False
-    scopes = {call["name"]: call["boxes"] for call in layout.prop_scopes}
-    assert scopes["surface_enabled"]
-    assert scopes["surface_advanced_expanded"] == scopes["surface_enabled"]
-    assert scopes["show_particles"] != scopes["surface_enabled"]
-    assert not hasattr(panels, "FLUIDSIM_PT_surface_advanced")
-
-    fs.surface_advanced_expanded = True
-    expanded_layout = _Layout()
-    panel.layout = expanded_layout
-    panel.draw(context)
-    assert advanced_controls.issubset(expanded_layout.props)
-    assert expanded_layout.props.index("surface_material") < (
-        expanded_layout.props.index("surface_advanced_expanded"))
-    assert expanded_layout.props.index("surface_build_lowres_sdf") < (
-        expanded_layout.props.index("show_particles"))
-    expanded_scopes = {
-        call["name"]: call["boxes"] for call in expanded_layout.prop_scopes}
-    for name in advanced_controls:
-        assert expanded_scopes[name] == expanded_scopes["surface_enabled"]
-    assert expanded_scopes["show_particles"] != expanded_scopes["surface_enabled"]
-    expanded_toggle = next(
-        call for call in expanded_layout.prop_calls
-        if call["name"] == "surface_advanced_expanded")
-    assert expanded_toggle["icon"] == "TRIA_DOWN"
 
 
-def test_whitewater_panel_starts_with_simulation_toggle_and_owns_controls(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        whitewater_enabled=True,
-        max_whitewater=1000,
-        ww_churn_gain=1.0,
-        ww_churn_decay=1.0,
-        ww_churn_threshold=0.5,
-        ww_emission_rate=2.0,
-        ww_min_speed=0.5,
-        ww_life_min=1.0,
-        ww_life_max=3.0,
-        ww_bubble_drag=4.0,
-        ww_spray_drag=0.2,
-        show_whitewater=True,
-        whitewater_display_scale=1.0,
-        whitewater_attribute_mode="NONE",
-        whitewater_material=None,
-    )
-    expected = {
-        "show_whitewater",
-        "whitewater_enabled",
-        "whitewater_display_scale",
-        "whitewater_attribute_mode",
-        "whitewater_material",
-        "max_whitewater",
-        "ww_churn_gain",
-        "ww_churn_decay",
-        "ww_churn_threshold",
-        "ww_emission_rate",
-        "ww_min_speed",
-        "ww_life_min",
-        "ww_life_max",
-        "ww_bubble_drag",
-        "ww_spray_drag",
-    }
-
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_surface()
-    panel.layout = layout
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-
-    assert layout.props[0] == "whitewater_enabled"
-    assert expected.issubset(layout.props)
-    assert "Viewport / Render" not in {label["text"] for label in layout.labels}
-    assert layout.labels == [
-        {"text": "Reinitialize Required", "icon": "ERROR"},
-        {"text": "Live", "icon": "INFO"},
-    ]
-    other_sources = "\n".join(inspect.getsource(cls.draw) for cls in (
-        panels.FLUIDSIM_PT_realtime_display,
-        panels.FLUIDSIM_PT_output,
-    ))
-    assert all(name not in other_sources for name in expected)
 
 
-def test_panels_move_static_help_to_tooltips_but_keep_structural_tiers(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    panel_source = inspect.getsource(panels)
-    prohibited_explanations = {
-        "Solid Volume requires a watertight mesh",
-        "Direct Append adds owned points once; it is not volume fill",
-        "Targets colliders and closed domain walls",
-        "Configure these in Blender Physics properties",
-        "Mesh vertices, PointCloud points, or the first particle system",
-        "Compatibility direct append; this is not volume fill",
-        "FIELD operations never emit liquid",
-    }
-
-    assert all(text not in panel_source for text in prohibited_explanations)
-    assert "def _draw_interaction_tier" in panel_source
-    assert '_draw_interaction_tier(layout, "Live / Targeted Refresh")' in inspect.getsource(
-        panels.FLUIDSIM_PT_realtime_display.draw)
-    assert '_draw_interaction_tier(layout, "Live")' in inspect.getsource(
-        panels.FLUIDSIM_PT_pressure.draw)
 
 
-@pytest.mark.parametrize("height_enabled", [False, True])
-def test_unrelated_height_fill_keeps_original_disabled_controls_visible(
-        monkeypatch, height_enabled):
-    """Height-fill settings must grey out, never vanish.
-
-    Hiding them behind `if not fs.height_enabled: return` would make the panel
-    change height as the toggle flips and hide the authored values; greying
-    keeps them readable.  Asserted on the drawn layout rather than on the
-    source text, so a rewrite that still greys correctly stays green.
-    """
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        height_enabled=height_enabled, height_back_mode="FLAT",
-        height_error="")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_domain_height_fill()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-
-    governed = ("height_base", "height_emission_mode", "height_velocity",
-                "height_emit_particles", "particles_per_voxel",
-                "height_back_mode")
-    for name in governed:
-        assert layout.drawn_enabled(name) is height_enabled, name
-    # The master toggle lives outside the layout it governs, so it can always
-    # be switched back on.
-    assert layout.drawn_enabled("height_enabled") is True
 
 
-@pytest.mark.parametrize(
-    "panel_name, toggle, fs_fields",
-    [
-        ("FLUIDSIM_PT_domain_height_fill", "height_enabled",
-         {"height_back_mode": "FLAT", "height_error": ""}),
-        ("FLUIDSIM_PT_surface", "whitewater_enabled",
-         {"show_whitewater": False}),
-        ("FLUIDSIM_PT_surface", "show_whitewater",
-         {"whitewater_enabled": False}),
-        ("FLUIDSIM_PT_realtime_display", "surface_enabled",
-         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
-          "show_surface": False, "show_particles": False,
-          "surface_advanced_expanded": True}),
-        ("FLUIDSIM_PT_realtime_display", "show_surface",
-         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
-          "surface_enabled": False, "show_particles": False,
-          "surface_advanced_expanded": False}),
-        ("FLUIDSIM_PT_realtime_display", "show_particles",
-         {"liquid_view_mode": "SURFACE", "surface_resolution_mode": "MULTIPLIER",
-          "surface_enabled": False, "show_surface": False,
-          "surface_advanced_expanded": False}),
-    ],
-)
-def test_master_toggles_are_not_self_locking(
-        monkeypatch, panel_name, toggle, fs_fields):
-    """A toggle drawn into the sub-layout it disables can never be undone.
-
-    Greyout is inherited by the layout, not evaluated per control, so
-    `col.enabled = fs.x; col.prop(fs, "x")` renders `x` unclickable the moment
-    it goes false -- a one-way door with no keyboard escape.  Every master
-    toggle must be drawn into a layout its own value does not govern.
-    """
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = _PermissiveSettings({**fs_fields, toggle: False})
-    layout = _Layout()
-    panel = getattr(panels, panel_name)()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(
-        fluidsim=fs, fluidsim_pending_action="", fluidsim_pending_count=0,
-        fluidsim_pending_reasons="", fluidsim_pending_blocked="")))
-
-    assert layout.drawn_enabled(toggle) is True, (
-        f"{panel_name}.{toggle} greys itself out when off")
 
 
 def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
@@ -1073,15 +608,6 @@ def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
     assert offenders == []
 
 
-def test_collider_panel_has_only_per_object_material_controls(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    source = inspect.getsource(panels.FLUIDSIM_PT_colliders.draw)
-
-    assert 'col.prop(pg, "collider_friction")' in source
-    assert 'col.prop(pg, "collider_restitution")' in source
-    assert 'col.prop(fs, "friction")' not in source
-    assert 'col.prop(fs, "restitution")' not in source
 
 
 def test_realtime_property_callbacks_request_surface_or_output_refresh(monkeypatch):
@@ -1380,63 +906,6 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     assert applied == [(scene, sess, {"reset_only": True})]
 
 
-def test_solver_property_interaction_tiers_are_mechanically_exhaustive(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    properties = _reload_module("fluidSim_warp_blender51.properties")
-    bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    tree = ast.parse(textwrap.dedent(
-        inspect.getsource(properties.FLUIDSIM_PG_settings)))
-    callbacks = {}
-    for node in tree.body[0].body:
-        if not (isinstance(node, ast.AnnAssign)
-                and isinstance(node.target, ast.Name)
-                and isinstance(node.annotation, ast.Call)):
-            continue
-        update = next(
-            (kw.value for kw in node.annotation.keywords if kw.arg == "update"),
-            None,
-        )
-        if isinstance(update, ast.Name):
-            callbacks[node.target.id] = update.id
-
-    live_props = {name for name, callback in callbacks.items()
-                  if callback == "_request_live"}
-    assert live_props == set(_pending_module()._LIVE_SETTING_FIELDS) | {
-        "gravity", "use_scene_gravity"}
-    declared_callbacks = {
-        "_on_live_changed", "_request_rebuild", "_request_live",
-        "_request_reset", "_request_surface_refresh",
-        "_request_whitewater_refresh", "_apply_liquid_view_mode",
-        "_sync_liquid_view_mode", "_request_output_refresh",
-        "_request_particle_capacity", "_on_cache_playback_changed",
-    }
-    assert set(callbacks.values()) == declared_callbacks
-
-    allocation = {"voxel_size", "leaf_capacity", "max_particles", "max_whitewater"}
-    assert allocation.isdisjoint(
-        _pending_module()._LIVE_SETTING_FIELDS | _pending_module()._RESET_SETTING_FIELDS)
-    assert {
-        name for name, callback in callbacks.items()
-        if callback == "_request_particle_capacity"
-    } == {
-        "max_particles", "auto_grow_particles",
-        "particle_growth_failure_policy",
-    }
-    assert _pending_module()._HOT_SETTING_FIELDS.isdisjoint(_pending_module()._RESET_SETTING_FIELDS)
-    assert _pending_module()._HOT_SETTING_FIELDS.isdisjoint(_pending_module()._SURFACE_SETTING_FIELDS)
-    assert _pending_module()._LIVE_REFRESH_SETTING_FIELDS == set()
-    assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
-    enum_sources = {source for source, _enum in _pending_module()._enum_setting_fields().values()}
-    appliable = set(_pending_module()._DIRECT_SETTING_FIELDS) | enum_sources
-    assert (_pending_module()._LIVE_SETTING_FIELDS | _pending_module()._RESET_SETTING_FIELDS).issubset(
-        appliable)
-    assert _pending_module()._RESET_SETTING_FIELDS.issubset(
-        {name for name, callback in callbacks.items()
-         if callback == "_request_reset"})
-    assert _pending_module()._SURFACE_SETTING_FIELDS.issubset(
-        {name for name, callback in callbacks.items()
-         if callback == "_request_surface_refresh"})
-    _pending_module().validate_transition_registry()
 
 
 def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
@@ -1585,7 +1054,7 @@ def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
     assert calls == ["init", "init"]
 
 
-def test_runtime_warp_probe_accepts_supported_pre_certification_runtime(monkeypatch):
+def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
     _install_bpy_stub(monkeypatch)
     runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
     fake_warp = SimpleNamespace(
@@ -1596,7 +1065,7 @@ def test_runtime_warp_probe_accepts_supported_pre_certification_runtime(monkeypa
             total_memory=8 * 1024**3,
             is_cuda=True,
         )],
-        __version__="1.12.1",
+        __version__="1.16.0",
         __file__="warp/__init__.py",
     )
     monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
@@ -1605,12 +1074,12 @@ def test_runtime_warp_probe_accepts_supported_pre_certification_runtime(monkeypa
     probe = runtime.probe_runtime()
 
     assert probe.available
-    assert probe.warp_version == "1.12.1"
-    assert "certified" in probe.message
+    assert probe.warp_version == "1.16.0"
+    assert "Detected" in probe.message
 
 
-@pytest.mark.parametrize("version", ["1.12.0", "1.17.0", "unknown"])
-def test_runtime_warp_probe_rejects_versions_outside_supported_range(
+@pytest.mark.parametrize("version", ["1.12.1", "1.16.1", "1.17.0", "unknown"])
+def test_runtime_warp_probe_rejects_noncertified_versions(
     monkeypatch, version,
 ):
     _install_bpy_stub(monkeypatch)
@@ -1632,7 +1101,7 @@ def test_runtime_warp_probe_rejects_versions_outside_supported_range(
     probe = runtime.probe_runtime()
 
     assert not probe.available
-    assert "1.12.1 through 1.16.x" in probe.message
+    assert "requires external Warp 1.16.0" in probe.message
 
 
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):
@@ -1818,101 +1287,8 @@ def test_clear_error_operator_resets_session_and_scene_error(monkeypatch):
     assert scene.fluidsim.status == "Solver ready"
 
 
-def test_cache_and_bake_panel_shows_activity_and_primary_actions(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        liquid_view_mode="SURFACE",
-        show_surface=True,
-        surface_attribute_mode="NONE",
-        show_particles=False,
-        particle_display_fraction=1.0,
-        particle_attribute_mode="NONE",
-        show_whitewater=False,
-        whitewater_attribute_mode="NONE",
-        surface_material=None,
-        whitewater_material=None,
-        output_collection_name="FluidSim Output",
-        show_overlay=True,
-        cache_enabled=False,
-        cache_playback_enabled=True,
-        cache_path="//fluidsim_cache/",
-        cache_format="NPZ",
-        bake_start=3,
-        bake_end=5,
-        checkpoint_interval=1,
-        cache_compress=True,
-        bake_status="IDLE",
-        bake_progress=0.0,
-        bake_message="",
-        cache_use_custom_range=True,
-        cache_frame_start=3,
-        cache_frame_end=5,
-    )
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_output()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(
-        scene=SimpleNamespace(fluidsim=fs),
-        screen=SimpleNamespace(is_animation_playing=True),
-    ))
-
-    assert panel.bl_label == "Cache & Bake"
-    assert any(label["text"] == "Playing Cache" for label in layout.labels)
-    assert "cache_path" in layout.props
-    assert "bake_start" in layout.props
-    assert "bake_end" in layout.props
-    assert {
-        "cache_enabled",
-        "cache_playback_enabled",
-        "cache_use_custom_range",
-        "cache_frame_start",
-        "cache_frame_end",
-    }.isdisjoint(layout.props)
-    assert {op["id"] for op in layout.operators} >= {
-        "fluidsim.cache_playback_stop",
-        "fluidsim.bake_start",
-        "fluidsim.bake_resume",
-        "fluidsim.bake_cancel",
-    }
-    assert "fluidsim.export_frame" not in {op["id"] for op in layout.operators}
 
 
-def test_cache_utilities_panel_contains_management_only(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        cache_format="NPZ",
-        checkpoint_interval=1,
-        cache_compress=True,
-    )
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_cache_utilities()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-
-    assert panel.bl_parent_id == "FLUIDSIM_PT_output"
-    assert {"cache_format", "checkpoint_interval", "cache_compress"} <= set(layout.props)
-    operator_ids = {op["id"] for op in layout.operators}
-    assert operator_ids >= {
-        "fluidsim.cache_integrity_scan",
-        "fluidsim.cache_remove_orphans",
-        "fluidsim.cache_open_folder",
-        "fluidsim.cache_move",
-        "fluidsim.cache_rename",
-        "fluidsim.cache_free",
-        "fluidsim.copy_bake_command",
-    }
-    assert {
-        "fluidsim.cache_playback_start",
-        "fluidsim.cache_playback_stop",
-        "fluidsim.bake_start",
-        "fluidsim.bake_resume",
-        "fluidsim.bake_cancel",
-        "fluidsim.export_frame",
-    }.isdisjoint(operator_ids)
 
 
 def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
@@ -2032,115 +1408,12 @@ def _phase1_object(role, **overrides):
     )
 
 
-def test_phase1_source_draw_exposes_real_lifecycle_and_hides_compatibility(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    source = _phase1_object("SOURCE")
-    fs = SimpleNamespace(
-        height_enabled=True, height_base=0.3,
-        height_velocity=(0.0, 0.0, 0.0), height_emit_particles=True,
-    )
-    scene = SimpleNamespace(fluidsim=fs, objects=[source])
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_liquid_emitters()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=scene, active_object=source))
-
-    assert {
-        "emission_mode", "source_sampling_mode", "emit_rate", "geometry_mode"
-    }.issubset(layout.props)
-    assert {
-        ("ANALYTIC", "Analytic Volume"),
-        ("MESH", "Mesh Surface Shell"),
-    }.issubset({(call["value"], call["text"])
-                for call in layout.prop_enum_calls})
-    assert "source_mode" not in layout.props
-    assert "height_back_mode" not in layout.props
-    assert any(call == {"name": "emit_rate", "text": "Legacy Absolute Target"}
-               for call in layout.prop_calls)
-    assert any(op["id"] == "fluidsim.tag_liquid_emitter"
-               for op in layout.operators)
-    assert not any(op["id"] == "fluidsim.inject_particles"
-                   for op in layout.operators)
 
 
-def test_phase1_particle_attributes_are_source_only_and_collapsed(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    source = _phase1_object("SOURCE", use_lifespan=True)
-    context = SimpleNamespace(active_object=source)
-    assert panels.FLUIDSIM_PT_liquid_emitter_attributes.poll(context)
-    assert "DEFAULT_CLOSED" in panels.FLUIDSIM_PT_liquid_emitter_attributes.bl_options
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_liquid_emitter_attributes()
-    panel.layout = layout
-    panel.draw(context)
-    assert {"temperature", "viscosity", "density", "use_lifespan",
-            "life_min", "life_max"}.issubset(layout.props)
-    assert any(call == {"name": "density", "text": "Density Attribute"}
-               for call in layout.prop_calls)
-    assert not panels.FLUIDSIM_PT_liquid_emitter_attributes.poll(
-        SimpleNamespace(active_object=_phase1_object("SINK")))
 
 
-def test_phase1_sink_uses_shared_region_editor_in_sink_workflow(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    sink = _phase1_object(
-        "SINK", geometry_mode="MESH", mesh_error="Mesh must be watertight")
-    scene = SimpleNamespace(objects=[sink], fluidsim=SimpleNamespace())
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_liquid_sinks()
-    panel.layout = layout
-
-    panel.draw(SimpleNamespace(scene=scene, active_object=sink))
-
-    assert {"geometry_mode", "mesh_object", "mesh_evaluation_mode",
-            "sink_region_mode"}.issubset(layout.props)
-    assert "mesh_surface_thickness" not in layout.props
-    assert {
-        ("ANALYTIC", "Analytic Volume"), ("MESH", "Mesh")
-    }.issubset({(call["value"], call["text"])
-                for call in layout.prop_enum_calls})
-    assert {"text": "Mesh must be watertight", "icon": "ERROR"} in layout.labels
-    assert any(op["id"] == "fluidsim.tag_liquid_sink"
-               for op in layout.operators)
 
 
-def test_phase1_force_editor_requires_force_role_and_tag_action(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    fs = SimpleNamespace(
-        directional_force=(0.0, 0.0, 0.0),
-        omnidirectional_force_strength=0.0,
-        omnidirectional_force_center=(0.0, 0.0, 0.0),
-        omnidirectional_force_radius=1.0,
-        force_diffusion=0.0,
-        dissipation_enabled=False,
-        dissipation_attribute="TEMPERATURE",
-        dissipation_rate=0.0,
-        dissipation_target=0.0,
-        attraction_enabled=False,
-        attraction_strength=0.0,
-        attraction_max_distance=1.0,
-    )
-    scene = SimpleNamespace(fluidsim=fs)
-
-    force_layout = _Layout()
-    panel = panels.FLUIDSIM_PT_forces()
-    panel.layout = force_layout
-    panel.draw(SimpleNamespace(scene=scene, active_object=_phase1_object("FORCE")))
-    assert {"enabled", "shape", "force_type"}.issubset(force_layout.props)
-    assert any(op["id"] == "fluidsim.tag_force_region"
-               for op in force_layout.operators)
-
-    source_layout = _Layout()
-    panel.layout = source_layout
-    panel.draw(SimpleNamespace(scene=scene, active_object=_phase1_object("SOURCE")))
-    assert "force_type" not in source_layout.props
-    assert any("Select a tagged Force Region" in label["text"]
-               for label in source_layout.labels)
 
 
 def test_phase1_tag_operator_supports_force_and_has_disabled_state(monkeypatch):
@@ -2161,25 +1434,6 @@ def test_phase1_tag_operator_supports_force_and_has_disabled_state(monkeypatch):
     assert "Select at least one object" in operators.FLUIDSIM_OT_tag_object._poll_message
 
 
-def test_phase3_field_volume_input_is_drawn_once_when_region_and_payload_use_volume(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    field = _phase1_object(
-        "FIELD", source_mode="FIELD", field_operation="SCALAR",
-        field_region_kind="VOLUME_GRID", field_value_source="VOLUME_GRID",
-        volume_input_object=None, volume_scalar_grid="temperature",
-        volume_vector_grid="", volume_vector_x_grid="",
-        volume_vector_y_grid="", volume_vector_z_grid="",
-        blend_mode="REPLACE", field_amount=1.0,
-        source_status_message="", source_status_severity="",
-        source_status_code="", source_status_capacity_limited=False)
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_advanced_field_sources(); panel.layout = layout
-    panel.draw(SimpleNamespace(
-        scene=SimpleNamespace(objects=[field], fluidsim=SimpleNamespace()),
-        active_object=field))
-    assert [call["name"] for call in layout.prop_calls].count(
-        "volume_input_object") == 1
 
 
 def test_phase3_aggregate_emission_is_not_broadcast_as_per_source_truth():
@@ -2449,82 +1703,10 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert "changed" in fs.status.lower()
 
 
-def test_panel_hierarchy_promotes_common_settings_and_keeps_specialists_nested(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    expected_top = {
-        "Simulation", "Quality", "Inputs", "Physics",
-        "Surface & Whitewater", "Cache & Bake", "Advanced",
-        "Domain / Sparse Grid", "Particles",
-    }
-    actual_top = {
-        cls.bl_label for cls in panels.CLASSES
-        if issubclass(cls, panels.FluidSimPanel)
-        and "bl_parent_id" not in cls.__dict__
-    }
-    assert actual_top == expected_top
-    assert panels.FLUIDSIM_PT_advanced.bl_options == {"DEFAULT_CLOSED"}
-    assert "bl_parent_id" not in panels.FLUIDSIM_PT_domain.__dict__
-    assert "bl_parent_id" not in panels.FLUIDSIM_PT_particles.__dict__
-    assert panels.FLUIDSIM_PT_liquid_emitters.bl_parent_id == "FLUIDSIM_PT_inputs"
-    assert panels.FLUIDSIM_PT_advanced_field_sources.bl_parent_id == "FLUIDSIM_PT_inputs"
-    assert panels.FLUIDSIM_PT_pressure.bl_parent_id == "FLUIDSIM_PT_physics"
-    assert panels.FLUIDSIM_PT_realtime_display.bl_parent_id == "FLUIDSIM_PT_surface"
-    assert panels.FLUIDSIM_PT_stflip.bl_parent_id == "FLUIDSIM_PT_advanced"
-    assert panels.FLUIDSIM_PT_cache_utilities.bl_parent_id == "FLUIDSIM_PT_output"
 
 
-def test_domain_panel_exposes_one_boundary_policy_control(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_domain(); panel.layout = layout
-    scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(domain_object=None, open_boundaries=False))
-
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert "open_boundaries" in layout.props
-    assert "domain_sdf_walls" not in layout.props
 
 
-def test_basic_quality_panel_exposes_only_semantic_controls(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_quality(); panel.layout = layout
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(sample_type="FLIP"))
-
-    panel.draw(SimpleNamespace(scene=scene))
-
-    assert {
-        "voxel_size", "particles_per_voxel", "sample_type", "flip_ratio",
-        "cfl", "min_substeps", "max_substeps",
-    } <= set(layout.props)
-    assert {"max_particles", "max_active_leaves", "max_whitewater"}.isdisjoint(
-        layout.props)
-    label_text = {label["text"] for label in layout.labels}
-    assert "Changes spatial resolution; Requires Reinitialize" in label_text
-    assert "Changes liquid rest density and inherited fill; Requires Reset" in label_text
 
 
-def test_advanced_panel_owns_only_manual_capacity_controls(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    panel = panels.FLUIDSIM_PT_advanced(); panel.layout = layout
 
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
-
-    assert {"leaf_capacity", "topology_expand"} <= set(layout.props)
-    assert "min_substeps" not in layout.props
-
-
-def test_long_capacity_copy_wraps_instead_of_truncating(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    panels = _reload_module("fluidSim_warp_blender51.panels")
-    layout = _Layout()
-    text = "This capacity warning contains enough detail to exceed one narrow panel line."
-    panels._draw_wrapped(layout, text, icon="INFO", width=30)
-    assert len(layout.labels) >= 2
-    assert "".join(label["text"] for label in layout.labels).replace(" ", "") == text.replace(" ", "")

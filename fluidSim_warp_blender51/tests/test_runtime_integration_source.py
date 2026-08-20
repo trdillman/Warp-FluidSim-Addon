@@ -48,9 +48,11 @@ def test_gpu_operators_have_runtime_poll_gates():
         assert "poll" in methods[class_name]
     source = (ROOT / "operators.py").read_text(encoding="utf-8")
     assert "def _runtime_poll(" in source
+    assert "def _mutation_poll(" in source
     assert "runtime_status_for_device" in source
     assert "class _FLUIDSIM_OT_session_base" in source
-    assert "if not _runtime_poll(cls):" in source
+    assert "if not _mutation_poll(cls, context):" in source
+    assert "return _runtime_poll(cls)" in source
 
 
 def test_simulation_and_cache_panels_surface_runtime_state():

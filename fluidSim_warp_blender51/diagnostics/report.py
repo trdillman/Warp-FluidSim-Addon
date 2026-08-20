@@ -23,33 +23,33 @@ def redact_path(value: str | os.PathLike[str] | None, *, home: str | None = None
     if value is None:
         return ""
     text = os.fspath(value)
-    if not text or not os.path.isabs(os.path.expanduser(text)):
+    portable = text.replace("\\", "/")
+    if not portable or not (
+            portable.startswith("/")
+            or re.match(r"^[A-Za-z]:/", portable)):
         return text
 
-    candidates = []
-    if home:
-        candidates.append(os.path.abspath(os.path.expanduser(home)))
-    else:
-        candidates.append(os.path.abspath(os.path.expanduser("~")))
-    normalized = os.path.normpath(text)
+    candidates = [home] if home else [os.path.expanduser("~")]
     for candidate in candidates:
-        candidate = os.path.normpath(candidate)
-        try:
-            if os.path.commonpath((normalized, candidate)) == candidate:
-                suffix = normalized[len(candidate):].lstrip("/\\")
-                return "~" + (("/" + suffix.replace("\\", "/")) if suffix else "")
-        except (ValueError, OSError):
-            pass
+        if not candidate:
+            continue
+        candidate = os.fspath(candidate).replace("\\", "/").rstrip("/")
+        compare_text = portable.casefold() if re.match(r"^[A-Za-z]:/", portable) else portable
+        compare_home = candidate.casefold() if re.match(r"^[A-Za-z]:/", candidate) else candidate
+        if (compare_text == compare_home
+                or compare_text.startswith(compare_home + "/")):
+            suffix = portable[len(candidate):].lstrip("/")
+            return "~" + (("/" + suffix) if suffix else "")
 
     # Reports may include a module path from another user profile (for example,
     # a copied failure report). Redact common absolute home layouts as well.
-    posix = re.sub(r"^/(?:home|Users)/[^/]+", "~", normalized)
-    if posix != normalized:
+    posix = re.sub(r"^/(?:home|Users)/[^/]+", "~", portable)
+    if posix != portable:
         return posix
     windows = re.sub(
-        r"^[A-Za-z]:[\\/]Users[\\/][^\\/]+",
+        r"^[A-Za-z]:/Users/[^/]+",
         "~",
-        normalized,
+        portable,
         flags=re.IGNORECASE,
     )
     return windows

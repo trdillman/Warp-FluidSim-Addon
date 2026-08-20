@@ -648,33 +648,12 @@ def run_synchronous(
     restart: bool = False,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> BakeResult:
-    """Synchronous adapter used by scripts/tests; UI uses modal timer ticks."""
-    fs = scene.fluidsim
-    start = int(fs.bake_start if start is None else start)
-    end = int(fs.bake_end if end is None else end)
-    backend = ProductionBakeBackend(
-        checkpoint_interval=int(getattr(fs, "checkpoint_interval", 1)),
-        compressed=bool(getattr(fs, "cache_compress", False)),
-    )
-    controller = BakeController(
-        backend=backend, progress_callback=progress_callback)
-    register_active_bake(scene, controller)
-    try:
-        if resume:
-            controller.resume(scene, end=end)
-        else:
-            controller.start(scene, start, end, restart=restart)
-        while controller.status in {
-            BakeStatus.INITIALIZING,
-            BakeStatus.RUNNING,
-            BakeStatus.CANCELLING,
-        }:
-            controller.tick(scene)
-        if controller.status is BakeStatus.FAILED:
-            raise RuntimeError(controller.error or controller.message)
-        return controller.result()
-    finally:
-        clear_active_bake(scene, controller)
+    """Compatibility delegate; ``cache_bake`` owns sequential execution."""
+    from .cache_bake import run_synchronous as run_cache_bake
+
+    return run_cache_bake(
+        scene, sess, start, end, resume=resume, restart=restart,
+        progress_callback=progress_callback)
 
 
 class SignalCancellation:

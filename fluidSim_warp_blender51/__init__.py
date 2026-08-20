@@ -63,41 +63,34 @@ def register():
 
 
 def unregister():
-    from . import operators, panels, preferences, properties
-    from .blender import (
-        effect_ui,
-        effect_workspace,
-        effects,
-        pending_settings,
-        playback,
-        render,
-        sources,
-        ui_object,
-        ui_scene,
-        viewport_overlay,
-    )
+    import sys
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a
-    # Reload Scripts that re-enters unregister() twice), so one step's
-    # failure never blocks the rest of teardown.
+    # Reload Scripts that re-enters unregister() twice). Never import a module
+    # merely to tear it down: a partial registration may not have had enough
+    # Blender API surface to import later UI adapters in the first place.
     steps = (
-        ("viewport overlay", viewport_overlay.unregister_overlay),
-        ("render handlers", render.unregister_handlers),
-        ("pending handlers", pending_settings.unregister_handlers),
-        ("playback handlers", playback.unregister_handlers),
-        ("source migration handlers", sources.unregister_handlers),
-        ("Warp Code workspace", effect_workspace.unregister),
-        ("custom effects UI", effect_ui.unregister),
-        ("Object Properties UI", ui_object.unregister),
-        ("Scene Properties UI", ui_scene.unregister),
-        ("viewport launcher", panels.unregister),
-        ("operators", operators.unregister),
-        ("preferences", preferences.unregister),
-        ("custom effects model", effects.unregister),
-        ("properties", properties.unregister),
+        ("viewport overlay", "blender.viewport_overlay", "unregister_overlay"),
+        ("render handlers", "blender.render", "unregister_handlers"),
+        ("pending handlers", "blender.pending_settings", "unregister_handlers"),
+        ("playback handlers", "blender.playback", "unregister_handlers"),
+        ("source migration handlers", "blender.sources", "unregister_handlers"),
+        ("Warp Code workspace", "blender.effect_workspace", "unregister"),
+        ("custom effects UI", "blender.effect_ui", "unregister"),
+        ("Object Properties UI", "blender.ui_object", "unregister"),
+        ("Scene Properties UI", "blender.ui_scene", "unregister"),
+        ("viewport launcher", "panels", "unregister"),
+        ("operators", "operators", "unregister"),
+        ("preferences", "preferences", "unregister"),
+        ("custom effects model", "blender.effects", "unregister"),
+        ("properties", "properties", "unregister"),
     )
-    for name, step in steps:
+    for name, relative_name, function_name in steps:
+        module = sys.modules.get(f"{__name__}.{relative_name}")
+        step = getattr(module, function_name, None) if module is not None else None
+        if not callable(step):
+            continue
         try:
             step()
         except Exception as exc:  # noqa: BLE001

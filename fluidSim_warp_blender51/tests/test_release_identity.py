@@ -26,7 +26,7 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["id"] == extension_id == "fluidsim_warp"
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
     assert manifest["platforms"] == ["linux-x64"]
-    assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.2.0"
+    assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.1.0"
     assert version == (1, 0, 252)
 
 
@@ -59,7 +59,7 @@ def test_solver_constants_consume_canonical_identity():
 def test_user_guide_declares_certified_support_matrix():
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
     for text in (
-        "Blender 5.2.0 LTS",
+        "Blender 5.1.0",
         "Linux x64",
         "NVIDIA CUDA",
         "External NVIDIA Warp 1.16.0+cu12",

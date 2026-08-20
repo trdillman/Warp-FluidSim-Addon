@@ -11,7 +11,7 @@ from pathlib import Path
 import bpy
 
 SUCCESS_MARKER = "FLUIDSIM_GPU_REGRESSION_OK"
-EXPECTED_BLENDER_VERSION = (5, 2, 0)
+EXPECTED_BLENDER_VERSION = (5, 1, 0)
 EXPECTED_WARP_VERSION = "1.16.0"
 
 
@@ -60,7 +60,7 @@ def _assert_packaged_runtime(module: str, probe) -> None:
 def main() -> None:
     if bpy.app.version[:3] != EXPECTED_BLENDER_VERSION:
         raise AssertionError(
-            f"expected Blender 5.2.x, running {bpy.app.version_string}"
+            f"expected Blender 5.1.x, running {bpy.app.version_string}"
         )
     started = time.time()
     module = _installed_module()

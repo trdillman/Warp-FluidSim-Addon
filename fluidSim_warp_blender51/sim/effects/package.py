@@ -155,7 +155,7 @@ def write_effect_package(path: str | Path, definition: EffectDefinitionV2) -> Pa
         with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for name in sorted(members):
                 archive.writestr(_zip_info(name), members[name])
-        with temp.open("rb") as handle:
+        with temp.open("r+b") as handle:
             os.fsync(handle.fileno())
         os.replace(temp, path)
         if os.name != "nt":

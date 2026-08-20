@@ -109,11 +109,11 @@ class AdmissionSnapshot:
     height_source: object
     seeds: tuple
     snippets: tuple
-    effects: tuple
     footprints: tuple
     collider_footprints: tuple
     resources: object
     capacity_plan: object
+    effects: tuple = ()
     depsgraph: object = None
 
     def assert_evaluation_valid(self, scene):
@@ -340,12 +340,13 @@ def discard_prepared_solver(solver):
 class SimulationAdmission:
     """Deep admission owner used by one Solver Session."""
 
-    def __init__(self, session, *, scene_identity, snippet_builder, effect_builder,
-                 applied_state_capture, reset_settings_apply):
+    def __init__(self, session, *, scene_identity, snippet_builder,
+                 applied_state_capture, reset_settings_apply,
+                 effect_builder=None):
         self.session = session
         self._scene_identity = scene_identity
         self._snippet_builder = snippet_builder
-        self._effect_builder = effect_builder
+        self._effect_builder = effect_builder or (lambda _scene: ())
         self._capture_applied_state = applied_state_capture
         self._apply_reset_settings = reset_settings_apply
 

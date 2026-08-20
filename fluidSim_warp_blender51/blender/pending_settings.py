@@ -20,6 +20,7 @@ from .solver_settings import (
     apply_scene_settings as _apply_scene_settings,
     domain_bounds as _domain_bounds,
     enum_setting_fields as _enum_setting_fields,
+    normalize_domain_boundary_settings as _normalize_domain_boundary_settings,
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -147,6 +148,8 @@ _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",
+    "active_preset_id", "product_preset", "setup_mode",
+    "bake_start", "bake_end", "cache_format", "checkpoint_interval",
 })
 _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
@@ -167,7 +170,8 @@ _PRESENTATION_FIELDS = frozenset({
     "stat_surface_tension_max_acceleration",
     "stat_surface_tension_temporary_bytes",
     "stat_surface_tension_submission_ms", "stat_surface_tension_status",
-    "stat_surface_tension_message",
+    "stat_surface_tension_message", "bake_status", "bake_progress",
+    "bake_message",
 })
 
 _TIER_FIELDS = {
@@ -645,6 +649,7 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
         scene.fluidsim, sess.solver.settings,
         _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
     _apply_gravity(scene, sess.solver.settings)
+    _normalize_domain_boundary_settings(sess.solver.settings)
     return True
 
 

@@ -51,6 +51,17 @@ def _runtime_poll(cls) -> bool:
     return ready
 
 
+def _mutation_poll(cls, context) -> bool:
+    """Block solver mutations while Production Bake owns the scene."""
+    from .blender import production_bake
+
+    scene = getattr(context, "scene", None)
+    if scene is not None and production_bake.bake_is_active(scene):
+        cls.poll_message_set("Production Bake owns this scene")
+        return False
+    return _runtime_poll(cls)
+
+
 def _resolved_cache_path(scene) -> Path:
     """Resolve the exact authored cache target used by mutation dialogs."""
     raw = str(bpy.path.abspath(scene.fluidsim.cache_path) or "").strip()
@@ -95,7 +106,7 @@ class _FLUIDSIM_OT_session_base:
 
     @classmethod
     def poll(cls, context):
-        if not _runtime_poll(cls):
+        if not _mutation_poll(cls, context):
             return False
         if not _bridge().session().active:
             cls.poll_message_set("Initialize the solver first")
@@ -112,7 +123,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime_poll(cls)
+        return _mutation_poll(cls, context)
 
     ignore_memory_safeguard: BoolProperty(
         name="Run Anyway",
@@ -165,6 +176,11 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        from .blender import production_bake
+
+        if production_bake.bake_is_active(getattr(context, "scene", None)):
+            cls.poll_message_set("Production Bake owns this scene")
+            return False
         sess = _bridge().session()
         if not sess.active:
             cls.poll_message_set("No solver session is active")
@@ -589,9 +605,14 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
         if fs is None:
             cls.poll_message_set("The active scene has no FluidSim settings")
             return False
+        from .blender import production_bake
+
+        if production_bake.bake_is_active(context.scene):
+            cls.poll_message_set("Production Bake owns this scene")
+            return False
         if getattr(fs, "live", False):
             return True
-        return _runtime_poll(cls)
+        return _mutation_poll(cls, context)
 
     def execute(self, context):
         scene = context.scene
@@ -632,7 +653,7 @@ class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
         fs = context.scene.fluidsim
         fs.cache_playback_enabled = True
         fs.live = True
-        fs.status = "Cache playback enabled - press play"
+        fs.status = "Cache Playback ready - press Timeline Play"
         return {"FINISHED"}
 
 
@@ -654,7 +675,7 @@ class FLUIDSIM_OT_cache_playback_stop(bpy.types.Operator):
         fs = context.scene.fluidsim
         fs.live = False
         fs.cache_playback_enabled = False
-        fs.status = "Cache playback stopped"
+        fs.status = "Cache Playback stopped"
         return {"FINISHED"}
 
 
@@ -1665,6 +1686,7 @@ class _FLUIDSIM_OT_production_bake_modal:
 
     def execute(self, context):
         global _ACTIVE_BAKE
+        from .blender import production_bake
         from .blender.production_bake import BakeController, ProductionBakeBackend
 
         scene = context.scene
@@ -1688,6 +1710,7 @@ class _FLUIDSIM_OT_production_bake_modal:
             self.report({"ERROR"}, f"Production bake could not start: {exc}")
             return {"CANCELLED"}
         self._controller = controller
+        production_bake.register_active_bake(scene, controller)
         _ACTIVE_BAKE = controller
         _update_bake_rna(scene, controller)
         window_manager = context.window_manager
@@ -1697,6 +1720,7 @@ class _FLUIDSIM_OT_production_bake_modal:
 
     def _finish(self, context):
         global _ACTIVE_BAKE
+        from .blender import production_bake
         from .blender.production_bake import BakeStatus
 
         controller = self._controller
@@ -1704,6 +1728,7 @@ class _FLUIDSIM_OT_production_bake_modal:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
         _ACTIVE_BAKE = None
+        production_bake.clear_active_bake(context.scene, controller)
         _update_bake_rna(context.scene, controller)
         if controller.status is BakeStatus.COMPLETE:
             self.report({"INFO"}, controller.message)

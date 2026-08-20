@@ -571,8 +571,8 @@ def main() -> None:
     }
     extension = None
     try:
-        if bpy.app.version[:3] != (5, 2, 0):
-            raise AssertionError(f"expected Blender 5.2.0, running {bpy.app.version_string}")
+        if bpy.app.version[:3] != (5, 1, 0):
+            raise AssertionError(f"expected Blender 5.1.0, running {bpy.app.version_string}")
         runtime = _assert_warp_root(options.expected_warp_root)
         extension = importlib.import_module(options.module)
         extension.register()

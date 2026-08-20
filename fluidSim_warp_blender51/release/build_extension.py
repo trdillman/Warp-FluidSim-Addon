@@ -24,7 +24,7 @@ REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
 REQUIRED_PLATFORMS = ("linux-x64",)
 REQUIRED_WARP_VERSION = "1.16.0"
 REQUIRED_WARP_DISTRIBUTION = "1.16.0+cu12"
-REQUIRED_BLENDER_MIN = "5.2.0"
+REQUIRED_BLENDER_MIN = "5.1.0"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS = {
     "release/build_extension.py",

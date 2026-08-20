@@ -66,7 +66,8 @@ def test_admission_uses_effect_stack_and_fails_closed_before_cutover():
     assert "snapshot.effects" in admission
     assert "build_candidate_effects" in admission
     assert "set_custom_effect_candidate" in admission
-    assert "effect_builder=effects.build_effect_stack_for_admission" in bridge
+    assert "effect_builder=build_effect_stack" in bridge
+    assert "return effects.build_effect_stack_for_admission(scene)" in bridge
     assert "def build_effect_stack_for_admission" in effects_source
     assert "production_blocking_reason" in effects_source.split(
         "def build_effect_stack_for_admission", 1
