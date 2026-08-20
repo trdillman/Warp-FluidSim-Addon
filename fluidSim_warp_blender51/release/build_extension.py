@@ -644,10 +644,19 @@ def build(
             runner([sys.executable, "-m", "ruff", "check", "."], root)
         runner([sys.executable, "-m", "pytest", "-q"], root)
         runner([sys.executable, "-m", "compileall", "-q", "-f", "."], root)
-    runner([str(blender), "--command", "extension", "validate", str(root)], root)
+    blender_package_prefix = [
+        str(blender),
+        "--factory-startup",
+        "--background",
+        "--offline-mode",
+    ]
+    runner(
+        [*blender_package_prefix, "--command", "extension", "validate", str(root)],
+        root,
+    )
     runner(
         [
-            str(blender),
+            *blender_package_prefix,
             "--command",
             "extension",
             "build",

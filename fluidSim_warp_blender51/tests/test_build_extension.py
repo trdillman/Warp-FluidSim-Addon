@@ -347,7 +347,9 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
 
     def fake_run(command: list[str], cwd: Path, *, env=None):
         commands.append(command)
-        if command[1:4] == ["--command", "extension", "build"]:
+        if "--command" in command and command[
+            command.index("--command") + 1 : command.index("--command") + 3
+        ] == ["extension", "build"]:
             _write_package(
                 output / f"fluidsim_warp-{VERSION}-windows_x64.zip",
                 platform="windows-x64",
@@ -364,6 +366,11 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     assert any("-m compileall" in command for command in flattened)
     assert any("extension validate" in command for command in flattened)
     assert any("extension build --split-platforms" in command for command in flattened)
+    package_commands = [command for command in commands if "--command" in command]
+    assert len(package_commands) == 2
+    assert all("--factory-startup" in command for command in package_commands)
+    assert all("--background" in command for command in package_commands)
+    assert all("--offline-mode" in command for command in package_commands)
     assert [path.name for path in packages] == [
         f"fluidsim_warp-{VERSION}-linux_x64.zip",
         f"fluidsim_warp-{VERSION}-windows_x64.zip",
