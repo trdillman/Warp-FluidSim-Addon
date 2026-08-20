@@ -2,7 +2,7 @@
 
 FluidSim Warp is distributed under GPL-3.0-or-later. **FluidSim delivery archives do not include Blender, NVIDIA Warp, CUDA runtime packages, Python wheels, or other third-party runtime binaries.**
 
-NVIDIA Warp `warp-lang 1.16.0+cu12` is the certified external runtime used to validate the Linux x64 build. Users and CI systems must provision that runtime separately. FluidSim does not download, install, extract, or redistribute it at runtime.
+NVIDIA Warp `warp-lang 1.16.0+cu12` is the certified external runtime. The supplied Linux wheel is the validation input available on this host; it does not restrict FluidSim's Windows x64 and Linux x64 product support. Users and CI systems must provision the matching platform runtime separately. FluidSim does not download, install, extract, or redistribute it at runtime.
 
 ## External runtime references
 

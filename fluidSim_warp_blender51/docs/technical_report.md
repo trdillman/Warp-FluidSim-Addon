@@ -1,12 +1,13 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 1.0.252 is a Blender 5.2.0 LTS extension around the existing
+FluidSim Warp 1.0.253 is a Blender 5.2.0 LTS extension around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.252`
-- Validated host: Blender `5.2.0 LTS` on Linux x64
+- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.253`
+- Product platforms: Windows x64 and Linux x64
+- Validation host for this build: Blender `5.2.0 LTS` on Linux x64
 - Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
   package/runtime smoke evidence
@@ -457,7 +458,7 @@ and Warp Code surfaces.
 
 ---
 
-## 12. Verification Results for 1.0.252
+## 12. Verification Results for 1.0.253
 
 | Gate | Result in this environment |
 |---|---|

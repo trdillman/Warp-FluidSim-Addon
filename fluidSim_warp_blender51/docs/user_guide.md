@@ -1,7 +1,7 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 1.0.252 is a sparse-grid PIC/FLIP liquid simulator for Blender
-5.1.0 using NVIDIA Warp / CUDA. It has two distinct workflows:
+FluidSim Warp 1.0.253 is a sparse-grid PIC/FLIP liquid simulator for Blender
+5.2.0 LTS using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
   and look development. It is responsive but not an authoritative production
@@ -14,9 +14,9 @@ FluidSim Warp 1.0.252 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Validated target |
 |---|---|
-| FluidSim | 1.0.252 |
-| Blender | Blender 5.1.0 |
-| Operating systems | Linux x64 |
+| FluidSim | 1.0.253 |
+| Blender | Blender 5.2.0 LTS |
+| Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
 | Warp dependency | External NVIDIA Warp 1.16.0+cu12; FluidSim does not package, download, or install Warp |
 | Cache compatibility | Cache v2 write/playback/resume; cache v1 playback only |
@@ -26,8 +26,10 @@ import `warp`. The current extension never searches arbitrary Python
 installations, invokes `pip`, downloads dependencies, or bundles Blender/Warp
 runtimes.
 
-Windows x64 remains unvalidated in this deliverable because matching supplied
-Windows Blender and Warp packages were not available.
+The extension is packaged for both Windows x64 and Linux x64. The attached
+runtime evidence was executed on Linux because the supplied Blender and Warp
+validation packages are Linux builds; validation-host availability must never
+remove Windows from the product manifest or release artifacts.
 
 ---
 
@@ -246,9 +248,6 @@ Validation Suite action on the root. Benchmark baseline saving and file exports
 remain explicit operator dialogs.
 
 ### Object Properties
-
-Analytic Volume provides the six analytic signed-distance shapes. Cone and
-Pyramid preserve their exact Euclidean boundary distance.
 
 **FluidSim Role — Selected Objects** is the role assignment surface. Its action
 labels state that they operate on the selected set. Detailed child panels use
@@ -687,7 +686,7 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 ## 12. Validation limits for this build
 
-Release 1.0.252 was exercised with the supplied Blender 5.2.0 LTS package and
+Release 1.0.253 was exercised with the supplied Blender 5.2.0 LTS package and
 the supplied NVIDIA Warp 1.16.0+cu12 package. The available host exposed Warp
 CPU only and no usable NVIDIA driver/device. The dependency-free suite completed
 with **381 passed and 6 intentional real-Warp skips**; the same suite completed

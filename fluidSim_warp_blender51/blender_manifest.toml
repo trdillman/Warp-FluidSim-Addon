@@ -2,14 +2,14 @@ schema_version = "1.0.0"
 
 id = "fluidsim_warp"
 name = "FluidSim Warp"
-version = "1.0.252"
+version = "1.0.253"
 tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
 maintainer = "FluidSim"
 type = "add-on"
 
-blender_version_min = "5.1.0"
+blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
-platforms = ["linux-x64"]
+platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
 
 [permissions]
@@ -50,3 +50,11 @@ paths_exclude_pattern = [
   "build/",
   "dist/",
 ]
+
+
+# BEGIN GENERATED CONTENT.
+# This must not be included in source manifests.
+[build.generated]
+platforms = ["windows-x64"]
+wheels = []
+# END GENERATED CONTENT.

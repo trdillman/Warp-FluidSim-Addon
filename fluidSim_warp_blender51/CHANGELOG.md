@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.253 — restore Windows x64 extension packaging
+
+### Fixed
+
+- Restored the long-standing Windows x64 product platform in the Blender
+  extension manifest and split-platform release output.
+- Separated supported product platforms from the subset of external runtime
+  artifacts available on the current validation host. A Linux-only supplied
+  Warp wheel can no longer silently reduce the extension to Linux-only.
+- Added release tests that require both `windows-x64` and `linux-x64`, require
+  both split archives, and require CI to retain both artifacts.
+
+### Packaging and validation
+
+- The release builder now emits `windows_x64` and `linux_x64` archives from the
+  same binary-free Python/assets source. Neither archive bundles Blender or Warp.
+- Linux Blender/Warp execution remains the available runtime proof in this
+  environment; Windows execution requires a Windows validation host but is no
+  longer incorrectly blocked by package metadata.
+
 ## 1.0.252 — native Properties workflow and Custom Effects UI integration
 
 ### Added

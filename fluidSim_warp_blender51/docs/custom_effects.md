@@ -1,6 +1,6 @@
 # Custom Effects
 
-Custom Effects is FluidSim's artist-facing system for adding Warp-driven behavior without exposing solver array plumbing in the normal workflow. It replaces the prototype Custom Warp Snippets panel. The low-level legacy operator IDs remain as migration adapters for release 1.0.252, but new scenes should use **Custom Effects** and **Warp Code**.
+Custom Effects is FluidSim's artist-facing system for adding Warp-driven behavior without exposing solver array plumbing in the normal workflow. It replaces the prototype Custom Warp Snippets panel. The low-level legacy operator IDs remain as migration adapters for release 1.0.253, but new scenes should use **Custom Effects** and **Warp Code**.
 
 ## Artist workflow
 
