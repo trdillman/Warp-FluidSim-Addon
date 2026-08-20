@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import tomllib
 import zipfile
@@ -97,6 +98,42 @@ class ArtifactRecord:
 
 def _run(command: list[str], cwd: Path, *, env: Mapping[str, str] | None = None) -> None:
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def _blender_process_environment(
+    source: Mapping[str, str],
+    *,
+    os_name: str | None = None,
+    compiled_platform: str | None = None,
+) -> dict[str, str]:
+    """Return an environment with truthful Windows architecture metadata.
+
+    Blender's extension installer derives its platform suffix through
+    ``platform.machine()``. Managed shells can omit
+    ``PROCESSOR_ARCHITECTURE``, which makes that call return an empty string
+    even though Python's compiled platform remains authoritative.
+    """
+    env = {str(key): str(value) for key, value in source.items()}
+    active_os = os.name if os_name is None else str(os_name)
+    if active_os != "nt" or env.get("PROCESSOR_ARCHITECTURE"):
+        return env
+    platform_tag = str(
+        sysconfig.get_platform()
+        if compiled_platform is None
+        else compiled_platform
+    ).lower().replace("_", "-")
+    architecture = {
+        "win-amd64": "AMD64",
+        "win-arm64": "ARM64",
+        "win32": "x86",
+    }.get(platform_tag)
+    if architecture is None:
+        raise RuntimeError(
+            "cannot derive Blender Windows architecture from compiled "
+            f"platform {platform_tag!r}"
+        )
+    env["PROCESSOR_ARCHITECTURE"] = architecture
+    return env
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -714,7 +751,7 @@ def run_installed_script(
     if profile_dir.exists():
         shutil.rmtree(profile_dir)
     profile_dir.mkdir(parents=True)
-    env = dict(os.environ)
+    env = _blender_process_environment(os.environ)
     isolated_paths = {
         "BLENDER_USER_CONFIG": profile_dir / "config",
         "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
@@ -807,7 +844,7 @@ def run_installed_smoke(
             raise RuntimeError(f"installed smoke did not record two passing runs: {report}")
 
     profile_dir = Path(repo_dir).resolve().parent / f"{Path(repo_dir).name}-profile"
-    env = dict(os.environ)
+    env = _blender_process_environment(os.environ)
     isolated_paths = {
         "BLENDER_USER_CONFIG": profile_dir / "config",
         "BLENDER_USER_SCRIPTS": profile_dir / "scripts",

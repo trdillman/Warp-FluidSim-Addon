@@ -409,6 +409,22 @@ def test_installed_smoke_uses_external_python_environment_and_uninstalls(tmp_pat
     assert any("extension remove fluidsim_ci.fluidsim_warp" in command for command in flattened)
 
 
+def test_blender_process_environment_recovers_missing_windows_architecture():
+    source = {"PATH": "C:/tools"}
+
+    recovered = build_extension._blender_process_environment(
+        source, os_name="nt", compiled_platform="win-amd64")
+    explicit = build_extension._blender_process_environment(
+        {"PROCESSOR_ARCHITECTURE": "ARM64"},
+        os_name="nt",
+        compiled_platform="win-amd64",
+    )
+
+    assert recovered["PROCESSOR_ARCHITECTURE"] == "AMD64"
+    assert source == {"PATH": "C:/tools"}
+    assert explicit["PROCESSOR_ARCHITECTURE"] == "ARM64"
+
+
 def test_verify_only_is_successful_without_runtime_binary_payloads(tmp_path: Path):
     _write_project(tmp_path)
     report = tmp_path / "metadata-report.json"
