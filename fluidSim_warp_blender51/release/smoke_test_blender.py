@@ -13,7 +13,8 @@ import warp as wp
 
 EXPECTED_WARP_VERSION = "1.16.0"
 EXPECTED_BLENDER_VERSION = (5, 1, 0)
-EXPECTED_FLUIDSIM_VERSION = (1, 0, 252)
+EXPECTED_FLUIDSIM_VERSION = (1, 0, 253)
+EXPECTED_FLUIDSIM_VERSION_STRING = ".".join(map(str, EXPECTED_FLUIDSIM_VERSION))
 EXPECTED_PRESETS = {
     "preview_water",
     "production_water",
@@ -566,7 +567,7 @@ def main() -> None:
         scene_signature="phase5-smoke-scene",
         settings_signature="phase5-smoke-settings",
     )
-    if support_report["fluidsim"]["version"] != "1.0.252":
+    if support_report["fluidsim"]["version"] != EXPECTED_FLUIDSIM_VERSION_STRING:
         raise AssertionError("support report version drift")
     if support_report["runtime"]["warp_version"] != EXPECTED_WARP_VERSION:
         raise AssertionError("support report Warp version drift")

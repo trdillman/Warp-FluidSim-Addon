@@ -21,7 +21,7 @@ import warp as wp
 
 EXPECTED_BLENDER_VERSION = (5, 1, 0)
 EXPECTED_WARP_VERSION = "1.16.0"
-EXPECTED_FLUIDSIM_VERSION = "1.0.252"
+EXPECTED_FLUIDSIM_VERSION = "1.0.253"
 
 
 def _write_json(path: Path, payload: dict) -> None:

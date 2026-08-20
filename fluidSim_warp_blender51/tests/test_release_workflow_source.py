@@ -39,6 +39,16 @@ def test_workflow_uploads_both_platform_packages_checksums_and_reports():
     assert "custom-effects-blender-validation.json" in source
 
 
+def test_installed_release_oracles_match_the_1_0_253_identity():
+    for relative in (
+        "release/smoke_test_blender.py",
+        "release/validate_phase5_blender.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "1.0.252" not in source
+        assert "1.0.253" in source or "(1, 0, 253)" in source
+
+
 def test_workflow_uses_current_actions_and_pinned_dev_tools():
     source = _workflow()
     assert "actions/checkout@v6" in source
