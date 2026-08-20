@@ -241,12 +241,20 @@ def _check_cache_scene_key(scene, base, frame_data):
     from ..io import cache
 
     frame = int(frame_data.get("frame", -1))
-    metadata_key = str((cache.read_sequence_metadata(base) or {}).get("scene_key", ""))
+    metadata = cache.read_sequence_metadata(base) or {}
+    metadata_key = str(metadata.get("scene_key", ""))
     frame_key = (str(np.asarray(frame_data["scene_key"]).item())
                  if "scene_key" in frame_data else "")
     if not (metadata_key or frame_key):
         return
-    current = cache.scene_key(scene)
+    if int(metadata.get("format_version", 1)) >= 2:
+        try:
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+        except (AttributeError, RuntimeError):
+            depsgraph = None
+        current = cache.signature_bundle(scene, depsgraph)["scene_key"]
+    else:
+        current = cache.scene_key(scene)
     for candidate in (metadata_key, frame_key):
         if candidate and candidate != current:
             raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
@@ -255,8 +263,10 @@ def _check_cache_scene_key(scene, base, frame_data):
 
 def play_cache_frame(sess, scene, frame=None):
     """Publish one cached frame without initializing or stepping a solver."""
-    from . import output_publication
+    import numpy as np
+
     from ..io import cache
+    from . import output_publication
 
     fs = scene.fluidsim
     frame = int(scene.frame_current if frame is None else frame)

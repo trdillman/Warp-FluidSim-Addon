@@ -48,8 +48,8 @@ def surface_evidence(payload):
     digest.update(np.ascontiguousarray(tris).tobytes())
     return {
         "valid": valid,
-        "vertices": int(len(verts)),
-        "triangles": int(len(tris)),
+        "vertices": len(verts),
+        "triangles": len(tris),
         # Diagnostic only: CUDA marching-cubes order/topology equality is not
         # an acceptance invariant.
         "diagnostic_hash": digest.hexdigest(),
@@ -283,8 +283,8 @@ def main():
                 frame_data.append(
                     {
                         "frame": int(np.asarray(data["frame"]).item()),
-                        "particles": int(len(positions)),
-                        "surface_verts": int(len(surface_verts)),
+                        "particles": len(positions),
+                        "surface_verts": len(surface_verts),
                         "position_sample": positions[:32].copy(),
                     }
                 )
@@ -337,10 +337,14 @@ def main():
         playback.handle_frame_change = forbidden_frame_handler
         output_publication.update_outputs = forbidden_output_publication
         active_bake[0] = "second"
+        from fluidSim_warp_blender51.blender import cache_bake
+
+        second_bake = cache_bake.run_synchronous(
+            scene, session(), 1, 3, restart=True)
         check(
-            "repeat export with changed preview policy",
-            bpy.ops.fluidsim.export_cache_sequence() == {"FINISHED"},
-            fs.status,
+            "explicitly restart export with changed preview policy",
+            second_bake.status.value == "COMPLETE",
+            second_bake.message,
         )
         second_payload_hashes = []
         second_payload_schemas = []
@@ -512,8 +516,11 @@ def main():
         if session().active:
             bpy.ops.fluidsim.release()
         check("solver released before cache playback", not session().active)
-        fs.live = True
-        fs.cache_playback_enabled = True
+        check(
+            "arm cache playback through the owned workflow",
+            bpy.ops.fluidsim.cache_playback_start() == {"FINISHED"},
+            fs.status,
+        )
 
         session().last_frame = -1
         scene.frame_set(1)
