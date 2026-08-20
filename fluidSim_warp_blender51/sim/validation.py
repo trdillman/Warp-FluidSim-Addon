@@ -1304,8 +1304,23 @@ def test_surface_tension_zero_equivalence(device):
         zero_positions = zero[3]
         disabled_velocities = disabled[4]
         zero_velocities = zero[4]
-        position_error = float(np.max(np.abs(disabled_positions - zero_positions)))
-        velocity_error = float(np.max(np.abs(disabled_velocities - zero_velocities)))
+        if len(disabled_positions) != len(zero_positions):
+            return False, (
+                "particle count differs: "
+                f"{len(disabled_positions)} != {len(zero_positions)}"
+            )
+        # GPU compaction is free to return the same particles in a different
+        # order.  Equivalence here is the particle state, not atomic ordering.
+        disabled_order = np.lexsort(tuple(disabled_positions[:, axis]
+                                          for axis in (2, 1, 0)))
+        zero_order = np.lexsort(tuple(zero_positions[:, axis]
+                                      for axis in (2, 1, 0)))
+        position_error = float(np.max(np.abs(
+            disabled_positions[disabled_order] - zero_positions[zero_order]
+        )))
+        velocity_error = float(np.max(np.abs(
+            disabled_velocities[disabled_order] - zero_velocities[zero_order]
+        )))
         ok = position_error <= 1.0e-7 and velocity_error <= 1.0e-7
         return ok, (
             f"max position error={position_error:.3e}, "
