@@ -10,7 +10,8 @@ from fluidsim_testpkg.release import build_extension
 
 EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 PAYLOAD = b"external-wheel-payload"
-VERSION = "1.0.252"
+STALE_OWNER_PAYLOAD = b"stale candidate owner\n"
+VERSION = "1.0.253"
 
 
 def _manifest() -> str:
@@ -23,7 +24,7 @@ maintainer = "FluidSim"
 type = "add-on"
 blender_version_min = "5.1.0"
 license = ["SPDX:GPL-3.0-or-later"]
-platforms = ["linux-x64"]
+platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
 
 [permissions]
@@ -38,6 +39,7 @@ paths_exclude_pattern = [
   "wheels/",
   "tests/",
   "release/build_extension.py",
+  "release/candidate_collision_guard_1_0_253.json",
   "release/delivery_policy.py",
   "release/fetch_warp_wheels.py",
   "release/custom_effect_demo_runtime.py",
@@ -71,7 +73,7 @@ def _write_project(root: Path) -> None:
     (root / "wheels").mkdir()
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
-        'VERSION = (1, 0, 252)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
+        'VERSION = (1, 0, 253)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
         encoding="utf-8",
     )
     (root / "__init__.py").write_text(
@@ -122,6 +124,19 @@ def _write_project(root: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (root / "release" / "candidate_collision_guard_1_0_253.json").write_text(
+        json.dumps(
+            {
+                "candidate_sha256": "0" * 64,
+                "forbidden_sha256": {
+                    "sim/surface_tension.py": hashlib.sha256(
+                        STALE_OWNER_PAYLOAD
+                    ).hexdigest(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     effects_dir = root / "resources" / "effects"
     sources_dir = effects_dir / "sources"
     sources_dir.mkdir(parents=True)
@@ -141,8 +156,14 @@ def _write_project(root: Path) -> None:
         (renders / f"{stem}.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 1_024)
 
 
-def _write_package(path: Path, *, extra: dict[str, bytes] | None = None) -> None:
-    generated = '\n[build.generated]\nplatforms = ["linux-x64"]\nwheels = []\n'
+def _write_package(
+    path: Path,
+    *,
+    platform: str = "linux-x64",
+    surface_tension_payload: bytes = b"# surface tension\n",
+    extra: dict[str, bytes] | None = None,
+) -> None:
+    generated = f'\n[build.generated]\nplatforms = ["{platform}"]\nwheels = []\n'
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("blender_manifest.toml", _manifest() + generated)
         archive.writestr("__init__.py", "def register(): pass\ndef unregister(): pass\n")
@@ -157,7 +178,7 @@ def _write_package(path: Path, *, extra: dict[str, bytes] | None = None) -> None
         archive.writestr("blender/setup_wizard.py", "# guided setup\n")
         archive.writestr("blender/geometry_nodes.py", "# render nodes\n")
         archive.writestr("sim/attributes.py", "# attribute schema\n")
-        archive.writestr("sim/surface_tension.py", "# surface tension\n")
+        archive.writestr("sim/surface_tension.py", surface_tension_payload)
         archive.writestr("sim/surface_tension_math.py", "# surface tension math\n")
         archive.writestr("sim/effects/schema.py", "# custom effects schema\n")
         archive.writestr("sim/effects/runtime.py", "# custom effects runtime\n")
@@ -193,10 +214,12 @@ def _write_package(path: Path, *, extra: dict[str, bytes] | None = None) -> None
             archive.writestr(name, value)
 
 
-def test_verify_source_tree_accepts_external_runtime_dependency_project(tmp_path: Path):
+def test_verify_source_tree_keeps_supported_platforms_when_runtime_lock_is_linux_only(
+    tmp_path: Path,
+):
     _write_project(tmp_path)
     result = build_extension.verify_source_tree(tmp_path)
-    assert result.platforms == ("linux-x64",)
+    assert result.platforms == ("windows-x64", "linux-x64")
     assert result.release_ready is True
     assert result.external_runtime_wheels == (EXTERNAL_WHEEL,)
 
@@ -223,6 +246,14 @@ def test_verify_source_tree_rejects_wheel_payload_in_source_tree(tmp_path: Path)
         build_extension.verify_source_tree(tmp_path)
 
 
+def test_verify_source_tree_rejects_stale_candidate_owner_payload(tmp_path: Path):
+    _write_project(tmp_path)
+    (tmp_path / "sim" / "surface_tension.py").write_bytes(STALE_OWNER_PAYLOAD)
+
+    with pytest.raises(RuntimeError, match="stale candidate implementation"):
+        build_extension.verify_source_tree(tmp_path)
+
+
 def test_verify_source_tree_rejects_manifest_wheel_declaration(tmp_path: Path):
     _write_project(tmp_path)
     manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
@@ -232,14 +263,46 @@ def test_verify_source_tree_rejects_manifest_wheel_declaration(tmp_path: Path):
         build_extension.verify_source_tree(tmp_path)
 
 
-def test_inspect_packages_accepts_binary_free_platform_archive(tmp_path: Path):
+@pytest.mark.parametrize("platform", ["windows-x64", "linux-x64"])
+def test_inspect_packages_accepts_binary_free_platform_archive(
+    tmp_path: Path,
+    platform: str,
+):
     _write_project(tmp_path)
-    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
-    _write_package(package)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-{platform.replace('-', '_')}.zip"
+    _write_package(package, platform=platform)
     records = build_extension.inspect_packages(tmp_path, [package])
-    assert [record.platform for record in records] == ["linux-x64"]
+    assert [record.platform for record in records] == [platform]
     assert records[0].runtime_dependency == "external"
     assert records[0].sha256
+
+
+def test_inspect_packages_rejects_platform_payload_drift(tmp_path: Path):
+    _write_project(tmp_path)
+    windows = tmp_path / f"fluidsim_warp-{VERSION}-windows_x64.zip"
+    linux = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(windows, platform="windows-x64")
+    _write_package(
+        linux,
+        platform="linux-x64",
+        extra={"sim/platform_drift.py": b"linux-only payload\n"},
+    )
+
+    with pytest.raises(RuntimeError, match="split-platform payloads differ"):
+        build_extension.inspect_packages(tmp_path, [windows, linux])
+
+
+def test_inspect_packages_rejects_stale_candidate_owner_payload(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-windows_x64.zip"
+    _write_package(
+        package,
+        platform="windows-x64",
+        surface_tension_payload=STALE_OWNER_PAYLOAD,
+    )
+
+    with pytest.raises(RuntimeError, match="stale candidate implementation"):
+        build_extension.inspect_packages(tmp_path, [package])
 
 
 @pytest.mark.parametrize(
@@ -285,7 +348,14 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     def fake_run(command: list[str], cwd: Path, *, env=None):
         commands.append(command)
         if command[1:4] == ["--command", "extension", "build"]:
-            _write_package(output / f"fluidsim_warp-{VERSION}-linux_x64.zip")
+            _write_package(
+                output / f"fluidsim_warp-{VERSION}-windows_x64.zip",
+                platform="windows-x64",
+            )
+            _write_package(
+                output / f"fluidsim_warp-{VERSION}-linux_x64.zip",
+                platform="linux-x64",
+            )
 
     packages = build_extension.build(tmp_path, Path("/opt/blender"), output, runner=fake_run)
     flattened = [" ".join(command) for command in commands]
@@ -294,8 +364,14 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     assert any("-m compileall" in command for command in flattened)
     assert any("extension validate" in command for command in flattened)
     assert any("extension build --split-platforms" in command for command in flattened)
-    assert [path.name for path in packages] == [f"fluidsim_warp-{VERSION}-linux_x64.zip"]
+    assert [path.name for path in packages] == [
+        f"fluidsim_warp-{VERSION}-linux_x64.zip",
+        f"fluidsim_warp-{VERSION}-windows_x64.zip",
+    ]
     assert f"fluidsim_warp-{VERSION}-linux_x64.zip" in (output / "SHA256SUMS.txt").read_text()
+    assert f"fluidsim_warp-{VERSION}-windows_x64.zip" in (
+        output / "SHA256SUMS.txt"
+    ).read_text()
 
 
 def test_installed_smoke_uses_external_python_environment_and_uninstalls(tmp_path: Path):
@@ -340,7 +416,7 @@ def test_verify_only_is_successful_without_runtime_binary_payloads(tmp_path: Pat
 
 def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):
     output = tmp_path / "nested" / "dist"
-    package = output / "fluidsim_warp-1.0.252-linux_x64.zip"
+    package = output / "fluidsim_warp-1.0.253-linux_x64.zip"
     record = build_extension.ArtifactRecord(
         path=package,
         platform="linux-x64",

@@ -25,9 +25,18 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["version"] == ".".join(map(str, version))
     assert manifest["id"] == extension_id == "fluidsim_warp"
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
-    assert manifest["platforms"] == ["linux-x64"]
+    assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.1.0"
-    assert version == (1, 0, 252)
+    assert version == (1, 0, 253)
+
+
+def test_supported_platforms_are_independent_of_current_runtime_evidence():
+    supported = _assigned_value(ROOT / "version.py", "SUPPORTED_PLATFORMS")
+    validated = _assigned_value(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS")
+
+    assert supported == ("windows-x64", "linux-x64")
+    assert validated == ("linux-x64",)
+    assert set(validated).issubset(supported)
 
 
 def test_manifest_is_the_only_blender_metadata_surface():
@@ -60,10 +69,11 @@ def test_user_guide_declares_certified_support_matrix():
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
     for text in (
         "Blender 5.1.0",
+        "Windows x64",
         "Linux x64",
         "NVIDIA CUDA",
         "External NVIDIA Warp 1.16.0+cu12",
         "Cache v1",
     ):
         assert text in guide
-    assert "| Operating systems | Linux x64 |" in guide
+    assert "| Operating systems | Windows x64 and Linux x64 |" in guide

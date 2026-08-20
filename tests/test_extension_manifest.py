@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from fluidSim_warp_blender51.version import BLENDER_MIN_VERSION, VERSION_STRING
+from fluidSim_warp_blender51 import version as release_version
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,15 +17,18 @@ def _manifest():
 def test_source_manifest_matches_runtime_release_identity():
     manifest = _manifest()
 
-    assert manifest["version"] == VERSION_STRING
-    assert tuple(int(part) for part in manifest["blender_version_min"].split(".")) == BLENDER_MIN_VERSION
+    assert manifest["version"] == release_version.VERSION_STRING
+    assert tuple(int(part) for part in manifest["blender_version_min"].split(".")) == release_version.BLENDER_MIN_VERSION
 
 
 def test_source_manifest_remains_installable_on_proven_compatibility_targets():
     manifest = _manifest()
 
-    assert BLENDER_MIN_VERSION == (5, 1, 0)
-    assert "platforms" not in manifest
+    assert release_version.BLENDER_MIN_VERSION == (5, 1, 0)
+    assert release_version.VERSION_STRING == "1.0.253"
+    supported = getattr(release_version, "SUPPORTED_PLATFORMS", None)
+    assert supported == ("windows-x64", "linux-x64")
+    assert tuple(manifest["platforms"]) == supported
 
 
 def test_source_manifest_does_not_contain_builder_generated_metadata():
