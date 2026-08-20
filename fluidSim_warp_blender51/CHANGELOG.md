@@ -16,9 +16,9 @@
 
 - The release builder now emits `windows_x64` and `linux_x64` archives from the
   same binary-free Python/assets source. Neither archive bundles Blender or Warp.
-- Linux Blender/Warp execution remains the available runtime proof in this
-  environment; Windows execution requires a Windows validation host but is no
-  longer incorrectly blocked by package metadata.
+- Windows Blender 5.1/Warp 1.16 execution is proven by the GUI-inclusive
+  production gate on an RTX 4080 SUPER. Linux remains supported by the
+  previously established runtime proof and the same binary-free source archive.
 
 ## 1.0.252 — native Properties workflow and Custom Effects UI integration
 
