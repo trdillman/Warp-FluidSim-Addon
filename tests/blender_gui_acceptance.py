@@ -36,23 +36,24 @@ RESULT_PATH = os.environ.get(
 SCREENSHOT_PATH = os.path.join(ARTIFACTS, "phase3_gui_viewport.png")
 RENDER_PATH = os.path.join(ARTIFACTS, "phase3_gui_render.png")
 PANEL_DRAW_FAILURE_ENV = "FLUIDSIM_PANEL_DRAW_INJECT_FAILURE"
-PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_simulation"
+PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_scene_control"
 PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
 
 PANEL_IDS = [
     "FLUIDSIM_PT_interaction_popover",
     "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_quality", "FLUIDSIM_PT_inputs",
     "FLUIDSIM_PT_physics", "FLUIDSIM_PT_advanced",
-    "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
-    "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
-    "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders",
-    "FLUIDSIM_PT_forces", "FLUIDSIM_PT_domain_height_fill",
-    "FLUIDSIM_PT_point_particle_injection", "FLUIDSIM_PT_advanced_field_sources",
-    "FLUIDSIM_PT_pressure", "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
-    "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output",
-    "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_snippet_editor",
-    "FLUIDSIM_PT_snippet_shortcuts", "FLUIDSIM_PT_diagnostics",
-    "FLUIDSIM_PT_validation",
+    "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
+    "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
+    "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_pressure",
+    "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_scene_surface",
+    "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
+    "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
+    "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
+    "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
+    "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
+    "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_packages",
+    "FLUIDSIM_PT_effect_warp_code",
 ]
 
 STATE = {
@@ -445,7 +446,7 @@ def _run_phase(phase, scene):
             src.select_set(True)
             bpy.context.view_layer.objects.active = src
         bpy.ops.fluidsim.snippet_add()
-        fs.snippets[-1].enabled = False
+        scene.fluidsim_effects.items[-1].enabled = False
         _draw_all_panels_smoke(
             "demo configured, solver inactive", STATE.get("source_name"))
 
