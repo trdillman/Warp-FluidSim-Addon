@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
 import numpy as np
@@ -331,7 +331,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
         if restored is None:
             raise AssertionError("Phase-3 cache frame did not round-trip")
         output_publication.update_outputs_from_cache_frame(scene, restored)
-        for kind, (obj, count, expected) in expected_by_kind.items():
+        for _kind, (obj, count, expected) in expected_by_kind.items():
             for key, values in expected.items():
                 actual = _read_attribute(obj.data, ATTRIBUTE_SPECS[key], count)
                 np.testing.assert_allclose(actual, values, rtol=0.0, atol=1.0e-7)

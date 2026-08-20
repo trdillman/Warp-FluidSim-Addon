@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
-
 import numpy as np
 import pytest
-
 from fluidsim_testpkg.io.cache_schema import CacheManifestV2
 from fluidsim_testpkg.io.checkpoint import (
     CheckpointPayload,

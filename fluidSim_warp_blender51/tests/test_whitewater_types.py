@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from fluidsim_testpkg.sim.whitewater_types import (
     LEGACY_UNCLASSIFIED,
     RESERVED_DUST_TYPE,

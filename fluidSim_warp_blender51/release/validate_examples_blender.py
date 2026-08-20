@@ -5,11 +5,10 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
-
 
 EXPECTED = {
     "01_live_pour.blend": ("preview_water", {"SOURCE", "COLLIDER"}),

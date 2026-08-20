@@ -5,7 +5,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from fluidsim_testpkg.release import delivery_policy
 
 

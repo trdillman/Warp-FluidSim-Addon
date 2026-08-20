@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-
 from fluidsim_testpkg.blender.output_publication import (
     BUBBLES_NAME,
     FOAM_NAME,

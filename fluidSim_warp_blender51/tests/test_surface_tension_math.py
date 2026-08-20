@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 
 import pytest
-
 from fluidsim_testpkg.sim.surface_tension_math import (
     capillary_dt,
     compact_cosine_delta,

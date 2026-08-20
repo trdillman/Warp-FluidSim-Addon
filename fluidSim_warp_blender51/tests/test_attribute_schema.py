@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
-
 from fluidsim_testpkg.sim.attributes import (
     ATTRIBUTE_SPECS,
     enabled_attribute_keys,

@@ -5,7 +5,6 @@ import zipfile
 from dataclasses import replace
 
 import pytest
-
 from fluidsim_testpkg.sim.effects import package as effect_package
 from fluidsim_testpkg.sim.effects.builtins import builtin_effect_definitions
 from fluidsim_testpkg.sim.effects.enums import TrustState

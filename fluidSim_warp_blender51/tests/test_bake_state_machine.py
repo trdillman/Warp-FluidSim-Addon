@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
-
 from fluidsim_testpkg.blender.production_bake import BakeController, BakeStatus
 from fluidsim_testpkg.io.cache_schema import CacheManifestV2, ResumeDecision
 

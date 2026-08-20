@@ -11,8 +11,8 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
 import numpy as np
@@ -290,7 +290,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
         bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False)
         reopened_scene = bpy.context.scene
         reopened = {}
-        for name, expected_count in expected_counts.items():
+        for name, _expected_count in expected_counts.items():
             obj = publication.output_object(reopened_scene, name)
             if obj is None:
                 raise AssertionError(f"{name} did not survive save/reopen")

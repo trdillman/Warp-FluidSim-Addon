@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from fluidsim_testpkg.io.checkpoint import (
     CheckpointPayload,
     capture_solver,

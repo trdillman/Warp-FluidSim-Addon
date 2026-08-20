@@ -6,7 +6,6 @@ import pathlib
 import tomllib
 
 import pytest
-
 from fluidsim_testpkg.release import fetch_warp_wheels
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]

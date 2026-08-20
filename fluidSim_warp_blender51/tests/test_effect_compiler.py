@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import importlib.util
+from dataclasses import replace
 
 import pytest
-
 from fluidsim_testpkg.sim.effects.compiler import build_candidate_effects, compile_effect
 from fluidsim_testpkg.sim.effects.enums import (
     EffectCadence,
@@ -23,7 +22,6 @@ from fluidsim_testpkg.sim.effects.schema import (
     ParameterDefinitionV2,
 )
 from fluidsim_testpkg.sim.effects.trust import TrustStore, content_trust_digest
-
 
 REQUIRES_WARP = pytest.mark.skipif(
     importlib.util.find_spec("warp") is None,

@@ -4,7 +4,6 @@ import json
 
 import numpy as np
 import pytest
-
 from fluidsim_testpkg.io.cache import (
     authoritative_payload_counts,
     validate_optional_attributes,

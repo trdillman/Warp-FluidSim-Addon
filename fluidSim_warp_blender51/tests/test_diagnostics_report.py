@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from fluidsim_testpkg.diagnostics import report
 from fluidsim_testpkg.runtime.warp_runtime import DeviceRecord, RuntimeProbe
 

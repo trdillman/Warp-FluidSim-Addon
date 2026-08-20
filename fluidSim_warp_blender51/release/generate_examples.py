@@ -14,11 +14,10 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
-
 
 EXAMPLE_NAMES = (
     "01_live_pour.blend",
@@ -46,7 +45,6 @@ def _args() -> argparse.Namespace:
 
 
 def _new_scene(name: str):
-    previous = bpy.context.scene
     scene = bpy.data.scenes.new(name)
     bpy.context.window.scene = scene
     for candidate in tuple(bpy.data.scenes):

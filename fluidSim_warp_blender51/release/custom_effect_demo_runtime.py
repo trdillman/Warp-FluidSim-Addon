@@ -19,7 +19,6 @@ from types import SimpleNamespace
 import numpy as np
 import warp as wp
 
-from ..version import VERSION_STRING
 from ..sim.effects.builtins import builtin_effect_definitions
 from ..sim.effects.compiler import build_candidate_effects
 from ..sim.effects.enums import (
@@ -38,6 +37,7 @@ from ..sim.effects.schema import (
     ParameterDefinitionV2,
 )
 from ..sim.effects.trust import TrustStore, content_trust_digest
+from ..version import VERSION_STRING
 
 
 @wp.kernel

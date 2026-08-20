@@ -4,10 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
-
 from fluidsim_testpkg.blender.command_line import (
-    CliOptions,
     EXIT_ARGUMENTS,
+    CliOptions,
     parse_args,
     write_json_atomic,
 )

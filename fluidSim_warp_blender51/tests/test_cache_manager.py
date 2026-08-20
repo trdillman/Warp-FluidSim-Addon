@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from fluidsim_testpkg.blender.cache_manager import (
     free_cache,
     inspect_cache,

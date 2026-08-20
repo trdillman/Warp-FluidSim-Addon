@@ -11,14 +11,12 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-import math
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
 import numpy as np
-from mathutils import Vector
 
 DEMO_NAMES = (
     "05_custom_effects_vortex.blend",
@@ -131,7 +129,7 @@ def _segments(name: str, starts: np.ndarray, ends: np.ndarray, offset, material)
     vertices = []
     edges = []
     ox, oy, oz = offset
-    for start, end in zip(starts, ends):
+    for start, end in zip(starts, ends, strict=True):
         index = len(vertices)
         vertices.extend((
             (start[0] + ox, start[1] + oy, start[2] * 0.2 + oz),

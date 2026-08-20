@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from fluidsim_testpkg.sim.effects.enums import EffectCadence, EffectDomain, EffectStage, ParameterKind
+from fluidsim_testpkg.sim.effects.enums import (
+    EffectCadence,
+    EffectDomain,
+    EffectStage,
+    ParameterKind,
+)
 from fluidsim_testpkg.sim.effects.schema import (
     EffectDefinitionV2,
     EffectInstanceV2,

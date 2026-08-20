@@ -6,7 +6,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from fluidsim_testpkg.release import build_extension
 
 EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"

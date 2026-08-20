@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from fluidsim_testpkg.sim.effects.enums import EffectCadence, EffectDomain, EffectStage, ParameterKind
+from fluidsim_testpkg.sim.effects.enums import (
+    EffectCadence,
+    EffectDomain,
+    EffectStage,
+    ParameterKind,
+)
 from fluidsim_testpkg.sim.effects.fingerprint import effect_fingerprint, stack_fingerprint
 from fluidsim_testpkg.sim.effects.schema import (
     EffectDefinitionV2,
@@ -108,6 +113,7 @@ def test_stack_order_changes_aggregate_signature_and_inventory():
 
 def test_execution_stack_excludes_disabled_and_muted_and_honors_solo():
     from dataclasses import replace
+
     from fluidsim_testpkg.sim.effects.fingerprint import (
         effective_stack_instances,
         execution_stack_fingerprint,
@@ -127,6 +133,7 @@ def test_execution_stack_excludes_disabled_and_muted_and_honors_solo():
 
 def test_execution_stack_empty_identity_is_blank_and_duplicate_instance_ids_fail():
     from dataclasses import replace
+
     import pytest
     from fluidsim_testpkg.sim.effects.fingerprint import (
         effective_stack_instances,

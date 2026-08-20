@@ -6,12 +6,11 @@ import argparse
 import importlib
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
-import sys
 
 import bpy
-
 
 EXPECTED_SCENE_ROOTS = {
     "FLUIDSIM_PT_scene_control": (0, False),
@@ -491,7 +490,7 @@ def _assert_scene_properties_shortcut() -> dict[str, object]:
     )
     context = SimpleNamespace(screen=SimpleNamespace(areas=(area,)))
     reporter = _Reporter()
-    operator = getattr(bpy.types, "FLUIDSIM_OT_open_scene_properties")
+    operator = bpy.types.FLUIDSIM_OT_open_scene_properties
     result = operator.execute(reporter, context)
     if "FINISHED" not in result or area.spaces.active.context != "SCENE":
         raise AssertionError(f"Scene Properties shortcut failed: {result}, {area.spaces.active.context}")

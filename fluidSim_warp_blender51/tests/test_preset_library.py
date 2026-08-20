@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from fluidsim_testpkg.presets import library
 from fluidsim_testpkg.presets.schema import PresetV1
 

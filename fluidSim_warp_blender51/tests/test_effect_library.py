@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-
 from fluidsim_testpkg.sim.effects.builtins import builtin_effect_definitions
 from fluidsim_testpkg.sim.effects.library import (
     compare_effect_versions,

@@ -7,8 +7,8 @@ simulation/runtime binaries and is validated by ``validate_phase4_blender.py``.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
 

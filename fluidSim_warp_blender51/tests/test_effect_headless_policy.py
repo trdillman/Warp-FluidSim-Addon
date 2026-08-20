@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from fluidsim_testpkg.sim.effects.builtins import builtin_effect_definitions
 from fluidsim_testpkg.sim.effects.policy import evaluate_custom_code_policy
-from fluidsim_testpkg.sim.effects.schema import EffectDefinitionV2, EffectInstanceV2
+from fluidsim_testpkg.sim.effects.schema import EffectInstanceV2
 from fluidsim_testpkg.sim.effects.trust import TrustStore, content_trust_digest
 
 
@@ -71,8 +71,8 @@ def test_disabled_or_muted_effects_do_not_execute_under_policy(tmp_path):
 
 def test_cli_contract_exposes_explicit_custom_code_policy(tmp_path):
     from fluidsim_testpkg.blender.command_line import (
-        CliOptions,
         EXIT_CUSTOM_CODE_POLICY,
+        CliOptions,
         parse_args,
     )
 

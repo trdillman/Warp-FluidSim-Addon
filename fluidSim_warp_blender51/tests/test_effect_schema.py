@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from fluidsim_testpkg.sim.effects.enums import (
     EffectCadence,
     EffectDomain,
