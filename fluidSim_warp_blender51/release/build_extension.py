@@ -1,0 +1,852 @@
+"""Verify, build, inspect, and smoke-test FluidSim Blender extensions."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+import zipfile
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_EXTENSION_ID = "fluidsim_warp"
+REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
+REQUIRED_PLATFORMS = ("linux-x64",)
+REQUIRED_WARP_VERSION = "1.16.0"
+REQUIRED_WARP_DISTRIBUTION = "1.16.0+cu12"
+REQUIRED_BLENDER_MIN = "5.2.0"
+RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
+RELEASE_ONLY_RELATIVE_PATHS = {
+    "release/build_extension.py",
+    "release/delivery_policy.py",
+    "release/fetch_warp_wheels.py",
+    "release/custom_effect_demo_runtime.py",
+    "release/generate_custom_effect_demos.py",
+    "release/generate_examples.py",
+    "release/generate_geometry_nodes.py",
+    "release/gpu_regression_blender.py",
+    "release/smoke_test_blender.py",
+    "release/validate_examples_blender.py",
+    "release/validate_custom_effects_blender.py",
+    "release/validate_custom_effects_warp.py",
+    "release/validate_phase3_blender.py",
+    "release/validate_phase3_warp.py",
+    "release/validate_phase4_blender.py",
+    "release/validate_phase4_warp.py",
+    "release/validate_phase5_blender.py",
+    "release/validate_phase5_warp.py",
+    "release/wheels.lock.json",
+}
+RELEASE_ONLY_PATHS = {
+    "tests",
+    "demo_outputs",
+    "artifacts",
+    "build",
+    "dist",
+    ".git",
+    ".github",
+}
+Runner = Callable[..., Any]
+_BLENDER_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def _looks_like_blender_file(payload: bytes) -> bool:
+    return payload.startswith(b"BLENDER") or payload.startswith(_BLENDER_ZSTD_MAGIC)
+
+
+@dataclass(frozen=True)
+class SourceVerification:
+    """Result of verifying release metadata and external runtime locks."""
+
+    extension_id: str
+    version: str
+    platforms: tuple[str, ...]
+    external_runtime_wheels: tuple[str, ...]
+
+    @property
+    def release_ready(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class ArtifactRecord:
+    """Verified split-platform package metadata."""
+
+    path: Path
+    platform: str
+    runtime_dependency: str
+    size: int
+    sha256: str
+
+    def as_dict(self) -> dict[str, object]:
+        data = asdict(self)
+        data["path"] = str(self.path)
+        return data
+
+
+def _run(command: list[str], cwd: Path, *, env: Mapping[str, str] | None = None) -> None:
+    subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeError(f"could not read TOML metadata {path}: {exc}") from exc
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"could not read JSON metadata {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"expected a JSON object in {path}")
+    return value
+
+
+def _assigned_literal(path: Path, name: str) -> Any:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        raise RuntimeError(f"could not parse {path}: {exc}") from exc
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            try:
+                return ast.literal_eval(node.value)
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError(f"{name} in {path} must be a literal") from exc
+    raise RuntimeError(f"{name} is not assigned in {path}")
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _locked_files(lock: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    files = lock.get("files")
+    if not isinstance(files, dict) or not files:
+        raise RuntimeError("release/wheels.lock.json must contain a non-empty files object")
+    result: dict[str, dict[str, Any]] = {}
+    for filename, metadata in files.items():
+        if not isinstance(filename, str) or PurePosixPath(filename).name != filename:
+            raise RuntimeError(f"invalid locked wheel filename: {filename!r}")
+        if not isinstance(metadata, dict):
+            raise RuntimeError(f"invalid lock metadata for {filename}")
+        result[filename] = metadata
+    return result
+
+
+def verify_source_tree(root: Path) -> SourceVerification:
+    """Validate release identity and external-only Warp runtime metadata."""
+    root = Path(root).resolve()
+    required = (
+        "__init__.py",
+        "blender_manifest.toml",
+        "version.py",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "sim/surface_tension.py",
+        "sim/surface_tension_math.py",
+        "resources/presets/water_surface_tension.json",
+        "resources/presets/stylized_high_tension.json",
+        "sim/effects/schema.py",
+        "sim/effects/runtime.py",
+        "sim/effects/package.py",
+        "blender/effects.py",
+        "blender/effect_ui.py",
+        "blender/effect_workspace.py",
+        "resources/effects/vortex_force.json",
+        "resources/effects/sources/vortex_force.py",
+        "resources/examples/05_custom_effects_vortex.blend",
+        "resources/examples/06_custom_effects_stack.blend",
+        "resources/examples/07_warp_code_authoring.blend",
+        "resources/examples/custom_effects/renders/05_custom_effects_vortex.png",
+        "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
+        "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
+        "release/wheels.lock.json",
+    )
+    missing_required = [name for name in required if not (root / name).is_file()]
+    if missing_required:
+        custom_missing = [
+            item for item in missing_required
+            if item.startswith(("sim/effects/", "blender/effect_", "resources/effects/"))
+            or "custom_effects" in item
+        ]
+        if custom_missing:
+            raise RuntimeError(f"missing required custom effect release files: {custom_missing}")
+        raise RuntimeError(f"missing required release files: {missing_required}")
+
+    manifest = _read_toml(root / "blender_manifest.toml")
+    lock = _read_json(root / "release" / "wheels.lock.json")
+    files = _locked_files(lock)
+    if lock.get("warp_version") != REQUIRED_WARP_VERSION:
+        raise RuntimeError(f"Warp version lock must be {REQUIRED_WARP_VERSION}")
+    if lock.get("distribution_version") != REQUIRED_WARP_DISTRIBUTION:
+        raise RuntimeError(f"Warp distribution lock must be {REQUIRED_WARP_DISTRIBUTION}")
+
+    version = _assigned_literal(root / "version.py", "VERSION")
+    extension_id = _assigned_literal(root / "version.py", "EXTENSION_ID")
+    if not isinstance(version, tuple) or not version or not all(isinstance(item, int) for item in version):
+        raise RuntimeError("VERSION must be a non-empty integer tuple")
+    version_string = ".".join(str(item) for item in version)
+
+    if extension_id != REQUIRED_EXTENSION_ID or manifest.get("id") != extension_id:
+        raise RuntimeError("unexpected extension id")
+    if manifest.get("version") != version_string:
+        raise RuntimeError("manifest version does not match version.py")
+    if manifest.get("license") != REQUIRED_LICENSE:
+        raise RuntimeError("unexpected extension license")
+    if manifest.get("blender_version_min") != REQUIRED_BLENDER_MIN:
+        raise RuntimeError(f"Blender minimum version must be {REQUIRED_BLENDER_MIN}")
+
+    platforms = tuple(manifest.get("platforms", ()))
+    if platforms != REQUIRED_PLATFORMS:
+        raise RuntimeError(
+            f"supported platforms must be {list(REQUIRED_PLATFORMS)}, got {list(platforms)}"
+        )
+    lock_platforms = {str(item.get("platform", "")) for item in files.values()}
+    if lock_platforms != set(platforms):
+        raise RuntimeError("locked wheel platforms do not match manifest platforms")
+
+    manifest_wheels = manifest.get("wheels")
+    if manifest_wheels not in (None, []):
+        raise RuntimeError("FluidSim deliverables must not declare bundled wheels")
+
+    build_patterns = set(manifest.get("build", {}).get("paths_exclude_pattern", ()))
+    required_patterns = {
+        "__pycache__/", ".*", "*.zip", "*.whl", "wheels/",
+        "tests/", "demo_outputs/", "artifacts/",
+        "pyproject.toml", "requirements-dev.txt",
+        "release/build_extension.py", "release/delivery_policy.py",
+        "release/fetch_warp_wheels.py", "release/generate_examples.py",
+        "release/custom_effect_demo_runtime.py",
+        "release/generate_custom_effect_demos.py",
+        "release/generate_geometry_nodes.py",
+        "release/gpu_regression_blender.py", "release/smoke_test_blender.py",
+        "release/validate_examples_blender.py",
+        "release/validate_custom_effects_blender.py",
+        "release/validate_custom_effects_warp.py",
+        "release/validate_phase3_blender.py",
+        "release/validate_phase3_warp.py",
+        "release/validate_phase4_blender.py",
+        "release/validate_phase4_warp.py",
+        "release/validate_phase5_blender.py",
+        "release/validate_phase5_warp.py",
+        "release/wheels.lock.json",
+    }
+    if not required_patterns.issubset(build_patterns):
+        missing_patterns = sorted(required_patterns - build_patterns)
+        raise RuntimeError(f"manifest build exclusions are incomplete: {missing_patterns}")
+
+    init_source = (root / "__init__.py").read_text(encoding="utf-8")
+    if "bl_info" in init_source:
+        raise RuntimeError("legacy bl_info metadata is not allowed in an extension")
+    notices = (root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    for marker in ("NVIDIA Warp", "Apache License, Version 2.0", "libmathdx"):
+        if marker not in notices:
+            raise RuntimeError(f"THIRD_PARTY_NOTICES.md is missing {marker!r}")
+    if not (root / "LICENSE").read_text(encoding="utf-8").strip():
+        raise RuntimeError("LICENSE is empty")
+
+    render_asset = (
+        root / "resources" / "geometry_nodes" / "fluidsim_render_nodes.blend"
+    )
+    if not render_asset.is_file() or render_asset.stat().st_size <= 50_000:
+        raise RuntimeError("bundled Geometry Nodes asset is missing or unexpectedly small")
+    if not _looks_like_blender_file(render_asset.read_bytes()[:7]):
+        raise RuntimeError("bundled Geometry Nodes asset is not a Blender file")
+    if list(render_asset.parent.glob("*.blend1")):
+        raise RuntimeError("Blender backup files must not be shipped as render assets")
+
+    forbidden_source_wheels = []
+    ignored_roots = {".git", "build", "dist", "artifacts"}
+    for path in root.rglob("*.whl"):
+        rel = path.relative_to(root)
+        if rel.parts and rel.parts[0] in ignored_roots:
+            continue
+        forbidden_source_wheels.append(str(rel))
+    if forbidden_source_wheels:
+        raise RuntimeError(
+            "runtime binary payloads must not be stored in the deliverable source tree: "
+            f"{sorted(forbidden_source_wheels)}"
+        )
+
+    for filename, metadata in sorted(files.items()):
+        expected_sha = str(metadata.get("sha256", ""))
+        expected_size = metadata.get("size")
+        platform = str(metadata.get("platform", ""))
+        source_name = str(metadata.get("source", ""))
+        url = str(metadata.get("url", ""))
+        if len(expected_sha) != 64 or any(char not in "0123456789abcdef" for char in expected_sha):
+            raise RuntimeError(f"invalid SHA-256 lock for {filename}")
+        if not isinstance(expected_size, int) or expected_size <= 0:
+            raise RuntimeError(f"invalid size lock for {filename}")
+        if platform not in REQUIRED_PLATFORMS:
+            raise RuntimeError(f"invalid platform lock for {filename}: {platform}")
+        if not source_name:
+            raise RuntimeError(f"wheel provenance is missing: {filename}")
+        if url and not url.startswith("https://"):
+            raise RuntimeError(f"wheel URL must use HTTPS when present: {filename}")
+
+    return SourceVerification(
+        extension_id=str(extension_id),
+        version=version_string,
+        platforms=platforms,
+        external_runtime_wheels=tuple(sorted(files)),
+    )
+
+def _archive_relative_names(archive: zipfile.ZipFile) -> dict[str, str]:
+    names = [name for name in archive.namelist() if name and not name.endswith("/")]
+    if not names:
+        raise RuntimeError("extension package is empty")
+    for name in names:
+        path = PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise RuntimeError(f"unsafe archive path: {name}")
+    manifests = [name for name in names if PurePosixPath(name).name == "blender_manifest.toml"]
+    if len(manifests) != 1:
+        raise RuntimeError(f"expected exactly one blender_manifest.toml, found {manifests}")
+    prefix = str(PurePosixPath(manifests[0]).parent)
+    prefix = "" if prefix == "." else prefix.rstrip("/") + "/"
+    relative: dict[str, str] = {}
+    for name in names:
+        if prefix and not name.startswith(prefix):
+            raise RuntimeError("archive contains files outside the extension root")
+        normalized = name[len(prefix) :] if prefix else name
+        relative[normalized] = name
+    return relative
+
+
+def _platform_from_package_name(path: Path, extension_id: str, version: str) -> str:
+    matches = [
+        platform
+        for platform in REQUIRED_PLATFORMS
+        if path.name == f"{extension_id}-{version}-{platform.replace('-', '_')}.zip"
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"unexpected split package filename: {path.name}")
+    return matches[0]
+
+
+def _is_forbidden_runtime_payload(relative: str) -> bool:
+    path = PurePosixPath(relative)
+    lower_parts = tuple(part.lower() for part in path.parts)
+    filename = path.name.lower()
+    if path.suffix.lower() == ".whl":
+        return True
+    if lower_parts and lower_parts[0] == "wheels":
+        return True
+    if any(part == "warp" or part.startswith("warp_lang-") for part in lower_parts):
+        return True
+    if filename.startswith("blender-") and (
+        filename.endswith(".zip")
+        or filename.endswith(".tar.xz")
+        or filename.endswith(".tar.gz")
+        or filename.endswith(".tgz")
+    ):
+        return True
+    if filename == "blender" and (not lower_parts or lower_parts[0] != "blender"):
+        return True
+    return False
+
+
+def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecord]:
+    """Inspect split archives and reject Blender/Warp binary payloads."""
+    root = Path(root).resolve()
+    source = verify_source_tree(root)
+    package_paths = sorted((Path(path).resolve() for path in packages), key=lambda path: path.name)
+    if not package_paths:
+        raise RuntimeError("no split-platform packages were provided for inspection")
+    allowed_names = {
+        f"{source.extension_id}-{source.version}-{platform.replace('-', '_')}.zip"
+        for platform in source.platforms
+    }
+    unexpected_names = sorted(path.name for path in package_paths if path.name not in allowed_names)
+    if unexpected_names:
+        raise RuntimeError(f"unexpected split package filenames: {unexpected_names}")
+    if len({path.name for path in package_paths}) != len(package_paths):
+        raise RuntimeError("duplicate split-platform package paths were provided")
+
+    records: list[ArtifactRecord] = []
+    for package in package_paths:
+        if not package.is_file():
+            raise RuntimeError(f"missing built package: {package}")
+        platform = _platform_from_package_name(package, source.extension_id, source.version)
+        with zipfile.ZipFile(package) as archive:
+            names = _archive_relative_names(archive)
+            for relative in names:
+                path = PurePosixPath(relative)
+                if _is_forbidden_runtime_payload(relative):
+                    raise RuntimeError(f"forbidden bundled runtime payload: {relative}")
+                if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
+                    raise RuntimeError(f"compiled Python artifact leaked into package: {relative}")
+                if path.parts and path.parts[0] in RELEASE_ONLY_PATHS:
+                    raise RuntimeError(f"release-only path leaked into package: {relative}")
+                if relative in RELEASE_ONLY_FILES or relative in RELEASE_ONLY_RELATIVE_PATHS:
+                    raise RuntimeError(f"release-only file leaked into package: {relative}")
+            required = {
+                "blender_manifest.toml",
+                "__init__.py",
+                "LICENSE",
+                "THIRD_PARTY_NOTICES.md",
+                "release/__init__.py",
+                "release/run_headless_bake.py",
+                "blender/setup_wizard.py",
+                "blender/geometry_nodes.py",
+                "sim/attributes.py",
+                "sim/surface_tension.py",
+                "sim/surface_tension_math.py",
+                "presets/schema.py",
+                "resources/presets/preview_water.json",
+                "resources/presets/water_surface_tension.json",
+                "resources/presets/stylized_high_tension.json",
+                "resources/geometry_nodes/fluidsim_render_nodes.blend",
+                "sim/effects/schema.py",
+                "sim/effects/runtime.py",
+                "sim/effects/package.py",
+                "blender/effects.py",
+                "blender/effect_ui.py",
+                "blender/effect_workspace.py",
+                "resources/effects/vortex_force.json",
+                "resources/effects/sources/vortex_force.py",
+                "resources/examples/05_custom_effects_vortex.blend",
+                "resources/examples/06_custom_effects_stack.blend",
+                "resources/examples/07_warp_code_authoring.blend",
+                "resources/examples/custom_effects/renders/05_custom_effects_vortex.png",
+                "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
+                "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
+            }
+            missing = sorted(required - set(names))
+            if missing:
+                raise RuntimeError(f"package {package.name} is missing files: {missing}")
+            if any(PurePosixPath(name).suffix == ".blend1" for name in names):
+                raise RuntimeError(f"Blender backup asset leaked into {package.name}")
+            effect_json = [
+                name for name in names
+                if name.startswith("resources/effects/")
+                and "/sources/" not in name and name.endswith(".json")
+            ]
+            effect_sources = [
+                name for name in names
+                if name.startswith("resources/effects/sources/") and name.endswith(".py")
+            ]
+            if len(effect_json) != 8 or len(effect_sources) != 8:
+                raise RuntimeError(
+                    f"package {package.name} must contain eight built-in effect definitions "
+                    "and eight source files"
+                )
+            asset_payload = archive.read(
+                names["resources/geometry_nodes/fluidsim_render_nodes.blend"]
+            )
+            if len(asset_payload) <= 50_000 or not _looks_like_blender_file(
+                    asset_payload[:7]):
+                raise RuntimeError(f"invalid Geometry Nodes asset in {package.name}")
+
+            embedded = tomllib.loads(archive.read(names["blender_manifest.toml"]).decode("utf-8"))
+            if embedded.get("id") != source.extension_id or embedded.get("version") != source.version:
+                raise RuntimeError(f"embedded manifest identity mismatch: {package.name}")
+            if embedded.get("license") != REQUIRED_LICENSE:
+                raise RuntimeError(f"embedded manifest license mismatch: {package.name}")
+            if tuple(embedded.get("platforms", ())) != source.platforms:
+                raise RuntimeError(
+                    f"embedded source platform mismatch: expected {list(source.platforms)}, "
+                    f"got {embedded.get('platforms')}"
+                )
+            if embedded.get("wheels") not in (None, []):
+                raise RuntimeError(f"embedded manifest declares bundled wheels: {package.name}")
+            generated = embedded.get("build", {}).get("generated", {})
+            if generated.get("platforms") != [platform]:
+                raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
+            if generated.get("wheels", []) != []:
+                raise RuntimeError(f"generated package declares bundled wheels: {package.name}")
+
+        records.append(
+            ArtifactRecord(
+                path=package,
+                platform=platform,
+                runtime_dependency="external",
+                size=package.stat().st_size,
+                sha256=_sha256_path(package),
+            )
+        )
+    return sorted(records, key=lambda item: item.platform)
+
+def _fsync_directory(path: Path) -> None:
+    """Best-effort directory sync after an atomic metadata replacement."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    """Durably replace a small release metadata file without exposing partial data."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(path.parent)
+    except BaseException:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _write_checksums(output: Path, records: Sequence[ArtifactRecord]) -> Path:
+    path = output / "SHA256SUMS.txt"
+    text = "".join(f"{record.sha256}  {record.path.name}\n" for record in records)
+    _write_bytes_atomic(path, text.encode("utf-8"))
+    return path
+
+
+def build(
+    root: Path,
+    blender: Path,
+    output: Path,
+    *,
+    runner: Runner = _run,
+    run_python_checks: bool = True,
+    run_lint: bool = True,
+) -> list[Path]:
+    """Run static gates, Blender validation, split build, and archive inspection."""
+    root = Path(root).resolve()
+    blender = Path(blender)
+    output = Path(output).resolve()
+    source = verify_source_tree(root)
+    output.mkdir(parents=True, exist_ok=True)
+    for path in output.glob(f"{source.extension_id}-{source.version}-*.zip"):
+        path.unlink()
+    checksum_path = output / "SHA256SUMS.txt"
+    if checksum_path.exists():
+        checksum_path.unlink()
+
+    if run_python_checks:
+        if run_lint:
+            runner([sys.executable, "-m", "ruff", "check", "."], root)
+        runner([sys.executable, "-m", "pytest", "-q"], root)
+        runner([sys.executable, "-m", "compileall", "-q", "-f", "."], root)
+    runner([str(blender), "--command", "extension", "validate", str(root)], root)
+    runner(
+        [
+            str(blender),
+            "--command",
+            "extension",
+            "build",
+            "--split-platforms",
+            "--source-dir",
+            str(root),
+            "--output-dir",
+            str(output),
+            "--verbose",
+        ],
+        root,
+    )
+    packages = sorted(output.glob(f"{source.extension_id}-{source.version}-*.zip"))
+    expected_names = {
+        f"{source.extension_id}-{source.version}-{platform.replace('-', '_')}.zip"
+        for platform in source.platforms
+    }
+    actual_names = {path.name for path in packages}
+    if actual_names != expected_names:
+        raise RuntimeError(
+            f"expected split-platform packages {sorted(expected_names)}, "
+            f"found {sorted(actual_names)}"
+        )
+    records = inspect_packages(root, packages)
+    _write_checksums(output, records)
+    return [record.path for record in records]
+
+
+def run_installed_script(
+    blender: Path,
+    package: Path,
+    repo_dir: Path,
+    script: Path,
+    *,
+    repeats: int = 1,
+    runner: Runner = _run,
+    extra_env: Mapping[str, str] | None = None,
+) -> None:
+    """Install one archive into an isolated repository and run a Blender script."""
+    blender = Path(blender)
+    package = Path(package).resolve()
+    repo_dir = Path(repo_dir).resolve()
+    script = Path(script).resolve()
+    if not package.is_file():
+        raise RuntimeError(f"package does not exist: {package}")
+    if not script.is_file():
+        raise RuntimeError(f"Blender script does not exist: {script}")
+    if repeats < 1:
+        raise ValueError("repeats must be at least one")
+
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
+    repo_dir.mkdir(parents=True)
+    profile_dir = repo_dir.parent / f"{repo_dir.name}-profile"
+    if profile_dir.exists():
+        shutil.rmtree(profile_dir)
+    profile_dir.mkdir(parents=True)
+    env = dict(os.environ)
+    isolated_paths = {
+        "BLENDER_USER_CONFIG": profile_dir / "config",
+        "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
+        "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
+        "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
+    }
+    for path in isolated_paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+    env.update({key: str(path) for key, path in isolated_paths.items()})
+    env["FLUIDSIM_CI_REPOSITORY"] = str(repo_dir)
+    if extra_env:
+        env.update({str(key): str(value) for key, value in extra_env.items()})
+
+    cwd = script.parent
+    runner(
+        [
+            str(blender),
+            "--command",
+            "extension",
+            "repo-add",
+            "fluidsim_ci",
+            "--name",
+            "FluidSim CI",
+            "--directory",
+            str(repo_dir),
+            "--clear-all",
+        ],
+        cwd,
+        env=env,
+    )
+    runner(
+        [
+            str(blender),
+            "--command",
+            "extension",
+            "install-file",
+            "-r",
+            "fluidsim_ci",
+            "-e",
+            str(package),
+        ],
+        cwd,
+        env=env,
+    )
+    for _ in range(repeats):
+        runner(
+            [
+                str(blender),
+                "--background",
+                "--offline-mode",
+                "--python-use-system-env",
+                "--python-exit-code",
+                "1",
+                "--python",
+                str(script),
+            ],
+            cwd,
+            env=env,
+        )
+
+
+def run_installed_smoke(
+    blender: Path,
+    package: Path,
+    repo_dir: Path,
+    script: Path,
+    *,
+    runner: Runner = _run,
+    extra_env: Mapping[str, str] | None = None,
+) -> None:
+    """Run registration smoke coverage twice, then uninstall from the clean profile."""
+    run_installed_script(
+        blender,
+        package,
+        repo_dir,
+        script,
+        repeats=2,
+        runner=runner,
+        extra_env=extra_env,
+    )
+
+    report_value = str((extra_env or {}).get("FLUIDSIM_SMOKE_REPORT", ""))
+    if report_value and runner is _run:
+        report_path = Path(report_value)
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"could not read smoke report {report_path}: {exc}") from exc
+        if report.get("status") != "passed" or report.get("run_count") != 2:
+            raise RuntimeError(f"installed smoke did not record two passing runs: {report}")
+
+    profile_dir = Path(repo_dir).resolve().parent / f"{Path(repo_dir).name}-profile"
+    env = dict(os.environ)
+    isolated_paths = {
+        "BLENDER_USER_CONFIG": profile_dir / "config",
+        "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
+        "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
+        "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
+    }
+    env.update({key: str(path) for key, path in isolated_paths.items()})
+    env["FLUIDSIM_CI_REPOSITORY"] = str(Path(repo_dir).resolve())
+    if extra_env:
+        env.update({str(key): str(value) for key, value in extra_env.items()})
+    runner(
+        [
+            str(blender),
+            "--command",
+            "extension",
+            "remove",
+            "fluidsim_ci.fluidsim_warp",
+        ],
+        Path(script).resolve().parent,
+        env=env,
+    )
+    installed_root = Path(repo_dir).resolve() / "fluidsim_warp"
+    if installed_root.exists():
+        raise RuntimeError(f"extension uninstall left package files behind: {installed_root}")
+
+
+def _record_payload(records: Sequence[ArtifactRecord]) -> list[dict[str, object]]:
+    return [record.as_dict() for record in records]
+
+
+def _package_for_platform(packages: Sequence[Path], platform: str) -> Path:
+    suffix = f"-{platform.replace('-', '_')}.zip"
+    matches = [path for path in packages if path.name.endswith(suffix)]
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one {platform} package, found {matches}")
+    return matches[0]
+
+
+def _write_json_report(path: Path, payload: Mapping[str, object]) -> None:
+    encoded = (
+        json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    _write_bytes_atomic(path, encoded)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--output", type=Path, default=ROOT / "dist")
+    parser.add_argument("--blender", type=Path)
+    parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--skip-python-checks", action="store_true")
+    parser.add_argument("--skip-lint", action="store_true")
+    parser.add_argument("--smoke-platform", choices=REQUIRED_PLATFORMS)
+    parser.add_argument("--gpu-regression-platform", choices=REQUIRED_PLATFORMS)
+    parser.add_argument("--repository", type=Path)
+    parser.add_argument("--json-report", type=Path)
+    args = parser.parse_args(argv)
+    root = args.root.resolve()
+    output = args.output.resolve()
+    blender = args.blender.resolve() if args.blender is not None else None
+    repository = args.repository.resolve() if args.repository is not None else None
+    json_report = args.json_report.resolve() if args.json_report is not None else None
+
+    try:
+        if args.verify_only:
+            result = verify_source_tree(root)
+            payload: dict[str, object] = {
+                "mode": "verify-only",
+                "source": asdict(result),
+                "release_ready": result.release_ready,
+            }
+            if json_report:
+                _write_json_report(json_report, payload)
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if result.release_ready else 2
+
+        if blender is None:
+            parser.error("--blender is required unless --verify-only is used")
+        packages = build(
+            root,
+            blender,
+            output,
+            run_python_checks=not args.skip_python_checks,
+            run_lint=not args.skip_lint,
+        )
+        records = inspect_packages(root, packages)
+        payload = {
+            "mode": "build",
+            "artifacts": _record_payload(records),
+            "release_ready": True,
+        }
+        repo_dir = repository or output / "fluidsim-ci-repository"
+        if args.smoke_platform:
+            package = _package_for_platform(packages, args.smoke_platform)
+            smoke_report = output / "smoke-test-report.json"
+            if smoke_report.exists():
+                smoke_report.unlink()
+            run_installed_smoke(
+                blender,
+                package,
+                repo_dir,
+                root / "release" / "smoke_test_blender.py",
+                extra_env={"FLUIDSIM_SMOKE_REPORT": str(smoke_report)},
+            )
+            payload["smoke_platform"] = args.smoke_platform
+            payload["smoke_report"] = str(smoke_report)
+        if args.gpu_regression_platform:
+            package = _package_for_platform(packages, args.gpu_regression_platform)
+            report_path = output / "gpu-regression-report.json"
+            if report_path.exists():
+                report_path.unlink()
+            run_installed_script(
+                blender,
+                package,
+                repo_dir,
+                root / "release" / "gpu_regression_blender.py",
+                extra_env={"FLUIDSIM_GPU_REPORT": str(report_path)},
+            )
+            payload["gpu_regression_platform"] = args.gpu_regression_platform
+            payload["gpu_report"] = str(report_path)
+        if json_report:
+            _write_json_report(json_report, payload)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    except (OSError, RuntimeError, subprocess.CalledProcessError, zipfile.BadZipFile) as exc:
+        payload = {"release_ready": False, "error": f"{type(exc).__name__}: {exc}"}
+        if json_report:
+            _write_json_report(json_report, payload)
+        print(json.dumps(payload, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

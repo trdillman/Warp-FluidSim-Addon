@@ -1,14 +1,12 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 1.0.248 is a Blender 5.1+ extension around the existing sparse
-8³-leaf NVIDIA Warp PIC/FLIP solver. Blender 5.2.0 LTS/Linux x64 remains the
-certified release target. Live Preview remains interactive;
+FluidSim Warp 1.0.252 is a Blender 5.2.0 LTS extension around the existing
+sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.248`
+- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.252`
 - Validated host: Blender `5.2.0 LTS` on Linux x64
-- Integration compatibility: Blender `5.1.0` on Windows x64 with Warp `1.12.1`
 - Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
   package/runtime smoke evidence
@@ -27,7 +25,7 @@ fluidsim_warp/
 │   ├── schema.py                 strict versioned allow-list schema
 │   └── library.py                built-in/user discovery and atomic writes
 ├── resources/
-│   ├── presets/*.json            six built-in product presets
+│   ├── presets/*.json            eight built-in product presets
 │   ├── examples/*.blend          generated Phase 2 example scenes
 │   └── geometry_nodes/*.blend    generated immutable render-node asset
 ├── blender/
@@ -37,13 +35,22 @@ fluidsim_warp/
 │   ├── cache_manager.py          inspect/free/move/rename/orphan operations
 │   ├── command_line.py           headless contract and JSON reporting
 │   ├── geometry_nodes.py         revisioned asset installation/input sync
-│   └── output_publication.py     typed attribute-aware publication
+│   ├── output_publication.py     typed attribute-aware publication
+│   ├── ui_common.py              native panel bases and derived UI state
+│   ├── ui_scene.py               Scene Properties workflow ownership
+│   ├── ui_object.py              role-aware Object Properties workflow
+│   ├── ui_cache_state.py         mutually exclusive bake presentation
+│   ├── effect_ui.py              artist-facing Custom Effects workflow
+│   └── effect_workspace.py       developer Warp Code workspace
 ├── io/
 │   ├── cache_schema.py           strict cache-v2 manifest schema
 │   ├── checkpoint.py             strict pickle-free checkpoint I/O
 │   └── cache.py                  cache-v1 reader plus v2 frame adapter
 ├── sim/
 │   ├── attributes.py             authoritative output/cache schema
+│   ├── whitewater_types.py       stable type enum and host policy
+│   ├── surface_tension_math.py   dependency-free physical/stability helpers
+│   ├── surface_tension.py        CSF kernels and optional scratch owner
 │   └── ...                       GPU solver core; no bpy imports
 └── release/
     └── run_headless_bake.py      installed process-exit entry point
@@ -89,9 +96,12 @@ etc. `k_source_resolve_type` finalizes the type mask each frame.
 
 ## 3. FLIP Pipeline (`FluidSolver.step_frame`)
 
-Per display frame, substeps are chosen by CFL
-(`dt_cfl = cfl * voxel_size / (vmax + g*dt)`), clamped to
-`[min_substeps, max_substeps]`. Each substep runs:
+Per display frame, substeps are the maximum of the authored minimum, CFL
+(`dt_cfl = cfl * voxel_size / (vmax + g*dt)`), and the explicit capillary
+limit (`safety × sqrt(rho h³ / (4πσ))`), clamped to
+`[min_substeps, max_substeps]`. The capillary limit is evaluated even before
+the first source emission so a newly filled frame cannot bypass stability.
+Each substep runs:
 
 | # | Phase (`compute_*` slot) | Work |
 |---|---|---|
@@ -103,7 +113,7 @@ Per display frame, substeps are chosen by CFL
 | — | p2g (2) | `k_particle_set_grid_data` (MAC velocity + weights), `k_normalize_mac`, `k_particle_to_grid_active` (fluid mask); optional viscosity attribute splat |
 | — | save velocities | copy MAC field to `vel_saved_{u,v,w}` for FLIP delta |
 | — | `BEFORE_FORCES` custom hook | snippet run |
-| — | forces (3) | gravity, optional directional/radial acceleration, velocity diffusion, particle-attribute dissipation, collision-SDF attraction, then speed limit |
+| — | forces (3) | gravity, optional directional/radial acceleration, velocity diffusion, particle-attribute dissipation, collision-SDF attraction, CSF surface tension, then speed limit |
 | — | viscosity (4) | explicit+implicit viscosity (Jacobi/PCG), constant or per-particle |
 | — | collision (8) | `k_sdf_to_axis_collision` + `k_expand_shift_axis_velocity_in_collider` |
 | — | `BEFORE_PROJECT…` custom hook | snippet run |
@@ -169,19 +179,52 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 - `SurfaceExtractor.extract` runs **marching cubes** on the SDF and returns
   `(verts Nx3 float32, tris Mx3 int32)` consumed by the viewport bridge.
 
+### Surface tension (`sim/surface_tension.py`)
+
+- Uses the simulation-grid liquid SDF with the negative-inside convention.
+  Outward normals are normalized central SDF gradients and signed curvature is
+  `-div(n)`, yielding an inward spherical force.
+- Applies `a = sigma * kappa * delta(phi) * n / rho` in a compact cosine band,
+  clamps curvature to `2 / voxel_size`, skips collision interiors, and rejects
+  non-finite/overflowing acceleration before writing.
+- A configurable normalized seven-point smoothing pass reduces normal noise.
+  Two `vec3` sparse fields ping-pong normals and reuse the inactive buffer for
+  acceleration, for 24 bytes per allocated voxel. Allocation is lazy and the
+  profiler tally is reversed when the feature is disabled.
+- Cell-centred acceleration is averaged to weighted staggered MAC faces before
+  viscosity and pressure projection. The SDF key is invalidated after particle
+  advection so whitewater and render surfacing cannot consume a pre-advection
+  interface.
+- Surface tension contributes no persistent stochastic or restart state.
+  Scratch fields are intentionally reconstructed after reset/checkpoint restore.
+- Cross-release playback and resume are separate contracts. Older frame caches
+  remain readable, but production resume requires the current solver/settings
+  signatures and, in 1.0.251, the exact effective Custom Effects identity.
+  Phase-4 and pre-Custom-Effects checkpoints therefore require rebaking for a
+  current resumable run even when the new force and effect stack are disabled.
+
 ### Whitewater (`sim/whitewater.py`, `WhitewaterSystem`)
+- **One-pool state:** position, velocity, age, life, alive, and persistent int32
+  `type` channels share one GPU capacity. Foam, bubble, and spray are not
+  separate simulation systems.
+- **Stable semantics:** `WhitewaterType.FOAM=0`, `BUBBLE=1`, and `SPRAY=2` in
+  `sim/whitewater_types.py`; value `3` is reserved and rejected.
 - **Churn** (`k_compute_churn`): accumulates velocity magnitude * divergence in
   fluid voxels, decaying each step (`churn_decay`/`churn_gain`). Churn is the
   only grid field carried across topology rebuilds.
-- **Emission** (`k_emit_whitewater`): spawns foam/spray/bubble particles where
-  churn exceeds `ww_churn_threshold`, near the surface band, and above
-  `ww_min_speed`; assigns life from `[ww_life_min, ww_life_max]`.
-- **Advection** (`k_advect_whitewater`): advects through the grid velocity
-  field with gravity, surface/airband classification, and differential drag
-  (`ww_bubble_drag`, `ww_spray_drag`).
+- **Typed emission:** candidate type derives deterministically from liquid SDF,
+  speed, and churn. Commit stores type and applies a type-specific lifespan
+  multiplier in the same admitted transaction.
+- **Hysteretic advection:** separated enter/exit SDF and speed thresholds avoid
+  rapid type flicker. Foam follows the liquid with preservation/density terms;
+  bubbles use fluid drag and buoyancy; spray uses air drag and scaled gravity.
+- **Aligned lifecycle:** scan compaction, capacity clearing, cache capture,
+  checkpoint restore, and frame output copy type in lockstep with every other
+  whitewater channel. A device reduction reports foam/bubble/spray/invalid
+  counts each frame.
 - `k_whitewater_set_grid_data` splats whitewater into `ww_density` for viz.
 
-### Phase-3 output attribute contract
+### Phase-3/Phase-4 output attribute contract
 
 `sim/attributes.py` is the sole inventory for public names, Blender data types,
 `POINT` domains, component counts, cache fields, and checkpoint policy. Surface,
@@ -207,10 +250,14 @@ published as Blender `velocity`; physical velocity remains
 `fluidsim_velocity`.
 
 Cache-v2 frame payloads include `attribute_schema_version`, an ordered JSON
-inventory, and `surface_attribute_transfer_method`. Read and publication paths
-fail closed on missing fields, wrong shape/type/domain, non-finite values,
-misalignment, or invalid UID data. Frames without this metadata retain legacy
-playback compatibility.
+inventory, and `surface_attribute_transfer_method`. Phase-4 schema version 2
+requires `whitewater_type` and validates int32 values against the stable enum.
+Read and publication paths fail closed on missing fields, wrong shape/type/domain,
+non-finite values, misalignment, invalid UID data, or reserved type values.
+Phase-3 schema-v1 frames retain playback compatibility as combined legacy-
+unclassified output. Checkpoints additionally carry
+`whitewater_type_schema_version=1`; older checkpoints are intentionally not
+resumable because deterministic type-transition state cannot be inferred.
 
 ---
 
@@ -233,34 +280,43 @@ playback compatibility.
 
 ---
 
-## 7. Custom Kernel Contract (`sim/custom.py`)
+## 7. Custom Effects v2 Contract
 
-Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
+`sim/effects/` is the authoritative custom-code product boundary. `sim/custom.py`
+remains a one-release legacy conversion adapter; it is not the public runtime.
 
-- **One lifecycle Module:** validation, conservative autofix, presets,
-  shortcuts, persistence, compilation, runtime grouping, and launch all live
-  in `sim/custom.py`; Blender callers use that Interface directly.
-- **Five order slots** (`CustomKernelOrder`): `FIRST_STEP`, `BEFORE_SOURCING`,
-  `BEFORE_FORCES`, `BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION`, `FINAL_STEP`.
-  All snippets in a slot run in declaration order (the original tool stopped
-  after the first — this port executes all of them).
-- **Run-over** (`CustomKernelRunOver`): `VOXEL_TILE`, `VOXEL_LINEAR` (both
-  flat-launch over `voxel_capacity`, exposing leaf-local + global + world
-  indices; collision voxels skipped), or `PARTICLES` (over particle capacity;
-  dead particles skipped).
-- **Arguments** (`CustomKernelArgumentMode`): `FIELD` binds a named solver
-  field from `FIELD_ACCESSORS` (velocity components, weights, temperature,
-  viscosity, density, pressure, divergence, surface/collision SDF, churn,
-  voxel_type, voxel_counts, and particle arrays) as a typed `wp.array`;
-  `CONSTANT` binds a float/int scalar.
-- **Compilation:** the snippet body is embedded into a generated Warp kernel
-  template and written to a **content-hashed temp file**
-  (`<tmp>/fluidsim_warp_snippets/<name>_<sha1>.py`), then imported — Warp
-  re-reads kernel source from disk for codegen, so in-memory `exec` is not an
-  option. Compiled modules are cached by hash across sessions.
-- A **time context** (`frame`, `time`, `real_time_step`, `solver_time_step`,
-  `time_scale`, `substeps`) is always in scope. Compile errors are surfaced to
-  each snippet's `last_error` UI field.
+- `schema.py` defines strict effect, kernel, parameter, field-binding, instance,
+  and diagnostic records with API 2 / ABI 1.
+- `fields.py` owns domain, dtype, units, legal stages, permissions, persistence,
+  runtime accessors, and prerequisite capabilities.
+- `fingerprint.py` filters enabled/mute/solo state, rejects duplicate instance
+  IDs, canonicalizes all execution inputs, and emits SHA-256 identity plus an
+  ordered inventory.
+- `trust.py` records local trust by exact content digest. A claimed built-in is
+  trusted only when its digest equals a shipped definition.
+- `validation.py` rejects unsafe or undeclared AST behavior before source
+  generation.
+- `source.py` creates deterministic content-addressed modules and maps generated
+  diagnostics back to user Text lines.
+- `compiler.py` imports the module and forces `wp.load_module` on the selected
+  device. Import alone is never success.
+- `sandbox.py` launches bounded particle/voxel fixtures, synchronizes, and checks
+  mutation canaries plus finite data.
+- `runtime.py` installs only complete candidates, derives topology/SDF/collision
+  work from capabilities, schedules public stages/cadence, profiles calls and
+  elements, and latches fail-closed after `EffectExecutionError`.
+- `package.py` validates deterministic `.fseffect` ZIPs before decompression,
+  including member/count/size/ratio limits and per-file SHA-256.
+
+Public stages are Before Emission, After Particle Transfer, Before Pressure,
+and After Particle Update. Cadence is Every Substep, Once Per Frame, or
+Initialization. Particle-only effects do not force topology rebuilds; active-
+voxel and SDF/collision consumers request only their declared prerequisites.
+
+Cache-v2 manifests, frames, checkpoints, production-bake reports, headless
+reports, and support reports include `effect_signature` and
+`effect_inventory`. Production admission recomputes the current Text datablock
+and controller snapshots instead of trusting stored update-callback state.
 
 ---
 
@@ -274,10 +330,13 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   `frame_change_post` handler that steps the solver when `fs.live` is on.
 - **`blender/output_publication.py`** writes solver/cache facts into real
   datablocks using bulk `foreach_set`: `FluidSim Surface` as a mesh and
-  `FluidSim Particles` / `FluidSim Whitewater` as padded PointCloud objects
-  where available. It recreates conflicting managed attributes, validates
-  Phase-3 values before mutation, preserves display-only `display_color`
-  separately, and tracks live point count independently of padded capacity.
+  `FluidSim Particles`, combined whitewater, foam, bubbles, and spray as padded
+  PointCloud objects where available. It recreates conflicting managed
+  attributes, validates schema/type values before mutation, preserves display-
+  only `display_color` separately, and tracks live point count independently of
+  padded capacity. Separate views filter aligned host arrays by type; they do
+  not allocate separate GPU pools. Legacy-unclassified points remain visible
+  only on the combined object.
   `blender/viewport.py` remains the timeline/overlay adapter.
 - **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
   bridge for realtime UI edits. Its `SceneUpdate` enum owns the supported
@@ -292,14 +351,38 @@ Port of the custom-OpenCL-kernel feature to controlled Warp extension points:
   `fluidsim_color`; the liquid material also maps `fluidsim_viscosity` to
   roughness. Legacy debug materials read only `display_color`, so visualization
   never overwrites simulation color.
-- **`blender/geometry_nodes.py`** appends three immutable revision-tagged groups
-  from `resources/geometry_nodes/fluidsim_render_nodes.blend`, attaches one
-  owned modifier per output, and synchronizes typed Blender 5.2 material/radius
-  inputs. Point groups realize instances before material assignment so named
-  point attributes reach F12 shaders. Explicit updates skip user-owned
+- **`blender/geometry_nodes.py`** appends six immutable P4 revision-tagged
+  groups from `resources/geometry_nodes/fluidsim_render_nodes.blend`, attaches
+  one owned modifier per output, and synchronizes typed Blender 5.2 material/
+  radius inputs. Point groups realize instances before material assignment so
+  named point attributes reach F12 shaders. Explicit updates skip user-owned
   modifiers and never mutate user node groups.
+- **`blender/ui_common.py`**, **`blender/ui_scene.py`**, and
+  **`blender/ui_object.py`** make Blender Scene/Object Properties the
+  authoritative UI surface. One derived `activity_snapshot` owns Idle, Live
+  Preview, Cache Playback, and Production Bake presentation;
+  `pending_settings.pending_presentation` remains the lifecycle-policy owner.
+  The Scene hierarchy follows setup → domain → physics → Custom Effects →
+  reconstruction/whitewater → outputs → cache → diagnostics. Object panels
+  poll canonical SOURCE/SINK/COLLIDER/FORCE/FIELD roles and hide inapplicable
+  analytic, mesh, point, constant, and volume payloads.
+- **`panels.py`** now registers one compact View3D status/launcher rather than a
+  second settings hierarchy. **`preferences.py`** owns device selection and the
+  explicitly enabled developer override only.
+- **`blender/effect_ui.py`** draws Effect Stack, Selected Effect, Workflow, and
+  Status in Scene Properties. Package administration is a closed child.
+  **`blender/effect_workspace.py`** is a closed Warp Code child that prefers an
+  existing Text Editor before repurposing the active area. Legacy snippet
+  panels are not registered.
+- **`blender/ui_cache_state.py`** presents exactly one Start, Resume, or Restart
+  production action from the manifest boundary. Full checks remain in the bake
+  execute path. Cache mutation dialogs bind to the exact resolved path or
+  orphan inventory; `cache_manager` independently refuses arbitrary
+  directories and recognizes interrupted first-frame FluidSim transactions.
 - **`properties.py`** defines the scene + object PropertyGroups. Attribute-viz
-  item tuples and the `liquid_view_mode` update callback live here.
+  item tuples and the `liquid_view_mode` update callback live here. Field
+  payload callbacks keep Volume Grid coverage and Volume Grid payload selection
+  coherent so no configured payload becomes unreachable.
 
 ---
 
@@ -345,50 +428,60 @@ disabling it shrinks codegen.
 
 ## 11. Validation Methodology
 
-`sim/validation.py` defines **16 tests**, each decorated with
-`@_test(name)` and registered in `_TESTS`. `run_all(device, progress)`
-executes them on the real CUDA device; each returns
-`(passed, detail)` wrapped in a `ValidationResult`. Tests cover: sparse tiled
-leaf-grid coordinate/index roundtrip; leaf addressing; 16/32-bit precision parity; P2G
-count/average/active masks; G2P sampling; source shape coverage + attribute
-transfer; collision/sink voxel bits; divergence reduction under projection;
-Jacobi + PCG residual convergence; surface SDF build + box-filter parity;
-viscosity stability (damps, never amplifies); whitewater churn→emit→advect
-behaviour; and benchmark/profile schema compatibility. Failures are reported,
-never crash the suite.
+`sim/validation.py` defines **21 tests**, each decorated with
+`@_test(name)` and registered in `_TESTS`. `run_all(device, progress)` executes
+them on the real CUDA device and wraps `(passed, detail)` in a
+`ValidationResult`. The first sixteen retain sparse-grid, transfer, source,
+collision, pressure, surface, viscosity, whitewater, profiler, and ST-FLIP
+coverage. Tests 17–21 add static-droplet boundedness/volume proxy, a
+Rayleigh–Lamb oscillation trend oracle, zero-coefficient full-solver
+equivalence, capillary timestep trends, and finite-energy/diagnostic guards.
+Failures are reported rather than crashing the suite.
+
+`release/validate_phase5_warp.py` is a separate supplied-package gate. It
+executes all P5 kernels on one analytic sparse leaf, validates inward force,
+finite/clamped curvature and acceleration, linear coefficient scaling,
+collision exclusion, MAC integration, optional-scratch lifecycle, and timestep
+trends. It also invokes the real frame-level solver limiter with an empty initial
+particle pool, proving that capillarity selects 27 requested substeps in the
+probe case and reports the authored clamp to 8. CPU execution proves code paths;
+`cuda:0` execution is required for release certification.
+
+`release/validate_properties_ui_blender.py` runs in the supplied Blender rather
+than treating source strings as UI proof. It verifies panel metadata and order,
+draws all 49 authored panels, exercises ten canonical object-role/geometry
+configurations, checks Field Source payload coherence, saves/reopens a `.blend`,
+and unregisters/re-registers the extension. Installed-package smoke separately
+requires the new UI modules, native panels, compact launcher, Custom Effects,
+and Warp Code surfaces.
 
 ---
 
-## 12. Verification Results for 1.0.248
+## 12. Verification Results for 1.0.252
 
 | Gate | Result in this environment |
 |---|---|
-| Pure-Python suite | Upstream delivery: **150 passed**; Blender 5.1 integration: **613 passed** |
+| Dependency-free Python suite | **381 passed, 6 skipped**; only real-Warp JIT tests are skipped when Warp is deliberately absent |
+| Supplied-Warp Python suite | **387 passed** with `/mnt/data/warp_lang_1_16_external` |
 | Python compilation | Passed |
-| Source/release verification | Passed; generated render asset present and no bundled Blender/Warp payload |
-| Supplied Blender | **5.2.0 LTS**; registration, attribute publication, cache round-trip, save/reopen, Geometry Nodes evaluation, typed modifier inputs, user-modifier protection, and Eevee F12 rendering passed |
-| Supplied Warp | **1.16.0+cu12**, module `1.16.0`, loaded from the supplied external package; CPU kernels for source metadata, velocity preservation, optional compaction, checkpoint restore, and vorticity passed |
-| Shader attribute survival | F12 point render contained independently detected red, green, and blue regions; surface render contained red/blue regions from `fluidsim_color` |
-| Cache/checkpoint transactions | Phase-2 manifest/checkpoint guarantees remain covered; Phase-3 inventory, dtype/shape/finiteness/alignment, optional persistent channels, and UID validation added |
-| Installed headless no-CUDA exit | Required process-level exit `12` remains the expected host result |
-| Blender 5.1 integration gate | Windows x64, NVIDIA RTX 4080 SUPER, Warp 1.12.1: **FULL-PRODUCTION-GATE-PASS**, GUI **38/38**, saved-demo playback passed, solver validation **16/16** |
-| NVIDIA CUDA solver/render gate | Upstream 5.2/Linux evidence remained open; the Blender 5.1/Windows integration gate is closed by real CUDA execution |
+| Source/release verification | Passed; seven example scenes, three durable Custom Effects renders, eight built-ins, and no bundled Blender/Warp payload |
+| Supplied Blender | **5.2.0 LTS**; P3 renders, P4 typed whitewater, P5 settings/save-reopen, all three Custom Effects demos, and all seven example scenes passed |
+| Native Properties UI gate | Passed in supplied Blender: 49 authored panels, ten canonical role/geometry cases, Field Source payload coherence, `.blend` save/reopen, and unregister/re-register cleanup |
+| Supplied Warp | **1.16.0+cu12**, module `1.16.0`, loaded from the supplied external package; P3/P4/P5 and Custom Effects kernels compiled/executed on CPU |
+| P5 analytic kernel proof | Inward droplet force, finite normals/curvature/acceleration, curvature clamp, 2× coefficient scaling, collision exclusion, MAC integration, scratch lifecycle, and real solver-limiter selection/clamp passed |
+| Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
+| Installed package lifecycle | Passed twice in clean profiles: install, enable/disable/re-enable, supplied-Warp CPU kernel, Custom Effects Test/Apply, save/reopen, and uninstall |
+| Installed headless no-CUDA exit | Actual process exit `12`, atomic report written, **0 frames committed**, and package removed cleanly |
+| Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and demo contracts passed |
+| Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
+| Custom Effects supplied-Blender proof | Three demos, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed |
+| Release workflow coverage | Linux package job now runs and uploads the native Properties UI report in addition to P4/P5 Warp, Custom Effects Warp/Blender, package build, and installed smoke evidence |
+| NVIDIA CUDA solver gate | **Open** — no usable CUDA driver/device was exposed |
 
-The upstream CPU and Blender evidence proves surrounding data, cache,
-publication, asset, and render integration. The repository integration run at
-proof HEAD `8a94f529fb52cd67afdeb19deb546578c195eb11` additionally exercises real
-CUDA solver numerics, GPU memory safeguards, performance profiling, viewport
-rendering, and saved-demo playback. Production output remains numerically
-nondeterministic where atomic accumulation, compaction, emission ordering, and
-derived marching-cubes output are involved.
-
-The bounded demo artifact
-`artifacts/demo_analysis/analysis_report.json` (SHA-256
-`aa5c64a6c4d361a07225c6a13f4a5a32c4806da776a0a54afa33bfc194adf2d6`)
-passed 18/18 checks at `2026-08-14T11:36:17.609519+00:00`. Its promoted
-metrics are `front_speed_over_c0=1.0127570428`,
-`column_height_end=0.0850219727`, `crown_sqrt_t_corr=0.9715359144`, and
-`max_crown_height=0.1751342863`.
+The CPU and Blender evidence proves package, settings, kernel compilation,
+analytic force behavior, publication, and lifecycle paths. It does not certify
+full CUDA solver numerics, droplet oscillation, CUDA resume determinism, GPU
+memory/performance, or NVIDIA-specific rendering.
 
 ## 13. Performance Notes
 
@@ -408,6 +501,12 @@ metrics are `front_speed_over_c0=1.0127570428`,
   shaders. This intentionally trades render geometry/memory for correctness;
   display fraction, output toggles, and attribute inventory control the cost.
 - Disabled optional color/source-ID/UID channels allocate no full-capacity pool.
+- Surface tension allocates two optional `vec3` fields (24 bytes per sparse-grid
+  voxel) only while enabled. Fine voxels and high coefficients can make the
+  capillary limit, rather than CFL, dominate substep cost.
+- Typed whitewater always uses one persistent int32 type array. Separate Blender
+  outputs are filtered publication views; `BOTH` duplicates host/render views,
+  not the device simulation pool.
 
 ## Decoupled render surfacing and ST-FLIP beta
 

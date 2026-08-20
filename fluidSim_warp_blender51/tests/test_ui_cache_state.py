@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from fluidsim_testpkg.blender.ui_cache_state import production_bake_action
+from fluidsim_testpkg.io.cache_schema import CacheManifestV2, write_manifest_atomic
+
+
+def _manifest(*, frame_end: int = 10) -> CacheManifestV2:
+    return CacheManifestV2.new(
+        solver_version="1.0.251",
+        scene_key="sha256:" + "1" * 64,
+        settings_signature="sha256:" + "2" * 64,
+        source_signature="sha256:" + "3" * 64,
+        frame_start=1,
+        frame_end=frame_end,
+        checkpoint_interval=1,
+        effect_signature="4" * 64,
+        effect_inventory=(),
+    )
+
+
+def test_production_bake_starts_when_no_v2_manifest_exists(tmp_path):
+    state = production_bake_action(tmp_path)
+    assert state.action == "START"
+    assert state.destructive is False
+
+
+def test_production_bake_resumes_an_existing_incomplete_manifest(tmp_path):
+    write_manifest_atomic(tmp_path / "fluidsim_cache.json", _manifest())
+    state = production_bake_action(tmp_path)
+    assert state.action == "RESUME"
+    assert "verify" in state.message.lower()
+    assert state.destructive is False
+
+
+def test_production_bake_restarts_a_complete_manifest(tmp_path):
+    manifest = _manifest(frame_end=1)
+    # The UI presentation only needs the manifest transaction boundary; exact
+    # frame/checkpoint integrity remains an execute-time responsibility.
+    from fluidsim_testpkg.io.cache_schema import FrameEntry
+
+    manifest.frames[1] = FrameEntry(
+        frame=1,
+        frame_file="frames/frame_000001.npz",
+        frame_sha256="a" * 64,
+        frame_size=1,
+        checkpoint_file="checkpoints/checkpoint_000001.npz",
+        checkpoint_sha256="b" * 64,
+        checkpoint_size=1,
+        solver_frame=1,
+        simulation_time=0.1,
+        settings_signature="sha256:" + "2" * 64,
+        source_signature="sha256:" + "3" * 64,
+        completed_at="2026-08-18T00:00:00Z",
+    )
+    write_manifest_atomic(tmp_path / "fluidsim_cache.json", manifest)
+    state = production_bake_action(tmp_path)
+    assert state.action == "RESTART"
+    assert state.destructive is True
+
+
+def test_production_bake_restarts_an_invalid_v2_manifest(tmp_path):
+    (tmp_path / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    state = production_bake_action(tmp_path)
+    assert state.action == "RESTART"
+    assert "invalid" in state.message.lower()

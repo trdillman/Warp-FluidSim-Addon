@@ -83,6 +83,24 @@ def _require_timestamp(value: Any, name: str) -> str:
     return value
 
 
+def _normalize_effect_inventory(value: Any) -> tuple[dict[str, Any], ...]:
+    if value in (None, (), []):
+        return ()
+    if not isinstance(value, (tuple, list)):
+        raise ValueError("effect_inventory must be an array")
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"effect_inventory[{index}] must be an object")
+        normalized = {str(key): item[key] for key in sorted(item)}
+        try:
+            json.dumps(normalized, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"effect_inventory[{index}] is not strict JSON: {exc}") from exc
+        result.append(normalized)
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class FrameEntry:
     """One fully committed frame/checkpoint pair."""
@@ -154,6 +172,8 @@ class CacheManifestV2:
     checkpoint_interval: int
     created_at: str
     updated_at: str
+    effect_signature: str = ""
+    effect_inventory: tuple[dict[str, Any], ...] = ()
     frames: dict[int, FrameEntry] = field(default_factory=dict)
 
     @classmethod
@@ -168,6 +188,8 @@ class CacheManifestV2:
         frame_end: int,
         checkpoint_interval: int = 1,
         checkpoint_format_version: int = 1,
+        effect_signature: str = "",
+        effect_inventory: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
         timestamp: str | None = None,
     ) -> "CacheManifestV2":
         timestamp = timestamp or utc_now()
@@ -183,6 +205,8 @@ class CacheManifestV2:
             checkpoint_interval=checkpoint_interval,
             created_at=timestamp,
             updated_at=timestamp,
+            effect_signature=str(effect_signature),
+            effect_inventory=_normalize_effect_inventory(effect_inventory),
             frames={},
         )
         return manifest.validate()
@@ -208,6 +232,11 @@ class CacheManifestV2:
         _require_int(self.checkpoint_interval, "checkpoint_interval", minimum=1)
         _require_timestamp(self.created_at, "created_at")
         _require_timestamp(self.updated_at, "updated_at")
+        if self.effect_signature:
+            _require_sha256(self.effect_signature, "effect_signature")
+        inventory = _normalize_effect_inventory(self.effect_inventory)
+        if inventory and not self.effect_signature:
+            raise ValueError("effect inventory requires an effect signature")
         if not isinstance(self.frames, dict):
             raise ValueError("frames must be an object")
 
@@ -272,6 +301,7 @@ class CacheManifestV2:
     def to_dict(self) -> dict[str, Any]:
         self.validate()
         result = asdict(self)
+        result["effect_inventory"] = [dict(item) for item in self.effect_inventory]
         result["frames"] = {
             str(frame): asdict(self.frames[frame]) for frame in sorted(self.frames)
         }
@@ -282,8 +312,9 @@ class CacheManifestV2:
         if not isinstance(value, Mapping):
             raise ValueError("cache manifest must be a JSON object")
         expected = set(cls.__dataclass_fields__)
+        optional = {"effect_signature", "effect_inventory"}
         actual = set(value)
-        missing = expected - actual
+        missing = (expected - optional) - actual
         unknown = actual - expected
         if missing or unknown:
             raise ValueError(
@@ -301,7 +332,15 @@ class CacheManifestV2:
             entry = FrameEntry.from_dict(entry_value)
             entry.validate(key=frame)
             frames[frame] = entry
-        kwargs = {name: value[name] for name in expected if name != "frames"}
+        kwargs = {
+            name: value[name]
+            for name in expected
+            if name not in {"frames", "effect_signature", "effect_inventory"}
+        }
+        kwargs["effect_signature"] = str(value.get("effect_signature", ""))
+        kwargs["effect_inventory"] = _normalize_effect_inventory(
+            value.get("effect_inventory", ())
+        )
         return cls(**kwargs, frames=frames).validate()
 
 

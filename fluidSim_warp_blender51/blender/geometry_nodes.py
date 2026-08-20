@@ -13,22 +13,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-ASSET_REVISION = "fluidsim-render-p3-v1"
+ASSET_REVISION = "fluidsim-render-p4-v1"
 ASSET_RELATIVE_PATH = Path("resources") / "geometry_nodes" / "fluidsim_render_nodes.blend"
 
-SURFACE_GROUP = "FluidSim Surface Render [P3 v1]"
-PARTICLE_GROUP = "FluidSim Liquid Particles [P3 v1]"
-WHITEWATER_GROUP = "FluidSim Whitewater [P3 v1]"
+SURFACE_GROUP = "FluidSim Surface Render [P4 v1]"
+PARTICLE_GROUP = "FluidSim Liquid Particles [P4 v1]"
+WHITEWATER_GROUP = "FluidSim Whitewater [P4 v1]"
+FOAM_GROUP = "FluidSim Foam [P4 v1]"
+BUBBLE_GROUP = "FluidSim Bubbles [P4 v1]"
+SPRAY_GROUP = "FluidSim Spray [P4 v1]"
 
 GROUP_BY_OUTPUT = {
     "FluidSim Surface": SURFACE_GROUP,
     "FluidSim Particles": PARTICLE_GROUP,
     "FluidSim Whitewater": WHITEWATER_GROUP,
+    "FluidSim Foam": FOAM_GROUP,
+    "FluidSim Bubbles": BUBBLE_GROUP,
+    "FluidSim Spray": SPRAY_GROUP,
 }
 MODIFIER_BY_OUTPUT = {
     "FluidSim Surface": "FluidSim Surface Render",
     "FluidSim Particles": "FluidSim Liquid Particles",
     "FluidSim Whitewater": "FluidSim Whitewater",
+    "FluidSim Foam": "FluidSim Foam",
+    "FluidSim Bubbles": "FluidSim Bubbles",
+    "FluidSim Spray": "FluidSim Spray",
 }
 MATERIAL_SOCKET = "Material"
 RADIUS_SOCKET = "Radius Scale"
@@ -40,6 +49,9 @@ _MODIFIER_OWNER_KEYS = {
     "FluidSim Surface": "fluidsim_surface_render_modifier",
     "FluidSim Particles": "fluidsim_particles_render_modifier",
     "FluidSim Whitewater": "fluidsim_whitewater_render_modifier",
+    "FluidSim Foam": "fluidsim_foam_render_modifier",
+    "FluidSim Bubbles": "fluidsim_bubbles_render_modifier",
+    "FluidSim Spray": "fluidsim_spray_render_modifier",
 }
 
 
@@ -230,6 +242,9 @@ def install_render_nodes(
         "FluidSim Surface": 1.0,
         "FluidSim Particles": float(getattr(fs, "particle_display_scale", 1.0)),
         "FluidSim Whitewater": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Foam": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Bubbles": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Spray": float(getattr(fs, "whitewater_display_scale", 1.0)),
     }
     attached: list[str] = []
     skipped: list[str] = []
@@ -269,6 +284,9 @@ def sync_render_inputs(scene) -> None:
         "FluidSim Surface": 1.0,
         "FluidSim Particles": float(getattr(fs, "particle_display_scale", 1.0)),
         "FluidSim Whitewater": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Foam": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Bubbles": float(getattr(fs, "whitewater_display_scale", 1.0)),
+        "FluidSim Spray": float(getattr(fs, "whitewater_display_scale", 1.0)),
     }
     for output_name, modifier_name in MODIFIER_BY_OUTPUT.items():
         obj = output_publication.output_object(scene, output_name)

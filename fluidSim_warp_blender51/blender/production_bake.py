@@ -217,52 +217,6 @@ class BakeController:
         )
 
 
-_ACTIVE_BAKES: dict[int, BakeController] = {}
-
-
-def _scene_key(scene) -> int:
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            return int(pointer())
-        except (ReferenceError, TypeError, ValueError):
-            pass
-    return id(scene)
-
-
-def register_active_bake(scene, controller: BakeController) -> None:
-    """Give one controller authoritative bake ownership for ``scene``."""
-    key = _scene_key(scene)
-    existing = _ACTIVE_BAKES.get(key)
-    if existing is not None and existing is not controller:
-        raise RuntimeError("A Production Bake is already active for this scene")
-    _ACTIVE_BAKES[key] = controller
-
-
-def active_bake(scene) -> BakeController | None:
-    """Return the controller that currently owns ``scene``'s bake workflow."""
-    return _ACTIVE_BAKES.get(_scene_key(scene))
-
-
-def bake_is_active(scene) -> bool:
-    controller = active_bake(scene)
-    return bool(controller is not None and controller.status in {
-        BakeStatus.PREFLIGHT,
-        BakeStatus.INITIALIZING,
-        BakeStatus.RUNNING,
-        BakeStatus.CANCELLING,
-    })
-
-
-def clear_active_bake(scene, controller: BakeController | None = None) -> None:
-    """Release bake ownership, optionally only for the expected controller."""
-    key = _scene_key(scene)
-    existing = _ACTIVE_BAKES.get(key)
-    if existing is None or (controller is not None and existing is not controller):
-        return
-    _ACTIVE_BAKES.pop(key, None)
-
-
 class ProductionBakeBackend:
     """Blender/session adapter for one-frame cache-v2 transactions."""
 
@@ -272,6 +226,8 @@ class ProductionBakeBackend:
         self.base_dir = Path()
         self.manifest: CacheManifestV2 | None = None
         self.signatures: dict[str, str] = {}
+        self.effect_signature = ""
+        self.effect_inventory: tuple[dict[str, object], ...] = ()
         self.sess = None
         self._original_frame = None
         self._original_live = False
@@ -323,6 +279,25 @@ class ProductionBakeBackend:
                 "SOLVER_VERSION_MISMATCH",
                 f"Cache solver {manifest.solver_version} is incompatible with {VERSION_STRING}",
             )
+        from .effects import effect_identity
+        try:
+            current_effect_signature, current_effect_inventory = effect_identity(scene)
+        except ValueError as exc:
+            return ResumeDecision(False, None, "EFFECT_STACK_NOT_APPLIED", str(exc))
+        if manifest.effect_signature != current_effect_signature:
+            return ResumeDecision(
+                False,
+                None,
+                "EFFECT_SIGNATURE_MISMATCH",
+                "Current applied Custom Effects do not match the cache effect identity",
+            )
+        if tuple(manifest.effect_inventory) != tuple(current_effect_inventory):
+            return ResumeDecision(
+                False,
+                None,
+                "EFFECT_SIGNATURE_MISMATCH",
+                "Current applied Custom Effects inventory does not match the cache",
+            )
         signatures = cache.signature_bundle(
             scene, self._bpy().context.evaluated_depsgraph_get()
         )
@@ -349,6 +324,7 @@ class ProductionBakeBackend:
                     expected_frame=frame,
                     expected_settings_signature=manifest.settings_signature,
                     expected_source_signature=manifest.source_signature,
+                    expected_effect_signature=manifest.effect_signature,
                 )
                 if checkpoint.frame != entry.solver_frame:
                     raise ValueError(
@@ -394,10 +370,14 @@ class ProductionBakeBackend:
             signatures = cache.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
             )
+            from .effects import effect_identity
+            original_effect_signature, original_effect_inventory = effect_identity(scene)
             self._original_session_payload = capture_solver(
                 self.sess.solver,
                 settings_signature=signatures["settings_signature"],
                 source_signature=signatures["source_signature"],
+                effect_signature=original_effect_signature,
+                effect_inventory=original_effect_inventory,
             )
             self._original_session_signatures = signatures
 
@@ -431,6 +411,8 @@ class ProductionBakeBackend:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         depsgraph = self._bpy().context.evaluated_depsgraph_get()
         self.signatures = cache.signature_bundle(scene, depsgraph)
+        from .effects import effect_identity
+        self.effect_signature, self.effect_inventory = effect_identity(scene)
 
         if resume:
             decision = self.resume_decision(scene)
@@ -439,6 +421,8 @@ class ProductionBakeBackend:
             self.manifest = load_manifest(manifest_path(self.base_dir))
             if self.manifest is None:
                 raise ValueError("cache-v2 manifest disappeared during resume")
+            if self.manifest.effect_signature != self.effect_signature:
+                raise ValueError("EFFECT_SIGNATURE_MISMATCH: cache effect identity changed")
         else:
             existing = load_manifest(manifest_path(self.base_dir))
             if existing is not None and not restart:
@@ -454,6 +438,8 @@ class ProductionBakeBackend:
                 frame_start=int(start),
                 frame_end=int(end),
                 checkpoint_interval=self.checkpoint_interval,
+                effect_signature=self.effect_signature,
+                effect_inventory=self.effect_inventory,
             )
             write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
 
@@ -472,6 +458,7 @@ class ProductionBakeBackend:
                         expected_frame=last,
                         expected_settings_signature=self.manifest.settings_signature,
                         expected_source_signature=self.manifest.source_signature,
+                        expected_effect_signature=self.manifest.effect_signature,
                     )
                     restore_solver(self.sess.solver, payload)
                 next_frame = (
@@ -522,12 +509,16 @@ class ProductionBakeBackend:
             scene_key_value=self.manifest.scene_key,
             settings_signature=self.manifest.settings_signature,
             source_signature=self.manifest.source_signature,
+            effect_signature=self.effect_signature,
+            effect_inventory=self.effect_inventory,
             compressed=self.compressed,
         )
         checkpoint = capture_solver(
             self.sess.solver,
             settings_signature=self.manifest.settings_signature,
             source_signature=self.manifest.source_signature,
+            effect_signature=self.effect_signature,
+            effect_inventory=self.effect_inventory,
         )
         if checkpoint.frame != frame:
             raise ValueError("captured checkpoint frame does not match frame output")

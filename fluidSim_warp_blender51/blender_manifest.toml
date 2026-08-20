@@ -2,13 +2,14 @@ schema_version = "1.0.0"
 
 id = "fluidsim_warp"
 name = "FluidSim Warp"
-version = "1.0.248"
+version = "1.0.252"
 tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
 maintainer = "FluidSim"
 type = "add-on"
 
-blender_version_min = "5.1.0"
+blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
+platforms = ["linux-x64"]
 tags = ["Physics"]
 
 [permissions]
@@ -26,12 +27,21 @@ paths_exclude_pattern = [
   "release/delivery_policy.py",
   "release/fetch_warp_wheels.py",
   "release/generate_examples.py",
+  "release/custom_effect_demo_runtime.py",
+  "release/generate_custom_effect_demos.py",
+  "release/validate_custom_effects_blender.py",
+  "release/validate_custom_effects_warp.py",
   "release/generate_geometry_nodes.py",
   "release/gpu_regression_blender.py",
   "release/smoke_test_blender.py",
   "release/validate_examples_blender.py",
   "release/validate_phase3_blender.py",
   "release/validate_phase3_warp.py",
+  "release/validate_phase4_blender.py",
+  "release/validate_phase4_warp.py",
+  "release/validate_phase5_blender.py",
+  "release/validate_phase5_warp.py",
+  "release/validate_properties_ui_blender.py",
   "release/wheels.lock.json",
   "demo_outputs/",
   "artifacts/",

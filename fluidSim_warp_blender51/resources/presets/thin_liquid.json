@@ -6,7 +6,7 @@
   "expected_scale": "1 Blender unit = 1 metre; fine streams across 0.5-6 metres",
   "performance_cost": "High",
   "requires_reset": true,
-  "source_version": "1.0.248",
+  "source_version": "1.0.250",
   "settings": {
     "voxel_size": 0.04,
     "leaf_capacity": 16384,
@@ -19,6 +19,7 @@
     "max_substeps": 8,
     "pressure_solver": "PCG",
     "viscosity_enabled": false,
+    "surface_tension_enabled": false,
     "particle_radius_scale": 0.95,
     "surface_resolution_mode": "MULTIPLIER",
     "surface_resolution_multiplier": 2.5,

@@ -28,6 +28,6 @@ The upstream Warp distribution carries its own complete license inventory, inclu
 
 `resources/geometry_nodes/fluidsim_render_nodes.blend` is generated from
 `release/generate_geometry_nodes.py` using the supplied Blender 5.2.0 LTS
-package. The node groups and generated resource are FluidSim project content
-covered by the project GPL-3.0-or-later license. The file contains no Blender,
+package. The six P4 node groups and generated resource are FluidSim project
+content covered by the project GPL-3.0-or-later license. The file contains no Blender,
 Warp, CUDA, wheel, or other third-party runtime binary payload.

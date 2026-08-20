@@ -32,12 +32,6 @@ def register(*names: str, strategy: str = "flat", notes: str = ""):
 
     def deco(fn):
         for n in names:
-            if n in KERNEL_REGISTRY:
-                previous = KERNEL_REGISTRY[n]
-                raise ValueError(
-                    f"FluidSim kernel identity {n!r} is already registered "
-                    f"by {previous.fn!r}"
-                )
             KERNEL_REGISTRY[n] = RegistryEntry(n, fn, strategy, notes)
             if n.startswith("fluidSim"):
                 SOURCE_ALIASES["paradigm" + n[len("fluidSim"):]] = n

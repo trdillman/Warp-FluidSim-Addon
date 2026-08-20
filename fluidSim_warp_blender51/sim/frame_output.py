@@ -95,13 +95,6 @@ class HostFrame:
             if isinstance(key, tuple) and key and key[0] == "surface_attributes":
                 self._values.pop(key, None)
 
-    def _live_count(self, owner_name):
-        key = (owner_name, "count")
-        return self._get(
-            key,
-            lambda: getattr(self.solver, owner_name).refresh_host_count(),
-        )
-
     def should_publish_surface(self, cadence):
         cadence = max(1, int(cadence))
         return self.frame <= 1 or cadence <= 1 or self.frame % cadence == 0
@@ -119,7 +112,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_positions()[::stride], dtype=np.float32)
-            n = self._live_count("particles")
+            n = self.solver.particles.refresh_host_count()
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -134,7 +127,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_velocities(), dtype=np.float32)
-            n = self._live_count("particles")
+            n = self.solver.particles.refresh_host_count()
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -177,7 +170,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.whitewater_positions(), dtype=np.float32)
-            n = self._live_count("whitewater")
+            n = self.solver.whitewater.refresh_host_count()
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -197,7 +190,7 @@ class HostFrame:
     def particle_attr(self, name):
         def load():
             try:
-                n = self._live_count("particles")
+                n = self.solver.particles.refresh_host_count()
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particles.attr(name).numpy()[:n])
@@ -208,7 +201,7 @@ class HostFrame:
     def whitewater_attr(self, name):
         def load():
             try:
-                n = self._live_count("whitewater")
+                n = self.solver.whitewater.refresh_host_count()
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     getattr(self.solver.whitewater, name).numpy()[:n])
@@ -256,6 +249,8 @@ class HostFrame:
             values = self.whitewater_attr("age")
         elif key == "lifetime":
             values = self.whitewater_attr("life")
+        elif key == "type":
+            values = self.whitewater_attr("type")
         else:
             raise ValueError(f"unsupported whitewater attribute {key!r}")
         return np.ascontiguousarray(values)
@@ -271,8 +266,6 @@ class HostFrame:
         """Return every enabled channel for one output with strict alignment."""
         output_kind = str(output_kind).lower()
         keys = enabled_attribute_keys(settings, output_kind)
-        if not keys:
-            return {}
         if output_kind == "particles":
             count = len(self.positions_strided(stride))
             values = {

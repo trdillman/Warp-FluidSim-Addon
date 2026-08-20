@@ -8,7 +8,18 @@ registration so installed extensions use only package-declared wheels.
 
 def register():
     from . import operators, panels, preferences, properties
-    from .blender import pending_settings, playback, render, sources, viewport_overlay
+    from .blender import (
+        effect_ui,
+        effect_workspace,
+        effects,
+        pending_settings,
+        playback,
+        render,
+        sources,
+        ui_object,
+        ui_scene,
+        viewport_overlay,
+    )
 
     # register()/unregister() must be idempotent in both directions: if a
     # later step raises, Blender's add-on enable path leaves everything
@@ -18,9 +29,14 @@ def register():
     # half-registered add-on it believes failed to enable.
     steps = (
         ("properties", properties.register, properties.unregister),
+        ("custom effects model", effects.register, effects.unregister),
         ("preferences", preferences.register, preferences.unregister),
         ("operators", operators.register, operators.unregister),
-        ("panels", panels.register, panels.unregister),
+        ("viewport launcher", panels.register, panels.unregister),
+        ("Scene Properties UI", ui_scene.register, ui_scene.unregister),
+        ("Object Properties UI", ui_object.register, ui_object.unregister),
+        ("custom effects UI", effect_ui.register, effect_ui.unregister),
+        ("Warp Code workspace", effect_workspace.register, effect_workspace.unregister),
         ("source migration handlers", sources.register_handlers,
          sources.unregister_handlers),
         ("playback handlers", playback.register_handlers,
@@ -48,7 +64,18 @@ def register():
 
 def unregister():
     from . import operators, panels, preferences, properties
-    from .blender import pending_settings, playback, render, sources, viewport_overlay
+    from .blender import (
+        effect_ui,
+        effect_workspace,
+        effects,
+        pending_settings,
+        playback,
+        render,
+        sources,
+        ui_object,
+        ui_scene,
+        viewport_overlay,
+    )
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a
@@ -60,9 +87,14 @@ def unregister():
         ("pending handlers", pending_settings.unregister_handlers),
         ("playback handlers", playback.unregister_handlers),
         ("source migration handlers", sources.unregister_handlers),
-        ("panels", panels.unregister),
+        ("Warp Code workspace", effect_workspace.unregister),
+        ("custom effects UI", effect_ui.unregister),
+        ("Object Properties UI", ui_object.unregister),
+        ("Scene Properties UI", ui_scene.unregister),
+        ("viewport launcher", panels.unregister),
         ("operators", operators.unregister),
         ("preferences", preferences.unregister),
+        ("custom effects model", effects.unregister),
         ("properties", properties.unregister),
     )
     for name, step in steps:

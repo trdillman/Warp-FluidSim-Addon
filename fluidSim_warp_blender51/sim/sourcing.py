@@ -3228,6 +3228,9 @@ class SourcePipeline:
             total = particles.refresh_host_count() if emitted else initial
             if emitted:
                 self.owner._host_frame_cache = None
+                surface = getattr(self.owner, "surface", None)
+                if surface is not None:
+                    surface.invalidate_particle_state()
             return InjectionResult(
                 True, emitted, demand, available, False, int(total))
         return InjectionResult(False, 0, demand, available, True, initial)

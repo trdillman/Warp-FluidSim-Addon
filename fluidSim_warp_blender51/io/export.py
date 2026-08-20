@@ -44,15 +44,8 @@ def export_surface_obj(solver, path: str, *, host=None) -> str:
 
 def export_points_ply(positions: np.ndarray, path: str,
                       velocities: np.ndarray | None = None) -> str:
-    positions = np.asarray(positions)
-    if positions.ndim != 2 or positions.shape[1] != 3:
-        raise ValueError("positions must have shape (N, 3)")
     n = len(positions)
-    has_vel = velocities is not None
-    if has_vel:
-        velocities = np.asarray(velocities)
-        if velocities.ndim != 2 or velocities.shape != positions.shape:
-            raise ValueError("velocities must match positions shape (N, 3)")
+    has_vel = velocities is not None and len(velocities) == n
     _require_existing_parent(path)
     with open(path, "wb") as fh:
         header = ["ply", "format binary_little_endian 1.0",

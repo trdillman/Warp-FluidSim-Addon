@@ -25,11 +25,13 @@ from ..sim.attributes import (
     ATTRIBUTE_SCHEMA_VERSION,
     ATTRIBUTE_SPECS,
     OUTPUT_ATTRIBUTE_KEYS,
+    SUPPORTED_ATTRIBUTE_SCHEMA_VERSIONS,
     SURFACE_TRANSFER_METHOD,
     cache_attribute_name,
     enabled_attribute_keys,
     validate_attribute_values,
 )
+from ..sim.whitewater_types import validate_type_values
 
 CACHE_FORMAT_VERSION = 1
 CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
@@ -49,13 +51,6 @@ _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
 # RNA property types with a stable value repr. POINTER/COLLECTION reprs embed
 # addresses and would change the key every session.
 _HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
-_SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
-    "source_status_severity",
-    "source_status_code",
-    "source_status_message",
-    "source_status_emitted",
-    "source_status_capacity_limited",
-})
 
 
 def _digest(h, value):
@@ -72,13 +67,9 @@ def _digest(h, value):
     h.update(b"|")
 
 
-def _digest_rna(h, group, *, ignored=frozenset()):
+def _digest_rna(h, group):
     for name, prop in sorted(group.bl_rna.properties.items()):
-        if (
-            name == "rna_type"
-            or name in ignored
-            or prop.type not in _HASHABLE_RNA_TYPES
-        ):
+        if name == "rna_type" or prop.type not in _HASHABLE_RNA_TYPES:
             continue
         value = getattr(group, name)
         h.update(f"{name}=".encode())
@@ -133,8 +124,6 @@ def source_signature(scene, depsgraph=None) -> str:
     sufficient to keep one-shot source identity stable across reopened files
     and to reject resume after materially changing sources/colliders/forces.
     """
-    from ..blender.scene_inputs import persistent_source_key
-
     h = hashlib.sha256()
     h.update(b"fluidsim-source-signature-v2|")
     for obj in sorted(scene.objects, key=lambda value: value.name_full):
@@ -142,10 +131,10 @@ def source_signature(scene, depsgraph=None) -> str:
         role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
         if role == "NONE":
             continue
-        identity = persistent_source_key(obj)
+        identity = str(obj.get("fluidsim_persistent_id", "") or obj.name_full)
         library = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
         h.update(f"{identity}|{obj.name_full}|{library}|{role}|".encode("utf-8"))
-        _digest_rna(h, group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA)
+        _digest_rna(h, group)
         _digest(h, tuple(tuple(float(component) for component in row)
                          for row in obj.matrix_world))
         evaluated = None
@@ -248,21 +237,9 @@ def settings_record(settings) -> dict:
 
 def compact_settings_segments(settings_records: dict) -> list[dict]:
     """Compact frame->record data into contiguous signature boundaries."""
-    # Metadata loaded from JSON has string keys, while records assembled during
-    # a bake use integer keys.  Normalize once before indexing; converting only
-    # in the ``sorted`` expression leaves string-keyed mappings inaccessible.
-    normalized = {}
-    for raw_frame, record in settings_records.items():
-        frame = int(raw_frame)
-        if frame in normalized:
-            raise ValueError(
-                f"Duplicate settings record for frame {frame} after key normalization"
-            )
-        normalized[frame] = record
-
     segments = []
-    for frame in sorted(normalized):
-        signature = normalized[frame]["signature"]
+    for frame in sorted(int(value) for value in settings_records):
+        signature = settings_records[frame]["signature"]
         if (segments and segments[-1]["signature"] == signature
                 and segments[-1]["frame_end"] + 1 == frame):
             segments[-1]["frame_end"] = frame
@@ -279,13 +256,29 @@ def _attribute_inventory(settings) -> dict[str, list[str]]:
     }
 
 
+_ATTRIBUTE_KEYS_BY_SCHEMA: dict[int, dict[str, tuple[str, ...]]] = {
+    # Phase 3 did not persist a whitewater type channel.  Keep its ordered
+    # inventory readable while requiring type for newly written Phase-4 data.
+    1: {
+        "surface": OUTPUT_ATTRIBUTE_KEYS["surface"],
+        "particles": OUTPUT_ATTRIBUTE_KEYS["particles"],
+        "whitewater": ("velocity", "speed", "age", "lifetime"),
+    },
+    ATTRIBUTE_SCHEMA_VERSION: OUTPUT_ATTRIBUTE_KEYS,
+}
+
+
 def _decode_attribute_inventory(frame_data: dict) -> dict[str, tuple[str, ...]] | None:
     if "attribute_schema_version" not in frame_data:
         return None
     version = int(np.asarray(frame_data["attribute_schema_version"]).item())
-    if version != ATTRIBUTE_SCHEMA_VERSION:
+    if version not in SUPPORTED_ATTRIBUTE_SCHEMA_VERSIONS:
+        supported = ", ".join(str(item) for item in SUPPORTED_ATTRIBUTE_SCHEMA_VERSIONS)
         raise ValueError(
-            f"unsupported attribute schema {version}; expected {ATTRIBUTE_SCHEMA_VERSION}")
+            f"unsupported attribute schema {version}; supported versions are {supported}")
+    schema_keys = _ATTRIBUTE_KEYS_BY_SCHEMA.get(version)
+    if schema_keys is None:
+        raise ValueError(f"attribute schema {version} has no inventory contract")
     raw = frame_data.get("attribute_inventory_json")
     if raw is None:
         raise ValueError("attribute payload is missing attribute_inventory_json")
@@ -293,7 +286,7 @@ def _decode_attribute_inventory(frame_data: dict) -> dict[str, tuple[str, ...]] 
         value = json.loads(str(np.asarray(raw).item()))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid attribute inventory: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != set(OUTPUT_ATTRIBUTE_KEYS):
+    if not isinstance(value, dict) or set(value) != set(schema_keys):
         raise ValueError("attribute inventory must contain surface, particles, and whitewater")
     result = {}
     for output_kind, keys in value.items():
@@ -301,14 +294,16 @@ def _decode_attribute_inventory(frame_data: dict) -> dict[str, tuple[str, ...]] 
             raise ValueError(f"{output_kind} attribute inventory must be a string list")
         if len(keys) != len(set(keys)):
             raise ValueError(f"{output_kind} attribute inventory contains duplicates")
-        unsupported = set(keys) - set(OUTPUT_ATTRIBUTE_KEYS[output_kind])
+        unsupported = set(keys) - set(schema_keys[output_kind])
         if unsupported:
             raise ValueError(
                 f"{output_kind} attribute inventory contains unsupported keys {sorted(unsupported)}")
-        ordered = tuple(key for key in OUTPUT_ATTRIBUTE_KEYS[output_kind] if key in keys)
+        ordered = tuple(key for key in schema_keys[output_kind] if key in keys)
         if tuple(keys) != ordered:
             raise ValueError(f"{output_kind} attribute inventory is not in schema order")
         result[output_kind] = ordered
+    if version >= 2 and "type" not in result["whitewater"]:
+        raise ValueError("Phase-4 whitewater inventory must include type")
     transfer = str(np.asarray(frame_data.get(
         "surface_attribute_transfer_method", "")).item())
     if transfer != SURFACE_TRANSFER_METHOD:
@@ -352,6 +347,11 @@ def validate_optional_attributes(
         uid = np.asarray(payload[cache_attribute_name("particles", "uid")], dtype=np.int32)
         if np.any(uid <= 0) or len(np.unique(uid)) != len(uid):
             raise ValueError("particle_uid must contain unique positive values")
+    if "type" in inventory["whitewater"]:
+        validate_type_values(
+            payload[cache_attribute_name("whitewater", "type")],
+            allow_unclassified=False,
+        )
     return inventory
 
 
@@ -392,6 +392,7 @@ def _frame_payload(solver, scene_key_value: str = ""):
         "whitewater_velocities": host.whitewater_attr("velocity"),
         "whitewater_age": host.whitewater_attr("age"),
         "whitewater_life": host.whitewater_attr("life"),
+        "whitewater_type": host.whitewater_attr("type"),
         "whitewater_required": np.array(
             int(getattr(getattr(solver, "stats", None), "whitewater_required", 0)),
             dtype=np.int32),
@@ -451,7 +452,13 @@ def authoritative_payload_counts(frame_data: dict) -> dict:
     before that specific write.
     """
     counts = {}
-    for group, names in AUTHORITATIVE_PAYLOAD_FIELDS.items():
+    schema_version = None
+    if "attribute_schema_version" in frame_data:
+        schema_version = int(np.asarray(frame_data["attribute_schema_version"]).item())
+    for group, base_names in AUTHORITATIVE_PAYLOAD_FIELDS.items():
+        names = base_names
+        if group == "whitewater" and schema_version is not None and schema_version >= 2:
+            names = (*base_names, "whitewater_type")
         missing = [name for name in names if name not in frame_data]
         if missing:
             raise ValueError(f"{group} payload is missing fields {missing}")
@@ -596,11 +603,6 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict):
-        # Valid JSON can still be corrupt sequence metadata.  Treat it like a
-        # truncated/unparseable supplemental cache rather than leaking an
-        # AttributeError from the playback handler.
-        return None
     if data.get("format_version") != CACHE_FORMAT_VERSION:
         raise ValueError(
             f"Unsupported cache metadata format_version "
@@ -686,7 +688,8 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
 def write_frame_v2_atomic(
         base_dir: str | os.PathLike[str], solver, frame: int, *,
         scene_key_value: str, settings_signature: str,
-        source_signature: str, compressed: bool = False) -> tuple[Path, str, int]:
+        source_signature: str, effect_signature: str = "",
+        effect_inventory=(), compressed: bool = False) -> tuple[Path, str, int]:
     """Write a strict cache-v2 frame before its manifest transaction commits."""
     frame = int(frame)
     payload = _frame_payload(solver, scene_key_value)
@@ -697,6 +700,10 @@ def write_frame_v2_atomic(
         "simulation_time": np.array(float(solver.sim_time), dtype=np.float64),
         "settings_signature": np.array(str(settings_signature)),
         "source_signature": np.array(str(source_signature)),
+        "effect_signature": np.array(str(effect_signature)),
+        "effect_inventory_json": np.array(json.dumps(
+            [dict(item) for item in effect_inventory],
+            sort_keys=True, separators=(",", ":"), allow_nan=False)),
     })
     authoritative_payload_counts(payload)
     if int(solver.frame) != frame:
@@ -746,6 +753,22 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
             raise ValueError(f"cache-v2 frame {frame} settings-signature mismatch")
         if str(np.asarray(data["source_signature"]).item()) != manifest.source_signature:
             raise ValueError(f"cache-v2 frame {frame} source-signature mismatch")
+        frame_effect_signature = (
+            str(np.asarray(data["effect_signature"]).item())
+            if "effect_signature" in data.files else ""
+        )
+        if frame_effect_signature != manifest.effect_signature:
+            raise ValueError(f"cache-v2 frame {frame} effect-signature mismatch")
+        try:
+            frame_effect_inventory = (
+                json.loads(str(np.asarray(data["effect_inventory_json"]).item()))
+                if "effect_inventory_json" in data.files else []
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"cache-v2 frame {frame} effect inventory is invalid: {exc}") from exc
+        if frame_effect_inventory != [dict(item) for item in manifest.effect_inventory]:
+            raise ValueError(f"cache-v2 frame {frame} effect-inventory mismatch")
         result = {name: data[name] for name in data.files}
     authoritative_payload_counts(result)
     validate_optional_attributes(result)

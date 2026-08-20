@@ -1,0 +1,100 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Creates a controllable spherical impulse field around an owned Empty. Positive strength pushes outward; negative strength pulls inward, with a smooth linear falloff to the radius.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.radial_pulse",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Applies a bounded radial acceleration around the controller origin.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "radial_pulse",
+      "label": "Apply Pulse",
+      "parameter_keys": [
+        "controller",
+        "strength",
+        "radius"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "offset = position - controller\ndistance = wp.length(offset)\nif distance > 1.0e-6 and distance < radius:\n    influence = wp.clamp(1.0 - distance / radius, 0.0, 1.0)\n    direction = offset / distance\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction * (strength * influence * solver_time_step)",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Radial Pulse",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": false,
+      "default": "",
+      "description": "Scene object whose origin places the pulse center.",
+      "enum_items": [],
+      "key": "controller",
+      "kind": "OBJECT",
+      "label": "Controller",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "OBJECT"
+    },
+    {
+      "animatable": true,
+      "default": 6.0,
+      "description": "Outward or inward radial acceleration.",
+      "enum_items": [],
+      "key": "strength",
+      "kind": "FLOAT",
+      "label": "Strength",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2"
+    },
+    {
+      "animatable": true,
+      "default": 2.5,
+      "description": "Maximum pulse influence distance.",
+      "enum_items": [],
+      "key": "radius",
+      "kind": "FLOAT",
+      "label": "Radius",
+      "maximum": 1000.0,
+      "minimum": 0.001,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Push or pull liquid radially from a controller with a finite radius.",
+  "tags": [
+    "burst",
+    "controller",
+    "force"
+  ],
+  "version": "1.0.0"
+}

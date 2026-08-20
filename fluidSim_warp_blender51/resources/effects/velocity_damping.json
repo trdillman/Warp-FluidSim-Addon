@@ -1,0 +1,66 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Utilities",
+  "cost_hint": "LOW",
+  "description": "Applies stable per-substep velocity damping to the current liquid particle. Use it to settle motion, tame injected energy, or create a localized viscous-looking art direction layer.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.velocity_damping",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Scales each current particle velocity by a bounded timestep-aware factor.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "velocity_damping",
+      "label": "Damp Velocity",
+      "parameter_keys": [
+        "damping"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "factor = wp.clamp(1.0 - damping * solver_time_step, 0.0, 1.0)\nparticle_velocity[particle_index] = particle_velocity[particle_index] * factor",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Velocity Damping",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": true,
+      "default": 1.0,
+      "description": "Fractional velocity reduction rate.",
+      "enum_items": [],
+      "key": "damping",
+      "kind": "FLOAT",
+      "label": "Damping",
+      "maximum": 1000.0,
+      "minimum": 0.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/s"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Reduce particle velocity smoothly without changing solver topology.",
+  "tags": [
+    "damping",
+    "stability",
+    "utility"
+  ],
+  "version": "1.0.0"
+}

@@ -94,6 +94,7 @@ def build_report(
     cache_path: str = "",
     scene_signature: str = "",
     settings_signature: str = "",
+    effect_state: dict | None = None,
 ) -> dict:
     """Build a privacy-safe report for users, CI, and support triage."""
     runtime = probe_runtime()
@@ -142,6 +143,8 @@ def build_report(
         # Compatibility field retained for existing report consumers.
         "warp": runtime.warp_version or "unavailable",
     }
+    if effect_state is not None:
+        report["custom_effects"] = effect_state
     if profiler is not None:
         report["compute"] = profiler.compute_profile()
         report["timers_average"] = profiler.summary()

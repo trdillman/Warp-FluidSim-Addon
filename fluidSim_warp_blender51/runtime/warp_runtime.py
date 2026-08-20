@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-import re
 from typing import Any
 
-CERTIFIED_WARP_VERSION = "1.16.0"
-MINIMUM_WARP_VERSION = (1, 12, 1)
-MAXIMUM_WARP_VERSION_EXCLUSIVE = (1, 17, 0)
+EXPECTED_WARP_VERSION = "1.16.0"
 _UNAVAILABLE_DEVICE_ID = "__unavailable__"
 
 
@@ -60,15 +57,6 @@ def _version_of(module: Any) -> str:
     return str(getattr(config, "version", "unknown"))
 
 
-def _compatible_version(version: str) -> bool:
-    """Return whether *version* is inside the runtime ABI range we exercise."""
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[+.-].*)?$", version)
-    if match is None:
-        return False
-    parsed = tuple(int(part) for part in match.groups())
-    return MINIMUM_WARP_VERSION <= parsed < MAXIMUM_WARP_VERSION_EXCLUSIVE
-
-
 def _device_record(device: Any) -> DeviceRecord:
     alias = str(getattr(device, "alias", "") or device)
     name = str(getattr(device, "name", alias))
@@ -96,13 +84,12 @@ def _cached_probe() -> RuntimeProbe:
         )
         driver = _safe_int_call(wp, "get_cuda_driver_version")
         toolkit = _safe_int_call(wp, "get_cuda_toolkit_version")
-        if not _compatible_version(version):
+        if version != EXPECTED_WARP_VERSION:
             return RuntimeProbe(
                 available=False,
                 message=(
-                    "FluidSim supports external Warp 1.12.1 through 1.16.x, "
-                    f"but loaded {version}. Install a compatible runtime in "
-                    "Blender's Python environment."
+                    f"FluidSim requires external Warp {EXPECTED_WARP_VERSION}, "
+                    f"but loaded {version}. Install the certified Warp runtime in Blender's Python environment."
                 ),
                 warp_version=version,
                 module_file=module_file,
@@ -125,10 +112,7 @@ def _cached_probe() -> RuntimeProbe:
             )
         return RuntimeProbe(
             available=True,
-            message=(
-                f"Detected {len(devices)} CUDA device(s); Warp "
-                f"{CERTIFIED_WARP_VERSION} is the certified release runtime."
-            ),
+            message=f"Detected {len(devices)} CUDA device(s).",
             warp_version=version,
             module_file=module_file,
             cuda_driver_version=driver,

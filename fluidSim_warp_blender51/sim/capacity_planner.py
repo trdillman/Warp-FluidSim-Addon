@@ -16,7 +16,10 @@ from typing import Any, Iterable, Mapping, Optional
 
 import numpy as np
 
+from . import constants as C
 from .memory_safety import estimate_solver_bytes, safe_memory_budget
+from .surface_tension_math import (
+    required_sdf_splat_radius_voxels, required_topology_expand_leaves)
 from .quality_contract import resolve_quality
 
 
@@ -103,6 +106,16 @@ def _settings_dict(settings: Any) -> dict[str, Any]:
         "particles_per_voxel": 8.0,
         "topology_expand": 1,
         "max_whitewater": 0,
+        "particle_radius_scale": 1.2,
+        "surface_splat_radius": 2,
+        "surface_filter_iterations": 0,
+        "surface_dilate_iterations": 0,
+        "surface_erode_iterations": 0,
+        "surface_smooth_iterations": 0,
+        "surface_tension_enabled": False,
+        "surface_tension_coefficient": 0.072,
+        "surface_tension_band_voxels": 1.5,
+        "surface_tension_smoothing_iterations": 1,
         "surface_enabled": True,
         "surface_resolution_mode": 0,
         "surface_resolution_multiplier": 1.0,
@@ -215,21 +228,40 @@ def _seed_leaf_coords(settings: Any, payloads: Iterable[Any]) -> set[tuple[int, 
         if points is None:
             continue
         leaves = np.floor((points.astype(np.float64) - lo) / h / 8.0).astype(np.int64)
-        valid = np.all(
-            (leaves >= 0) & (leaves < np.asarray(dims, dtype=np.int64)),
-            axis=1,
-        )
-        if not np.any(valid):
-            continue
-        flat = np.unique(np.ravel_multi_index(leaves[valid].T, dims))
-        result.update(zip(*(axis.tolist()
-                            for axis in np.unravel_index(flat, dims))))
+        for coord in leaves:
+            item = tuple(int(axis) for axis in coord)
+            if all(0 <= item[i] < dims[i] for i in range(3)):
+                result.add(item)
     return result
+
+
+def _effective_topology_expand(settings: Any) -> int:
+    authored = max(0, int(_value(settings, "topology_expand", 0)))
+    if (not bool(_value(settings, "surface_tension_enabled", False))
+            or float(_value(settings, "surface_tension_coefficient", 0.0)) <= 0.0):
+        return authored
+    sdf_filter_iterations = sum(max(0, int(_value(settings, name, 0))) for name in (
+        "surface_filter_iterations",
+        "surface_dilate_iterations",
+        "surface_erode_iterations",
+        "surface_smooth_iterations",
+    ))
+    splat_radius = max(
+        int(_value(settings, "surface_splat_radius", 2)),
+        required_sdf_splat_radius_voxels(
+            0.5 * float(_value(settings, "particle_radius_scale", 1.2)),
+            float(_value(settings, "surface_tension_band_voxels", 1.5)),
+            int(_value(settings, "surface_tension_smoothing_iterations", 1)),
+            sdf_filter_iterations,
+        ),
+    )
+    capillary = required_topology_expand_leaves(splat_radius, C.LEAF_DIM)
+    return max(authored, capillary)
 
 
 def _expanded_leaf_coords(settings: Any, coords: Iterable[tuple[int, int, int]]) -> tuple[tuple[int, int, int], ...]:
     dims = _leaf_dims(settings)
-    radius = max(0, int(_value(settings, "topology_expand", 0)))
+    radius = _effective_topology_expand(settings)
     expanded: set[tuple[int, int, int]] = set()
     for coord in coords:
         for dz in range(-radius, radius + 1):

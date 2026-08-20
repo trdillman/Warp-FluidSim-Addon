@@ -199,20 +199,10 @@ def resolve_source_sampling(
                     else SourceSamplingMode(str(raw_mode).upper()))
         except ValueError:
             mode = SourceSamplingMode.LEGACY_ABSOLUTE
-        multiplier = _value(source_sampling, "multiplier", 1.0)
-        legacy = _value(source_sampling, "legacy_absolute", 8.0)
+        multiplier = float(_value(source_sampling, "multiplier", 1.0))
+        legacy = float(_value(source_sampling, "legacy_absolute", 8.0))
 
     diagnostics: list[str] = []
-    try:
-        multiplier = float(multiplier)
-    except (TypeError, ValueError):
-        diagnostics.append("invalid sampling multiplier; using 1x")
-        multiplier = 1.0
-    try:
-        legacy = float(legacy)
-    except (TypeError, ValueError):
-        diagnostics.append("invalid legacy source sampling; using zero")
-        legacy = 0.0
     if mode is SourceSamplingMode.INHERIT:
         value = resolved_quality.liquid_sampling
     elif mode is SourceSamplingMode.MULTIPLIER:

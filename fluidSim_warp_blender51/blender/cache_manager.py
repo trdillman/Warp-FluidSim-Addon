@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -34,10 +35,62 @@ class CacheInspection:
     orphan_files: tuple[str, ...]
     compatible: bool
     message: str
+    effect_signature: str = ""
+    effect_inventory: tuple[dict[str, object], ...] = ()
 
     @property
     def healthy(self) -> bool:
         return not (self.missing_files or self.corrupt_files)
+
+
+def is_managed_cache_directory(path: Path | str) -> bool:
+    """Return whether ``path`` contains only recognizable FluidSim cache state.
+
+    A manifest/legacy metadata file is authoritative.  The limited partial
+    patterns cover a first-frame transaction interrupted before manifest
+    commit without treating an arbitrary existing directory as a cache.
+    """
+    base = Path(path).expanduser().resolve()
+    if not base.is_dir():
+        return False
+    if (base / "fluidsim_cache.json").is_file() or (base / "fluidsim_sequence.json").is_file():
+        return True
+    if any(base.glob("fluidsim_*.npz")):
+        return True
+    patterns = (
+        ("frames", "frame_*.npz"),
+        ("frames", "frame_*.tmp"),
+        ("frames", "frame_*.tmp.npz"),
+        ("checkpoints", "checkpoint_*.npz"),
+        ("checkpoints", "checkpoint_*.tmp"),
+    )
+    for directory, pattern in patterns:
+        root = base / directory
+        if root.is_dir() and any(root.glob(pattern)):
+            return True
+    return False
+
+
+def _require_managed_cache_directory(path: Path | str) -> Path:
+    base = Path(path).expanduser().resolve()
+    if not is_managed_cache_directory(base):
+        raise ValueError(f"not a recognized FluidSim cache directory: {base}")
+    return base
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_snapshot(path: Path) -> dict[str, tuple[int, str]]:
+    result: dict[str, tuple[int, str]] = {}
+    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+        result[item.relative_to(path).as_posix()] = (item.stat().st_size, _sha256_file(item))
+    return result
 
 
 def _disk_size(path: Path) -> int:
@@ -129,6 +182,8 @@ def inspect_cache(path: Path | str) -> CacheInspection:
                 if compatible else
                 "Cache v2 failed integrity verification"
             ),
+            effect_signature=manifest.effect_signature,
+            effect_inventory=tuple(dict(item) for item in manifest.effect_inventory),
         )
 
     legacy_metadata = path / "fluidsim_sequence.json"
@@ -170,9 +225,10 @@ def remove_orphans(path: Path | str) -> tuple[str, ...]:
 
 def free_cache(path: Path | str) -> Path | None:
     """Rename on the same volume before deletion; return retained trash on failure."""
-    path = Path(path).resolve()
+    path = Path(path).expanduser().resolve()
     if not path.exists():
         return None
+    path = _require_managed_cache_directory(path)
     trash = path.with_name(f".{path.name}.fluidsim-trash-{uuid.uuid4().hex}")
     os.replace(path, trash)
     try:
@@ -198,14 +254,18 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
             destination,
             load_manifest(manifest_path(destination)),  # type: ignore[arg-type]
         )
+    elif source_inspection.format_version == 0:
+        if _file_snapshot(source) != _file_snapshot(destination):
+            raise RuntimeError("copied partial cache failed byte-for-byte verification")
 
 
 def move_cache(source: Path | str, destination: Path | str) -> Path:
     """Copy, verify, atomically publish, then remove the source."""
-    source = Path(source).resolve()
-    destination = Path(destination).resolve()
+    source = Path(source).expanduser().resolve()
+    destination = Path(destination).expanduser().resolve()
     if not source.is_dir():
         raise FileNotFoundError(f"cache source does not exist: {source}")
+    source = _require_managed_cache_directory(source)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +293,7 @@ def validate_leaf_name(name: str) -> str:
 
 
 def rename_cache(path: Path | str, name: str) -> Path:
-    path = Path(path).resolve()
+    path = _require_managed_cache_directory(path)
     name = validate_leaf_name(name)
     destination = path.with_name(name)
     if destination.exists():

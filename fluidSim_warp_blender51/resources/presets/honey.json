@@ -6,7 +6,7 @@
   "expected_scale": "1 Blender unit = 0.1-1 metre; short pours and close shots",
   "performance_cost": "Very High",
   "requires_reset": true,
-  "source_version": "1.0.248",
+  "source_version": "1.0.250",
   "settings": {
     "voxel_size": 0.04,
     "leaf_capacity": 12288,
@@ -23,7 +23,8 @@
     "viscosity_solver": "PCG",
     "viscosity_constant": 40.0,
     "viscosity_iterations": 400,
-    "viscosity_tolerance": 0.00001,
+    "viscosity_tolerance": 1e-05,
+    "surface_tension_enabled": false,
     "particle_radius_scale": 1.35,
     "surface_resolution_mode": "MULTIPLIER",
     "surface_resolution_multiplier": 1.5,

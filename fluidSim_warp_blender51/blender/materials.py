@@ -7,6 +7,9 @@ import bpy
 LIQUID_MATERIAL = "FluidSim Liquid"
 PARTICLE_MATERIAL = "FluidSim Particles"
 WHITEWATER_MATERIAL = "FluidSim Whitewater"
+FOAM_MATERIAL = "FluidSim Foam"
+BUBBLE_MATERIAL = "FluidSim Bubbles"
+SPRAY_MATERIAL = "FluidSim Spray"
 SURFACE_ATTR_MATERIAL = "FluidSim Surface Attribute"
 PARTICLE_ATTR_MATERIAL = "FluidSim Particle Attribute"
 WHITEWATER_ATTR_MATERIAL = "FluidSim Whitewater Attribute"
@@ -91,7 +94,25 @@ def _new_whitewater_material():
         if "Emission Strength" in bsdf.inputs:
             bsdf.inputs["Emission Strength"].default_value = 0.05
     mat.diffuse_color = (1.0, 1.0, 1.0, 1.0)
-    mat["fluidsim_material_revision"] = "p3-v1"
+    mat["fluidsim_material_revision"] = "p4-v1"
+    return mat
+
+
+def _new_typed_whitewater_material(name, color, *, roughness, emission=0.0):
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = color
+        if "Roughness" in bsdf.inputs:
+            bsdf.inputs["Roughness"].default_value = float(roughness)
+        if "Emission Color" in bsdf.inputs:
+            bsdf.inputs["Emission Color"].default_value = color
+        if "Emission Strength" in bsdf.inputs:
+            bsdf.inputs["Emission Strength"].default_value = float(emission)
+    mat.diffuse_color = color
+    mat["fluidsim_material_revision"] = "p4-v1"
     return mat
 
 
@@ -183,3 +204,35 @@ def ensure_whitewater_material(scene, obj):
             mat = bpy.data.materials.get(WHITEWATER_MATERIAL) or _new_whitewater_material()
     _assign_material(obj, mat)
     return mat
+
+
+def _ensure_typed_whitewater_material(scene, obj, pointer_name, default_name,
+                                      fallback_color, roughness, emission=0.0):
+    fs = scene.fluidsim
+    mat = getattr(fs, pointer_name, None)
+    if mat is None:
+        mat = bpy.data.materials.get(default_name)
+    if mat is None:
+        mat = _new_typed_whitewater_material(
+            default_name, fallback_color, roughness=roughness,
+            emission=emission)
+    _assign_material(obj, mat)
+    return mat
+
+
+def ensure_foam_material(scene, obj):
+    return _ensure_typed_whitewater_material(
+        scene, obj, "foam_material", FOAM_MATERIAL,
+        (0.98, 0.99, 1.0, 1.0), 0.75, 0.03)
+
+
+def ensure_bubble_material(scene, obj):
+    return _ensure_typed_whitewater_material(
+        scene, obj, "bubble_material", BUBBLE_MATERIAL,
+        (0.70, 0.88, 1.0, 1.0), 0.25, 0.01)
+
+
+def ensure_spray_material(scene, obj):
+    return _ensure_typed_whitewater_material(
+        scene, obj, "spray_material", SPRAY_MATERIAL,
+        (1.0, 1.0, 1.0, 1.0), 0.45, 0.08)

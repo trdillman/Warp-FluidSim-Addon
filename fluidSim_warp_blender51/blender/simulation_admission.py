@@ -109,6 +109,7 @@ class AdmissionSnapshot:
     height_source: object
     seeds: tuple
     snippets: tuple
+    effects: tuple
     footprints: tuple
     collider_footprints: tuple
     resources: object
@@ -184,7 +185,7 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
 def capture_snapshot(
         scene, settings, resources, *, depsgraph=None, scene_identity=None,
         scene_key="", snippet_builder=lambda _scene: (),
-        additional_transaction_bytes=0):
+        effect_builder=lambda _scene: (), additional_transaction_bytes=0):
     """Gather and compile one evaluated scene exactly once.
 
     The compiler is always released.  The returned SceneInputs owner is either
@@ -218,6 +219,7 @@ def capture_snapshot(
         height_source = inputs.gather_height_source(scene, depsgraph)
         seeds = tuple(sources.prepare_auto_seeds(scene, depsgraph))
         snippets = tuple(snippet_builder(scene))
+        effects = tuple(effect_builder(scene))
         # Register staged mesh descriptor bindings so every failure path can
         # break those references deterministically.
         inputs.materialize_device_meshes(descriptors, colliders, "cpu")
@@ -293,6 +295,7 @@ def capture_snapshot(
             height_source=height_source,
             seeds=seeds,
             snippets=snippets,
+            effects=effects,
             footprints=tuple(footprints),
             collider_footprints=collider_footprints,
             resources=resources,
@@ -337,11 +340,12 @@ def discard_prepared_solver(solver):
 class SimulationAdmission:
     """Deep admission owner used by one Solver Session."""
 
-    def __init__(self, session, *, scene_identity, snippet_builder,
+    def __init__(self, session, *, scene_identity, snippet_builder, effect_builder,
                  applied_state_capture, reset_settings_apply):
         self.session = session
         self._scene_identity = scene_identity
         self._snippet_builder = snippet_builder
+        self._effect_builder = effect_builder
         self._capture_applied_state = applied_state_capture
         self._apply_reset_settings = reset_settings_apply
 
@@ -355,6 +359,7 @@ class SimulationAdmission:
             scene_identity=self._scene_identity(scene),
             scene_key=cache.scene_key(scene),
             snippet_builder=self._snippet_builder,
+            effect_builder=self._effect_builder,
             additional_transaction_bytes=additional_transaction_bytes,
         )
 
@@ -477,17 +482,10 @@ class SimulationAdmission:
                     "then retry. This estimate is not an OOM guarantee.")
 
             resources = vram_snapshot(settings.device)
-            from ..sim.capacity_service import refresh_resources
-            from ..sim.capacity_planner import CapacityPlan
-            if isinstance(snapshot.capacity_plan, CapacityPlan):
-                snapshot.resources = resources
-                snapshot.capacity_plan = refresh_resources(
-                    snapshot.capacity_plan, settings, resources)
-            else:
-                snapshot = self._replan_snapshot(
-                    snapshot, settings, resources, scene=scene,
-                    depsgraph=depsgraph,
-                    additional_transaction_bytes=live_solver_bytes)
+            snapshot = self._replan_snapshot(
+                snapshot, settings, resources, scene=scene,
+                depsgraph=depsgraph,
+                additional_transaction_bytes=live_solver_bytes)
             snapshot.settings = settings
             if not hasattr(snapshot, "frame_start"):
                 snapshot.frame_start = int(getattr(scene, "frame_start", 1))
@@ -548,7 +546,7 @@ class SimulationAdmission:
 
         return FluidSolver(snapshot.settings, profiler=profiler)
 
-    def _configure_candidate(self, candidate, snapshot):
+    def _configure_candidate(self, candidate, snapshot, scene):
         inputs = snapshot.scene_inputs
         inputs.materialize_device_meshes(
             snapshot.descriptors, snapshot.colliders,
@@ -560,7 +558,39 @@ class SimulationAdmission:
         candidate.set_colliders(snapshot.colliders)
         candidate.set_force_fields(snapshot.force_fields)
         candidate.set_height_source(snapshot.height_source)
-        return candidate.set_custom_snippets(snapshot.snippets)
+
+        enabled_legacy = tuple(
+            item for item in snapshot.snippets if bool(getattr(item, "enabled", True)))
+        enabled_effects = tuple(
+            item for item in snapshot.effects
+            if bool(getattr(item, "enabled", True)) and not bool(getattr(item, "muted", False)))
+        if enabled_legacy and enabled_effects:
+            raise RuntimeError(
+                "LEGACY_EFFECT_STACK_CONFLICT: legacy Custom Warp Snippets and "
+                "Custom Effects cannot execute together. Open Custom Effects and "
+                "migrate legacy snippets before initialization.")
+
+        legacy_errors = candidate.set_custom_snippets(snapshot.snippets)
+        if legacy_errors:
+            rendered = "; ".join(f"{name}: {error}" for name, error in legacy_errors)
+            raise RuntimeError(
+                "Legacy Custom Warp Snippet validation failed closed: " + rendered)
+
+        from ..sim.effects.compiler import build_candidate_effects
+        from .effects import trust_store_for_scene
+
+        effect_candidate = build_candidate_effects(
+            snapshot.effects,
+            device=snapshot.configured_device,
+            trust_store=trust_store_for_scene(scene),
+        )
+        if not effect_candidate.success:
+            issue = effect_candidate.issues[0] if effect_candidate.issues else None
+            message = issue.message if issue is not None else "effect candidate validation failed"
+            raise RuntimeError(f"Custom Effects admission failed closed: {message}")
+        if not candidate.set_custom_effect_candidate(effect_candidate):
+            raise RuntimeError("Custom Effects candidate could not be installed atomically")
+        return ()
 
     def _prepare_solver_replacement(self, scene, settings, snapshot, profiler):
         from . import sources
@@ -568,7 +598,7 @@ class SimulationAdmission:
         candidate = None
         try:
             candidate = self._allocate_solver(snapshot, profiler)
-            errors = self._configure_candidate(candidate, snapshot)
+            errors = self._configure_candidate(candidate, snapshot, scene)
             sources.commit_prepared_seeds(
                 SimpleNamespace(solver=candidate), snapshot.seeds)
             result = getattr(

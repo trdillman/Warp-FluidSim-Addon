@@ -13,7 +13,8 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
-ATTRIBUTE_SCHEMA_VERSION = 1
+ATTRIBUTE_SCHEMA_VERSION = 2
+SUPPORTED_ATTRIBUTE_SCHEMA_VERSIONS = (1, ATTRIBUTE_SCHEMA_VERSION)
 SURFACE_TRANSFER_METHOD = "nearest_liquid_particle_v1"
 
 
@@ -66,6 +67,8 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     # world-units-per-second velocity channel above.
     "motion": AttributeSpec(
         "motion", "velocity", "FLOAT_VECTOR", "POINT", 3, True, False),
+    "type": AttributeSpec(
+        "type", "fluidsim_whitewater_type", "INT", "POINT", 1, True, True),
 }
 
 # Old experimental names accepted on read and removed/replaced on publication.
@@ -90,8 +93,15 @@ OUTPUT_ATTRIBUTE_KEYS: dict[str, tuple[str, ...]] = {
         "source_id", "uid", "viscosity", "density",
     ),
     "whitewater": (
-        "velocity", "speed", "age", "lifetime",
+        "velocity", "speed", "age", "lifetime", "type",
     ),
+}
+
+# Whitewater type is simulation state rather than an optional render channel.
+# It is always cached/published for newly written Phase-4 frames even if every
+# other whitewater attribute is disabled.
+MANDATORY_OUTPUT_ATTRIBUTE_KEYS: dict[str, tuple[str, ...]] = {
+    "whitewater": ("type",),
 }
 
 OUTPUT_TOGGLE_NAMES: dict[str, dict[str, str]] = {
@@ -124,6 +134,7 @@ CACHE_ATTRIBUTE_NAMES: dict[str, dict[str, str]] = {
         "speed": "whitewater_speed",
         "age": "whitewater_age",
         "lifetime": "whitewater_life",
+        "type": "whitewater_type",
     },
 }
 
@@ -146,9 +157,10 @@ def enabled_attribute_keys(settings, output_kind: str) -> tuple[str, ...]:
     if output_kind not in OUTPUT_ATTRIBUTE_KEYS:
         raise ValueError(f"unknown output kind {output_kind!r}")
     toggles = OUTPUT_TOGGLE_NAMES[output_kind]
+    mandatory = frozenset(MANDATORY_OUTPUT_ATTRIBUTE_KEYS.get(output_kind, ()))
     return tuple(
         key for key in OUTPUT_ATTRIBUTE_KEYS[output_kind]
-        if bool(getattr(settings, toggles[key], False))
+        if key in mandatory or bool(getattr(settings, toggles[key], False))
     )
 
 

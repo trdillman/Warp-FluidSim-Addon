@@ -81,6 +81,14 @@ WHITEWATER_ATTR_ITEMS = (
     ("SPEED", "Speed", "Color by whitewater velocity magnitude"),
     ("AGE", "Age", "Color by whitewater age"),
     ("LIFE", "Life", "Color by whitewater life span"),
+    ("TYPE", "Type", "Color by persistent foam, bubble, and spray type"),
+)
+
+
+WHITEWATER_OUTPUT_ITEMS = (
+    ("COMBINED", "Combined", "Publish one fast whitewater point pool with a type attribute"),
+    ("SEPARATE", "Separate", "Publish independently materialized foam, bubble, and spray outputs"),
+    ("BOTH", "Combined + Separate", "Publish the combined preview pool and all three typed outputs"),
 )
 
 
@@ -161,6 +169,20 @@ def _request_sync(self, context):
     from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.SYNC)
+
+
+def _update_field_region_kind(self, context):
+    """Keep field payload controls reachable for the selected coverage mode."""
+    if self.field_region_kind != "VOLUME_GRID" and self.field_value_source != "CONSTANT":
+        self.field_value_source = "CONSTANT"
+    _request_sync(self, context)
+
+
+def _update_field_value_source(self, context):
+    """Volume payloads require volume-grid coverage and its mapping panel."""
+    if self.field_value_source == "VOLUME_GRID" and self.field_region_kind != "VOLUME_GRID":
+        self.field_region_kind = "VOLUME_GRID"
+    _request_sync(self, context)
 
 
 def _request_particle_capacity(self, context):
@@ -525,13 +547,13 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Field Region", items=[
             ("ANALYTIC", "Analytic Region", "Use this object's analytic region"),
             ("VOLUME_GRID", "Volume Grid", "Use named values from a Blender Volume"),
-        ], default="ANALYTIC", update=_request_sync,
+        ], default="ANALYTIC", update=_update_field_region_kind,
         description="Choose whether the field source uses this object's analytic shape or a Volume grid; changing it replaces the region controls")
     field_value_source: EnumProperty(
         name="Payload Source", items=[
             ("CONSTANT", "Constant", "Use the constant value below"),
             ("VOLUME_GRID", "Volume Grid", "Sample the named scalar or vector grid"),
-        ], default="CONSTANT", update=_request_sync,
+        ], default="CONSTANT", update=_update_field_value_source,
         description="Choose a fixed value or values sampled from a Volume grid; changing it switches which payload controls are used")
     field_scalar_value: FloatProperty(
         name="Field Value", default=1.0, update=_request_sync,
@@ -773,8 +795,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     domain_sdf_walls: BoolProperty(
         name="Domain Collision Walls", default=True,
         update=_request_reset,
-        description="Compatibility value for older files; closed domains "
-                    "always project collision walls into solver settings")
+        description="Build collision SDF walls around the domain bounds "
+                     "(recommended for closed domains; without this the "
+                     "pressure solve treats sparse-grid padding beyond the "
+                     "domain box as open space)")
 
     # -- Particles -------------------------------------------------------------
     max_particles: IntProperty(
@@ -995,6 +1019,31 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Set the viscosity residual required for early convergence; lower values demand a tighter solve and may take longer, while higher values stop sooner")
 
+    # -- Surface tension -----------------------------------------------------------
+    surface_tension_enabled: BoolProperty(
+        name="Enable Surface Tension", default=False, update=_request_reset,
+        description="Enable continuum-surface-force capillarity from the liquid SDF; changing allocation state resets the solver")
+    surface_tension_coefficient: FloatProperty(
+        name="Coefficient", default=0.072, min=0.0, soft_max=1.0,
+        precision=5, update=_request_live,
+        description="Set surface-tension coefficient in newtons per metre; water near room temperature is approximately 0.072 N/m, higher values form tighter droplets, and zero applies no force")
+    surface_tension_density: FloatProperty(
+        name="Liquid Density", default=1000.0, min=1.0e-6,
+        soft_min=1.0, soft_max=5000.0, update=_request_live,
+        description="Set liquid density in kilograms per cubic metre for capillary acceleration and timestep stability; higher density reduces surface-tension acceleration")
+    surface_tension_band_voxels: FloatProperty(
+        name="Force Band", default=1.5, min=0.5, max=8.0,
+        update=_request_live,
+        description="Set the half-width of the compact surface-force band in simulation voxels; wider bands are smoother but spread the force over more cells")
+    surface_tension_safety: FloatProperty(
+        name="Timestep Safety", default=0.5, min=0.05, max=1.0,
+        update=_request_live,
+        description="Scale the explicit capillary timestep limit; lower values request more conservative substeps and higher values reduce cost with less margin")
+    surface_tension_smoothing_iterations: IntProperty(
+        name="Normal Smoothing", default=1, min=0, max=8,
+        update=_request_live,
+        description="Set normalized 7-point smoothing passes for SDF normals; more passes reduce curvature noise but soften small capillary features")
+
     # -- Surface -------------------------------------------------------------------
     surface_enabled: BoolProperty(
         name="Generate Surface", default=True,
@@ -1114,6 +1163,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     ww_emission_rate: FloatProperty(
         name="Emission Rate", default=2.0, min=0.0, update=_request_live,
         description="Scale whitewater particles spawned from eligible liquid; higher values produce denser bubbles and spray at greater cost, while zero emits none")
+    ww_surface_band: FloatProperty(
+        name="Emission Surface Band", default=2.0, min=0.05, soft_max=8.0,
+        update=_request_live,
+        description="Set the liquid-SDF emission band in voxels; higher values admit candidates farther from the interface")
     ww_min_speed: FloatProperty(
         name="Min Speed", default=0.5, min=0.0, update=_request_live,
         description="Set the minimum liquid speed eligible for whitewater emission; higher values restrict emission to faster motion, while lower values include calmer flow")
@@ -1123,12 +1176,55 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     ww_life_max: FloatProperty(
         name="Life Max", default=3.0, min=0.0, update=_request_live,
         description="Set the longest whitewater lifetime in seconds; higher values allow some particles to persist longer and increase occupancy")
+    ww_foam_band: FloatProperty(
+        name="Foam Band", default=1.0, min=0.05, soft_max=8.0,
+        update=_request_live,
+        description="Set the near-surface foam band in voxels; deeper particles classify as bubbles and sufficiently elevated fast particles classify as spray")
+    ww_spray_min_speed: FloatProperty(
+        name="Spray Speed", default=0.5, min=0.0, update=_request_live,
+        description="Set the minimum speed required to enter spray above the foam band")
+    ww_type_hysteresis: FloatProperty(
+        name="Type Hysteresis", default=0.25, min=0.0, max=0.95,
+        update=_request_live,
+        description="Separate foam/bubble/spray enter and exit thresholds to prevent rapid type flicker")
+    ww_foam_advection: FloatProperty(
+        name="Foam Fluid Advection", default=1.0, min=0.0, max=1.0,
+        update=_request_live,
+        description="Blend foam velocity toward the surrounding liquid each substep; one follows the liquid fully")
+    ww_foam_preservation: FloatProperty(
+        name="Foam Preservation", default=0.0, min=0.0, max=1.0,
+        update=_request_live,
+        description="Slow foam aging in dense whitewater regions when density influence is enabled")
+    ww_foam_density_influence: FloatProperty(
+        name="Foam Density Influence", default=0.0, min=0.0, soft_max=1.0,
+        update=_request_live,
+        description="Scale how strongly local whitewater density contributes to foam preservation")
+    ww_foam_life_multiplier: FloatProperty(
+        name="Foam Life", default=1.0, min=0.01, soft_max=5.0,
+        update=_request_live,
+        description="Multiply base lifetime while particles are classified as foam")
     ww_bubble_drag: FloatProperty(
         name="Bubble Drag", default=4.0, min=0.0, update=_request_live,
         description="Set how quickly bubbles follow surrounding liquid velocity; higher values couple bubbles more strongly, while zero lets them retain their own motion")
+    ww_bubble_buoyancy: FloatProperty(
+        name="Bubble Buoyancy", default=1.0, min=0.0, soft_max=4.0,
+        update=_request_live,
+        description="Scale acceleration opposite gravity for particles classified as bubbles")
+    ww_bubble_life_multiplier: FloatProperty(
+        name="Bubble Life", default=1.0, min=0.01, soft_max=5.0,
+        update=_request_live,
+        description="Multiply base lifetime while particles are classified as bubbles")
     ww_spray_drag: FloatProperty(
         name="Spray Drag", default=0.2, min=0.0, update=_request_live,
         description="Set aerodynamic damping on spray velocity; higher values slow spray more quickly, while zero preserves ballistic motion")
+    ww_spray_gravity_scale: FloatProperty(
+        name="Spray Gravity", default=1.0, min=0.0, soft_max=4.0,
+        update=_request_live,
+        description="Scale scene gravity for particles classified as spray")
+    ww_spray_life_multiplier: FloatProperty(
+        name="Spray Life", default=1.0, min=0.01, soft_max=5.0,
+        update=_request_live,
+        description="Multiply base lifetime while particles are classified as spray")
 
     # -- Height source ------------------------------------------------------------
     height_enabled: BoolProperty(
@@ -1208,6 +1304,13 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Color whitewater particles by a simulation attribute",
     )
+    whitewater_output_mode: EnumProperty(
+        name="Whitewater Outputs",
+        items=WHITEWATER_OUTPUT_ITEMS,
+        default="COMBINED",
+        update=_request_output_refresh,
+        description="Choose the fast combined pool, separate typed outputs, or both",
+    )
     # -- Production render attributes -------------------------------------------
     # Inventory changes are reset-tier because color/source/UID channels are
     # allocated only when selected and cache signatures include every toggle.
@@ -1285,6 +1388,9 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     whitewater_attribute_lifetime: BoolProperty(
         name="Lifetime", default=True, update=_request_reset,
         description="Publish whitewater lifetime")
+    whitewater_attribute_type: BoolProperty(
+        name="Type", default=True, options={"HIDDEN"},
+        description="Persistent foam, bubble, and spray type; always published")
 
     whitewater_display_scale: FloatProperty(
         name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
@@ -1302,6 +1408,18 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Whitewater Material", type=bpy.types.Material,
         update=_request_output_refresh,
         description="Select the material used for whitewater display; changing it updates bubble and spray output")
+    foam_material: PointerProperty(
+        name="Foam Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate foam output")
+    bubble_material: PointerProperty(
+        name="Bubble Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate bubble output")
+    spray_material: PointerProperty(
+        name="Spray Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate spray output")
     output_collection_name: StringProperty(
         name="Output Collection", default="FluidSim Output",
         update=_request_output_refresh,
@@ -1359,7 +1477,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Cache Format",
         items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
         default="V2",
-        description="Choose the authoritative production-cache schema",
     )
     bake_start: IntProperty(
         name="Bake Start", default=1, min=-1048574, max=1048574,
@@ -1371,7 +1488,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     )
     checkpoint_interval: IntProperty(
         name="Checkpoint Interval", default=1, min=1, max=100,
-        description="Set checkpoint cadence; cache v2 currently commits one restart checkpoint per frame",
+        description="Checkpoint cadence; current cache-v2 production guarantees commit one restart checkpoint per frame",
     )
     bake_status: EnumProperty(
         name="Bake Status",
@@ -1381,16 +1498,13 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         )),
         default="IDLE",
         options={"SKIP_SAVE"},
-        description="Show the current transactional production-bake state",
     )
     bake_progress: FloatProperty(
         name="Bake Progress", default=0.0, min=0.0, max=1.0,
         subtype="FACTOR", options={"SKIP_SAVE"},
-        description="Display the fraction of the requested production-bake range committed",
     )
     bake_message: StringProperty(
         name="Bake Message", default="", options={"SKIP_SAVE"},
-        description="Show the latest production-bake status or actionable failure message",
     )
 
     # -- Diagnostics ---------------------------------------------------------------
@@ -1451,6 +1565,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     stat_particles: IntProperty(default=0)
     stat_voxels: IntProperty(default=0)
     stat_whitewater: IntProperty(default=0)
+    stat_whitewater_foam: IntProperty(default=0)
+    stat_whitewater_bubbles: IntProperty(default=0)
+    stat_whitewater_spray: IntProperty(default=0)
+    stat_whitewater_invalid_types: IntProperty(default=0)
     stat_whitewater_required: IntProperty(default=0)
     stat_whitewater_admitted: IntProperty(default=0)
     stat_whitewater_dropped: IntProperty(default=0)
@@ -1459,6 +1577,17 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     stat_step_ms: FloatProperty(default=0.0)
     stat_substeps: IntProperty(default=0)
     stat_cfl_clamped: BoolProperty(default=False)
+    stat_capillary_dt: FloatProperty(default=0.0)
+    stat_capillary_substeps_required: IntProperty(default=1)
+    stat_capillary_clamped: BoolProperty(default=False)
+    stat_substep_limiter: StringProperty(default="MINIMUM")
+    stat_surface_tension_active_voxels: IntProperty(default=0)
+    stat_surface_tension_max_curvature: FloatProperty(default=0.0)
+    stat_surface_tension_max_acceleration: FloatProperty(default=0.0)
+    stat_surface_tension_temporary_bytes: IntProperty(default=0)
+    stat_surface_tension_submission_ms: FloatProperty(default=0.0)
+    stat_surface_tension_status: StringProperty(default="DISABLED")
+    stat_surface_tension_message: StringProperty(default="")
 
 
 CLASSES = (

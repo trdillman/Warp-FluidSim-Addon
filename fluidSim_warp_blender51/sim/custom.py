@@ -142,29 +142,6 @@ def _collect_assigned_names(tree: ast.AST):
     return names
 
 
-def _first_assignment_positions(tree: ast.AST):
-    """Return the source position after the first binding of each local."""
-    positions = {}
-    for node in ast.walk(tree):
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For)):
-            targets = [node.target]
-        names = set()
-        for target in targets:
-            _add_target_names(target, names)
-        if not names:
-            continue
-        position = (
-            getattr(node, "end_lineno", node.lineno),
-            getattr(node, "end_col_offset", node.col_offset),
-        )
-        for name in names:
-            positions[name] = min(positions.get(name, position), position)
-    return positions
-
-
 def _suggest(name: str, candidates):
     close = difflib.get_close_matches(name, candidates, n=1, cutoff=0.6)
     return f" (did you mean '{close[0]}'?)" if close else ""
@@ -193,7 +170,6 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
 
     allowed = context_names(run_over) | set(arg_names)
     assigned = _collect_assigned_names(tree)
-    first_assignments = _first_assignment_positions(tree)
     known_all = sorted(allowed | set(KNOWN_FIELDS))
 
     for node in ast.walk(tree):
@@ -215,10 +191,7 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
                         f"attribute access '.{node.attr}' is only allowed on "
                         f"wp.* and C.*"))
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if (node.id not in allowed
-                    and (node.id not in assigned
-                         or (node.lineno, node.col_offset)
-                         < first_assignments[node.id])):
+            if node.id not in allowed and node.id not in assigned:
                 extra = ""
                 if node.id in KNOWN_FIELDS:
                     extra = (" - it is a known solver field; declare it as a "
@@ -227,16 +200,6 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
                     extra = _suggest(node.id, known_all)
                 issues.append(Issue(
                     "ERROR", node.lineno, f"unknown name '{node.id}'{extra}"))
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            name = node.target.id
-            position = (
-                getattr(node, "end_lineno", node.lineno),
-                getattr(node, "end_col_offset", node.col_offset),
-            )
-            if name not in allowed and first_assignments.get(name) == position:
-                issues.append(Issue(
-                    "ERROR", node.lineno,
-                    f"unknown name '{name}' before augmented assignment"))
         elif isinstance(node, ast.Call) and node.keywords:
             issues.append(Issue(
                 "WARNING", node.lineno,
@@ -1095,3 +1058,133 @@ class SnippetManager:
 
     def has_any(self):
         return any(self._by_order.values())
+
+
+# ---------------------------------------------------------------------------
+# Custom Effects v2 compatibility conversion
+# ---------------------------------------------------------------------------
+
+
+def legacy_snippet_to_effect(snippet: CustomSnippet, *, instance_id: str | None = None):
+    """Wrap a legacy one-kernel snippet as a strict Custom Effects v2 instance.
+
+    Source, constants, field bindings, frame window, enable state, and legacy
+    execution semantics are preserved.  ``VOXEL_TILE`` never had distinct tile
+    scheduling in the Warp port, so it migrates to ``ACTIVE_VOXELS`` with an
+    explicit warning rather than retaining a misleading public mode.
+    """
+    from .effects.enums import (
+        EffectCadence,
+        EffectDomain,
+        EffectStage,
+        FieldAccess,
+        ParameterKind,
+    )
+    from .effects.fields import FIELD_SPECS
+    from .effects.schema import (
+        EffectDefinitionV2,
+        EffectInstanceV2,
+        FieldBindingV2,
+        KernelDefinitionV2,
+        ParameterDefinitionV2,
+    )
+
+    warnings = []
+    domain = (
+        EffectDomain.PARTICLES
+        if snippet.run_over == CustomKernelRunOver.PARTICLES
+        else EffectDomain.ACTIVE_VOXELS
+    )
+    if snippet.run_over == CustomKernelRunOver.VOXEL_TILE:
+        warnings.append(
+            "Legacy VOXEL_TILE used the same flat active-voxel launch as "
+            "VOXEL_LINEAR and was migrated to ACTIVE_VOXELS."
+        )
+    stage_map = {
+        CustomKernelOrder.FIRST_STEP: EffectStage.BEFORE_EMISSION,
+        CustomKernelOrder.BEFORE_SOURCING: EffectStage.BEFORE_EMISSION,
+        CustomKernelOrder.BEFORE_FORCES: EffectStage.AFTER_PARTICLE_TRANSFER,
+        CustomKernelOrder.BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION: EffectStage.BEFORE_PRESSURE,
+        CustomKernelOrder.FINAL_STEP: EffectStage.AFTER_PARTICLE_UPDATE,
+    }
+    fields = []
+    parameters = []
+    values = {}
+    for argument in snippet.arguments:
+        if argument.mode == CustomKernelArgumentMode.FIELD:
+            spec = FIELD_SPECS.get(argument.field)
+            read_only = bool(spec and (
+                spec.structural
+                or spec.allowed_access == frozenset({FieldAccess.READ})
+            ))
+            fields.append(FieldBindingV2(
+                argument.field,
+                FieldAccess.READ if read_only else FieldAccess.READ_WRITE_CURRENT,
+            ))
+        else:
+            kind = (
+                ParameterKind.FLOAT
+                if argument.constant_type == CustomKernelConstantType.FLOAT
+                else ParameterKind.INT
+            )
+            value = (
+                float(argument.constant_value)
+                if kind is ParameterKind.FLOAT
+                else int(round(argument.constant_value))
+            )
+            parameters.append(ParameterDefinitionV2(
+                argument.constant_name,
+                argument.constant_name.replace("_", " ").title(),
+                kind,
+                value,
+                description="Migrated legacy constant.",
+            ))
+            values[argument.constant_name] = value
+
+    slug = re.sub(r"[^a-z0-9]+", "-", snippet.kernel_name.lower()).strip("-") or "effect"
+    digest = hashlib.sha256((snippet.code + repr(snippet.arguments)).encode("utf-8")).hexdigest()[:10]
+    effect_id = f"legacy.{slug}-{digest}"
+    kernel_id = re.sub(r"[^A-Za-z0-9_]+", "_", snippet.kernel_name).strip("_") or "legacy_kernel"
+    if kernel_id[0].isdigit():
+        kernel_id = "legacy_" + kernel_id
+    definition = EffectDefinitionV2(
+        effect_id=effect_id,
+        version="1.0.0",
+        name=snippet.kernel_name or "Legacy Custom Effect",
+        summary="Migrated legacy FluidSim Warp snippet.",
+        description=(
+            "This effect was migrated without rewriting its source. Review and "
+            "trust the exact content before enabling it."
+        ),
+        category="Legacy",
+        author="Scene author",
+        license="User supplied",
+        parameters=tuple(parameters),
+        kernels=(KernelDefinitionV2(
+            kernel_id=kernel_id,
+            label=snippet.kernel_name or "Legacy Kernel",
+            domain=domain,
+            stage=stage_map[snippet.order],
+            cadence=EffectCadence.EVERY_SUBSTEP,
+            source=snippet.code or "pass",
+            fields=tuple(fields),
+            parameter_keys=tuple(parameter.key for parameter in parameters),
+            safe_mode=False,
+        ),),
+        built_in=False,
+        package_origin="legacy-scene-snippet",
+        cost_hint="UNKNOWN",
+    )
+    instance = EffectInstanceV2(
+        instance_id=instance_id or f"legacy-{digest}",
+        definition=definition,
+        enabled=bool(snippet.enabled),
+        parameter_values=values,
+        frame_start=int(snippet.frame_start),
+        frame_end=int(snippet.frame_end),
+        frame_step=max(1, int(snippet.frame_step)),
+        safe_mode=False,
+        expert_acknowledged=True,
+        display_name=snippet.kernel_name,
+    )
+    return instance, tuple(warnings)

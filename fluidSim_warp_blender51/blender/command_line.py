@@ -27,6 +27,7 @@ EXIT_SCENE_INVALID = 13
 EXIT_RESUME_INCOMPATIBLE = 14
 EXIT_BAKE_FAILURE = 15
 EXIT_CANCELLED = 16
+EXIT_CUSTOM_CODE_POLICY = 17
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class CliOptions:
     checkpoint_interval: int
     save_after_bake: bool
     report_json: Path | None
+    custom_code_policy: str = "builtins-only"
 
 
 def _absolute_path(value: str) -> Path:
@@ -65,6 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-interval", type=int, default=1)
     parser.add_argument("--save-after-bake", action="store_true")
     parser.add_argument("--report-json", type=_absolute_path)
+    parser.add_argument(
+        "--custom-code-policy",
+        choices=("deny", "builtins-only", "trusted"),
+        default="builtins-only",
+        help="Policy for executable Custom Effects in background mode",
+    )
     return parser
 
 
@@ -85,6 +93,7 @@ def parse_args(argv: list[str]) -> CliOptions:
         checkpoint_interval=int(args.checkpoint_interval),
         save_after_bake=bool(args.save_after_bake),
         report_json=args.report_json,
+        custom_code_policy=str(args.custom_code_policy),
     )
 
 
@@ -183,6 +192,20 @@ def run(options: CliOptions) -> int:
     try:
         import bpy
 
+        from .effects import scene_effect_instances, trust_store_for_scene
+        from ..sim.effects.policy import evaluate_custom_code_policy
+        scene = _select_scene(bpy, options.scene)
+        policy_decision = evaluate_custom_code_policy(
+            scene_effect_instances(scene),
+            options.custom_code_policy,
+            trust_store_for_scene(scene),
+        )
+        report["custom_code"] = asdict(policy_decision)
+        if not policy_decision.allowed:
+            code = EXIT_CUSTOM_CODE_POLICY
+            report["message"] = f"{policy_decision.code}: {policy_decision.message}"
+            return code
+
         from ..runtime.warp_runtime import EXPECTED_WARP_VERSION, probe_runtime
         from .production_bake import (
             BakeController,
@@ -224,7 +247,6 @@ def run(options: CliOptions) -> int:
             return code
         report["runtime"]["selected_device"] = selected_device
 
-        scene = _select_scene(bpy, options.scene)
         valid, message = _scene_validation(scene)
         if not valid:
             code = EXIT_SCENE_INVALID
@@ -244,10 +266,13 @@ def run(options: CliOptions) -> int:
             report["message"] = f"Bake end {end} is before start {start}"
             return code
 
-        # Bind the alias through the sole preferences-registry owner.
-        from ..preferences import set_configured_device
-
-        set_configured_device(selected_device)
+        # Bind the selected alias to the installed extension preferences where
+        # possible; the solver settings bridge reads this same preference.
+        try:
+            prefs = bpy.context.preferences.addons[__package__.split(".blender")[0]].preferences
+            prefs.device = selected_device
+        except (KeyError, AttributeError, TypeError):
+            pass
 
         backend = ProductionBakeBackend(
             checkpoint_interval=options.checkpoint_interval,

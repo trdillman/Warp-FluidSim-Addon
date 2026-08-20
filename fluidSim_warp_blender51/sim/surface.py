@@ -17,6 +17,8 @@ wp.set_module_options({"enable_backward": False})
 
 from . import constants as C
 from .quality_contract import AuthoredQualitySettings, resolve_quality
+from .surface_tension_math import (
+    normal_support_voxels, required_sdf_splat_radius_voxels)
 from .fields import (
     leaf_linear_index,
     leaf_coord_of_voxel,
@@ -156,9 +158,36 @@ class SurfacePipeline:
     def build_sdf(self, grid, sdf, tmp, nvox, positions, voxel_size):
         solver, s = self.solver, self.solver.settings
         h, nvox = float(voxel_size), max(1, int(nvox))
-        wp.launch(k_surface_sdf_reset, dim=nvox, inputs=[sdf.data, grid.num_leaves, 4.0 * h], device=solver.device)
         radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
         splat = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
+        far_distance = 4.0 * h
+        if (grid is solver.grid
+                and bool(getattr(s, "surface_tension_enabled", False))
+                and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0):
+            band_voxels = float(getattr(s, "surface_tension_band_voxels", 1.5))
+            smoothing = int(getattr(
+                s, "surface_tension_smoothing_iterations", 1))
+            sdf_filter_iterations = sum(max(0, int(value)) for value in (
+                s.surface_filter_iterations,
+                s.surface_dilate_iterations,
+                s.surface_erode_iterations,
+                s.surface_smooth_iterations,
+            ))
+            support_voxels = (
+                normal_support_voxels(band_voxels, smoothing)
+                + sdf_filter_iterations
+            )
+            far_distance = max(far_distance, (support_voxels + 1.0) * h)
+            splat = max(
+                splat,
+                required_sdf_splat_radius_voxels(
+                    radius / h, band_voxels, smoothing,
+                    sdf_filter_iterations),
+            )
+        wp.launch(
+            k_surface_sdf_reset, dim=nvox,
+            inputs=[sdf.data, grid.num_leaves, far_distance],
+            device=solver.device)
         wp.launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
                   grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat], outputs=[sdf.data], device=solver.device)
         def apply(kernel, iterations, strength):
@@ -199,6 +228,17 @@ class SurfacePipeline:
             int(s.surface_smooth_type), int(s.surface_smooth_iterations),
             round(float(s.surface_smooth_strength), 6),
         )
+
+    def invalidate_solver_sdf(self):
+        """Mark the simulation SDF stale after particle positions change."""
+        self.solver_sdf_key = None
+
+    def invalidate_particle_state(self):
+        """Invalidate every surface product after an out-of-step particle edit."""
+
+        self.built_key = None
+        self.solver_sdf_key = None
+        self.invalidate()
 
     def ensure_solver_sdf_current(self):
         """Build the simulation-grid SDF independently of render surfacing.

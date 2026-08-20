@@ -56,10 +56,7 @@ def growth_target(
     current = max(1, int(current))
     required = max(0, int(required))
     granularity = max(1, int(granularity))
-    factor = float(factor)
-    if not math.isfinite(factor):
-        raise ValueError("particle growth factor must be finite")
-    raw = max(required, int(math.ceil(current * max(1.0, factor))))
+    raw = max(required, int(math.ceil(current * max(1.0, float(factor)))))
     rounded = int(math.ceil(raw / granularity) * granularity)
     return min(max(rounded, current), max(current, int(hard_limit)))
 

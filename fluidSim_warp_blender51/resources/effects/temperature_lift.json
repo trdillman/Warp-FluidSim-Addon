@@ -1,0 +1,148 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Thermal",
+  "cost_hint": "MEDIUM",
+  "description": "A two-kernel effect: the first applies lift after particle-to-grid transfer; the second cools temperature after particle update. It demonstrates one artist effect spanning two solver stages.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.temperature_lift",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Converts excess particle temperature into directional acceleration.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ",
+          "field": "particle_temperature"
+        },
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "temperature_lift",
+      "label": "Apply Thermal Lift",
+      "parameter_keys": [
+        "direction",
+        "ambient",
+        "buoyancy"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "direction_length = wp.length(direction)\nif direction_length > 1.0e-6:\n    direction_n = direction / direction_length\n    excess = particle_temperature[particle_index] - ambient\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction_n * (excess * buoyancy * solver_time_step)",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    },
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Returns particle temperature toward ambient after advection.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_temperature"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "temperature_cooling",
+      "label": "Cool Particle Temperature",
+      "parameter_keys": [
+        "ambient",
+        "cooling"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "factor = wp.clamp(1.0 - cooling * solver_time_step, 0.0, 1.0)\nparticle_temperature[particle_index] = ambient + (particle_temperature[particle_index] - ambient) * factor",
+      "stage": "AFTER_PARTICLE_UPDATE"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Temperature Lift",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": true,
+      "default": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "description": "World-space lift direction.",
+      "enum_items": [],
+      "key": "direction",
+      "kind": "VECTOR",
+      "label": "Lift Direction",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "DIRECTION"
+    },
+    {
+      "animatable": true,
+      "default": 0.0,
+      "description": "Temperature with zero lift.",
+      "enum_items": [],
+      "key": "ambient",
+      "kind": "FLOAT",
+      "label": "Ambient",
+      "maximum": 10000.0,
+      "minimum": -10000.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "TEMPERATURE"
+    },
+    {
+      "animatable": true,
+      "default": 0.5,
+      "description": "Acceleration per temperature unit above ambient.",
+      "enum_items": [],
+      "key": "buoyancy",
+      "kind": "FLOAT",
+      "label": "Buoyancy",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2/K"
+    },
+    {
+      "animatable": true,
+      "default": 0.25,
+      "description": "Rate at which temperature returns to ambient.",
+      "enum_items": [],
+      "key": "cooling",
+      "kind": "FLOAT",
+      "label": "Cooling",
+      "maximum": 1000.0,
+      "minimum": 0.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/s"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Convert particle temperature into buoyant lift and cool it after advection.",
+  "tags": [
+    "buoyancy",
+    "multi-stage",
+    "temperature"
+  ],
+  "version": "1.0.0"
+}

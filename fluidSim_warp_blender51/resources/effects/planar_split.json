@@ -1,0 +1,121 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Uses a controller origin and world-space normal to push particles away from a plane. The finite width makes the effect easy to art-direct without global scene impact.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.planar_split",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Pushes current particles to opposing sides of the configured plane.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "planar_split",
+      "label": "Apply Split",
+      "parameter_keys": [
+        "controller",
+        "normal",
+        "strength",
+        "width"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "normal_length = wp.length(normal)\nif normal_length > 1.0e-6:\n    normal_n = normal / normal_length\n    signed_distance = wp.dot(position - controller, normal_n)\n    absolute_distance = wp.abs(signed_distance)\n    if absolute_distance < width:\n        side = 1.0\n        if signed_distance < 0.0:\n            side = -1.0\n        influence = wp.clamp(1.0 - absolute_distance / width, 0.0, 1.0)\n        particle_velocity[particle_index] = particle_velocity[particle_index] + normal_n * (side * strength * influence * solver_time_step)",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Planar Split",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": false,
+      "default": "",
+      "description": "Scene object whose origin places the split plane.",
+      "enum_items": [],
+      "key": "controller",
+      "kind": "OBJECT",
+      "label": "Controller",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "OBJECT"
+    },
+    {
+      "animatable": true,
+      "default": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "description": "World-space normal of the split plane.",
+      "enum_items": [],
+      "key": "normal",
+      "kind": "VECTOR",
+      "label": "Plane Normal",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "DIRECTION"
+    },
+    {
+      "animatable": true,
+      "default": 3.0,
+      "description": "Acceleration away from the plane.",
+      "enum_items": [],
+      "key": "strength",
+      "kind": "FLOAT",
+      "label": "Strength",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2"
+    },
+    {
+      "animatable": true,
+      "default": 1.0,
+      "description": "Half-width of the plane influence band.",
+      "enum_items": [],
+      "key": "width",
+      "kind": "FLOAT",
+      "label": "Width",
+      "maximum": 1000.0,
+      "minimum": 0.001,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Separate liquid to opposite sides of an artist-positioned plane.",
+  "tags": [
+    "controller",
+    "plane",
+    "separation"
+  ],
+  "version": "1.0.0"
+}

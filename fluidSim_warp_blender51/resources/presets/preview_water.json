@@ -6,7 +6,7 @@
   "expected_scale": "1 Blender unit = 1 metre; domains roughly 1-12 metres",
   "performance_cost": "Low",
   "requires_reset": true,
-  "source_version": "1.0.248",
+  "source_version": "1.0.250",
   "settings": {
     "voxel_size": 0.12,
     "leaf_capacity": 4096,
@@ -19,6 +19,7 @@
     "pressure_solver": "PCG",
     "pressure_iterations": 120,
     "pressure_tolerance": 0.0001,
+    "surface_tension_enabled": false,
     "surface_enabled": true,
     "surface_resolution_mode": "SIMULATION",
     "surface_smooth_iterations": 1,

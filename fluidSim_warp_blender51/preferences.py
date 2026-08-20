@@ -23,10 +23,9 @@ def _device_items(_self, _context):
     return _DEVICE_ITEMS_CACHE
 
 
-def _preferences(context=None):
-    context = bpy.context if context is None else context
+def _preferences():
     try:
-        return context.preferences.addons[__package__].preferences
+        return bpy.context.preferences.addons[__package__].preferences
     except (KeyError, AttributeError):
         return None
 
@@ -40,15 +39,6 @@ def configured_device() -> str:
     if selected in aliases:
         return selected
     return aliases[0] if aliases else ""
-
-
-def set_configured_device(device: str) -> bool:
-    """Store one selected CUDA alias through the sole preferences owner."""
-    prefs = _preferences()
-    if prefs is None:
-        return False
-    prefs.device = str(device)
-    return True
 
 
 def _apply_developer_override(prefs) -> None:
@@ -66,7 +56,7 @@ def _refresh_runtime(prefs):
     _apply_developer_override(prefs)
     probe = probe_runtime(force=True)
     aliases = tuple(device.alias for device in probe.cuda_devices)
-    if prefs is not None and aliases and getattr(prefs, "device", "") not in aliases:
+    if aliases and getattr(prefs, "device", "") not in aliases:
         prefs.device = aliases[0]
     selected = configured_device()
     return probe, runtime_status_for_device(selected, probe=probe)
@@ -80,7 +70,7 @@ class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        prefs = _preferences(context)
+        prefs = context.preferences.addons[__package__].preferences
         _probe, (ready, message) = _refresh_runtime(prefs)
         self.report({"INFO" if ready else "WARNING"}, message)
         return {"FINISHED"}
@@ -94,7 +84,7 @@ class FLUIDSIM_OT_redetect_device(bpy.types.Operator):
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        prefs = _preferences(context)
+        prefs = context.preferences.addons[__package__].preferences
         _probe, (ready, message) = _refresh_runtime(prefs)
         self.report({"INFO" if ready else "WARNING"}, message)
         return {"FINISHED"}
@@ -128,25 +118,25 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "device")
-        layout.prop(self, "verbose")
+        box = layout.box()
+        box.label(text="Runtime", icon="GPU")
+        box.prop(self, "device")
 
         probe = probe_runtime()
         selected = configured_device()
         ready, message = runtime_status_for_device(selected, probe=probe)
-        row = layout.row(align=True)
+        row = box.row(align=True)
         row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
         row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+        if probe.module_file:
+            box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
+        box.label(text="FluidSim uses an external Warp runtime; Blender and Warp are not bundled.")
 
         if os.environ.get("FLUIDSIM_ALLOW_EXTERNAL_WARP") == "1":
-            box = layout.box()
-            box.label(text="Trusted developer override", icon="CONSOLE")
-            box.prop(self, "developer_warp_path")
-            box.label(text="FluidSim never bundles Warp; this override selects a trusted external runtime.")
-
-        layout.label(
-            text="External Warp 1.12.1-1.16.x is supported (1.16.0 certified); NVIDIA CUDA is required."
-        )
+            developer = layout.box()
+            developer.label(text="Developer Runtime Override", icon="CONSOLE")
+            developer.prop(self, "developer_warp_path")
+            developer.label(text="Trusted local-development override; normal releases ignore this path.")
 
 
 CLASSES = (

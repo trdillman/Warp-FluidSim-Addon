@@ -1,0 +1,117 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Applies a smooth trigonometric curl-style velocity perturbation. The effect is deterministic for a given seed, position, time, and stack order and requires no topology rebuild.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.curl_turbulence",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Adds deterministic spatially varying motion without changing particle positions directly.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "curl_turbulence",
+      "label": "Apply Turbulence",
+      "parameter_keys": [
+        "strength",
+        "frequency",
+        "drift",
+        "seed"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "sample = position * frequency + wp.vec3(seed, seed * 1.37, seed * 2.11)\nphase = time * drift\nnoise = wp.vec3(\n    wp.sin(sample[1] + phase) - wp.sin(sample[2] - phase),\n    wp.sin(sample[2] + phase * 1.17) - wp.sin(sample[0] - phase),\n    wp.sin(sample[0] + phase * 0.73) - wp.sin(sample[1] - phase * 1.31),\n)\nparticle_velocity[particle_index] = particle_velocity[particle_index] + noise * (strength * solver_time_step)",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Curl Turbulence",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": true,
+      "default": 1.0,
+      "description": "Magnitude of the turbulent acceleration.",
+      "enum_items": [],
+      "key": "strength",
+      "kind": "FLOAT",
+      "label": "Strength",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2"
+    },
+    {
+      "animatable": true,
+      "default": 1.5,
+      "description": "Spatial frequency of turbulent features.",
+      "enum_items": [],
+      "key": "frequency",
+      "kind": "FLOAT",
+      "label": "Frequency",
+      "maximum": 1000.0,
+      "minimum": 0.001,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/m"
+    },
+    {
+      "animatable": true,
+      "default": 0.5,
+      "description": "Animation rate of the turbulence pattern.",
+      "enum_items": [],
+      "key": "drift",
+      "kind": "FLOAT",
+      "label": "Drift",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/s"
+    },
+    {
+      "animatable": true,
+      "default": 17.0,
+      "description": "Deterministic phase offset.",
+      "enum_items": [],
+      "key": "seed",
+      "kind": "FLOAT",
+      "label": "Seed",
+      "maximum": 100000.0,
+      "minimum": -100000.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "NONE"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Add deterministic, animated divergence-like turbulent motion to particles.",
+  "tags": [
+    "force",
+    "noise",
+    "turbulence"
+  ],
+  "version": "1.0.0"
+}

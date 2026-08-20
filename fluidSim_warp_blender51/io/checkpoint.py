@@ -72,6 +72,21 @@ def _validate_channel_alignment(arrays: Mapping[str, np.ndarray]) -> None:
             raise ValueError(f"unaligned {label} checkpoint channels: {lengths}")
 
 
+def _normalize_effect_inventory(value: Any) -> tuple[dict[str, Any], ...]:
+    if value in (None, (), []):
+        return ()
+    if not isinstance(value, (tuple, list)):
+        raise ValueError("checkpoint effect_inventory must be an array")
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"checkpoint effect_inventory[{index}] must be an object")
+        normalized = {str(key): item[key] for key in sorted(item)}
+        _json_safe(normalized, f"effect_inventory[{index}]")
+        result.append(normalized)
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class CheckpointPayload:
     frame: int
@@ -82,6 +97,8 @@ class CheckpointPayload:
     scalars: Mapping[str, Any] = field(default_factory=dict)
     source_state: Mapping[str, Any] = field(default_factory=dict)
     format_version: int = CHECKPOINT_FORMAT_VERSION
+    effect_signature: str = ""
+    effect_inventory: tuple[dict[str, Any], ...] = ()
 
     def validated(self) -> "CheckpointPayload":
         if isinstance(self.frame, bool) or not isinstance(self.frame, int):
@@ -94,6 +111,14 @@ class CheckpointPayload:
             raise ValueError("checkpoint settings_signature is required")
         if not isinstance(self.source_signature, str) or not self.source_signature:
             raise ValueError("checkpoint source_signature is required")
+        if self.effect_signature:
+            if (not isinstance(self.effect_signature, str)
+                    or len(self.effect_signature) != 64
+                    or any(ch not in "0123456789abcdef" for ch in self.effect_signature)):
+                raise ValueError("checkpoint effect_signature must be a lowercase SHA-256")
+        inventory = _normalize_effect_inventory(self.effect_inventory)
+        if inventory and not self.effect_signature:
+            raise ValueError("checkpoint effect inventory requires an effect signature")
         if self.format_version != CHECKPOINT_FORMAT_VERSION:
             raise ValueError(
                 f"unsupported checkpoint format {self.format_version}; "
@@ -106,6 +131,11 @@ class CheckpointPayload:
         if any(not name or name == _META_KEY for name in arrays):
             raise ValueError("checkpoint array names must be non-empty and reserved-key safe")
         _validate_channel_alignment(arrays)
+        if "whitewater_type" in arrays:
+            from ..sim.whitewater_types import validate_type_values
+
+            arrays["whitewater_type"] = validate_type_values(
+                arrays["whitewater_type"], allow_unclassified=False)
         _json_safe(dict(self.scalars), "scalars")
         _json_safe(dict(self.source_state), "source_state")
         return CheckpointPayload(
@@ -113,6 +143,8 @@ class CheckpointPayload:
             sim_time=float(self.sim_time),
             settings_signature=self.settings_signature,
             source_signature=self.source_signature,
+            effect_signature=self.effect_signature,
+            effect_inventory=inventory,
             arrays=arrays,
             scalars=dict(self.scalars),
             source_state=dict(self.source_state),
@@ -127,6 +159,8 @@ def _metadata(payload: CheckpointPayload) -> dict[str, Any]:
         "sim_time": payload.sim_time,
         "settings_signature": payload.settings_signature,
         "source_signature": payload.source_signature,
+        "effect_signature": payload.effect_signature,
+        "effect_inventory": [dict(item) for item in payload.effect_inventory],
         "scalars": _json_safe(dict(payload.scalars), "scalars"),
         "source_state": _json_safe(dict(payload.source_state), "source_state"),
         "arrays": {
@@ -198,6 +232,7 @@ def read_checkpoint(
     expected_frame: int | None = None,
     expected_settings_signature: str | None = None,
     expected_source_signature: str | None = None,
+    expected_effect_signature: str | None = None,
 ) -> CheckpointPayload:
     path = Path(path)
     if not path.is_file():
@@ -219,7 +254,7 @@ def read_checkpoint(
             raise ValueError("checkpoint metadata is invalid") from exc
         if not isinstance(metadata, dict):
             raise ValueError("checkpoint metadata must be an object")
-        expected_meta = {
+        required_meta = {
             "checkpoint_format_version",
             "frame",
             "sim_time",
@@ -229,7 +264,8 @@ def read_checkpoint(
             "source_state",
             "arrays",
         }
-        if set(metadata) != expected_meta:
+        optional_meta = {"effect_signature", "effect_inventory"}
+        if not required_meta.issubset(metadata) or set(metadata) - required_meta - optional_meta:
             raise ValueError("checkpoint metadata keys are invalid")
         arrays_meta = metadata["arrays"]
         if not isinstance(arrays_meta, dict):
@@ -251,6 +287,8 @@ def read_checkpoint(
         sim_time=metadata["sim_time"],
         settings_signature=metadata["settings_signature"],
         source_signature=metadata["source_signature"],
+        effect_signature=str(metadata.get("effect_signature", "")),
+        effect_inventory=_normalize_effect_inventory(metadata.get("effect_inventory", ())),
         arrays=arrays,
         scalars=metadata["scalars"],
         source_state=metadata["source_state"],
@@ -268,6 +306,11 @@ def read_checkpoint(
         and payload.source_signature != expected_source_signature
     ):
         raise ValueError("checkpoint source signature mismatch")
+    if (
+        expected_effect_signature is not None
+        and payload.effect_signature != expected_effect_signature
+    ):
+        raise ValueError("checkpoint effect signature mismatch")
     return payload
 
 
@@ -276,6 +319,8 @@ def capture_solver(
     *,
     settings_signature: str,
     source_signature: str,
+    effect_signature: str = "",
+    effect_inventory: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
 ) -> CheckpointPayload:
     """Capture an owned solver snapshot through its audited state seam."""
     state = solver.export_checkpoint_state()
@@ -291,6 +336,8 @@ def capture_solver(
         sim_time=sim_time,
         settings_signature=settings_signature,
         source_signature=source_signature,
+        effect_signature=effect_signature,
+        effect_inventory=_normalize_effect_inventory(effect_inventory),
         arrays=arrays,
         scalars=scalars,
         source_state=source_state,

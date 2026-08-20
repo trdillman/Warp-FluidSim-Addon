@@ -1,11 +1,11 @@
 """Canonical FluidSim release identity."""
 
-VERSION = (1, 0, 248)
+VERSION = (1, 0, 252)
 VERSION_STRING = ".".join(str(part) for part in VERSION)
 EXTENSION_ID = "fluidsim_warp"
 BUILD_CHANNEL = "beta"
 BUILD_LABEL = f"FluidSim Warp {VERSION_STRING}-{BUILD_CHANNEL}"
-BLENDER_MIN_VERSION = (5, 1, 0)
+BLENDER_MIN_VERSION = (5, 2, 0)
 CERTIFIED_BLENDER_VERSION = (5, 2, 0)
 CERTIFIED_WARP_VERSION = "1.16.0"
 CERTIFIED_WARP_DISTRIBUTION = "1.16.0+cu12"

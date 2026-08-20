@@ -6,7 +6,7 @@
   "expected_scale": "1 Blender unit = 0.25-1 metre; product pours and stylized shots",
   "performance_cost": "High",
   "requires_reset": true,
-  "source_version": "1.0.248",
+  "source_version": "1.0.250",
   "settings": {
     "voxel_size": 0.055,
     "leaf_capacity": 12288,
@@ -22,6 +22,7 @@
     "viscosity_solver": "PCG",
     "viscosity_constant": 8.0,
     "viscosity_iterations": 250,
+    "surface_tension_enabled": false,
     "particle_radius_scale": 1.2,
     "surface_resolution_mode": "MULTIPLIER",
     "surface_resolution_multiplier": 1.5,
