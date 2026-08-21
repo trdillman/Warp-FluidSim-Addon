@@ -479,7 +479,7 @@ source at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`.
 | Warp/runtime | External Warp **1.16.0**, CUDA `cuda:0`, NVIDIA GeForce RTX 4080 SUPER |
 | P5 analytic kernel proof | Inward droplet force, finite normals/curvature/acceleration, curvature clamp, 2× coefficient scaling, collision exclusion, MAC integration, scratch lifecycle, and real solver-limiter selection/clamp passed |
 | Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
-| Installed package lifecycle | Pending the final 1.0.255 archive build after this source proof; the unchanged 1.0.253 packaging lane previously passed twice in clean profiles |
+| Installed package lifecycle | **Passed** twice from the final 1.0.255 Windows archive in clean profiles on Blender 5.1.0 with external Warp 1.16.0; registration cycled twice per run, Custom Effects applied, CUDA was detected, and the builder reported `release_ready=true` |
 | Installed headless no-CUDA exit | Prior packaging proof exited `12`, wrote an atomic report, committed **0 frames**, and removed the package cleanly; final 1.0.255 artifact rerun remains required |
 | Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and demo contracts passed |
 | Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
