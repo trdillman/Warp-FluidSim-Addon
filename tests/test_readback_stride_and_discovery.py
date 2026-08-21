@@ -88,7 +88,8 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     # Half one: the viewport read decimated before crossing the bus.
     assert len(frame.particles) == 16
     assert reads() == [16]
-    assert len(frame.particle_attributes["SPEED"]) == 16
+    assert set(frame.particle_attributes) == {"speed"}
+    assert len(frame.particle_attributes["speed"]) == 16
     assert np.array_equal(frame.particles[:, 0], np.arange(0, 64, 4))
 
     payload = cache._frame_payload(solver)
