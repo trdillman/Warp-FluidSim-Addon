@@ -89,6 +89,74 @@ def test_disabled_attribute_inventory_performs_no_host_readback():
     assert calls == {}
 
 
+def test_surface_velocity_speed_and_motion_share_two_device_readbacks():
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+
+    calls = {}
+    solver = _solver(calls)
+    solver.settings = SimpleNamespace(
+        voxel_size=0.1, frame_rate=24.0, time_scale=1.0)
+    settings = SimpleNamespace()
+    for key, property_name in OUTPUT_TOGGLE_NAMES["surface"].items():
+        setattr(settings, property_name, key in {"velocity", "speed", "motion"})
+    frame = HostFrame(solver)
+    host_output_operation_counts(reset=True)
+
+    attributes = frame.output_attributes(
+        settings,
+        "surface",
+        positions=np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+    )
+
+    assert set(attributes) == {"velocity", "speed", "motion"}
+    assert calls == {"positions": 1, "velocities": 1}
+    assert host_output_operation_counts()["device_readbacks"] == 2
+
+
+def test_surface_velocity_samples_mac_grid_with_one_device_readback():
+    import pytest
+    import warp as wp
+
+    from fluidSim_warp_blender51.sim.fields import (
+        MacVelocityField,
+        SparseGrid,
+    )
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+
+    if not wp.is_cuda_available():
+        pytest.skip("CUDA required")
+    device = "cuda:0"
+    grid = SparseGrid(
+        origin=(0.0, 0.0, 0.0), size=(0.8, 0.8, 0.8),
+        voxel_size=0.1, leaf_capacity=4, device=device)
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.79, 0.79, 0.79))
+    assert grid.finalize_topology() == 1
+    velocity = MacVelocityField(grid)
+    for array, value in zip(
+            (velocity.u, velocity.v, velocity.w), (1.0, 2.0, 3.0)):
+        array.fill_(value)
+    for weights in (velocity.wu, velocity.wv, velocity.ww):
+        weights.fill_(1.0)
+    solver = SimpleNamespace(
+        device=device, grid=grid, vel=velocity,
+        settings=SimpleNamespace(voxel_size=0.1),
+    )
+    frame = HostFrame(solver)
+    host_output_operation_counts(reset=True)
+
+    values = frame.surface_velocity(
+        np.array([[0.35, 0.35, 0.35]], dtype=np.float32))
+
+    np.testing.assert_allclose(values, [[1.0, 2.0, 3.0]], atol=1.0e-5)
+    assert host_output_operation_counts()["device_readbacks"] == 1
+
+
 def test_each_attribute_refreshes_stale_host_count_when_requested_first():
     calls = {}
     solver = _solver(calls)

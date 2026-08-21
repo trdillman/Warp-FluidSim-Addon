@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import importlib.util
+from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
@@ -27,6 +29,38 @@ from fluidSim_warp_blender51.sim.sourcing import (
     k_source_shapes_particles,
 )
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
+
+
+def test_user_path_profile_resolves_surface_attribute_modes(monkeypatch):
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+
+    spec = importlib.util.spec_from_file_location(
+        "fluidsim_profile_user_path",
+        Path(__file__).parents[1] / "tools" / "profile_user_path.py",
+    )
+    profile_user_path = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(profile_user_path)
+
+    settings = SimpleNamespace()
+    for toggle in OUTPUT_TOGGLE_NAMES["surface"].values():
+        setattr(settings, toggle, True)
+
+    assert profile_user_path.configure_surface_attribute_profile(
+        settings, "off") == ()
+    assert profile_user_path.configure_surface_attribute_profile(
+        settings, "default") == ("velocity", "motion")
+    assert profile_user_path.configure_surface_attribute_profile(
+        settings, "all") == tuple(OUTPUT_TOGGLE_NAMES["surface"])
+    assert profile_user_path.expected_surface_attribute_readbacks("off") == 0
+    assert profile_user_path.expected_surface_attribute_readbacks("default") == 1
+    assert profile_user_path.expected_surface_attribute_readbacks("all") == 9
+    assert profile_user_path.expected_surface_attribute_numpy_calls("off") == 0
+    assert profile_user_path.expected_surface_attribute_numpy_calls("default") == 1
+    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 10
+
+    monkeypatch.setattr(
+        sys, "argv", ["profile_user_path.py", "--", "--surface-attributes", "off"])
+    assert profile_user_path.parse_args().surface_attributes == "off"
 
 
 def test_particle_emission_saturates_device_and_host_counts():

@@ -61,6 +61,34 @@ def k_sample_particle_vorticity(
     )
 
 
+@wp.kernel
+def k_sample_surface_velocity(
+    positions: wp.array(dtype=wp.vec3),
+    count: int,
+    origin: wp.vec3,
+    voxel_size: float,
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    out_velocity: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    if tid >= count:
+        return
+    voxel_position = world_to_voxel(
+        positions[tid], origin, voxel_size)
+    out_velocity[tid] = sample_mac_velocity(
+        u, v, w, wu, wv, ww, leaf_table, voxels_dim, leaves_dim,
+        voxel_position,
+    )
+
+
 def host_output_operation_counts(*, reset=False):
     """Count actual HostFrame construction/readback/extraction operations."""
     counts = {
@@ -91,6 +119,7 @@ class HostFrame:
 
     def invalidate_surface(self):
         self._values.pop("surface_mesh", None)
+        self._values.pop("surface_velocity", None)
         for key in tuple(self._values):
             if isinstance(key, tuple) and key and key[0] == "surface_attributes":
                 self._values.pop(key, None)
@@ -194,6 +223,47 @@ class HostFrame:
                     np.ascontiguousarray(tris, dtype=np.int32))
         return self._get("surface_mesh", load)
 
+    def surface_velocity(self, positions):
+        targets = np.asarray(
+            positions, dtype=np.float32).reshape((-1, 3))
+
+        def load():
+            if not len(targets):
+                return np.zeros((0, 3), dtype=np.float32)
+            grid = getattr(self.solver, "grid", None)
+            velocity = getattr(self.solver, "vel", None)
+            device = getattr(self.solver, "device", None)
+            if grid is None or velocity is None or device is None:
+                nearest = nearest_sample_indices(
+                    targets,
+                    self.positions,
+                    cell_size=max(
+                        float(self.solver.settings.voxel_size) * 2.0,
+                        1.0e-5,
+                    ),
+                )
+                return np.ascontiguousarray(self.velocities[nearest])
+            device_targets = wp.array(
+                targets, dtype=wp.vec3, device=device)
+            out = wp.empty(len(targets), dtype=wp.vec3, device=device)
+            wp.launch(
+                k_sample_surface_velocity,
+                dim=len(targets),
+                inputs=[
+                    device_targets, len(targets), grid.origin,
+                    float(self.solver.settings.voxel_size),
+                    velocity.u, velocity.v, velocity.w,
+                    velocity.wu, velocity.wv, velocity.ww,
+                    grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                ],
+                outputs=[out],
+                device=device,
+            )
+            _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+            return np.ascontiguousarray(out.numpy(), dtype=np.float32)
+
+        return self._get("surface_velocity", load)
+
     def particle_attr(self, name):
         def load():
             try:
@@ -294,31 +364,46 @@ class HostFrame:
             targets = (self.surface_mesh[0] if positions is None
                        else np.asarray(positions, dtype=np.float32).reshape((-1, 3)))
             count = len(targets)
-            source_positions = self.positions
-            if len(source_positions):
-                nearest = nearest_sample_indices(
-                    targets,
-                    source_positions,
-                    cell_size=max(
-                        float(self.solver.settings.voxel_size) * 2.0,
-                        1.0e-5,
-                    ),
-                )
-                values = {
-                    key: np.ascontiguousarray(
-                        self.particle_attribute(key)[nearest]
+            velocity_keys = frozenset({"velocity", "speed", "motion"})
+            surface_velocity = (
+                self.surface_velocity(targets)
+                if velocity_keys.intersection(keys) else None)
+            nearest = None
+            source_positions = None
+            values = {}
+            for key in keys:
+                if key == "velocity":
+                    value = surface_velocity
+                elif key == "speed":
+                    value = speed_from_velocity(surface_velocity)
+                elif key == "motion":
+                    value = motion_from_velocity(
+                        surface_velocity,
+                        frame_rate=float(self.solver.settings.frame_rate),
+                        time_scale=float(self.solver.settings.time_scale),
                     )
-                    for key in keys
-                }
-            else:
-                values = {
-                    key: np.zeros(
-                        (count,) if ATTRIBUTE_SPECS[key].components == 1
-                        else (count, ATTRIBUTE_SPECS[key].components),
-                        dtype=ATTRIBUTE_SPECS[key].numpy_dtype,
-                    )
-                    for key in keys
-                }
+                else:
+                    if source_positions is None:
+                        source_positions = self.positions
+                        if len(source_positions):
+                            nearest = nearest_sample_indices(
+                                targets,
+                                source_positions,
+                                cell_size=max(
+                                    float(self.solver.settings.voxel_size) * 2.0,
+                                    1.0e-5,
+                                ),
+                            )
+                    if nearest is None:
+                        spec = ATTRIBUTE_SPECS[key]
+                        value = np.zeros(
+                            (count,) if spec.components == 1
+                            else (count, spec.components),
+                            dtype=spec.numpy_dtype,
+                        )
+                    else:
+                        value = self.particle_attribute(key)[nearest]
+                values[key] = np.ascontiguousarray(value)
         else:
             raise ValueError(f"unknown output kind {output_kind!r}")
         return {
