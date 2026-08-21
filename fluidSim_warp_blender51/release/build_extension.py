@@ -757,6 +757,7 @@ def run_installed_script(
         "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
         "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
         "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
+        "WARP_CACHE_PATH": profile_dir / "warp-cache",
     }
     for path in isolated_paths.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -850,6 +851,7 @@ def run_installed_smoke(
         "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
         "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
         "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
+        "WARP_CACHE_PATH": profile_dir / "warp-cache",
     }
     env.update({key: str(path) for key, path in isolated_paths.items()})
     env["FLUIDSIM_CI_REPOSITORY"] = str(Path(repo_dir).resolve())
