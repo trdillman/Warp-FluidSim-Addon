@@ -707,21 +707,22 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 ## 12. Validation limits for this build
 
-The supplied 1.0.253 candidate reports exercise with Blender 5.2.0 LTS and
-NVIDIA Warp 1.16.0+cu12. This is imported provenance, not current proof for the
-integrated Blender 5.1 Windows build. The candidate host exposed Warp
-CPU only and no usable NVIDIA driver/device. The dependency-free suite completed
-with **381 passed and 6 intentional real-Warp skips**; the same suite completed
-with **387 passed** when the supplied Warp package was present. Supplied-Blender
-evidence covers Phase-3 rendering, Phase-4 typed whitewater, Phase-5
-surface-tension settings/save-reopen, all three Custom Effects demos, all seven
-example scenes, and the native Properties UI gate. The UI gate drew all 49
-authored panels, exercised ten canonical object-role/geometry cases, verified
-Field Source payload coherence, saved/reopened a `.blend`, and verified
-unregister/re-register cleanup. P5 adds no checkpointed stochastic state; older
-cache playback remains supported, while resume still requires the exact
-manifest/settings/effect signatures to match.
+Release 1.0.255 passed the current Windows Blender 5.1 GUI-inclusive production
+gate with external Warp 1.16.0 on an NVIDIA GeForce RTX 4080 SUPER. Evidence
+includes **1,033 Python tests**, **21/21 CUDA validations**, **40/40 GUI checks**,
+saved-demo timeline playback, cache-v2 production/export, handler save/reopen,
+and all 18 bounded demo-analysis checks.
 
-Full CUDA droplet/oscillation regressions, CUDA deterministic resume, GPU memory
-behavior/performance, Cycles/NVIDIA renderer validation, and the integrated
-Windows x64 package/runtime remain mandatory gates until rerun from this source.
+The native UI gate drew 49 authored surfaces, validated 51 delegated View3D
+mirrors beneath one collapsed root, exercised domain/input and all six output
+Physics contexts, revalidated guarded add/remove actions, covered ten canonical
+role/geometry cases, saved/reopened a `.blend`, and completed an unregister/
+re-register cycle. The interactive user path averaged 6.116 ms for viewport
+publication and 16.336 ms total without added output-path readbacks,
+synchronization, Blender ID churn, depsgraph updates, or structural replacement.
+
+The solver and cache checks assert physical, schema, ownership, and bounded-error
+invariants. They do not claim bitwise repeatability across GPU atomic accumulation,
+particle compaction/emission ordering, or derived marching-cubes output. Native
+Linux execution and renderer-specific visual certification remain separate host
+gates; Linux x64 packaging continues from the same binary-free source.

@@ -1,14 +1,14 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 1.0.253 targets Blender 5.1.0 or newer around the existing
+FluidSim Warp 1.0.255 targets Blender 5.1.0 or newer around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.253`
+- Extension ID: `fluidsim_warp` · manifest/runtime version `1.0.255`
 - Product platforms: Windows x64 and Linux x64
-- Imported candidate evidence: Blender `5.2.0 LTS` on Linux x64; local
-  Blender 5.1 Windows validation is required before release handoff
+- Current validation host: Blender `5.1.0` on Windows x64 with an NVIDIA
+  GeForce RTX 4080 SUPER
 - Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
   package/runtime smoke evidence
@@ -355,22 +355,27 @@ and controller snapshots instead of trusting stored update-callback state.
   never overwrites simulation color.
 - **`blender/geometry_nodes.py`** appends six immutable P4 revision-tagged
   groups from `resources/geometry_nodes/fluidsim_render_nodes.blend`, attaches
-  one owned modifier per output, and synchronizes typed Blender 5.2 material/
+  one owned modifier per output, and synchronizes typed Blender 5.1+ material/
   radius inputs. Point groups realize instances before material assignment so
   named point attributes reach F12 shaders. Explicit updates skip user-owned
   modifiers and never mutate user node groups.
 - **`blender/ui_common.py`**, **`blender/ui_scene.py`**, and
-  **`blender/ui_object.py`** make Blender Scene/Object Properties the
-  authoritative UI surface. One derived `activity_snapshot` owns Idle, Live
-  Preview, Cache Playback, and Production Bake presentation;
+  **`blender/ui_object.py`** define the authoritative Scene/Object draw and RNA
+  ownership surfaces. One derived `activity_snapshot` owns Idle, Live Preview,
+  Cache Playback, and Production Bake presentation;
   `pending_settings.pending_presentation` remains the lifecycle-policy owner.
   The Scene hierarchy follows setup → domain → physics → Custom Effects →
   reconstruction/whitewater → outputs → cache → diagnostics. Object panels
   poll canonical SOURCE/SINK/COLLIDER/FORCE/FIELD roles and hide inapplicable
   analytic, mesh, point, constant, and volume payloads.
-- **`panels.py`** now registers one compact View3D status/launcher rather than a
-  second settings hierarchy. **`preferences.py`** owns device selection and the
-  explicitly enabled developer override only.
+- **`panels.py`** retains the compact View3D status/lifecycle surface.
+  **`blender/ui_view3d.py`** mirrors the authoritative Scene and Custom Effects
+  panels beneath one collapsed Full Settings parent by delegating to their draw
+  and poll functions; it introduces no second settings model.
+- **`blender/ui_physics.py`** recognizes the domain by exact scene pointer,
+  outputs by stable tags, and inputs by canonical object role. It reuses existing
+  Scene/Object panels and routes single-output deletion through identity-checked
+  Output Publication ownership. **`preferences.py`** remains the device owner.
 - **`blender/effect_ui.py`** draws Effect Stack, Selected Effect, Workflow, and
   Status in Scene Properties. Package administration is a closed child.
   **`blender/effect_workspace.py`** is a closed Warp Code child that prefers an
@@ -449,45 +454,44 @@ particle pool, proving that capillarity selects 27 requested substeps in the
 probe case and reports the authored clamp to 8. CPU execution proves code paths;
 `cuda:0` execution is required for release certification.
 
-`release/validate_properties_ui_blender.py` runs in the supplied Blender rather
-than treating source strings as UI proof. It verifies panel metadata and order,
-draws all 49 authored panels, exercises ten canonical object-role/geometry
-configurations, checks Field Source payload coherence, saves/reopens a `.blend`,
-and unregisters/re-registers the extension. Installed-package smoke separately
-requires the new UI modules, native panels, compact launcher, Custom Effects,
-and Warp Code surfaces.
+`release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
+treating source strings as UI proof. It draws 49 authored surfaces, validates
+one collapsed root plus 51 View3D mirrors with exact poll/draw parity, exercises
+domain/input contexts and all six output kinds in Physics Properties, revalidates
+guarded domain/output actions, covers ten role/geometry configurations, then
+saves/reopens and unregisters/re-registers the extension. Installed-package
+smoke separately requires the same modules and representative panels.
 
 ---
 
-## 12. Verification Results for 1.0.253
+## 12. Verification Results for 1.0.255
 
-The table below preserves the supplied candidate's Linux/Blender 5.2 evidence.
-It does not certify the integrated Blender 5.1 Windows artifact; current local
-results must be appended only after the corresponding executable gates run.
+The table records current executable evidence from the integrated Windows
+source at proof HEAD `7643ddcc7084e07d0a941ecb96243e056e6b4275`.
 
 | Gate | Result in this environment |
 |---|---|
-| Dependency-free Python suite | **381 passed, 6 skipped**; only real-Warp JIT tests are skipped when Warp is deliberately absent |
-| Supplied-Warp Python suite | **387 passed** with `/mnt/data/warp_lang_1_16_external` |
+| Full Python suite | **1,033 passed**; only the linked-worktree pytest cache emitted a non-test warning |
 | Python compilation | Passed |
 | Source/release verification | Passed; seven example scenes, three durable Custom Effects renders, eight built-ins, and no bundled Blender/Warp payload |
-| Supplied Blender | **5.2.0 LTS**; P3 renders, P4 typed whitewater, P5 settings/save-reopen, all three Custom Effects demos, and all seven example scenes passed |
-| Native Properties UI gate | Passed in supplied Blender: 49 authored panels, ten canonical role/geometry cases, Field Source payload coherence, `.blend` save/reopen, and unregister/re-register cleanup |
-| Supplied Warp | **1.16.0+cu12**, module `1.16.0`, loaded from the supplied external package; P3/P4/P5 and Custom Effects kernels compiled/executed on CPU |
+| Blender host | **5.1.0 Windows x64**; GUI acceptance passed **40/40** and saved-demo timeline playback passed |
+| Native UI gate | Passed: 49 authored draws, 51 delegated View3D mirrors under one collapsed root, domain/input/six-output Physics contexts, guarded actions, ten role cases, save/reopen, and registration cleanup |
+| Warp/runtime | External Warp **1.16.0**, CUDA `cuda:0`, NVIDIA GeForce RTX 4080 SUPER |
 | P5 analytic kernel proof | Inward droplet force, finite normals/curvature/acceleration, curvature clamp, 2× coefficient scaling, collision exclusion, MAC integration, scratch lifecycle, and real solver-limiter selection/clamp passed |
 | Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
-| Installed package lifecycle | Passed twice in clean profiles: install, enable/disable/re-enable, supplied-Warp CPU kernel, Custom Effects Test/Apply, save/reopen, and uninstall |
-| Installed headless no-CUDA exit | Actual process exit `12`, atomic report written, **0 frames committed**, and package removed cleanly |
+| Installed package lifecycle | Pending the final 1.0.255 archive build after this source proof; the unchanged 1.0.253 packaging lane previously passed twice in clean profiles |
+| Installed headless no-CUDA exit | Prior packaging proof exited `12`, wrote an atomic report, committed **0 frames**, and removed the package cleanly; final 1.0.255 artifact rerun remains required |
 | Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and demo contracts passed |
 | Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
 | Custom Effects supplied-Blender proof | Three demos, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed |
 | Release workflow coverage | Linux package job now runs and uploads the native Properties UI report in addition to P4/P5 Warp, Custom Effects Warp/Blender, package build, and installed smoke evidence |
-| NVIDIA CUDA solver gate | **Open** — no usable CUDA driver/device was exposed |
+| NVIDIA CUDA solver gate | **Passed 21/21**, including pressure, viscosity, collision/sink masks, ST-FLIP, surface tension, and bounded diagnostics |
+| Interactive user path | **Passed**: 6.116 ms mean viewport publication, 16.336 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |
 
-The CPU and Blender evidence proves package, settings, kernel compilation,
-analytic force behavior, publication, and lifecycle paths. It does not certify
-full CUDA solver numerics, droplet oscillation, CUDA resume determinism, GPU
-memory/performance, or NVIDIA-specific rendering.
+The GUI-inclusive production gate proves the current Windows source, Blender
+registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
+and bounded interactive publication. GPU results are physical/schema/lifecycle
+bounds, not a claim of bitwise determinism across atomic or compaction order.
 
 ## 13. Performance Notes
 
@@ -530,10 +534,10 @@ and retains its recorded-launch/CUDA-graph PCG path.
 
 ## Current promoted demo evidence
 
-The GUI-inclusive 1.0.253 production gate at proof HEAD
-`8dfc3939729f2fb64b12272f602de85148a91c73` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0114477622`,
-`column_height_end=0.3378906250`, `crown_sqrt_t_corr=0.9713680253`, and
-`max_crown_height=0.2855468988`. The authoritative source is
+The GUI-inclusive 1.0.255 production gate at proof HEAD
+`7643ddcc7084e07d0a941ecb96243e056e6b4275` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0109923602`,
+`column_height_end=0.3391113281`, `crown_sqrt_t_corr=0.9713800298`, and
+`max_crown_height=0.2380029410`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda53f064`.
+`6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76`.

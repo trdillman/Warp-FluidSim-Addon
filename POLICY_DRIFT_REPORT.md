@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-21T01:33:34.492713+00:00
+generated_at: 2026-08-21T03:18:35.249230+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 8dfc3939729f2fb64b12272f602de85148a91c73
-gate_run_at: 2026-08-21T01:33:34.492713+00:00
+git_head: 7643ddcc7084e07d0a941ecb96243e056e6b4275
+gate_run_at: 2026-08-21T03:18:35.249230+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda53f064
+demo_artifact_sha256: 6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76
 ---
 
 # Policy Drift Report — root unit
@@ -15,14 +15,14 @@ demo_artifact_sha256: 2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda
 ## Strongest live evidence
 
 - `FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py --include-gui`
-  passed at proof HEAD `8dfc3939729f2fb64b12272f602de85148a91c73`;
+  passed at proof HEAD `7643ddcc7084e07d0a941ecb96243e056e6b4275`;
   the run wrote the full-gate
   manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (40/40)`,
   `GUI-PLAYBACK-PROBE-PASS`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - The generated demo analysis is `result: pass`, 18/18 bounded checks, and the
   checked-in `demos/analysis_report.json` is byte-for-byte synchronized with
   `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda53f064`.
+  `6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76`.
 - The measured user path passed at 6.116 ms mean viewport publication and
   16.336 ms mean total, with no added output-path readbacks, synchronization,
   Blender ID creation/removal, depsgraph updates, or structural replacement.
@@ -54,7 +54,7 @@ and to this isolated merge worktree.
 
 ## Known non-blocking exceptions
 
-- `C:\Python314\python.exe -m pytest -q` passed all 1,028 tests before the committed-HEAD
+- `C:\Python314\python.exe -m pytest -q` passed all 1,033 tests before the committed-HEAD
   production run. There is no repository-wide Python exception in this proof.
 - `demos/paddle_stir` is an opt-in moving-collider demo outside the canonical
   18/18 gate set. Fresh standalone rebuilds on both baseline and integration
@@ -62,13 +62,13 @@ and to this isolated merge worktree.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-21T01:33:34.492713+00:00
+generated_at: 2026-08-21T03:18:35.249230+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 8dfc3939729f2fb64b12272f602de85148a91c73
-gate_run_at: 2026-08-21T01:33:34.492713+00:00
+git_head: 7643ddcc7084e07d0a941ecb96243e056e6b4275
+gate_run_at: 2026-08-21T03:18:35.249230+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda53f064
+demo_artifact_sha256: 6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76
 freshness: fresh
 status: fresh
 blocking_criticality: none
@@ -78,7 +78,7 @@ strongest_live_verification:
   - 'PASS: GUI-ACCEPTANCE-PASS (40/40) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
   - 'PASS: generated demo analysis result=pass, 18/18 bounded checks.'
   - 'PASS: user-path profile; view mean 6.116 ms, total mean 16.336 ms.'
-  - 'PASS: C:\Python314\python.exe -m pytest -q; 1028 passed.'
+  - 'PASS: C:\Python314\python.exe -m pytest -q; 1033 passed.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:
