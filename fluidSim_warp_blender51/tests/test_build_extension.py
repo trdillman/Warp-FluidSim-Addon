@@ -408,6 +408,10 @@ def test_installed_smoke_uses_external_python_environment_and_uninstalls(tmp_pat
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")
     assert all(env.get("WARP_CACHE_PATH") == expected_cache for env in environments)
     assert (tmp_path / "repo-profile" / "warp-cache").is_dir()
+    expected_temp = str(tmp_path / "repo-profile" / "temp")
+    assert all(env.get("TEMP") == expected_temp for env in environments)
+    assert all(env.get("TMP") == expected_temp for env in environments)
+    assert (tmp_path / "repo-profile" / "temp").is_dir()
     flattened = [" ".join(command) for command in commands]
     assert any("extension remove fluidsim_ci.fluidsim_warp" in command for command in flattened)
 
