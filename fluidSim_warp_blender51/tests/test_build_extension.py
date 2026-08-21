@@ -11,7 +11,7 @@ from fluidsim_testpkg.release import build_extension
 EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 PAYLOAD = b"external-wheel-payload"
 STALE_OWNER_PAYLOAD = b"stale candidate owner\n"
-VERSION = "1.0.253"
+VERSION = "1.0.255"
 
 
 def _manifest() -> str:
@@ -73,7 +73,7 @@ def _write_project(root: Path) -> None:
     (root / "wheels").mkdir()
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
-        'VERSION = (1, 0, 253)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
+        'VERSION = (1, 0, 255)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
         encoding="utf-8",
     )
     (root / "__init__.py").write_text(
@@ -446,7 +446,7 @@ def test_verify_only_is_successful_without_runtime_binary_payloads(tmp_path: Pat
 
 def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):
     output = tmp_path / "nested" / "dist"
-    package = output / "fluidsim_warp-1.0.253-linux_x64.zip"
+    package = output / "fluidsim_warp-1.0.255-linux_x64.zip"
     record = build_extension.ArtifactRecord(
         path=package,
         platform="linux-x64",

@@ -1,6 +1,6 @@
 # Custom Effects
 
-Custom Effects is FluidSim's artist-facing system for adding Warp-driven behavior without exposing solver array plumbing in the normal workflow. It replaces the prototype Custom Warp Snippets panel. The low-level legacy operator IDs remain as migration adapters for release 1.0.253, but new scenes should use **Custom Effects** and **Warp Code**.
+Custom Effects is FluidSim's artist-facing system for adding Warp-driven behavior without exposing solver array plumbing in the normal workflow. It replaces the prototype Custom Warp Snippets panel. The low-level legacy operator IDs remain as migration adapters in release 1.0.255, but new scenes should use **Custom Effects** and **Warp Code**.
 
 ## Artist workflow
 
@@ -14,7 +14,8 @@ The root panel follows the same compact four-part structure as the rest of the
 FluidSim Scene Properties workflow: **Effect Stack**, **Selected Effect**,
 **Workflow**, and **Status**. **Effect Packages** and **Warp Code** are closed
 children so package administration and kernel authoring do not compete with the
-artist path. The compact 3D View launcher does not duplicate effect controls.
+artist path. The 3D View FluidSim panel mirrors the same Custom Effects draw
+implementation beneath its collapsed **Full Settings** group.
 
 The default library contains Vortex Force, Curl Turbulence, Radial Pulse, Planar Split, Velocity Damping, Temperature Lift, Particle Speed Limit, and Voxel Cooling. Spatial effects use owned Empty controller objects rather than raw world-coordinate constants.
 

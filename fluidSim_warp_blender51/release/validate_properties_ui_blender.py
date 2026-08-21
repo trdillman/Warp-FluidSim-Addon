@@ -294,6 +294,25 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
     if (viewport["space"], viewport["region"]) != ("VIEW_3D", "UI"):
         raise AssertionError(f"compact viewport launcher metadata is incorrect: {viewport}")
     records["FLUIDSIM_PT_viewport_status"] = viewport
+    full_settings = _panel_metadata("FLUIDSIM_VIEW3D_PT_full_settings")
+    if (
+        (full_settings["space"], full_settings["region"])
+        != ("VIEW_3D", "UI")
+        or full_settings["parent"] != "FLUIDSIM_PT_viewport_status"
+        or not full_settings["closed"]
+    ):
+        raise AssertionError(
+            f"collapsed viewport settings root is incorrect: {full_settings}")
+    records["FLUIDSIM_VIEW3D_PT_full_settings"] = full_settings
+    physics_root = _panel_metadata("FLUIDSIM_PT_physics_root")
+    if (
+        physics_root["space"],
+        physics_root["region"],
+        physics_root["context"],
+    ) != ("PROPERTIES", "WINDOW", "physics"):
+        raise AssertionError(
+            f"contextual Physics root metadata is incorrect: {physics_root}")
+    records["FLUIDSIM_PT_physics_root"] = physics_root
     if not hasattr(bpy.types, "FLUIDSIM_OT_open_scene_properties"):
         raise AssertionError("FLUIDSIM_OT_open_scene_properties is not registered")
     for legacy in (
@@ -432,6 +451,153 @@ def _assert_all_authored_draws(work_dir: Path) -> dict[str, int]:
     return result
 
 
+def _assert_view3d_mirrors(module_name: str) -> dict[str, int]:
+    ui_view3d = importlib.import_module(f"{module_name}.blender.ui_view3d")
+    result: dict[str, int] = {}
+    root_events = _draw("FLUIDSIM_VIEW3D_PT_full_settings", bpy.context)
+    result["FLUIDSIM_VIEW3D_PT_full_settings"] = len(root_events)
+    for source in ui_view3d.VIEW3D_SOURCE_PANELS:
+        source_id = str(source.bl_idname)
+        mirror_id = ui_view3d._mirror_id(source_id)
+        metadata = _panel_metadata(mirror_id)
+        source_parent = str(getattr(source, "bl_parent_id", "") or "")
+        expected_parent = (
+            ui_view3d._mirror_id(source_parent)
+            if source_parent
+            else "FLUIDSIM_VIEW3D_PT_full_settings"
+        )
+        if (
+            (metadata["space"], metadata["region"]) != ("VIEW_3D", "UI")
+            or metadata["parent"] != expected_parent
+        ):
+            raise AssertionError(
+                f"viewport mirror metadata drift for {mirror_id}: {metadata}")
+        source_poll = getattr(source, "poll", None)
+        source_visible = (
+            bool(source.poll(bpy.context)) if callable(source_poll) else True
+        )
+        mirror = _panel(mirror_id)
+        mirror_poll = getattr(mirror, "poll", None)
+        mirror_visible = (
+            bool(mirror.poll(bpy.context)) if callable(mirror_poll) else True
+        )
+        if mirror_visible != source_visible:
+            raise AssertionError(
+                f"viewport mirror poll drift for {source_id}: "
+                f"source={source_visible}, mirror={mirror_visible}"
+            )
+        if not source_visible:
+            result[mirror_id] = 0
+            continue
+        source_events = _draw(source_id, bpy.context)
+        mirror_events = _draw(mirror_id, bpy.context)
+        if mirror_events != source_events:
+            raise AssertionError(
+                f"viewport mirror draw drift for {source_id}: "
+                f"{len(source_events)} != {len(mirror_events)} events"
+            )
+        result[mirror_id] = len(mirror_events)
+    return result
+
+
+def _activate_object(obj) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.hide_set(False)
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+
+def _assert_physics_context(module_name: str) -> dict[str, object]:
+    ui_physics = importlib.import_module(f"{module_name}.blender.ui_physics")
+    output_publication = importlib.import_module(
+        f"{module_name}.blender.output_publication")
+    scene = bpy.context.scene
+    fs = scene.fluidsim
+    cube = _ensure_cube()
+    cube.fluidsim.role = "NONE"
+    fs.domain_object = None
+    _activate_object(cube)
+
+    reporter = _Reporter()
+    assign = bpy.types.FLUIDSIM_OT_use_active_as_domain
+    result = assign.execute(reporter, bpy.context)
+    if "FINISHED" not in result or fs.domain_object is not cube:
+        raise AssertionError(f"contextual domain assignment failed: {result}")
+    if ui_physics.physics_object_kind(bpy.context) != "DOMAIN":
+        raise AssertionError("assigned domain is not recognized by exact scene pointer")
+    domain_draws = {
+        panel_id: len(_draw(panel_id, bpy.context))
+        for panel_id in (
+            "FLUIDSIM_PT_physics_root",
+            "FLUIDSIM_PT_physics_domain_scene_domain",
+            "FLUIDSIM_PT_physics_domain_scene_simulation",
+        )
+    }
+
+    clear = bpy.types.FLUIDSIM_OT_clear_domain_assignment
+    result = clear.execute(reporter, bpy.context)
+    if "FINISHED" not in result or fs.domain_object is not None:
+        raise AssertionError(f"contextual domain removal failed: {result}")
+
+    cube.fluidsim.role = "SOURCE"
+    if ui_physics.physics_object_kind(bpy.context) != "INPUT":
+        raise AssertionError("canonical input role is not recognized in Physics Properties")
+    input_draws = {
+        panel_id: len(_draw(panel_id, bpy.context))
+        for panel_id in (
+            "FLUIDSIM_PT_physics_root",
+            "FLUIDSIM_PT_physics_input_object_role",
+            "FLUIDSIM_PT_physics_input_object_source",
+        )
+    }
+
+    shells = output_publication.ensure_output_shells(scene)
+    output_panel_ids = {
+        output_publication.SURFACE_NAME: "FLUIDSIM_PT_physics_surface_output",
+        output_publication.PARTICLES_NAME: "FLUIDSIM_PT_physics_particles_output",
+        output_publication.WHITEWATER_NAME: "FLUIDSIM_PT_physics_whitewater_output",
+        output_publication.FOAM_NAME: "FLUIDSIM_PT_physics_foam_output",
+        output_publication.BUBBLES_NAME: "FLUIDSIM_PT_physics_bubbles_output",
+        output_publication.SPRAY_NAME: "FLUIDSIM_PT_physics_spray_output",
+    }
+    output_draws: dict[str, int] = {}
+    for obj in shells:
+        _activate_object(obj)
+        kind = str(obj.get(output_publication.OUTPUT_TAG, ""))
+        if ui_physics.physics_object_kind(bpy.context) == "NONE":
+            raise AssertionError(f"tagged output is not recognized: {kind}")
+        _draw("FLUIDSIM_PT_physics_root", bpy.context)
+        output_draws[kind] = len(_draw(output_panel_ids[kind], bpy.context))
+
+    spray = output_publication.output_object(scene, output_publication.SPRAY_NAME)
+    _activate_object(spray)
+    removal = _Reporter()
+    removal.expected_object = "identity-drift"
+    removal.expected_kind = output_publication.SPRAY_NAME
+    result = bpy.types.FLUIDSIM_OT_remove_selected_output.execute(
+        removal, bpy.context)
+    if "CANCELLED" not in result or output_publication.output_object(
+        scene, output_publication.SPRAY_NAME
+    ) is not spray:
+        raise AssertionError("output removal did not fail closed on identity drift")
+    removal.expected_object = spray.name
+    result = bpy.types.FLUIDSIM_OT_remove_selected_output.execute(
+        removal, bpy.context)
+    if "FINISHED" not in result or output_publication.output_object(
+        scene, output_publication.SPRAY_NAME
+    ) is not None:
+        raise AssertionError("confirmed owned output removal failed")
+    output_publication.ensure_output_shells(scene)
+    _activate_object(cube)
+    cube.fluidsim.role = "SOURCE"
+    return {
+        "domain_draws": domain_draws,
+        "input_draws": input_draws,
+        "output_draws": output_draws,
+        "operators": "passed",
+    }
+
+
 def _assert_object_role_matrix() -> dict[str, list[str]]:
     cube = _ensure_cube()
     settings = cube.fluidsim
@@ -526,6 +692,8 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_PT_physics_root",
     ):
         if hasattr(bpy.types, panel_id):
             raise AssertionError(f"panel survived unregister: {panel_id}")
@@ -537,6 +705,8 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_PT_physics_root",
     ):
         _panel(panel_id)
     return {"unregister": "passed", "reregister": "passed"}
@@ -578,6 +748,8 @@ def main() -> None:
         report["panel_metadata"] = _assert_metadata()
         report["draws"] = _assert_scene_and_object_draws(options.module)
         report["all_authored_draws"] = _assert_all_authored_draws(options.work_dir)
+        report["viewport_mirrors"] = _assert_view3d_mirrors(options.module)
+        report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()
         report["field_payload_coherence"] = _assert_field_payload_coherence()
         report["shortcut"] = _assert_scene_properties_shortcut()

@@ -16,6 +16,10 @@ def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():
         "FLUIDSIM_PT_effect_packages",
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_PT_physics_root",
+        "FLUIDSIM_OT_use_active_as_domain",
+        "FLUIDSIM_OT_remove_selected_output",
         "FLUIDSIM_OT_open_scene_properties",
         "RecordingLayout",
         "save_as_mainfile",
@@ -33,6 +37,8 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         'extension_root / "blender" / "ui_common.py"',
         'extension_root / "blender" / "ui_scene.py"',
         'extension_root / "blender" / "ui_object.py"',
+        'extension_root / "blender" / "ui_physics.py"',
+        'extension_root / "blender" / "ui_view3d.py"',
     ):
         assert path in source
     for panel_id in (
@@ -43,6 +49,10 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         "FLUIDSIM_PT_effect_packages",
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_VIEW3D_PT_scene_control",
+        "FLUIDSIM_PT_physics_root",
+        "FLUIDSIM_PT_physics_surface_output",
     ):
         assert panel_id in source
 
@@ -64,6 +74,8 @@ def test_properties_validator_exercises_all_authored_panels_and_object_role_matr
         "FIELD",
         "VOLUME_GRID",
         "all_authored_draws",
+        "viewport_mirrors",
+        "physics_context",
         "role_matrix",
     ):
         assert marker in source

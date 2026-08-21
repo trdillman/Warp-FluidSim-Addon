@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 1.0.253 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 1.0.255 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.1.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 1.0.253 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Validated target |
 |---|---|
-| FluidSim | 1.0.253 |
+| FluidSim | 1.0.255 |
 | Blender | Blender 5.1.0 or newer |
 | Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
@@ -43,9 +43,10 @@ After selecting one or more mesh objects, the shortest workflow is:
    **Start Live Preview**. Runtime and capacity preflight run before allocation.
 3. Press Play.
 
-The compact **3D View → FluidSim** panel exposes the same lifecycle shortcuts
-without duplicating authored settings. Object roles and per-input controls live
-in **Object Properties**.
+The compact **3D View → FluidSim** status panel exposes lifecycle shortcuts.
+Its collapsed **Full Settings** child mirrors the authoritative Scene Properties
+workflow without duplicating state. Object roles and per-input controls remain
+in **Object Properties** and also appear contextually in **Physics Properties**.
 
 Guided setup creates or reuses one owned collection tree without deleting or
 renaming unrelated user data:
@@ -99,7 +100,8 @@ Manual setup remains available for authored pipelines:
 
 1. Assign the Domain object and resolution in **Scene Properties → Domain & Particles**.
 2. Select one or more input objects and assign their role in **Object Properties →
-   FluidSim Role — Selected Objects**.
+   FluidSim Role — Selected Objects** or the contextual **Physics Properties →
+   FluidSim** panel.
 3. Configure the active object's role-specific Region, Source, Collider, Force,
    Field, or Volume Grid panels. Role actions affect the selected set; detailed
    values describe the active object.
@@ -275,12 +277,28 @@ Preferences contains only runtime selection and detection. The external-Warp
 developer path appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device
 selection does not appear in scene panels.
 
-### Compact 3D View launcher
+### 3D View FluidSim workflow
 
-The **3D View → FluidSim** panel is deliberately small. It shows activity,
-runtime readiness, lifecycle actions, pending-change count, and **Open FluidSim
-Scene Properties**. It does not duplicate physics, inputs, cache, outputs,
-diagnostics, or Custom Effects settings.
+The primary **3D View → FluidSim** panel stays deliberately small. It shows
+activity, runtime readiness, lifecycle actions, pending-change count, and the
+Scene Properties shortcut. A single collapsed **Full Settings** child mirrors
+the complete Scene Properties hierarchy, including Custom Effects, by calling
+the existing draw and poll implementations. Both surfaces therefore edit the
+same `Scene.fluidsim` and `Scene.fluidsim_effects` owners.
+
+### Physics Properties — contextual FluidSim objects
+
+Selecting a FluidSim object exposes a **FluidSim** panel in Physics Properties:
+
+- the exact `Scene.fluidsim.domain_object` receives domain and physics groups;
+- tagged surface, particle, whitewater, foam, bubble, and spray outputs receive
+  their relevant scene-owned display, material, attribute, or dynamics groups;
+- Source, Sink, Collider, Force, Field, and Volume Grid inputs reuse the
+  existing role-aware Object Properties panels.
+
+Domain assignment changes only the scene pointer. Removing an output requires
+confirmation and revalidates its stable tag, FluidSim ownership, and exact
+object identity before deletion. Object names are labels, never authority.
 
 ## 4. Production render attributes and viewport visualization
 

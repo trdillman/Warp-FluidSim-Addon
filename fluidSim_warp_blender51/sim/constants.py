@@ -13,7 +13,7 @@ TOOL_VERSION = VERSION_STRING
 TOOL_BUILD = BUILD_LABEL
 TOOL_PROFILER = "fluidSim_profiler::1.0"
 TOOL_PROFILER_LABEL = "FluidSim Profiler 1.0"
-BLENDER_TARGET = "5.2"
+BLENDER_TARGET = "5.1+"
 BACKEND_TARGET = "NVIDIA Warp / CUDA"
 
 # ---------------------------------------------------------------------------

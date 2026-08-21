@@ -1,7 +1,7 @@
 """Operator and runtime regressions retained after the Properties UI migration.
 
-Scene/Object authoring and compact View3D launcher behavior are exercised by
-the 1.0.253 Properties UI suites and ``test_release_1_0_253_integration.py``.
+Scene/Object authoring and the combined 1.0.255 View3D/Physics presentation are
+exercised by the Properties UI suites and release integration contract.
 """
 
 from __future__ import annotations
@@ -98,6 +98,9 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     class _Panel:
         pass
 
+    class _UIList:
+        pass
+
     class _AddonPreferences:
         pass
 
@@ -107,6 +110,7 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy.types = SimpleNamespace(
         Operator=_Operator,
         Panel=_Panel,
+        UIList=_UIList,
         AddonPreferences=_AddonPreferences,
     )
     fake_bpy.props = SimpleNamespace(
@@ -1560,6 +1564,156 @@ def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
     assert "Injected 0 particles" in reports[-1][1]
 
 
+def test_single_output_removal_requires_owned_stable_identity(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    output_publication = _reload_module(
+        "fluidSim_warp_blender51.blender.output_publication")
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: None)
+
+    class Output:
+        def __init__(self, *, owned=True):
+            self._values = {
+                output_publication.OUTPUT_TAG: output_publication.SURFACE_NAME,
+                "fluidsim_owned": owned,
+            }
+
+        def get(self, name, default=None):
+            return self._values.get(name, default)
+
+    owned = Output()
+    removed = []
+    monkeypatch.setattr(
+        output_publication, "output_object", lambda _scene, _kind: owned)
+    monkeypatch.setattr(
+        output_publication, "_remove_output_object", removed.append)
+
+    with pytest.raises(ValueError, match="unsupported FluidSim output kind"):
+        output_publication.remove_output(object(), "user-object")
+    with pytest.raises(RuntimeError, match="identity changed"):
+        output_publication.remove_output(
+            object(), output_publication.SURFACE_NAME,
+            expected_object=Output(),
+        )
+
+    unowned = Output(owned=False)
+    monkeypatch.setattr(
+        output_publication, "output_object", lambda _scene, _kind: unowned)
+    with pytest.raises(RuntimeError, match="not owned by FluidSim"):
+        output_publication.remove_output(
+            object(), output_publication.SURFACE_NAME,
+            expected_object=unowned,
+        )
+
+    monkeypatch.setattr(
+        output_publication, "output_object", lambda _scene, _kind: owned)
+    assert output_publication.remove_output(
+        object(), output_publication.SURFACE_NAME,
+        expected_object=owned,
+    ) is True
+    assert removed == [owned]
+
+
+def test_contextual_domain_actions_revalidate_object_role_and_identity(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+
+    domain = SimpleNamespace(
+        name="Domain", type="MESH", fluidsim=SimpleNamespace(role="NONE"))
+    settings = SimpleNamespace(domain_object=None, status="")
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=settings),
+        active_object=domain,
+        object=domain,
+    )
+
+    assert operators.FLUIDSIM_OT_use_active_as_domain.poll(context)
+    assign = operators.FLUIDSIM_OT_use_active_as_domain()
+    assert assign.execute(context) == {"FINISHED"}
+    assert settings.domain_object is domain
+
+    assert operators.FLUIDSIM_OT_clear_domain_assignment.poll(context)
+    clear = operators.FLUIDSIM_OT_clear_domain_assignment()
+    assert clear.execute(context) == {"FINISHED"}
+    assert settings.domain_object is None
+
+    domain.fluidsim.role = "SOURCE"
+    assert not operators.FLUIDSIM_OT_use_active_as_domain.poll(context)
+    assert "Clear the object's FluidSim input role" in (
+        operators.FLUIDSIM_OT_use_active_as_domain._poll_message)
+
+
+def test_viewport_full_workflow_is_collapsed_below_compact_status(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
+    module_path = root / "blender" / "ui_view3d.py"
+    assert module_path.is_file(), "1.0.255 full View3D workflow adapter is missing"
+
+    ui_view3d = _reload_module("fluidSim_warp_blender51.blender.ui_view3d")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    assert panels.FLUIDSIM_PT_viewport_status in panels.CLASSES
+
+    full_settings = ui_view3d.FLUIDSIM_VIEW3D_PT_full_settings
+    assert full_settings.bl_parent_id == "FLUIDSIM_PT_viewport_status"
+    assert full_settings.bl_options == {"DEFAULT_CLOSED"}
+
+    classes = ui_view3d.VIEW3D_PANEL_CLASSES
+    assert len({cls.bl_idname for cls in classes}) == len(classes)
+    mirrors = {cls.bl_idname: cls for cls in classes}
+    for source in ui_view3d.VIEW3D_SOURCE_PANELS:
+        mirror = mirrors[ui_view3d._mirror_id(source.bl_idname)]
+        source_parent = str(getattr(source, "bl_parent_id", "") or "")
+        expected_parent = (
+            ui_view3d._mirror_id(source_parent)
+            if source_parent else full_settings.bl_idname
+        )
+        assert mirror.bl_parent_id == expected_parent
+
+
+def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
+    module_path = root / "blender" / "ui_physics.py"
+    assert module_path.is_file(), "1.0.255 contextual Physics adapter is missing"
+
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    output_publication = _reload_module(
+        "fluidSim_warp_blender51.blender.output_publication")
+    scene_settings = SimpleNamespace(domain_object=None)
+    scene = SimpleNamespace(fluidsim=scene_settings)
+
+    input_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="SOURCE"),
+        get=lambda _key, default=None: default,
+    )
+    context = SimpleNamespace(scene=scene, object=input_obj)
+    assert ui_physics.physics_object_kind(context) == "INPUT"
+
+    scene_settings.domain_object = input_obj
+    assert ui_physics.physics_object_kind(context) == "DOMAIN"
+
+    output_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        get=lambda key, default=None: (
+            output_publication.SURFACE_NAME
+            if key == output_publication.OUTPUT_TAG else default
+        ),
+    )
+    scene_settings.domain_object = None
+    context.object = output_obj
+    assert ui_physics.physics_object_kind(context) == "SURFACE"
+
+    assert len({cls.bl_idname for cls in ui_physics.PHYSICS_PANEL_CLASSES}) == len(
+        ui_physics.PHYSICS_PANEL_CLASSES)
+    assert all(
+        cls.bl_context == "physics"
+        for cls in ui_physics.PHYSICS_PANEL_CLASSES
+    )
+
+
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
@@ -1701,9 +1855,6 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert op.execute(context) == {"CANCELLED"}
     assert fs.max_particles == 8
     assert "changed" in fs.status.lower()
-
-
-
 
 
 

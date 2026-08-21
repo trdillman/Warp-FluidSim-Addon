@@ -31,22 +31,22 @@ def test_release_workflow_has_static_dual_package_and_gpu_gates():
 def test_workflow_uploads_both_platform_packages_checksums_and_reports():
     source = _workflow()
     assert "SHA256SUMS.txt" in source
-    assert "fluidsim_warp-1.0.253-linux_x64.zip" in source
-    assert "fluidsim_warp-1.0.253-windows_x64.zip" in source
+    assert "fluidsim_warp-1.0.255-linux_x64.zip" in source
+    assert "fluidsim_warp-1.0.255-windows_x64.zip" in source
     assert "smoke-test-report.json" in source
     assert "gpu-regression-report.json" in source
     assert "custom-effects-warp-cpu-validation.json" in source
     assert "custom-effects-blender-validation.json" in source
 
 
-def test_installed_release_oracles_match_the_1_0_253_identity():
+def test_installed_release_oracles_match_the_1_0_255_identity():
     for relative in (
         "release/smoke_test_blender.py",
         "release/validate_phase5_blender.py",
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "1.0.252" not in source
-        assert "1.0.253" in source or "(1, 0, 253)" in source
+        assert "1.0.255" in source or "(1, 0, 255)" in source
 
 
 def test_workflow_uses_current_actions_and_pinned_dev_tools():

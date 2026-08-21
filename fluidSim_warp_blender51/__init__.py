@@ -17,7 +17,9 @@ def register():
         render,
         sources,
         ui_object,
+        ui_physics,
         ui_scene,
+        ui_view3d,
         viewport_overlay,
     )
 
@@ -37,6 +39,8 @@ def register():
         ("Object Properties UI", ui_object.register, ui_object.unregister),
         ("custom effects UI", effect_ui.register, effect_ui.unregister),
         ("Warp Code workspace", effect_workspace.register, effect_workspace.unregister),
+        ("Physics Properties UI", ui_physics.register, ui_physics.unregister),
+        ("full viewport settings UI", ui_view3d.register, ui_view3d.unregister),
         ("source migration handlers", sources.register_handlers,
          sources.unregister_handlers),
         ("playback handlers", playback.register_handlers,
@@ -76,6 +80,8 @@ def unregister():
         ("pending handlers", "blender.pending_settings", "unregister_handlers"),
         ("playback handlers", "blender.playback", "unregister_handlers"),
         ("source migration handlers", "blender.sources", "unregister_handlers"),
+        ("full viewport settings UI", "blender.ui_view3d", "unregister"),
+        ("Physics Properties UI", "blender.ui_physics", "unregister"),
         ("Warp Code workspace", "blender.effect_workspace", "unregister"),
         ("custom effects UI", "blender.effect_ui", "unregister"),
         ("Object Properties UI", "blender.ui_object", "unregister"),

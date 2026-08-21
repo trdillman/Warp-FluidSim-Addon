@@ -1,5 +1,11 @@
 # FluidSim Properties UI and Custom Effects Integration Design
 
+> **Presentation update (1.0.255):** `docs/contextual_physics_ui.md` supersedes
+> this document's compact-viewport-only decision. Scene field ownership remains
+> authoritative; the compact status panel remains primary, the full hierarchy
+> is mirrored beneath one collapsed parent, and selected FluidSim objects
+> receive contextual Physics Properties panels.
+
 ## Purpose
 
 FluidSim 1.0.251 has production-capable solver, cache, rendering, whitewater, surface-tension, and Custom Effects systems, but its public controls are split across a dense 3D View sidebar. The result exposes implementation groupings instead of the workflow artists follow and duplicates concepts between the legacy panel tree and Custom Effects v2.

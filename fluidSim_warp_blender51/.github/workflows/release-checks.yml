@@ -140,8 +140,8 @@ jobs:
         with:
           name: fluidsim-dual-platform-packages
           path: |
-            dist/fluidsim_warp-1.0.253-linux_x64.zip
-            dist/fluidsim_warp-1.0.253-windows_x64.zip
+            dist/fluidsim_warp-1.0.255-linux_x64.zip
+            dist/fluidsim_warp-1.0.255-windows_x64.zip
             dist/SHA256SUMS.txt
             dist/linux-build-report.json
             dist/smoke-test-report.json

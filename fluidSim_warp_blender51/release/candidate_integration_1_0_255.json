@@ -1,0 +1,67 @@
+{
+  "candidate": "fluidsim_warp-1.0.255-windows_x64.zip",
+  "candidate_sha256": "49c598ee53606463eaf66c4a71fcf645986fb9b1ef3c99549b4b9c4245ff50eb",
+  "candidate_size_bytes": 2398254,
+  "comparison_lineage": {
+    "candidate": "1.0.255",
+    "prior_candidate": "1.0.253",
+    "prior_candidate_sha256": "354d32b97bf952c5bf07b62543dda66ed39b7368f0b9d7b91ad83521ac2061e7"
+  },
+  "incremental_surface": {
+    "changed": 15,
+    "added": 3,
+    "removed": 0
+  },
+  "adopt_or_adapt": [
+    "__init__.py",
+    "blender_manifest.toml",
+    "blender/output_publication.py",
+    "blender/ui_common.py",
+    "blender/ui_physics.py",
+    "blender/ui_view3d.py",
+    "CHANGELOG.md",
+    "docs/contextual_physics_ui.md",
+    "docs/custom_effects.md",
+    "docs/superpowers/plans/2026-08-18-properties-ui-and-custom-effects.md",
+    "docs/superpowers/specs/2026-08-18-properties-ui-and-custom-effects-design.md",
+    "docs/technical_report.md",
+    "docs/user_guide.md",
+    "operators.py",
+    "sim/constants.py",
+    "version.py"
+  ],
+  "retained_current_owners": [
+    "blender/cache_bake.py",
+    "blender/command_line.py",
+    "blender/pending_settings.py",
+    "blender/playback.py",
+    "blender/production_bake.py",
+    "blender/scene_bridge.py",
+    "blender/simulation_admission.py",
+    "blender/solver_settings.py",
+    "diagnostics/benchmark.py",
+    "diagnostics/profiler.py",
+    "diagnostics/report.py",
+    "io/cache.py",
+    "io/export.py",
+    "panels.py",
+    "sim/capacity_service.py",
+    "sim/cuda_reduction.py",
+    "sim/custom.py",
+    "sim/effects/runtime.py",
+    "sim/frame_output.py",
+    "sim/particle_capacity.py",
+    "sim/quality_contract.py",
+    "sim/registry.py",
+    "sim/solver.py",
+    "sim/validation.py",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "collision_decisions": {
+    "viewport": "Keep the compact status and lifecycle panel; nest the candidate full workflow beneath one collapsed Full Settings parent.",
+    "physics_properties": "Adopt contextual panels as adapters over existing Scene and Object RNA owners.",
+    "output_removal": "Adopt at the authoritative Output Publication seam with exact identity, stable tag, and fluidsim_owned revalidation.",
+    "runtime_certification": "Retain current Blender 5.1 and Windows/Linux runtime certification instead of the candidate Linux-only metadata.",
+    "deep_runtime": "Retain current shared-owner hardening; the 1.0.255 archive carries unchanged older 1.0.253-lineage copies of these modules."
+  }
+}

@@ -38,7 +38,7 @@ class FluidSimObjectPanel:
 
 
 class FluidSimView3DPanel:
-    """Base for the compact FluidSim 3D View launcher."""
+    """Base for the compact launcher and its collapsed full workflow."""
 
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"

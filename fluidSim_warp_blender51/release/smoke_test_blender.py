@@ -13,7 +13,7 @@ import warp as wp
 
 EXPECTED_WARP_VERSION = "1.16.0"
 EXPECTED_BLENDER_VERSION = (5, 1, 0)
-EXPECTED_FLUIDSIM_VERSION = (1, 0, 253)
+EXPECTED_FLUIDSIM_VERSION = (1, 0, 255)
 EXPECTED_FLUIDSIM_VERSION_STRING = ".".join(map(str, EXPECTED_FLUIDSIM_VERSION))
 EXPECTED_PRESETS = {
     "preview_water",
@@ -114,6 +114,8 @@ def _assert_packaged_entry_points(extension_root: Path) -> None:
         extension_root / "blender" / "ui_common.py",
         extension_root / "blender" / "ui_scene.py",
         extension_root / "blender" / "ui_object.py",
+        extension_root / "blender" / "ui_physics.py",
+        extension_root / "blender" / "ui_view3d.py",
         extension_root / "presets" / "schema.py",
         extension_root / "resources" / "presets" / "preview_water.json",
         extension_root / "resources" / "presets" / "water_surface_tension.json",
@@ -422,6 +424,10 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_PT_effect_packages": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_effect_warp_code": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_viewport_status": ("VIEW_3D", ""),
+        "FLUIDSIM_VIEW3D_PT_full_settings": ("VIEW_3D", ""),
+        "FLUIDSIM_VIEW3D_PT_scene_control": ("VIEW_3D", ""),
+        "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
+        "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }
     result = {}
     for panel_id, (space, context) in expected.items():
@@ -447,6 +453,14 @@ def _assert_properties_ui() -> dict[str, object]:
             raise AssertionError(f"legacy dense sidebar panel is still registered: {legacy}")
     if not hasattr(bpy.types, "FLUIDSIM_OT_open_scene_properties"):
         raise AssertionError("installed Scene Properties shortcut operator is missing")
+    for operator_id in (
+        "FLUIDSIM_OT_use_active_as_domain",
+        "FLUIDSIM_OT_clear_domain_assignment",
+        "FLUIDSIM_OT_remove_selected_output",
+    ):
+        if not hasattr(bpy.types, operator_id):
+            raise AssertionError(
+                f"installed contextual workflow operator is missing: {operator_id}")
     return result
 
 

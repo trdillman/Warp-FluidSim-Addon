@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.255 — contextual Physics Properties and full viewport workflow
+
+### Added
+
+- Added contextual **Physics Properties → FluidSim** panels for the selected
+  domain, generated outputs, and input-role objects without adding a second
+  settings model.
+- Added the complete Scene/Custom Effects workflow to **3D View → FluidSim**
+  beneath one collapsed **Full Settings** parent, while retaining the compact
+  activity/status and lifecycle panel as the primary viewport surface.
+- Added guarded domain assignment/removal and confirmed single-output removal.
+  Destructive output actions revalidate stable tags, ownership, and exact object
+  identity immediately before deletion.
+
+### Preserved during integration
+
+- Scene/Object RNA, Pending Settings, Simulation Admission, Playback,
+  Production Bake, and Output Publication remain the authoritative owners.
+- Blender 5.1+, Windows x64, Linux x64, external Warp 1.16.0, and binary-free
+  split-platform packaging remain the supported and validated contract.
+- Removed legacy cache controls remain removed; the viewport mirrors only the
+  current authoritative Scene Properties workflow.
+
 ## 1.0.253 — restore Windows x64 extension packaging
 
 ### Fixed

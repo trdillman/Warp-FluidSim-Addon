@@ -1409,6 +1409,24 @@ def _clear_points(scene, name):
         _swap_vertex_cloud(obj, np.zeros((0, 3), dtype=np.float32))
 
 
+def remove_output(scene, kind, *, expected_object=None):
+    """Remove one identity-checked FluidSim-owned output object."""
+    _require_bpy()
+    allowed = {SURFACE_NAME, PARTICLES_NAME, *WHITEWATER_OUTPUT_NAMES}
+    kind = str(kind)
+    if kind not in allowed:
+        raise ValueError(f"unsupported FluidSim output kind {kind!r}")
+    obj = output_object(scene, kind)
+    if obj is None:
+        return False
+    if expected_object is not None and obj is not expected_object:
+        raise RuntimeError("FluidSim output identity changed before removal")
+    if not bool(getattr(obj, "get", lambda *_args: False)("fluidsim_owned")):
+        raise RuntimeError("refusing to remove an output not owned by FluidSim")
+    _remove_output_object(obj)
+    return True
+
+
 def remove_outputs(scene=None):
     _require_bpy()
     if scene is not None:

@@ -1,4 +1,4 @@
-"""Integration contract for the adapted 1.0.253 release surface."""
+"""Integration contract for the adapted 1.0.255 release surface."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
 COLLISION_GUARD = ROOT / "release" / "candidate_collision_guard_1_0_253.json"
+UPDATE_GUARD = ROOT / "release" / "candidate_integration_1_0_255.json"
 
 
 def _assigned(path: Path, name: str):
@@ -28,7 +29,7 @@ def test_release_identity_targets_blender_51_without_bundled_runtimes():
         (ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
 
     assert manifest["id"] == "fluidsim_warp"
-    assert manifest["version"] == "1.0.253"
+    assert manifest["version"] == "1.0.255"
     assert manifest["blender_version_min"] == "5.1.0"
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 1, 0)
@@ -66,3 +67,31 @@ def test_adjudicated_owners_cannot_revert_to_stale_candidate_payloads():
     for relative, stale_hash in stale_hashes.items():
         payload = (ROOT / relative).read_bytes()
         assert hashlib.sha256(payload).hexdigest() != stale_hash, relative
+
+
+def test_1_0_255_update_records_incremental_scope_and_retained_owners():
+    assert UPDATE_GUARD.is_file()
+    record = json.loads(UPDATE_GUARD.read_text(encoding="utf-8"))
+
+    assert record["candidate_sha256"] == (
+        "49c598ee53606463eaf66c4a71fcf645986fb9b1ef3c99549b4b9c4245ff50eb"
+    )
+    assert record["incremental_surface"] == {
+        "changed": 15,
+        "added": 3,
+        "removed": 0,
+    }
+    assert {
+        "blender/ui_physics.py",
+        "blender/ui_view3d.py",
+        "blender/output_publication.py",
+        "operators.py",
+    }.issubset(record["adopt_or_adapt"])
+    assert {
+        "blender/pending_settings.py",
+        "blender/playback.py",
+        "blender/production_bake.py",
+        "blender/simulation_admission.py",
+        "sim/cuda_reduction.py",
+        "sim/solver.py",
+    }.issubset(record["retained_current_owners"])

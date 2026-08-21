@@ -1,5 +1,11 @@
 # FluidSim Properties UI and Custom Effects Integration Implementation Plan
 
+> **Presentation update (1.0.255):** `docs/contextual_physics_ui.md` supersedes
+> this plan's compact-viewport-only steps. The compact status panel remains the
+> primary viewport surface, the complete authoritative hierarchy is available
+> beneath one collapsed Full Settings parent, and selected FluidSim objects
+> receive contextual Physics Properties panels.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the dense FluidSim 3D View sidebar with a field-complete Blender Properties workflow and integrate Custom Effects v2 as a coherent artist/developer experience.
