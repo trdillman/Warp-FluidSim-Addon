@@ -329,6 +329,34 @@ def test_live_payload_canonicalizes_selected_visualization_channel(monkeypatch):
     np.testing.assert_array_equal(payload.surface_attributes["speed"], expected)
 
 
+def test_live_payload_preserves_non_schema_visualization_without_publishing_it(
+        monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    expected = np.array([3.0, 4.0], dtype=np.float32)
+    monkeypatch.setattr(
+        output_publication, "_surface_values",
+        lambda _solver, _mode, _positions, host=None: expected,
+    )
+    host = _LiveAttributeHost(attributes={})
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=_live_settings(
+            show_particles=False,
+            show_whitewater=False,
+            surface_attribute_mode="HEIGHT",
+        )),
+        host,
+    )
+
+    np.testing.assert_array_equal(
+        output_publication._selected_attribute_values(
+            payload.surface_attributes, payload.surface_attribute_mode),
+        expected,
+    )
+    assert output_publication._phase3_attribute_map(
+        payload.surface_attributes) == {}
+
+
 def test_live_payload_reuses_enabled_selected_channel(monkeypatch):
     from fluidSim_warp_blender51.blender import output_publication
 

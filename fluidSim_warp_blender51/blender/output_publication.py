@@ -40,6 +40,7 @@ WHITEWATER_OUTPUT_NAMES = (
     WHITEWATER_NAME, FOAM_NAME, BUBBLES_NAME, SPRAY_NAME,
 )
 COLOR_ATTR = "display_color"
+_VISUALIZATION_VALUE_KEY = "__visualization__"
 # Live point count of a padded output cloud; see _swap_points.
 POINT_COUNT_TAG = "fluidsim_live_point_count"
 LEGACY_UNCLASSIFIED_COUNT_TAG = "fluidsim_legacy_unclassified_count"
@@ -105,9 +106,19 @@ def _merge_selected_attribute(attributes, mode, values):
         if str(key).lower() in ATTRIBUTE_SPECS
     }
     key = _canonical_attribute_key(mode)
-    if key is not None and key not in result and values is not None:
-        result[key] = np.asarray(values)
+    if values is not None:
+        if key is None:
+            result[_VISUALIZATION_VALUE_KEY] = np.asarray(values)
+        elif key not in result:
+            result[key] = np.asarray(values)
     return result
+
+
+def _selected_attribute_values(attributes, mode):
+    key = _canonical_attribute_key(mode)
+    if key is None:
+        key = _VISUALIZATION_VALUE_KEY
+    return attributes.get(key)
 
 
 def _phase3_attribute_map(values):
@@ -894,8 +905,9 @@ def prepare_live_payload(scene, host, publish_surface=True):
         if fs.show_particles else {})
     particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
     particle_values = None
-    if (fs.show_particles and particle_key is not None
-            and particle_key not in particle_attributes):
+    if (fs.show_particles
+            and (particle_key is None
+                 or particle_key not in particle_attributes)):
         particle_values = _particle_values(
             solver, fs.particle_attribute_mode, positions, indices=indices,
             host=host)
@@ -911,8 +923,9 @@ def prepare_live_payload(scene, host, publish_surface=True):
         if whitewater_visible else {})
     whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
     whitewater_values = None
-    if (whitewater_visible and whitewater_key is not None
-            and whitewater_key not in whitewater_attributes):
+    if (whitewater_visible
+            and (whitewater_key is None
+                 or whitewater_key not in whitewater_attributes)):
         whitewater_values = _whitewater_values(
             solver, fs.whitewater_attribute_mode, whitewater, host=host)
     whitewater_attributes = _merge_selected_attribute(
@@ -931,8 +944,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
             fs, "surface", positions=verts)
         surface_key = _canonical_attribute_key(fs.surface_attribute_mode)
         surface_values = None
-        if (surface_key is not None
-                and surface_key not in surface_attributes):
+        if surface_key is None or surface_key not in surface_attributes:
             surface_values = _surface_values(
                 solver, fs.surface_attribute_mode, verts, host=host)
         surface_attributes = _merge_selected_attribute(
@@ -1162,7 +1174,7 @@ def _subset_aligned_attributes(attributes, indices, count):
 def _publish_whitewater_points(
         scene, name, positions, attributes, attribute_mode, radius,
         ensure_material, *, legacy_unclassified_count=0):
-    values = attributes.get(_canonical_attribute_key(attribute_mode))
+    values = _selected_attribute_values(attributes, attribute_mode)
     colors = _values_to_colors(values) if values is not None else None
     obj = _ensure_point_object(
         scene, name,
@@ -1206,8 +1218,8 @@ def publish_payload(scene, payload):
 
     if payload.surface_visible:
         if payload.publish_surface:
-            values = payload.surface_attributes.get(
-                _canonical_attribute_key(payload.surface_attribute_mode))
+            values = _selected_attribute_values(
+                payload.surface_attributes, payload.surface_attribute_mode)
             colors = _values_to_colors(values) if values is not None else None
             obj = _ensure_object(
                 scene, SURFACE_NAME,
@@ -1227,8 +1239,8 @@ def publish_payload(scene, payload):
             )
 
     if payload.particles_visible:
-        values = payload.particle_attributes.get(
-            _canonical_attribute_key(payload.particle_attribute_mode))
+        values = _selected_attribute_values(
+            payload.particle_attributes, payload.particle_attribute_mode)
         colors = _values_to_colors(values) if values is not None else None
         obj = _ensure_point_object(
             scene, PARTICLES_NAME,
