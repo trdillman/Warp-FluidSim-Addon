@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-20T23:14:10.544662+00:00
+generated_at: 2026-08-21T00:07:25.518125+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree\demos'
-git_head: f9613f65cb619ca52972b0f2d6989b8c7ee50f0e
-gate_run_at: 2026-08-20T23:14:10.544662+00:00
+git_head: 459dac4cbf9885d66bf44e30a9412022c24621ac
+gate_run_at: 2026-08-21T00:07:25.518125+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: f13efd30d309f880ef09e2808126521f0493806d0b0b88a36ab2a03549dc24db
+demo_artifact_sha256: b782a6f7386b5c044af7515743d3de543f505fa6e25d936e459dcb1cb7964365
 ---
 
 # Policy Drift Report — demos unit
@@ -35,13 +35,13 @@ descendants remain valid; non-evidence drift makes validation fail closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-20T23:14:10.544662+00:00
+generated_at: 2026-08-21T00:07:25.518125+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree\demos'
-git_head: f9613f65cb619ca52972b0f2d6989b8c7ee50f0e
-gate_run_at: 2026-08-20T23:14:10.544662+00:00
+git_head: 459dac4cbf9885d66bf44e30a9412022c24621ac
+gate_run_at: 2026-08-21T00:07:25.518125+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: f13efd30d309f880ef09e2808126521f0493806d0b0b88a36ab2a03549dc24db
+demo_artifact_sha256: b782a6f7386b5c044af7515743d3de543f505fa6e25d936e459dcb1cb7964365
 freshness: fresh
 status: fresh
 blocking_criticality: none
