@@ -531,9 +531,9 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.253 production gate at proof HEAD
-`ae89a3eac7b9f5c48b6683f862f7139eaa1909b4` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0111631359`,
-`column_height_end=0.3391113281`, `crown_sqrt_t_corr=0.9714301207`, and
-`max_crown_height=0.2859863043`. The authoritative source is
+`8dfc3939729f2fb64b12272f602de85148a91c73` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0114477622`,
+`column_height_end=0.3378906250`, `crown_sqrt_t_corr=0.9713680253`, and
+`max_crown_height=0.2855468988`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`123ffd94c2a828cc6ba1ec373c7af3e0c0fa2f79921411782dfef21024784d90`.
+`2923bc6c463874c13f11062d8d018860ac3b8f5ef021d763fa4e9e7eda53f064`.
