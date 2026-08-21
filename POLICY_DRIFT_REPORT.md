@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-21T03:18:35.249230+00:00
+generated_at: 2026-08-21T03:31:20.028907+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 7643ddcc7084e07d0a941ecb96243e056e6b4275
-gate_run_at: 2026-08-21T03:18:35.249230+00:00
+git_head: 4b53ec79b323e8685974bb7b6a19309a16f9946f
+gate_run_at: 2026-08-21T03:31:20.028907+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76
+demo_artifact_sha256: 1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9
 ---
 
 # Policy Drift Report — root unit
@@ -15,14 +15,14 @@ demo_artifact_sha256: 6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00a
 ## Strongest live evidence
 
 - `FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py --include-gui`
-  passed at proof HEAD `7643ddcc7084e07d0a941ecb96243e056e6b4275`;
+  passed at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`;
   the run wrote the full-gate
   manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (40/40)`,
   `GUI-PLAYBACK-PROBE-PASS`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - The generated demo analysis is `result: pass`, 18/18 bounded checks, and the
   checked-in `demos/analysis_report.json` is byte-for-byte synchronized with
   `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76`.
+  `1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9`.
 - The measured user path passed at 6.116 ms mean viewport publication and
   16.336 ms mean total, with no added output-path readbacks, synchronization,
   Blender ID creation/removal, depsgraph updates, or structural replacement.
@@ -62,13 +62,13 @@ and to this isolated merge worktree.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-21T03:18:35.249230+00:00
+generated_at: 2026-08-21T03:31:20.028907+00:00
 audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 7643ddcc7084e07d0a941ecb96243e056e6b4275
-gate_run_at: 2026-08-21T03:18:35.249230+00:00
+git_head: 4b53ec79b323e8685974bb7b6a19309a16f9946f
+gate_run_at: 2026-08-21T03:31:20.028907+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76
+demo_artifact_sha256: 1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9
 freshness: fresh
 status: fresh
 blocking_criticality: none

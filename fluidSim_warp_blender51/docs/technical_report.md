@@ -467,7 +467,7 @@ smoke separately requires the same modules and representative panels.
 ## 12. Verification Results for 1.0.255
 
 The table records current executable evidence from the integrated Windows
-source at proof HEAD `7643ddcc7084e07d0a941ecb96243e056e6b4275`.
+source at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`.
 
 | Gate | Result in this environment |
 |---|---|
@@ -535,9 +535,9 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`7643ddcc7084e07d0a941ecb96243e056e6b4275` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0109923602`,
-`column_height_end=0.3391113281`, `crown_sqrt_t_corr=0.9713800298`, and
-`max_crown_height=0.2380029410`. The authoritative source is
+`4b53ec79b323e8685974bb7b6a19309a16f9946f` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0095123038`,
+`column_height_end=0.3364257812`, `crown_sqrt_t_corr=0.9713672681`, and
+`max_crown_height=0.2473388761`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`6ce0fb25a8e31102f82171a62b97673f96780c3ec708bf34381f68a00ad20d76`.
+`1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9`.
