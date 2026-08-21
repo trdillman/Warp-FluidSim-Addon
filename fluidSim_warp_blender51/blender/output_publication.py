@@ -93,11 +93,25 @@ def publish_attribute(data, spec, values, *, live_count=None):
     return attr
 
 
-def _phase3_attribute_map(values):
-    return {
-        key: np.asarray(value) for key, value in values.items()
-        if key in ATTRIBUTE_SPECS
+def _canonical_attribute_key(mode):
+    key = str(mode or "").lower()
+    return key if key in ATTRIBUTE_SPECS else None
+
+
+def _merge_selected_attribute(attributes, mode, values):
+    result = {
+        str(key).lower(): np.asarray(value)
+        for key, value in attributes.items()
+        if str(key).lower() in ATTRIBUTE_SPECS
     }
+    key = _canonical_attribute_key(mode)
+    if key is not None and key not in result and values is not None:
+        result[key] = np.asarray(values)
+    return result
+
+
+def _phase3_attribute_map(values):
+    return _merge_selected_attribute(values, None, None)
 
 _STRUCTURAL_REPLACEMENTS = Counter()
 _COST_PHASES = (
@@ -859,10 +873,6 @@ class PublicationPayload:
     whitewater_attributes: dict[str, np.ndarray]
 
 
-def _attribute_map(mode, values):
-    return {} if values is None else {mode: np.asarray(values)}
-
-
 def _display_stride(fs):
     fraction = float(getattr(fs, "particle_display_fraction", 1.0))
     if not 0.0 < fraction < 1.0:
@@ -879,33 +889,54 @@ def prepare_live_payload(scene, host, publish_surface=True):
     indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
-    particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions, indices=indices,
-        host=host) if fs.show_particles else None)
-    particle_attributes = _attribute_map(
-        str(fs.particle_attribute_mode), particle_values)
+    particle_attributes = (
+        host.output_attributes(fs, "particles", stride=step)
+        if fs.show_particles else {})
+    particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
+    particle_values = None
+    if (fs.show_particles and particle_key is not None
+            and particle_key not in particle_attributes):
+        particle_values = _particle_values(
+            solver, fs.particle_attribute_mode, positions, indices=indices,
+            host=host)
+    particle_attributes = _merge_selected_attribute(
+        particle_attributes, fs.particle_attribute_mode, particle_values)
 
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
                   np.zeros((0, 3), dtype=np.float32))
-    whitewater_values = (_whitewater_values(
-        solver, fs.whitewater_attribute_mode, whitewater, host=host)
-        if fs.show_whitewater and fs.whitewater_enabled else None)
-    whitewater_attributes = _attribute_map(
-        str(fs.whitewater_attribute_mode), whitewater_values)
+    whitewater_visible = bool(fs.show_whitewater and fs.whitewater_enabled)
+    whitewater_attributes = (
+        host.output_attributes(fs, "whitewater")
+        if whitewater_visible else {})
+    whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
+    whitewater_values = None
+    if (whitewater_visible and whitewater_key is not None
+            and whitewater_key not in whitewater_attributes):
+        whitewater_values = _whitewater_values(
+            solver, fs.whitewater_attribute_mode, whitewater, host=host)
+    whitewater_attributes = _merge_selected_attribute(
+        whitewater_attributes, fs.whitewater_attribute_mode,
+        whitewater_values)
     whitewater_output_mode = str(
         getattr(fs, "whitewater_output_mode", "COMBINED"))
-    if (fs.show_whitewater and fs.whitewater_enabled
+    if (whitewater_visible
             and whitewater_output_mode.upper() in {"SEPARATE", "BOTH"}
             and "type" not in whitewater_attributes):
         whitewater_attributes["type"] = host.whitewater_attribute("type")
 
     if publish_surface and fs.show_surface and fs.surface_enabled:
         verts, tris = host.surface_mesh
-        surface_values = _surface_values(
-            solver, fs.surface_attribute_mode, verts, host=host)
-        surface_attributes = _attribute_map(
-            str(fs.surface_attribute_mode), surface_values)
+        surface_attributes = host.output_attributes(
+            fs, "surface", positions=verts)
+        surface_key = _canonical_attribute_key(fs.surface_attribute_mode)
+        surface_values = None
+        if (surface_key is not None
+                and surface_key not in surface_attributes):
+            surface_values = _surface_values(
+                solver, fs.surface_attribute_mode, verts, host=host)
+        surface_attributes = _merge_selected_attribute(
+            surface_attributes, fs.surface_attribute_mode, surface_values)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)
@@ -925,8 +956,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
                          * getattr(fs, "particle_display_scale", 1.0)),
         particles=np.asarray(positions, dtype=np.float32),
         particle_attributes=particle_attributes,
-        whitewater_visible=bool(
-            fs.show_whitewater and fs.whitewater_enabled),
+        whitewater_visible=whitewater_visible,
         whitewater_output_mode=whitewater_output_mode,
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
         whitewater_radius=(voxel_size * 0.15
@@ -997,12 +1027,13 @@ def prepare_cache_payload(scene, frame_data):
     if (str(fs.whitewater_attribute_mode) == "TYPE"
             and whitewater_values is None):
         whitewater_values = whitewater_attributes["type"]
-    if surface_values is not None:
-        surface_attributes[str(fs.surface_attribute_mode)] = surface_values
-    if particle_values is not None:
-        particle_attributes[str(fs.particle_attribute_mode)] = particle_values
-    if whitewater_values is not None:
-        whitewater_attributes[str(fs.whitewater_attribute_mode)] = whitewater_values
+    surface_attributes = _merge_selected_attribute(
+        surface_attributes, fs.surface_attribute_mode, surface_values)
+    particle_attributes = _merge_selected_attribute(
+        particle_attributes, fs.particle_attribute_mode, particle_values)
+    whitewater_attributes = _merge_selected_attribute(
+        whitewater_attributes, fs.whitewater_attribute_mode,
+        whitewater_values)
 
     step = _display_stride(fs)
     if step > 1 and len(positions):
@@ -1131,7 +1162,7 @@ def _subset_aligned_attributes(attributes, indices, count):
 def _publish_whitewater_points(
         scene, name, positions, attributes, attribute_mode, radius,
         ensure_material, *, legacy_unclassified_count=0):
-    values = attributes.get(attribute_mode)
+    values = attributes.get(_canonical_attribute_key(attribute_mode))
     colors = _values_to_colors(values) if values is not None else None
     obj = _ensure_point_object(
         scene, name,
@@ -1176,7 +1207,7 @@ def publish_payload(scene, payload):
     if payload.surface_visible:
         if payload.publish_surface:
             values = payload.surface_attributes.get(
-                payload.surface_attribute_mode)
+                _canonical_attribute_key(payload.surface_attribute_mode))
             colors = _values_to_colors(values) if values is not None else None
             obj = _ensure_object(
                 scene, SURFACE_NAME,
@@ -1197,7 +1228,7 @@ def publish_payload(scene, payload):
 
     if payload.particles_visible:
         values = payload.particle_attributes.get(
-            payload.particle_attribute_mode)
+            _canonical_attribute_key(payload.particle_attribute_mode))
         colors = _values_to_colors(values) if values is not None else None
         obj = _ensure_point_object(
             scene, PARTICLES_NAME,

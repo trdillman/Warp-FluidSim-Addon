@@ -170,44 +170,164 @@ def test_viewport_frame_module_does_not_require_blender_runtime(monkeypatch):
     assert output_publication.prepare_live_payload.__name__ == "prepare_live_payload"
 
 
-def test_live_payload_excludes_unselected_production_attributes():
-    from fluidSim_warp_blender51.blender import output_publication
+def _live_settings(**overrides):
+    values = {
+        "show_particles": True,
+        "particle_display_fraction": 0.5,
+        "particle_display_scale": 1.0,
+        "particle_attribute_mode": "NONE",
+        "show_whitewater": True,
+        "whitewater_enabled": True,
+        "whitewater_output_mode": "COMBINED",
+        "whitewater_display_scale": 1.0,
+        "whitewater_attribute_mode": "NONE",
+        "show_surface": True,
+        "surface_enabled": True,
+        "surface_attribute_mode": "NONE",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
-    class LiveHost:
-        solver = SimpleNamespace(settings=SimpleNamespace(voxel_size=0.1))
-        whitewater = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-        surface_mesh = (
-            np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
-            np.zeros((0, 3), dtype=np.int32),
-        )
 
-        def positions_strided(self, _step):
-            return np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
-
-        def output_attributes(self, *_args, **_kwargs):
-            raise AssertionError(
-                "live viewport adaptation must not capture production attributes")
-
-    fs = SimpleNamespace(
-        show_particles=True,
-        particle_display_fraction=1.0,
-        particle_display_scale=1.0,
-        particle_attribute_mode="NONE",
-        show_whitewater=True,
-        whitewater_enabled=True,
-        whitewater_display_scale=1.0,
-        whitewater_attribute_mode="NONE",
-        show_surface=True,
-        surface_enabled=True,
-        surface_attribute_mode="NONE",
+class _LiveAttributeHost:
+    solver = SimpleNamespace(settings=SimpleNamespace(voxel_size=0.1))
+    whitewater = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+    surface_mesh = (
+        np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
+        np.zeros((0, 3), dtype=np.int32),
     )
 
-    payload = output_publication.prepare_live_payload(
-        SimpleNamespace(fluidsim=fs), LiveHost())
+    def __init__(self, attributes=None):
+        self.attribute_calls = []
+        self.attributes = attributes if attributes is not None else {
+            "particles": {"age": np.array([4.0], dtype=np.float32)},
+            "whitewater": {
+                "velocity": np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            },
+            "surface": {
+                "velocity": np.array(
+                    [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
+                "motion": np.array(
+                    [[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], dtype=np.float32),
+            },
+        }
 
+    def positions_strided(self, _step):
+        return np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+
+    def output_attributes(self, _settings, output_kind, **kwargs):
+        self.attribute_calls.append((output_kind, kwargs))
+        return self.attributes.get(output_kind, {})
+
+
+def test_live_payload_gathers_enabled_attributes_for_visible_outputs():
+    from fluidSim_warp_blender51.blender import output_publication
+
+    host = _LiveAttributeHost()
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=_live_settings()), host)
+
+    assert host.attribute_calls[:2] == [
+        ("particles", {"stride": 2}),
+        ("whitewater", {}),
+    ]
+    assert host.attribute_calls[2][0] == "surface"
+    np.testing.assert_array_equal(
+        host.attribute_calls[2][1]["positions"], host.surface_mesh[0])
+    assert set(payload.surface_attributes) == {"velocity", "motion"}
+    assert set(payload.particle_attributes) == {"age"}
+    assert set(payload.whitewater_attributes) == {"velocity"}
+
+
+def test_live_payload_canonicalizes_selected_visualization_channel(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    expected = np.array([3.0, 4.0], dtype=np.float32)
+    monkeypatch.setattr(
+        output_publication, "_surface_values",
+        lambda _solver, _mode, _positions, host=None: expected,
+    )
+    host = _LiveAttributeHost(attributes={})
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=_live_settings(
+            show_particles=False,
+            show_whitewater=False,
+            surface_attribute_mode="SPEED",
+        )),
+        host,
+    )
+
+    assert set(payload.surface_attributes) == {"speed"}
+    np.testing.assert_array_equal(payload.surface_attributes["speed"], expected)
+
+
+def test_live_payload_reuses_enabled_selected_channel(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    def unexpected_recompute(*_args, **_kwargs):
+        raise AssertionError("enabled selected channel must be reused")
+
+    monkeypatch.setattr(output_publication, "_surface_values", unexpected_recompute)
+    expected = np.array([7.0, 8.0], dtype=np.float32)
+    host = _LiveAttributeHost(attributes={"surface": {"speed": expected}})
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=_live_settings(
+            show_particles=False,
+            show_whitewater=False,
+            surface_attribute_mode="SPEED",
+        )),
+        host,
+    )
+
+    assert set(payload.surface_attributes) == {"speed"}
+    np.testing.assert_array_equal(payload.surface_attributes["speed"], expected)
+
+
+def test_hidden_live_outputs_do_not_request_attributes():
+    from fluidSim_warp_blender51.blender import output_publication
+
+    host = _LiveAttributeHost()
+    payload = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=_live_settings(
+            show_particles=False,
+            show_whitewater=False,
+            show_surface=False,
+        )),
+        host,
+    )
+
+    assert host.attribute_calls == []
     assert payload.surface_attributes == {}
     assert payload.particle_attributes == {}
     assert payload.whitewater_attributes == {}
+
+
+def test_cache_payload_uses_same_canonical_attribute_keys(monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.io import cache as cache_io
+
+    expected = np.array([3.0, 4.0], dtype=np.float32)
+    monkeypatch.setattr(
+        cache_io, "validate_optional_attributes", lambda _frame_data: {})
+    monkeypatch.setattr(
+        output_publication, "_cached_values",
+        lambda mode, _positions, _velocities=None: (
+            expected if mode == "SPEED" else None),
+    )
+    payload = output_publication.prepare_cache_payload(
+        SimpleNamespace(fluidsim=_live_settings(
+            show_particles=False,
+            show_whitewater=False,
+            surface_attribute_mode="SPEED",
+        )),
+        {
+            "surface_verts": _LiveAttributeHost.surface_mesh[0],
+            "surface_tris": _LiveAttributeHost.surface_mesh[1],
+        },
+    )
+
+    assert set(payload.surface_attributes) == {"speed"}
+    np.testing.assert_array_equal(payload.surface_attributes["speed"], expected)
 
 
 def test_viewport_cache_and_export_share_one_frame(tmp_path):
