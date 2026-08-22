@@ -1,0 +1,66 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Utilities",
+  "cost_hint": "LOW",
+  "description": "Limits the magnitude of each liquid particle velocity while preserving direction. This is a predictable utility for art direction and for guarding aggressive custom-force stacks.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.particle_speed_limit",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Clamps current-particle speed without changing velocity direction.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "particle_speed_limit",
+      "label": "Limit Speed",
+      "parameter_keys": [
+        "maximum_speed"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "current = particle_velocity[particle_index]\nspeed = wp.length(current)\nif speed > maximum_speed:\n    particle_velocity[particle_index] = current * (maximum_speed / speed)",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Particle Speed Limit",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": true,
+      "default": 10.0,
+      "description": "Maximum allowed particle speed.",
+      "enum_items": [],
+      "key": "maximum_speed",
+      "kind": "FLOAT",
+      "label": "Maximum Speed",
+      "maximum": 10000.0,
+      "minimum": 0.001,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Clamp particle speeds to an explicit artist-controlled maximum.",
+  "tags": [
+    "clamp",
+    "stability",
+    "utility"
+  ],
+  "version": "1.0.0"
+}

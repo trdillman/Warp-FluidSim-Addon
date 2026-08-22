@@ -36,12 +36,11 @@ def main():
         raise RuntimeError(f"opened {blend}, expected {expected}")
     if not addon_utils.check(ADDON_NAME)[1]:
         raise RuntimeError(f"{ADDON_NAME} is not enabled")
-    if ADDON_NAME not in bpy.context.preferences.addons:
-        raise RuntimeError(f"{ADDON_NAME} missing from Blender preferences")
 
     scene = bpy.context.scene
-    if hasattr(scene, "fluidsim"):
-        scene.fluidsim.live = True
+    if not hasattr(scene, "fluidsim"):
+        raise RuntimeError(f"{ADDON_NAME} scene properties are not registered")
+    scene.fluidsim.live = True
     scene.frame_set(max(scene.frame_start, 1))
     marker = os.environ.get("FLUIDSIM_OPEN_MARKER")
     message = (

@@ -60,11 +60,16 @@ def test_solver_reset_clears_surface_extractor_buffers():
 
     solver = object.__new__(FluidSolver)
     solver.particles = Clearable()
+    solver.particles.optional_channels = ()
     solver.whitewater = Clearable()
     solver.churn = Clearable()
     solver.grid = Grid()
     extractor = Extractor()
-    solver.settings = SimpleNamespace(spacetime_enabled=False, spacetime_seed=1729)
+    solver.settings = SimpleNamespace(
+        spacetime_enabled=False,
+        spacetime_seed=1729,
+        spacetime_reference_mass=0.0,
+    )
     calibration_calls = []
     solver._calibrate_st_reference_mass = lambda: calibration_calls.append("calibrated")
     solver.surface = SimpleNamespace(reset=lambda: extractor.reset_buffers())
@@ -96,6 +101,12 @@ def test_frame_stats_exports_slowdown_diagnostics():
     stats.substeps = 3
     stats.pressure_iterations = 11
     stats.pressure_residual = 0.125
+    stats.custom_effects = [{
+        "key": "effect:kernel:0",
+        "calls": 1,
+        "elements": 128,
+        "submissionSeconds": 0.001,
+    }]
 
     data = stats.as_dict()
 
@@ -103,11 +114,13 @@ def test_frame_stats_exports_slowdown_diagnostics():
     assert data["substeps"] == 3
     assert data["pressureIterations"] == 11
     assert data["pressureResidual"] == 0.125
+    assert data["customEffects"] == stats.custom_effects
     for field in (
         "whitewaterParticles",
         "substeps",
         "pressureIterations",
         "pressureResidual",
+        "customEffects",
     ):
         assert field in PROFILE_FRAME_FIELDS
 

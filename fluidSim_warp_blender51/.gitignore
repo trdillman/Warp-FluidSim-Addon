@@ -1,0 +1,16 @@
+.worktrees/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+wheels/*.part
+gpu-regression-report.json
+p0-environment-report.json
+
+wheels/*.whl
+
+release-environment-report.json

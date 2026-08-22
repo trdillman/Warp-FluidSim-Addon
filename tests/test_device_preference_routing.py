@@ -29,7 +29,7 @@ _PACKAGE_ROOT = (pathlib.Path(__file__).resolve().parent.parent
 def _install_bpy_stub(monkeypatch, *, prefs):
     fake_bpy = types.ModuleType("bpy")
     fake_props = types.ModuleType("bpy.props")
-    for name in ("BoolProperty", "StringProperty"):
+    for name in ("BoolProperty", "EnumProperty", "StringProperty"):
         setattr(fake_props, name, lambda **kwargs: None)
     fake_bpy.props = fake_props
     fake_bpy.types = SimpleNamespace(Operator=object, AddonPreferences=object)
@@ -49,6 +49,12 @@ def _install_bpy_stub(monkeypatch, *, prefs):
 def test_the_selected_device_is_what_callers_get(monkeypatch):
     preferences = _install_bpy_stub(
         monkeypatch, prefs=SimpleNamespace(device="cuda:3"))
+    monkeypatch.setattr(
+        preferences,
+        "probe_runtime",
+        lambda: SimpleNamespace(
+            cuda_devices=(SimpleNamespace(alias="cuda:3"),)),
+    )
     assert preferences.configured_device() == "cuda:3"
 
 
@@ -59,39 +65,102 @@ def test_an_unregistered_addon_falls_back_rather_than_raising(monkeypatch):
     rather than an exception or an empty device name.
     """
     preferences = _install_bpy_stub(monkeypatch, prefs=None)
+    monkeypatch.setattr(
+        preferences,
+        "probe_runtime",
+        lambda: SimpleNamespace(
+            cuda_devices=(SimpleNamespace(alias="cuda:0"),)),
+    )
     assert preferences.configured_device() == "cuda:0"
 
     preferences = _install_bpy_stub(
         monkeypatch, prefs=SimpleNamespace(device=""))
+    monkeypatch.setattr(
+        preferences,
+        "probe_runtime",
+        lambda: SimpleNamespace(
+            cuda_devices=(SimpleNamespace(alias="cuda:0"),)),
+    )
     assert preferences.configured_device() == "cuda:0"
 
 
-def test_the_availability_probe_reports_the_device_actually_in_use(monkeypatch):
-    """The panel's checkmark is the whole point of the probe.
+def test_preferences_helper_accepts_the_operator_context(monkeypatch):
+    preferences = _install_bpy_stub(
+        monkeypatch, prefs=SimpleNamespace(device="cuda:0"))
+    custom_prefs = SimpleNamespace(device="cuda:7")
+    custom_context = SimpleNamespace(
+        preferences=SimpleNamespace(addons={
+            "fluidSim_warp_blender51": SimpleNamespace(
+                preferences=custom_prefs)
+        }))
 
-    Probing cuda:0 while the solver ran on the selected device is how the
-    checkmark came to describe a card that was never in use.
-    """
+    assert preferences._preferences(custom_context) is custom_prefs
+
+
+def test_refresh_operators_tolerate_missing_transient_preferences(monkeypatch):
+    """Nonpersistent enables may have no Blender preferences entry."""
+    preferences = _install_bpy_stub(monkeypatch, prefs=None)
+    refreshed = []
+
+    def fake_refresh(prefs):
+        refreshed.append(prefs)
+        return None, (True, "runtime ready")
+
+    monkeypatch.setattr(preferences, "_refresh_runtime", fake_refresh)
+
+    for operator_type in (
+        preferences.FLUIDSIM_OT_refresh_runtime_probe,
+        preferences.FLUIDSIM_OT_redetect_device,
+    ):
+        operator = operator_type()
+        operator.report = lambda *_args: None
+        assert operator.execute(preferences.bpy.context) == {"FINISHED"}
+
+    assert refreshed == [None, None]
+
+
+def test_refresh_runtime_does_not_write_missing_preferences(monkeypatch):
+    preferences = _install_bpy_stub(monkeypatch, prefs=None)
+    probe = SimpleNamespace(
+        cuda_devices=(SimpleNamespace(alias="cuda:0"),))
+    monkeypatch.setattr(
+        preferences, "probe_runtime", lambda force=False: probe)
+    monkeypatch.setattr(
+        preferences,
+        "runtime_status_for_device",
+        lambda device, probe=None: (True, f"ready: {device}"),
+    )
+
+    refreshed, (ready, message) = preferences._refresh_runtime(None)
+
+    assert refreshed is probe
+    assert ready
+    assert message == "ready: cuda:0"
+
+
+def test_the_runtime_status_reports_the_device_actually_in_use(monkeypatch):
     preferences = _install_bpy_stub(
         monkeypatch, prefs=SimpleNamespace(device="cuda:3"))
 
     probed = []
-    fake_warp = types.ModuleType("warp")
-    fake_warp.init = lambda: None
-    fake_warp.is_cuda_available = lambda: True
-    fake_warp.config = SimpleNamespace(version="1.12.1")
+    probe = SimpleNamespace(
+        cuda_devices=(SimpleNamespace(alias="cuda:3"),))
+    monkeypatch.setattr(
+        preferences, "probe_runtime", lambda force=False: probe)
+    monkeypatch.setattr(
+        preferences,
+        "runtime_status_for_device",
+        lambda device, probe=None: (
+            probed.append(device) or True,
+            "Warp 1.16.0 - cuda:3: RTX 4080 SUPER",
+        ),
+    )
 
-    def _get_device(name):
-        probed.append(name)
-        return SimpleNamespace(name="RTX 4080 SUPER")
-
-    fake_warp.get_device = _get_device
-    monkeypatch.setitem(sys.modules, "warp", fake_warp)
-    monkeypatch.setattr(preferences, "_WARP_PROBE_RESULT", None)
-
-    ok, message = preferences._probe_warp(force=True)
+    refreshed, (ok, message) = preferences._refresh_runtime(
+        preferences._preferences())
 
     assert probed == ["cuda:3"]
+    assert refreshed is probe
     assert ok and "RTX 4080 SUPER" in message
 
 
@@ -109,15 +178,29 @@ def test_nothing_else_reaches_into_the_addon_preferences(monkeypatch):
         and lookup.search(path.read_text(encoding="utf-8")))
 
     assert offenders == []
+    owner_source = (_PACKAGE_ROOT / "preferences.py").read_text(encoding="utf-8")
+    helper_source = owner_source.split("def _preferences", 1)[1].split(
+        "def configured_device", 1)[0]
+    assert len(lookup.findall(helper_source)) == 1
+    assert len(lookup.findall(owner_source)) == 1
 
 
 def test_the_owner_does_not_hardcode_the_package_name():
     """Renaming the folder is a supported way to install an add-on."""
     source = (_PACKAGE_ROOT / "preferences.py").read_text(encoding="utf-8")
-    body = source.split("def configured_device", 1)[1].split("\ndef ", 1)[0]
+    start = source.index("def _preferences")
+    end = source.index("def configured_device")
+    body = source[start:end]
 
     assert "__package__" in body
     assert "fluidSim_warp_blender51" not in body
+
+
+def test_command_line_routes_selection_through_the_owner():
+    source = (_PACKAGE_ROOT / "blender" / "command_line.py").read_text(
+        encoding="utf-8")
+
+    assert "set_configured_device(selected_device)" in source
 
 
 def test_build_settings_routes_through_the_helper():

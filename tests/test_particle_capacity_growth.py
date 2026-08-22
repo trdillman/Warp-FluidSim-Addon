@@ -18,6 +18,12 @@ def test_growth_target_adds_geometric_headroom_and_rounds_to_chunks():
     assert growth_target(100_000, 100_001) == 196_608
 
 
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), float("-inf")])
+def test_growth_target_rejects_nonfinite_factor(factor):
+    with pytest.raises(ValueError, match="factor must be finite"):
+        growth_target(1_024, 2_048, factor=factor)
+
+
 def test_growth_guard_charges_full_atomic_replacement_pool():
     unit = 1024**3
     plan = plan_particle_growth(

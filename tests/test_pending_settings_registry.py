@@ -116,11 +116,15 @@ def test_adapters_delegate_pending_policy_to_deep_owner(monkeypatch):
     sources = [
         (root / "operators.py").read_text(encoding="utf-8"),
         (root / "panels.py").read_text(encoding="utf-8"),
+        (root / "blender" / "ui_common.py").read_text(encoding="utf-8"),
+        (root / "blender" / "ui_scene.py").read_text(encoding="utf-8"),
         (root / "blender" / "viewport_overlay.py").read_text(encoding="utf-8"),
         (root / "blender" / "playback.py").read_text(encoding="utf-8"),
     ]
 
     assert "def _pending" in sources[0]
-    assert "pending_settings import pending_presentation" in sources[1]
+    assert "pending_ui_state" in sources[1]
     assert "pending_settings import pending_presentation" in sources[2]
-    assert "pending_settings.apply_pending_on_rewind" in sources[3]
+    assert "pending_ui_state" in sources[3]
+    assert "pending_settings import pending_presentation" in sources[4]
+    assert "pending_settings.apply_pending_on_rewind" in sources[5]

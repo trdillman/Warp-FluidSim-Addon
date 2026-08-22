@@ -125,6 +125,18 @@ def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
     assert solver.settings.voxel_size == 0.1
 
 
+def test_reset_projection_preserves_closed_domain_wall_invariant(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    scene.fluidsim.domain_sdf_walls = False
+    _sess, solver = _activate(bridge, scene)
+
+    bridge.pending.apply_reset_solver_settings(scene)
+
+    assert solver.settings.open_boundaries is False
+    assert solver.settings.domain_sdf_walls is True
+
+
 def test_pending_state_is_isolated_between_scenes(monkeypatch):
     bridge = _bridge(monkeypatch)
     first = _scene()

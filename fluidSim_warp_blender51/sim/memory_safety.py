@@ -15,6 +15,7 @@ from .quality_contract import resolve_quality
 LEAF_VOLUME = 512
 BASE_BYTES = 256 * 1024**2
 SIM_BYTES_PER_VOXEL = 356
+SURFACE_TENSION_BYTES_PER_VOXEL = 24
 RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
@@ -237,6 +238,11 @@ def estimate_solver_bytes(settings) -> int:
     surface_enabled = bool(_value(settings, "surface_enabled", True))
     surface_h = _surface_voxel_size(settings)
     sim_h = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
+    if (bool(_value(settings, "surface_tension_enabled", False))
+            and float(_value(settings, "surface_tension_coefficient", 0.0)) > 0.0):
+        estimate += (
+            leaves * LEAF_VOLUME * SURFACE_TENSION_BYTES_PER_VOXEL
+        )
     if surface_enabled:
         estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL
     if surface_enabled and abs(surface_h - sim_h) > 1.0e-8:
@@ -270,6 +276,13 @@ def recommend_safe_settings(
         "surface_leaf_capacity_scale": float(_value(settings, "surface_leaf_capacity_scale", 1.0)),
         "surface_max_dense_dim": int(_value(settings, "surface_max_dense_dim", 256)),
         "surface_enabled": bool(_value(settings, "surface_enabled", True)),
+        # Preserve optional P5 allocation state while evaluating candidates.
+        # Dropping these fields would make subsequent estimates silently fall
+        # back to the disabled defaults and could accept an over-budget plan.
+        "surface_tension_enabled": bool(
+            _value(settings, "surface_tension_enabled", False)),
+        "surface_tension_coefficient": float(
+            _value(settings, "surface_tension_coefficient", 0.0)),
         "surface_voxel_size": float(_value(settings, "surface_voxel_size", 0.0)),
         "domain_min": tuple(_value(settings, "domain_min", (-2.0, -2.0, 0.0))),
         "domain_max": tuple(_value(settings, "domain_max", (2.0, 2.0, 4.0))),

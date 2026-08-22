@@ -31,6 +31,20 @@ def register(*names: str, strategy: str = "flat", notes: str = ""):
     """Register a callable under one or more canonical kernel identities."""
 
     def deco(fn):
+        requested = set()
+        for n in names:
+            if n in requested:
+                raise ValueError(
+                    f"FluidSim kernel identity {n!r} was requested more than once"
+                )
+            requested.add(n)
+            if n in KERNEL_REGISTRY:
+                previous = KERNEL_REGISTRY[n]
+                raise ValueError(
+                    f"FluidSim kernel identity {n!r} is already registered "
+                    f"by {previous.fn!r}"
+                )
+
         for n in names:
             KERNEL_REGISTRY[n] = RegistryEntry(n, fn, strategy, notes)
             if n.startswith("fluidSim"):

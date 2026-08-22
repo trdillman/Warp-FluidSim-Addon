@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import bpy
 import warp as wp
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.build_demo_scenes import fresh_scene, make_particle_seed  # noqa: E402
+from tools.build_demo_scenes import fresh_scene, make_particle_seed
 
 
 def check(label, condition, detail=""):
@@ -23,13 +23,29 @@ def check(label, condition, detail=""):
 def main():
     scene = fresh_scene()
     fs = scene.fluidsim
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.8))
+    bpy.context.object.name = "Admission Setup Source"
+    check("setup", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+    # Guided Setup applies its product preset; admission-specific authored
+    # values belong after that transaction and before snapshot capture.
     fs.voxel_size = 0.15
     fs.max_particles = 20_000
     fs.max_whitewater = 1
     fs.whitewater_enabled = False
     fs.surface_enabled = False
     fs.show_particles = True
-    check("setup", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+    # Reproduce a legacy scene authored with the unsafe independent wall
+    # switch disabled. Admission must normalize the runtime without mutating
+    # the saved scene during preflight.
+    fs.open_boundaries = False
+    fs.domain_sdf_walls = False
+    bpy.ops.mesh.primitive_cube_add(
+        size=0.5, location=(0.0, 0.0, -0.25))
+    bpy.context.object.name = "Admission Collider"
+    check(
+        "tag collider",
+        bpy.ops.fluidsim.tag_collider() == {"FINISHED"},
+    )
     seed = make_particle_seed(
         scene, ((0.0, 0.0, 0.8),), "Admission Seed")
     seed.fluidsim.enabled = True
@@ -45,11 +61,16 @@ def main():
     force.fluidsim.force_strength = 0.1
     fs.height_enabled = True
     fs.height_base = 0.2
-    bpy.ops.fluidsim.snippet_add()
+    check("add custom effect",
+          bpy.ops.fluidsim.snippet_add() == {"FINISHED"})
+    check(
+        "compile and apply custom effect",
+        bpy.ops.fluidsim.effect_apply_stack(device="cuda:0") == {"FINISHED"},
+    )
 
     from fluidSim_warp_blender51.blender import simulation_admission, sources
-    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
     from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
     from fluidSim_warp_blender51.sim import memory_safety
     from fluidSim_warp_blender51.sim.enums import SourceShapeSourceMode
 
@@ -94,7 +115,7 @@ def main():
 
     memory_safety.release_cuda_memory = release_cuda_memory
 
-    def observe_configuration(owner, candidate, snapshot):
+    def observe_configuration(owner, candidate, snapshot, scene_arg):
         installed.update({
             "sources": len(snapshot.descriptors) + len(snapshot.extra_plans),
             "colliders": len(snapshot.colliders),
@@ -106,8 +127,9 @@ def main():
             "height": bool(getattr(snapshot.height_source, "enabled", False)),
             "seeds": len(snapshot.seeds),
             "snippets": len(snapshot.snippets),
+            "effects": len(snapshot.effects),
         })
-        result = original_configure(owner, candidate, snapshot)
+        result = original_configure(owner, candidate, snapshot, scene_arg)
         materialized_meshes.append(sum(
             1 for entry in snapshot.scene_inputs._evaluated_mesh_cache.values()
             if str(entry.get("device", "")).startswith("cuda")
@@ -129,13 +151,19 @@ def main():
           and all(item[1] is initial_gathers[0][1]
                   for item in initial_gathers), repr(initial_gathers))
     check("active CUDA solver", sess.active and str(sess.solver.device).startswith("cuda"))
+    check(
+        "closed-domain wall invariant",
+        not fs.open_boundaries
+        and not fs.domain_sdf_walls
+        and sess.solver.settings.domain_sdf_walls,
+    )
     check("sources installed", installed.get("sources", 0) >= 1)
     check("collider installed", installed.get("colliders", 0) >= 1)
     check("force installed", installed.get("analytic_forces", 0) >= 1)
     check("height installed", installed.get("height") is True)
     check("seed committed", installed.get("seeds", 0) >= 1
           and sess.solver.particles.refresh_host_count() >= 1)
-    check("snippet captured", installed.get("snippets", 0) >= 1)
+    check("custom effect captured", installed.get("effects", 0) >= 1)
     check("outputs prepared", any(obj.type == "POINTCLOUD" for obj in scene.objects))
     check("CUDA meshes materialized only after preflight on candidate",
           materialized_meshes and materialized_meshes[-1] >= 1,

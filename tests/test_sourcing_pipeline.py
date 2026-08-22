@@ -229,6 +229,7 @@ class _Particles:
         self.capacity = capacity
         self.refreshed_count = refreshed_count
         self.refresh_calls = 0
+        self.next_uid = 0
         self.position = "position"
         self.velocity = "velocity"
         self.time_offset = "time_offset"
@@ -237,6 +238,12 @@ class _Particles:
 
     def attr(self, name):
         return f"attr:{name}"
+
+    def has_optional_channel(self, _name):
+        return False
+
+    def optional_array(self, name):
+        return f"optional:{name}"
 
     def refresh_host_count(self):
         self.refresh_calls += 1
@@ -409,7 +416,7 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     arrays, launches = _record_warp(monkeypatch)
     # Admission reads the device counter in the kernel; the single host refresh
     # reports the committed total after the exact packet transaction.
-    owner = _owner(refreshed_count=2)
+    owner = _owner(refreshed_count=[0, 2])
     pipeline = SourcePipeline(owner)
 
     result = pipeline.inject_particles(
@@ -426,7 +433,7 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
         sourcing.k_source_owned_points,
     ]
     assert launches[-1][1]["dim"] == 2
-    assert owner.particles.refresh_calls == 1
+    assert owner.particles.refresh_calls == 2
     assert owner._host_frame_cache is None
     assert pipeline.last_injection_result == sourcing.InjectionResult(
         admitted=True, emitted=2, required=2, available=8,
@@ -434,4 +441,4 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
 
     assert pipeline.inject_particles([]) == 0
     assert len(launches) == 3
-    assert owner.particles.refresh_calls == 1
+    assert owner.particles.refresh_calls == 2

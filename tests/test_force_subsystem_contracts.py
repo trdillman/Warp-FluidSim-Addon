@@ -59,6 +59,7 @@ def _force_harness():
         speed_limit_percent=0.1,
     )
     source_force_calls = []
+    surface_tension_calls = []
     return SimpleNamespace(
         settings=settings,
         grid=SimpleNamespace(
@@ -75,6 +76,9 @@ def _force_harness():
         sourcing=SimpleNamespace(
             apply_forces=lambda dt: source_force_calls.append(dt)),
         source_force_calls=source_force_calls,
+        surface_tension=SimpleNamespace(
+            apply=lambda dt: surface_tension_calls.append(dt)),
+        surface_tension_calls=surface_tension_calls,
         _force_field_data=lambda: "force_field_array",
         _nvox=512,
         _np_dim=lambda: 13,
@@ -104,6 +108,7 @@ def test_force_stage_dispatches_all_enabled_global_force_kernels(monkeypatch):
         solver_mod.k_forces_speed_limit,
     ]
     assert solver.source_force_calls == [0.125]
+    assert solver.surface_tension_calls == [0.125]
     assert launches[3][1]["inputs"][:2] == ["force_field_array", 1]
     assert launches[5][1]["inputs"][0] == "particle_attr:viscosity"
     assert launches[6][1]["inputs"][0] == "collision_sdf"
@@ -182,10 +187,11 @@ def test_force_defaults_are_inert_and_preserve_valid_attribute_selection():
 
 
 def test_force_panel_exposes_spin_axis_and_global_attraction_controls():
-    panel_source = (Path(__file__).parents[1] / "fluidSim_warp_blender51" /
-                    "panels.py").read_text(encoding="utf-8")
+    root = Path(__file__).parents[1] / "fluidSim_warp_blender51" / "blender"
+    scene_source = (root / "ui_scene.py").read_text(encoding="utf-8")
+    object_source = (root / "ui_object.py").read_text(encoding="utf-8")
 
-    assert 'global_box.prop(fs, "attraction_enabled")' in panel_source
-    assert 'global_box.prop(fs, "force_diffusion")' in panel_source
-    assert 'elif pg.force_type == "SPIN":' in panel_source
-    assert 'sub.prop(pg, "force_direction", text="Spin Axis")' in panel_source
+    assert 'layout.prop(fs, "attraction_enabled")' in scene_source
+    assert 'layout.prop(fs, "force_diffusion")' in scene_source
+    assert 'settings.force_type in {"DIRECTIONAL", "SPIN"}' in object_source
+    assert 'layout.prop(settings, "force_direction")' in object_source

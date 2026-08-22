@@ -88,7 +88,8 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     # Half one: the viewport read decimated before crossing the bus.
     assert len(frame.particles) == 16
     assert reads() == [16]
-    assert len(frame.particle_attributes["SPEED"]) == 16
+    assert set(frame.particle_attributes) == {"speed"}
+    assert len(frame.particle_attributes["speed"]) == 16
     assert np.array_equal(frame.particles[:, 0], np.arange(0, 64, 4))
 
     payload = cache._frame_payload(solver)
@@ -99,29 +100,14 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     assert reads() == [16, count]
 
 
-def test_warp_discovery_skips_path_probe_when_a_cheap_candidate_matches(
+def test_warp_discovery_never_mutates_path_without_explicit_opt_in(
         monkeypatch, tmp_path):
     from fluidSim_warp_blender51 import warp_discovery
 
     modules = tmp_path / "addons" / "modules"
-    (modules / "warp").mkdir(parents=True)
-    (modules / "warp" / "__init__.py").write_text("")
-    origin = str(modules / "warp" / "__init__.py")
-
-    probes = []
-
-    def _expensive_path_probe():
-        probes.append(1)
-        return []
-
-    monkeypatch.setattr(
-        warp_discovery, "_blender_module_candidates", lambda: [modules])
-    monkeypatch.setattr(warp_discovery, "_python_site_candidates", lambda: [])
-    monkeypatch.setattr(
-        warp_discovery, "_path_python_candidates", _expensive_path_probe)
-    specs = iter([None, SimpleNamespace(origin=origin)])
-    monkeypatch.setattr(warp_discovery, "_find_warp", lambda: next(specs))
+    modules.mkdir(parents=True)
+    monkeypatch.delenv("FLUIDSIM_ALLOW_EXTERNAL_WARP", raising=False)
     monkeypatch.setattr(sys, "path", list(sys.path))
 
-    assert warp_discovery.ensure_warp_discoverable() == origin
-    assert probes == []
+    assert warp_discovery.enable_developer_override(str(modules)) is False
+    assert str(modules) not in sys.path

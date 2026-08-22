@@ -1,0 +1,59 @@
+"""Stable enums for the FluidSim Custom Effects v2 API."""
+
+from __future__ import annotations
+
+from enum import Enum
+
+
+class EffectDomain(str, Enum):
+    PARTICLES = "PARTICLES"
+    ACTIVE_VOXELS = "ACTIVE_VOXELS"
+
+
+class EffectStage(str, Enum):
+    BEFORE_EMISSION = "BEFORE_EMISSION"
+    AFTER_PARTICLE_TRANSFER = "AFTER_PARTICLE_TRANSFER"
+    BEFORE_PRESSURE = "BEFORE_PRESSURE"
+    AFTER_PARTICLE_UPDATE = "AFTER_PARTICLE_UPDATE"
+
+
+class EffectCadence(str, Enum):
+    EVERY_SUBSTEP = "EVERY_SUBSTEP"
+    ONCE_PER_FRAME = "ONCE_PER_FRAME"
+    INITIALIZATION = "INITIALIZATION"
+
+
+class FieldAccess(str, Enum):
+    READ = "READ"
+    WRITE_CURRENT = "WRITE_CURRENT"
+    READ_WRITE_CURRENT = "READ_WRITE_CURRENT"
+    ATOMIC_SCATTER = "ATOMIC_SCATTER"
+    UNSAFE_ARBITRARY = "UNSAFE_ARBITRARY"
+
+
+class ParameterKind(str, Enum):
+    FLOAT = "FLOAT"
+    INT = "INT"
+    BOOL = "BOOL"
+    VECTOR = "VECTOR"
+    COLOR = "COLOR"
+    ENUM = "ENUM"
+    OBJECT = "OBJECT"
+
+
+class TrustState(str, Enum):
+    BUILT_IN_TRUSTED = "BUILT_IN_TRUSTED"
+    LOCAL_TRUSTED = "LOCAL_TRUSTED"
+    UNTRUSTED_IMPORTED = "UNTRUSTED_IMPORTED"
+    BLOCKED = "BLOCKED"
+
+
+class EffectStatus(str, Enum):
+    DISABLED = "DISABLED"
+    UNTRUSTED = "UNTRUSTED"
+    DRAFT = "DRAFT"
+    INVALID = "INVALID"
+    TESTED = "TESTED"
+    APPLIED = "APPLIED"
+    DIRTY = "DIRTY"
+    RUNTIME_ERROR = "RUNTIME_ERROR"

@@ -104,6 +104,9 @@ def _particle_outputs(capacity, device):
         "temperature": sourcing.wp.empty(capacity, dtype=float, device=device),
         "viscosity": sourcing.wp.empty(capacity, dtype=float, device=device),
         "density": sourcing.wp.empty(capacity, dtype=float, device=device),
+        "color": sourcing.wp.empty(capacity, dtype=sourcing.wp.vec4, device=device),
+        "source_id": sourcing.wp.empty(
+            capacity, dtype=sourcing.wp.int32, device=device),
         "time_offset": sourcing.wp.empty(capacity, dtype=float, device=device),
         "alive": sourcing.wp.zeros(capacity, dtype=sourcing.wp.int32, device=device),
         "count": sourcing.wp.zeros(1, dtype=sourcing.wp.int32, device=device),
@@ -142,7 +145,7 @@ def test_mesh_particles_are_projected_to_actual_triangles_with_attributes(geomet
             mesh.id, desc.to_struct(), desc.query_radius(), leaves,
             num_leaves, sourcing.wp.vec3(0.0, 0.0, 0.0), 0.25,
             sourcing.wp.zeros(C.LEAF_VOLUME, dtype=sourcing.wp.int32, device=device),
-            1234, 1024,
+            1234, 0, 0, 1024,
         ],
         outputs=list(outputs.values()),
         device=device,
@@ -196,7 +199,7 @@ def test_mesh_source_force_velocity_reaches_emitted_particles():
             num_leaves, sourcing.wp.vec3(0.0, 0.0, 0.0), 0.25,
             sourcing.wp.zeros(C.LEAF_VOLUME, dtype=sourcing.wp.int32,
                              device=device),
-            9876, 1024,
+            9876, 0, 0, 1024,
         ],
         outputs=list(outputs.values()),
         device=device,
@@ -229,7 +232,7 @@ def test_mesh_particle_emission_respects_existing_voxel_top_up_counts():
         inputs=[
             mesh.id, desc.to_struct(), desc.query_radius(), leaves,
             num_leaves, sourcing.wp.vec3(0.0, 0.0, 0.0), 0.25,
-            existing_counts, 5678, 64,
+            existing_counts, 5678, 0, 0, 64,
         ],
         outputs=list(outputs.values()),
         device=device)
@@ -263,7 +266,7 @@ def test_subvoxel_mesh_particle_source_still_reaches_top_up_target():
             num_leaves, sourcing.wp.vec3(0.0, 0.0, 0.0), 1.0,
             sourcing.wp.zeros(C.LEAF_VOLUME, dtype=sourcing.wp.int32,
                               device=device),
-            2468, 32,
+            2468, 0, 0, 32,
         ],
         outputs=list(outputs.values()),
         device=device)

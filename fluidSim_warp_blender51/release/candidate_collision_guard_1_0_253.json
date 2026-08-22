@@ -1,0 +1,32 @@
+{
+  "candidate_sha256": "354d32b97bf952c5bf07b62543dda66ed39b7368f0b9d7b91ad83521ac2061e7",
+  "forbidden_sha256": {
+    "__init__.py": "cc253b94ecf63a4824959214bd4de312b106ed24ec3e51822b23373437e5a4a7",
+    "blender/cache_bake.py": "a8b51b8ac61e7295fecfd5598ed8e453faad40d5b1278b908715514dcce8e73a",
+    "blender/command_line.py": "d2bbeaccb1cd9afc7cdd2d7151d27956c99df190cb373d2d73420966cf23678f",
+    "blender/output_publication.py": "d3fd6f38261864d74c5abfa626353ab82e1b08a52c7c6aa01fc284444d89b82a",
+    "blender/pending_settings.py": "29335c64a8abd75d9c991ef604cc436c26328dea5489a667571a0ef1bd266143",
+    "blender/playback.py": "f8fab5c3bf58cb5b1884d0648e0117c97771861551add59920d5be1c7e55e437",
+    "blender/production_bake.py": "a07b236d3ef8b55ef79ac6a63bc3c07b67086fc3fe9f6d558a84ccafeeffa7ae",
+    "blender/scene_bridge.py": "6de959cc644a3b0f0bac0958532fd9494b666e1a5aea7ab41569a38011e9b0dc",
+    "blender/simulation_admission.py": "4d41e3bd1b96e529a8d59f64f178da8251d1a0f1f1957ff4b25b21c82f5c61b7",
+    "blender/solver_settings.py": "862095b2e489e315994cbe7cda1b84490d9d6c329ef1b6df8f7e10ee4fc77a99",
+    "blender/ui_scene.py": "c8a18ce49c65c0d7c4338c97966cf7d6b0ba30af941164a6e92b333fe86fb785",
+    "diagnostics/benchmark.py": "faee06f54efa003639f9b71a434737acf42d8cddc9ae950f67cfb425c8b7035e",
+    "diagnostics/profiler.py": "a1281942d841627d2b74916e42cdba6311e3c3b64255feb25e45e185f59ddc38",
+    "diagnostics/report.py": "8338bc08b70f7a9737cac4a14b9e0e57457426745c1efeefabebe37154b4d05c",
+    "io/cache.py": "963dafae5e5ffca6efa01f8c9dd75334e3c374940ac33c25d607c01d282a0767",
+    "io/export.py": "3a4ec45b7b03998fe73aac773a621701796e4e641c2ad50ddca0fffe54d1bbb2",
+    "operators.py": "f78d964a7925f72946745a49f189cf27a0ba05260763e5811f018d66af057b06",
+    "preferences.py": "e49b0a0a85b0ea7fc06d02e447e3a313ae501c93ae45b4e011a1330ea0bf4de5",
+    "sim/capacity_service.py": "7dd2e689260def02aa95485806c003fdde27f1a8247a763601cd8fea8b1d2f57",
+    "sim/cuda_reduction.py": "2e3188aee04d9ba99cd934e3d458e67ba1b38d0b6f87788b0305d70a9e383d83",
+    "sim/custom.py": "d70711128d48e788804e5a678296e352873c29678532113ee95602732b638f15",
+    "sim/effects/package.py": "8af6d5a916ad041943e224d8ec8828962f49192a758765331a38d1b9e9394c9a",
+    "sim/frame_output.py": "bca949fa0b0e3683f1f9b6bcce3ad61748072b1f2e22d483ca419740617e03ad",
+    "sim/particle_capacity.py": "14f42eeef5898a3e1f211a2241abe02e0f5432a8d37c5b34a2b56afa9383888e",
+    "sim/quality_contract.py": "092d4fe0d0f6cec0c921ff06f258cd53165fef5bb86b0267f7134bf943a91371",
+    "sim/registry.py": "0ba6e4263cbe55e24ea5c90707f08a94ea2fbd3520d50b0622837ba8070d4ed3",
+    "sim/solver.py": "afeabe53dc8a7bd95e92a03f3a734c61696de51f859fb47459c982686b96ba8f"
+  }
+}

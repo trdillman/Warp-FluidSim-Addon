@@ -48,3 +48,16 @@ def test_martin_moses_front_position_rejects_value_below_reported_range(monkeypa
         False,
         "Z(T=2) = 2.24 (experimental 2.5-4.0)",
     )
+
+
+def test_column_collapse_uses_pre_reflection_minimum_not_last_frame():
+    analyzer = _load_demo_analyzer()
+    frames = {
+        1: {"positions": np.array([[0.1, 0.0, 1.2], [1.0, 0.0, 0.1]])},
+        2: {"positions": np.array([[0.1, 0.0, 0.3], [2.0, 0.0, 0.1]])},
+        3: {"positions": np.array([[0.1, 0.0, 0.9], [3.0, 0.0, 0.1]])},
+    }
+
+    height = analyzer.left_wall_collapse_height(frames, (1, 2, 3))
+
+    assert height == 0.3

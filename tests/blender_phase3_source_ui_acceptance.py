@@ -50,9 +50,18 @@ def main():
     args = parse_args()
     enable_repo_addon(str(ROOT), default_set=True, persistent=True)
     import fluidSim_warp_blender51 as addon
-    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+    from fluidSim_warp_blender51.blender.scene_inputs import (
+        SceneInputs,
+        persistent_source_key,
+    )
     from fluidSim_warp_blender51.sim.enums import MeshSourceRegion, SourceRegionKind
     from fluidSim_warp_blender51.sim.source_regions import CompileContext, SourceCompiler
+    from fluidSim_warp_blender51.version import VERSION
+
+    def plan_for(obj, candidates):
+        source_key = persistent_source_key(obj)
+        return next((plan for plan in candidates
+                     if str(plan.stable_id) == source_key), None)
 
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -155,8 +164,7 @@ def main():
     descriptors = inputs.gather_sources(scene)
     plans = inputs.gather_source_plans(scene)
     point.fluidsim.point_source_representation = "DIRECT_APPEND"
-    direct_point_plan = next((plan for plan in inputs.gather_source_plans(scene)
-                              if str(plan.stable_id).endswith(str(point.as_pointer()))), None)
+    direct_point_plan = plan_for(point, inputs.gather_source_plans(scene))
     check("direct point representation translates once", direct_point_plan is not None
           and direct_point_plan.lifecycle.name == "DIRECT_APPEND"
           and direct_point_plan.region.kind == SourceRegionKind.POINTS)
@@ -189,9 +197,9 @@ def main():
         field.fluidsim.field_operation = operation
         field.fluidsim.field_region_kind = "ANALYTIC"
         field.fluidsim.field_value_source = "CONSTANT"
-        translated_field_ops.update(
-            plan.operation.name for plan in inputs.gather_source_plans(scene)
-            if str(plan.stable_id).endswith(str(field.as_pointer())))
+        field_plan = plan_for(field, inputs.gather_source_plans(scene))
+        if field_plan is not None:
+            translated_field_ops.add(field_plan.operation.name)
     check("all accepted field operations translate", translated_field_ops == {
         "PRESSURE", "SCALAR_FIELD", "VECTOR_FIELD", "STAGGERED_VELOCITY"},
         translated_field_ops)
@@ -201,16 +209,14 @@ def main():
     field.fluidsim.volume_input_object = volume
     field.fluidsim.volume_mask_grid = "density"
     field.fluidsim.volume_scalar_grid = "density"
-    imported_field = next((plan for plan in inputs.gather_source_plans(scene)
-                           if str(plan.stable_id).endswith(str(field.as_pointer()))), None)
+    imported_field = plan_for(field, inputs.gather_source_plans(scene))
     check("Volume field payload translates", imported_field is not None
           and imported_field.operation.name == "SCALAR_FIELD"
           and imported_field.region.kind == SourceRegionKind.VOLUME_GRID)
     field.fluidsim.field_operation = "STAGGERED_VELOCITY"
     field.fluidsim.volume_scalar_grid = ""
     field.fluidsim.volume_vector_grid = "velocity"
-    imported_vector = next((plan for plan in inputs.gather_source_plans(scene)
-                            if str(plan.stable_id).endswith(str(field.as_pointer()))), None)
+    imported_vector = plan_for(field, inputs.gather_source_plans(scene))
     check("Volume vector field payload translates", imported_vector is not None
           and imported_vector.operation.name == "STAGGERED_VELOCITY"
           and imported_vector.region.vector_grid == "velocity")
@@ -251,10 +257,11 @@ def main():
           and reopened_legacy.emit_rate == 5.0)
 
     required_panels = (
-        "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
-        "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-        "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
-        "FLUIDSIM_PT_advanced_field_sources",
+        "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_status",
+        "FLUIDSIM_PT_object_region", "FLUIDSIM_PT_object_source",
+        "FLUIDSIM_PT_object_lifespan", "FLUIDSIM_PT_object_blending",
+        "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
+        "FLUIDSIM_PT_object_field", "FLUIDSIM_PT_object_volume",
     )
     check("role panels registered", all(hasattr(bpy.types, name) for name in required_panels))
     check("legacy mixed source panel absent", not hasattr(bpy.types, "FLUIDSIM_PT_sources"))
@@ -266,7 +273,7 @@ def main():
             "blender_version": bpy.app.version_string,
             "blender_hash": bpy.app.build_hash.decode() if isinstance(bpy.app.build_hash, bytes) else str(bpy.app.build_hash),
             "addon_path": str(Path(addon.__file__).resolve()),
-            "addon_version": list(addon.bl_info["version"]),
+            "addon_version": list(VERSION),
         },
         "fixture": str(fixture.resolve()),
         "checks": CHECKS,

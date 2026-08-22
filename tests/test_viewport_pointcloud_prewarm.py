@@ -15,8 +15,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class _FakeAttributes(dict):
+    def __iter__(self):
+        return iter(self.values())
+
     def new(self, name, type_, domain):
-        attr = SimpleNamespace(name=name, type=type_, domain=domain)
+        attr = SimpleNamespace(
+            name=name, type=type_, data_type=type_, domain=domain)
         self[name] = attr
         return attr
 
@@ -90,12 +94,18 @@ def test_structural_replacements_are_counted_by_existing_fallback_reason(monkeyp
             pass
 
     class Attribute:
-        def __init__(self):
+        def __init__(self, name, data_type, domain="POINT"):
+            self.name = name
+            self.data_type = data_type
+            self.domain = domain
             self.data = Values()
 
     class Attributes(dict):
-        def new(self, name, _type, _domain):
-            attr = Attribute()
+        def __iter__(self):
+            return iter(self.values())
+
+        def new(self, name, data_type, domain):
+            attr = Attribute(name, data_type, domain)
             self[name] = attr
             return attr
 
@@ -104,9 +114,11 @@ def test_structural_replacements_are_counted_by_existing_fallback_reason(monkeyp
             self.users = 1
             self.points = [None] * capacity
             self.attributes = Attributes(
-                position=Attribute(), radius=Attribute())
+                position=Attribute("position", "FLOAT_VECTOR"),
+                radius=Attribute("radius", "FLOAT"))
             if color:
-                self.attributes[output_publication.COLOR_ATTR] = Attribute()
+                self.attributes[output_publication.COLOR_ATTR] = Attribute(
+                    output_publication.COLOR_ATTR, "FLOAT_COLOR")
             self.materials = []
 
         def resize(self, count):

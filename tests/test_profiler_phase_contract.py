@@ -24,6 +24,16 @@ def test_unknown_profiler_phase_fails_instead_of_using_misc_slot():
             pass
 
 
+def test_unknown_named_track_and_nonpositive_summary_window_fail_closed():
+    profiler = Profiler(device="cpu", sync=False)
+
+    with pytest.raises(KeyError, match="unknown profiler track"):
+        with profiler.track_track("typo"):
+            pass
+    with pytest.raises(ValueError, match="last_n must be positive"):
+        profiler.summary(0)
+
+
 def test_profile_tool_derives_labels_from_canonical_slots():
     assert _phase_labels() == {
         f"compute_{slot}": phase
@@ -33,7 +43,7 @@ def test_profile_tool_derives_labels_from_canonical_slots():
 
 def test_blender_profiler_labels_derive_from_canonical_slots():
     root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
-    for relative_path in ("blender/viewport_overlay.py", "panels.py"):
+    for relative_path in ("blender/viewport_overlay.py", "blender/ui_scene.py"):
         source = (root / relative_path).read_text(encoding="utf-8")
         assert "TIMER_PHASE_SLOTS.items()" in source
         assert '"compute_0"' not in source

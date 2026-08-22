@@ -1,9 +1,9 @@
 """Contracts for decoupled render-surface resolution."""
 
-from pathlib import Path
 import inspect
 import re
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 from fluidSim_warp_blender51.sim.enums import (
@@ -38,7 +38,12 @@ def test_render_surface_voxel_size_is_decoupled_from_simulation_grid():
 
 
 def test_surface_panel_exposes_resolution_and_cadence_controls():
-    source = (Path(__file__).parents[1] / "fluidSim_warp_blender51" / "panels.py").read_text()
+    source = (
+        Path(__file__).parents[1]
+        / "fluidSim_warp_blender51"
+        / "blender"
+        / "ui_scene.py"
+    ).read_text()
 
     for control in (
         "surface_resolution_mode",

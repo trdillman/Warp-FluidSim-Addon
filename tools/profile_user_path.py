@@ -45,6 +45,7 @@ USER_PATH_CONTRACT = {
         "--particles",
         "--cache",
         "--collider-subdiv",
+        "--surface-attributes",
         "--max-mean-view-ms",
         "--max-mean-total-ms",
         "--min-particles",
@@ -63,6 +64,7 @@ USER_PATH_CONTRACT = {
         "surface_dense_dim_last",
         "reset_probe",
         "phase2_costs",
+        "host_output_operations",
         "output_entrypoint_counts",
     ],
     "regression_focus": [
@@ -72,6 +74,55 @@ USER_PATH_CONTRACT = {
         "collider gather, viewport readback, and optional cache writes stay bounded",
     ],
 }
+
+
+DEFAULT_SURFACE_ATTRIBUTE_KEYS = ("velocity", "motion")
+SURFACE_ATTRIBUTE_READBACKS_PER_PUBLICATION = {
+    "off": 0,
+    "default": 1,
+    "all": 9,
+}
+SURFACE_ATTRIBUTE_NUMPY_CALLS_PER_PUBLICATION = {
+    "off": 0,
+    "default": 1,
+    "all": 10,
+}
+
+
+def configure_surface_attribute_profile(settings, mode):
+    from fluidSim_warp_blender51.sim.attributes import (
+        OUTPUT_ATTRIBUTE_KEYS,
+        OUTPUT_TOGGLE_NAMES,
+        enabled_attribute_keys,
+    )
+
+    mode = str(mode).lower()
+    if mode == "off":
+        enabled = frozenset()
+    elif mode == "default":
+        enabled = frozenset(DEFAULT_SURFACE_ATTRIBUTE_KEYS)
+    elif mode == "all":
+        enabled = frozenset(OUTPUT_ATTRIBUTE_KEYS["surface"])
+    else:
+        raise ValueError(f"unknown surface attribute profile {mode!r}")
+    for key, property_name in OUTPUT_TOGGLE_NAMES["surface"].items():
+        setattr(settings, property_name, key in enabled)
+    return enabled_attribute_keys(settings, "surface")
+
+
+def expected_surface_attribute_readbacks(mode):
+    try:
+        return SURFACE_ATTRIBUTE_READBACKS_PER_PUBLICATION[str(mode).lower()]
+    except KeyError as exc:
+        raise ValueError(f"unknown surface attribute profile {mode!r}") from exc
+
+
+def expected_surface_attribute_numpy_calls(mode):
+    try:
+        return SURFACE_ATTRIBUTE_NUMPY_CALLS_PER_PUBLICATION[
+            str(mode).lower()]
+    except KeyError as exc:
+        raise ValueError(f"unknown surface attribute profile {mode!r}") from exc
 
 
 def parse_args():
@@ -87,6 +138,11 @@ def parse_args():
     ap.add_argument("--cache", action="store_true")
     ap.add_argument("--collider-subdiv", type=int, default=5,
                     help="icosphere subdivision for a static high-poly collider")
+    ap.add_argument(
+        "--surface-attributes", choices=("off", "default", "all"),
+        default="default",
+        help="surface attribute inventory used by the viewport profile",
+    )
     ap.add_argument("--disable-whitewater", action="store_true",
                     help="keep whitewater disabled to match the default Quick Setup path")
     ap.add_argument("--profile-phases", action="store_true",
@@ -196,6 +252,22 @@ def _surface_dense_dim(sess):
     return [int(d) for d in dims]
 
 
+def _expected_surface_publications(frames, cadence):
+    """Count frames where the live cadence contract requires a surface."""
+    cadence = max(1, int(cadence))
+    return sum(
+        1 for row in frames
+        if int(row["solver_frame"]) <= 1
+        or cadence <= 1
+        or int(row["solver_frame"]) % cadence == 0
+    )
+
+
+def _warm_rows(rows):
+    """Exclude the first lazy-compilation frames when enough samples exist."""
+    return rows[3:] if len(rows) > 3 else rows
+
+
 def _validate_contract(args, summary, sess, device, output_counts):
     checks = []
     frames = summary["frames"]
@@ -243,9 +315,19 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "no output-path Warp synchronization",
            entrypoints["warp_synchronizations"] == 0,
            entrypoints["warp_synchronizations"])
-    _check(checks, "surface readback entrypoints unchanged",
-           entrypoints["warp_array_numpy"] == measured * 6,
-           f"{entrypoints['warp_array_numpy']} == {measured * 6}")
+    expected_surface = _expected_surface_publications(
+        frames, summary["config"]["live_surface_publish_cadence"])
+    if not args.particles:
+        attribute_readbacks = expected_surface_attribute_readbacks(
+            args.surface_attributes)
+        attribute_numpy_calls = expected_surface_attribute_numpy_calls(
+            args.surface_attributes)
+        expected_numpy = expected_surface * (5 + attribute_numpy_calls)
+        _check(checks, "surface readback entrypoints cadence-bounded",
+               entrypoints["warp_array_numpy"] == expected_numpy,
+               f"{entrypoints['warp_array_numpy']} == {expected_numpy}")
+    else:
+        attribute_readbacks = 0
 
     costs = summary["phase2_costs"]
     live = costs["live_adaptation"]
@@ -259,11 +341,23 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "one output publication per measured frame",
            publication["invocations"] == measured,
            f"{publication['invocations']} == {measured}")
-    _check(checks, "one surface extraction per surface frame",
-           live["surface_extractions"] == measured,
-           f"{live['surface_extractions']} == {measured}")
+    _check(checks, "one surface extraction per scheduled surface frame",
+           live["surface_extractions"] == expected_surface,
+           f"{live['surface_extractions']} == {expected_surface}")
+    expected_device_readbacks = expected_surface * attribute_readbacks
+    host_operations = summary["host_output_operations"]
+    _check(checks, "surface attribute device readbacks exactly bounded",
+           live["device_readbacks"] == expected_device_readbacks,
+           f"{live['device_readbacks']} == {expected_device_readbacks}")
+    _check(checks, "HostFrame reports the same bounded device readbacks",
+           host_operations["device_readbacks"] == expected_device_readbacks,
+           f"{host_operations['device_readbacks']} == "
+           f"{expected_device_readbacks}")
+    _check(checks, "HostFrame surface extractions match publication cadence",
+           host_operations["surface_extractions"] == expected_surface,
+           f"{host_operations['surface_extractions']} == {expected_surface}")
     for event in (
-            "device_readbacks", "synchronizations",
+            "synchronizations",
             "blender_id_creations", "blender_id_removals",
             "depsgraph_updates", "relation_changes", "structural_replacements",
             "datablock_replacements"):
@@ -313,6 +407,8 @@ def main():
     fs.cache_enabled = False  # timed manually below
 
     assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
+    enabled_surface_attributes = configure_surface_attribute_profile(
+        fs, args.surface_attributes)
     if args.domain_scale_x > 0.0:
         domain = fs.domain_object
         domain.scale.x = args.domain_scale_x
@@ -424,6 +520,7 @@ def main():
                 cache_ms = (time.perf_counter() - tc) * 1000.0
             row = {
                 "frame": f,
+                "solver_frame": int(sess.solver.frame),
                 "sync_ms": (t1 - t0) * 1000.0,
                 "solve_ms": (t2 - t1) * 1000.0,
                 "view_ms": (t3 - t2) * 1000.0,
@@ -458,12 +555,13 @@ def main():
     if solve_profiler is not None:
         solve_profiler.dump_stats("artifacts/perf_goal_solver.pstats")
 
-    warm = rows[3:] if len(rows) > 6 else rows
+    warm = _warm_rows(rows)
 
     def mean(key):
         return statistics.fmean(r[key] for r in warm)
 
     phase2_costs = output_publication.output_cost_counts()
+    host_output_operations = host_output_operation_counts()
 
     # Untimed wrapper-path probe: the segmented timings above isolate sync,
     # solve, and viewport cost; this call verifies the live scene-bridge surface
@@ -498,7 +596,12 @@ def main():
     summary = {
         "result": "USER-PATH-PROFILE-PASS",
         "contract": USER_PATH_CONTRACT,
-        "config": vars(args),
+        "config": {
+            **vars(args),
+            "live_surface_publish_cadence": int(
+                fs.live_surface_publish_cadence),
+            "enabled_surface_attributes": list(enabled_surface_attributes),
+        },
         "domain": domain_bounds,
         "means": {k: mean(k) for k in
                   ("sync_ms", "solve_ms", "view_ms", "cache_ms", "total_ms")},
@@ -514,6 +617,7 @@ def main():
         "viewport_counts": output_counts,
         "scene_stats_probe": scene_stats_probe,
         "phase2_costs": phase2_costs,
+        "host_output_operations": host_output_operations,
         "output_entrypoint_counts": output_entrypoint_counts,
         "frames": rows,
     }

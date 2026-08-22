@@ -29,7 +29,11 @@ DIRECT_SETTING_FIELDS = (
     "relax_enabled", "relax_strength",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
     "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
-    "viscosity_iterations", "viscosity_tolerance", "surface_enabled",
+    "viscosity_iterations", "viscosity_tolerance",
+    "surface_tension_enabled", "surface_tension_coefficient",
+    "surface_tension_density", "surface_tension_band_voxels",
+    "surface_tension_safety", "surface_tension_smoothing_iterations",
+    "surface_enabled",
     "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_multiplier", "surface_voxel_size",
     "surface_leaf_capacity_scale", "surface_max_dense_dim",
@@ -40,8 +44,25 @@ DIRECT_SETTING_FIELDS = (
     "surface_erode_strength", "surface_smooth_iterations",
     "surface_smooth_strength", "whitewater_enabled", "ww_churn_decay",
     "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
-    "ww_min_speed", "ww_life_min", "ww_life_max", "ww_bubble_drag",
-    "ww_spray_drag",
+    "ww_surface_band", "ww_min_speed", "ww_life_min", "ww_life_max",
+    "ww_foam_band", "ww_spray_min_speed", "ww_type_hysteresis",
+    "ww_foam_advection", "ww_foam_preservation",
+    "ww_foam_density_influence", "ww_foam_life_multiplier",
+    "ww_bubble_drag", "ww_bubble_buoyancy", "ww_bubble_life_multiplier",
+    "ww_spray_drag", "ww_spray_gravity_scale", "ww_spray_life_multiplier",
+    "surface_attribute_velocity", "surface_attribute_speed",
+    "surface_attribute_vorticity", "surface_attribute_age",
+    "surface_attribute_lifetime", "surface_attribute_color",
+    "surface_attribute_source_id", "surface_attribute_viscosity",
+    "surface_attribute_density", "surface_attribute_motion",
+    "particles_attribute_velocity", "particles_attribute_speed",
+    "particles_attribute_vorticity", "particles_attribute_age",
+    "particles_attribute_lifetime", "particles_attribute_color",
+    "particles_attribute_source_id", "particles_attribute_uid",
+    "particles_attribute_viscosity", "particles_attribute_density",
+    "whitewater_attribute_velocity", "whitewater_attribute_speed",
+    "whitewater_attribute_age", "whitewater_attribute_lifetime",
+    "whitewater_attribute_type",
 )
 
 VECTOR_SETTING_FIELDS = frozenset({
@@ -164,6 +185,13 @@ def apply_gravity(scene, settings):
     return settings
 
 
+def normalize_domain_boundary_settings(settings):
+    """Enforce the solver invariant required by closed particle bounds."""
+    if not settings.open_boundaries:
+        settings.domain_sdf_walls = True
+    return settings
+
+
 def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
@@ -176,4 +204,7 @@ def build_settings(scene):
     settings.frame_rate = float(scene.render.fps) / float(scene.render.fps_base)
     apply_gravity(scene, settings)
     apply_scene_settings(fs, settings)
-    return settings
+    # Closed particle bounds require matching pressure/collision walls. Old
+    # files may store the internal switch as false, so normalize the solver
+    # projection without mutating Blender data during read-only preflight.
+    return normalize_domain_boundary_settings(settings)

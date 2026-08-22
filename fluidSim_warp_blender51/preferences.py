@@ -1,89 +1,159 @@
-"""Add-on preferences: device selection and runtime information."""
+"""Add-on preferences: external Warp runtime and CUDA device selection."""
 
 from __future__ import annotations
 
+import os
+
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
+
+from .runtime.warp_runtime import (
+    cuda_device_items,
+    probe_runtime,
+    runtime_status_for_device,
+)
+
+_DEVICE_ITEMS_CACHE: list[tuple[str, str, str]] = []
 
 
-_WARP_PROBE_RESULT = None
+def _device_items(_self, _context):
+    """Keep dynamic enum strings alive for Blender's RNA callback."""
+    global _DEVICE_ITEMS_CACHE
+    _DEVICE_ITEMS_CACHE = cuda_device_items()
+    return _DEVICE_ITEMS_CACHE
 
 
-def configured_device():
-    """The device the user selected, or the CUDA default.
-
-    Sole owner of that lookup. Two callers previously open-coded it and a
-    third ignored it entirely, so the preferences panel could report a
-    different device than the solver was running on.
-    """
+def _preferences(context=None):
+    context = bpy.context if context is None else context
     try:
-        prefs = bpy.context.preferences.addons[__package__].preferences
-        if prefs.device:
-            return prefs.device
+        return context.preferences.addons[__package__].preferences
     except (KeyError, AttributeError):
-        pass
-    return "cuda:0"
+        return None
 
 
-def _probe_warp(*, force=False):
-    """Report Warp/CUDA availability, cached across preference redraws."""
-    global _WARP_PROBE_RESULT
-    if _WARP_PROBE_RESULT is not None and not force:
-        return _WARP_PROBE_RESULT
-    try:
-        import warp as wp
+def configured_device() -> str:
+    """Return a detected selected device, falling back to the first CUDA GPU."""
+    probe = probe_runtime()
+    aliases = tuple(device.alias for device in probe.cuda_devices)
+    prefs = _preferences()
+    selected = str(getattr(prefs, "device", "") or "")
+    if selected in aliases:
+        return selected
+    return aliases[0] if aliases else ""
 
-        wp.init()
-        if wp.is_cuda_available():
-            # Probing cuda:0 while the solver runs on the selected device made
-            # this panel's checkmark report a card that was never in use.
-            dev = wp.get_device(configured_device())
-            result = (True, f"Warp {wp.config.version} - {dev.name}")
-        else:
-            result = (False, f"Warp {wp.config.version} - no CUDA device")
-    except Exception as exc:  # noqa: BLE001
-        result = (False, f"Warp unavailable: {exc}")
-    _WARP_PROBE_RESULT = result
-    return result
+
+def set_configured_device(device: str) -> bool:
+    """Store one selected CUDA alias through the sole preferences owner."""
+    prefs = _preferences()
+    if prefs is None:
+        return False
+    prefs.device = str(device)
+    return True
+
+
+def _apply_developer_override(prefs) -> None:
+    if os.environ.get("FLUIDSIM_ALLOW_EXTERNAL_WARP") != "1":
+        return
+    path = str(getattr(prefs, "developer_warp_path", "") or "").strip()
+    if not path:
+        return
+    from .warp_discovery import enable_developer_override
+
+    enable_developer_override(path)
+
+
+def _refresh_runtime(prefs):
+    _apply_developer_override(prefs)
+    probe = probe_runtime(force=True)
+    aliases = tuple(device.alias for device in probe.cuda_devices)
+    if prefs is not None and aliases and getattr(prefs, "device", "") not in aliases:
+        prefs.device = aliases[0]
+    selected = configured_device()
+    return probe, runtime_status_for_device(selected, probe=probe)
+
+
+class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
+    """Refresh external Warp import state and the CUDA device list."""
+
+    bl_idname = "fluidsim.refresh_runtime_probe"
+    bl_label = "Refresh Runtime Detection"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        prefs = _preferences(context)
+        _probe, (ready, message) = _refresh_runtime(prefs)
+        self.report({"INFO" if ready else "WARNING"}, message)
+        return {"FINISHED"}
 
 
 class FLUIDSIM_OT_redetect_device(bpy.types.Operator):
-    """Explicitly refresh the cached Warp/CUDA device status."""
+    """Compatibility alias for the pre-1.0.244 refresh operator."""
 
     bl_idname = "fluidsim.redetect_device"
     bl_label = "Re-detect Device"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
-        ok, message = _probe_warp(force=True)
-        self.report({"INFO" if ok else "WARNING"}, message)
+        prefs = _preferences(context)
+        _probe, (ready, message) = _refresh_runtime(prefs)
+        self.report({"INFO" if ready else "WARNING"}, message)
         return {"FINISHED"}
 
 
 class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    device: StringProperty(
-        name="Device", default="cuda:0",
-        description="Set the Warp CUDA device used by the solver and status probe, such as cuda:0; changing it moves future initialization to that GPU and an invalid identifier prevents startup")
+    device: EnumProperty(
+        name="CUDA Device",
+        items=_device_items,
+        description="CUDA device used for FluidSim allocations and kernel launches",
+    )
     verbose: BoolProperty(
-        name="Verbose Kernel Loading", default=False,
-        description="Enable to print detailed Warp module-load timings to the console for diagnosis; disable for quieter startup output")
+        name="Verbose Kernel Loading",
+        default=False,
+        description=(
+            "Enable detailed Warp module-load timings in the console for diagnosis; "
+            "disable for quieter startup output"
+        ),
+    )
+    developer_warp_path: StringProperty(
+        name="External Warp Module Directory",
+        subtype="DIR_PATH",
+        default="",
+        description=(
+            "Trusted local-development override used only when the process sets "
+            "FLUIDSIM_ALLOW_EXTERNAL_WARP=1"
+        ),
+    )
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "device")
-        layout.prop(self, "verbose")
-        ok, msg = _probe_warp()
-        row = layout.row(align=True)
-        row.label(text=msg, icon="CHECKMARK" if ok else "ERROR")
-        row.operator("fluidsim.redetect_device", text="", icon="FILE_REFRESH")
-        layout.label(
-            text="Solver runs GPU-only through NVIDIA Warp/CUDA; "
-                 "first initialization compiles kernels (cached afterwards).")
+        box = layout.box()
+        box.label(text="Runtime", icon="GPU")
+        box.prop(self, "device")
+
+        probe = probe_runtime()
+        selected = configured_device()
+        ready, message = runtime_status_for_device(selected, probe=probe)
+        row = box.row(align=True)
+        row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
+        row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+        if probe.module_file:
+            box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
+        box.label(text="FluidSim uses an external Warp runtime; Blender and Warp are not bundled.")
+
+        if os.environ.get("FLUIDSIM_ALLOW_EXTERNAL_WARP") == "1":
+            developer = layout.box()
+            developer.label(text="Developer Runtime Override", icon="CONSOLE")
+            developer.prop(self, "developer_warp_path")
+            developer.label(text="Trusted local-development override; normal releases ignore this path.")
 
 
-CLASSES = (FLUIDSIM_OT_redetect_device, FLUIDSIM_AP_preferences)
+CLASSES = (
+    FLUIDSIM_OT_refresh_runtime_probe,
+    FLUIDSIM_OT_redetect_device,
+    FLUIDSIM_AP_preferences,
+)
 
 
 def register():
@@ -93,4 +163,7 @@ def register():
 
 def unregister():
     for cls in reversed(CLASSES):
-        bpy.utils.unregister_class(cls)
+        try:
+            bpy.utils.unregister_class(cls)
+        except (RuntimeError, ValueError):
+            pass

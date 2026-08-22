@@ -5,13 +5,15 @@ Voxel-type bits and solver constants mirror the synthesized reference
 No bpy imports allowed in this module.
 """
 
+from ..version import BUILD_LABEL, VERSION_STRING
+
 TOOL_NAME = "fluidSim"
 TOOL_NAME_LABEL = "FluidSim"
-TOOL_VERSION = "1.0.240-beta"
-TOOL_BUILD = "fluidSim1.0.240-collider-material-response-stflip-beta"
+TOOL_VERSION = VERSION_STRING
+TOOL_BUILD = BUILD_LABEL
 TOOL_PROFILER = "fluidSim_profiler::1.0"
 TOOL_PROFILER_LABEL = "FluidSim Profiler 1.0"
-BLENDER_TARGET = "5.1"
+BLENDER_TARGET = "5.1+"
 BACKEND_TARGET = "NVIDIA Warp / CUDA"
 
 # ---------------------------------------------------------------------------

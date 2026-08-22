@@ -24,5 +24,10 @@
   "voxel_size": 0.01,
   "fps": 24,
   "pool_particles": 256000,
-  "total_particles": 259112
+  "total_particles": 259112,
+  "playable_live_setup": true,
+  "seed_objects": [
+    "Crown Pool Seed",
+    "Crown Droplet Seed"
+  ]
 }

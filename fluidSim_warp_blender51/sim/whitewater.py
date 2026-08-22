@@ -7,6 +7,7 @@ Ports of the fluid_whitewater group + fluidSimAdvectWhiteWater:
 
 from __future__ import annotations
 
+import numpy as np
 import warp as wp
 
 wp.set_module_options({"enable_backward": False})
@@ -22,6 +23,12 @@ from .fields import (
 )
 from .particles import k_clamp_count
 from .registry import register_fn
+from .whitewater_types import WhitewaterType, validate_type_values
+
+
+WW_FOAM = int(WhitewaterType.FOAM)
+WW_BUBBLE = int(WhitewaterType.BUBBLE)
+WW_SPRAY = int(WhitewaterType.SPRAY)
 
 
 WHITEWATER_POLICY_FIXED_CAPACITY = "FIXED_CAPACITY_DETERMINISTIC_DROPS"
@@ -52,6 +59,75 @@ def deterministic_admission(candidate_flags, *, live_count, free_count, capacity
         "dropped": required - admitted,
         "winner_tids": winners[:admitted],
     }
+
+
+@wp.func
+def classify_whitewater_device(
+    sdf: float,
+    speed: float,
+    churn_value: float,
+    foam_band: float,
+    min_spray_speed: float,
+    min_churn: float,
+):
+    """Device equivalent of ``whitewater_types.classify_sample``."""
+    result = WW_FOAM
+    if sdf < -foam_band:
+        result = WW_BUBBLE
+    elif (sdf > foam_band and speed >= min_spray_speed
+          and churn_value >= min_churn):
+        result = WW_SPRAY
+    return result
+
+
+@wp.func
+def transition_whitewater_device(
+    current_type: int,
+    sdf: float,
+    speed: float,
+    spray_enter_height: float,
+    spray_exit_height: float,
+    bubble_enter_depth: float,
+    bubble_exit_depth: float,
+    min_spray_speed: float,
+    spray_exit_speed: float,
+):
+    """Hysteretic type transition matching the host reference policy."""
+    result = current_type
+    if current_type == WW_BUBBLE:
+        if sdf >= -bubble_exit_depth:
+            if sdf > spray_enter_height and speed >= min_spray_speed:
+                result = WW_SPRAY
+            else:
+                result = WW_FOAM
+    elif current_type == WW_SPRAY:
+        if sdf < -bubble_enter_depth:
+            result = WW_BUBBLE
+        elif sdf <= spray_exit_height or speed < spray_exit_speed:
+            result = WW_FOAM
+    else:
+        if sdf < -bubble_enter_depth:
+            result = WW_BUBBLE
+        elif sdf > spray_enter_height and speed >= min_spray_speed:
+            result = WW_SPRAY
+        else:
+            result = WW_FOAM
+    return result
+
+
+@wp.func
+def whitewater_life_multiplier(
+    particle_type: int,
+    foam_multiplier: float,
+    bubble_multiplier: float,
+    spray_multiplier: float,
+):
+    result = foam_multiplier
+    if particle_type == WW_BUBBLE:
+        result = bubble_multiplier
+    elif particle_type == WW_SPRAY:
+        result = spray_multiplier
+    return wp.max(result, 1.0e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +235,16 @@ def k_mark_whitewater_candidates(
     emission_rate: float,
     surface_band: float,
     min_speed: float,
+    foam_band: float,
+    min_spray_speed: float,
     seed: int,
     candidates: wp.array(dtype=wp.int32),
+    candidate_types: wp.array(dtype=wp.int32),
 ):
     """Mark probability-passing candidates without mutating the output pool."""
     tid = wp.tid()
     candidates[tid] = 0
+    candidate_types[tid] = WW_FOAM
     if tid >= liquid_count[0]:
         return
     p = liquid_positions[tid]
@@ -190,6 +270,10 @@ def k_mark_whitewater_candidates(
     prob = wp.clamp((c - churn_threshold) * emission_rate * dt, 0.0, 1.0)
     if wp.randf(state) <= prob:
         candidates[tid] = 1
+        candidate_types[tid] = classify_whitewater_device(
+            sdf, wp.length(vel), c, foam_band, min_spray_speed,
+            churn_threshold,
+        )
 
 
 @wp.kernel
@@ -236,10 +320,14 @@ def k_commit_whitewater_candidates(
     liquid_positions: wp.array(dtype=wp.vec3),
     liquid_velocities: wp.array(dtype=wp.vec3),
     candidates: wp.array(dtype=wp.int32),
+    candidate_types: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
     voxel_size: float,
     life_min: float,
     life_max: float,
+    foam_life_multiplier: float,
+    bubble_life_multiplier: float,
+    spray_life_multiplier: float,
     seed: int,
     ww_free_slots: wp.array(dtype=wp.int32),
     plan: wp.array(dtype=wp.int32),
@@ -248,6 +336,7 @@ def k_commit_whitewater_candidates(
     ww_age: wp.array(dtype=float),
     ww_life: wp.array(dtype=float),
     ww_alive: wp.array(dtype=wp.int32),
+    ww_type: wp.array(dtype=wp.int32),
 ):
     """Commit ascending-liquid-tid winners to free slots, then the pool tail."""
     tid = wp.tid()
@@ -272,8 +361,16 @@ def k_commit_whitewater_candidates(
     ww_positions[slot] = liquid_positions[tid] + jitter
     ww_velocities[slot] = liquid_velocities[tid]
     ww_age[slot] = 0.0
-    ww_life[slot] = life_min + wp.randf(state) * (life_max - life_min)
+    particle_type = candidate_types[tid]
+    multiplier = whitewater_life_multiplier(
+        particle_type, foam_life_multiplier, bubble_life_multiplier,
+        spray_life_multiplier,
+    )
+    ww_life[slot] = (
+        life_min + wp.randf(state) * (life_max - life_min)
+    ) * multiplier
     ww_alive[slot] = 1
+    ww_type[slot] = particle_type
 
 
 @wp.kernel
@@ -308,6 +405,7 @@ def k_advect_whitewater(
     ww_age: wp.array(dtype=float),
     ww_life: wp.array(dtype=float),
     ww_alive: wp.array(dtype=wp.int32),
+    ww_type: wp.array(dtype=wp.int32),
     ww_count: wp.array(dtype=wp.int32),
     u: wp.array(dtype=float),
     v: wp.array(dtype=float),
@@ -317,6 +415,7 @@ def k_advect_whitewater(
     ww_weight: wp.array(dtype=float),
     surface_sdf: wp.array(dtype=float),
     collision_sdf: wp.array(dtype=float),
+    whitewater_density: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
@@ -324,20 +423,29 @@ def k_advect_whitewater(
     voxel_size: float,
     dt: float,
     gravity: wp.vec3,
-    foam_band: float,
+    spray_enter_height: float,
+    spray_exit_height: float,
+    bubble_enter_depth: float,
+    bubble_exit_depth: float,
+    min_spray_speed: float,
+    spray_exit_speed: float,
+    foam_advection: float,
+    foam_preservation: float,
+    foam_density_influence: float,
     bubble_drag: float,
+    bubble_buoyancy: float,
     spray_drag: float,
+    spray_gravity_scale: float,
+    foam_life_multiplier: float,
+    bubble_life_multiplier: float,
+    spray_life_multiplier: float,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
     ww_capacity: int,
     ww_free_slots: wp.array(dtype=wp.int32),
     ww_free_count: wp.array(dtype=wp.int32),
 ):
-    """Advect whitewater by regime:
-      - inside liquid (sdf < -band): bubble -> dragged to fluid velocity + buoyancy
-      - near surface (|sdf| <= band): foam -> follows fluid velocity
-      - outside (sdf > band): spray -> ballistic with mild drag
-    Ages particles and kills expired/out-of-domain ones."""
+    """Advect persistent foam/bubble/spray types with hysteretic transitions."""
     tid = wp.tid()
     if tid >= ww_count[0]:
         return
@@ -353,18 +461,52 @@ def k_advect_whitewater(
     sdf = sample_scalar_trilinear(
         surface_sdf, leaf_table, voxels_dim, leaves_dim, vp, 1.0e6
     )
+    old_type = ww_type[tid]
+    if old_type < WW_FOAM or old_type > WW_SPRAY:
+        old_type = WW_FOAM
+    particle_type = transition_whitewater_device(
+        old_type, sdf, wp.length(vel), spray_enter_height,
+        spray_exit_height, bubble_enter_depth, bubble_exit_depth,
+        min_spray_speed, spray_exit_speed,
+    )
 
-    if sdf < -foam_band:
-        # Bubble: strong drag toward fluid velocity + buoyancy against gravity.
+    # Preserve lifetime semantics across a type transition.  Life is stored as
+    # an absolute age limit, so scale only once when the persistent type changes.
+    if particle_type != old_type:
+        old_multiplier = whitewater_life_multiplier(
+            old_type, foam_life_multiplier, bubble_life_multiplier,
+            spray_life_multiplier,
+        )
+        new_multiplier = whitewater_life_multiplier(
+            particle_type, foam_life_multiplier, bubble_life_multiplier,
+            spray_life_multiplier,
+        )
+        ww_life[tid] = ww_life[tid] * new_multiplier / old_multiplier
+        ww_type[tid] = particle_type
+
+    age_step = dt
+    if particle_type == WW_BUBBLE:
+        # Bubble: drag toward the liquid and buoyancy opposite gravity.
         t = wp.clamp(bubble_drag * dt, 0.0, 1.0)
-        vel = vel + (fluid_vel - vel) * t - gravity * dt
-    elif sdf <= foam_band:
-        # Foam: ride the surface flow.
-        vel = fluid_vel
-    else:
-        # Spray: ballistic.
+        vel = vel + (fluid_vel - vel) * t - gravity * bubble_buoyancy * dt
+    elif particle_type == WW_SPRAY:
+        # Spray: ballistic with configurable aerodynamic coupling.
         t = wp.clamp(spray_drag * dt, 0.0, 1.0)
-        vel = vel + (fluid_vel - vel) * t + gravity * dt
+        vel = vel + (fluid_vel - vel) * t + gravity * spray_gravity_scale * dt
+    else:
+        # Foam: follow the liquid surface while dense foam may age more slowly.
+        t = wp.clamp(foam_advection, 0.0, 1.0)
+        vel = vel + (fluid_vel - vel) * t
+        flat = voxel_flat_index(
+            leaf_table, voxels_dim, leaves_dim,
+            wp.vec3i(int(wp.floor(vp[0])), int(wp.floor(vp[1])), int(wp.floor(vp[2]))),
+        )
+        if flat >= 0:
+            preservation = wp.clamp(
+                foam_preservation * foam_density_influence
+                * whitewater_density[flat], 0.0, 0.95,
+            )
+            age_step = dt * (1.0 - preservation)
 
     p = p + vel * dt
 
@@ -374,13 +516,15 @@ def k_advect_whitewater(
         collision_sdf, leaf_table, voxels_dim, leaves_dim, cvp, 1.0e6
     )
     if csdf < 0.0:
-        eps = 0.5 * voxel_size
-        gx = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim,
-                                     cvp + wp.vec3(0.5, 0.0, 0.0), 1.0e6) - csdf
-        gy = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim,
-                                     cvp + wp.vec3(0.0, 0.5, 0.0), 1.0e6) - csdf
-        gz = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim,
-                                     cvp + wp.vec3(0.0, 0.0, 0.5), 1.0e6) - csdf
+        gx = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            cvp + wp.vec3(0.5, 0.0, 0.0), 1.0e6) - csdf
+        gy = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            cvp + wp.vec3(0.0, 0.5, 0.0), 1.0e6) - csdf
+        gz = sample_scalar_trilinear(
+            collision_sdf, leaf_table, voxels_dim, leaves_dim,
+            cvp + wp.vec3(0.0, 0.0, 0.5), 1.0e6) - csdf
         n = wp.vec3(gx, gy, gz)
         if wp.length(n) > 1.0e-8:
             n = wp.normalize(n)
@@ -389,12 +533,10 @@ def k_advect_whitewater(
             if vn < 0.0:
                 vel = vel - n * vn
 
-    # Age / lifespan.
-    age = ww_age[tid] + dt
+    age = ww_age[tid] + age_step
     ww_age[tid] = age
     dead = age >= ww_life[tid]
 
-    # Domain containment.
     for axis in range(3):
         if p[axis] < domain_min[axis] or p[axis] > domain_max[axis]:
             dead = True
@@ -412,7 +554,7 @@ def k_advect_whitewater(
 
 
 register_fn(k_advect_whitewater, "fluidSimAdvectWhiteWater",
-            notes="Foam/spray/bubble regimes classified by surface SDF.")
+            notes="Persistent foam/bubble/spray types with hysteretic transitions.")
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +594,28 @@ register_fn(k_whitewater_set_grid_data, "fluidSimWhiteWaterSetGridData",
             notes="Per-voxel whitewater density splat.")
 
 
+@wp.kernel
+def k_count_whitewater_types(
+    particle_type: wp.array(dtype=wp.int32),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    type_counts: wp.array(dtype=wp.int32),
+):
+    """Count foam, bubble, spray, and invalid type values deterministically."""
+    tid = wp.tid()
+    if tid >= count[0] or alive[tid] == 0:
+        return
+    value = particle_type[tid]
+    bucket = 3
+    if value == WW_FOAM:
+        bucket = 0
+    elif value == WW_BUBBLE:
+        bucket = 1
+    elif value == WW_SPRAY:
+        bucket = 2
+    wp.atomic_add(type_counts, bucket, 1)
+
+
 # ---------------------------------------------------------------------------
 # Host-side whitewater particle container
 # ---------------------------------------------------------------------------
@@ -468,6 +632,7 @@ class WhitewaterSystem:
         self.age = wp.zeros(self.capacity, dtype=float, device=device)
         self.life = wp.zeros(self.capacity, dtype=float, device=device)
         self.alive = wp.zeros(self.capacity, dtype=wp.int32, device=device)
+        self.type = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
         self.free_slots = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.free_count = wp.zeros(1, dtype=wp.int32, device=device)
@@ -477,15 +642,19 @@ class WhitewaterSystem:
         self._velocity2 = wp.zeros_like(self.velocity)
         self._age2 = wp.zeros_like(self.age)
         self._life2 = wp.zeros_like(self.life)
+        self._type2 = wp.zeros_like(self.type)
         self._scan = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self._count2 = wp.zeros(1, dtype=wp.int32, device=device)
         # Emission scans only the active liquid prefix, never whitewater capacity.
         self.candidates = wp.zeros(
             self.candidate_capacity, dtype=wp.int32, device=device)
         self.candidate_offsets = wp.zeros_like(self.candidates)
+        self.candidate_types = wp.zeros_like(self.candidates)
         self.admission_plan = wp.zeros(4, dtype=wp.int32, device=device)
         # required, admitted, dropped, and available are per-frame totals.
         self.diagnostics = wp.zeros(4, dtype=wp.int32, device=device)
+        # Foam, bubble, spray, and invalid/unclassified counts.
+        self.type_counts = wp.zeros(4, dtype=wp.int32, device=device)
         self.last_diagnostics = {
             "policy": WHITEWATER_POLICY_FIXED_CAPACITY,
             "status": WHITEWATER_STATUS_OK,
@@ -500,7 +669,9 @@ class WhitewaterSystem:
     def clear(self):
         self.count.zero_()
         self.alive.zero_()
+        self.type.zero_()
         self.free_count.zero_()
+        self.type_counts.zero_()
         self.host_count = 0
         self.reset_frame_diagnostics()
 
@@ -522,13 +693,14 @@ class WhitewaterSystem:
         """Allocate replacement emission scratch without mutating live state."""
         capacity = max(1, int(capacity))
         candidates = wp.zeros(capacity, dtype=wp.int32, device=self.device)
-        return candidates, wp.zeros_like(candidates)
+        return candidates, wp.zeros_like(candidates), wp.zeros_like(candidates)
 
     def swap_candidate_workspace(self, workspace):
         """Commit a fully allocated candidate workspace."""
-        candidates, offsets = workspace
+        candidates, offsets, candidate_types = workspace
         self.candidates = candidates
         self.candidate_offsets = offsets
+        self.candidate_types = candidate_types
         self.candidate_capacity = len(candidates)
 
     def mark_sdf_unavailable(self, message):
@@ -563,7 +735,9 @@ class WhitewaterSystem:
     def emit(self, *, candidate_count, liquid_positions, liquid_velocities,
              liquid_count, churn, surface_sdf, leaf_table, voxels_dim,
              leaves_dim, origin, voxel_size, dt, churn_threshold,
-             emission_rate, surface_band, min_speed, life_min, life_max, seed):
+             emission_rate, surface_band, min_speed, foam_band,
+             min_spray_speed, life_min, life_max, foam_life_multiplier,
+             bubble_life_multiplier, spray_life_multiplier, seed):
         """Run device-only candidate/scan/admit/commit emission."""
         life_min, life_max = normalized_life_range(life_min, life_max)
         n = max(1, min(int(candidate_count), self.candidate_capacity))
@@ -573,9 +747,9 @@ class WhitewaterSystem:
                 liquid_positions, liquid_velocities, liquid_count, churn,
                 surface_sdf, leaf_table, voxels_dim, leaves_dim, origin,
                 voxel_size, dt, churn_threshold, emission_rate, surface_band,
-                min_speed, seed,
+                min_speed, foam_band, min_spray_speed, seed,
             ],
-            outputs=[self.candidates], device=self.device,
+            outputs=[self.candidates, self.candidate_types], device=self.device,
         )
         wp.utils.array_scan(
             self.candidates[:n], self.candidate_offsets[:n], inclusive=False)
@@ -591,11 +765,14 @@ class WhitewaterSystem:
             k_commit_whitewater_candidates, dim=n,
             inputs=[
                 liquid_positions, liquid_velocities, self.candidates,
-                self.candidate_offsets, voxel_size, life_min, life_max, seed,
+                self.candidate_types, self.candidate_offsets, voxel_size,
+                life_min, life_max, foam_life_multiplier,
+                bubble_life_multiplier, spray_life_multiplier, seed,
                 self.free_slots, self.admission_plan,
             ],
             outputs=[
                 self.position, self.velocity, self.age, self.life, self.alive,
+                self.type,
             ], device=self.device,
         )
         wp.launch(
@@ -615,6 +792,98 @@ class WhitewaterSystem:
         self.host_count = int(self.count.numpy()[0])
         return self.host_count
 
+    def update_type_counts(self, count_hint: int | None = None):
+        """Queue a device type-count reduction for the current live prefix."""
+        bound = self.capacity if count_hint is None else max(
+            0, min(int(count_hint), self.capacity))
+        self.type_counts.zero_()
+        if bound:
+            wp.launch(
+                k_count_whitewater_types,
+                dim=bound,
+                inputs=[self.type, self.alive, self.count],
+                outputs=[self.type_counts],
+                device=self.device,
+            )
+
+    def refresh_type_counts(self):
+        values = self.type_counts.numpy()
+        return {
+            "foam": int(values[0]),
+            "bubble": int(values[1]),
+            "spray": int(values[2]),
+            "invalid": int(values[3]),
+        }
+
+    def restore_checkpoint_prefix(self, arrays, count: int) -> None:
+        """Validate and restore all persistent whitewater channels."""
+        count = int(count)
+        if count < 0 or count > self.capacity:
+            raise ValueError(
+                f"whitewater checkpoint count {count} exceeds capacity {self.capacity}")
+        specifications = {
+            "whitewater_position": ((count, 3), np.float32),
+            "whitewater_velocity": ((count, 3), np.float32),
+            "whitewater_age": ((count,), np.float32),
+            "whitewater_life": ((count,), np.float32),
+            "whitewater_alive": ((count,), np.int32),
+            "whitewater_type": ((count,), np.int32),
+        }
+        normalized = {}
+        for name, (shape, dtype) in specifications.items():
+            if name not in arrays:
+                raise ValueError(f"whitewater checkpoint is missing {name}")
+            value = np.asarray(arrays[name])
+            if value.shape != shape:
+                raise ValueError(f"{name} has shape {value.shape}; expected {shape}")
+            value = np.ascontiguousarray(value, dtype=dtype)
+            if value.dtype.kind == "f" and not np.all(np.isfinite(value)):
+                raise ValueError(f"{name} contains non-finite values")
+            normalized[name] = value
+        alive = normalized["whitewater_alive"]
+        if np.any((alive != 0) & (alive != 1)):
+            raise ValueError("whitewater_alive must contain only 0 or 1")
+        normalized["whitewater_type"] = validate_type_values(
+            normalized["whitewater_type"], allow_unclassified=False)
+
+        for value in (
+                self.position, self.velocity, self.age, self.life, self.alive,
+                self.type,
+                self.free_slots, self._position2, self._velocity2, self._age2,
+                self._life2, self._type2, self._scan, self.type_counts):
+            value.zero_()
+        if count:
+            wp.copy(
+                self.position,
+                wp.array(normalized["whitewater_position"], dtype=wp.vec3,
+                         device=self.device), count=count)
+            wp.copy(
+                self.velocity,
+                wp.array(normalized["whitewater_velocity"], dtype=wp.vec3,
+                         device=self.device), count=count)
+            for name, target in (("whitewater_age", self.age),
+                                 ("whitewater_life", self.life)):
+                wp.copy(
+                    target,
+                    wp.array(normalized[name], dtype=float, device=self.device),
+                    count=count)
+            wp.copy(
+                self.alive,
+                wp.array(alive, dtype=wp.int32, device=self.device),
+                count=count)
+            wp.copy(
+                self.type,
+                wp.array(normalized["whitewater_type"], dtype=wp.int32,
+                         device=self.device),
+                count=count)
+        wp.copy(
+            self.count,
+            wp.array([count], dtype=wp.int32, device=self.device), count=1)
+        self._count2.zero_()
+        self.free_count.zero_()
+        self.host_count = count
+        self.reset_frame_diagnostics()
+
     def compact(self, count_hint: int | None = None):
         """Stream-compact live particles without any host synchronization.
 
@@ -630,6 +899,8 @@ class WhitewaterSystem:
         if cap <= 0:
             self.count.zero_()
             self.alive.zero_()
+            self.type.zero_()
+            self.type_counts.zero_()
             self.host_count = 0
             return
         self.clamp_count()
@@ -645,11 +916,11 @@ class WhitewaterSystem:
             dim=cap,
             inputs=[
                 self.alive, self._scan, self.position, self.velocity,
-                self.age, self.life,
+                self.age, self.life, self.type,
             ],
             outputs=[
                 self._position2, self._velocity2, self._age2, self._life2,
-                self._count2,
+                self._type2, self._count2,
             ],
             device=self.device,
         )
@@ -664,6 +935,7 @@ class WhitewaterSystem:
         self.velocity, self._velocity2 = self._velocity2, self.velocity
         self.age, self._age2 = self._age2, self.age
         self.life, self._life2 = self._life2, self.life
+        self.type, self._type2 = self._type2, self.type
         self.count, self._count2 = self._count2, self.count
         if count_hint is None:
             self.alive.zero_()
@@ -675,6 +947,7 @@ class WhitewaterSystem:
             device=self.device,
         )
         self.free_count.zero_()
+        self.update_type_counts(cap)
 
 
 @wp.kernel
@@ -685,10 +958,12 @@ def k_ww_compact_scatter(
     velocity: wp.array(dtype=wp.vec3),
     age: wp.array(dtype=float),
     life: wp.array(dtype=float),
+    particle_type: wp.array(dtype=wp.int32),
     out_position: wp.array(dtype=wp.vec3),
     out_velocity: wp.array(dtype=wp.vec3),
     out_age: wp.array(dtype=float),
     out_life: wp.array(dtype=float),
+    out_type: wp.array(dtype=wp.int32),
     out_count: wp.array(dtype=wp.int32),
 ):
     tid = wp.tid()
@@ -699,6 +974,7 @@ def k_ww_compact_scatter(
     out_velocity[dst] = velocity[tid]
     out_age[dst] = age[tid]
     out_life[dst] = life[tid]
+    out_type[dst] = particle_type[tid]
 
 
 @wp.kernel

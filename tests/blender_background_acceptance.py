@@ -19,7 +19,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
 
 FAILURES = []
 
@@ -42,6 +42,13 @@ def main():
     check("addon enable", ok)
     if not ok:
         return
+
+    check("persistent addon preferences entry registered",
+          ADDON_NAME in bpy.context.preferences.addons)
+    check("persistent runtime refresh operator completes",
+          bpy.ops.fluidsim.refresh_runtime_probe() == {"FINISHED"})
+    check("persistent device redetect operator completes",
+          bpy.ops.fluidsim.redetect_device() == {"FINISHED"})
 
     scene = bpy.context.scene
     check("scene properties registered", hasattr(scene, "fluidsim"))
@@ -94,14 +101,29 @@ def main():
     result = bpy.ops.fluidsim.setup_scene()
     check("setup_scene operator", result == {"FINISHED"})
     check("domain object assigned", fs.domain_object is not None)
-    src = bpy.data.objects.get("FluidSim Source")
+    src = next(
+        (
+            obj for obj in scene.objects
+            if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+            == "SOURCE"
+        ),
+        None,
+    )
     check("source tagged", src is not None and src.fluidsim.role == "SOURCE")
     if src is not None:
         src.fluidsim.force_type = "SPIN"
         src.fluidsim.force_strength = 0.05
         src.fluidsim.force_direction = (0.0, 0.0, 1.0)
-    col = bpy.data.objects.get("FluidSim Collider")
-    check("collider tagged", col is not None and col.fluidsim.role == "COLLIDER")
+    implicit_colliders = [
+        obj for obj in scene.objects
+        if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+        == "COLLIDER"
+    ]
+    check(
+        "quick liquid does not invent an implicit collider",
+        not implicit_colliders,
+        str([obj.name for obj in implicit_colliders]),
+    )
 
     force_specs = (
         ("FORCE", -0.03), ("WIND", 0.02), ("VORTEX", 0.01),
@@ -247,94 +269,60 @@ def main():
         check("pressure phase timed", timers.get("compute_5", 0.0) > 0.0,
               f"pressure {timers.get('compute_5', 0):.2f} ms")
 
-    # -- custom snippet -----------------------------------------------------------
-    bpy.ops.fluidsim.snippet_add()
-    snip = fs.snippets[-1]
-    snip.kernel_name = "chill"
-    snip.order = "BEFORE_FORCES"
-    snip.run_over = "VOXEL_LINEAR"
-    snip.text_block.clear()
-    snip.text_block.write(
-        "temperature[flat_voxel_index] = 123.0\n")
-    arg = snip.arguments.add()
-    arg.mode = "FIELD"
-    arg.field = "temperature"
-    result = bpy.ops.fluidsim.snippet_apply()
-    check("snippet compile", result == {"FINISHED"}, snip.last_error)
-    bpy.ops.fluidsim.step(frames=1)
-    import numpy as np
+    # -- Custom Effects v2 -------------------------------------------------------
+    # The legacy add/apply entry points are compatibility adapters.  Their owned
+    # state is the v2 effect stack, never the removed ``fs.snippets`` collection.
+    result = bpy.ops.fluidsim.snippet_add()
+    effect_stack = scene.fluidsim_effects
+    check("legacy effect add adapter", result == {"FINISHED"})
+    check("v2 effect added", len(effect_stack.items) == 1
+          and effect_stack.items[0].effect_id == "fluidsim.vortex_force")
 
-    temp = sess.solver.temperature.data.numpy()
-    check("snippet executed on GPU", float(np.abs(temp - 123.0).min()) < 1e-3,
-          f"temperature field max {temp.max():.1f}")
-
-    # -- snippet library / validation / auto-fix / layering ---------------------
-    fs.snippet_library_selection = "EX:learn_particles_speed_limit"
-    result = bpy.ops.fluidsim.snippet_load_preset()
-    check("library preset loads", result == {"FINISHED"})
-    loaded = fs.snippets[-1]
-    check("preset arguments bound",
-          any(a.mode == "FIELD" and a.field == "particle_velocity"
-              for a in loaded.arguments))
-    check("preset validates", loaded.is_valid, loaded.validation_report)
-    result = bpy.ops.fluidsim.snippet_test()
-    check("snippet test compiles preset", result == {"FINISHED"},
-          loaded.last_error)
-
-    # Invalid code must be rejected and gated out of the scene.
-    loaded.text_block.clear()
-    loaded.text_block.write("import os\nx = os.getcwd()\n")
-    result = bpy.ops.fluidsim.snippet_apply()
-    check("invalid snippet rejected by apply", result == {"CANCELLED"})
-    check("invalid snippet flagged", not loaded.is_valid,
-          loaded.validation_report)
-
-    # Auto-fix repairs C-style habits; validation then passes.
-    loaded.text_block.clear()
-    loaded.text_block.write(
-        "// damp fast particles\n"
-        "speed = wp.length(velocity);\n"
-        "if speed > max_speed:\n"
-        "    particle_velocity[particle_index] = velocity * 0.5;\n")
-    result = bpy.ops.fluidsim.snippet_autofix()
-    check("autofix operator", result == {"FINISHED"})
-    check("autofix produces valid snippet", loaded.is_valid,
-          loaded.validation_report)
-
-    # Layering: frame-windowed snippet runs alongside the first one.
-    loaded.frame_start = 1
-    loaded.frame_end = 0
-    loaded.frame_step = 1
-    result = bpy.ops.fluidsim.snippet_apply()
-    check("layered snippets apply", result == {"FINISHED"},
-          str([(s.kernel_name, s.last_error) for s in fs.snippets]))
+    result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+    check("v2 effect compile and apply", result == {"FINISHED"},
+          effect_stack.blocking_reason)
     result = bpy.ops.fluidsim.step(frames=1)
-    check("layered snippets step", result == {"FINISHED"})
+    check("v2 effect step", result == {"FINISHED"})
+    effect_stats = list(sess.solver.effects.stats.values())
+    check("v2 effect executed on GPU",
+          any(item.effect_id == "fluidsim.vortex_force" and item.calls > 0
+              for item in effect_stats),
+          str([(item.effect_id, item.calls) for item in effect_stats]))
 
-    # Save to the user library and see it in the dropdown items.
-    result = bpy.ops.fluidsim.snippet_save_preset(preset_name="accept_saved")
-    check("snippet save preset", result == {"FINISHED"})
-    from fluidSim_warp_blender51.properties import (
-        _snippet_library_items, user_snippet_dir,
-    )
+    # A bad draft must fail closed without replacing the applied live stack.
+    applied_signature = effect_stack.applied_signature
+    kernel_text = effect_stack.items[0].kernels[0].source_text
+    kernel_text.clear()
+    kernel_text.write("import os\nx = os.getcwd()\n")
+    try:
+        result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+        rejection = effect_stack.blocking_reason
+    except RuntimeError as exc:
+        result = {"CANCELLED"}
+        rejection = str(exc)
+    check("invalid v2 draft rejected", result == {"CANCELLED"}, rejection)
+    check("invalid draft preserves applied stack",
+          effect_stack.applied_signature == applied_signature)
+    result = bpy.ops.fluidsim.effect_revert_draft()
+    check("revert restores applied effect", result == {"FINISHED"}
+          and effect_stack.status == "APPLIED")
 
-    items = _snippet_library_items(None, bpy.context)
-    check("saved preset listed in library",
-          any(ident.startswith("USR:") and "accept_saved" in ident
-              for ident, _, _ in items if ident),
-          str([i[0] for i in items if i[0]]))
-    saved_path = os.path.join(user_snippet_dir(), "accept_saved.json")
-    if os.path.exists(saved_path):
-        os.remove(saved_path)  # keep the environment clean for reruns
+    # Layering is owned by the ordered v2 stack and must hot-swap atomically.
+    from fluidSim_warp_blender51.blender.effects import add_builtin_effect
 
-    # Shortcut insertion appends code and revalidates.
-    fs.shortcut_constant_name = "boost"
-    fs.shortcut_constant_value = 2.0
-    result = bpy.ops.fluidsim.snippet_shortcut_constant()
-    check("constant shortcut", result == {"FINISHED"})
-    check("constant argument added",
-          any(a.mode == "CONSTANT" and a.constant_name == "boost"
-              for a in loaded.arguments))
+    add_builtin_effect(scene, "fluidsim.curl_turbulence")
+    result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+    check("layered v2 effects apply", result == {"FINISHED"},
+          effect_stack.blocking_reason)
+    result = bpy.ops.fluidsim.step(frames=1)
+    check("layered v2 effects step", result == {"FINISHED"})
+    executed_ids = {
+        item.effect_id for item in sess.solver.effects.stats.values()
+        if item.calls > 0
+    }
+    check("layered v2 effects executed",
+          {"fluidsim.vortex_force", "fluidsim.curl_turbulence"}
+          <= executed_ids, str(sorted(executed_ids)))
 
     # -- report -----------------------------------------------------------------
     report_path = os.path.join(tempfile.gettempdir(), "fluidsim_report.json")
@@ -361,15 +349,17 @@ def main():
 
     # -- panels draw headlessly? (registration check) ------------------------------
     panel_ids = [
-        "FLUIDSIM_PT_simulation", "FLUIDSIM_PT_domain", "FLUIDSIM_PT_particles",
-        "FLUIDSIM_PT_liquid_emitters", "FLUIDSIM_PT_liquid_emitter_attributes",
-        "FLUIDSIM_PT_liquid_sinks", "FLUIDSIM_PT_colliders", "FLUIDSIM_PT_forces",
-        "FLUIDSIM_PT_domain_height_fill", "FLUIDSIM_PT_point_particle_injection",
-        "FLUIDSIM_PT_advanced_field_sources", "FLUIDSIM_PT_pressure",
-        "FLUIDSIM_PT_viscosity", "FLUIDSIM_PT_surface",
-        "FLUIDSIM_PT_realtime_display", "FLUIDSIM_PT_output",
-        "FLUIDSIM_PT_snippets", "FLUIDSIM_PT_snippet_editor",
-        "FLUIDSIM_PT_snippet_shortcuts", "FLUIDSIM_PT_diagnostics", "FLUIDSIM_PT_validation",
+        "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
+        "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
+        "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_pressure",
+        "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_scene_surface",
+        "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
+        "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
+        "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
+        "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
+        "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
+        "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_packages",
+        "FLUIDSIM_PT_effect_warp_code",
     ]
     missing = [p for p in panel_ids if not hasattr(bpy.types, p)]
     check("all Phase 3 panels registered", not missing, str(missing))
@@ -379,12 +369,10 @@ def main():
            "tag_collider", "tag_force_region", "tag_field_source", "clear_object_role",
            "inject_particles", "run_validation",
            "run_benchmark", "write_report", "snippet_add", "snippet_remove",
-           "snippet_apply", "snippet_load_preset", "snippet_validate",
-           "snippet_autofix", "snippet_test", "snippet_save_preset",
-           "snippet_insert_shortcut", "snippet_shortcut_field",
-           "snippet_shortcut_constant", "snippet_select",
-           "snippet_edit_line", "snippet_line_add", "snippet_line_delete",
-           "export_frame"]
+           "snippet_apply", "effect_add", "effect_remove", "effect_duplicate",
+           "effect_move", "effect_test_draft", "effect_apply_stack",
+           "effect_revert_draft", "effect_preview_one_frame",
+           "effect_create_controller", "effect_export_package", "export_frame"]
     missing_ops = [o for o in ops if not hasattr(bpy.ops.fluidsim, o)]
     check("operators registered", not missing_ops, str(missing_ops))
 

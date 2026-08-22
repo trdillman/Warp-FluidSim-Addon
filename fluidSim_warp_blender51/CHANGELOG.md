@@ -1,0 +1,340 @@
+# Changelog
+
+## 1.0.255 — contextual Physics Properties and full viewport workflow
+
+### Added
+
+- Added contextual **Physics Properties → FluidSim** panels for the selected
+  domain, generated outputs, and input-role objects without adding a second
+  settings model.
+- Added the complete Scene/Custom Effects workflow to **3D View → FluidSim**
+  beneath one collapsed **Full Settings** parent, while retaining the compact
+  activity/status and lifecycle panel as the primary viewport surface.
+- Added guarded domain assignment/removal and confirmed single-output removal.
+  Destructive output actions revalidate stable tags, ownership, and exact object
+  identity immediately before deletion.
+
+### Preserved during integration
+
+- Scene/Object RNA, Pending Settings, Simulation Admission, Playback,
+  Production Bake, and Output Publication remain the authoritative owners.
+- Blender 5.1+, Windows x64, Linux x64, external Warp 1.16.0, and binary-free
+  split-platform packaging remain the supported and validated contract.
+- Removed legacy cache controls remain removed; the viewport mirrors only the
+  current authoritative Scene Properties workflow.
+
+### Fixed
+
+- Multi-name kernel registration now validates the complete identity set before
+  mutation, so duplicate or colliding names cannot leave partial registry or
+  source-alias state.
+
+## 1.0.253 — restore Windows x64 extension packaging
+
+### Fixed
+
+- Restored the long-standing Windows x64 product platform in the Blender
+  extension manifest and split-platform release output.
+- Separated supported product platforms from the subset of external runtime
+  artifacts available on the current validation host. A Linux-only supplied
+  Warp wheel can no longer silently reduce the extension to Linux-only.
+- Added release tests that require both `windows-x64` and `linux-x64`, require
+  both split archives, and require CI to retain both artifacts.
+
+### Packaging and validation
+
+- The release builder now emits `windows_x64` and `linux_x64` archives from the
+  same binary-free Python/assets source. Neither archive bundles Blender or Warp.
+- Windows Blender 5.1/Warp 1.16 execution is proven by the GUI-inclusive
+  production gate on an RTX 4080 SUPER. Linux remains supported by the
+  previously established runtime proof and the same binary-free source archive.
+
+## 1.0.252 — native Properties workflow and Custom Effects UI integration
+
+### Added
+
+- Added a workflow-ordered Scene Properties hierarchy for Session, Setup,
+  Domain, Height Fill, Physics, Custom Effects, Surface, Whitewater, Outputs,
+  Cache/Production Bake, and Diagnostics.
+- Added canonical role-aware Object Properties panels for Sources, Sinks,
+  Colliders, Forces, Field Sources, and Volume Grid payloads.
+- Added a compact 3D View status/launcher and a Scene Properties navigation
+  action without duplicating authored settings.
+- Added a mutually exclusive Start/Resume/Restart production-bake presentation
+  layer while retaining strict execute-time verification.
+- Added supplied-Blender validation for panel metadata, all authored draw paths,
+  ten object-role/geometry combinations, Field Source payload coherence,
+  save/reopen persistence, and registration cleanup.
+
+### Changed
+
+- Integrated Custom Effects v2 as a Scene Properties root between Physics and
+  Surface. Artist flow is Effect Stack → Selected Effect → Workflow → Status;
+  package administration and Warp Code are closed child panels.
+- Warp Code now prefers an existing Blender Text Editor before repurposing the
+  current area.
+- Preferences now expose runtime/device selection and only the explicitly
+  enabled developer override. The previous verbose toggle remains internal.
+- Cache mutation dialogs display the exact resolved path or orphan inventory
+  and revalidate it immediately before mutation.
+- Field Source payload selection and region coverage stay coherent: Volume Grid
+  payload selects Volume Grid coverage, while analytic coverage restores a
+  Constant payload.
+
+### Fixed
+
+- Fixed Stop Live Preview, Stop Cache Playback, Cancel Bake, and Release Solver
+  disappearing or becoming unusable after runtime readiness degraded.
+- Fixed Step One Frame opening the multi-frame dialog and disabled stepping
+  during cache playback or production bake.
+- Fixed Surface + Particles controls being hidden because the UI tested the
+  nonexistent `BOTH` identifier instead of `SURFACE_PARTICLES`.
+- Fixed Height Fill errors appearing in a conditional source panel instead of
+  the authoritative Session & Status surface.
+- Fixed installed-package maintenance actions appearing for embedded-only
+  Custom Effects.
+- Fixed arbitrary existing directories qualifying for destructive Cache
+  management. Filesystem services now fail closed unless the target is a
+  recognized FluidSim cache or interrupted FluidSim transaction.
+- Fixed cache-management visibility for an empty authored path and added
+  byte-for-byte move verification for pre-manifest interrupted transactions.
+
+### Compatibility and validation
+
+- Cache-v1 playback, cache-v2 transactions/resume, Phase-3 attributes, Phase-4
+  typed whitewater, Phase-5 surface tension, and Custom Effects v2 identities
+  remain compatible. No solver or persistent effect schema was removed.
+- External Warp 1.16.0+cu12 remains the runtime dependency. Blender and Warp
+  runtimes are not bundled.
+- Linux x64 is validated with the supplied Blender 5.2.0 LTS and supplied Warp
+  1.16.0 package. The release workflow now requires and uploads a native
+  Properties UI report alongside solver, Custom Effects, package, and installed
+  lifecycle evidence.
+- Updated the Phase-5 Blender regression to verify the native Scene Properties
+  surface-tension panel and its Simulation Physics parent after removal of the
+  legacy sidebar panel.
+- CUDA solver certification and Windows x64 remain external gates.
+
+## 1.0.251 — shippable Custom Effects and Warp Code workflow
+
+### Added
+
+- Replaced the prototype-facing Custom Warp Snippets UI with an artist-facing
+  Custom Effects stack and a separate developer-grade Warp Code workspace.
+- Added eight typed built-in effects, controller-object workflows, ordered
+  mute/solo/duplicate/reorder operations, draft/tested/applied states, live
+  dirty detection, profiling, and real one-frame preview actions.
+- Added strict Effect schema/API 2 and ABI 1 contracts, an authoritative typed
+  field/capability registry, deterministic generated source, source maps, real
+  `wp.load_module` compilation, and bounded synchronized sandbox launches.
+- Added exact-content SHA-256 trust, imported-code blocking, headless
+  `deny|builtins-only|trusted` policy, and process exit code `17` for policy
+  rejection before compilation or solver allocation.
+- Added strict `.fseffect` packages with per-file hashes, path/symlink/duplicate
+  rejection, decompression resource limits, atomic installation, identity-safe
+  Keep Both behavior, semantic update comparison, safe package rename,
+  malformed-package diagnostics, and library reveal/delete operations.
+- Added three generated Blender demos with supplied-Warp numerical fixtures and
+  Eevee F12 evidence: Vortex Force, stack-order behavior, and Warp Code
+  authoring/trust.
+
+### Changed
+
+- Cache-v2 manifests, frame payloads, checkpoints, production-bake reports,
+  headless reports, cache inspection, and support reports now carry the exact
+  effective Custom Effects signature and ordered inventory.
+- Production admission recomputes current Text datablock, parameter, controller,
+  order, cadence, frame, binding, and capability state instead of trusting
+  stored UI callback hashes.
+- Runtime prerequisites are capability-derived. Particle-only effects no longer
+  force sparse topology/SDF rebuilds.
+- Legacy snippet operator IDs remain one-release migration adapters. Legacy
+  `VOXEL_TILE` maps to Active Voxels with a warning; imported legacy code is
+  disabled and untrusted.
+
+### Fixed
+
+- Fixed import-only false-positive validation by forcing Warp JIT compilation
+  and a synchronized guarded launch.
+- Fixed resume continuing after source/parameter/controller changes by binding
+  the effective stack identity to every transactional cache/checkpoint seam.
+- Fixed failed Apply removing the prior working stack; candidate replacement is
+  atomic and invalid enabled effects fail closed.
+- Fixed runtime errors allowing later effects or frames to continue; execution
+  now raises a structured error and remains latched failed until a successful
+  candidate swap.
+- Fixed built-in trust spoofing, package identity shadowing, filename-only Keep
+  Both behavior, duplicate instance ambiguity, stale UI status, and diagnostics
+  attaching to the wrong instance.
+- Fixed effect-package zip-bomb exposure by checking member count, per-member
+  size, total uncompressed size, and compression ratio before decompression.
+
+### Compatibility and validation
+
+- Cache v1 remains playback-only. Older cache-v2 frames remain playable, but a
+  resume with active Custom Effects requires matching effect identity; rebake
+  when identity is absent or differs.
+- External Warp 1.16.0+cu12 remains the runtime dependency; no Blender or Warp
+  runtime is bundled.
+- Supplied Blender 5.2.0 LTS and supplied Warp 1.16.0 CPU proof cover the product
+  and integration paths on Linux x64. CUDA numerics/determinism/performance and
+  Windows x64 remain external release gates.
+
+## 1.0.250 — stable surface-tension physics and final foundation release
+
+- Added continuum-surface-force capillarity from the simulation liquid SDF.
+- Added a Brackbill-style capillary timestep limit, explicit clamp diagnostics,
+  curvature/acceleration statistics, and optional 24-byte-per-voxel scratch state.
+- Added physical Water Surface Tension and stylized High Tension presets.
+- Added supplied-Warp CPU kernel validation and mandatory CUDA release gates.
+- Preserved cache-v1 and older cache-v2 frame playback. Surface tension adds
+  no persistent stochastic state, but cross-release production resume remains
+  fail-closed: rebake under 1.0.250 to obtain its exact solver/settings signature.
+- Fixed duplicate Spray UI labeling and stale pre-advection SDF reuse when
+  capillarity and whitewater are both active.
+- Fixed same-key SDF reuse after continuous source emission, first-frame
+  capillary substep bypass, reversible optional-scratch accounting, and
+  per-frame maximum capillary diagnostics across multiple substeps.
+- Fixed the authored Time Scale = 0 pause path so capillary preview and
+  particle sanitation remain finite instead of dividing by zero.
+- Fixed direct particle injection invalidation so same-frame physical SDF and
+  render-mesh caches cannot omit newly appended particles.
+- Kept static/source tests independent of Warp so the release identity and
+  packaging gate remains runnable before an external runtime is provisioned.
+- Expanded SDF-normal support for smoothing, made optional scratch allocation
+  transactional, and closed validation-resource leaks on failure paths.
+- Strengthened the supplied-Warp proof to exercise the real solver limiter
+  before first-frame emission, and removed checkout-name assumptions from all
+  Phase-3/4/5 Warp regression harnesses.
+- Expanded the physical SDF and sparse topology halo for every capillary
+  stencil, including authored splat radii, and included the resulting topology
+  and optional scratch costs in capacity and VRAM-safe recommendations.
+- Prevented legacy presets from retaining hidden capillary state after a Phase-5
+  preset, and made release JSON/checksum metadata strict atomic replacements.
+
+All notable user-facing changes are recorded here. FluidSim follows a three-part release version and declares cache compatibility explicitly.
+
+## 1.0.249 — deterministic typed whitewater outputs
+
+### Added
+
+- Stable persistent whitewater type values: foam `0`, bubble `1`, and spray `2`; value `3` remains reserved and is rejected by current cache/checkpoint validators.
+- Deterministic host/device classification with SDF depth, speed, churn, and hysteretic per-step transitions that prevent threshold flicker.
+- Type-specific foam advection/preservation, bubble fluid drag/buoyancy, spray air drag/gravity, and independent lifespan multipliers.
+- A mandatory int32 `fluidsim_whitewater_type` point attribute in Phase-4 cache-v2 frames and solver checkpoints, with an explicit whitewater-type checkpoint schema version.
+- Separate `FluidSim Foam`, `FluidSim Bubbles`, and `FluidSim Spray` Blender outputs and materials, alongside the backward-compatible `FluidSim Whitewater` combined output.
+- A P4 Geometry Nodes asset containing six revisioned groups: surface, liquid particles, combined whitewater, foam, bubbles, and spray.
+- Supplied-Warp validation for host/device classification parity, typed admission, type-specific lifetimes, aligned compaction, type counts, checkpoint restoration, and the one-pool invariant.
+- Supplied-Blender validation for all six output shells, typed cache publication, legacy-unclassified preservation, user-modifier protection, save/reopen, and an Eevee F12 three-material render.
+
+### Changed
+
+- Whitewater remains one GPU simulation pool. Separate artist outputs are filtered publication views and do not triple solver storage.
+- The Splash + Whitewater preset publishes both combined and separate typed views; other workflows retain the combined-only preview default.
+- Legacy cache-v1 and Phase-3 cache-v2 whitewater without type state is preserved as `-1` unclassified on the combined output. It is never silently labelled foam, bubble, or spray.
+- Whitewater type is mandatory and cannot be disabled in the render-attribute inventory.
+
+### Compatibility
+
+- Cache-v1 and Phase-3 cache-v2 frame playback remains supported. Earlier whitewater is combined/unclassified because no physical type state was recorded.
+- Phase-3 solver checkpoints are not resumable as Phase 4 because deterministic type and transition state cannot be reconstructed; rebake to create Phase-4 checkpoints.
+- Blender 5.2.0 LTS and Linux x64 remain the validated host/platform. NVIDIA Warp 1.16.0+cu12 remains external and is not bundled.
+- CUDA solver determinism, NVIDIA memory/performance behavior, and Windows x64 remain open hardware/platform gates on this host.
+
+## 1.0.248 — artist-ready attributes and render nodes
+
+### Added
+
+- One authoritative Phase-3 attribute schema for surface, liquid-particle, and whitewater outputs, including stable Blender names, domains, data types, cache names, and checkpoint policy.
+- Opt-in persistent liquid-particle color, source-ID, and UID channels. UID allocation is monotonic and transactional; source identity is deterministic across Blender sessions.
+- Derived speed and projected-grid vorticity output, plus Blender motion data stored as per-scene-frame displacement in the conventional `velocity` attribute while `fluidsim_velocity` remains world units per second.
+- Strict cache-v2 attribute inventory metadata and fail-closed shape, dtype, finiteness, alignment, and UID validation. Legacy cache frames without a Phase-3 inventory remain readable.
+- A generated, revisioned Geometry Nodes asset for surface, liquid particles, and whitewater, together with idempotent installation and explicit update controls that never claim user-owned modifiers or node groups.
+- Attribute-aware default materials for source color and viscosity, host-readback/cache-cost estimates, and a dedicated Render Attributes panel.
+- Supplied-Warp validation for optional-channel allocation, source metadata, scan compaction, checkpoint restoration, prepared-packet velocity preservation, and the vorticity kernel.
+- Supplied-Blender validation for attribute publication, cache round-trip, save/reopen, typed modifier inputs, evaluated Geometry Nodes, motion data, user-asset protection, and non-empty F12 renders.
+
+### Changed
+
+- Point render groups realize particle instances before material assignment so point-domain simulation attributes survive into shader-visible F12 geometry.
+- Guided setup installs the current bundled render-node revision on all three owned output objects.
+- Persistent render-attribute inventory changes are Reset-tier and participate in solver/cache compatibility signatures; viewport debug coloring remains a separate presentation path.
+
+### Validation status
+
+- The pure-Python suite, source verification, supplied-Warp CPU execution, supplied-Blender attribute publication, save/reopen, Geometry Nodes evaluation, and Eevee F12 rendering pass for this increment.
+- The validation host exposed no NVIDIA CUDA driver/device. CUDA solver numerics, CUDA determinism, GPU memory behavior, GPU performance, and hardware renderer regressions remain explicit release gates.
+
+### Compatibility
+
+- Blender 5.2.0 LTS and Linux x64 remain the validated host/platform.
+- NVIDIA Warp 1.16.0+cu12 remains an external dependency and is not bundled.
+- Cache v1 playback remains supported. Existing cache-v2 frames without the Phase-3 attribute schema remain readable; newly enabled persistent channels require Reset/rebake and are checkpointed.
+
+## 1.0.247 — resumable production workflow and guided first run
+
+### Added
+
+- Strict cache-v2 manifests, transactional frame/checkpoint commits, SHA-256 and file-size verification, contiguous committed-frame enforcement, and fail-closed corruption/orphan handling.
+- Solver checkpoint export/import for liquid, whitewater, sparse topology, source lifecycle/RNG, ST-FLIP temporal/RNG/reference-mass state, solver frame, and simulation time.
+- Responsive one-frame production-bake controller with safe cancellation, restart, resume, Blender-frame restoration, and live-session restoration.
+- Farm-friendly background bake command with JSONL progress, atomic final reports, signal cancellation, and process exit codes `0`, `2`, and `10`–`16`.
+- Six strict product presets, atomic user-preset storage, selected-object guided setup modes, owned FluidSim collection structure, stable domain/output creation, and capacity-preflight reporting.
+- Four generated example scenes covering live inflow, moving colliders, viscous liquid, and whitewater cache-v2 bake/resume.
+
+### Changed
+
+- `fluidsim.setup_scene` now implements the artist-facing selected-object workflow while preserving its public operator ID.
+- New production bakes write cache v2; cache v1 remains readable for playback.
+- The installable extension includes only the installed headless entry point from `release/`; build, smoke, wheel-fetch, and example-generation tooling remains excluded.
+
+### Validation status
+
+- Pure-Python, source verification, supplied-Blender registration, installed-package lifecycle, preset/example save-reopen, and supplied-Warp CPU execution are release evidence for this increment.
+- CUDA solver numerics, CUDA resume determinism, NVIDIA memory behavior, and GPU performance remain an explicit hardware release gate; they are not certified by a CPU-only environment.
+
+### Compatibility
+
+- Blender 5.2.0 LTS and Linux x64 remain the validated host/platform in this deliverable.
+- NVIDIA Warp 1.16.0+cu12 remains an external dependency and is not bundled.
+- Cache v1 playback remains available; resume requires cache v2.
+
+## 1.0.245 — external runtime packaging policy
+
+### Changed
+
+- Removed NVIDIA Warp and all Blender/Warp runtime binaries from FluidSim delivery archives.
+- Warp 1.16.0+cu12 remains checksum-locked as an external validation/runtime dependency only.
+- Release inspection now rejects bundled `.whl` files, Blender runtime archives, Warp package directories, and Warp distribution metadata.
+- Blender smoke tests load Warp from a separately provisioned validation environment and prove it is outside the installed FluidSim extension.
+
+### Compatibility
+
+- Solver numerics and cache-v1 compatibility are unchanged.
+- Blender 5.2.0 LTS / Linux x64 remains the certified P0 target.
+
+## 1.0.244 — P0 release foundation
+
+### Added
+
+- Canonical `fluidsim_warp` extension identity and centralized runtime version metadata.
+- GPL-3.0-or-later license file and a complete embedded Warp-license inventory.
+- Certified P0 target: Blender 5.2.0 LTS on Linux x64 with NVIDIA CUDA.
+- Namespace-safe generated custom Warp modules and extension-scoped user snippet storage.
+- Checksum-locked, package-contained NVIDIA Warp 1.16.0+cu12 binary.
+- Cached runtime/device preflight, enumerated CUDA selection, and privacy-safe support diagnostics.
+- Deterministic source verification, platform archive inspection, and SHA-256 artifact manifests.
+- Clean-profile install, enable, disable, re-enable, fresh-process reload, bundled-Warp execution, and uninstall smoke coverage.
+- Self-hosted NVIDIA gate definition for all 16 GPU validations plus ten preview frames.
+
+### Changed
+
+- Blender extension metadata now comes exclusively from `blender_manifest.toml`.
+- Registration no longer searches external Python installations for Warp.
+- Initialize, live playback, stepping, and cache baking are blocked with actionable messages until the packaged runtime and selected CUDA device are available.
+- Render-handler teardown removes only exact callbacks owned by FluidSim.
+
+### Compatibility
+
+- Existing cache-v1 frame output remains readable. P0 does not change the cache payload format or solver numerics.
+- Windows x64 is not shipped in this P0 archive because a matching Warp 1.16.0+cu12 Windows wheel and Windows Blender 5.2 runtime were not supplied for validation.

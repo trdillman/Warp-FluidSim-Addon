@@ -41,21 +41,74 @@ def _material_uses_display_color(mat):
     return False
 
 
+def _check_attribute(data, name, data_type, domain, count):
+    attr = data.attributes.get(name)
+    check(f"{name} exists", attr is not None)
+    if attr is not None:
+        check(f"{name} type", attr.data_type == data_type, attr.data_type)
+        check(f"{name} domain", attr.domain == domain, attr.domain)
+        check(f"{name} aligned", len(attr.data) == count, len(attr.data))
+    return attr
+
+
+def _geometry_nodes_exists_probe(obj, attribute_name):
+    probe_name = "fluidsim_gn_velocity_exists"
+    modifier = obj.modifiers.new(
+        name="FluidSim Attribute Access Probe", type="NODES")
+    tree = bpy.data.node_groups.new(
+        "FluidSim Attribute Access Probe", "GeometryNodeTree")
+    modifier.node_group = tree
+    tree.interface.new_socket(
+        name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    tree.interface.new_socket(
+        name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+
+    nodes = tree.nodes
+    links = tree.links
+    group_in = nodes.new("NodeGroupInput")
+    group_out = nodes.new("NodeGroupOutput")
+    named = nodes.new("GeometryNodeInputNamedAttribute")
+    named.data_type = "FLOAT_VECTOR"
+    named.inputs["Name"].default_value = attribute_name
+    store = nodes.new("GeometryNodeStoreNamedAttribute")
+    store.data_type = "BOOLEAN"
+    store.domain = "POINT"
+    store.inputs["Name"].default_value = probe_name
+    links.new(group_in.outputs["Geometry"], store.inputs["Geometry"])
+    links.new(named.outputs["Exists"], store.inputs["Value"])
+    links.new(store.outputs["Geometry"], group_out.inputs["Geometry"])
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    depsgraph.update()
+    evaluated = obj.evaluated_get(depsgraph)
+    attr = evaluated.data.attributes.get(probe_name)
+    values = [False] * len(evaluated.data.vertices)
+    if attr is not None and values:
+        attr.data.foreach_get("value", values)
+    return evaluated, attr, values
+
+
 def main():
     enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.voxel_size = 0.08
     fs.max_particles = 500_000
+    bpy.ops.fluidsim.setup_scene()
     fs.whitewater_enabled = True
+    fs.surface_attribute_velocity = True
+    fs.surface_attribute_speed = True
+    fs.surface_attribute_motion = True
+    fs.ww_churn_gain = 10.0
     fs.ww_churn_threshold = 0.05
     fs.ww_emission_rate = 4.0
-
-    bpy.ops.fluidsim.setup_scene()
     # This gate validates whitewater color attributes, so configure an explicit
     # energetic Continuous Inflow instead of depending on the new P3 emitter
     # default (Initial Fill) to happen to generate whitewater.
-    source = bpy.data.objects.get("FluidSim Source")
+    source = next(
+        obj for obj in scene.objects
+        if getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
+    )
     source.fluidsim.emission_mode = "CONTINUOUS_INFLOW"
     source.fluidsim.initial_velocity = (2.0, 0.0, 1.0)
     bpy.ops.fluidsim.initialize()
@@ -74,6 +127,37 @@ def main():
 
     surf = bpy.data.objects.get("FluidSim Surface")
     check("surface output exists", surf is not None and surf.type == "MESH")
+    if surf is not None:
+        surface_count = len(surf.data.vertices)
+        _check_attribute(
+            surf.data, "fluidsim_velocity", "FLOAT_VECTOR", "POINT",
+            surface_count)
+        _check_attribute(
+            surf.data, "fluidsim_speed", "FLOAT", "POINT", surface_count)
+        _check_attribute(
+            surf.data, "velocity", "FLOAT_VECTOR", "POINT", surface_count)
+
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = surf.evaluated_get(depsgraph)
+        evaluated_count = len(evaluated.data.vertices)
+        _check_attribute(
+            evaluated.data, "fluidsim_velocity", "FLOAT_VECTOR", "POINT",
+            evaluated_count)
+        _check_attribute(
+            evaluated.data, "fluidsim_speed", "FLOAT", "POINT",
+            evaluated_count)
+        _check_attribute(
+            evaluated.data, "velocity", "FLOAT_VECTOR", "POINT",
+            evaluated_count)
+
+        evaluated, probe, probe_values = _geometry_nodes_exists_probe(
+            surf, "fluidsim_velocity")
+        check(
+            "Geometry Nodes Named Attribute existence probe",
+            probe is not None and bool(probe_values) and all(probe_values),
+            f"{sum(bool(value) for value in probe_values)}/"
+            f"{len(evaluated.data.vertices)} points",
+        )
     sattr = surf.data.color_attributes.get("display_color") if surf else None
     check("surface display_color attribute", sattr is not None and len(sattr.data) > 0,
           f"{len(sattr.data) if sattr else 0} colors")

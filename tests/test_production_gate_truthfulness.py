@@ -56,6 +56,14 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     assert len(admission_calls) == 1
     assert "tests/blender_simulation_admission_acceptance.py" in admission_calls[0][0]
     assert admission_calls[0][1] == "SIMULATION-ADMISSION-ACCEPTANCE-PASS"
+    stability_calls = [
+        (command, marker)
+        for label, command, _env, _reject_output, marker in calls
+        if label == "tests/blender_closed_domain_stability_acceptance.py"
+    ]
+    assert len(stability_calls) == 1
+    assert "tests/blender_closed_domain_stability_acceptance.py" in stability_calls[0][0]
+    assert stability_calls[0][1] == "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"
 
 
 def test_production_gate_include_gui_requires_foreground_gui_acceptance(
@@ -145,9 +153,9 @@ def test_playback_validator_recomputes_and_requires_stored_verdict(tmp_path):
         "solver_frame": 3,
         "viewport_baseline_solver_frame": 1,
         "device": "cuda:0",
-        "expected_domain_sdf_walls": False,
-        "saved_domain_sdf_walls": False,
-        "domain_sdf_walls": False,
+        "expected_domain_sdf_walls": True,
+        "saved_domain_sdf_walls": True,
+        "domain_sdf_walls": True,
         "particle_count": 4,
         "viewport_particle_count": 4,
         "viewport_changed": True,

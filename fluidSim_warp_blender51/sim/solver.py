@@ -38,6 +38,7 @@ from .fields import (
     voxel_center_world,
 )
 from .particles import ParticleSystem, ParticleBins
+from .attributes import persistent_particle_channels
 from .quality_contract import resolve_quality
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
@@ -47,6 +48,18 @@ from .whitewater import (
     k_compute_churn,
     k_advect_whitewater,
     k_whitewater_set_grid_data,
+)
+from .whitewater_types import (
+    WHITEWATER_TYPE_SCHEMA_VERSION,
+    classification_policy,
+    validate_type_values,
+)
+from .surface_tension import (
+    SurfaceTensionSolver,
+    capillary_dt,
+    required_capillary_substeps,
+    required_sdf_splat_radius_voxels,
+    required_topology_expand_leaves,
 )
 from .surface import (
     k_surface_sdf_reset,
@@ -96,6 +109,8 @@ from .kernels_fluid import (
     k_clear_just_initialized_tracked,
 )
 from .custom import SnippetManager
+from .effects.enums import EffectStage
+from .effects.runtime import EffectRuntimeManager
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +515,15 @@ class SolverSettings:
     viscosity_tolerance: float = C.DEFAULT_VISCOSITY_TOLERANCE
     viscosity_from_particles: bool = False
 
+    # Continuum-surface-force surface tension.  Coefficient is N/m, density
+    # is kg/m^3, and the narrow-band width is authored in simulation voxels.
+    surface_tension_enabled: bool = False
+    surface_tension_coefficient: float = 0.072
+    surface_tension_density: float = 1000.0
+    surface_tension_band_voxels: float = 1.5
+    surface_tension_safety: float = 0.5
+    surface_tension_smoothing_iterations: int = 1
+
     surface_enabled: bool = True
     particle_radius_scale: float = 1.2
     surface_splat_radius: int = 2
@@ -525,6 +549,34 @@ class SolverSettings:
     surface_smooth_iterations: int = 1
     surface_smooth_strength: float = 0.7
 
+    # Artist-ready output inventory.  These fields are signature-bound and
+    # selected before initialization so optional particle channels stay opt-in.
+    surface_attribute_velocity: bool = True
+    surface_attribute_speed: bool = False
+    surface_attribute_vorticity: bool = False
+    surface_attribute_age: bool = False
+    surface_attribute_lifetime: bool = False
+    surface_attribute_color: bool = False
+    surface_attribute_source_id: bool = False
+    surface_attribute_viscosity: bool = False
+    surface_attribute_density: bool = False
+    surface_attribute_motion: bool = True
+    particles_attribute_velocity: bool = False
+    particles_attribute_speed: bool = False
+    particles_attribute_vorticity: bool = False
+    particles_attribute_age: bool = True
+    particles_attribute_lifetime: bool = True
+    particles_attribute_color: bool = False
+    particles_attribute_source_id: bool = False
+    particles_attribute_uid: bool = False
+    particles_attribute_viscosity: bool = False
+    particles_attribute_density: bool = False
+    whitewater_attribute_velocity: bool = False
+    whitewater_attribute_speed: bool = False
+    whitewater_attribute_age: bool = True
+    whitewater_attribute_lifetime: bool = True
+    whitewater_attribute_type: bool = True
+
     whitewater_enabled: bool = False
     churn_decay: float = 1.0
     churn_gain: float = 1.0
@@ -535,8 +587,18 @@ class SolverSettings:
     ww_life_min: float = 1.0
     ww_life_max: float = 3.0
     ww_foam_band: float = 1.0        # in voxels
+    ww_spray_min_speed: float = 0.5
+    ww_type_hysteresis: float = 0.25
+    ww_foam_advection: float = 1.0
+    ww_foam_preservation: float = 0.0
+    ww_foam_density_influence: float = 0.0
+    ww_foam_life_multiplier: float = 1.0
     ww_bubble_drag: float = 8.0
+    ww_bubble_buoyancy: float = 1.0
+    ww_bubble_life_multiplier: float = 1.0
     ww_spray_drag: float = 0.5
+    ww_spray_gravity_scale: float = 1.0
+    ww_spray_life_multiplier: float = 1.0
 
     topology_expand: int = 1
     device: str = "cuda:0"
@@ -553,6 +615,10 @@ class FrameStats:
         self.active_particles = 0
         self.total_particles = 0
         self.whitewater_particles = 0
+        self.whitewater_foam = 0
+        self.whitewater_bubbles = 0
+        self.whitewater_spray = 0
+        self.whitewater_invalid_types = 0
         self.whitewater_required = 0
         self.whitewater_available = 0
         self.whitewater_admitted = 0
@@ -568,6 +634,18 @@ class FrameStats:
         # this frame integrated at a timestep known to violate the condition.
         # FrameStats outlives the frame -- assign every frame or it latches.
         self.cfl_substeps_clamped = False
+        self.capillary_dt = float("inf")
+        self.capillary_substeps_required = 1
+        self.capillary_substeps_clamped = False
+        self.substep_limiter = "MINIMUM"
+        self.surface_tension_active_voxels = 0
+        self.surface_tension_max_curvature = 0.0
+        self.surface_tension_max_acceleration = 0.0
+        self.surface_tension_temporary_bytes = 0
+        self.surface_tension_submission_seconds = 0.0
+        self.surface_tension_status = "DISABLED"
+        self.surface_tension_message = ""
+        self.custom_effects = []
         self.pressure_iterations = 0
         self.pressure_residual = 0.0
         self.timers = {}
@@ -583,6 +661,10 @@ class FrameStats:
             "activeParticles": self.active_particles,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
+            "whitewaterFoam": self.whitewater_foam,
+            "whitewaterBubbles": self.whitewater_bubbles,
+            "whitewaterSpray": self.whitewater_spray,
+            "whitewaterInvalidTypes": self.whitewater_invalid_types,
             "whitewaterRequired": self.whitewater_required,
             "whitewaterAvailable": self.whitewater_available,
             "whitewaterAdmitted": self.whitewater_admitted,
@@ -595,6 +677,19 @@ class FrameStats:
             "surfaceActiveLeaves": self.surface_active_leaves,
             "substeps": self.substeps,
             "cflSubstepsClamped": self.cfl_substeps_clamped,
+            "capillaryDt": (
+                self.capillary_dt if math.isfinite(self.capillary_dt) else 0.0),
+            "capillarySubstepsRequired": self.capillary_substeps_required,
+            "capillarySubstepsClamped": self.capillary_substeps_clamped,
+            "substepLimiter": self.substep_limiter,
+            "surfaceTensionActiveVoxels": self.surface_tension_active_voxels,
+            "surfaceTensionMaxCurvature": self.surface_tension_max_curvature,
+            "surfaceTensionMaxAcceleration": self.surface_tension_max_acceleration,
+            "surfaceTensionTemporaryBytes": self.surface_tension_temporary_bytes,
+            "surfaceTensionSubmissionSeconds": self.surface_tension_submission_seconds,
+            "surfaceTensionStatus": self.surface_tension_status,
+            "surfaceTensionMessage": self.surface_tension_message,
+            "customEffects": [dict(item) for item in self.custom_effects],
             "pressureIterations": self.pressure_iterations,
             "pressureResidual": self.pressure_residual,
             "voxelsPerSecond": vps,
@@ -608,6 +703,21 @@ class FrameStats:
             "particleVoxelFillRatio": self.active_particles / max(self.active_voxels, 1),
             "timers": dict(self.timers),
         }
+
+
+_CHECKPOINT_FIELD_NAMES = (
+    "vel.u", "vel.v", "vel.w", "vel.wu", "vel.wv", "vel.ww",
+    "vel_saved_u", "vel_saved_v", "vel_saved_w",
+    "voxel_type.data", "temperature.data", "viscosity_field.data",
+    "density.data", "churn.data",
+)
+
+
+def _resolve_attr(root, dotted_name: str):
+    value = root
+    for component in dotted_name.split("."):
+        value = getattr(value, component)
+    return value
 
 
 class FluidSolver:
@@ -682,7 +792,9 @@ class FluidSolver:
             g.num_leaf_cells, -1, dtype=wp.int32, device=self.device
         )
 
-        self.particles = ParticleSystem(settings.max_particles, self.device)
+        self.particles = ParticleSystem(
+            settings.max_particles, self.device,
+            persistent_particle_channels(settings))
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
         self.whitewater = WhitewaterSystem(
             settings.max_whitewater, self.device,
@@ -692,9 +804,11 @@ class FluidSolver:
         self.viscosity_solver = ViscositySolver(g, self.device)
         self.sourcing = SourcePipeline(self)
         self.surface = SurfacePipeline(self)
+        self.surface_tension = SurfaceTensionSolver(self)
         self._host_frame_cache = None
         self.last_particle_growth = None
         self.snippets = SnippetManager()
+        self.effects = EffectRuntimeManager(device=self.device)
 
         self.colliders: list[ColliderDesc] = []
         self.force_fields: list[ForceFieldDesc] = []
@@ -767,8 +881,34 @@ class FluidSolver:
         return self.sourcing.height_source
 
     def set_custom_snippets(self, snippets):
+        """Compatibility path for legacy v1 snippets.
+
+        New Blender integration installs a complete v2 candidate through
+        :meth:`set_custom_effect_candidate`; this adapter remains for one
+        migration release and preserves the old operator/script surface.
+        """
         self.snippets.set_snippets(snippets)
         return self.snippets.errors
+
+    def set_custom_effect_candidate(self, candidate):
+        """Atomically install a fully compiled and sandboxed effect stack."""
+        return self.effects.swap_candidate(candidate)
+
+    def _prepare_effect_stage(self, stage):
+        requirements = self.effects.requirements_for_stage(stage)
+        if requirements.surface_sdf:
+            self.surface.ensure_solver_sdf_current()
+        return requirements
+
+    def _run_effect_stage(self, stage, time_ctx):
+        self._prepare_effect_stage(stage)
+        self.effects.run(stage, self, time_ctx)
+        if self.effects.runtime_errors:
+            latest = self.effects.runtime_errors[-1]
+            raise RuntimeError(
+                "Custom Effect runtime failure "
+                f"[{latest.effect_id}/{latest.kernel_id}]: {latest.message}"
+            )
 
     def ensure_particle_capacity(self, required: int):
         """Atomically grow particle/binner storage while preserving solver state."""
@@ -855,6 +995,14 @@ class FluidSolver:
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing.reset()
+        expected_channels = persistent_particle_channels(self.settings)
+        if tuple(self.particles.optional_channels) != tuple(expected_channels):
+            # Reset is the explicit transaction boundary for persistent output
+            # inventory changes.  No live state is copied across this swap.
+            old_particles = self.particles
+            self.particles = ParticleSystem(
+                old_particles.capacity, self.device, expected_channels)
+            del old_particles
         self.particles.clear()
         self.whitewater.clear()
         self.churn.zero()
@@ -874,7 +1022,278 @@ class FluidSolver:
         self.grid.finalize_topology()
         self._nvox = max(1, self.grid.active_voxel_count)
         if settings is not None:
-            self.surface.reset()
+            surface = getattr(self, "surface", None)
+            if surface is not None:
+                surface.reset()
+            surface_tension = getattr(self, "surface_tension", None)
+            if surface_tension is not None:
+                surface_tension.reset()
+        self._host_frame_cache = None
+
+    def export_checkpoint_state(self):
+        """Synchronize once and return host-owned deterministic restart state.
+
+        Scratch pressure, collision, binning, surface-extraction, and temporary
+        reduction arrays are omitted because ``import_checkpoint_state`` clears
+        or rebuilds them before the next source/P2G transaction.
+        """
+        wp.synchronize_device(self.device)
+        leaf_count = int(self.grid.refresh_topology_counts())
+        particle_count = int(self.particles.refresh_host_count())
+        whitewater_count = int(self.whitewater.refresh_host_count())
+        active_voxels = leaf_count * C.LEAF_VOLUME
+
+        arrays = {
+            "grid_leaf_coords": np.ascontiguousarray(
+                self.grid.leaf_coords.numpy()[:leaf_count], dtype=np.int32),
+            "grid_old_leaf_table": np.ascontiguousarray(
+                self.old_leaf_table.numpy(), dtype=np.int32),
+            "particle_position": np.ascontiguousarray(
+                self.particles.position.numpy()[:particle_count], dtype=np.float32),
+            "particle_velocity": np.ascontiguousarray(
+                self.particles.velocity.numpy()[:particle_count], dtype=np.float32),
+            "particle_alive": np.ascontiguousarray(
+                self.particles.alive.numpy()[:particle_count], dtype=np.int32),
+            "particle_time_offset": np.ascontiguousarray(
+                self.particles.time_offset.numpy()[:particle_count], dtype=np.float32),
+            "whitewater_position": np.ascontiguousarray(
+                self.whitewater.position.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_velocity": np.ascontiguousarray(
+                self.whitewater.velocity.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_age": np.ascontiguousarray(
+                self.whitewater.age.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_life": np.ascontiguousarray(
+                self.whitewater.life.numpy()[:whitewater_count], dtype=np.float32),
+            "whitewater_alive": np.ascontiguousarray(
+                self.whitewater.alive.numpy()[:whitewater_count], dtype=np.int32),
+            "whitewater_type": np.ascontiguousarray(
+                self.whitewater.type.numpy()[:whitewater_count], dtype=np.int32),
+        }
+        for name in self.particles.ATTR_NAMES:
+            arrays[f"particle_attr_{name}"] = np.ascontiguousarray(
+                self.particles.attrs[name].numpy()[:particle_count],
+                dtype=np.float32)
+        arrays.update(self.particles.checkpoint_arrays(particle_count))
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
+                _resolve_attr(self, dotted_name).numpy()[:active_voxels])
+
+        return {
+            "arrays": arrays,
+            "scalars": {
+                "frame": int(self.frame),
+                "sim_time": float(self.sim_time),
+                "leaf_count": leaf_count,
+                "particle_count": particle_count,
+                "whitewater_count": whitewater_count,
+                "leaf_capacity": int(self.grid.capacity),
+                "particle_capacity": int(self.particles.capacity),
+                "whitewater_capacity": int(self.whitewater.capacity),
+                "whitewater_emit_seed": int(self._whitewater_emit_seed),
+                "st_step_seed": int(self._st_step_seed),
+                "st_previous_dt": float(self._st_previous_dt),
+                "st_reference_mass_cached": float(
+                    self._st_reference_mass_cached),
+                "next_particle_uid": int(self.particles.next_uid),
+                "particle_optional_channels": ",".join(
+                    self.particles.optional_channels),
+                "whitewater_type_schema_version": WHITEWATER_TYPE_SCHEMA_VERSION,
+            },
+            "source_state": self.sourcing.export_checkpoint_state(),
+        }
+
+    def _validate_checkpoint_state(self, state):
+        if not isinstance(state, dict) or set(state) != {
+                "arrays", "scalars", "source_state"}:
+            raise ValueError("solver checkpoint state has an invalid schema")
+        arrays = state["arrays"]
+        scalars = state["scalars"]
+        if not isinstance(arrays, dict) or not isinstance(scalars, dict):
+            raise ValueError("solver checkpoint arrays/scalars must be mappings")
+        required_scalars = {
+            "frame", "sim_time", "leaf_count", "particle_count",
+            "whitewater_count", "leaf_capacity", "particle_capacity",
+            "whitewater_capacity", "whitewater_emit_seed", "st_step_seed",
+            "st_previous_dt", "st_reference_mass_cached",
+            "whitewater_type_schema_version",
+        }
+        missing = required_scalars - set(scalars)
+        if missing:
+            raise ValueError(f"solver checkpoint is missing scalars {sorted(missing)}")
+        counts = {
+            name: int(scalars[name])
+            for name in ("leaf_count", "particle_count", "whitewater_count")
+        }
+        if any(value < 0 for value in counts.values()):
+            raise ValueError("solver checkpoint counts must be non-negative")
+        if counts["leaf_count"] > self.grid.capacity:
+            raise ValueError("checkpoint leaf count exceeds current capacity")
+        if counts["whitewater_count"] > self.whitewater.capacity:
+            raise ValueError("checkpoint whitewater count exceeds current capacity")
+        required_arrays = {
+            "grid_leaf_coords", "grid_old_leaf_table",
+            "particle_position", "particle_velocity", "particle_alive",
+            "particle_time_offset", "whitewater_position",
+            "whitewater_velocity", "whitewater_age", "whitewater_life",
+            "whitewater_alive", "whitewater_type",
+        }
+        required_arrays.update(
+            f"particle_attr_{name}" for name in self.particles.ATTR_NAMES)
+        required_arrays.update(
+            f"particle_attr_{name}" for name in self.particles.optional_channels)
+        if (self.particles.optional_channels
+                and "particle_optional_channels" not in scalars):
+            raise ValueError(
+                "checkpoint is missing optional particle inventory metadata")
+        saved_channels = str(scalars.get("particle_optional_channels", ""))
+        saved_channels = tuple(filter(None, saved_channels.split(",")))
+        if saved_channels != tuple(self.particles.optional_channels):
+            raise ValueError(
+                "checkpoint optional particle inventory does not match settings")
+        if "uid" in self.particles.optional_channels:
+            if "next_particle_uid" not in scalars:
+                raise ValueError("UID-enabled checkpoint is missing next_particle_uid")
+            if int(scalars["next_particle_uid"]) <= 0:
+                raise ValueError("next_particle_uid must be positive")
+        required_arrays.update(
+            f"field_{name.replace('.', '_')}" for name in _CHECKPOINT_FIELD_NAMES)
+        missing_arrays = required_arrays - set(arrays)
+        if missing_arrays:
+            raise ValueError(
+                f"solver checkpoint is missing arrays {sorted(missing_arrays)}")
+        for name in required_arrays:
+            value = np.asarray(arrays[name])
+            if value.dtype.hasobject:
+                raise ValueError(f"checkpoint array {name} uses object dtype")
+            if value.dtype.kind in "fc" and not np.all(np.isfinite(value)):
+                raise ValueError(f"checkpoint array {name} is non-finite")
+        if int(scalars["whitewater_type_schema_version"]) != (
+                WHITEWATER_TYPE_SCHEMA_VERSION):
+            raise ValueError("unsupported whitewater type checkpoint schema")
+        validate_type_values(
+            arrays["whitewater_type"], allow_unclassified=False)
+        if np.asarray(arrays["grid_leaf_coords"]).shape != (
+                counts["leaf_count"], 3):
+            raise ValueError("grid_leaf_coords shape does not match leaf_count")
+        if np.asarray(arrays["grid_old_leaf_table"]).shape != (
+                self.grid.num_leaf_cells,):
+            raise ValueError("grid_old_leaf_table has the wrong shape")
+        active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            key = f"field_{dotted_name.replace('.', '_')}"
+            if np.asarray(arrays[key]).shape != (active_voxels,):
+                raise ValueError(f"{key} shape does not match active topology")
+        return arrays, scalars, counts
+
+    def import_checkpoint_state(self, state):
+        """Restore into a newly initialized, signature-compatible solver."""
+        arrays, scalars, counts = self._validate_checkpoint_state(state)
+        particle_count = counts["particle_count"]
+        if particle_count > self.particles.capacity:
+            growth = self.ensure_particle_capacity(particle_count)
+            if str(getattr(growth, "status", "")) not in {
+                    "GROWN", "SUFFICIENT"}:
+                raise ValueError(
+                    "checkpoint particle count cannot be admitted: "
+                    f"{getattr(growth, 'reason', growth)}")
+
+        self.grid.restore_topology(arrays["grid_leaf_coords"])
+        active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
+        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+            target = _resolve_attr(self, dotted_name)
+            target.zero_()
+            if active_voxels:
+                source = np.ascontiguousarray(
+                    arrays[f"field_{dotted_name.replace('.', '_')}"])
+                dtype = wp.int32 if source.dtype.kind in "iu" else float
+                wp.copy(
+                    target,
+                    wp.array(source, dtype=dtype, device=self.device),
+                    count=active_voxels)
+        old_table = np.ascontiguousarray(
+            arrays["grid_old_leaf_table"], dtype=np.int32)
+        wp.copy(
+            self.old_leaf_table,
+            wp.array(old_table, dtype=wp.int32, device=self.device))
+        self.particles.restore_checkpoint_prefix(arrays, particle_count)
+        if "uid" in self.particles.optional_channels:
+            self.particles.next_uid = int(scalars["next_particle_uid"])
+            if particle_count:
+                maximum_uid = int(np.max(np.asarray(
+                    arrays["particle_attr_uid"], dtype=np.int64)))
+                if self.particles.next_uid <= maximum_uid:
+                    raise ValueError(
+                        "next_particle_uid must exceed every restored UID")
+        else:
+            self.particles.next_uid = int(scalars.get("next_particle_uid", 1))
+        self.whitewater.restore_checkpoint_prefix(
+            arrays, counts["whitewater_count"])
+        self.sourcing.import_checkpoint_state(state["source_state"])
+
+        self.frame = int(scalars["frame"])
+        self.sim_time = float(scalars["sim_time"])
+        self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
+        self._st_step_seed = int(scalars["st_step_seed"])
+        self._st_previous_dt = float(scalars["st_previous_dt"])
+        self._st_reference_mass_cached = float(
+            scalars["st_reference_mass_cached"])
+        self._rebuild_transient_state_after_restore()
+        self.assert_checkpoint_invariants()
+
+    def _rebuild_transient_state_after_restore(self):
+        """Clear/rebuild every intentionally omitted scratch subsystem."""
+        self.bins.zero()
+        self.voxel_counts.zero()
+        for value in (
+                self.tmp_u, self.tmp_v, self.tmp_w,
+                self.collision_impact_u, self.collision_impact_v,
+                self.collision_impact_w, self.collision_vel,
+                self.collision_friction, self.collision_restitution):
+            value.zero_()
+        self.collision_sdf.zero()
+        self.churn_tmp.zero()
+        self.attr_weight.zero()
+        self.ww_density.zero()
+        self._force_fields_dev = None
+        self._host_frame_cache = None
+        self._nvox = max(1, self.grid.active_voxel_count)
+        self.surface.reset()
+        self.surface_tension.reset()
+        self.whitewater.reset_frame_diagnostics()
+        self.stats = FrameStats()
+        wp.synchronize_device(self.device)
+
+    def assert_checkpoint_invariants(self):
+        leaf_count = int(self.grid.refresh_topology_counts())
+        particle_count = int(self.particles.refresh_host_count())
+        whitewater_count = int(self.whitewater.refresh_host_count())
+        if not 0 <= leaf_count <= self.grid.capacity:
+            raise ValueError("restored leaf count violates capacity")
+        if not 0 <= particle_count <= self.particles.capacity:
+            raise ValueError("restored particle count violates capacity")
+        if not 0 <= whitewater_count <= self.whitewater.capacity:
+            raise ValueError("restored whitewater count violates capacity")
+        for name, value in (
+                ("particle_position", self.particles.position.numpy()[:particle_count]),
+                ("particle_velocity", self.particles.velocity.numpy()[:particle_count]),
+                ("whitewater_position", self.whitewater.position.numpy()[:whitewater_count]),
+                ("whitewater_velocity", self.whitewater.velocity.numpy()[:whitewater_count])):
+            if not np.all(np.isfinite(value)):
+                raise ValueError(f"restored {name} contains non-finite values")
+        validate_type_values(
+            self.whitewater.type.numpy()[:whitewater_count],
+            allow_unclassified=False,
+        )
+        if "uid" in self.particles.optional_channels and particle_count:
+            uid = self.particles.int_attrs["uid"].numpy()[:particle_count]
+            if np.any(uid <= 0) or len(np.unique(uid)) != particle_count:
+                raise ValueError("restored particle UIDs are invalid")
+            if int(self.particles.next_uid) <= int(np.max(uid)):
+                raise ValueError("restored next_particle_uid is not monotonic")
+        if not math.isfinite(self.sim_time) or not math.isfinite(
+                self._st_previous_dt):
+            raise ValueError("restored timing state is non-finite")
+        return True
 
     def release(self):
         """Break GPU-owning backreferences before the session drops this solver."""
@@ -893,6 +1312,11 @@ class FluidSolver:
         # and io.cache._frame_payload both gate on hasattr(..., "surface"), and
         # a None left in place turns that guard into an AttributeError that
         # masks the solver error being handled.
+        surface_tension = getattr(self, "surface_tension", None)
+        if surface_tension is not None:
+            surface_tension.release()
+        if hasattr(self, "surface_tension"):
+            del self.surface_tension
         if hasattr(self, "surface"):
             del self.surface
 
@@ -1373,6 +1797,9 @@ class FluidSolver:
                         self.vel.wu, self.vel.wv, self.vel.ww],
                 device=self.device,
             )
+        # Surface tension is a physical grid force.  It uses the current
+        # particle SDF after P2G and before implicit viscosity/pressure.
+        self.surface_tension.apply(dt)
         if s.max_speed > 0.0:
             wp.launch(
                 k_forces_speed_limit, dim=self._nvox,
@@ -1483,7 +1910,10 @@ class FluidSolver:
         """Kill non-finite particles, clamp particle speeds."""
         s = self.settings
         g = self.grid
-        max_speed = max(s.cfl * g.voxel_size / dt * 2.0, 50.0)
+        # Time Scale = 0 is an authored pause mode. Keep its no-op substep
+        # finite rather than dividing by zero during post-advection sanitation.
+        safe_dt = max(float(dt), 1.0e-8)
+        max_speed = max(s.cfl * g.voxel_size / safe_dt * 2.0, 50.0)
         p = self.particles
         wp.launch(
             k_sanitize_particles, dim=self._np_dim(),
@@ -1610,6 +2040,7 @@ class FluidSolver:
         ) & 0x7FFFFFFF
         life_min, life_max = normalized_life_range(
             s.ww_life_min, s.ww_life_max)
+        type_policy = classification_policy(s)
         ww.emit(
             candidate_count=self._np_dim(),
             liquid_positions=p.position,
@@ -1627,8 +2058,13 @@ class FluidSolver:
             emission_rate=s.ww_emission_rate,
             surface_band=s.ww_surface_band * s.voxel_size,
             min_speed=s.ww_min_speed,
+            foam_band=type_policy.foam_band,
+            min_spray_speed=type_policy.min_spray_speed,
             life_min=life_min,
             life_max=life_max,
+            foam_life_multiplier=s.ww_foam_life_multiplier,
+            bubble_life_multiplier=s.ww_bubble_life_multiplier,
+            spray_life_multiplier=s.ww_spray_life_multiplier,
             seed=self._whitewater_emit_seed,
         )
         # Bound advection by the prior live prefix plus this substep's maximum
@@ -1642,14 +2078,29 @@ class FluidSolver:
         wp.launch(
             k_advect_whitewater, dim=nww,
             inputs=[ww.position, ww.velocity, ww.age, ww.life,
-                    ww.alive, ww.count,
+                    ww.alive, ww.type, ww.count,
                     self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
                     self.surface_sdf.data, self.collision_sdf.data,
+                    self.ww_density.data,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, s.voxel_size, dt, wp.vec3(*s.gravity),
-                    s.ww_foam_band * s.voxel_size, s.ww_bubble_drag,
+                    type_policy.spray_enter_height,
+                    type_policy.spray_exit_height,
+                    type_policy.bubble_enter_depth,
+                    type_policy.bubble_exit_depth,
+                    type_policy.min_spray_speed,
+                    type_policy.spray_exit_speed,
+                    s.ww_foam_advection,
+                    s.ww_foam_preservation,
+                    s.ww_foam_density_influence,
+                    s.ww_bubble_drag,
+                    s.ww_bubble_buoyancy,
                     s.ww_spray_drag,
+                    s.ww_spray_gravity_scale,
+                    s.ww_foam_life_multiplier,
+                    s.ww_bubble_life_multiplier,
+                    s.ww_spray_life_multiplier,
                     wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
                     ww.capacity, ww.free_slots, ww.free_count],
             device=self.device,
@@ -1660,6 +2111,7 @@ class FluidSolver:
         ww = self.whitewater
         active_whitewater = ww.refresh_host_count()
         if not self.settings.whitewater_enabled:
+            ww.update_type_counts(active_whitewater)
             return active_whitewater
 
         g = self.grid
@@ -1673,6 +2125,7 @@ class FluidSolver:
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
+        ww.update_type_counts(active_whitewater)
         return active_whitewater
 
     # -- CFL ----------------------------------------------------------------
@@ -1708,39 +2161,91 @@ class FluidSolver:
         return vmax
 
     def _compute_substeps(self, frame_dt):
-        """Return (substeps, cfl_clamped) for one frame.
+        """Return ``(substeps, cfl_clamped)`` and retain all limiter evidence.
 
-        The second value is the fact the old ``min(max_substeps, n)`` threw
-        away: the CFL condition asked for more substeps than the cap allows,
-        so this frame integrates at a timestep known to violate it. Silently
-        discarding that is how a stability violation becomes an unexplained
-        artefact. The early returns never compute ``n``, so nothing is clamped
-        on those paths.
+        The selected count is the maximum of the authored minimum, the fluid /
+        collider CFL requirement, and the explicit capillary requirement.  It
+        is then capped by ``max_substeps``.  The capillary condition is applied
+        whenever enabled because sources may emit their first liquid particles
+        after this frame-level decision has already been made.
         """
         s = self.settings
         min_substeps = max(1, int(s.min_substeps))
         max_substeps = max(min_substeps, int(s.max_substeps))
-        # host_count is kept current by end-of-frame stats, inject_particles
-        # and clear(); avoid an extra device sync here.
-        if self.particles.host_count == 0:
-            return min_substeps, False
-        if min_substeps == max_substeps:
-            return min_substeps, False
-        self.max_speed_dev.zero_()
-        wp.launch(
-            k_max_vec3_magnitude, dim=self.particles.host_count,
-            inputs=[self.particles.velocity, self.particles.count],
-            outputs=[self.max_speed_dev], device=self.device,
+        cfl_required = 1
+        capillary_required = 1
+        capillary_limit = float("inf")
+
+        if (bool(getattr(s, "surface_tension_enabled", False))
+                and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0):
+            capillary_limit = capillary_dt(
+                float(s.surface_tension_density),
+                float(s.voxel_size),
+                float(s.surface_tension_coefficient),
+                float(s.surface_tension_safety),
+            )
+            capillary_required = required_capillary_substeps(
+                frame_dt, capillary_limit)
+
+        # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
+        # device reduction/readback entirely. Capillary demand is still
+        # calculated above so its clamp diagnostics remain truthful.
+        if min_substeps < max_substeps and self.particles.host_count > 0:
+            self.max_speed_dev.zero_()
+            wp.launch(
+                k_max_vec3_magnitude, dim=self.particles.host_count,
+                inputs=[self.particles.velocity, self.particles.count],
+                outputs=[self.max_speed_dev], device=self.device,
+            )
+            vmax = float(self.max_speed_dev.numpy()[0])
+            gmag = math.sqrt(sum(x * x for x in s.gravity))
+            vmax = max(vmax + gmag * frame_dt, self._collider_max_speed())
+            if vmax >= 1.0e-6:
+                dt_cfl = s.cfl * s.voxel_size / vmax
+                cfl_required = max(
+                    1, int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6))))
+
+        required = max(min_substeps, cfl_required, capillary_required)
+        selected = min(max_substeps, required)
+        if required <= min_substeps:
+            limiter = "MINIMUM"
+        elif cfl_required == capillary_required == required:
+            limiter = "CFL_AND_CAPILLARY"
+        elif capillary_required == required:
+            limiter = "CAPILLARY"
+        else:
+            limiter = "CFL"
+        self._last_substep_diagnostics = {
+            "capillary_dt": capillary_limit,
+            "capillary_substeps_required": capillary_required,
+            "capillary_substeps_clamped": capillary_required > max_substeps,
+            "substep_limiter": limiter,
+        }
+        return max(min_substeps, selected), cfl_required > max_substeps
+
+    def _surface_tension_topology_expand(self):
+        """Return the leaf halo required by the physical capillary SDF."""
+
+        s = self.settings
+        if (not bool(getattr(s, "surface_tension_enabled", False))
+                or float(getattr(s, "surface_tension_coefficient", 0.0)) <= 0.0):
+            return 0
+        sdf_filter_iterations = sum(max(0, int(value)) for value in (
+            s.surface_filter_iterations,
+            s.surface_dilate_iterations,
+            s.surface_erode_iterations,
+            s.surface_smooth_iterations,
+        ))
+        splat_radius = max(
+            int(s.surface_splat_radius),
+            required_sdf_splat_radius_voxels(
+                0.5 * float(s.particle_radius_scale),
+                float(s.surface_tension_band_voxels),
+                int(s.surface_tension_smoothing_iterations),
+                sdf_filter_iterations,
+            ),
         )
-        vmax = float(self.max_speed_dev.numpy()[0])
-        gmag = math.sqrt(sum(x * x for x in s.gravity))
-        vmax = vmax + gmag * frame_dt
-        vmax = max(vmax, self._collider_max_speed())
-        if vmax < 1.0e-6:
-            return min_substeps, False
-        dt_cfl = s.cfl * s.voxel_size / vmax
-        n = int(math.ceil(frame_dt / max(dt_cfl, 1.0e-6)))
-        return max(min_substeps, min(max_substeps, n)), n > max_substeps
+        return required_topology_expand_leaves(splat_radius, C.LEAF_DIM)
 
     def _whitewater_topology_expand(self, frame_dt):
         """Return a leaf radius covering existing whitewater for one frame."""
@@ -1767,6 +2272,8 @@ class FluidSolver:
         frame_dt = s.time_scale / s.frame_rate
         if self.profiler is not None:
             self.profiler.begin_frame()
+        self.effects.begin_frame()
+        self.surface_tension.begin_frame()
 
         substeps, cfl_clamped = self._compute_substeps(frame_dt)
         dt = frame_dt / substeps
@@ -1777,18 +2284,24 @@ class FluidSolver:
             "time_scale": s.time_scale, "substeps": substeps,
         }
 
-        rebuild_each_substep = self.snippets.has_any()
+        rebuild_each_substep = (
+            self.snippets.has_any()
+            or self.effects.requirements.rebuild_topology_each_substep
+        )
         moving_colliders = any(
             col.base_points is not None for col in self.colliders)
         frame_topology_expand = max(
             int(s.topology_expand),
             int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
             self._whitewater_topology_expand(frame_dt),
+            self._surface_tension_topology_expand(),
         )
         self.whitewater.reset_frame_diagnostics()
         self._whitewater_launch_bound = self.whitewater.host_count
         for substep_index in range(substeps):
+            time_ctx["substep_index"] = substep_index
             self.snippets.run(CustomKernelOrder.FIRST_STEP, self, time_ctx)
+            self._run_effect_stage(EffectStage.BEFORE_EMISSION, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
             collision_rebuild = rebuild or moving_colliders
             with self._phase("misc"):
@@ -1810,10 +2323,16 @@ class FluidSolver:
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:
                     self._index_particles()
+                    # The previous frame may have produced a current-key SDF
+                    # during render surfacing. Newly emitted particles change
+                    # the physical interface without advancing frame/time, so
+                    # invalidate explicitly before the capillary force reads it.
+                    self.surface.invalidate_solver_sdf()
             with self._phase("p2g"):
                 self._p2g(dt)
             self._save_velocities()
             self.snippets.run(CustomKernelOrder.BEFORE_FORCES, self, time_ctx)
+            self._run_effect_stage(EffectStage.AFTER_PARTICLE_TRANSFER, time_ctx)
             with self._phase("forces"):
                 self._forces(dt)
             with self._phase("viscosity"):
@@ -1826,6 +2345,7 @@ class FluidSolver:
             self.snippets.run(
                 CustomKernelOrder.BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION,
                 self, time_ctx)
+            self._run_effect_stage(EffectStage.BEFORE_PRESSURE, time_ctx)
             with self._phase("pressure"):
                 self._pressure(dt)
                 self._collider_material_response()
@@ -1837,10 +2357,16 @@ class FluidSolver:
                 self._lifecycle(dt)
             with self._phase("relax"):
                 self._relax()
+            # Surface tension may have built the SDF before G2P/advection.  The
+            # particle positions now describe a new interface; invalidate that
+            # pre-advection key so whitewater and substep render surfacing can
+            # never consume stale geometry.
+            self.surface.invalidate_solver_sdf()
             sdf_ready = self.surface.after_substep()
             with self._phase("whitewater"):
                 self._whitewater(dt, sdf_ready=sdf_ready)
             self.snippets.run(CustomKernelOrder.FINAL_STEP, self, time_ctx)
+            self._run_effect_stage(EffectStage.AFTER_PARTICLE_UPDATE, time_ctx)
             self.sim_time += dt
             time_ctx["time"] = self.sim_time
 
@@ -1853,17 +2379,37 @@ class FluidSolver:
         wp.synchronize_device(self.device)
         self.grid.refresh_topology_counts()
         whitewater_diagnostics = self.whitewater.refresh_diagnostics()
+        whitewater_types = self.whitewater.refresh_type_counts()
 
         st = self.stats
         st.step_time = _time.perf_counter() - t_start
         st.substeps = substeps
         st.cfl_substeps_clamped = cfl_clamped
+        limiter = getattr(self, "_last_substep_diagnostics", {})
+        st.capillary_dt = float(limiter.get("capillary_dt", float("inf")))
+        st.capillary_substeps_required = int(
+            limiter.get("capillary_substeps_required", 1))
+        st.capillary_substeps_clamped = bool(
+            limiter.get("capillary_substeps_clamped", False))
+        st.substep_limiter = str(limiter.get("substep_limiter", "MINIMUM"))
+        tension = self.surface_tension.diagnostics()
+        st.surface_tension_active_voxels = tension.active_voxels
+        st.surface_tension_max_curvature = tension.max_abs_curvature
+        st.surface_tension_max_acceleration = tension.max_acceleration
+        st.surface_tension_temporary_bytes = tension.temporary_bytes
+        st.surface_tension_submission_seconds = tension.submission_seconds
+        st.surface_tension_status = tension.status
+        st.surface_tension_message = tension.message
         st.active_voxels = self.grid.active_voxel_count
         st.initialized_voxels = self.grid.voxel_capacity
         st.total_voxels = self.grid.total_voxels()
         st.active_particles = self.particles.refresh_host_count()
         st.total_particles = self.particles.capacity
         st.whitewater_particles = whitewater_particles
+        st.whitewater_foam = whitewater_types["foam"]
+        st.whitewater_bubbles = whitewater_types["bubble"]
+        st.whitewater_spray = whitewater_types["spray"]
+        st.whitewater_invalid_types = whitewater_types["invalid"]
         st.whitewater_required = whitewater_diagnostics["required"]
         st.whitewater_available = whitewater_diagnostics["available"]
         st.whitewater_admitted = whitewater_diagnostics["admitted"]
@@ -1875,6 +2421,7 @@ class FluidSolver:
         st.surface_voxel_size = float(surface_metadata["voxel_size"])
         st.surface_active_leaves = surface_metadata["active_leaves"]
         st.surface_active_voxels = surface_metadata["active_voxels"]
+        st.custom_effects = self.effects.frame_stats_snapshot()
         if self.profiler is not None:
             st.timers = self.profiler.collect()
         return st
@@ -1887,15 +2434,18 @@ class FluidSolver:
 
     def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
                                velocities=None, temperature=0.0, viscosity=0.0,
-                               density=1.0, life=0.0, use_lifespan=False):
+                               density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                               source_id=0, life=0.0, use_lifespan=False):
         return self.sourcing.inject_particles_exact(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
+            color=color, source_id=source_id,
             life=life, use_lifespan=use_lifespan)
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
-                         density=1.0, life=0.0, use_lifespan=False):
+                         density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                         source_id=0, life=0.0, use_lifespan=False):
         """Append external world-space points as liquid particles.
 
         ``positions``: (N,3) array-like. Optional per-particle ``velocities``
@@ -1908,6 +2458,8 @@ class FluidSolver:
             temperature=temperature,
             viscosity=viscosity,
             density=density,
+            color=color,
+            source_id=source_id,
             life=life,
             use_lifespan=use_lifespan,
         )

@@ -1,0 +1,155 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Adds controlled tangential motion around a chosen axis, with optional suction and lift. Use the owned controller Empty to place the vortex directly in the Blender scene.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.vortex_force",
+  "kernels": [
+    {
+      "cadence": "EVERY_SUBSTEP",
+      "description": "Adds bounded tangential, radial, and axial acceleration to live liquid particles.",
+      "domain": "PARTICLES",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "particle_velocity"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "vortex_force",
+      "label": "Apply Vortex",
+      "parameter_keys": [
+        "controller",
+        "axis",
+        "strength",
+        "radius",
+        "suction",
+        "lift"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "offset = position - controller\naxis_length = wp.length(axis)\ndistance = wp.length(offset)\nif axis_length > 1.0e-6 and distance < radius:\n    axis_n = axis / axis_length\n    radial = offset - axis_n * wp.dot(offset, axis_n)\n    radial_length = wp.length(radial)\n    if radial_length > 1.0e-6:\n        influence = wp.clamp(1.0 - radial_length / radius, 0.0, 1.0)\n        tangent = wp.normalize(wp.cross(axis_n, radial))\n        updated = particle_velocity[particle_index]\n        updated = updated + tangent * (strength * influence * solver_time_step)\n        updated = updated - radial * (suction * influence * solver_time_step)\n        updated = updated + axis_n * (lift * influence * solver_time_step)\n        particle_velocity[particle_index] = updated",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Vortex Force",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": false,
+      "default": "",
+      "description": "Scene object whose origin places the vortex center.",
+      "enum_items": [],
+      "key": "controller",
+      "kind": "OBJECT",
+      "label": "Controller",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "OBJECT"
+    },
+    {
+      "animatable": true,
+      "default": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "description": "Local swirl axis in world space.",
+      "enum_items": [],
+      "key": "axis",
+      "kind": "VECTOR",
+      "label": "Axis",
+      "maximum": null,
+      "minimum": null,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "DIRECTION"
+    },
+    {
+      "animatable": true,
+      "default": 4.0,
+      "description": "Tangential acceleration at the controller center.",
+      "enum_items": [],
+      "key": "strength",
+      "kind": "FLOAT",
+      "label": "Strength",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2"
+    },
+    {
+      "animatable": true,
+      "default": 2.0,
+      "description": "Maximum radial influence distance.",
+      "enum_items": [],
+      "key": "radius",
+      "kind": "FLOAT",
+      "label": "Radius",
+      "maximum": 1000.0,
+      "minimum": 0.001,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m"
+    },
+    {
+      "animatable": true,
+      "default": 0.0,
+      "description": "Radial pull toward the vortex axis.",
+      "enum_items": [],
+      "key": "suction",
+      "kind": "FLOAT",
+      "label": "Suction",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/s\u00b2"
+    },
+    {
+      "animatable": true,
+      "default": 0.0,
+      "description": "Acceleration along the vortex axis.",
+      "enum_items": [],
+      "key": "lift",
+      "kind": "FLOAT",
+      "label": "Lift",
+      "maximum": 100.0,
+      "minimum": -100.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "m/s\u00b2"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Swirl liquid around an artist-positioned controller with radial falloff.",
+  "tags": [
+    "controller",
+    "force",
+    "swirl"
+  ],
+  "version": "1.0.0"
+}

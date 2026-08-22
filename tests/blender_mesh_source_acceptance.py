@@ -81,7 +81,14 @@ def main():
     fs.liquid_view_mode = "PARTICLES"
     bpy.ops.fluidsim.setup_scene()
 
-    default_source = bpy.data.objects.get("FluidSim Source")
+    default_source = next(
+        (
+            obj for obj in scene.objects
+            if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+            == "SOURCE"
+        ),
+        None,
+    )
     if default_source is not None:
         default_source.fluidsim.role = "NONE"
 

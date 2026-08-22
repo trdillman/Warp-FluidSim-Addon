@@ -1,0 +1,83 @@
+{
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Thermal",
+  "cost_hint": "MEDIUM",
+  "description": "Runs on active sparse voxels and therefore requests topology. It provides a clear example of a grid-domain effect whose cadence is once per frame rather than every solver substep.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.voxel_cooling",
+  "kernels": [
+    {
+      "cadence": "ONCE_PER_FRAME",
+      "description": "Relaxes temperature on active non-collision voxels once per display frame.",
+      "domain": "ACTIVE_VOXELS",
+      "fields": [
+        {
+          "access": "READ_WRITE_CURRENT",
+          "field": "temperature"
+        }
+      ],
+      "frame_end": 0,
+      "frame_start": 0,
+      "frame_step": 1,
+      "kernel_id": "voxel_cooling",
+      "label": "Cool Active Voxels",
+      "parameter_keys": [
+        "ambient",
+        "cooling"
+      ],
+      "prerequisites": [],
+      "safe_mode": true,
+      "source": "factor = wp.clamp(1.0 - cooling * real_time_step, 0.0, 1.0)\ntemperature[flat_voxel_index] = ambient + (temperature[flat_voxel_index] - ambient) * factor",
+      "stage": "AFTER_PARTICLE_TRANSFER"
+    }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Voxel Cooling",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+    {
+      "animatable": true,
+      "default": 0.0,
+      "description": "Target grid temperature.",
+      "enum_items": [],
+      "key": "ambient",
+      "kind": "FLOAT",
+      "label": "Ambient",
+      "maximum": 10000.0,
+      "minimum": -10000.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "TEMPERATURE"
+    },
+    {
+      "animatable": true,
+      "default": 0.5,
+      "description": "Grid temperature relaxation rate.",
+      "enum_items": [],
+      "key": "cooling",
+      "kind": "FLOAT",
+      "label": "Cooling",
+      "maximum": 1000.0,
+      "minimum": 0.0,
+      "precision": 3,
+      "runtime_bindable": true,
+      "soft_maximum": null,
+      "soft_minimum": null,
+      "unit": "1/s"
+    }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Relax active-grid temperature toward ambient once per frame.",
+  "tags": [
+    "cooling",
+    "grid",
+    "temperature"
+  ],
+  "version": "1.0.0"
+}

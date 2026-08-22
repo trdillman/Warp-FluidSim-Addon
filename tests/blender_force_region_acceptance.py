@@ -50,9 +50,16 @@ try:
     if bpy.ops.fluidsim.setup_scene() != {"FINISHED"}:
         raise RuntimeError("quick setup failed")
 
-    source = bpy.data.objects.get("FluidSim Source")
+    source = next(
+        (
+            obj for obj in scene.objects
+            if getattr(getattr(obj, "fluidsim", None), "role", "NONE")
+            == "SOURCE"
+        ),
+        None,
+    )
     if source is None:
-        raise RuntimeError("quick setup did not create FluidSim Source")
+        raise RuntimeError("quick setup did not tag a source")
     source.fluidsim.source_mode = "PARTICLES"
     source.fluidsim.emission_mode = "INITIAL_FILL"
     source.fluidsim.emit_rate = 8.0

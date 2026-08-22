@@ -20,6 +20,7 @@ from .solver_settings import (
     apply_scene_settings as _apply_scene_settings,
     domain_bounds as _domain_bounds,
     enum_setting_fields as _enum_setting_fields,
+    normalize_domain_boundary_settings as _normalize_domain_boundary_settings,
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -91,9 +92,17 @@ _LIVE_REGISTRY_FIELDS = frozenset({
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
     "viscosity_enabled", "viscosity_solver", "viscosity_constant",
     "viscosity_from_particles", "viscosity_iterations",
-    "viscosity_tolerance", "ww_churn_decay", "ww_churn_gain",
+    "viscosity_tolerance", "surface_tension_coefficient",
+    "surface_tension_density", "surface_tension_band_voxels",
+    "surface_tension_safety", "surface_tension_smoothing_iterations",
+    "ww_churn_decay", "ww_churn_gain",
     "ww_churn_threshold", "ww_emission_rate", "ww_min_speed",
     "ww_life_min", "ww_life_max", "ww_bubble_drag", "ww_spray_drag",
+    "ww_surface_band", "ww_foam_band", "ww_spray_min_speed",
+    "ww_type_hysteresis", "ww_foam_advection", "ww_foam_preservation",
+    "ww_foam_density_influence", "ww_foam_life_multiplier",
+    "ww_bubble_buoyancy", "ww_bubble_life_multiplier",
+    "ww_spray_gravity_scale", "ww_spray_life_multiplier",
     "auto_grow_particles", "particle_growth_failure_policy",
 })
 _OUTPUT_REGISTRY_FIELDS = frozenset({
@@ -101,7 +110,9 @@ _OUTPUT_REGISTRY_FIELDS = frozenset({
     "particle_display_fraction", "particle_display_scale",
     "surface_attribute_mode", "particle_attribute_mode",
     "whitewater_attribute_mode", "whitewater_display_scale",
+    "whitewater_output_mode",
     "surface_material", "particle_material", "whitewater_material",
+    "foam_material", "bubble_material", "spray_material",
     "output_collection_name", "show_overlay",
 })
 _SURFACE_REGISTRY_FIELDS = frozenset({
@@ -120,9 +131,11 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+    "surface_tension_enabled",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",
+    "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
@@ -135,6 +148,8 @@ _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",
+    "active_preset_id", "product_preset", "setup_mode",
+    "bake_start", "bake_end", "cache_format", "checkpoint_interval",
 })
 _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
@@ -146,6 +161,17 @@ _PRESENTATION_FIELDS = frozenset({
     "stat_cfl_clamped", "stat_whitewater_admitted",
     "stat_whitewater_dropped", "stat_whitewater_policy",
     "stat_whitewater_required", "stat_whitewater_status",
+    "stat_whitewater_foam", "stat_whitewater_bubbles",
+    "stat_whitewater_spray", "stat_whitewater_invalid_types",
+    "stat_capillary_dt", "stat_capillary_substeps_required",
+    "stat_capillary_clamped", "stat_substep_limiter",
+    "stat_surface_tension_active_voxels",
+    "stat_surface_tension_max_curvature",
+    "stat_surface_tension_max_acceleration",
+    "stat_surface_tension_temporary_bytes",
+    "stat_surface_tension_submission_ms", "stat_surface_tension_status",
+    "stat_surface_tension_message", "bake_status", "bake_progress",
+    "bake_message",
 })
 
 _TIER_FIELDS = {
@@ -218,7 +244,12 @@ _HOT_SETTING_FIELDS = frozenset({
     "viscosity_iterations", "viscosity_tolerance",
     "ww_churn_decay", "ww_churn_gain", "ww_churn_threshold",
     "ww_emission_rate", "ww_min_speed", "ww_life_min", "ww_life_max",
-    "ww_bubble_drag", "ww_spray_drag",
+    "ww_bubble_drag", "ww_spray_drag", "ww_surface_band", "ww_foam_band",
+    "ww_spray_min_speed", "ww_type_hysteresis", "ww_foam_advection",
+    "ww_foam_preservation", "ww_foam_density_influence",
+    "ww_foam_life_multiplier", "ww_bubble_buoyancy",
+    "ww_bubble_life_multiplier", "ww_spray_gravity_scale",
+    "ww_spray_life_multiplier",
 })
 
 _LIVE_REFRESH_SETTING_FIELDS = frozenset()
@@ -227,6 +258,7 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+    "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
 
 _SURFACE_SETTING_FIELDS = frozenset({
@@ -617,6 +649,7 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
         scene.fluidsim, sess.solver.settings,
         _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
     _apply_gravity(scene, sess.solver.settings)
+    _normalize_domain_boundary_settings(sess.solver.settings)
     return True
 
 

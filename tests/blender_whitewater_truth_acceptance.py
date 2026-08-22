@@ -111,8 +111,13 @@ def _capacity_acceptance(device, grid):
             emission_rate=100.0,
             surface_band=10.0,
             min_speed=0.0,
+            foam_band=1.0,
+            min_spray_speed=2.0,
             life_min=2.0,
             life_max=1.0,
+            foam_life_multiplier=1.0,
+            bubble_life_multiplier=1.0,
+            spray_life_multiplier=1.0,
             seed=123,
         )
         wp.synchronize_device(device)
@@ -142,8 +147,13 @@ def _capacity_acceptance(device, grid):
             emission_rate=100.0,
             surface_band=10.0,
             min_speed=0.0,
+            foam_band=1.0,
+            min_spray_speed=2.0,
             life_min=2.0,
             life_max=1.0,
+            foam_life_multiplier=1.0,
+            bubble_life_multiplier=1.0,
+            spray_life_multiplier=1.0,
             seed=123,
         )
         wp.synchronize_device(device)

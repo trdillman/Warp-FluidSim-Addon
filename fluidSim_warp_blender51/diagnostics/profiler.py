@@ -48,7 +48,24 @@ PROFILE_FRAME_FIELDS = [
     "activeParticles",
     "totalParticles",
     "whitewaterParticles",
+    "whitewaterFoam",
+    "whitewaterBubbles",
+    "whitewaterSpray",
+    "whitewaterInvalidTypes",
     "substeps",
+    "cflSubstepsClamped",
+    "capillaryDt",
+    "capillarySubstepsRequired",
+    "capillarySubstepsClamped",
+    "substepLimiter",
+    "surfaceTensionActiveVoxels",
+    "surfaceTensionMaxCurvature",
+    "surfaceTensionMaxAcceleration",
+    "surfaceTensionTemporaryBytes",
+    "surfaceTensionSubmissionSeconds",
+    "surfaceTensionStatus",
+    "surfaceTensionMessage",
+    "customEffects",
     "pressureIterations",
     "pressureResidual",
     "voxelsPerSecond",
@@ -161,6 +178,8 @@ class Profiler:
         if not self.enabled:
             yield
             return
+        if track_name not in TIMER_TRACK_ORDER:
+            raise KeyError(f"unknown profiler track: {track_name}")
         t0 = time.perf_counter()
         try:
             yield
@@ -201,6 +220,9 @@ class Profiler:
 
     def summary(self, last_n: int = 60) -> dict:
         """Average timers over the last N frames for overlay display."""
+        last_n = int(last_n)
+        if last_n <= 0:
+            raise ValueError("last_n must be positive")
         window = self.history[-last_n:]
         if not window:
             return {}

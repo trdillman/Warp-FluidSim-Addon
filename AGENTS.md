@@ -21,6 +21,19 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - `blender/pending_settings.py` owns the exhaustive setting lifecycle registry, Applied Settings Snapshots, pending presentation/transitions, and depsgraph/undo/load handlers. UI/property adapters must not reconstruct this policy.
 - Dependency direction is adapters → deep Blender modules → Solver Settings / Output Publication / Solver Session → `sim` and `io`. Review artifacts do not certify core behavior without source/runtime evidence.
 
+## Diagnosis scope contract
+
+- Treat the named demo, scene, test, report, or lower-agent finding as the reproducer, not as presumed ownership of the defect. Before claiming a root cause, trace the observed path to the deepest shared owner and enumerate its production callers and sibling lanes.
+- Every diagnosis must classify scope as one-off, shared-path, or unproven. A one-off claim requires evidence that the reproducer is unique and the shared path is unaffected. A shared-path claim must name affected lanes and activation conditions. Without caller tracing and a sibling or contrasting-path check, report the diagnosis as unproven.
+- Do not attribute an architectural defect to the demo that exposed it. Apply this rule equally to problems reported by the Owner, users, tests, reviewers, or lower agents.
+- Passing one reproducer does not close a shared-path issue. Verify the common seam and at least one affected sibling lane before claiming resolution.
+
+## Demo playback contract
+
+- Every tracked `demos/*.blend` is a playable demo, including source-workflow, cache-review, and opt-in scenes. It must reopen at `frame_start` with live playback ready, restart from that frame, initialize a non-empty solver through its intended owned sources or seed objects, and publish visibly changing viewport output when advanced by the real frame handlers.
+- A saved preview mesh, a build-time-only solver state, an external temporary cache, or a single preloaded frame does not satisfy the demo contract. Demo builders must leave no hidden seed objects or Scene settings from another demo.
+- `tools/check_demo_blends.py` is the executable all-demo gate. Keep its tracked scene inventory and owned-seed expectations synchronized with `demos/*.blend`; verify both nonzero solver state and changing owned particle, whitewater, or surface output after reopen.
+
 ## Verified workflows
 
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
@@ -47,4 +60,4 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - For decoupled surface-resolution acceptance, run `blender --background --factory-startup --python tests/headless_surface_resolution_pipeline.py -- --device cuda:0 --particles 500000 --frames 24`.
 - Build demos with `blender --background --python tools/build_demo_scenes.py`; use `-- --list-scenes`, `-- --standard-cache-scenes`, or `-- dam_break crown_splash force_fields adhesive_calender` to select targets.
 - Verify saved demo files with `blender --background --python tools/check_demo_blends.py`, then analyze outputs with `python tools/analyze_demos.py` and expect `DEMO-ANALYSIS-PASS (18/18)`. `tools/analyze_demos.py` parses `sys.argv` directly, so run it under plain `python`, never through `blender --background --python`.
-- For moving-collider (rotating/translating obstacle) changes, build and analyze `paddle_stir`: `blender --background --python tools/build_demo_scenes.py -- paddle_stir`, then `python tools/analyze_demos.py paddle_stir`. It is opt-in and outside the canonical 18/18 set, so the bare analyzer run is unaffected. Current expected result is `DEMO-ANALYSIS-FAIL (9/10)`: the velocity-bound check trips on the known pi-crossing impulse documented in `docs/ISSUE-paddle-stir-velocity-spike.md`. Treat any *other* failing check, or a 9/10 becoming 8/10, as a regression.
+- For moving-collider (rotating/translating obstacle) changes, build and analyze `paddle_stir`: `blender --background --python tools/build_demo_scenes.py -- paddle_stir`, then `python tools/analyze_demos.py paddle_stir`. It is opt-in and outside the canonical 18/18 set, so the bare analyzer run is unaffected. The current rebuilt demo is expected to report `DEMO-ANALYSIS-PASS (10/10)`; treat any failing check as a regression.

@@ -31,6 +31,7 @@ from . import kernels_fluid as KF
 from . import pressure as P
 from . import sourcing as SRC
 from . import surface as SURF
+from . import surface_tension as ST
 from . import whitewater as WW
 from .fields import MacVelocityField, ScalarField, SparseGrid
 from .particles import ParticleSystem
@@ -52,6 +53,11 @@ VALIDATION_TESTS = [
     "whitewater churn/emission/advection behavior",
     "benchmark profile schema compatibility",
     "spatiotemporal FLIP jitter, phase, and residual boundedness",
+    "surface-tension static droplet boundedness and volume proxy",
+    "surface-tension droplet oscillation frequency trend",
+    "surface-tension zero-coefficient solver equivalence",
+    "surface-tension capillary timestep constraint",
+    "surface-tension finite-energy and diagnostic guard",
 ]
 
 
@@ -1173,6 +1179,203 @@ def test_spatiotemporal_flip(device):
         f"max weight={float(weights.max()):.4f}, max phase={float(phase.max()):.4f}, "
         f"pressure={solver.pressure_solver.last_pressure_status}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 17-21. surface-tension physics and capillary stability
+# ---------------------------------------------------------------------------
+
+
+def _surface_tension_settings(device, *, coefficient=0.072, enabled=True):
+    from .solver import SolverSettings
+
+    settings = SolverSettings()
+    settings.domain_min = (-0.5, -0.5, 0.0)
+    settings.domain_max = (0.5, 0.5, 1.0)
+    settings.voxel_size = 0.1
+    settings.leaf_capacity = 64
+    settings.max_particles = 20_000
+    settings.auto_grow_particles = False
+    settings.frame_rate = 24.0
+    settings.time_scale = 1.0
+    settings.min_substeps = 1
+    settings.max_substeps = 8
+    settings.cfl = 0.8
+    settings.gravity = (0.0, 0.0, 0.0)
+    settings.relax_enabled = False
+    settings.surface_enabled = False
+    settings.surface_filter_iterations = 0
+    settings.surface_dilate_iterations = 0
+    settings.surface_erode_iterations = 0
+    settings.surface_smooth_iterations = 0
+    settings.surface_tension_enabled = bool(enabled)
+    settings.surface_tension_coefficient = float(coefficient)
+    settings.surface_tension_density = 1000.0
+    settings.surface_tension_band_voxels = 1.5
+    settings.surface_tension_safety = 0.5
+    settings.surface_tension_smoothing_iterations = 1
+    settings.whitewater_enabled = False
+    settings.pressure_iterations = 120
+    settings.pressure_tolerance = 1.0e-5
+    settings.device = device
+    return settings
+
+
+def _droplet_points(center=(0.0, 0.0, 0.5), radius=0.22, spacing=0.07):
+    center = np.asarray(center, dtype=np.float32)
+    axis = np.arange(-radius, radius + spacing * 0.5, spacing, dtype=np.float32)
+    offsets = np.stack(
+        np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(-1, 3)
+    offsets = offsets[np.linalg.norm(offsets, axis=1) <= radius]
+    return np.ascontiguousarray(offsets + center, dtype=np.float32)
+
+
+def _run_droplet(device, *, coefficient=0.072, enabled=True, frames=3):
+    from .solver import FluidSolver
+
+    settings = _surface_tension_settings(
+        device, coefficient=coefficient, enabled=enabled)
+    solver = FluidSolver(settings)
+    try:
+        points = _droplet_points()
+        solver.inject_particles(points, velocity=(0.0, 0.0, 0.0))
+        initial = solver.particle_positions().copy()
+        stats = None
+        for _ in range(int(frames)):
+            stats = solver.step_frame()
+        positions = solver.particle_positions()
+        velocities = solver.particle_velocities()
+        return solver, stats, initial, positions, velocities
+    except Exception:
+        solver.release()
+        raise
+
+
+@_test(VALIDATION_TESTS[16])
+def test_surface_tension_static_droplet(device):
+    solver, stats, initial, positions, velocities = _run_droplet(device, frames=4)
+    try:
+        if len(positions) != len(initial) or len(positions) == 0:
+            return False, f"particle count changed: {len(initial)} -> {len(positions)}"
+        center_initial = initial.mean(axis=0)
+        center_final = positions.mean(axis=0)
+        radius_initial = float(np.mean(np.linalg.norm(initial - center_initial, axis=1)))
+        radius_final = float(np.mean(np.linalg.norm(positions - center_final, axis=1)))
+        drift = abs(radius_final - radius_initial) / max(radius_initial, 1.0e-9)
+        max_speed = float(np.max(np.linalg.norm(velocities, axis=1)))
+        finite = bool(np.isfinite(positions).all() and np.isfinite(velocities).all())
+        active = int(getattr(stats, "surface_tension_active_voxels", 0))
+        ok = finite and drift < 0.12 and max_speed < 5.0 and active > 0
+        return ok, (
+            f"particles={len(positions)}, radius drift={drift:.5f}, "
+            f"max speed={max_speed:.5f}, active force voxels={active}"
+        )
+    finally:
+        solver.release()
+
+
+@_test(VALIDATION_TESTS[17])
+def test_surface_tension_oscillation_trend(_device):
+    baseline = ST.rayleigh_lamb_frequency(1000.0, 0.1, 0.072)
+    stronger = ST.rayleigh_lamb_frequency(1000.0, 0.1, 0.144)
+    smaller = ST.rayleigh_lamb_frequency(1000.0, 0.05, 0.072)
+    expected_ratio = np.sqrt(2.0)
+    ratio = stronger / baseline
+    ok = (
+        stronger > baseline
+        and smaller > baseline
+        and abs(ratio - expected_ratio) < 1.0e-12
+    )
+    return ok, (
+        f"omega={baseline:.6f}, strong/base={ratio:.6f}, "
+        f"small/base={smaller / baseline:.6f}"
+    )
+
+
+@_test(VALIDATION_TESTS[18])
+def test_surface_tension_zero_equivalence(device):
+    disabled = _run_droplet(
+        device, coefficient=0.0, enabled=False, frames=2)
+    zero = None
+    try:
+        zero = _run_droplet(
+            device, coefficient=0.0, enabled=True, frames=2)
+        disabled_positions = disabled[3]
+        zero_positions = zero[3]
+        disabled_velocities = disabled[4]
+        zero_velocities = zero[4]
+        if len(disabled_positions) != len(zero_positions):
+            return False, (
+                "particle count differs: "
+                f"{len(disabled_positions)} != {len(zero_positions)}"
+            )
+        # GPU compaction is free to return the same particles in a different
+        # order.  Equivalence here is the particle state, not atomic ordering.
+        disabled_order = np.lexsort(tuple(disabled_positions[:, axis]
+                                          for axis in (2, 1, 0)))
+        zero_order = np.lexsort(tuple(zero_positions[:, axis]
+                                      for axis in (2, 1, 0)))
+        position_error = float(np.max(np.abs(
+            disabled_positions[disabled_order] - zero_positions[zero_order]
+        )))
+        velocity_error = float(np.max(np.abs(
+            disabled_velocities[disabled_order] - zero_velocities[zero_order]
+        )))
+        ok = position_error <= 1.0e-7 and velocity_error <= 1.0e-7
+        return ok, (
+            f"max position error={position_error:.3e}, "
+            f"max velocity error={velocity_error:.3e}"
+        )
+    finally:
+        disabled[0].release()
+        if zero is not None:
+            zero[0].release()
+
+
+@_test(VALIDATION_TESTS[19])
+def test_surface_tension_capillary_timestep(_device):
+    coarse = ST.capillary_dt(1000.0, 0.1, 0.072, 0.5)
+    fine = ST.capillary_dt(1000.0, 0.05, 0.072, 0.5)
+    strong = ST.capillary_dt(1000.0, 0.1, 0.144, 0.5)
+    disabled = ST.capillary_dt(1000.0, 0.1, 0.0, 0.5)
+    frame_dt = 1.0 / 24.0
+    required = ST.required_capillary_substeps(frame_dt, fine)
+    ok = fine < coarse and strong < coarse and np.isinf(disabled) and required >= 1
+    return ok, (
+        f"coarse={coarse:.6g}s, fine={fine:.6g}s, "
+        f"strong={strong:.6g}s, fine substeps={required}"
+    )
+
+
+@_test(VALIDATION_TESTS[20])
+def test_surface_tension_finite_energy(device):
+    solver, stats, _initial, positions, velocities = _run_droplet(
+        device, coefficient=0.25, enabled=True, frames=5)
+    try:
+        energy = 0.5 * float(np.sum(np.square(velocities, dtype=np.float64)))
+        finite = bool(
+            np.isfinite(positions).all()
+            and np.isfinite(velocities).all()
+            and np.isfinite(energy)
+        )
+        max_acceleration = float(
+            getattr(stats, "surface_tension_max_acceleration", 0.0))
+        curvature = float(getattr(stats, "surface_tension_max_curvature", 0.0))
+        curvature_limit = 2.0 / solver.settings.voxel_size
+        ok = (
+            finite
+            and energy < 10_000.0
+            and max_acceleration > 0.0
+            and 0.0 < curvature <= curvature_limit + 1.0e-4
+            and not bool(getattr(stats, "capillary_substeps_clamped", False))
+        )
+        return ok, (
+            f"energy proxy={energy:.6g}, max acceleration={max_acceleration:.6g}, "
+            f"max |curvature|={curvature:.6g}/{curvature_limit:.6g}, "
+            f"limiter={getattr(stats, 'substep_limiter', 'unknown')}"
+        )
+    finally:
+        solver.release()
 
 
 # ---------------------------------------------------------------------------

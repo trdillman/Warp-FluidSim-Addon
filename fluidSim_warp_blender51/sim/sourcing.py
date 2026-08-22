@@ -47,6 +47,7 @@ from .enums import (BlendMode, MeshSinkRegionMode, MeshSourceRegion,
                     SourceShapeForceType, SourceShapeShape,
                     SourceShapeSourceMode, SourceShapeType)
 from .registry import register_fn
+from .attributes import normalize_color, stable_source_id
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +116,8 @@ class SourceShape:
     temperature: wp.float32
     viscosity: wp.float32
     density: wp.float32
+    color: wp.vec4
+    source_numeric_id: wp.int32
     life_min: wp.float32
     life_max: wp.float32
     use_lifespan: wp.int32
@@ -146,6 +149,8 @@ class MeshSource:
     temperature: wp.float32
     viscosity: wp.float32
     density: wp.float32
+    color: wp.vec4
+    source_numeric_id: wp.int32
     life_min: wp.float32
     life_max: wp.float32
     use_lifespan: wp.int32
@@ -179,6 +184,8 @@ class SourceShapeDesc:
     temperature: float = 0.0
     viscosity: float = 0.0
     density: float = 1.0
+    color: tuple = (0.1, 0.45, 1.0, 1.0)
+    source_numeric_id: int = 0
     life_min: float = 1.0e30
     life_max: float = 1.0e30
     use_lifespan: bool = False
@@ -228,6 +235,9 @@ class SourceShapeDesc:
         shape.temperature = float(self.temperature)
         shape.viscosity = float(self.viscosity)
         shape.density = float(self.density)
+        shape.color = wp.vec4(*normalize_color(self.color))
+        shape.source_numeric_id = int(
+            self.source_numeric_id or stable_source_id(self.source_id))
         shape.life_min = float(self.life_min)
         shape.life_max = float(self.life_max)
         shape.use_lifespan = 1 if self.use_lifespan else 0
@@ -259,6 +269,8 @@ class MeshSourceDesc:
     temperature: float = 0.0
     viscosity: float = 0.0
     density: float = 1.0
+    color: tuple = (0.1, 0.45, 1.0, 1.0)
+    source_numeric_id: int = 0
     life_min: float = 1.0e30
     life_max: float = 1.0e30
     use_lifespan: bool = False
@@ -313,6 +325,9 @@ class MeshSourceDesc:
         source.temperature = float(self.temperature)
         source.viscosity = float(self.viscosity)
         source.density = float(self.density)
+        source.color = wp.vec4(*normalize_color(self.color))
+        source.source_numeric_id = int(
+            self.source_numeric_id or stable_source_id(self.source_id))
         source.life_min = float(self.life_min)
         source.life_max = float(self.life_max)
         source.use_lifespan = 1 if self.use_lifespan else 0
@@ -336,6 +351,8 @@ class HeightSourceDesc:
     # liquid volume once; continuous inflow is the opt-in pump.
     emission_mode: int = SourceEmissionMode.INITIAL_FILL
     source_id: str = "builtin:height"
+    color: tuple = (0.1, 0.45, 1.0, 1.0)
+    source_numeric_id: int = 0
 
 
 @wp.func
@@ -726,6 +743,8 @@ def k_source_shapes_particles(
     voxel_size: float,
     voxel_counts: wp.array(dtype=wp.int32),
     seed: int,
+    color_enabled: int,
+    source_id_enabled: int,
     capacity: int,
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -734,6 +753,8 @@ def k_source_shapes_particles(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -787,6 +808,10 @@ def k_source_shapes_particles(
             temperature[slot] = s.temperature
             viscosity[slot] = s.viscosity
             density[slot] = s.density
+            if color_enabled != 0:
+                product_color[slot] = s.color
+            if source_id_enabled != 0:
+                product_source_id[slot] = s.source_numeric_id
             time_offset[slot] = 0.0
             alive[slot] = 1
             wp.atomic_add(emission_state, 2, 1)
@@ -876,6 +901,8 @@ def k_mesh_source_particles(
     voxel_size: float,
     voxel_counts: wp.array(dtype=wp.int32),
     seed: int,
+    color_enabled: int,
+    source_id_enabled: int,
     capacity: int,
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -884,6 +911,8 @@ def k_mesh_source_particles(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -943,6 +972,10 @@ def k_mesh_source_particles(
         temperature[slot] = source.temperature
         viscosity[slot] = source.viscosity
         density[slot] = source.density
+        if color_enabled != 0:
+            product_color[slot] = source.color
+        if source_id_enabled != 0:
+            product_source_id[slot] = source.source_numeric_id
         time_offset[slot] = 0.0
         alive[slot] = 1
         wp.atomic_add(emission_state, 2, 1)
@@ -1128,6 +1161,10 @@ def k_source_owned_points(
     default_temperature: float,
     default_viscosity: float,
     default_density: float,
+    default_color: wp.vec4,
+    default_source_id: int,
+    color_enabled: int,
+    source_id_enabled: int,
     default_lifespan: float,
     use_lifespan: int,
     capacity: int,
@@ -1138,6 +1175,8 @@ def k_source_owned_points(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -1175,6 +1214,10 @@ def k_source_owned_points(
     density[slot] = default_density
     if has_density != 0:
         density[slot] = src_density[tid]
+    if color_enabled != 0:
+        product_color[slot] = default_color
+    if source_id_enabled != 0:
+        product_source_id[slot] = default_source_id
     time_offset[slot] = 0.0
     alive[slot] = 1
     wp.atomic_add(result, 0, 1)
@@ -1861,6 +1904,10 @@ def k_emit_compiled_source_particles(
     temperature_value: float,
     viscosity_value: float,
     density_value: float,
+    color_value: wp.vec4,
+    source_id_value: int,
+    color_enabled: int,
+    source_id_enabled: int,
     life_value: float,
     use_lifespan: int,
     capacity: int,
@@ -1872,6 +1919,8 @@ def k_emit_compiled_source_particles(
     temperature: wp.array(dtype=float),
     viscosity: wp.array(dtype=float),
     density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -1913,11 +1962,27 @@ def k_emit_compiled_source_particles(
         temperature[slot] = temperature_value
         viscosity[slot] = viscosity_value
         density[slot] = density_value
+        if color_enabled != 0:
+            product_color[slot] = color_value
+        if source_id_enabled != 0:
+            product_source_id[slot] = source_id_value
         time_offset[slot] = 0.0
         alive[slot] = 1
         wp.atomic_add(voxel_counts, flat, 1)
         wp.atomic_add(result, 0, 1)
         wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_assign_emitted_uids(
+    start: int,
+    emitted: int,
+    uid_base: int,
+    uid: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    if tid < emitted:
+        uid[start + tid] = uid_base + tid
 
 
 @wp.kernel
@@ -2072,6 +2137,8 @@ class DirectInjectionPacket:
     temperature: float = 0.0
     viscosity: float = 0.0
     density: float = 1.0
+    color: tuple[float, float, float, float] = (0.1, 0.45, 1.0, 1.0)
+    source_id: int = 0
     life: float = 0.0
     use_lifespan: bool = False
 
@@ -2080,6 +2147,11 @@ class DirectInjectionPacket:
             self.positions, dtype=np.float32, copy=True, order="C"
         ).reshape((-1, 3))
         object.__setattr__(self, "positions", positions)
+        object.__setattr__(self, "color", normalize_color(self.color))
+        source_id = int(self.source_id)
+        if source_id < 0 or source_id > np.iinfo(np.int32).max:
+            raise ValueError("source_id must fit a non-negative int32")
+        object.__setattr__(self, "source_id", source_id)
         if self.velocities is not None:
             velocities = np.array(
                 self.velocities, dtype=np.float32, copy=True, order="C"
@@ -2183,6 +2255,51 @@ class SourcePipeline:
             "available": int(getattr(particles, "capacity", 0)),
             "admitted": True,
         }
+
+    def export_checkpoint_state(self):
+        """Return deterministic source lifecycle/RNG state at a frame boundary."""
+        if self._emission_transaction_active:
+            raise RuntimeError(
+                "cannot checkpoint while a source emission transaction is active")
+        return {
+            "schema_version": 1,
+            "emit_seed": int(self._emit_seed),
+            "initial_fired": sorted(str(value) for value in self._initial_fired),
+            "session_generation": int(self._session_generation),
+        }
+
+    def import_checkpoint_state(self, state):
+        """Restore one-shot source identity and RNG without changing descriptors."""
+        if not isinstance(state, dict) or set(state) != {
+                "schema_version", "emit_seed", "initial_fired",
+                "session_generation"}:
+            raise ValueError("source checkpoint state has an invalid schema")
+        if int(state["schema_version"]) != 1:
+            raise ValueError("unsupported source checkpoint schema")
+        fired = state["initial_fired"]
+        if not isinstance(fired, list) or not all(
+                isinstance(value, str) and value for value in fired):
+            raise ValueError("source initial_fired must be a list of IDs")
+        if len(fired) != len(set(fired)):
+            raise ValueError("source initial_fired contains duplicate IDs")
+        emit_seed = int(state["emit_seed"])
+        generation = int(state["session_generation"])
+        if emit_seed < 0 or generation < 0:
+            raise ValueError("source checkpoint integers must be non-negative")
+
+        self._emit_seed = emit_seed
+        self._initial_fired = set(fired)
+        self._session_generation = generation
+        self._emission_transaction_active = False
+        self._emission_pending_fired = set()
+        self._shape_array = None
+        self._emit_shape_array = None
+        self._emit_shape_key = None
+        compiler = getattr(self, "compiler", None)
+        if compiler is not None:
+            compiler.release()
+        self._compiled_batch = None
+        self.last_diagnostics = ()
 
     def release(self):
         """Release all compiler-owned GPU values on solver teardown/failure."""
@@ -2397,6 +2514,10 @@ class SourcePipeline:
                         height, "emission_mode",
                         SourceEmissionMode.CONTINUOUS_INFLOW)),
                     source_id=getattr(height, "source_id", ""),
+                    color=normalize_color(getattr(
+                        height, "color", (0.1, 0.45, 1.0, 1.0))),
+                    source_numeric_id=int(getattr(
+                        height, "source_numeric_id", 0)),
                 ))
             key = tuple(repr(source) for source in emit_sources)
             if self._emit_shape_array is None or self._emit_shape_key != key:
@@ -2465,6 +2586,7 @@ class SourcePipeline:
 
         attempted = bool(compiled_candidates or self._emission_legacy_attempted)
         self._emission_initial_count = int(particles.host_count)
+        self._emission_uid_base = int(particles.next_uid)
         self._emission_available = max(
             0, int(particles.capacity) - self._emission_initial_count)
         self._emission_transaction_active = attempted
@@ -2573,7 +2695,15 @@ class SourcePipeline:
                 self._emit_shape_array = None
                 self._emit_shape_key = None
             if emitted:
-                self.owner.particles.refresh_host_count()
+                particles = self.owner.particles
+                if particles.has_optional_channel("uid"):
+                    wp.launch(
+                        k_assign_emitted_uids, dim=emitted, inputs=[
+                            self._emission_initial_count, emitted,
+                            self._emission_uid_base, particles.int_attrs["uid"],
+                        ], device=self.device)
+                    particles.next_uid = self._emission_uid_base + emitted
+                particles.refresh_host_count()
                 self.owner._host_frame_cache = None
             self.last_apply_result = {
                 "emitted": emitted,
@@ -2710,13 +2840,20 @@ class SourcePipeline:
                         1 if point_values.device_density is not None else 0,
                         1 if point_values.device_lifespan is not None else 0,
                         wp.vec3(*payload.velocity), payload.temperature,
-                        payload.viscosity, payload.density, payload.lifespan,
+                        payload.viscosity, payload.density,
+                        wp.vec4(*normalize_color(payload.color)),
+                        int(payload.source_id or stable_source_id(stable_id)),
+                        1 if particles.has_optional_channel("color") else 0,
+                        1 if particles.has_optional_channel("source_id") else 0,
+                        payload.lifespan,
                         1 if payload.use_lifespan else 0, particles.capacity,
                     ],
                     outputs=[particles.position, particles.velocity,
                              particles.attr("age"), particles.attr("life"),
                              particles.attr("temperature"),
                              particles.attr("viscosity"), particles.attr("density"),
+                             particles.optional_array("color"),
+                             particles.optional_array("source_id"),
                              particles.time_offset, particles.alive,
                              particles.count, self._compiled_result,
                              self._emission_state],
@@ -2735,7 +2872,12 @@ class SourcePipeline:
                         self.owner.settings.voxel_size,
                         normalized_liquid_target(plan),
                         wp.vec3(*payload.velocity), payload.temperature,
-                        payload.viscosity, payload.density, payload.lifespan,
+                        payload.viscosity, payload.density,
+                        wp.vec4(*normalize_color(payload.color)),
+                        int(payload.source_id or stable_source_id(stable_id)),
+                        1 if particles.has_optional_channel("color") else 0,
+                        1 if particles.has_optional_channel("source_id") else 0,
+                        payload.lifespan,
                         1 if payload.use_lifespan else 0, particles.capacity,
                         owner.voxel_counts.data,
                     ],
@@ -2743,6 +2885,8 @@ class SourcePipeline:
                              particles.attr("age"), particles.attr("life"),
                              particles.attr("temperature"),
                              particles.attr("viscosity"), particles.attr("density"),
+                             particles.optional_array("color"),
+                             particles.optional_array("source_id"),
                              particles.time_offset, particles.alive,
                              particles.count, self._compiled_result,
                              self._emission_state],
@@ -2960,13 +3104,19 @@ class SourcePipeline:
                     self._transaction_shapes, self._transaction_shape_count,
                     grid.leaf_coords, grid.num_leaves, grid.origin,
                     settings.voxel_size, owner.voxel_counts.data,
-                    self._transaction_emit_seed, particles.capacity,
+                    self._transaction_emit_seed,
+                    1 if particles.has_optional_channel("color") else 0,
+                    1 if particles.has_optional_channel("source_id") else 0,
+                    particles.capacity,
                 ],
                 outputs=[particles.position, particles.velocity,
                          particles.attr("age"), particles.attr("life"),
                          particles.attr("temperature"),
                          particles.attr("viscosity"),
-                         particles.attr("density"), particles.time_offset,
+                         particles.attr("density"),
+                         particles.optional_array("color"),
+                         particles.optional_array("source_id"),
+                         particles.time_offset,
                          particles.alive, particles.count,
                          self._emission_state],
                 device=self.device,
@@ -2980,13 +3130,18 @@ class SourcePipeline:
                     grid.num_leaves, grid.origin, settings.voxel_size,
                     owner.voxel_counts.data,
                     self._transaction_emit_seed + mesh_index + 1,
+                    1 if particles.has_optional_channel("color") else 0,
+                    1 if particles.has_optional_channel("source_id") else 0,
                     particles.capacity,
                 ],
                 outputs=[particles.position, particles.velocity,
                          particles.attr("age"), particles.attr("life"),
                          particles.attr("temperature"),
                          particles.attr("viscosity"),
-                         particles.attr("density"), particles.time_offset,
+                         particles.attr("density"),
+                         particles.optional_array("color"),
+                         particles.optional_array("source_id"),
+                         particles.time_offset,
                          particles.alive, particles.count,
                          self._emission_state],
                 device=self.device,
@@ -3013,6 +3168,8 @@ class SourcePipeline:
     def _direct_packet_attempt(self, uploaded, required):
         """Run one device-authoritative admit/commit attempt for all packets."""
         particles = self.owner.particles
+        initial_count = int(particles.refresh_host_count())
+        uid_base = int(particles.next_uid)
         self._emission_state.zero_()
         self._compiled_result.zero_()
         wp.launch(
@@ -3033,7 +3190,11 @@ class SourcePipeline:
                     1 if packet.velocities is not None else 0,
                     0, 0, 0, 0, wp.vec3(*packet.velocity),
                     float(packet.temperature), float(packet.viscosity),
-                    float(packet.density), float(packet.life),
+                    float(packet.density), wp.vec4(*packet.color),
+                    int(packet.source_id),
+                    1 if particles.has_optional_channel("color") else 0,
+                    1 if particles.has_optional_channel("source_id") else 0,
+                    float(packet.life),
                     1 if packet.use_lifespan else 0, particles.capacity,
                 ],
                 outputs=[
@@ -3041,6 +3202,8 @@ class SourcePipeline:
                     particles.attr("age"), particles.attr("life"),
                     particles.attr("temperature"),
                     particles.attr("viscosity"), particles.attr("density"),
+                    particles.optional_array("color"),
+                    particles.optional_array("source_id"),
                     particles.time_offset, particles.alive, particles.count,
                     self._compiled_result, self._emission_state,
                 ], device=self.device)
@@ -3049,13 +3212,25 @@ class SourcePipeline:
         demand, admitted, emitted, invariant, available = map(
             int, values[:5])
         initial = max(0, int(particles.capacity) - available)
+        if initial != initial_count:
+            raise RuntimeError("direct particle transaction initial count drifted")
         if invariant or (admitted and emitted != demand):
             raise RuntimeError(
                 "direct particle transaction violated its admitted count")
         if admitted:
+            if emitted and particles.has_optional_channel("uid"):
+                wp.launch(
+                    k_assign_emitted_uids, dim=emitted,
+                    inputs=[initial, emitted, uid_base, particles.int_attrs["uid"]],
+                    device=self.device,
+                )
+                particles.next_uid = uid_base + emitted
             total = particles.refresh_host_count() if emitted else initial
             if emitted:
                 self.owner._host_frame_cache = None
+                surface = getattr(self.owner, "surface", None)
+                if surface is not None:
+                    surface.invalidate_particle_state()
             return InjectionResult(
                 True, emitted, demand, available, False, int(total))
         return InjectionResult(False, 0, demand, available, True, initial)
@@ -3067,9 +3242,12 @@ class SourcePipeline:
             else DirectInjectionPacket(
                 positions=packet.positions,
                 velocity=tuple(packet.velocity),
+                velocities=getattr(packet, "velocities", None),
                 temperature=float(packet.temperature),
                 viscosity=float(packet.viscosity),
                 density=float(packet.density),
+                color=tuple(getattr(packet, "color", (0.1, 0.45, 1.0, 1.0))),
+                source_id=int(getattr(packet, "source_id", 0)),
                 life=float(packet.life),
                 use_lifespan=bool(packet.use_lifespan),
             )
@@ -3126,20 +3304,24 @@ class SourcePipeline:
 
     def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
                                velocities=None, temperature=0.0, viscosity=0.0,
-                               density=1.0, life=0.0, use_lifespan=False):
+                               density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                               source_id=0, life=0.0, use_lifespan=False):
         packet = DirectInjectionPacket(
             positions=positions, velocity=tuple(velocity),
             velocities=velocities, temperature=float(temperature),
             viscosity=float(viscosity), density=float(density),
+            color=tuple(color), source_id=int(source_id),
             life=float(life), use_lifespan=bool(use_lifespan))
         return self.inject_particle_packets_exact((packet,))
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
-                         density=1.0, life=0.0, use_lifespan=False):
+                         density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                         source_id=0, life=0.0, use_lifespan=False):
         """Compatibility API: final total on success, zero on refusal/empty."""
         result = self.inject_particles_exact(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
+            color=color, source_id=source_id,
             life=life, use_lifespan=use_lifespan)
         return result.total if result.admitted and result.emitted else 0

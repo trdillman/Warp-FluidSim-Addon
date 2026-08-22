@@ -38,8 +38,8 @@ scene = bpy.context.scene
 start_frame = scene.frame_current
 started_at = time.monotonic()
 canonical_wall_expectation = {
-    "dam_break.blend": False,
-    "crown_splash.blend": False,
+    "dam_break.blend": True,
+    "crown_splash.blend": True,
 }
 expected_domain_sdf_walls = canonical_wall_expectation.get(
     os.path.basename(blend_path), bool(scene.fluidsim.domain_sdf_walls)

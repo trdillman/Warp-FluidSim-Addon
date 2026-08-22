@@ -7,6 +7,7 @@ deterministic production cache generation lives in ``cache_bake``.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 import bpy
@@ -190,9 +191,20 @@ class Session:
             from . import pending_settings, snippets
             from .simulation_admission import SimulationAdmission
 
+            def build_effect_stack(scene):
+                # Host-Python contract tests intentionally provide a minimal
+                # bpy seam. Custom Effects are a Blender adapter and are only
+                # importable when Blender's property API is present.
+                if not hasattr(bpy, "props"):
+                    return ()
+                from . import effects
+
+                return effects.build_effect_stack_for_admission(scene)
+
             self._admission_owner = SimulationAdmission(
                 self, scene_identity=_scene_identity,
                 snippet_builder=snippets.build_snippets,
+                effect_builder=build_effect_stack,
                 applied_state_capture=pending_settings.capture_applied_state,
                 reset_settings_apply=pending_settings.apply_reset_solver_settings,
             )
@@ -299,6 +311,12 @@ class Session:
         fs.stat_particles = stats.active_particles
         fs.stat_voxels = stats.active_voxels
         fs.stat_whitewater = stats.whitewater_particles
+        fs.stat_whitewater_foam = int(getattr(stats, "whitewater_foam", 0))
+        fs.stat_whitewater_bubbles = int(
+            getattr(stats, "whitewater_bubbles", 0))
+        fs.stat_whitewater_spray = int(getattr(stats, "whitewater_spray", 0))
+        fs.stat_whitewater_invalid_types = int(
+            getattr(stats, "whitewater_invalid_types", 0))
         fs.stat_whitewater_required = int(
             getattr(stats, "whitewater_required", 0))
         fs.stat_whitewater_admitted = int(
@@ -312,6 +330,28 @@ class Session:
         fs.stat_step_ms = stats.step_time * 1000.0
         fs.stat_substeps = stats.substeps
         fs.stat_cfl_clamped = stats.cfl_substeps_clamped
+        capillary = float(getattr(stats, "capillary_dt", float("inf")))
+        fs.stat_capillary_dt = 0.0 if not math.isfinite(capillary) else capillary
+        fs.stat_capillary_substeps_required = int(
+            getattr(stats, "capillary_substeps_required", 1))
+        fs.stat_capillary_clamped = bool(
+            getattr(stats, "capillary_substeps_clamped", False))
+        fs.stat_substep_limiter = str(
+            getattr(stats, "substep_limiter", "MINIMUM"))
+        fs.stat_surface_tension_active_voxels = int(
+            getattr(stats, "surface_tension_active_voxels", 0))
+        fs.stat_surface_tension_max_curvature = float(
+            getattr(stats, "surface_tension_max_curvature", 0.0))
+        fs.stat_surface_tension_max_acceleration = float(
+            getattr(stats, "surface_tension_max_acceleration", 0.0))
+        fs.stat_surface_tension_temporary_bytes = int(
+            getattr(stats, "surface_tension_temporary_bytes", 0))
+        fs.stat_surface_tension_submission_ms = float(
+            getattr(stats, "surface_tension_submission_seconds", 0.0)) * 1000.0
+        fs.stat_surface_tension_status = str(
+            getattr(stats, "surface_tension_status", "DISABLED"))
+        fs.stat_surface_tension_message = str(
+            getattr(stats, "surface_tension_message", ""))
         growth = getattr(self.solver, "last_particle_growth", None)
         if (growth is not None and getattr(growth, "grew", False)
                 and int(growth.current) != self.last_reported_growth_capacity):
@@ -332,34 +372,6 @@ class Session:
             from . import output_publication
 
             output_publication.update_outputs(scene, self)
-        if write_cache and fs.cache_enabled:
-            from ..io import cache
-
-            try:
-                timeline_frame = int(
-                    scene.frame_current if timeline_frame is None
-                    else timeline_frame)
-                cache.write_frame(scene, self, timeline_frame)
-                record_settings = getattr(cache, "settings_record", None)
-                if callable(record_settings):
-                    self.cache_settings_records[timeline_frame] = record_settings(
-                        self.solver.settings)
-                self.cache_written_start = (
-                    timeline_frame if self.cache_written_start is None
-                    else min(self.cache_written_start, timeline_frame))
-                self.cache_written_end = (
-                    timeline_frame if self.cache_written_end is None
-                    else max(self.cache_written_end, timeline_frame))
-                cache.write_sequence_metadata(
-                    bpy.path.abspath(fs.cache_path),
-                    self.cache_written_start,
-                    self.cache_written_end,
-                    source="live_simulation",
-                    settings_records=self.cache_settings_records,
-                    scene_key_value=self.scene_key,
-                )
-            except Exception as exc:  # noqa: BLE001 - cache is supplemental
-                print(f"fluidSim cache write failed: {exc!r}")
         return stats
 
     def reset(self, scene, *, depsgraph=None):

@@ -23,11 +23,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 #   export_cache_sequence  - Session.export_cache_sequence calls
 #                            self.initialize(scene) internally, so it
 #                            legitimately runs with no live session
+#   write_report           - reports available diagnostics even when no solver
+#                            session is active
 _NO_POLL_REQUIRED = {
     "FLUIDSIM_OT_initialize",
     "FLUIDSIM_OT_clear_error",
     "FLUIDSIM_OT_toggle_live",
     "FLUIDSIM_OT_export_cache_sequence",
+    "FLUIDSIM_OT_write_report",
     # Explicit reinitialize is also a no-session recovery path when a scene
     # retains a per-scene pending snapshot after its solver was released.
     "FLUIDSIM_OT_apply_pending_reinitialize",
@@ -43,7 +46,6 @@ _KNOWN_SESSION_OPERATORS = {
     "FLUIDSIM_OT_run_validation",
     "FLUIDSIM_OT_run_benchmark",
     "FLUIDSIM_OT_write_report",
-    "FLUIDSIM_OT_snippet_apply",
     "FLUIDSIM_OT_export_frame",
 }
 
@@ -141,10 +143,12 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
             missing.append(cls.__name__)
     assert missing == []
 
-    # export_cache_sequence is excluded on purpose: it bakes a range through
-    # Session.export_cache_sequence, which initializes the solver itself.
-    assert "poll" not in vars(operators.FLUIDSIM_OT_export_cache_sequence)
+    # Legacy export initializes the solver itself but still requires a ready
+    # external Warp runtime.
+    assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
     assert not issubclass(operators.FLUIDSIM_OT_export_cache_sequence,
+                          operators._FLUIDSIM_OT_session_base)
+    assert not issubclass(operators.FLUIDSIM_OT_snippet_apply,
                           operators._FLUIDSIM_OT_session_base)
 
 
@@ -159,44 +163,48 @@ def test_clear_object_role_poll_explains_why_it_is_greyed_out(monkeypatch):
     assert cls._poll_message
 
 
-def test_domain_panel_draw_survives_a_broken_domain_object(monkeypatch):
+def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeypatch):
     _install_bpy_stub(monkeypatch)
-    _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    panels = _reload_module("fluidSim_warp_blender51.panels")
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
 
     class _Layout:
         def __init__(self):
-            self.labels = []
+            self.properties = []
+            self.use_property_split = False
+            self.use_property_decorate = True
 
-        def column(self, align=False):
+        def grid_flow(self, **_kwargs):
             return self
 
-        def box(self):
-            return self
-
-        def prop(self, *_args, **_kwargs):
-            return None
-
-        def label(self, text="", icon="NONE"):
-            self.labels.append({"text": text, "icon": icon})
+        def prop(self, _data, name, **_kwargs):
+            self.properties.append(name)
 
     # A domain object that no longer exposes geometry (deleted / wrong type):
     # _domain_bounds raises, and a draw callback must not propagate that.
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
         domain_object=SimpleNamespace(),
         voxel_size=0.05,
-        leaf_capacity=4096,
+        particles_per_voxel=8,
+        max_particles=1000,
+        auto_grow_particles=True,
         topology_expand=1,
         open_boundaries=False,
-        domain_sdf_walls=True,
     ))
     layout = _Layout()
-    panel = panels.FLUIDSIM_PT_domain()
+    panel = ui_scene.FLUIDSIM_PT_scene_domain()
     panel.layout = layout
 
     panel.draw(SimpleNamespace(scene=scene))
 
-    assert any(label["icon"] == "ERROR" for label in layout.labels)
+    assert layout.properties == [
+        "domain_object",
+        "voxel_size",
+        "particles_per_voxel",
+        "max_particles",
+        "auto_grow_particles",
+        "topology_expand",
+        "open_boundaries",
+    ]
 
 
 def test_released_solver_reports_no_surface_pipeline():
