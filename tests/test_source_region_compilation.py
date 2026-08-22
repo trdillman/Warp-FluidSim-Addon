@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim.enums import (
     SourceEvaluationCadence, SourceLifecycle, SourceOperation,
@@ -28,6 +29,32 @@ def plan(region, key="x"):
     return SourcePlan(SourceKey(key),SourceOperation.LIQUID,SourceLifecycle.TOP_UP,
                       SourceEvaluationCadence.STATIC,region,
                       PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES))
+
+
+@pytest.mark.parametrize(
+    ("vertices", "triangles"),
+    [
+        (np.zeros((3,), np.float32), np.zeros((0, 3), np.int32)),
+        (np.zeros((1, 3, 2), np.float32), np.zeros((0, 3), np.int32)),
+        (np.zeros((3, 2), np.float32), np.zeros((0, 3), np.int32)),
+        (np.zeros((0, 3), np.float32), np.zeros((3, 2), np.int32)),
+    ],
+)
+def test_mesh_region_rejects_malformed_vector_shapes(vertices, triangles):
+    with pytest.raises(ValueError):
+        MeshRegionPlan(vertices, triangles)
+
+
+def test_mesh_region_accepts_exact_empty_and_populated_vector_shapes():
+    empty = MeshRegionPlan(
+        np.zeros((0, 3), np.float32), np.zeros((0, 3), np.int32))
+    populated = MeshRegionPlan(
+        np.zeros((2, 3), np.float32), np.zeros((1, 3), np.int32))
+
+    assert empty.vertices.shape == (0, 3)
+    assert empty.triangles.shape == (0, 3)
+    assert populated.vertices.shape == (2, 3)
+    assert populated.triangles.shape == (1, 3)
 
 
 def test_watertight_mesh_solid_matches_analytic_box_at_voxel_centers():

@@ -45,6 +45,55 @@ def test_point_attribute_lengths_are_validated():
         PointRegionPlan([[0,0,0],[1,1,1]],temperature=[1])
 
 
+@pytest.mark.parametrize(
+    "positions",
+    [
+        np.zeros((3,), np.float32),
+        np.zeros((1, 3, 2), np.float32),
+        np.zeros((3, 2), np.float32),
+    ],
+)
+def test_point_region_rejects_malformed_position_shapes(positions):
+    with pytest.raises(ValueError):
+        PointRegionPlan(positions)
+
+
+def test_point_region_rejects_wrong_vector_tail_shape():
+    with pytest.raises(ValueError):
+        PointRegionPlan(
+            np.zeros((2, 3), np.float32),
+            velocities=np.zeros((3, 2), np.float32),
+        )
+
+
+@pytest.mark.parametrize("attribute", ["temperature", "viscosity", "density", "lifespan"])
+def test_point_region_rejects_rank_two_scalar_attributes(attribute):
+    values = {attribute: np.zeros((2, 1), np.float32)}
+
+    with pytest.raises(ValueError):
+        PointRegionPlan(np.zeros((2, 3), np.float32), **values)
+
+
+def test_point_region_accepts_exact_vector_and_scalar_ranks():
+    empty = PointRegionPlan(
+        np.zeros((0, 3), np.float32),
+        velocities=np.zeros((0, 3), np.float32),
+        temperature=np.zeros((0,), np.float32),
+    )
+    populated = PointRegionPlan(
+        np.zeros((2, 3), np.float32),
+        velocities=np.zeros((2, 3), np.float32),
+        temperature=np.zeros((2,), np.float32),
+    )
+
+    assert empty.positions.shape == (0, 3)
+    assert empty.velocities.shape == (0, 3)
+    assert empty.temperature.shape == (0,)
+    assert populated.positions.shape == (2, 3)
+    assert populated.velocities.shape == (2, 3)
+    assert populated.temperature.shape == (2,)
+
+
 def test_direct_point_arrays_reach_live_particles_without_constant_substitution():
     settings = SolverSettings()
     settings.domain_min = (0.0, 0.0, 0.0)

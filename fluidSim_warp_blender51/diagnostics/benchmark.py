@@ -9,6 +9,7 @@ performance fields.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -31,6 +32,15 @@ BENCHMARK_FIELDS = [
 EXACT_FIELDS = ["activeVoxelsAverage", "activeVoxelsMinimum", "activeVoxelsMaximum"]
 # Fields compared with relative tolerance (performance check).
 PERFORMANCE_FIELDS = ["timeStepAverage", "voxelsPerSecondAverage"]
+
+
+def _numeric_field_error(record: dict, name: str, side: str) -> str | None:
+    if name not in record:
+        return f"{side} is missing the contract field"
+    value = record[name]
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return f"{side} must be a finite JSON number"
+    return None
 
 
 @dataclass
@@ -131,18 +141,47 @@ def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.2
     ``perf_tolerance`` relative deviation. Returns a comparison report.
     """
     report = {"exact": {}, "performance": {}, "result": "pass"}
+    if not isinstance(current, dict):
+        return {**report, "result": "fail", "error": "current must be a JSON object"}
+    if not isinstance(baseline, dict):
+        return {**report, "result": "fail", "error": "baseline must be a JSON object"}
+
     for name in EXACT_FIELDS:
-        ok = current.get(name) == baseline.get(name)
-        report["exact"][name] = {
+        error = (
+            _numeric_field_error(current, name, "current")
+            or _numeric_field_error(baseline, name, "baseline")
+        )
+        detail = {
             "current": current.get(name),
             "baseline": baseline.get(name),
-            "match": ok,
+            "match": error is None and current[name] == baseline[name],
         }
-        if not ok:
+        if error is not None:
+            detail["error"] = error
+            report.setdefault("error", f"{name}: {error}")
+        report["exact"][name] = detail
+        if not detail["match"]:
             report["result"] = "fail"
+
     for name in PERFORMANCE_FIELDS:
-        cur = float(current.get(name, 0.0))
-        base = float(baseline.get(name, 0.0))
+        error = (
+            _numeric_field_error(current, name, "current")
+            or _numeric_field_error(baseline, name, "baseline")
+        )
+        if error is not None:
+            report["performance"][name] = {
+                "current": current.get(name),
+                "baseline": baseline.get(name),
+                "relative_delta": None,
+                "within_tolerance": False,
+                "error": error,
+            }
+            report.setdefault("error", f"{name}: {error}")
+            report["result"] = "fail"
+            continue
+
+        cur = float(current[name])
+        base = float(baseline[name])
         rel = abs(cur - base) / base if base else 0.0
         ok = rel <= perf_tolerance
         report["performance"][name] = {

@@ -41,7 +41,7 @@ def _draw_interaction_tier(layout, text, icon="INFO"):
     row.label(text=text, icon=icon)
 
 
-def _pending_reason_label(scene, reason):
+def _pending_reason_label(scene, reason, detail):
     """Translate cached internal setting names into user-facing RNA labels."""
     prefix, separator, field_name = str(reason).partition(":")
     if not separator:
@@ -51,7 +51,7 @@ def _pending_reason_label(scene, reason):
     properties = getattr(rna, "properties", {})
     prop = properties.get(field_name)
     label = prop.name if prop is not None else field_name.replace("_", " ").title()
-    return f"{label} will apply after restart"
+    return f"{label} {detail}"
 
 
 def _draw_pending_banner(layout, scene, *, show_actions=False):
@@ -62,26 +62,19 @@ def _draw_pending_banner(layout, scene, *, show_actions=False):
     if pending["action"] == "NONE":
         return
     box = layout.box()
-    box.label(
-        text=f"{pending['count']} change(s) staged for restart",
-        icon="INFO",
-    )
+    box.label(text=pending["summary"], icon="INFO")
     for reason in pending["reasons"][:3]:
-        box.label(text=_pending_reason_label(scene, reason))
+        box.label(text=_pending_reason_label(
+            scene, reason, pending["reason_detail"]))
     if pending["count"] > 3:
         box.label(text=f"+ {pending['count'] - 3} more")
     if pending["blocked_reason"]:
         box.label(text=pending["blocked_reason"][:120], icon="INFO")
     if show_actions:
         row = box.row(align=True)
-        if pending["action"] == "REINIT_PENDING":
-            row.operator(
-                "fluidsim.apply_pending_reinitialize",
-                text="Restart Now", icon="FILE_REFRESH")
-        else:
-            row.operator(
-                "fluidsim.apply_pending_reset",
-                text="Reset Now", icon="FILE_REFRESH")
+        row.operator(
+            pending["action_operator"],
+            text=pending["action_label"], icon="FILE_REFRESH")
         row.operator(
             "fluidsim.revert_pending", text="Discard Changes", icon="LOOP_BACK")
 

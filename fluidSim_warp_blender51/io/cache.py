@@ -46,18 +46,6 @@ _SCENE_KEY_IGNORED_SETTINGS = frozenset({
 _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
     "live_surface_publish_cadence",
 })
-# RNA property types with a stable value repr. POINTER/COLLECTION reprs embed
-# addresses and would change the key every session.
-_HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
-_SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
-    "source_status_severity",
-    "source_status_code",
-    "source_status_message",
-    "source_status_emitted",
-    "source_status_capacity_limited",
-})
-
-
 def _digest(h, value):
     """Feed one setting value into the running hash."""
     if isinstance(value, np.ndarray):
@@ -72,123 +60,75 @@ def _digest(h, value):
     h.update(b"|")
 
 
-def _digest_rna(h, group, *, ignored=frozenset()):
-    for name, prop in sorted(group.bl_rna.properties.items()):
-        if (
-            name == "rna_type"
-            or name in ignored
-            or prop.type not in _HASHABLE_RNA_TYPES
-        ):
-            continue
-        value = getattr(group, name)
+def _digest_properties(h, properties):
+    for name, value in sorted(properties.items()):
         h.update(f"{name}=".encode())
-        _digest(h, tuple(value) if getattr(prop, "is_array", False) else value)
+        _digest(h, value)
 
 
-def scene_key(scene) -> str:
-    """Content hash of every scene input that changes what the solver computes.
+def scene_key_from_records(settings, scene_objects) -> str:
+    """Hash plain settings and object records into a legacy cache identity.
 
-    This is the identity of a baked cache. Playback refuses a sequence whose key
-    does not match the current scene rather than replaying a stale result as if
-    it were a correct answer.
-
-    ``build_settings`` is hashed rather than a hand-listed field set so the key
-    stays correct by construction as settings are added -- a hand-maintained
-    list going stale is the exact failure being fixed here.
-
-    ponytail: a tagged object contributes its transform and vertex count, not
-    its vertex positions. Hashing evaluated geometry needs a depsgraph pass and
-    would duplicate what SceneInputs already does every frame. Editing vertices
-    in place, without changing the count or the transform, is the known blind
-    spot; hash ``obj.evaluated_get(depsgraph).to_mesh()`` here if it bites.
+    Records are collected by the Blender adapter; this low-level helper knows
+    nothing about scenes, RNA, depsgraphs, or evaluated meshes.
     """
-    from ..blender.solver_settings import build_settings
-
     h = hashlib.blake2b(digest_size=16)
     h.update(f"{SCENE_KEY_VERSION}|settings|".encode())
-    settings = build_settings(scene)
-    fields = getattr(type(settings), "__dataclass_fields__", None) or vars(settings)
-    for name in sorted(fields):
+    for name, value in sorted(settings.items()):
         if name in _SCENE_KEY_IGNORED_SETTINGS:
             continue
         h.update(f"{name}=".encode())
-        _digest(h, getattr(settings, name))
+        _digest(h, value)
     h.update(b"roster|")
-    for obj in sorted(scene.objects, key=lambda value: value.name):
-        group = getattr(obj, "fluidsim", None)
-        if group is None or group.role == "NONE":
-            continue
-        h.update(f"{obj.name}|".encode())
-        _digest_rna(h, group)
-        _digest(h, tuple(tuple(row) for row in obj.matrix_world))
-        _digest(h, len(getattr(getattr(obj, "data", None), "vertices", ())))
+    for record in sorted(scene_objects, key=lambda value: value["name"]):
+        h.update(f"{record['name']}|".encode())
+        _digest_properties(h, record["properties"])
+        _digest(h, record["matrix_world"])
+        _digest(h, record["vertex_count"])
     return h.hexdigest()
 
 
-def source_signature(scene, depsgraph=None) -> str:
-    """Return a persistent, process-independent source/input signature.
+def source_signature_from_records(source_records) -> str:
+    """Hash plain source records into a process-independent signature.
 
-    The signature intentionally excludes Blender memory addresses. Object
-    names, library identity, role RNA, transforms, and evaluated geometry are
-    sufficient to keep one-shot source identity stable across reopened files
-    and to reject resume after materially changing sources/colliders/forces.
+    ``vertex_bytes`` must contain packed float32 coordinates in Blender's
+    ``foreach_get('co')`` order so this remains byte-compatible with existing
+    cache manifests.
     """
-    from ..blender.scene_inputs import persistent_source_key
-
     h = hashlib.sha256()
     h.update(b"fluidsim-source-signature-v2|")
-    for obj in sorted(scene.objects, key=lambda value: value.name_full):
-        group = getattr(obj, "fluidsim", None)
-        role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
-        if role == "NONE":
-            continue
-        identity = persistent_source_key(obj)
-        library = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
-        h.update(f"{identity}|{obj.name_full}|{library}|{role}|".encode("utf-8"))
-        _digest_rna(h, group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA)
-        _digest(h, tuple(tuple(float(component) for component in row)
-                         for row in obj.matrix_world))
-        evaluated = None
-        mesh = None
-        try:
-            evaluated = obj.evaluated_get(depsgraph) if depsgraph is not None else obj
-            if getattr(evaluated, "type", None) == "MESH":
-                mesh = evaluated.to_mesh() if hasattr(evaluated, "to_mesh") else evaluated.data
-                vertices = getattr(mesh, "vertices", ())
-                h.update(f"verts={len(vertices)}|".encode("utf-8"))
-                if vertices:
-                    coords = np.empty(len(vertices) * 3, dtype=np.float32)
-                    vertices.foreach_get("co", coords)
-                    h.update(coords.tobytes())
-                polygons = getattr(mesh, "polygons", ())
-                h.update(f"polys={len(polygons)}|".encode("utf-8"))
-            else:
-                data = getattr(evaluated, "data", None)
-                h.update(
-                    f"type={getattr(evaluated, 'type', '')}|"
-                    f"points={len(getattr(data, 'points', ()))}|".encode("utf-8")
-                )
-        finally:
-            if mesh is not None and evaluated is not None and hasattr(evaluated, "to_mesh_clear"):
-                try:
-                    evaluated.to_mesh_clear()
-                except RuntimeError:
-                    pass
+    for record in sorted(source_records, key=lambda value: value["name_full"]):
+        h.update(
+            f"{record['identity']}|{record['name_full']}|{record['library']}|"
+            f"{record['role']}|".encode("utf-8")
+        )
+        _digest_properties(h, record["properties"])
+        _digest(h, record["matrix_world"])
+        geometry = record["geometry"]
+        if geometry["kind"] == "MESH":
+            h.update(f"verts={geometry['vertex_count']}|".encode("utf-8"))
+            h.update(geometry["vertex_bytes"])
+            h.update(f"polys={geometry['polygon_count']}|".encode("utf-8"))
+        else:
+            h.update(
+                f"type={geometry['kind']}|points={geometry['point_count']}|".encode(
+                    "utf-8")
+            )
     return h.hexdigest()
 
 
-def signature_bundle(scene, depsgraph=None) -> dict[str, str]:
-    """Return the cache-v2 scene/settings/source identity bundle."""
-    from ..blender.solver_settings import build_settings
-
-    settings = settings_record(build_settings(scene))["signature"]
-    sources = source_signature(scene, depsgraph)
+def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
+    """Return a cache-v2 identity bundle from adapter-produced records."""
+    settings_signature = settings_record(settings)["signature"]
+    source_signature = source_signature_from_records(source_records)
     digest = hashlib.sha256()
-    digest.update(f"settings={settings}|sources={sources}".encode("utf-8"))
+    digest.update(
+        f"settings={settings_signature}|sources={source_signature}".encode("utf-8")
+    )
     return {
         "scene_key": digest.hexdigest(),
-        "settings_signature": settings,
-        "source_signature": sources,
+        "settings_signature": settings_signature,
+        "source_signature": source_signature,
     }
 
 
@@ -235,12 +175,17 @@ def _jsonable_setting(value):
 
 def settings_record(settings) -> dict:
     """Canonical, JSON-safe settings snapshot plus its stable content hash."""
-    fields = getattr(settings, "__dataclass_fields__", None)
-    names = sorted(fields) if fields is not None else sorted(vars(settings))
-    values = {name: _jsonable_setting(getattr(settings, name)) for name in names
+    if isinstance(settings, dict):
+        names = sorted(settings)
+        value_for = settings.__getitem__
+    else:
+        fields = getattr(settings, "__dataclass_fields__", None)
+        names = sorted(fields) if fields is not None else sorted(vars(settings))
+        value_for = lambda name: getattr(settings, name)
+    values = {name: _jsonable_setting(value_for(name)) for name in names
               if (not name.startswith("_")
                   and name not in _CACHE_METADATA_IGNORED_SETTINGS
-                  and hasattr(settings, name))}
+                  and (isinstance(settings, dict) or hasattr(settings, name)))}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return {"signature": hashlib.sha256(encoded).hexdigest(), "settings": values}
@@ -248,9 +193,21 @@ def settings_record(settings) -> dict:
 
 def compact_settings_segments(settings_records: dict) -> list[dict]:
     """Compact frame->record data into contiguous signature boundaries."""
+    # Metadata loaded from JSON has string keys, while records assembled during
+    # a bake use integer keys.  Normalize once before indexing; converting only
+    # in the ``sorted`` expression leaves string-keyed mappings inaccessible.
+    normalized = {}
+    for raw_frame, record in settings_records.items():
+        frame = int(raw_frame)
+        if frame in normalized:
+            raise ValueError(
+                f"Duplicate settings record for frame {frame} after key normalization"
+            )
+        normalized[frame] = record
+
     segments = []
-    for frame in sorted(int(value) for value in settings_records):
-        signature = settings_records[frame]["signature"]
+    for frame in sorted(normalized):
+        signature = normalized[frame]["signature"]
         if (segments and segments[-1]["signature"] == signature
                 and segments[-1]["frame_end"] + 1 == frame):
             segments[-1]["frame_end"] = frame
@@ -507,12 +464,16 @@ def write_sequence_metadata(
         "scene_key": str(scene_key_value),
     }
     if settings_records:
-        normalized = {int(frame): record for frame, record in settings_records.items()
-                      if start <= int(frame) <= end}
-        segments = compact_settings_segments(normalized)
+        # Retain raw keys until ``compact_settings_segments`` normalizes them,
+        # so JSON string keys cannot silently overwrite equivalent integer keys.
+        filtered_records = {
+            frame: record for frame, record in settings_records.items()
+            if start <= int(frame) <= end
+        }
+        segments = compact_settings_segments(filtered_records)
         records_by_signature = {
             record["signature"]: record["settings"]
-            for record in normalized.values()
+            for record in filtered_records.values()
         }
         signatures = list(records_by_signature)
         baseline_signature = segments[0]["signature"] if segments else None

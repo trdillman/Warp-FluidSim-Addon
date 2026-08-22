@@ -153,6 +153,178 @@ def _pending_module():
         "fluidSim_warp_blender51.blender.pending_settings")
 
 
+def test_snippet_rna_persists_permission_and_type_with_legacy_safe_defaults(
+        monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    argument_schema = properties.FLUIDSIM_PG_snippet_argument.__annotations__
+    snippet_schema = properties.FLUIDSIM_PG_snippet.__annotations__
+    permission = argument_schema["field_permission"]
+    snippet_type = snippet_schema["snippet_type"]
+
+    assert "CustomKernelFieldPermission" in permission
+    assert "READ_WRITE" in permission
+    assert "CustomKernelType" in snippet_type
+    assert "KERNEL" in snippet_type
+
+
+def test_snippet_preset_operators_propagate_permission_and_type(monkeypatch):
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.sim import custom
+
+    class _Arguments(list):
+        def add(self):
+            item = SimpleNamespace(
+                mode="FIELD", field="temperature", field_permission="READ_WRITE",
+                constant_name="value", constant_type="FLOAT", constant_value=0.0)
+            self.append(item)
+            return item
+
+    class _Snippets(list):
+        def add(self):
+            item = SimpleNamespace(
+                enabled=True, kernel_name="", snippet_type="KERNEL",
+                description="", order="BEFORE_FORCES", run_over="PARTICLES",
+                arguments=_Arguments(), frame_start=0, frame_end=0, frame_step=1,
+                text_block=None, is_valid=False, validated_hash="",
+                validation_report="", last_error="")
+            self.append(item)
+            return item
+
+    class _Text:
+        def __init__(self):
+            self.value = ""
+
+        def write(self, value):
+            self.value += value
+
+        def as_string(self):
+            return self.value
+
+    fake_bpy.data = SimpleNamespace(
+        texts=SimpleNamespace(new=lambda _name: _Text()))
+    snippets = _Snippets()
+    fs = SimpleNamespace(
+        snippets=snippets, active_snippet=-1,
+        snippet_library_selection="EX:typed")
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    preset = custom.SnippetPreset(
+        preset_id="typed", label="Typed", category="Test",
+        description="typed preset",
+        order="BEFORE_FORCES", run_over="PARTICLES", code="pass\n",
+        arguments=({"mode": "FIELD", "field": "temperature",
+                    "field_permission": "READ"},),
+        snippet_type="FUNCTION")
+    monkeypatch.setattr(custom, "preset_by_id", lambda _preset_id: preset)
+    monkeypatch.setattr(
+        operators, "_snippets",
+        lambda: SimpleNamespace(validate_snippet_pg=lambda _pg: ()))
+
+    assert operators.FLUIDSIM_OT_snippet_load_preset().execute(context) == {
+        "FINISHED"}
+    loaded = snippets[0]
+    assert loaded.snippet_type == "FUNCTION"
+    assert loaded.arguments[0].field_permission == "READ"
+
+    loaded.kernel_name = "typed"
+    loaded.description = "typed preset"
+    captured = []
+    monkeypatch.setattr(
+        custom, "save_user_preset",
+        lambda _directory, data: captured.append(data) or "typed.json")
+    monkeypatch.setattr(
+        importlib.import_module("fluidSim_warp_blender51.properties"),
+        "user_snippet_dir", lambda create=False: "//snippets")
+    save = operators.FLUIDSIM_OT_snippet_save_preset()
+    save.preset_name = "Typed"
+
+    assert save.execute(context) == {"FINISHED"}
+    assert captured[0]["snippet_type"] == "FUNCTION"
+    assert captured[0]["arguments"][0]["field_permission"] == "READ"
+
+
+def test_liquid_view_hidden_state_round_trips_both_visibility_toggles(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    refreshes = []
+    monkeypatch.setattr(
+        properties, "_request_output_refresh",
+        lambda _self, _context: refreshes.append(True))
+    state = SimpleNamespace(
+        liquid_view_mode="SURFACE", show_surface=False, show_particles=False)
+
+    assert "HIDDEN" in {item[0] for item in properties.LIQUID_VIEW_ITEMS}
+    properties._sync_liquid_view_mode(state, None)
+    assert state.liquid_view_mode == "HIDDEN"
+
+    state.show_surface = True
+    state.show_particles = True
+    properties._apply_liquid_view_mode(state, None)
+    assert (state.show_surface, state.show_particles) == (False, False)
+    assert len(refreshes) == 2
+
+
+def test_invalid_snippet_mutations_cancel_without_changing_state(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    empty = SimpleNamespace(snippets=[], active_snippet=-1)
+    empty_context = SimpleNamespace(scene=SimpleNamespace(fluidsim=empty))
+    no_arguments = SimpleNamespace(arguments=[])
+    argument_state = SimpleNamespace(snippets=[no_arguments], active_snippet=0)
+    argument_context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=argument_state))
+
+    cases = (
+        (operators.FLUIDSIM_OT_snippet_remove, empty_context, empty),
+        (operators.FLUIDSIM_OT_snippet_argument_add, empty_context, empty),
+        (operators.FLUIDSIM_OT_snippet_argument_remove,
+         argument_context, argument_state),
+    )
+    for operator_type, context, state in cases:
+        before = (list(state.snippets), state.active_snippet)
+        assert hasattr(operator_type, "poll")
+        assert operator_type.poll(context) is False
+        assert operator_type().execute(context) == {"CANCELLED"}
+        assert (list(state.snippets), state.active_snippet) == before
+
+
+def test_active_production_cache_path_disables_and_rejects_mutators(
+        monkeypatch, tmp_path):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    active = tmp_path / "cache_a"
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(cache_path=str(active)))
+    context = SimpleNamespace(scene=scene)
+    controller = SimpleNamespace(
+        status=production_bake.BakeStatus.RUNNING,
+        backend=SimpleNamespace(base_dir=active),
+    )
+    production_bake.register_active_bake(scene, controller)
+    try:
+        cases = (
+            (operators.FLUIDSIM_OT_cache_remove_orphans(), {}),
+            (operators.FLUIDSIM_OT_cache_free(), {}),
+            (operators.FLUIDSIM_OT_cache_move(), {"destination": str(tmp_path / "moved")}),
+            (operators.FLUIDSIM_OT_cache_rename(), {"name": "renamed"}),
+        )
+        for operator, values in cases:
+            for name, value in values.items():
+                setattr(operator, name, value)
+            operator_type = type(operator)
+            assert operator_type.poll(context) is False
+            assert operator.execute(context) == {"CANCELLED"}
+
+        scene.fluidsim.cache_path = str(tmp_path / "cache_b")
+        for operator, _values in cases:
+            assert type(operator).poll(context) is True
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
 def test_validation_operator_uses_configured_device(monkeypatch):
     _install_bpy_stub(monkeypatch, device="cuda:3")
     operators = _reload_module("fluidSim_warp_blender51.operators")
@@ -418,11 +590,11 @@ def test_pending_banner_and_fixed_header_expose_real_actions(monkeypatch):
     header = SimpleNamespace(layout=layout)
     panels._draw_header_interaction(header, SimpleNamespace(scene=scene))
 
-    assert any(label["text"] == "2 change(s) staged for restart"
+    assert any(label["text"] == "2 change(s) staged to reinitialize the solver"
                for label in layout.labels)
     assert {op["id"] for op in layout.operators} >= {
         "fluidsim.apply_pending_reinitialize", "fluidsim.revert_pending"}
-    assert any(op.get("text") == "Restart Now" for op in layout.operators)
+    assert any(op.get("text") == "Reinitialize Now" for op in layout.operators)
     assert any(op.get("text") == "Discard Changes" for op in layout.operators)
     assert getattr(layout, "alert", False) is False
     assert layout.popovers == [{
@@ -1144,6 +1316,7 @@ def test_live_solver_settings_apply_without_resetting_particle_state(monkeypatch
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
@@ -1167,6 +1340,7 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
@@ -1221,6 +1395,7 @@ def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
         use_gravity=True,
         gravity=(0.0, 0.0, -4.0),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
     assert settings.gravity == (0.0, 0.0, -4.0)
@@ -1354,6 +1529,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     sess.reset(scene, depsgraph=depsgraph)
 
@@ -1450,6 +1626,7 @@ def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
     assert _pending_module()._apply_realtime_solver_settings(scene, sess)
 
     started = time.perf_counter()
@@ -1473,6 +1650,7 @@ def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch
     def fake_initialize(scene_arg):
         init_calls.append(scene_arg)
         sess.solver = object()
+        sess.scene_identity = id(scene_arg)
         return sess
 
     monkeypatch.setattr(sess, "initialize", fake_initialize)
@@ -1538,6 +1716,7 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
     )
     sess = scene_bridge.session()
     sess.solver = object()
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 1
 
@@ -1730,6 +1909,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         status="",
     )
     scene = SimpleNamespace(fluidsim=fs)
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.SURFACE)
 
@@ -1766,6 +1946,7 @@ def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):
     scene = SimpleNamespace(
         fluidsim=SimpleNamespace(whitewater_enabled=False, status="")
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.WHITEWATER)
 
@@ -1915,12 +2096,14 @@ def test_cache_utilities_panel_contains_management_only(monkeypatch):
     }.isdisjoint(operator_ids)
 
 
-def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
+def test_modal_bake_registers_and_clears_deep_production_ownership(
+        monkeypatch, tmp_path):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
     from fluidSim_warp_blender51.blender import production_bake
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        cache_path=str(tmp_path / "cache"),
         checkpoint_interval=1,
         cache_compress=False,
         bake_start=1,
@@ -1943,6 +2126,7 @@ def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
 
     assert operator.execute(context) == {"RUNNING_MODAL"}
     assert production_bake.active_bake(scene) is operator._controller
+    assert production_bake.cache_path_is_active(tmp_path / "cache")
 
     operator._controller.status = production_bake.BakeStatus.COMPLETE
     operator._controller.message = "Production bake complete"
@@ -1976,6 +2160,7 @@ def test_solver_mutation_operators_are_disabled_during_production_bake(monkeypat
 def test_cache_playback_operators_arm_and_stop_timeline_mode(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
+    operators._bridge().session().force_release()
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
         live=False,
         cache_playback_enabled=False,

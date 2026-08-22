@@ -20,6 +20,7 @@ _IN_FRAME_HANDLER = False
 _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
 _IN_MODE_TRANSITION = False
+_CACHE_CURSORS = {}
 
 _CACHE_SCENE_KEY_MESSAGE = (
     "Cache frame {frame} was baked from different scene settings "
@@ -169,19 +170,50 @@ def set_cache_playback_enabled(scene, enabled: bool):
                 _IN_MODE_TRANSITION = False
             fs.status = "Production Bake is active - Cache Playback is unavailable"
             return False
+        if sess.active and not sess.owns_scene(scene):
+            _IN_MODE_TRANSITION = True
+            try:
+                fs.cache_playback_enabled = False
+            finally:
+                _IN_MODE_TRANSITION = False
+            fs.status = (
+                "Another scene owns the live solver - release or switch that "
+                "scene before enabling Cache Playback")
+            return False
     if enabled:
         sess.release(scene)
+        _CACHE_CURSORS.pop(_scene_identity(scene), None)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
-    elif getattr(fs, "live", False):
-        set_live_enabled(scene, True)
+    else:
+        _CACHE_CURSORS.pop(_scene_identity(scene), None)
+        if getattr(fs, "live", False):
+            set_live_enabled(scene, True)
     return True
+
+
+def _scene_identity(scene):
+    pointer = getattr(scene, "as_pointer", None)
+    if callable(pointer):
+        try:
+            value = int(pointer())
+            if value:
+                return value
+        except (ReferenceError, TypeError, ValueError):
+            pass
+    return id(scene)
+
+
+def clear_cache_cursors():
+    """Clear all non-authoritative cache playback positions."""
+    _CACHE_CURSORS.clear()
 
 
 def _check_cache_scene_key(scene, base, frame_data):
     """Refuse cache data stamped for materially different scene settings."""
     import numpy as np
 
+    from . import cache_identity
     from ..io import cache
 
     frame = int(frame_data.get("frame", -1))
@@ -192,9 +224,9 @@ def _check_cache_scene_key(scene, base, frame_data):
     if not (metadata_key or frame_key):
         return
     current = (
-        cache.signature_bundle(scene)["scene_key"]
+        cache_identity.signature_bundle(scene)["scene_key"]
         if metadata.get("format_version") == 2
-        else cache.scene_key(scene)
+        else cache_identity.scene_key(scene)
     )
     for candidate in (metadata_key, frame_key):
         if candidate and candidate != current:
@@ -258,7 +290,9 @@ def ensure_session_before_frames(scene, reason):
         return
     bridge = _bridge()
     sess = bridge.session()
-    if sess.active:
+    # A singleton session may be active for a different Blender scene.  Only
+    # ownership, not mere activity, makes it safe to reuse for this callback.
+    if sess.owns_scene(scene):
         return
     try:
         sess.initialize(scene)
@@ -274,16 +308,21 @@ def handle_frame_change(sess, scene, depsgraph):
     if fs is None or not fs.live:
         return
     frame = scene.frame_current
-    if frame == sess.last_frame:
-        return
     if getattr(fs, "cache_playback_enabled", False):
-        sess.last_frame = frame
+        scene_id = _scene_identity(scene)
+        if _CACHE_CURSORS.get(scene_id) == frame:
+            return
         try:
             play_cache_frame(sess, scene, frame)
+            # Do not consume a timeline frame until publication succeeds.  A
+            # repaired/replaced cache can then be retried at the same frame.
+            _CACHE_CURSORS[scene_id] = frame
         except Exception as exc:  # noqa: BLE001 - never break playback
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"
             print(f"fluidSim cache playback failed: {exc!r}")
+        return
+    if frame == sess.last_frame:
         return
     if not sess.owns_scene(scene):
         try:
@@ -347,7 +386,7 @@ def handle_frame_change(sess, scene, depsgraph):
         sess.set_error(scene, repr(exc))
         fs.live = False
         fs.status = f"Solver error: {exc}"
-        sess.release(preserve_error=True)
+        sess.force_release(scene=scene, preserve_error=True)
         print(f"fluidSim step failed: {exc!r}")
 
 
@@ -369,7 +408,13 @@ def _on_frame_change(scene, depsgraph):
     restore_frame, _RENDER_RESTORE_FRAME = _RENDER_RESTORE_FRAME, None
     if (restore_frame is not None and scene is not None
             and scene.frame_current == restore_frame):
-        _bridge().session().last_frame = restore_frame
+        if getattr(getattr(scene, "fluidsim", None),
+                   "cache_playback_enabled", False):
+            _CACHE_CURSORS[_scene_identity(scene)] = restore_frame
+        else:
+            sess = _bridge().session()
+            if sess.owns_scene(scene):
+                sess.last_frame = restore_frame
         return
     if _IN_FRAME_HANDLER or _SUPPRESS_FRAME_HANDLERS:
         return
@@ -401,4 +446,5 @@ def _remove_handlers():
 def unregister_handlers():
     """Remove playback handlers before releasing their Solver Session."""
     _remove_handlers()
-    _bridge().session().release()
+    clear_cache_cursors()
+    _bridge().session().force_release()

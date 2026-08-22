@@ -342,6 +342,7 @@ def test_enabling_cache_playback_releases_live_solver(monkeypatch):
     scene = _scene(playback=False)
     scene.fluidsim.live = True
     scene_bridge.session().solver = object()
+    scene_bridge.session().scene_identity = id(scene)
 
     scene.fluidsim.cache_playback_enabled = True
     scene_bridge.playback.set_cache_playback_enabled(scene, True)
@@ -376,6 +377,83 @@ def test_active_production_bake_rejects_live_and_cache_playback(monkeypatch):
         production_bake.clear_active_bake(scene, controller)
 
 
+def test_cache_identity_adapter_preserves_pre_move_signatures(monkeypatch):
+    """The Blender adapter must preserve cache identities across extraction."""
+    assert importlib.util.find_spec(
+        "fluidSim_warp_blender51.blender.cache_identity") is not None, (
+            "cache identity adapter has not been extracted")
+    from fluidSim_warp_blender51.blender import cache_identity, solver_settings
+
+    class Prop:
+        def __init__(self, prop_type, *, is_array=False):
+            self.type = prop_type
+            self.is_array = is_array
+
+    class Group:
+        role = "SOURCE"
+        emit_rate = 2.5
+        source_status_message = "ignored"
+        bl_rna = SimpleNamespace(properties={
+            "rna_type": Prop("POINTER"),
+            "role": Prop("ENUM"),
+            "emit_rate": Prop("FLOAT"),
+            "source_status_message": Prop("STRING"),
+        })
+
+    class Vertices:
+        def __init__(self):
+            self.values = np.array(
+                [[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+
+        def __len__(self):
+            return len(self.values)
+
+        def __bool__(self):
+            return bool(len(self.values))
+
+        def foreach_get(self, _name, output):
+            output[:] = self.values.reshape(-1)
+
+    class SourceObject:
+        name = "Source"
+        name_full = "Source"
+        fluidsim = Group()
+        matrix_world = (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        library = None
+        type = "MESH"
+        data = SimpleNamespace(vertices=Vertices(), polygons=(object(),))
+
+        def get(self, key, default=""):
+            return "source-fixed" if key == "fluidsim_persistent_id" else default
+
+        def evaluated_get(self, _depsgraph):
+            return self
+
+    scene = SimpleNamespace(objects=(SourceObject(),))
+    settings = SimpleNamespace(
+        device="cuda:0", flip_ratio=0.95, voxel_size=0.1)
+    monkeypatch.setattr(
+        solver_settings, "build_settings", lambda _scene: settings)
+
+    assert cache_identity.scene_key(scene) == (
+        "f66de3ed6fb1e4f4b669b86d393fabe0")
+    assert cache_identity.source_signature(scene, object()) == (
+        "a096363f31671213e0e1b0720033059b3e3cae8d1257c81cbd554ad5498eb217")
+    assert cache_identity.signature_bundle(scene, object()) == {
+        "scene_key": (
+            "ad40ef588d1f46c74f920d984d7d7028aa1367e8b59b40715f8e18280d539365"),
+        "settings_signature": (
+            "f820c4f570ef4d5a7fbf9698e7046a528fe94ec06e1b8ced58bb6f9bea94d398"),
+        "source_signature": (
+            "a096363f31671213e0e1b0720033059b3e3cae8d1257c81cbd554ad5498eb217"),
+    }
+
+
 def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         monkeypatch, tmp_path):
     """A cache is only an answer to the scene it was baked from.
@@ -385,6 +463,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     than draw a stale result as if it were current.
     """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_identity
     from fluidSim_warp_blender51.io import cache
 
     base = str(tmp_path)
@@ -403,7 +482,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         lambda _scene, data: drawn.append(int(data["frame"])))
     _install_cache_playback_modules(monkeypatch, cache, fake_viewport)
 
-    baked = cache.scene_key(scene)
+    baked = cache_identity.scene_key(scene)
     cache.write_sequence_metadata(base, 1, 10, scene_key_value=baked)
     cache._savez_fast_compressed(cache._frame_path(base, 7), {
         "format_version": np.array(cache.CACHE_FORMAT_VERSION, dtype=np.int32),
@@ -823,6 +902,7 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
     scene = _scene()
     sess = scene_bridge.session()
     sess.solver = object()
+    sess.scene_identity = id(scene)
     sess.profiler = object()
     sess.start_frame = 9
     sess.last_frame = 12
@@ -848,6 +928,18 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
     assert scene_bridge.current_error(scene) == ""
 
 
+def test_release_session_no_argument_preserves_current_scene_compatibility(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    scene_bridge.bpy.context.scene = scene
+    sess = scene_bridge.session()
+    sess.solver = object()
+    sess.scene_identity = id(scene)
+
+    assert scene_bridge.release_session() is True
+    assert not sess.active
+
+
 def test_release_session_closes_solver_before_dropping_runtime(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
@@ -861,6 +953,7 @@ def test_release_session_closes_solver_before_dropping_runtime(monkeypatch):
 
     sess = scene_bridge.session()
     sess.solver = Solver()
+    sess.scene_identity = id(scene)
 
     scene_bridge.release_session(scene)
 
@@ -881,6 +974,7 @@ def test_release_session_drops_solver_before_cuda_pool_trim(monkeypatch):
     solver = Solver()
     solver_ref = weakref.ref(solver)
     scene_bridge.session().solver = solver
+    scene_bridge.session().scene_identity = id(scene)
     del solver
 
     observed = []
@@ -1005,6 +1099,7 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
         as_dict=lambda: {"frame": 1001},
     )
     sess.solver = SimpleNamespace(frame=1001, step_frame=lambda: stats)
+    sess.scene_identity = id(scene)
     sess.frame_stats = [{"frame": index} for index in range(1, 1001)]
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     fake_viewport.update_outputs = lambda *_args: None
@@ -1040,6 +1135,7 @@ def test_live_step_never_writes_legacy_cache(monkeypatch):
         settings=SimpleNamespace(),
         step_frame=lambda: stats,
     )
+    sess.scene_identity = id(scene)
     writes = []
     from fluidSim_warp_blender51.io import cache
 
@@ -1059,6 +1155,7 @@ def test_frame_change_rewind_delegates_to_session_reset(monkeypatch):
     scene = _scene(frame=3, playback=False)
     sess = scene_bridge.session()
     sess.solver = object()
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 8
     calls = []
@@ -1081,6 +1178,7 @@ def test_frame_change_catchup_publishes_only_final_timeline_frame(monkeypatch):
         frame=1,
         settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0),
     )
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 1
     calls = []
@@ -1111,6 +1209,7 @@ def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
         frame=1,
         settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0),
     )
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 1
     observed = []
@@ -1133,6 +1232,7 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
         settings=SimpleNamespace(sample_type="previous"),
     )
     sess.solver = solver
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 1
     stepped = []
@@ -1175,6 +1275,7 @@ def test_playback_manual_and_production_share_post_evaluation_reconcile_seam(mon
     sess = scene_bridge.session()
     sess.solver = SimpleNamespace(
         frame=0, settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0))
+    sess.scene_identity = id(scene)
     monkeypatch.setattr(sess, "initialize", lambda _scene: sess)
     monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
     observed = []
@@ -1253,6 +1354,7 @@ def _count_initialize(monkeypatch, sess):
     def initialize(scene_arg):
         calls.append(scene_arg)
         sess.solver = SimpleNamespace(frame=0)
+        sess.scene_identity = id(scene_arg)
         sess.start_frame = scene_arg.frame_start
         return sess
 
@@ -1283,6 +1385,20 @@ def test_playback_pre_is_idempotent_once_the_session_is_active(monkeypatch):
     scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
     assert len(calls) == 1
+
+
+def test_playback_pre_replaces_session_owned_by_another_scene(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    other_scene = _scene(frame=2, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=0)
+    sess.scene_identity = id(other_scene)
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge.playback.ensure_session_before_frames(scene, "playback")
+
+    assert calls == [scene]
 
 
 def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
@@ -1341,6 +1457,7 @@ def test_frame_change_after_playback_pre_does_not_reinitialize(monkeypatch):
     def initialize(scene_arg):
         calls.append(("initialize", scene_arg.frame_current))
         sess.solver = SimpleNamespace(frame=0)
+        sess.scene_identity = id(scene_arg)
         sess.start_frame = scene_arg.frame_start
         return sess
 
@@ -1364,6 +1481,7 @@ def _record_solver_work(monkeypatch, scene, sess):
     """Log sync/step/reset so a frame change's effect on the solver is visible."""
     calls = []
     sess.solver = SimpleNamespace(frame=3)
+    sess.scene_identity = id(scene)
     sess.start_frame = scene.frame_start
     monkeypatch.setattr(
         sess, "sync_scene", lambda *_args, **_kw: calls.append("sync"))

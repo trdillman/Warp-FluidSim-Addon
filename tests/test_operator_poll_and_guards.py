@@ -29,6 +29,9 @@ _NO_POLL_REQUIRED = {
     "FLUIDSIM_OT_initialize",
     "FLUIDSIM_OT_clear_error",
     "FLUIDSIM_OT_toggle_live",
+    # Cache playback is valid with no live solver; it inspects activity only to
+    # reject a foreign owner before arming the cache-only timeline mode.
+    "FLUIDSIM_OT_cache_playback_start",
     "FLUIDSIM_OT_export_cache_sequence",
     "FLUIDSIM_OT_write_report",
     # Explicit reinitialize is also a no-session recovery path when a scene
@@ -39,7 +42,6 @@ _NO_POLL_REQUIRED = {
 # Sanity floor for the source detector below: if it stops recognising these,
 # the sweep test would pass vacuously.
 _KNOWN_SESSION_OPERATORS = {
-    "FLUIDSIM_OT_release",
     "FLUIDSIM_OT_reset",
     "FLUIDSIM_OT_step",
     "FLUIDSIM_OT_inject_particles",
@@ -49,6 +51,10 @@ _KNOWN_SESSION_OPERATORS = {
     "FLUIDSIM_OT_snippet_apply",
     "FLUIDSIM_OT_export_frame",
 }
+
+# Release intentionally bypasses the shared runtime-probing base so a broken
+# runtime cannot hide safe teardown. Keep it explicit in the inventory.
+_DEDICATED_OWNER_SESSION_OPERATORS = {"FLUIDSIM_OT_release"}
 
 
 def _install_bpy_stub(monkeypatch):
@@ -125,6 +131,11 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     detected = {cls.__name__ for cls in operators.CLASSES
                 if _requires_live_solver(cls)}
     assert _KNOWN_SESSION_OPERATORS <= detected
+    registered = {cls.__name__ for cls in operators.CLASSES}
+    assert _DEDICATED_OWNER_SESSION_OPERATORS <= registered
+    assert "poll" in vars(operators.FLUIDSIM_OT_release)
+    assert "_runtime_poll" not in inspect.getsource(
+        operators.FLUIDSIM_OT_release.poll)
 
     monkeypatch.setattr(
         operators, "_bridge",
@@ -149,6 +160,88 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
     assert not issubclass(operators.FLUIDSIM_OT_export_cache_sequence,
                           operators._FLUIDSIM_OT_session_base)
+
+
+def test_foreign_scene_cannot_poll_or_execute_owner_session_actions(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    owner = SimpleNamespace()
+    foreign = SimpleNamespace(fluidsim=SimpleNamespace(snippets=[], status=""))
+    context = SimpleNamespace(scene=foreign)
+    solver = SimpleNamespace(set_custom_snippets=lambda _items: [])
+    sess = scene_bridge.session()
+    sess.solver = solver
+    sess.scene_identity = id(owner)
+    monkeypatch.setattr(operators, "_runtime_poll", lambda _cls: True)
+    exported = []
+    from fluidSim_warp_blender51.io import export as export_mod
+    monkeypatch.setattr(
+        export_mod, "export_frame",
+        lambda *_args: exported.append(True) or ("unexpected",))
+
+    for operator_type in (
+            operators.FLUIDSIM_OT_release,
+            operators.FLUIDSIM_OT_snippet_apply,
+            operators.FLUIDSIM_OT_export_frame):
+        operator_type._poll_message = ""
+        assert operator_type.poll(context) is False
+        assert "another scene" in operator_type._poll_message.lower()
+
+    release = operators.FLUIDSIM_OT_release()
+    assert release.execute(context) == {"CANCELLED"}
+    assert sess.solver is solver
+    assert operators.FLUIDSIM_OT_snippet_apply().execute(context) == {"CANCELLED"}
+    export = operators.FLUIDSIM_OT_export_frame()
+    export.filepath = "//foreign"
+    assert export.execute(context) == {"CANCELLED"}
+    assert exported == []
+
+
+def test_release_poll_ignores_runtime_probe_but_requires_owner_and_idle_bake(
+        monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    context = SimpleNamespace(scene=scene)
+    sess = scene_bridge.session()
+    sess.solver = object()
+    sess.scene_identity = id(scene)
+    monkeypatch.setattr(
+        operators, "_runtime_poll",
+        lambda _cls: (_ for _ in ()).throw(
+            AssertionError("Release must not probe runtime readiness")))
+
+    assert operators.FLUIDSIM_OT_release.poll(context) is True
+    controller = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
+    production_bake.register_active_bake(scene, controller)
+    try:
+        assert operators.FLUIDSIM_OT_release.poll(context) is False
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
+def test_cache_playback_operator_rejects_foreign_live_owner(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    owner = SimpleNamespace()
+    foreign = SimpleNamespace(fluidsim=SimpleNamespace(
+        live=False, cache_playback_enabled=False, status=""))
+    context = SimpleNamespace(scene=foreign)
+    sess = scene_bridge.session()
+    solver = object()
+    sess.solver = solver
+    sess.scene_identity = id(owner)
+
+    assert operators.FLUIDSIM_OT_cache_playback_start.poll(context) is False
+    assert operators.FLUIDSIM_OT_cache_playback_start().execute(context) == {
+        "CANCELLED"}
+    assert foreign.fluidsim.cache_playback_enabled is False
+    assert sess.solver is solver
 
 
 def test_clear_object_role_poll_explains_why_it_is_greyed_out(monkeypatch):

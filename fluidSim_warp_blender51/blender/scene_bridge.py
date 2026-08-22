@@ -178,12 +178,21 @@ class Session:
     def current_error(self, scene):
         return str(_scene_get(scene, ERROR_SCENE_KEY, "") or self.error or "")
 
-    def release(self, scene=None, *, preserve_error=False):
-        if scene is None:
-            scene = getattr(bpy.context, "scene", None)
+    def release(self, scene, *, preserve_error=False):
+        """Release only an inactive session or the runtime owned by ``scene``."""
+        if self.active and not self.owns_scene(scene):
+            return False
         self._clear_runtime()
         if not preserve_error:
             self.clear_error(scene)
+        return True
+
+    def force_release(self, *, preserve_error=False, scene=None):
+        """Explicitly tear down the singleton for global or fatal lifecycle paths."""
+        self._clear_runtime()
+        if not preserve_error:
+            self.clear_error(scene)
+        return True
 
     def _admission(self):
         if self._admission_owner is None:
@@ -211,9 +220,12 @@ class Session:
             ignore_memory_safeguard=ignore_memory_safeguard)
 
     def owns_scene(self, scene):
-        return self.active and (
-            self.scene_identity is None
-            or self.scene_identity == _scene_identity(scene))
+        return bool(
+            self.active
+            and scene is not None
+            and self.scene_identity is not None
+            and self.scene_identity == _scene_identity(scene)
+        )
 
     def sync_scene(self, scene, depsgraph=None, *, capture_first_mesh=True):
         if not self.owns_scene(scene):
@@ -425,7 +437,14 @@ def initialize_session(
 
 
 def release_session(scene=None):
-    session().release(scene)
+    if scene is None:
+        scene = getattr(bpy.context, "scene", None)
+    return session().release(scene)
+
+
+def force_release_session(*, preserve_error=False, scene=None):
+    return session().force_release(
+        preserve_error=preserve_error, scene=scene)
 
 
 def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):

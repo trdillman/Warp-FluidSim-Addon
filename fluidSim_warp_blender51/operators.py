@@ -62,6 +62,42 @@ def _production_bake_idle_poll(cls, context) -> bool:
     return True
 
 
+def _owned_session_poll(cls, context) -> bool:
+    scene = getattr(context, "scene", None)
+    sess = _bridge().session()
+    if not sess.active:
+        cls.poll_message_set("Initialize the solver first")
+        return False
+    if not sess.owns_scene(scene):
+        cls.poll_message_set("Another scene owns the live solver")
+        return False
+    return True
+
+
+def _owned_session_or_none(operator, context):
+    sess = _bridge().session()
+    if not sess.active or not sess.owns_scene(getattr(context, "scene", None)):
+        operator.report(
+            {"WARNING"}, "Solver is not initialized for this scene")
+        return None
+    return sess
+
+
+def _cache_path_mutable_poll(cls, context) -> bool:
+    from .blender import production_bake
+
+    scene = getattr(context, "scene", None)
+    fs = getattr(scene, "fluidsim", None)
+    if fs is None:
+        return False
+    path = Path(bpy.path.abspath(fs.cache_path))
+    if production_bake.cache_path_is_active(path):
+        cls.poll_message_set(
+            "Production Bake is actively writing this cache")
+        return False
+    return True
+
+
 def _scene_identity_token(scene):
     pointer = getattr(scene, "as_pointer", None)
     if callable(pointer):
@@ -102,10 +138,7 @@ class _FLUIDSIM_OT_session_base:
             return False
         if not _production_bake_idle_poll(cls, context):
             return False
-        if not _bridge().session().active:
-            cls.poll_message_set("Initialize the solver first")
-            return False
-        return True
+        return _owned_session_poll(cls, context)
 
 
 class FLUIDSIM_OT_initialize(bpy.types.Operator):
@@ -168,8 +201,19 @@ class FLUIDSIM_OT_release(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_idname = "fluidsim.release"
     bl_label = "Release Solver"
 
+    @classmethod
+    def poll(cls, context):
+        return (
+            _production_bake_idle_poll(cls, context)
+            and _owned_session_poll(cls, context)
+        )
+
     def execute(self, context):
-        _bridge().release_session()
+        if _owned_session_or_none(self, context) is None:
+            return {"CANCELLED"}
+        if not _bridge().release_session(context.scene):
+            self.report({"WARNING"}, "Another scene owns the live solver")
+            return {"CANCELLED"}
         context.scene.fluidsim.status = "Solver released"
         return {"FINISHED"}
 
@@ -895,12 +939,21 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         sess.benchmark_result = data
         baseline_path = bpy.path.abspath(fs.benchmark_baseline)
         if self.save_baseline:
-            bench.save_benchmark(baseline_path, data)
+            try:
+                bench.save_benchmark(baseline_path, data)
+            except (OSError, TypeError, ValueError) as exc:
+                message = f"Benchmark baseline invalid: {baseline_path}: {exc}"
+                fs.status = message
+                self.report({"ERROR"}, message)
+                return {"CANCELLED"}
             self.report({"INFO"}, f"Benchmark baseline saved: {baseline_path}")
         else:
             try:
                 baseline = bench.load_benchmark(baseline_path)
-                sess.benchmark_compare = bench.compare_benchmark(data, baseline)
+                comparison = bench.compare_benchmark(data, baseline)
+                if comparison.get("error"):
+                    raise ValueError(comparison["error"])
+                sess.benchmark_compare = comparison
                 self.report(
                     {"INFO"},
                     f"Benchmark {sess.benchmark_compare['result']}: "
@@ -913,6 +966,12 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
                     f"Benchmark complete (no baseline): "
                     f"{data['timeStepAverage'] * 1000:.1f} ms/frame avg, "
                     f"{data['voxelsPerSecondAverage'] / 1e6:.1f}M voxels/s")
+            except (OSError, TypeError, ValueError) as exc:
+                sess.benchmark_compare = None
+                message = f"Benchmark baseline invalid: {baseline_path}: {exc}"
+                fs.status = message
+                self.report({"ERROR"}, message)
+                return {"CANCELLED"}
         fs.status = f"Benchmark {data['result']}"
         return {"FINISHED"}
 
@@ -986,6 +1045,29 @@ class FLUIDSIM_OT_snippet_add(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _active_snippet_for_mutation(context):
+    scene = getattr(context, "scene", None)
+    fs = getattr(scene, "fluidsim", None)
+    snippets = getattr(fs, "snippets", None)
+    index = getattr(fs, "active_snippet", -1)
+    if snippets is None or not isinstance(index, int):
+        return fs, None
+    if not 0 <= index < len(snippets):
+        return fs, None
+    return fs, snippets[index]
+
+
+def _active_snippet_poll(cls, context, *, require_argument=False):
+    _fs, snippet = _active_snippet_for_mutation(context)
+    if snippet is None:
+        cls.poll_message_set("Select a snippet first")
+        return False
+    if require_argument and not len(snippet.arguments):
+        cls.poll_message_set("The active snippet has no arguments")
+        return False
+    return True
+
+
 class FLUIDSIM_OT_snippet_remove(bpy.types.Operator):
     """Remove the active custom snippet"""
 
@@ -993,11 +1075,17 @@ class FLUIDSIM_OT_snippet_remove(bpy.types.Operator):
     bl_label = "Remove Snippet"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_snippet_poll(cls, context)
+
     def execute(self, context):
-        fs = context.scene.fluidsim
-        if 0 <= fs.active_snippet < len(fs.snippets):
-            fs.snippets.remove(fs.active_snippet)
-            fs.active_snippet = min(fs.active_snippet, len(fs.snippets) - 1)
+        fs, snippet = _active_snippet_for_mutation(context)
+        if snippet is None:
+            self.report({"WARNING"}, "Select a snippet first")
+            return {"CANCELLED"}
+        fs.snippets.remove(fs.active_snippet)
+        fs.active_snippet = min(fs.active_snippet, len(fs.snippets) - 1)
         return {"FINISHED"}
 
 
@@ -1008,10 +1096,16 @@ class FLUIDSIM_OT_snippet_argument_add(bpy.types.Operator):
     bl_label = "Add Argument"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_snippet_poll(cls, context)
+
     def execute(self, context):
-        fs = context.scene.fluidsim
-        if 0 <= fs.active_snippet < len(fs.snippets):
-            fs.snippets[fs.active_snippet].arguments.add()
+        _fs, snippet = _active_snippet_for_mutation(context)
+        if snippet is None:
+            self.report({"WARNING"}, "Select a snippet first")
+            return {"CANCELLED"}
+        snippet.arguments.add()
         return {"FINISHED"}
 
 
@@ -1022,12 +1116,19 @@ class FLUIDSIM_OT_snippet_argument_remove(bpy.types.Operator):
     bl_label = "Remove Argument"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_snippet_poll(cls, context, require_argument=True)
+
     def execute(self, context):
-        fs = context.scene.fluidsim
-        if 0 <= fs.active_snippet < len(fs.snippets):
-            snip = fs.snippets[fs.active_snippet]
-            if len(snip.arguments):
-                snip.arguments.remove(len(snip.arguments) - 1)
+        _fs, snippet = _active_snippet_for_mutation(context)
+        if snippet is None:
+            self.report({"WARNING"}, "Select a snippet first")
+            return {"CANCELLED"}
+        if not len(snippet.arguments):
+            self.report({"WARNING"}, "The active snippet has no arguments")
+            return {"CANCELLED"}
+        snippet.arguments.remove(len(snippet.arguments) - 1)
         return {"FINISHED"}
 
 
@@ -1041,9 +1142,8 @@ class FLUIDSIM_OT_snippet_apply(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         scene = context.scene
         fs = scene.fluidsim
         bridge = _bridge()
-        sess = bridge.session()
-        if not sess.active:
-            self.report({"ERROR"}, "Solver not initialized")
+        sess = _owned_session_or_none(self, context)
+        if sess is None:
             return {"CANCELLED"}
         for pg in fs.snippets:
             pg.last_error = ""
@@ -1135,7 +1235,8 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
             data = custom.preset_to_dict(
                 preset.label, preset.description, preset.order,
                 preset.run_over, preset.code, preset.arguments,
-                preset.frame_start, preset.frame_end, preset.frame_step)
+                preset.frame_start, preset.frame_end, preset.frame_step,
+                snippet_type=getattr(preset, "snippet_type", "KERNEL"))
             base_name = preset.preset_id
         else:  # USR:<filename>
             import os
@@ -1153,6 +1254,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
         pg = fs.snippets.add()
         pg.kernel_name = f"{base_name}_{len(fs.snippets)}"
         pg.description = data.get("description", "")
+        pg.snippet_type = data.get("snippet_type", "KERNEL")
         pg.order = data.get("order", "BEFORE_FORCES")
         pg.run_over = data.get("run_over", "PARTICLES")
         pg.frame_start = int(data.get("frame_start", 0))
@@ -1168,6 +1270,8 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
             else:
                 apg.mode = "FIELD"
                 apg.field = arg.get("field", "temperature")
+                apg.field_permission = arg.get(
+                    "field_permission", "READ_WRITE")
         text = bpy.data.texts.new(f"fluidsim_{pg.kernel_name}.py")
         text.write(data.get("code", ""))
         pg.text_block = text
@@ -1298,12 +1402,18 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
                              "type": apg.constant_type,
                              "value": apg.constant_value})
             else:
-                args.append({"mode": "FIELD", "field": apg.field})
+                args.append({
+                    "mode": "FIELD",
+                    "field": apg.field,
+                    "field_permission": getattr(
+                        apg, "field_permission", "READ_WRITE"),
+                })
         data = custom.preset_to_dict(
             self.preset_name or pg.kernel_name,
             pg.description or "User snippet",
             pg.order, pg.run_over, _snippet_code(pg), args,
-            pg.frame_start, pg.frame_end, pg.frame_step)
+            pg.frame_start, pg.frame_end, pg.frame_step,
+            snippet_type=getattr(pg, "snippet_type", "KERNEL"))
         path = custom.save_user_preset(user_snippet_dir(create=True), data)
         self.report({"INFO"}, f"Saved: {path}")
         return {"FINISHED"}
@@ -1495,9 +1605,8 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     def execute(self, context):
         bridge = _bridge()
-        sess = bridge.session()
-        if not sess.active:
-            self.report({"ERROR"}, "Solver not initialized")
+        sess = _owned_session_or_none(self, context)
+        if sess is None:
             return {"CANCELLED"}
         from .io import export as export_mod
 
@@ -1680,6 +1789,7 @@ class _FLUIDSIM_OT_production_bake_modal:
                     int(fs.bake_end),
                     restart=bool(self.restart_existing),
                 )
+            controller.reserve_cache_path(backend.cache_path(scene))
             production_bake.register_active_bake(scene, controller)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Production bake could not start: {exc}")
@@ -1791,10 +1901,25 @@ class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _production_bake_idle_poll(cls, context)
+        if not _production_bake_idle_poll(cls, context):
+            return False
+        sess = _bridge().session()
+        if sess.active and not sess.owns_scene(getattr(context, "scene", None)):
+            cls.poll_message_set("Another scene owns the live solver")
+            return False
+        return True
 
     def execute(self, context):
-        fs = context.scene.fluidsim
+        from .blender import playback
+
+        scene = context.scene
+        if not self.poll(context):
+            self.report({"WARNING"}, self._poll_message)
+            return {"CANCELLED"}
+        fs = scene.fluidsim
+        if playback.set_cache_playback_enabled(scene, True) is False:
+            self.report({"WARNING"}, fs.status)
+            return {"CANCELLED"}
         fs.cache_playback_enabled = True
         fs.live = True
         fs.status = "Cache Playback ready - press Timeline Play"
@@ -1846,6 +1971,10 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     bl_label = "Remove Cache Orphans"
     bl_options = {"REGISTER"}
 
+    @classmethod
+    def poll(cls, context):
+        return _cache_path_mutable_poll(cls, context)
+
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
 
@@ -1853,7 +1982,11 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
         from .blender.cache_manager import remove_orphans
 
         path = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
-        removed = remove_orphans(path)
+        try:
+            removed = remove_orphans(path)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache orphans could not be removed: {exc}")
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Removed {len(removed)} orphan cache file(s)")
         return {"FINISHED"}
 
@@ -1864,6 +1997,10 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     bl_idname = "fluidsim.cache_free"
     bl_label = "Free Cache"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _cache_path_mutable_poll(cls, context)
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
@@ -1892,6 +2029,10 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     destination: StringProperty(name="Destination", subtype="DIR_PATH")
+
+    @classmethod
+    def poll(cls, context):
+        return _cache_path_mutable_poll(cls, context)
 
     def invoke(self, context, event):
         if not self.destination:
@@ -1923,6 +2064,10 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     name: StringProperty(name="New Directory Name", default="fluidsim_cache")
+
+    @classmethod
+    def poll(cls, context):
+        return _cache_path_mutable_poll(cls, context)
 
     def invoke(self, context, event):
         source = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))

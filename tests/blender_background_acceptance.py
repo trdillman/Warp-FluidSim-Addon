@@ -78,6 +78,16 @@ def main():
     check("output toggles sync to surface mode",
           fs.liquid_view_mode == "SURFACE",
           fs.liquid_view_mode)
+    fs.show_surface = False
+    check("both output toggles sync to hidden mode",
+          fs.liquid_view_mode == "HIDDEN",
+          fs.liquid_view_mode)
+    fs.show_surface = True
+    fs.show_particles = True
+    fs.liquid_view_mode = "HIDDEN"
+    check("hidden liquid view disables both outputs",
+          (fs.show_surface, fs.show_particles) == (False, False),
+          f"{fs.liquid_view_mode} {fs.show_surface}/{fs.show_particles}")
     fs.liquid_view_mode = "SURFACE"
     fs.voxel_size = 0.08
     fs.max_particles = 500_000
@@ -375,11 +385,30 @@ def main():
 
     # -- export -----------------------------------------------------------------
     export_base = os.path.join(tempfile.gettempdir(), "fluidsim_test")
+    prior_export = b"prior acceptance export\n"
+    for suffix in ("_surface.obj", "_particles.ply"):
+        with open(export_base + suffix, "wb") as fh:
+            fh.write(prior_export)
     result = bpy.ops.fluidsim.export_frame(filepath=export_base)
     check("export operator", result == {"FINISHED"})
     check("surface obj exported", os.path.exists(export_base + "_surface.obj"))
     check("particles ply exported",
           os.path.exists(export_base + "_particles.ply"))
+    replaced_prior_exports = True
+    for suffix in ("_surface.obj", "_particles.ply"):
+        with open(export_base + suffix, "rb") as fh:
+            replaced_prior_exports &= fh.read() != prior_export
+    check(
+        "export bundle replaces prior complete files",
+        replaced_prior_exports,
+    )
+    export_debris = [
+        name for name in os.listdir(tempfile.gettempdir())
+        if name.startswith(".fluidsim_test_")
+        and (name.endswith(".stage") or name.endswith(".backup"))
+    ]
+    check("export transaction leaves no debris", not export_debris,
+          str(export_debris))
 
     # -- panels draw headlessly? (registration check) ------------------------------
     panel_ids = [

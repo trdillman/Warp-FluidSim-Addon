@@ -65,8 +65,12 @@ def _owned_array(value, dtype, shape_tail=()):
     if value is None:
         return None
     array = np.array(value, dtype=dtype, copy=True, order="C")
-    if shape_tail:
-        array = array.reshape((-1,) + tuple(shape_tail))
+    shape_tail = tuple(shape_tail)
+    expected_rank = 1 + len(shape_tail)
+    if array.ndim != expected_rank or array.shape[1:] != shape_tail:
+        expected = "(N,)" if not shape_tail else f"(N, {', '.join(map(str, shape_tail))})"
+        raise ValueError(
+            f"array must have shape {expected}; received {array.shape}")
     array.setflags(write=False)
     return array
 

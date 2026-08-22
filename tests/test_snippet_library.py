@@ -136,6 +136,54 @@ def test_assigned_locals_are_usable():
     assert lib.is_valid("a = 1.0\nb = a * 2.0", "PARTICLES")
 
 
+def test_field_permission_enforces_direct_read_write_effects():
+    from fluidSim_warp_blender51.sim.enums import CustomKernelFieldPermission
+
+    read = {"temperature": CustomKernelFieldPermission.READ}
+    write = {"temperature": CustomKernelFieldPermission.WRITE}
+    read_write = {"temperature": CustomKernelFieldPermission.READ_WRITE}
+    index = "flat_voxel_index"
+
+    assert not lib.is_valid(
+        f"temperature[{index}] = 1.0", "VOXEL_LINEAR", ("temperature",), read)
+    assert lib.is_valid(
+        f"value = temperature[{index}]", "VOXEL_LINEAR", ("temperature",), read)
+    assert lib.is_valid(
+        f"temperature[{index}] = 1.0", "VOXEL_LINEAR", ("temperature",), write)
+    assert not lib.is_valid(
+        f"value = temperature[{index}]", "VOXEL_LINEAR", ("temperature",), write)
+    assert not lib.is_valid(
+        f"temperature[{index}] += 1.0", "VOXEL_LINEAR", ("temperature",), write)
+    assert lib.is_valid(
+        f"temperature[{index}] += 1.0", "VOXEL_LINEAR",
+        ("temperature",), read_write)
+
+
+def test_field_permission_rejects_atomics_aliases_and_unknown_effects():
+    from fluidSim_warp_blender51.sim.enums import CustomKernelFieldPermission
+
+    index = "flat_voxel_index"
+    read = {"temperature": CustomKernelFieldPermission.READ}
+    read_write = {"temperature": CustomKernelFieldPermission.READ_WRITE}
+
+    assert not lib.is_valid(
+        f"wp.atomic_add(temperature, {index}, 1.0)", "VOXEL_LINEAR",
+        ("temperature",), read)
+    assert lib.is_valid(
+        f"wp.atomic_add(temperature, {index}, 1.0)", "VOXEL_LINEAR",
+        ("temperature",), read_write)
+    assert not lib.is_valid(
+        "wp.atomic_add(temperature, density, 1.0)", "VOXEL_LINEAR",
+        ("temperature", "density"),
+        {"temperature": CustomKernelFieldPermission.READ_WRITE,
+         "density": CustomKernelFieldPermission.READ})
+    assert not lib.is_valid(
+        "alias = temperature", "VOXEL_LINEAR", ("temperature",), read_write)
+    assert not lib.is_valid(
+        "wp.some_future_mutation(temperature)", "VOXEL_LINEAR",
+        ("temperature",), read_write)
+
+
 # ---------------------------------------------------------------------------
 # Auto-fix
 # ---------------------------------------------------------------------------
@@ -241,6 +289,55 @@ def test_user_preset_roundtrip(tmp_path):
     assert got["_path"] == path
 
 
+def test_field_permission_and_kernel_type_roundtrip_through_adapter_and_preset(
+        tmp_path):
+    from fluidSim_warp_blender51.blender.snippets import snippet_from_pg
+    from fluidSim_warp_blender51.sim.enums import (
+        CustomKernelFieldPermission, CustomKernelType,
+    )
+
+    argument_pg = SimpleNamespace(
+        mode="FIELD", field="temperature", field_permission="READ",
+        constant_type="FLOAT", constant_name="value", constant_value=0.0)
+    snippet_pg = SimpleNamespace(
+        enabled=True, kernel_name="cooling", snippet_type="FUNCTION",
+        order="FINAL_STEP", run_over="VOXEL_LINEAR",
+        text_block=SimpleNamespace(
+            as_string=lambda: "x = temperature[flat_voxel_index]"),
+        arguments=[argument_pg], frame_start=0, frame_end=0, frame_step=1)
+
+    snippet = snippet_from_pg(snippet_pg)
+    assert snippet.snippet_type is CustomKernelType.FUNCTION
+    assert snippet.arguments[0].field_permission is CustomKernelFieldPermission.READ
+
+    data = lib.preset_to_dict(
+        "Cooling", "test", "FINAL_STEP", "VOXEL_LINEAR", snippet.code,
+        [{"mode": "FIELD", "field": "temperature",
+          "field_permission": "READ"}],
+        snippet_type="FUNCTION")
+    lib.save_user_preset(str(tmp_path), data)
+    loaded = lib.load_user_presets(str(tmp_path))[0]
+    assert loaded["snippet_type"] == "FUNCTION"
+    assert loaded["arguments"][0]["field_permission"] == "READ"
+
+
+def test_legacy_preset_and_runtime_objects_default_to_read_write_kernel():
+    from fluidSim_warp_blender51.sim.enums import (
+        CustomKernelFieldPermission, CustomKernelType,
+    )
+
+    argument = lib.CustomArgument()
+    snippet = lib.CustomSnippet()
+    data = lib.preset_to_dict(
+        "Legacy", "test", "FINAL_STEP", "VOXEL_LINEAR", "pass",
+        [{"mode": "FIELD", "field": "temperature"}])
+
+    assert argument.field_permission is CustomKernelFieldPermission.READ_WRITE
+    assert snippet.snippet_type is CustomKernelType.KERNEL
+    assert data["snippet_type"] == "KERNEL"
+    assert data["arguments"][0]["field_permission"] == "READ_WRITE"
+
+
 def test_load_user_presets_skips_garbage(tmp_path):
     (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
     (tmp_path / "nocode.json").write_text("{\"label\": \"x\"}",
@@ -318,6 +415,48 @@ def test_snippet_manager_rejects_invalid_before_compile():
     manager.set_snippets([bad, good])
     assert any(name == "bad_import" for name, _ in manager.errors)
     assert manager.has_any()
+
+
+def test_function_snippet_is_rejected_durably_at_adapter_admission():
+    from fluidSim_warp_blender51.blender import snippets
+
+    pg = SimpleNamespace(
+        enabled=True, kernel_name="helper", snippet_type="FUNCTION",
+        order="FINAL_STEP", run_over="PARTICLES",
+        text_block=SimpleNamespace(as_string=lambda: "x = velocity[0]"),
+        arguments=[], frame_start=0, frame_end=0, frame_step=1,
+        is_valid=True, validated_hash="", validation_report="", last_error="")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(snippets=[pg]))
+
+    assert snippets.build_snippets(scene) == []
+    assert not pg.is_valid
+    assert "FUNCTION" in pg.last_error
+    assert "unsupported" in pg.last_error.lower()
+
+
+def test_function_snippet_never_reaches_compile_or_dispatch(monkeypatch):
+    from fluidSim_warp_blender51.sim.enums import CustomKernelType
+
+    compiled = []
+
+    def _unexpected_compile(_snippet):
+        compiled.append(_snippet)
+        raise AssertionError("FUNCTION reached code generation")
+
+    monkeypatch.setattr(lib, "CompiledSnippet", _unexpected_compile)
+    manager = lib.SnippetManager()
+    manager.set_snippets([
+        lib.CustomSnippet(
+            kernel_name="helper", snippet_type=CustomKernelType.FUNCTION,
+            code="x = velocity[0]",
+        )
+    ])
+
+    assert compiled == []
+    assert not manager.has_any()
+    assert manager.errors == [
+        ("helper", "FUNCTION snippets are unsupported; helper linkage is undefined")
+    ]
 
 
 def _fake_solver_for_snippet_launch():

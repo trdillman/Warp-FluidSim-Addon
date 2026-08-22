@@ -8,6 +8,7 @@ import pytest
 
 from fluidSim_warp_blender51.io.cache import (
     available_frames,
+    compact_settings_segments,
     read_frame,
     read_sequence_metadata,
     resolve_frame_range,
@@ -16,6 +17,29 @@ from fluidSim_warp_blender51.io.cache import (
     write_frame,
     write_sequence_metadata,
 )
+
+
+def test_compact_settings_segments_accepts_json_string_frame_keys():
+    records = {
+        "10": {"signature": "first"},
+        "11": {"signature": "first"},
+        "12": {"signature": "second"},
+    }
+
+    assert compact_settings_segments(records) == [
+        {"frame_start": 10, "frame_end": 11, "signature": "first"},
+        {"frame_start": 12, "frame_end": 12, "signature": "second"},
+    ]
+
+
+def test_compact_settings_segments_rejects_duplicate_normalized_frames():
+    records = {
+        1: {"signature": "first"},
+        "1": {"signature": "second"},
+    }
+
+    with pytest.raises(ValueError, match="Duplicate settings record for frame 1"):
+        compact_settings_segments(records)
 
 
 class _PicklePayload:
@@ -194,6 +218,22 @@ def test_sequence_metadata_round_trips_frame_range(tmp_path):
     assert metadata["frame_end"] == 6
     assert metadata["frame_count"] == 3
     assert metadata["source"] == "simulation"
+
+
+def test_write_sequence_metadata_rejects_duplicate_normalized_frame_keys(tmp_path):
+    first = settings_record(SimpleNamespace(cfl=2.0))
+    second = settings_record(SimpleNamespace(cfl=1.0))
+
+    with pytest.raises(
+            ValueError, match="Duplicate settings record for frame 1"):
+        write_sequence_metadata(
+            str(tmp_path),
+            1,
+            1,
+            settings_records={1: first, "1": second},
+        )
+
+    assert not (tmp_path / "fluidsim_sequence.json").exists()
 
 
 def test_sequence_metadata_reports_mixed_settings_boundaries(tmp_path):

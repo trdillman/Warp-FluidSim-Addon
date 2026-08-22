@@ -23,8 +23,10 @@ from .sim import custom
 from .sim.enums import (
     BlendMode,
     CustomKernelConstantType,
+    CustomKernelFieldPermission,
     CustomKernelOrder,
     CustomKernelRunOver,
+    CustomKernelType,
     LimitBehavior,
     MeshEvaluationMode,
     MeshSinkRegionMode,
@@ -52,6 +54,7 @@ def _items(enum_cls, descriptions=None):
 
 
 LIQUID_VIEW_ITEMS = (
+    ("HIDDEN", "Hidden", "Hide both the liquid surface and liquid particles"),
     ("SURFACE", "Surface", "Show the marching-cubes liquid surface"),
     ("PARTICLES", "Particles", "Show liquid as particles only"),
     ("SURFACE_PARTICLES", "Surface + Particles", "Show both surface mesh and liquid particles"),
@@ -119,6 +122,8 @@ def _sync_liquid_view_mode(self, context):
             self.liquid_view_mode = "SURFACE"
         elif self.show_particles:
             self.liquid_view_mode = "PARTICLES"
+        else:
+            self.liquid_view_mode = "HIDDEN"
     finally:
         _LIQUID_VIEW_SYNCING = False
     _request_output_refresh(self, context)
@@ -328,6 +333,14 @@ class FLUIDSIM_PG_snippet_argument(bpy.types.PropertyGroup):
         description="Set the solver field this argument reads or writes (for example velocity_u, temperature, or pressure); changing it redirects the snippet to different simulation data",
         default="temperature",
     )
+    field_permission: EnumProperty(
+        name="Permission",
+        items=_items(CustomKernelFieldPermission),
+        default="READ_WRITE",
+        description=(
+            "Declare whether this snippet may read, write, or read and write "
+            "the bound field; invalid effects are rejected before compilation"),
+    )
     constant_type: EnumProperty(
         name="Type", items=_items(CustomKernelConstantType), default="FLOAT")
     constant_name: StringProperty(
@@ -345,6 +358,14 @@ class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
     kernel_name: StringProperty(
         name="Kernel Name", default="my_kernel",
         description="Set the generated kernel identifier; changing it renames the compiled snippet entry point")
+    snippet_type: EnumProperty(
+        name="Type",
+        items=_items(CustomKernelType),
+        default="KERNEL",
+        description=(
+            "Persist the synthesized snippet kind; FUNCTION is retained but "
+            "rejected until helper linkage semantics are implemented"),
+    )
     description: StringProperty(name="Description", default="")
     order: EnumProperty(
         name="Order", items=_items(CustomKernelOrder),
@@ -1168,7 +1189,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         items=LIQUID_VIEW_ITEMS,
         default="SURFACE",
         update=_apply_liquid_view_mode,
-        description="Choose whether the viewport shows the liquid surface, particles, or both; changing it updates the two visibility toggles below",
+        description="Choose whether the viewport hides liquid output or shows the liquid surface, particles, or both; changing it updates the two visibility toggles below",
     )
     show_surface: BoolProperty(
         name="Surface Mesh", default=True, update=_sync_liquid_view_mode,

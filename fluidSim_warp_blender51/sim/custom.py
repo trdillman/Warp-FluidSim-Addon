@@ -19,10 +19,12 @@ from dataclasses import dataclass, field as dc_field
 
 from . import constants as C
 from .enums import (
+    CustomKernelFieldPermission,
     CustomKernelOrder,
     CustomKernelRunOver,
     CustomKernelArgumentMode,
     CustomKernelConstantType,
+    CustomKernelType,
 )
 
 
@@ -147,8 +149,107 @@ def _suggest(name: str, candidates):
     return f" (did you mean '{close[0]}'?)" if close else ""
 
 
+_MODELED_ATOMICS = {
+    "atomic_add", "atomic_sub", "atomic_min", "atomic_max",
+    "atomic_and", "atomic_or", "atomic_xor", "atomic_exch", "atomic_cas",
+}
+
+FUNCTION_UNSUPPORTED_MESSAGE = (
+    "FUNCTION snippets are unsupported; helper linkage is undefined"
+)
+
+
+def _permission_name(permission) -> str:
+    if isinstance(permission, CustomKernelFieldPermission):
+        return permission.name
+    return str(permission).upper()
+
+
+def _field_permission_issues(tree: ast.AST, field_permissions) -> list:
+    """Conservatively enforce effects on permission-bearing field arguments."""
+    if not field_permissions:
+        return []
+
+    permissions = {}
+    issues = []
+    for name, permission in dict(field_permissions).items():
+        permission_name = _permission_name(permission)
+        if permission_name not in {"READ", "WRITE", "READ_WRITE"}:
+            issues.append(Issue(
+                "ERROR", 0,
+                f"field '{name}' has unknown permission '{permission_name}'"))
+        else:
+            permissions[str(name)] = permission_name
+    if not permissions:
+        return issues
+
+    parents = {
+        child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+    }
+
+    def add(node, message):
+        issues.append(Issue("ERROR", getattr(node, "lineno", 0), message))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            field_name = node.value.id
+            permission = permissions.get(field_name)
+            if permission is None:
+                continue
+            parent = parents.get(node)
+            read_modify_write = isinstance(parent, ast.AugAssign) and parent.target is node
+            if read_modify_write and permission != "READ_WRITE":
+                add(node, f"{permission} field '{field_name}' forbids read-modify-write")
+            elif isinstance(node.ctx, ast.Load) and permission == "WRITE":
+                add(node, f"WRITE field '{field_name}' forbids loads")
+            elif isinstance(node.ctx, (ast.Store, ast.Del)) and permission == "READ":
+                add(node, f"READ field '{field_name}' forbids stores")
+
+        elif isinstance(node, ast.Call):
+            atomic_name = None
+            if (isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "wp"
+                    and node.func.attr in _MODELED_ATOMICS):
+                atomic_name = node.func.attr
+            if atomic_name:
+                if not node.args or not isinstance(node.args[0], ast.Name):
+                    add(node, f"wp.{atomic_name} requires a direct bound field argument")
+                    continue
+                field_name = node.args[0].id
+                permission = permissions.get(field_name)
+                if permission is None:
+                    add(node, f"wp.{atomic_name} target '{field_name}' is not a permission-bearing field")
+                elif permission != "READ_WRITE":
+                    add(node, f"{permission} field '{field_name}' forbids atomic read-modify-write")
+                for arg in node.args[1:]:
+                    if isinstance(arg, ast.Name) and arg.id in permissions:
+                        add(arg, f"field '{arg.id}' cannot alias an atomic operand")
+                continue
+            for arg in node.args:
+                if isinstance(arg, ast.Name) and arg.id in permissions:
+                    add(arg, f"field '{arg.id}' cannot be passed to an unmodelled call")
+
+        elif isinstance(node, ast.Name) and node.id in permissions:
+            parent = parents.get(node)
+            if isinstance(parent, ast.Subscript) and parent.value is node:
+                continue
+            if (isinstance(parent, ast.Call) and parent.args
+                    and parent.args[0] is node
+                    and isinstance(parent.func, ast.Attribute)
+                    and isinstance(parent.func.value, ast.Name)
+                    and parent.func.value.id == "wp"
+                    and parent.func.attr in _MODELED_ATOMICS):
+                continue
+            if isinstance(parent, ast.Call) and node in parent.args:
+                continue  # the call branch emits the durable diagnostic
+            add(node, f"field '{node.id}' cannot be aliased or rebound")
+
+    return issues
+
+
 def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
-                     arg_names=()) -> list:
+                     arg_names=(), field_permissions=None) -> list:
     """Statically validate a snippet body. Returns a list of Issues.
 
     A snippet is runnable only when no ERROR-level issues remain. This is a
@@ -167,6 +268,8 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
         issues.append(Issue("ERROR", exc.lineno or 0,
                             f"syntax error: {exc.msg}"))
         return issues
+
+    issues.extend(_field_permission_issues(tree, field_permissions))
 
     allowed = context_names(run_over) | set(arg_names)
     assigned = _collect_assigned_names(tree)
@@ -218,9 +321,11 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
     return issues
 
 
-def is_valid(code: str, run_over: str = "VOXEL_LINEAR", arg_names=()) -> bool:
+def is_valid(code: str, run_over: str = "VOXEL_LINEAR", arg_names=(),
+             field_permissions=None) -> bool:
     return not any(i.level == "ERROR"
-                   for i in validate_snippet(code, run_over, arg_names))
+                   for i in validate_snippet(
+                       code, run_over, arg_names, field_permissions))
 
 
 # ---------------------------------------------------------------------------
@@ -335,10 +440,15 @@ class SnippetPreset:
     frame_start: int = 0   # 0 = from the first frame
     frame_end: int = 0     # 0 = never stops
     frame_step: int = 1    # run every Nth frame
+    snippet_type: str = "KERNEL"
 
 
-def _f(name):
-    return {"mode": "FIELD", "field": name}
+def _f(name, field_permission="READ_WRITE"):
+    return {
+        "mode": "FIELD",
+        "field": name,
+        "field_permission": field_permission,
+    }
 
 
 def _c(name, value, ctype="FLOAT"):
@@ -580,16 +690,28 @@ def preset_by_id(preset_id: str):
 # ---------------------------------------------------------------------------
 
 
+def _normalized_preset_arguments(arguments):
+    normalized = []
+    for argument in arguments:
+        item = dict(argument)
+        if item.get("mode") == "FIELD":
+            item.setdefault("field_permission", "READ_WRITE")
+        normalized.append(item)
+    return normalized
+
+
 def preset_to_dict(label, description, order, run_over, code, arguments,
-                   frame_start=0, frame_end=0, frame_step=1):
+                   frame_start=0, frame_end=0, frame_step=1,
+                   snippet_type="KERNEL"):
     return {
         "format": "fluidsim_warp_snippet/1",
         "label": label,
         "description": description,
+        "snippet_type": snippet_type,
         "order": order,
         "run_over": run_over,
         "code": code,
-        "arguments": list(arguments),
+        "arguments": _normalized_preset_arguments(arguments),
         "frame_start": int(frame_start),
         "frame_end": int(frame_end),
         "frame_step": int(frame_step),
@@ -627,8 +749,10 @@ def load_user_presets(directory: str) -> list:
             data.setdefault("label", os.path.splitext(name)[0])
             data.setdefault("order", "BEFORE_FORCES")
             data.setdefault("run_over", "PARTICLES")
+            data.setdefault("snippet_type", "KERNEL")
             data.setdefault("description", "User snippet")
             data.setdefault("arguments", [])
+            data["arguments"] = _normalized_preset_arguments(data["arguments"])
             data["_path"] = path
             presets.append(data)
         except (OSError, ValueError):
@@ -758,6 +882,7 @@ _DTYPE_DECL = {"float": "wp.array(dtype=float)",
 class CustomArgument:
     mode: CustomKernelArgumentMode = CustomKernelArgumentMode.FIELD
     field: str = "temperature"
+    field_permission: CustomKernelFieldPermission = CustomKernelFieldPermission.READ_WRITE
     constant_type: CustomKernelConstantType = CustomKernelConstantType.FLOAT
     constant_name: str = "value"
     constant_value: float = 0.0
@@ -767,6 +892,7 @@ class CustomArgument:
 class CustomSnippet:
     enabled: bool = True
     kernel_name: str = "user_kernel"
+    snippet_type: CustomKernelType = CustomKernelType.KERNEL
     order: CustomKernelOrder = CustomKernelOrder.FINAL_STEP
     run_over: CustomKernelRunOver = CustomKernelRunOver.VOXEL_LINEAR
     code: str = ""
@@ -797,6 +923,13 @@ class CustomSnippet:
             else:
                 names.append(arg.constant_name)
         return names
+
+    def field_permissions(self):
+        return {
+            arg.field: arg.field_permission
+            for arg in self.arguments
+            if arg.mode == CustomKernelArgumentMode.FIELD
+        }
 
     def signature_params(self):
         """Returns (param_decl_list, launch_binder) for declared arguments."""
@@ -924,6 +1057,8 @@ class CompiledSnippet:
 
     def _compile(self):
         sn = self.snippet
+        if sn.snippet_type != CustomKernelType.KERNEL:
+            raise ValueError(FUNCTION_UNSUPPORTED_MESSAGE)
         decls, binders = sn.signature_params()
         self._binders = binders
         extra = ",\n    ".join(decls) if decls else "_unused_pad: float"
@@ -1032,11 +1167,15 @@ class SnippetManager:
         for sn in snippets:
             if not sn.enabled:
                 continue
+            if sn.snippet_type != CustomKernelType.KERNEL:
+                self.errors.append((sn.kernel_name, FUNCTION_UNSUPPORTED_MESSAGE))
+                continue
             # Static validation gate: invalid snippets never reach codegen
             # or the running scene (Warp compile remains the final check).
             static_errors = [
                 issue for issue in validate_snippet(
-                    sn.code, sn.run_over.name, sn.argument_names())
+                    sn.code, sn.run_over.name, sn.argument_names(),
+                    sn.field_permissions())
                 if issue.level == "ERROR"
             ]
             if static_errors:

@@ -27,6 +27,7 @@ class _Session:
         self.solver = _Runtime("old")
         self.error = ""
         self.release_calls = []
+        self.force_release_calls = []
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
         self.scene_inputs = SimpleNamespace(clear=lambda: None)
@@ -48,6 +49,14 @@ class _Session:
 
     def release(self, _scene=None, *, preserve_error=False):
         self.release_calls.append(preserve_error)
+        if self.solver is not None:
+            self.solver.release()
+        self.solver = None
+        if not preserve_error:
+            self.error = ""
+
+    def force_release(self, *, preserve_error=False, scene=None):
+        self.force_release_calls.append(preserve_error)
         if self.solver is not None:
             self.solver.release()
         self.solver = None
@@ -156,11 +165,13 @@ def test_candidate_failures_preserve_live_session_and_post_cutover_failure_clean
         assert old_solver.released is True
         assert candidate.released is True
         assert session.solver is None
-        assert session.release_calls == [True]
+        assert session.release_calls == []
+        assert session.force_release_calls == [True]
     else:
         assert old_solver.released is False
         assert session.solver is old_solver
         assert session.release_calls == []
+        assert session.force_release_calls == []
     assert f"{failure_phase} failed" in session.error
     assert snapshot.released == 1
 

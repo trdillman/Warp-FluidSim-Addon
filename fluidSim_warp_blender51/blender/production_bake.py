@@ -71,6 +71,11 @@ class BakeController:
         self._resume = False
         self._restart = False
         self._cancel_requested = False
+        self._reserved_cache_path: Path | None = None
+
+    def reserve_cache_path(self, path: Path | str) -> None:
+        """Reserve the resolved intended cache path before backend initialization."""
+        self._reserved_cache_path = Path(path).resolve()
 
     def start(self, scene, start: int, end: int, *, restart: bool = False) -> None:
         if self.status in {
@@ -218,6 +223,12 @@ class BakeController:
 
 
 _ACTIVE_BAKES: dict[int, BakeController] = {}
+_ACTIVE_STATUSES = {
+    BakeStatus.PREFLIGHT,
+    BakeStatus.INITIALIZING,
+    BakeStatus.RUNNING,
+    BakeStatus.CANCELLING,
+}
 
 
 def _scene_key(scene) -> int:
@@ -230,12 +241,29 @@ def _scene_key(scene) -> int:
     return id(scene)
 
 
+def _active_cache_path(controller) -> Path | None:
+    if getattr(controller, "status", None) not in _ACTIVE_STATUSES:
+        return None
+    reserved = getattr(controller, "_reserved_cache_path", None)
+    if reserved is not None:
+        return Path(reserved).resolve()
+    backend = getattr(controller, "backend", None)
+    base_dir = getattr(backend, "base_dir", None)
+    return None if base_dir is None else Path(base_dir).resolve()
+
+
 def register_active_bake(scene, controller: BakeController) -> None:
     """Give one controller authoritative bake ownership for ``scene``."""
     key = _scene_key(scene)
     existing = _ACTIVE_BAKES.get(key)
     if existing is not None and existing is not controller:
         raise RuntimeError("A Production Bake is already active for this scene")
+    intended_path = _active_cache_path(controller)
+    if intended_path is not None:
+        for owner in tuple(_ACTIVE_BAKES.values()):
+            if owner is not controller and _active_cache_path(owner) == intended_path:
+                raise RuntimeError(
+                    f"Production Bake cache path is already active: {intended_path}")
     _ACTIVE_BAKES[key] = controller
 
 
@@ -246,12 +274,7 @@ def active_bake(scene) -> BakeController | None:
 
 def bake_is_active(scene) -> bool:
     controller = active_bake(scene)
-    return bool(controller is not None and controller.status in {
-        BakeStatus.PREFLIGHT,
-        BakeStatus.INITIALIZING,
-        BakeStatus.RUNNING,
-        BakeStatus.CANCELLING,
-    })
+    return bool(controller is not None and controller.status in _ACTIVE_STATUSES)
 
 
 def clear_active_bake(scene, controller: BakeController | None = None) -> None:
@@ -261,6 +284,15 @@ def clear_active_bake(scene, controller: BakeController | None = None) -> None:
     if existing is None or (controller is not None and existing is not controller):
         return
     _ACTIVE_BAKES.pop(key, None)
+
+
+def cache_path_is_active(path: Path | str) -> bool:
+    """Whether a registered running bake owns the resolved cache directory."""
+    candidate = Path(path).resolve()
+    for controller in tuple(_ACTIVE_BAKES.values()):
+        if _active_cache_path(controller) == candidate:
+            return True
+    return False
 
 
 class ProductionBakeBackend:
@@ -303,7 +335,7 @@ class ProductionBakeBackend:
         return cached_parts[:2] == current_parts[:2]
 
     def resume_decision(self, scene) -> ResumeDecision:
-        from ..io import cache
+        from . import cache_identity
 
         base = self.cache_path(scene)
         try:
@@ -323,7 +355,7 @@ class ProductionBakeBackend:
                 "SOLVER_VERSION_MISMATCH",
                 f"Cache solver {manifest.solver_version} is incompatible with {VERSION_STRING}",
             )
-        signatures = cache.signature_bundle(
+        signatures = cache_identity.signature_bundle(
             scene, self._bpy().context.evaluated_depsgraph_get()
         )
         for key, code in (
@@ -383,15 +415,14 @@ class ProductionBakeBackend:
         )
 
     def _snapshot_live_state(self, scene) -> None:
-        from . import scene_bridge
-        from ..io import cache
+        from . import cache_identity, scene_bridge
 
         self.sess = scene_bridge.session()
         self._original_frame = int(scene.frame_current)
         self._original_live = bool(scene.fluidsim.live)
         self._original_session_active = bool(self.sess.owns_scene(scene))
         if self._original_session_active:
-            signatures = cache.signature_bundle(
+            signatures = cache_identity.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
             )
             self._original_session_payload = capture_solver(
@@ -420,7 +451,7 @@ class ProductionBakeBackend:
         resume: bool = False,
         restart: bool = False,
     ) -> int | None:
-        from . import playback, scene_bridge
+        from . import cache_identity, playback, scene_bridge
         from ..io import cache
 
         if self._initialized:
@@ -430,7 +461,7 @@ class ProductionBakeBackend:
         self.base_dir = self.cache_path(scene)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         depsgraph = self._bpy().context.evaluated_depsgraph_get()
-        self.signatures = cache.signature_bundle(scene, depsgraph)
+        self.signatures = cache_identity.signature_bundle(scene, depsgraph)
 
         if resume:
             decision = self.resume_decision(scene)
