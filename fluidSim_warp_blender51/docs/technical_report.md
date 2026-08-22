@@ -467,7 +467,7 @@ smoke separately requires the same modules and representative panels.
 ## 12. Verification Results for 1.0.255
 
 The table records current executable evidence from the integrated Windows
-source at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`.
+source at proof HEAD `0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b`.
 
 | Gate | Result in this environment |
 |---|---|
@@ -486,7 +486,7 @@ source at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`.
 | Custom Effects supplied-Blender proof | Three demos, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed |
 | Release workflow coverage | Linux package job now runs and uploads the native Properties UI report in addition to P4/P5 Warp, Custom Effects Warp/Blender, package build, and installed smoke evidence |
 | NVIDIA CUDA solver gate | **Passed 21/21**, including pressure, viscosity, collision/sink masks, ST-FLIP, surface tension, and bounded diagnostics |
-| Interactive user path | **Passed**: 6.116 ms mean viewport publication, 16.336 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |
+| Interactive user path | **Passed**: 7.785 ms mean viewport publication, 23.353 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |
 
 The GUI-inclusive production gate proves the current Windows source, Blender
 registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
@@ -535,9 +535,9 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`4b53ec79b323e8685974bb7b6a19309a16f9946f` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0095123038`,
-`column_height_end=0.3364257812`, `crown_sqrt_t_corr=0.9713672681`, and
-`max_crown_height=0.2473388761`. The authoritative source is
+`0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0129847438`,
+`column_height_end=0.3422312737`, `crown_sqrt_t_corr=0.9713672681`, and
+`max_crown_height=0.3014160097`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9`.
+`d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905`.

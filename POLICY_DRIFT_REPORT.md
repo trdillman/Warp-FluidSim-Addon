@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-21T03:31:20.028907+00:00
-audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 4b53ec79b323e8685974bb7b6a19309a16f9946f
-gate_run_at: 2026-08-21T03:31:20.028907+00:00
+generated_at: 2026-08-22T02:58:05.405186+00:00
+audit_unit: 'C:\tmp\fluidsim-release-prep-1.0.255'
+git_head: 0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b
+gate_run_at: 2026-08-22T02:58:05.405186+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9
+demo_artifact_sha256: d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905
 ---
 
 # Policy Drift Report — root unit
@@ -15,16 +15,16 @@ demo_artifact_sha256: 1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e23494
 ## Strongest live evidence
 
 - `FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py --include-gui`
-  passed at proof HEAD `4b53ec79b323e8685974bb7b6a19309a16f9946f`;
+  passed at proof HEAD `0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b`;
   the run wrote the full-gate
   manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (40/40)`,
   `GUI-PLAYBACK-PROBE-PASS`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
 - The generated demo analysis is `result: pass`, 18/18 bounded checks, and the
   checked-in `demos/analysis_report.json` is byte-for-byte synchronized with
   `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9`.
-- The measured user path passed at 6.116 ms mean viewport publication and
-  16.336 ms mean total, with no added output-path readbacks, synchronization,
+  `d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905`.
+- The measured user path passed at 7.785 ms mean viewport publication and
+  23.353 ms mean total, with no added output-path readbacks, synchronization,
   Blender ID creation/removal, depsgraph updates, or structural replacement.
 - The four promoted metrics moved within their bounded tolerances relative to
   the previous proof; the shift is GPU floating-point nondeterminism across
@@ -62,13 +62,13 @@ and to this isolated merge worktree.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-21T03:31:20.028907+00:00
-audit_unit: 'C:\tmp\fluidsim-1.0.252-merge-worktree'
-git_head: 4b53ec79b323e8685974bb7b6a19309a16f9946f
-gate_run_at: 2026-08-21T03:31:20.028907+00:00
+generated_at: 2026-08-22T02:58:05.405186+00:00
+audit_unit: 'C:\tmp\fluidsim-release-prep-1.0.255'
+git_head: 0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b
+gate_run_at: 2026-08-22T02:58:05.405186+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 1b76afc1efac4627c1f274933abb59ca33e56e8579ce67d59e27e234947797b9
+demo_artifact_sha256: d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905
 freshness: fresh
 status: fresh
 blocking_criticality: none
@@ -77,8 +77,8 @@ strongest_live_verification:
   - 'PASS: FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS.'
   - 'PASS: GUI-ACCEPTANCE-PASS (40/40) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
   - 'PASS: generated demo analysis result=pass, 18/18 bounded checks.'
-  - 'PASS: user-path profile; view mean 6.116 ms, total mean 16.336 ms.'
-  - 'PASS: C:\Python314\python.exe -m pytest -q; 1033 passed.'
+  - 'PASS: user-path profile; view mean 7.785 ms, total mean 23.353 ms.'
+  - 'PASS: C:\Python314\python.exe -m pytest -q; 1043 passed.'
 files_that_need_correction: []
 active_backlog_tasks: []
 repair_checklist:
