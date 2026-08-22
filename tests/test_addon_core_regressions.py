@@ -13,7 +13,11 @@ from fluidSim_warp_blender51.sim.quality_contract import (
     resolve_quality,
     resolve_source_sampling,
 )
-from fluidSim_warp_blender51.sim.registry import KERNEL_REGISTRY, register
+from fluidSim_warp_blender51.sim.registry import (
+    KERNEL_REGISTRY,
+    SOURCE_ALIASES,
+    register,
+)
 
 
 def _benchmark_record(**changes):
@@ -71,6 +75,47 @@ def test_duplicate_kernel_identity_is_rejected_without_overwrite():
         assert KERNEL_REGISTRY[name].fn is first
     finally:
         KERNEL_REGISTRY.pop(name, None)
+
+
+def test_multi_name_registration_failure_is_atomic():
+    existing = "fluidSimRegressionAtomicExisting"
+    candidate = "fluidSimRegressionAtomicCandidate"
+    candidate_alias = "paradigmRegressionAtomicCandidate"
+
+    @register(existing)
+    def first():
+        pass
+
+    try:
+        with pytest.raises(ValueError, match="already registered"):
+            @register(candidate, existing)
+            def second():
+                pass
+
+        assert candidate not in KERNEL_REGISTRY
+        assert candidate_alias not in SOURCE_ALIASES
+        assert KERNEL_REGISTRY[existing].fn is first
+    finally:
+        KERNEL_REGISTRY.pop(existing, None)
+        KERNEL_REGISTRY.pop(candidate, None)
+        SOURCE_ALIASES.pop(candidate_alias, None)
+
+
+def test_duplicate_name_within_registration_is_atomic():
+    name = "fluidSimRegressionAtomicRepeated"
+    alias = "paradigmRegressionAtomicRepeated"
+
+    try:
+        with pytest.raises(ValueError, match="more than once"):
+            @register(name, name)
+            def repeated():
+                pass
+
+        assert name not in KERNEL_REGISTRY
+        assert alias not in SOURCE_ALIASES
+    finally:
+        KERNEL_REGISTRY.pop(name, None)
+        SOURCE_ALIASES.pop(alias, None)
 
 
 @pytest.mark.parametrize(

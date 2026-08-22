@@ -23,6 +23,12 @@
 - Removed legacy cache controls remain removed; the viewport mirrors only the
   current authoritative Scene Properties workflow.
 
+### Fixed
+
+- Multi-name kernel registration now validates the complete identity set before
+  mutation, so duplicate or colliding names cannot leave partial registry or
+  source-alias state.
+
 ## 1.0.253 — restore Windows x64 extension packaging
 
 ### Fixed
