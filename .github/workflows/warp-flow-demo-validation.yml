@@ -1,0 +1,151 @@
+name: Warp Flow demo lifecycle validation
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/warp-flow-demo-validation.yml'
+      - 'automation/warp_flow_demo_validation/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Blender ${{ matrix.label }} / Warp 1.16 CPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: '5.1.2'
+            tag: '5.1.2-1@2026-07-01_1782914438'
+            filename: 'Blender-5.1.2-1-anylinux-x86_64.AppImage'
+          - label: '5.2.0'
+            tag: '5.2.0-2@2026-07-22_1784722302'
+            filename: 'Blender-5.2.0-2-anylinux-x86_64.AppImage'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgl1-mesa-dri libegl1 mesa-utils scrot unzip
+          python -m pip install --upgrade pip
+          python -m pip install pytest pillow 'warp-lang==1.16.0'
+          python -m pip install --target "$GITHUB_WORKSPACE/.deps" pillow 'warp-lang==1.16.0'
+
+      - name: Reconstruct and verify source checkpoint
+        run: |
+          set -euo pipefail
+          mkdir -p work/source
+          cat automation/warp_flow_demo_validation/source.b64.part* | base64 --decode > work/source.zip
+          echo '0d8eea23d8c8afbfa970a5fb61fd7ef3f744d7b6c5e731c2db58d28b6b6acf05  work/source.zip' | sha256sum -c -
+          unzip -q work/source.zip -d work/source
+          python -m pytest work/source/tests -q --rootdir=work/source/tests --import-mode=importlib
+
+      - name: Download exact Blender runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.tag }}
+          FILE: ${{ matrix.filename }}
+        run: |
+          set -euo pipefail
+          mkdir -p runtime
+          cd runtime
+          gh release download "$TAG" \
+            --repo pkgforge-dev/Blender-AppImage \
+            --pattern "$FILE" \
+            --pattern "$FILE.sha256"
+          sha256sum -c "$FILE.sha256"
+          chmod +x "$FILE"
+          ./$FILE --appimage-extract >/dev/null
+          ./squashfs-root/AppRun --version | head -5
+
+      - name: Execute genuine Warp 1.16 CPU kernel
+        run: |
+          python - <<'PY'
+          import json
+          import numpy as np
+          import warp as wp
+
+          wp.init()
+
+          @wp.kernel
+          def square(values: wp.array(dtype=float), output: wp.array(dtype=float)):
+              index = wp.tid()
+              output[index] = values[index] * values[index]
+
+          source = wp.array(np.asarray([1.0, 2.0, 3.0], dtype=np.float32), dtype=float, device='cpu')
+          output = wp.zeros(3, dtype=float, device='cpu')
+          wp.launch(square, dim=3, inputs=[source, output], device='cpu')
+          actual = output.numpy().tolist()
+          assert actual == [1.0, 4.0, 9.0], actual
+          print(json.dumps({
+              'warp': wp.__version__,
+              'devices': [str(value) for value in wp.get_devices()],
+              'result': actual,
+          }))
+          PY
+
+      - name: Run ten 50-frame demo lifecycle sequences
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.deps
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+          WFLOW_SOURCE: ${{ github.workspace }}/work/source
+          EVIDENCE: ${{ github.workspace }}/evidence/${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          BLENDER="$GITHUB_WORKSPACE/runtime/squashfs-root/AppRun"
+          mkdir -p "$EVIDENCE"
+          demos=(
+            NAVIER_STOKES APIC_FLIP FLUID_SURFACE ELASTIC_BEAM FEM_CABLE
+            DEM SPH STREAMLINES LIDAR INVERSE_FIT
+          )
+          for demo in "${demos[@]}"; do
+            output="$EVIDENCE/$demo"
+            mkdir -p "$output"
+            echo "=== $demo stage 1 ==="
+            xvfb-run -a -s '-screen 0 1280x900x24' "$BLENDER" -b --factory-startup \
+              --python "$WFLOW_SOURCE/tools/blender_demo_lifecycle.py" -- \
+              stage1 --source "$WFLOW_SOURCE" --demo "$demo" \
+              --output "$output" --policy WARP_CPU
+            echo "=== $demo stage 2 ==="
+            xvfb-run -a -s '-screen 0 1280x900x24' "$BLENDER" -b --factory-startup \
+              --python "$WFLOW_SOURCE/tools/blender_demo_lifecycle.py" -- \
+              stage2 --source "$WFLOW_SOURCE" --demo "$demo" \
+              --output "$output" --blend "$output/saved_at_025.blend" \
+              --policy WARP_CPU
+          done
+          python "$WFLOW_SOURCE/tools/analyze_demo_lifecycle.py" \
+            "$EVIDENCE" "$EVIDENCE/analysis"
+
+      - name: Build evidence manifest
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp -a "evidence/${{ matrix.label }}" "artifacts/blender-${{ matrix.label }}" 2>/dev/null || true
+          cp work/source/WORK_STATE.json artifacts/ 2>/dev/null || true
+          cp work/source.zip artifacts/reconstructed-source.zip 2>/dev/null || true
+          (
+            cd artifacts
+            find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: warp-flow-demo-evidence-${{ matrix.label }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
