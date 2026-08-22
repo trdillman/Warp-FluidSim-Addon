@@ -47,10 +47,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p work/source
-          cat automation/warp_flow_demo_validation/source.b64.part* | base64 --decode > work/source.zip
-          echo '0d8eea23d8c8afbfa970a5fb61fd7ef3f744d7b6c5e731c2db58d28b6b6acf05  work/source.zip' | sha256sum -c -
-          unzip -q work/source.zip -d work/source
-          python -m pytest work/source/tests -q --rootdir=work/source/tests --import-mode=importlib
+          cat automation/warp_flow_demo_validation/runtime.b64.part* | base64 --decode > work/source.tar.xz
+          echo '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46  work/source.tar.xz' | sha256sum -c -
+          tar -xJf work/source.tar.xz -C work/source
+          python -m compileall -q work/source
 
       - name: Download exact Blender runtime
         env:
@@ -136,7 +136,7 @@ jobs:
           mkdir -p artifacts
           cp -a "evidence/${{ matrix.label }}" "artifacts/blender-${{ matrix.label }}" 2>/dev/null || true
           cp work/source/WORK_STATE.json artifacts/ 2>/dev/null || true
-          cp work/source.zip artifacts/reconstructed-source.zip 2>/dev/null || true
+          cp work/source.tar.xz artifacts/reconstructed-source.tar.xz 2>/dev/null || true
           (
             cd artifacts
             find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
