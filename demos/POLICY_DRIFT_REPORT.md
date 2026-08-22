@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-22T02:58:05.405186+00:00
-audit_unit: 'C:\tmp\fluidsim-release-prep-1.0.255\demos'
-git_head: 0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b
-gate_run_at: 2026-08-22T02:58:05.405186+00:00
+generated_at: 2026-08-22T04:41:09.889232+00:00
+audit_unit: 'C:\tmp\fluidsim-main-release\demos'
+git_head: bb6d3fc5a5be9b944d4316c46aeb9ed47f011409
+gate_run_at: 2026-08-22T04:41:09.889232+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905
+demo_artifact_sha256: db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5
 ---
 
 # Policy Drift Report — demos unit
@@ -35,13 +35,13 @@ descendants remain valid; non-evidence drift makes validation fail closed.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-22T02:58:05.405186+00:00
-audit_unit: 'C:\tmp\fluidsim-release-prep-1.0.255\demos'
-git_head: 0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b
-gate_run_at: 2026-08-22T02:58:05.405186+00:00
+generated_at: 2026-08-22T04:41:09.889232+00:00
+audit_unit: 'C:\tmp\fluidsim-main-release\demos'
+git_head: bb6d3fc5a5be9b944d4316c46aeb9ed47f011409
+gate_run_at: 2026-08-22T04:41:09.889232+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905
+demo_artifact_sha256: db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5
 freshness: fresh
 status: fresh
 blocking_criticality: none

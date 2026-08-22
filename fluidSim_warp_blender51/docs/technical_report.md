@@ -467,11 +467,11 @@ smoke separately requires the same modules and representative panels.
 ## 12. Verification Results for 1.0.255
 
 The table records current executable evidence from the integrated Windows
-source at proof HEAD `0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b`.
+source at proof HEAD `bb6d3fc5a5be9b944d4316c46aeb9ed47f011409`.
 
 | Gate | Result in this environment |
 |---|---|
-| Full Python suite | **1,033 passed**; only the linked-worktree pytest cache emitted a non-test warning |
+| Full Python suite | **1,043 passed** |
 | Python compilation | Passed |
 | Source/release verification | Passed; seven example scenes, three durable Custom Effects renders, eight built-ins, and no bundled Blender/Warp payload |
 | Blender host | **5.1.0 Windows x64**; GUI acceptance passed **40/40** and saved-demo timeline playback passed |
@@ -535,9 +535,9 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`0cf552e32575b1ad7dd34f383f5bc2c0b87d7c9b` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0129847438`,
-`column_height_end=0.3422312737`, `crown_sqrt_t_corr=0.9713672681`, and
-`max_crown_height=0.3014160097`. The authoritative source is
+`bb6d3fc5a5be9b944d4316c46aeb9ed47f011409` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0126431923`,
+`column_height_end=0.3410644531`, `crown_sqrt_t_corr=0.9713680253`, and
+`max_crown_height=0.2715820372`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`d9392877c51bab7e1c9c143d6c430e3ccf2d825aaf54741e01830fc6cf0c9905`.
+`db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5`.
