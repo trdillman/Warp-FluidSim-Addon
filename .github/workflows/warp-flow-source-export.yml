@@ -21,7 +21,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p export/source
-          cat automation/warp_flow_demo_validation/runtime.b64.part* | base64 --decode > export/source.tar.xz
+          python - <<'PY'
+          from __future__ import annotations
+          import base64
+          import hashlib
+          from pathlib import Path
+
+          expected = '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46'
+          parts = sorted(Path('automation/warp_flow_demo_validation').glob('runtime.b64.part*'))
+          if not parts:
+              raise SystemExit('No runtime Base64 parts found')
+          encoded = [b''.join(path.read_bytes().split()) for path in parts]
+          candidates = {
+              'concatenated-stream': base64.b64decode(b''.join(encoded), validate=False),
+              'independent-parts': b''.join(base64.b64decode(value, validate=False) for value in encoded),
+          }
+          for label, payload in candidates.items():
+              digest = hashlib.sha256(payload).hexdigest()
+              print(label, len(payload), digest)
+              if digest == expected:
+                  Path('export/source.tar.xz').write_bytes(payload)
+                  break
+          else:
+              raise SystemExit('No Base64 reconstruction strategy matched the expected SHA-256')
+          PY
           echo '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46  export/source.tar.xz' | sha256sum -c -
           tar -xJf export/source.tar.xz -C export/source
           python -m compileall -q export/source
