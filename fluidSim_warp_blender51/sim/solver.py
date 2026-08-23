@@ -39,6 +39,7 @@ from .fields import (
 )
 from .particles import ParticleSystem, ParticleBins
 from .attributes import persistent_particle_channels
+from .color_mixing import ColorMixTransport
 from .quality_contract import resolve_quality
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
@@ -524,6 +525,10 @@ class SolverSettings:
     surface_tension_safety: float = 0.5
     surface_tension_smoothing_iterations: int = 1
 
+    # GPU-resident artistic mixing of the existing per-particle color channel.
+    species_enabled: bool = False
+    species_mixing_rate: float = 8.0
+
     surface_enabled: bool = True
     particle_radius_scale: float = 1.2
     surface_splat_radius: int = 2
@@ -805,6 +810,7 @@ class FluidSolver:
         self.sourcing = SourcePipeline(self)
         self.surface = SurfacePipeline(self)
         self.surface_tension = SurfaceTensionSolver(self)
+        self.color_mixing = self._new_color_mixing()
         self._host_frame_cache = None
         self.last_particle_growth = None
         self.snippets = SnippetManager()
@@ -1004,6 +1010,7 @@ class FluidSolver:
                 old_particles.capacity, self.device, expected_channels)
             del old_particles
         self.particles.clear()
+        self.color_mixing = self._new_color_mixing()
         self.whitewater.clear()
         self.churn.zero()
         self.frame = 0
@@ -1937,6 +1944,7 @@ class FluidSolver:
                     int(s.sample_type), s.flip_ratio],
             outputs=[p.velocity], device=self.device,
         )
+
         if s.spacetime_enabled:
             self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
             wp.launch(
@@ -1970,6 +1978,23 @@ class FluidSolver:
                         1 if s.open_boundaries else 0],
                 outputs=[p.alive], device=self.device,
             )
+
+    def _new_color_mixing(self):
+        if not bool(getattr(self.settings, "species_enabled", False)):
+            return None
+        return ColorMixTransport(self.grid, self.device)
+
+    def _mix_particle_colors(self, dt):
+        transport = self.color_mixing
+        if transport is None:
+            return
+        transport.mix(
+            self.particles,
+            self.grid,
+            dt,
+            float(getattr(self.settings, "species_mixing_rate", 8.0)),
+            self._nvox,
+        )
 
     def _lifecycle(self, dt):
         g = self.grid
@@ -2369,6 +2394,12 @@ class FluidSolver:
             self._run_effect_stage(EffectStage.AFTER_PARTICLE_UPDATE, time_ctx)
             self.sim_time += dt
             time_ctx["time"] = self.sim_time
+
+        # Color is an artistic display attribute, so exchange it once per
+        # display frame.  Exponential rate scaling keeps the result tied to
+        # elapsed simulation time without multiplying work by CFL substeps.
+        with self._phase("g2p"):
+            self._mix_particle_colors(frame_dt)
 
         self.frame += 1
         self._host_frame_cache = None

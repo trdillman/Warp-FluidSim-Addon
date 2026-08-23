@@ -92,6 +92,15 @@ def test_special_particle_capacity_policy_is_explicit(monkeypatch):
         "spacetime_resync_surface"] is pending.SettingTier.AUTHORED_NEXT_RUN
 
 
+def test_species_toggle_rebuilds_storage_but_rate_updates_live(monkeypatch):
+    _properties, pending, _bridge = _modules(monkeypatch)
+
+    assert pending.SETTING_TRANSITION_REGISTRY[
+        "species_enabled"] is pending.SettingTier.RESET
+    assert pending.SETTING_TRANSITION_REGISTRY[
+        "species_mixing_rate"] is pending.SettingTier.LIVE
+
+
 def test_scene_bridge_no_longer_owns_pending_policy(monkeypatch):
     properties, pending, bridge = _modules(monkeypatch)
     source = inspect.getsource(bridge)

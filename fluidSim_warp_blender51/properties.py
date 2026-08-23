@@ -60,6 +60,7 @@ LIQUID_VIEW_ITEMS = (
 
 LIQUID_ATTR_ITEMS = (
     ("NONE", "Material", "Use the assigned material color"),
+    ("COLOR", "Source Color", "Display the persistent source colors and their mixed result"),
     ("HEIGHT", "Height", "Color by world-space height"),
     ("SPEED", "Speed", "Color by liquid velocity magnitude"),
     ("TEMPERATURE", "Temperature", "Color by particle temperature attribute"),
@@ -1043,6 +1044,15 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Normal Smoothing", default=1, min=0, max=8,
         update=_request_live,
         description="Set normalized 7-point smoothing passes for SDF normals; more passes reduce curvature noise but soften small capillary features")
+
+    # -- Clear dye color mixing ---------------------------------------------------
+    species_enabled: BoolProperty(
+        name="Enable Color Mixing", default=False, update=_request_reset,
+        description="Mix the existing source colors on the GPU; changing color-channel storage resets the solver")
+    species_mixing_rate: FloatProperty(
+        name="Mixing Strength", default=8.0, min=0.0, soft_max=40.0,
+        update=_request_live,
+        description="Control how quickly nearby liquid particle colors approach their local mixture; zero preserves source colors")
 
     # -- Surface -------------------------------------------------------------------
     surface_enabled: BoolProperty(

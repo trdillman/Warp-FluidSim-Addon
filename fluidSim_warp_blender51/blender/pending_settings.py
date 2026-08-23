@@ -95,6 +95,7 @@ _LIVE_REGISTRY_FIELDS = frozenset({
     "viscosity_tolerance", "surface_tension_coefficient",
     "surface_tension_density", "surface_tension_band_voxels",
     "surface_tension_safety", "surface_tension_smoothing_iterations",
+    "species_mixing_rate",
     "ww_churn_decay", "ww_churn_gain",
     "ww_churn_threshold", "ww_emission_rate", "ww_min_speed",
     "ww_life_min", "ww_life_max", "ww_bubble_drag", "ww_spray_drag",
@@ -131,7 +132,7 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
-    "surface_tension_enabled",
+    "surface_tension_enabled", "species_enabled",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",

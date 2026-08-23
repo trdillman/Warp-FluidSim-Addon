@@ -174,6 +174,8 @@ def persistent_particle_channels(settings) -> tuple[str, ...]:
     required: set[str] = set()
     for output_kind in ("surface", "particles"):
         required.update(enabled_attribute_keys(settings, output_kind))
+    if bool(getattr(settings, "species_enabled", False)):
+        required.add("color")
     return tuple(key for key in ("color", "source_id", "uid")
                  if key in required)
 

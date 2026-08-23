@@ -372,6 +372,8 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
             enabled.append("Viscosity")
         if fs.surface_tension_enabled:
             enabled.append("Surface tension")
+        if fs.species_enabled:
+            enabled.append("Color mixing")
         if fs.spacetime_enabled:
             enabled.append("ST-FLIP")
         layout.label(text="Active: " + (", ".join(enabled) if enabled else "Base liquid solver"))
@@ -473,6 +475,24 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
         stats.prop(fs, "stat_capillary_clamped", text="Clamped by Max Substeps")
         if fs.stat_surface_tension_message:
             _draw_wrapped(stats, fs.stat_surface_tension_message, icon="INFO")
+
+
+class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Color Mixing"
+    bl_idname = "FLUIDSIM_PT_sim_color_mixing"
+    bl_parent_id = "FLUIDSIM_PT_scene_simulation"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = _layout(self)
+        fs = context.scene.fluidsim
+        layout.prop(fs, "species_enabled")
+        if not fs.species_enabled:
+            return
+        layout.prop(fs, "species_mixing_rate")
+        box = layout.box()
+        box.label(text="Emitter colors are configured per fluid source.", icon="COLOR")
+        box.label(text="Any number of source colors can mix.")
 
 
 class FLUIDSIM_PT_sim_relax(FluidSimScenePanel, bpy.types.Panel):
@@ -1135,6 +1155,7 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_sim_pressure,
     FLUIDSIM_PT_sim_viscosity,
     FLUIDSIM_PT_sim_surface_tension,
+    FLUIDSIM_PT_sim_color_mixing,
     FLUIDSIM_PT_sim_relax,
     FLUIDSIM_PT_sim_limits,
     FLUIDSIM_PT_sim_forces,

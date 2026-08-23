@@ -31,6 +31,19 @@ def test_selected_projection_owns_vectors_and_maps_alias_and_enum():
     assert settings.speed_limit_behavior.name == "ACCELERATION"
 
 
+def test_species_mixing_settings_project_without_a_separate_substep_control():
+    from fluidSim_warp_blender51.blender import solver_settings
+
+    fs = SimpleNamespace(species_enabled=True, species_mixing_rate=12.5)
+    settings = SolverSettings()
+
+    solver_settings.apply_scene_settings(
+        fs, settings, {"species_enabled", "species_mixing_rate"})
+
+    assert settings.species_enabled is True
+    assert settings.species_mixing_rate == 12.5
+
+
 def test_registry_validation_fails_closed_for_unknown_target(monkeypatch):
     from fluidSim_warp_blender51.blender import solver_settings
 

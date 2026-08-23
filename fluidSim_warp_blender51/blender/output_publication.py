@@ -323,6 +323,13 @@ def _values_to_colors(values):
     values = np.asarray(values, dtype=np.float32)
     if len(values) == 0:
         return np.zeros((0, 4), dtype=np.float32)
+    if values.ndim == 2 and values.shape[1] in {3, 4}:
+        colors = np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=0.0)
+        colors = np.clip(colors, 0.0, 1.0)
+        if colors.shape[1] == 3:
+            colors = np.column_stack((
+                colors, np.ones(len(colors), dtype=np.float32)))
+        return np.ascontiguousarray(colors, dtype=np.float32)
     finite = np.isfinite(values)
     if not finite.any():
         t = np.zeros(len(values), dtype=np.float32)
@@ -354,10 +361,11 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
     points = np.asarray(points, dtype=np.float32)
     sample_points = np.asarray(sample_points, dtype=np.float32)
     sample_values = np.asarray(sample_values, dtype=np.float32)
+    value_shape = tuple(sample_values.shape[1:])
     if len(points) == 0:
-        return np.zeros(0, dtype=np.float32)
+        return np.zeros((0, *value_shape), dtype=np.float32)
     if len(sample_points) == 0:
-        return np.zeros(len(points), dtype=np.float32)
+        return np.zeros((len(points), *value_shape), dtype=np.float32)
     # Cap CPU-side lookup work for interactive attribute debugging.
     max_samples = 120_000
     if len(sample_points) > max_samples:
@@ -390,8 +398,9 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
     unique_keys, sample_starts, sample_counts = np.unique(
         sample_linear[sample_order], return_index=True, return_counts=True)
 
-    default = float(np.nanmean(sample_values)) if len(sample_values) else 0.0
-    out = np.full(len(points), default, dtype=np.float32)
+    default = np.nanmean(sample_values, axis=0)
+    out = np.empty((len(points), *value_shape), dtype=np.float32)
+    out[...] = default
     offsets = np.asarray([
         (dx, dy, dz) for dx in range(-1, 2)
         for dy in range(-1, 2) for dz in range(-1, 2)
@@ -769,6 +778,10 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None,
     if mode == "TIME_OFFSET":
         values = (host.particle_attr("time_offset") if host is not None else
                   solver.particles.time_offset.numpy()[:solver.particles.host_count])
+        return values[indices] if indices is not None else values
+    if mode == "COLOR":
+        values = (host.particle_attr("color") if host is not None else
+                  solver.particles.attr("color").numpy()[:solver.particles.host_count])
         return values[indices] if indices is not None else values
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:

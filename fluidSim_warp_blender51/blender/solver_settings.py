@@ -33,6 +33,7 @@ DIRECT_SETTING_FIELDS = (
     "surface_tension_enabled", "surface_tension_coefficient",
     "surface_tension_density", "surface_tension_band_voxels",
     "surface_tension_safety", "surface_tension_smoothing_iterations",
+    "species_enabled", "species_mixing_rate",
     "surface_enabled",
     "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_multiplier", "surface_voxel_size",

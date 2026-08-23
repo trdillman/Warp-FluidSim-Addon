@@ -202,6 +202,7 @@ DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_sim_pressure,
     ui_scene.FLUIDSIM_PT_sim_viscosity,
     ui_scene.FLUIDSIM_PT_sim_surface_tension,
+    ui_scene.FLUIDSIM_PT_sim_color_mixing,
     ui_scene.FLUIDSIM_PT_sim_relax,
     ui_scene.FLUIDSIM_PT_sim_limits,
     ui_scene.FLUIDSIM_PT_sim_forces,
