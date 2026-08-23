@@ -11,6 +11,7 @@ from collections import Counter
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+import json
 import sys
 
 import numpy as np
@@ -19,7 +20,9 @@ from ..sim.attributes import (
     ATTRIBUTE_ALIASES,
     ATTRIBUTE_SPECS,
     cache_attribute_name,
+    derive_species_preview_colors,
     enabled_attribute_keys,
+    nearest_sample_indices,
     validate_attribute_values,
 )
 from ..sim.constants import TIMER_PHASE_SLOTS
@@ -312,6 +315,14 @@ def _values_to_colors(values):
     return stops[i] * (1.0 - f) + stops[i + 1] * f
 
 
+def _display_colors(mode, values):
+    if values is None:
+        return None
+    if str(mode) == "CLEAR_DYE":
+        return validate_attribute_values(ATTRIBUTE_SPECS["color"], values, len(values))
+    return _values_to_colors(values)
+
+
 def _nearest_values(points, sample_points, sample_values, cell_size):
     points = np.asarray(points, dtype=np.float32)
     sample_points = np.asarray(sample_points, dtype=np.float32)
@@ -412,6 +423,21 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
         query_start = query_end
         query_batch = 4096
     return out
+
+
+def _nearest_aligned_values(points, sample_points, sample_values, cell_size):
+    """Transfer scalar or vector values through the canonical nearest map."""
+    points = np.asarray(points, dtype=np.float32).reshape((-1, 3))
+    sample_points = np.asarray(sample_points, dtype=np.float32).reshape((-1, 3))
+    values = np.asarray(sample_values)
+    if not len(points):
+        return np.ascontiguousarray(values[:0])
+    if not len(sample_points):
+        shape = (len(points),) + tuple(values.shape[1:])
+        return np.zeros(shape, dtype=values.dtype if values.size else np.float32)
+    indices = nearest_sample_indices(
+        points, sample_points, cell_size=max(float(cell_size), 1.0e-5))
+    return np.ascontiguousarray(values[indices])
 
 
 def _write_mesh_colors(mesh, tris, vertex_colors):
@@ -732,6 +758,11 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None,
         values = (host.particle_attr("time_offset") if host is not None else
                   solver.particles.time_offset.numpy()[:solver.particles.host_count])
         return values[indices] if indices is not None else values
+    if mode == "CLEAR_DYE":
+        if host is None:
+            return None
+        stride = (indices.step if isinstance(indices, slice) and indices.step else 1)
+        return host.species_preview_colors(stride=stride)
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
         vals = (host.particle_attr(name) if host is not None else
@@ -764,6 +795,24 @@ def _surface_values(solver, mode, verts, host=None):
         return None
     if mode == "HEIGHT":
         return verts[:, 2]
+    if mode == "CLEAR_DYE":
+        if host is None or not host._species_enabled():
+            return None
+        positions = host.positions
+        if not len(positions):
+            return derive_species_preview_colors(
+                np.zeros((len(verts), 4), dtype=np.float32),
+                solver.settings.species_absorption_rgb,
+                solver.settings.species_reference_path_length,
+            )
+        concentrations = _nearest_aligned_values(
+            verts, positions, host.species_concentrations(),
+            solver.settings.voxel_size * 2.0)
+        return derive_species_preview_colors(
+            concentrations,
+            solver.settings.species_absorption_rgb,
+            solver.settings.species_reference_path_length,
+        )
     pos = host.positions if host is not None else solver.particle_positions()
     vel = (host.velocities if host is not None and mode == "SPEED" else
            solver.particle_velocities() if mode == "SPEED" else None)
@@ -865,8 +914,14 @@ def prepare_live_payload(scene, host, publish_surface=True):
     particle_values = (_particle_values(
         solver, fs.particle_attribute_mode, positions, indices=indices,
         host=host) if fs.show_particles else None)
-    particle_attributes = _attribute_map(
-        fs.particle_attribute_mode, particle_values)
+    particle_inventory = enabled_attribute_keys(fs, "particles")
+    particle_attributes = (host.output_attributes(
+        fs, "particles", stride=step)
+        if fs.show_particles and particle_inventory else {})
+    particle_attributes.update(_attribute_map(
+        fs.particle_attribute_mode, particle_values))
+    if particle_values is not None and fs.particle_attribute_mode == "CLEAR_DYE":
+        particle_attributes["color"] = np.asarray(particle_values, dtype=np.float32)
 
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
@@ -881,8 +936,14 @@ def prepare_live_payload(scene, host, publish_surface=True):
         verts, tris = host.surface_mesh
         surface_values = _surface_values(
             solver, fs.surface_attribute_mode, verts, host=host)
-        surface_attributes = _attribute_map(
-            fs.surface_attribute_mode, surface_values)
+        surface_inventory = enabled_attribute_keys(fs, "surface")
+        surface_attributes = (host.output_attributes(
+            fs, "surface", positions=verts)
+            if surface_inventory else {})
+        surface_attributes.update(_attribute_map(
+            fs.surface_attribute_mode, surface_values))
+        if surface_values is not None and fs.surface_attribute_mode == "CLEAR_DYE":
+            surface_attributes["color"] = np.asarray(surface_values, dtype=np.float32)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)
@@ -950,6 +1011,34 @@ def prepare_cache_payload(scene, frame_data):
         frame_data, "whitewater", fs.whitewater_attribute_mode,
         whitewater, whitewater_velocities)
 
+    species_marker = "species_schema_version" in frame_data
+    species_requested = species_marker and any((
+        bool(getattr(fs, "particles_attribute_species", False)),
+        bool(getattr(fs, "surface_attribute_species", False)),
+        bool(getattr(fs, "particles_attribute_color", False)),
+        bool(getattr(fs, "surface_attribute_color", False)),
+        str(fs.particle_attribute_mode) == "CLEAR_DYE",
+        str(fs.surface_attribute_mode) == "CLEAR_DYE",
+    ))
+    species_concentrations = None
+    species_palette = None
+    if species_requested:
+        species_concentrations = validate_attribute_values(
+            ATTRIBUTE_SPECS["species"],
+            frame_data.get("particle_species_concentration", ()),
+            len(positions),
+        )
+        raw_palette = frame_data.get("species_palette_json")
+        if raw_palette is None:
+            raise ValueError("species cache presentation is missing palette metadata")
+        species_palette = json.loads(str(np.asarray(raw_palette).item()))
+        # Validate palette and simplex before any publication payload is built.
+        derive_species_preview_colors(
+            species_concentrations,
+            species_palette["absorption_rgb"],
+            species_palette["reference_path_length"],
+        )
+
     surface_attributes = {
         key: np.asarray(frame_data[cache_attribute_name("surface", key)])
         for key in inventory.get("surface", ())
@@ -962,6 +1051,36 @@ def prepare_cache_payload(scene, frame_data):
         key: np.asarray(frame_data[cache_attribute_name("whitewater", key)])
         for key in inventory.get("whitewater", ())
     }
+    if species_concentrations is not None:
+        particle_preview = derive_species_preview_colors(
+            species_concentrations,
+            species_palette["absorption_rgb"],
+            species_palette["reference_path_length"],
+        )
+        surface_species = (_nearest_aligned_values(
+            verts, positions, species_concentrations, voxel_size * 2.0)
+            if len(positions) else np.zeros((len(verts), 4), dtype=np.float32))
+        surface_preview = derive_species_preview_colors(
+            surface_species,
+            species_palette["absorption_rgb"],
+            species_palette["reference_path_length"],
+        )
+        if (bool(getattr(fs, "particles_attribute_species", False))
+                or str(fs.particle_attribute_mode) == "CLEAR_DYE"):
+            particle_attributes["species"] = species_concentrations
+        if (bool(getattr(fs, "surface_attribute_species", False))
+                or str(fs.surface_attribute_mode) == "CLEAR_DYE"):
+            surface_attributes["species"] = surface_species
+        if (bool(getattr(fs, "particles_attribute_color", False))
+                or str(fs.particle_attribute_mode) == "CLEAR_DYE"):
+            particle_attributes["color"] = particle_preview
+        if (bool(getattr(fs, "surface_attribute_color", False))
+                or str(fs.surface_attribute_mode) == "CLEAR_DYE"):
+            surface_attributes["color"] = surface_preview
+        if str(fs.particle_attribute_mode) == "CLEAR_DYE":
+            particle_values = particle_preview
+        if str(fs.surface_attribute_mode) == "CLEAR_DYE":
+            surface_values = surface_preview
     if surface_values is not None:
         surface_attributes[str(fs.surface_attribute_mode)] = surface_values
     if particle_values is not None:
@@ -1069,7 +1188,7 @@ def publish_payload(scene, payload):
         if payload.publish_surface:
             values = payload.surface_attributes.get(
                 payload.surface_attribute_mode)
-            colors = _values_to_colors(values) if values is not None else None
+            colors = _display_colors(payload.surface_attribute_mode, values)
             obj = _ensure_object(
                 scene, SURFACE_NAME,
                 lambda: _new_blender_id(
@@ -1090,7 +1209,7 @@ def publish_payload(scene, payload):
     if payload.particles_visible:
         values = payload.particle_attributes.get(
             payload.particle_attribute_mode)
-        colors = _values_to_colors(values) if values is not None else None
+        colors = _display_colors(payload.particle_attribute_mode, values)
         obj = _ensure_point_object(
             scene, PARTICLES_NAME,
             tuple(key for key in ATTRIBUTE_SPECS

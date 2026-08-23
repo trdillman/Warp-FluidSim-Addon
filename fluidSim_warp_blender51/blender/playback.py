@@ -234,6 +234,22 @@ def _check_cache_scene_key(scene, base, frame_data):
                 frame=frame, baked=candidate[:12], current=current[:12]))
 
 
+def _species_cache_requirements(fs):
+    if not bool(getattr(fs, "species_enabled", False)):
+        return {}
+    from ..sim.species import SpeciesPalette
+
+    palette = SpeciesPalette.create(
+        ids=(fs.species_id_a, fs.species_id_b),
+        absorption_rgb=(fs.species_absorption_a, fs.species_absorption_b),
+        reference_path_length=fs.species_reference_path_length,
+    )
+    return {
+        "species_enabled": True,
+        "expected_species_palette_hash": palette.palette_hash,
+    }
+
+
 def play_cache_frame(sess, scene, frame=None):
     """Publish one cached frame without initializing or stepping a solver."""
     from . import output_publication
@@ -252,7 +268,8 @@ def play_cache_frame(sess, scene, frame=None):
             raise FileNotFoundError(
                 f"Cache frame {frame} is outside playback range {start}-{end}")
     base = bpy.path.abspath(fs.cache_path)
-    frame_data = cache.read_frame(base, frame)
+    frame_data = cache.read_frame(
+        base, frame, **_species_cache_requirements(fs))
     if frame_data is None:
         raise FileNotFoundError(
             f"Cache frame {frame} is missing or corrupt in {base}")

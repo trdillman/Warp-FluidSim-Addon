@@ -15,6 +15,17 @@ def test_phase_slots_are_complete_and_unique():
     assert len(TIMER_PHASE_SLOTS) == len(set(TIMER_PHASE_SLOTS))
 
 
+def test_species_has_a_canonical_phase_slot_without_advection_aliasing():
+    assert TIMER_PHASE_SLOTS["species"] == 7
+    assert "advection" not in TIMER_PHASE_SLOTS
+
+    profiler = Profiler(device="cpu", sync=False)
+    profiler._wp = SimpleNamespace()
+    with profiler.track("species"):
+        pass
+    assert profiler.frame.timers["compute_7"] >= 0.0
+
+
 def test_unknown_profiler_phase_fails_instead_of_using_misc_slot():
     profiler = Profiler(device="cpu", sync=False)
     profiler._wp = SimpleNamespace()

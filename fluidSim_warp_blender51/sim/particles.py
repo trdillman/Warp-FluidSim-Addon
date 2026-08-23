@@ -14,8 +14,11 @@ from .constants import LEAF_VOLUME
 
 
 PHYSICAL_ATTR_NAMES = ("age", "life", "temperature", "viscosity", "density")
-OPTIONAL_VEC4_ATTR_NAMES = ("color",)
+OPTIONAL_FLOAT_ATTR_NAMES = ("represented_volume",)
+OPTIONAL_VEC4_ATTR_NAMES = ("color", "species_concentration")
 OPTIONAL_INT_ATTR_NAMES = ("source_id", "uid")
+SPECIES_OPTIONAL_ATTR_NAMES = frozenset(
+    ("represented_volume", "species_concentration"))
 
 
 @wp.kernel
@@ -89,12 +92,79 @@ def k_compact_alive_scatter(
 
 
 @wp.kernel
+def k_species_compact_alive_scatter(
+    alive: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    count_in: wp.array(dtype=wp.int32),
+    src_pos: wp.array(dtype=wp.vec3),
+    src_vel: wp.array(dtype=wp.vec3),
+    src_f0: wp.array(dtype=float),
+    src_f1: wp.array(dtype=float),
+    src_f2: wp.array(dtype=float),
+    src_f3: wp.array(dtype=float),
+    src_f4: wp.array(dtype=float),
+    src_time_offset: wp.array(dtype=float),
+    represented_volume: wp.array(dtype=float),
+    concentration: wp.array(dtype=wp.vec4),
+    dst_represented_volume: wp.array(dtype=float),
+    dst_concentration: wp.array(dtype=wp.vec4),
+    receipt: wp.array(dtype=float),
+    sinks_offset: int,
+    dst_pos: wp.array(dtype=wp.vec3),
+    dst_vel: wp.array(dtype=wp.vec3),
+    dst_f0: wp.array(dtype=float),
+    dst_f1: wp.array(dtype=float),
+    dst_f2: wp.array(dtype=float),
+    dst_f3: wp.array(dtype=float),
+    dst_f4: wp.array(dtype=float),
+    dst_time_offset: wp.array(dtype=float),
+    count_out: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    n = count_in[0]
+    if tid >= n:
+        return
+    volume = represented_volume[tid]
+    value = concentration[tid]
+    if alive[tid] == 0:
+        wp.atomic_add(receipt, sinks_offset, volume * value[0])
+        wp.atomic_add(receipt, sinks_offset + 1, volume * value[1])
+        return
+    j = offsets[tid]
+    dst_pos[j] = src_pos[tid]
+    dst_vel[j] = src_vel[tid]
+    dst_f0[j] = src_f0[tid]
+    dst_f1[j] = src_f1[tid]
+    dst_f2[j] = src_f2[tid]
+    dst_f3[j] = src_f3[tid]
+    dst_f4[j] = src_f4[tid]
+    dst_time_offset[j] = src_time_offset[tid]
+    dst_represented_volume[j] = volume
+    dst_concentration[j] = value
+    if tid == n - 1:
+        count_out[0] = j + 1
+
+
+@wp.kernel
 def k_compact_vec4_scatter(
     alive: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
     count_in: wp.array(dtype=wp.int32),
     source: wp.array(dtype=wp.vec4),
     target: wp.array(dtype=wp.vec4),
+):
+    tid = wp.tid()
+    if tid < count_in[0] and alive[tid] != 0:
+        target[offsets[tid]] = source[tid]
+
+
+@wp.kernel
+def k_compact_float_scatter(
+    alive: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    count_in: wp.array(dtype=wp.int32),
+    source: wp.array(dtype=float),
+    target: wp.array(dtype=float),
 ):
     tid = wp.tid()
     if tid < count_in[0] and alive[tid] != 0:
@@ -137,6 +207,7 @@ class ParticleSystem:
     """
 
     ATTR_NAMES = PHYSICAL_ATTR_NAMES
+    OPTIONAL_FLOAT_ATTR_NAMES = OPTIONAL_FLOAT_ATTR_NAMES
     OPTIONAL_VEC4_ATTR_NAMES = OPTIONAL_VEC4_ATTR_NAMES
     OPTIONAL_INT_ATTR_NAMES = OPTIONAL_INT_ATTR_NAMES
 
@@ -144,17 +215,27 @@ class ParticleSystem:
         self.capacity = int(capacity)
         self.device = device
         selected = frozenset(str(name) for name in optional_channels)
-        unknown = selected - set(OPTIONAL_VEC4_ATTR_NAMES) - set(OPTIONAL_INT_ATTR_NAMES)
+        unknown = (selected - set(OPTIONAL_FLOAT_ATTR_NAMES)
+                   - set(OPTIONAL_VEC4_ATTR_NAMES) - set(OPTIONAL_INT_ATTR_NAMES))
         if unknown:
             raise ValueError(f"unsupported optional particle channels: {sorted(unknown)}")
+        selected_species = selected & SPECIES_OPTIONAL_ATTR_NAMES
+        if selected_species and selected_species != SPECIES_OPTIONAL_ATTR_NAMES:
+            raise ValueError(
+                "represented_volume and species_concentration must be allocated together")
         self.optional_channels = tuple(
-            name for name in (*OPTIONAL_VEC4_ATTR_NAMES, *OPTIONAL_INT_ATTR_NAMES)
+            name for name in (*OPTIONAL_FLOAT_ATTR_NAMES, *OPTIONAL_VEC4_ATTR_NAMES,
+                              *OPTIONAL_INT_ATTR_NAMES)
             if name in selected)
         n = self.capacity
         self.position = wp.zeros(n, dtype=wp.vec3, device=device)
         self.velocity = wp.zeros(n, dtype=wp.vec3, device=device)
         self.attrs = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
+        }
+        self.float_attrs = {
+            name: wp.zeros(n, dtype=float, device=device)
+            for name in OPTIONAL_FLOAT_ATTR_NAMES if name in selected
         }
         self.vec4_attrs = {
             name: wp.zeros(n, dtype=wp.vec4, device=device)
@@ -165,6 +246,7 @@ class ParticleSystem:
             for name in OPTIONAL_INT_ATTR_NAMES if name in selected
         }
         # Kernels receive stable typed placeholders when a channel is disabled.
+        self._dummy_float = wp.zeros(1, dtype=float, device=device)
         self._dummy_vec4 = wp.zeros(1, dtype=wp.vec4, device=device)
         self._dummy_int = wp.zeros(1, dtype=wp.int32, device=device)
         # ST-FLIP residual: delta_t = t_global - t_particle.
@@ -173,6 +255,10 @@ class ParticleSystem:
         self._velocity2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._attrs2 = {
             name: wp.zeros(n, dtype=float, device=device) for name in self.ATTR_NAMES
+        }
+        self._float_attrs2 = {
+            name: wp.zeros(n, dtype=float, device=device)
+            for name in self.float_attrs
         }
         self._vec4_attrs2 = {
             name: wp.zeros(n, dtype=wp.vec4, device=device)
@@ -192,13 +278,18 @@ class ParticleSystem:
         self.next_uid = 1
 
     def has_optional_channel(self, name: str) -> bool:
-        return name in self.vec4_attrs or name in self.int_attrs
+        return (name in self.float_attrs or name in self.vec4_attrs
+                or name in self.int_attrs)
 
     def optional_array(self, name: str):
+        if name in self.float_attrs:
+            return self.float_attrs[name]
         if name in self.vec4_attrs:
             return self.vec4_attrs[name]
         if name in self.int_attrs:
             return self.int_attrs[name]
+        if name in OPTIONAL_FLOAT_ATTR_NAMES:
+            return self._dummy_float
         if name in OPTIONAL_VEC4_ATTR_NAMES:
             return self._dummy_vec4
         if name in OPTIONAL_INT_ATTR_NAMES:
@@ -210,11 +301,31 @@ class ParticleSystem:
             return self.time_offset
         if name in self.attrs:
             return self.attrs[name]
+        if name in self.float_attrs:
+            return self.float_attrs[name]
         if name in self.vec4_attrs:
             return self.vec4_attrs[name]
         if name in self.int_attrs:
             return self.int_attrs[name]
         raise KeyError(name)
+
+    def validate_species_birth_state(
+            self, represented_volume, species_concentration) -> None:
+        """Validate authoritative species values before a birth mutates count."""
+        if not SPECIES_OPTIONAL_ATTR_NAMES.issubset(self.optional_channels):
+            raise ValueError("species particle state is not enabled")
+        volume = np.asarray(represented_volume, dtype=np.float32)
+        concentration = np.asarray(species_concentration, dtype=np.float32)
+        if not np.all(np.isfinite(volume)) or np.any(volume <= 0.0):
+            raise ValueError("represented volume must be finite and positive")
+        if concentration.shape[-1:] != (4,) or not np.all(np.isfinite(concentration)):
+            raise ValueError("species concentration must contain four finite lanes")
+        if np.any(concentration[..., :2] < 0.0):
+            raise ValueError("active species concentrations must be nonnegative")
+        if np.any(concentration[..., :2].sum(axis=-1) > 1.0):
+            raise ValueError("active species concentrations must remain in the simplex")
+        if np.any(concentration[..., 2:] != 0.0):
+            raise ValueError("unused lanes z and w must remain zero")
 
     def clamp_count(self):
         wp.launch(k_clamp_count, dim=1, inputs=[self.count, self.capacity],
@@ -228,7 +339,8 @@ class ParticleSystem:
     def clear(self):
         self.count.zero_()
         self.time_offset.zero_()
-        for value in (*self.vec4_attrs.values(), *self.int_attrs.values()):
+        for value in (*self.float_attrs.values(), *self.vec4_attrs.values(),
+                      *self.int_attrs.values()):
             value.zero_()
         self.host_count = 0
         self.next_uid = 1
@@ -245,6 +357,8 @@ class ParticleSystem:
             wp.copy(grown.velocity, self.velocity, count=count)
             for name in self.ATTR_NAMES:
                 wp.copy(grown.attrs[name], self.attrs[name], count=count)
+            for name in self.float_attrs:
+                wp.copy(grown.float_attrs[name], self.float_attrs[name], count=count)
             for name in self.vec4_attrs:
                 wp.copy(grown.vec4_attrs[name], self.vec4_attrs[name], count=count)
             for name in self.int_attrs:
@@ -260,6 +374,9 @@ class ParticleSystem:
     def checkpoint_arrays(self, count: int) -> dict[str, np.ndarray]:
         """Return enabled product channels as owned checkpoint arrays."""
         result = {}
+        for name, value in self.float_attrs.items():
+            result[f"particle_attr_{name}"] = np.ascontiguousarray(
+                value.numpy()[:count], dtype=np.float32)
         for name, value in self.vec4_attrs.items():
             result[f"particle_attr_{name}"] = np.ascontiguousarray(
                 value.numpy()[:count], dtype=np.float32)
@@ -281,6 +398,8 @@ class ParticleSystem:
             "particle_time_offset": ((count,), np.float32),
         }
         for name in self.ATTR_NAMES:
+            required[f"particle_attr_{name}"] = ((count,), np.float32)
+        for name in self.float_attrs:
             required[f"particle_attr_{name}"] = ((count,), np.float32)
         for name in self.vec4_attrs:
             required[f"particle_attr_{name}"] = ((count, 4), np.float32)
@@ -312,6 +431,7 @@ class ParticleSystem:
             value.zero_()
         for value in (
                 *self.attrs.values(), *self._attrs2.values(),
+                *self.float_attrs.values(), *self._float_attrs2.values(),
                 *self.vec4_attrs.values(), *self._vec4_attrs2.values(),
                 *self.int_attrs.values(), *self._int_attrs2.values()):
             value.zero_()
@@ -331,6 +451,10 @@ class ParticleSystem:
                 wp.copy(self.attrs[name], wp.array(
                     normalized[f"particle_attr_{name}"], dtype=float,
                     device=self.device), count=count)
+            for name in self.float_attrs:
+                wp.copy(self.float_attrs[name], wp.array(
+                    normalized[f"particle_attr_{name}"], dtype=float,
+                    device=self.device), count=count)
             for name in self.vec4_attrs:
                 wp.copy(self.vec4_attrs[name], wp.array(
                     normalized[f"particle_attr_{name}"], dtype=wp.vec4,
@@ -344,7 +468,8 @@ class ParticleSystem:
         self._count2.zero_()
         self.host_count = count
 
-    def compact(self, count_hint: int | None = None):
+    def compact(self, count_hint: int | None = None, *,
+                species_sink_ledger=None):
         """Remove dead particles while keeping every enabled channel aligned."""
         n = self.capacity if count_hint is None else max(
             0, min(int(count_hint), self.capacity))
@@ -354,30 +479,59 @@ class ParticleSystem:
             self.host_count = 0
             return
         self.clamp_count()
+        if count_hint is not None:
+            # ``count_hint`` bounds launch/scan work; the device count remains
+            # authoritative across repeated substeps.  Clamp a bad low hint
+            # fail-closed instead of replacing a smaller live count with stale
+            # host state and reprocessing dead double-buffer tails.
+            wp.launch(k_clamp_count, dim=1, inputs=[self.count, n],
+                      device=self.device)
         alive = self.alive if count_hint is None else self.alive[:n]
         scan_tmp = self.scan_tmp if count_hint is None else self.scan_tmp[:n]
         count_in = self.count
         count_out = self._count2
-        if count_hint is not None:
-            wp.launch(k_set_count, dim=1, inputs=[self._count2, n],
-                      device=self.device)
-            count_in = self._count2
-            count_out = self.count
         wp.utils.array_scan(alive, scan_tmp, inclusive=False)
         wp.launch(k_last_offset_count, dim=1,
                   inputs=[self.alive, self.scan_tmp, count_in, count_out],
                   device=self.device)
-        wp.launch(k_compact_alive_scatter, dim=n, inputs=[
+        base_inputs = [
             self.alive, self.scan_tmp, count_in,
             self.position, self.velocity,
             self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
             self.attrs["viscosity"], self.attrs["density"], self.time_offset,
+        ]
+        base_outputs = [
             self._position2, self._velocity2,
             self._attrs2["age"], self._attrs2["life"],
             self._attrs2["temperature"], self._attrs2["viscosity"],
             self._attrs2["density"], self._time_offset2, count_out,
-        ], device=self.device)
+        ]
+        if species_sink_ledger is None:
+            wp.launch(k_compact_alive_scatter, dim=n,
+                      inputs=[*base_inputs, *base_outputs], device=self.device)
+        else:
+            if not SPECIES_OPTIONAL_ATTR_NAMES <= set(self.optional_channels):
+                raise ValueError("species compaction requires persistent channels")
+            receipt, sinks = species_sink_ledger
+            wp.launch(k_species_compact_alive_scatter, dim=n, inputs=[
+                *base_inputs,
+                self.float_attrs["represented_volume"],
+                self.vec4_attrs["species_concentration"],
+                self._float_attrs2["represented_volume"],
+                self._vec4_attrs2["species_concentration"],
+                receipt, int(sinks),
+                *base_outputs,
+            ], device=self.device)
+        for name in self.float_attrs:
+            if species_sink_ledger is not None and name == "represented_volume":
+                continue
+            wp.launch(k_compact_float_scatter, dim=n, inputs=[
+                self.alive, self.scan_tmp, count_in,
+                self.float_attrs[name], self._float_attrs2[name],
+            ], device=self.device)
         for name in self.vec4_attrs:
+            if species_sink_ledger is not None and name == "species_concentration":
+                continue
             wp.launch(k_compact_vec4_scatter, dim=n, inputs=[
                 self.alive, self.scan_tmp, count_in,
                 self.vec4_attrs[name], self._vec4_attrs2[name],
@@ -392,14 +546,16 @@ class ParticleSystem:
         self.time_offset, self._time_offset2 = self._time_offset2, self.time_offset
         for name in self.ATTR_NAMES:
             self.attrs[name], self._attrs2[name] = self._attrs2[name], self.attrs[name]
+        for name in self.float_attrs:
+            self.float_attrs[name], self._float_attrs2[name] = (
+                self._float_attrs2[name], self.float_attrs[name])
         for name in self.vec4_attrs:
             self.vec4_attrs[name], self._vec4_attrs2[name] = (
                 self._vec4_attrs2[name], self.vec4_attrs[name])
         for name in self.int_attrs:
             self.int_attrs[name], self._int_attrs2[name] = (
                 self._int_attrs2[name], self.int_attrs[name])
-        if count_out is self._count2:
-            wp.copy(self.count, self._count2)
+        wp.copy(self.count, self._count2)
         wp.launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
                   device=self.device)
 

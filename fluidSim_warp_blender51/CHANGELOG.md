@@ -21,6 +21,12 @@ All notable user-facing changes are recorded here. FluidSim follows a three-part
 - Guided setup installs the current bundled render-node revision on all three owned output objects.
 - Persistent render-attribute inventory changes are Reset-tier and participate in solver/cache compatibility signatures; viewport debug coloring remains a separate presentation path.
 
+### Fixed
+
+- Cache playback retries a frame after failed publication and reinitializes singleton solver sessions when Blender scene ownership changes.
+- Lazy particle and whitewater outputs share one refreshed live-count snapshot, so attributes requested before positions remain complete without redundant host-count reads.
+- Cache metadata, point export, benchmark comparison, profiler windows, particle-capacity growth, source sampling, custom snippets, and kernel registration now reject malformed or ambiguous inputs without leaving partial state.
+
 ### Validation status
 
 - The pure-Python suite, source verification, supplied-Warp CPU execution, supplied-Blender attribute publication, save/reopen, Geometry Nodes evaluation, and Eevee F12 rendering pass for this increment.

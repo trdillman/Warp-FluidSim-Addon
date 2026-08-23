@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import os
+from pathlib import Path
 import sys
 import types
 import weakref
@@ -320,6 +321,203 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
     assert scene.fluidsim.stat_whitewater_status == "DROPPED"
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
+
+
+def test_species_cache_playback_passes_scene_requirements_to_reader(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    scene.fluidsim.species_enabled = True
+    scene.fluidsim.species_id_a = "dye_a"
+    scene.fluidsim.species_id_b = "dye_b"
+    scene.fluidsim.species_absorption_a = (0.05, 1.75, 2.75)
+    scene.fluidsim.species_absorption_b = (2.75, 1.25, 0.05)
+    scene.fluidsim.species_reference_path_length = 1.0
+    calls = []
+
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_viewport.update_outputs_from_cache_frame = lambda *_args: None
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+
+    def read_frame(base, frame, **kwargs):
+        calls.append((base, frame, kwargs))
+        raise ValueError("species cache data is missing")
+
+    fake_cache.read_frame = read_frame
+    fake_cache.resolve_frame_range = lambda *args, **kwargs: (1, 10)
+    fake_cache.read_sequence_metadata = lambda _base: None
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+
+    with pytest.raises(ValueError, match="species cache data is missing"):
+        scene_bridge.playback.play_cache_frame(
+            scene_bridge.session(), scene, scene.frame_current)
+
+    assert len(calls) == 1
+    assert calls[0][2]["species_enabled"] is True
+    assert len(calls[0][2]["expected_species_palette_hash"]) == 64
+
+
+def test_failed_cache_publication_does_not_consume_timeline_frame(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_frame = lambda _base, _frame: None
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+    sess = scene_bridge.session()
+    sess.last_frame = 3
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert sess.last_frame == 3
+    assert "Cache playback error" in scene.fluidsim.status
+
+
+def test_session_release_is_owner_scoped_and_force_release_is_explicit(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    owner = _scene(playback=False)
+    foreign = _scene(playback=False)
+    sess = scene_bridge.Session()
+    cleared = []
+
+    def clear_runtime():
+        cleared.append(sess.solver)
+        sess.solver = None
+        sess.scene_identity = None
+
+    monkeypatch.setattr(sess, "_clear_runtime", clear_runtime)
+    owned_solver = object()
+    sess.solver = owned_solver
+    sess.scene_identity = id(owner)
+
+    assert sess.release(foreign) is False
+    assert sess.solver is owned_solver
+    assert cleared == []
+    assert sess.release(owner) is True
+    assert sess.solver is None
+    assert cleared == [owned_solver]
+
+    replacement = object()
+    sess.solver = replacement
+    sess.scene_identity = id(owner)
+    assert sess.force_release() is True
+    assert sess.solver is None
+    assert cleared == [owned_solver, replacement]
+
+
+def test_foreign_scene_cannot_activate_cache_over_live_owner(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    owner = _scene(playback=False)
+    foreign = _scene(playback=True)
+    sess = scene_bridge.session()
+    owned_solver = object()
+    sess.solver = owned_solver
+    sess.scene_identity = id(owner)
+
+    assert scene_bridge.playback.set_cache_playback_enabled(foreign, True) is False
+    assert foreign.fluidsim.cache_playback_enabled is False
+    assert sess.solver is owned_solver
+    assert "another scene" in foreign.fluidsim.status.lower()
+
+
+def test_cache_playback_uses_per_scene_cursor_without_touching_live_owner(
+        monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    owner = _scene(frame=19, playback=False)
+    cached = _scene(frame=7, playback=True)
+    calls = []
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_viewport.update_outputs_from_cache_frame = (
+        lambda scene_arg, data: calls.append((scene_arg, int(data["frame"]))))
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_frame = lambda _base, frame: {
+        "frame": np.array(frame, dtype=np.int32),
+        "positions": np.zeros((1, 3), dtype=np.float32),
+        "whitewater": np.zeros((0, 3), dtype=np.float32),
+    }
+    fake_cache.read_sequence_metadata = lambda _base: None
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+    sess = scene_bridge.session()
+    sess.solver = object()
+    sess.scene_identity = id(owner)
+    sess.last_frame = 19
+
+    scene_bridge.playback._on_frame_change(cached, depsgraph=object())
+    scene_bridge.playback._on_frame_change(cached, depsgraph=object())
+
+    assert calls == [(cached, 7)]
+    assert sess.last_frame == 19
+
+
+def test_active_production_bake_path_is_resolved_and_deeply_immutable(tmp_path):
+    from fluidSim_warp_blender51.blender import cache_manager, production_bake
+
+    scene = _scene(playback=False)
+    active = tmp_path / "cache_a"
+    mutable = tmp_path / "cache_b"
+    alias = active / ".." / active.name
+    controller = SimpleNamespace(
+        status=production_bake.BakeStatus.RUNNING,
+        backend=SimpleNamespace(base_dir=active),
+    )
+    production_bake.register_active_bake(scene, controller)
+    try:
+        assert production_bake.cache_path_is_active(alias)
+        for operation in (
+                lambda: cache_manager.remove_orphans(alias),
+                lambda: cache_manager.free_cache(alias),
+                lambda: cache_manager.move_cache(alias, mutable),
+                lambda: cache_manager.rename_cache(alias, "renamed")):
+            with pytest.raises(RuntimeError, match="Production Bake"):
+                operation()
+        assert cache_manager.remove_orphans(mutable) == ()
+
+        controller.status = production_bake.BakeStatus.COMPLETE
+        assert production_bake.cache_path_is_active(alias) is False
+        assert cache_manager.free_cache(alias) is None
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
+def test_initializing_production_bake_reserves_cache_path_before_first_tick(tmp_path):
+    from fluidSim_warp_blender51.blender import production_bake
+
+    scene = _scene(playback=False)
+    intended = tmp_path / "cache_a"
+    alias = intended / ".." / intended.name
+    controller = production_bake.BakeController(
+        backend=SimpleNamespace(base_dir=Path()))
+    controller.start(scene, 1, 2)
+    controller.reserve_cache_path(intended)
+    production_bake.register_active_bake(scene, controller)
+    try:
+        assert production_bake.cache_path_is_active(alias)
+    finally:
+        production_bake.clear_active_bake(scene, controller)
+
+
+def test_production_bake_registry_rejects_duplicate_reserved_cache_path(tmp_path):
+    from fluidSim_warp_blender51.blender import production_bake
+
+    first_scene = _scene(playback=False)
+    second_scene = _scene(playback=False)
+    intended = tmp_path / "cache_a"
+    first = production_bake.BakeController(backend=SimpleNamespace(base_dir=Path()))
+    second = production_bake.BakeController(backend=SimpleNamespace(base_dir=Path()))
+    for scene, controller in ((first_scene, first), (second_scene, second)):
+        controller.start(scene, 1, 2)
+        controller.reserve_cache_path(intended)
+
+    production_bake.register_active_bake(first_scene, first)
+    try:
+        with pytest.raises(RuntimeError, match="cache path.*already active"):
+            production_bake.register_active_bake(second_scene, second)
+        assert production_bake.active_bake(second_scene) is None
+    finally:
+        production_bake.clear_active_bake(first_scene, first)
+        production_bake.clear_active_bake(second_scene, second)
 
 
 def test_live_property_cache_playback_does_not_initialize_solver(monkeypatch):

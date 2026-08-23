@@ -63,6 +63,8 @@ LIQUID_VIEW_ITEMS = (
 
 LIQUID_ATTR_ITEMS = (
     ("NONE", "Material", "Use the assigned material color"),
+    ("CLEAR_DYE", "Clear Dye Species",
+     "Color from authoritative clear-dye concentrations using Beer-Lambert absorption"),
     ("HEIGHT", "Height", "Color by world-space height"),
     ("SPEED", "Speed", "Color by liquid velocity magnitude"),
     ("TEMPERATURE", "Temperature", "Color by particle temperature attribute"),
@@ -675,6 +677,13 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         default=(0.1, 0.45, 1.0, 1.0), min=0.0, max=1.0,
         update=_request_sync,
         description="Set the persistent color assigned to particles emitted by this source")
+    species_concentration: FloatVectorProperty(
+        name="Clear Dye Composition", size=4,
+        default=(0.0, 0.0, 0.0, 0.0), min=0.0, max=1.0,
+        update=_request_reset,
+        description=(
+            "Set the two authoritative clear-dye concentration lanes; the "
+            "third and fourth lanes remain zero and the first two must sum to at most one"))
     use_lifespan: BoolProperty(
         name="Use Lifespan", default=False, update=_request_sync,
         description="Enable to remove emitted particles after a randomized lifetime; disable to keep them until another sink or boundary removes them")
@@ -831,6 +840,51 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Liquid Sampling", default=8, min=0, max=64,
         update=_request_reset,
         description="Set authoritative liquid rest density and inherited source occupancy; changing it requires Reset, while zero disables inherited liquid emission")
+    species_enabled: BoolProperty(
+        name="Clear Dye Species", default=False, update=_request_rebuild,
+        description="Enable allocation and transport of two miscible clear-dye species in the constant-density carrier; changing it requires solver reinitialization")
+    species_count: IntProperty(
+        name="Species Count", default=2, min=2, max=2,
+        update=_request_rebuild,
+        description="This implementation slice supports exactly two clear-dye species")
+    species_diffusivity: FloatProperty(
+        name="Effective Diffusivity", default=0.0, min=0.0,
+        precision=6, update=_request_reset,
+        description="Set common clear-dye diffusivity in scene-units squared per second; zero disables diffusion")
+    species_max_diffusion_substeps: IntProperty(
+        name="Maximum Diffusion Substeps", default=16, min=1, max=256,
+        update=_request_reset,
+        description="Reject rather than exceed this admitted per-frame diffusion substep cap")
+    species_id_a: StringProperty(
+        name="Species A ID", default="dye_a", update=_request_rebuild,
+        description="Set the stable cache and palette identity for clear-dye species A; changing it requires solver reinitialization")
+    species_id_b: StringProperty(
+        name="Species B ID", default="dye_b", update=_request_rebuild,
+        description="Set the stable cache and palette identity for clear-dye species B; changing it requires solver reinitialization")
+    species_preview_swatch_a: FloatVectorProperty(
+        name="Species A Preview", size=3, subtype="COLOR",
+        default=(0.95, 0.12, 0.04), min=0.0, max=1.0,
+        update=_request_rebuild,
+        description="Choose the scene-linear reference color used to identify species A; changing it requires solver reinitialization")
+    species_preview_swatch_b: FloatVectorProperty(
+        name="Species B Preview", size=3, subtype="COLOR",
+        default=(0.04, 0.25, 0.95), min=0.0, max=1.0,
+        update=_request_rebuild,
+        description="Choose the scene-linear reference color used to identify species B; changing it requires solver reinitialization")
+    species_absorption_a: FloatVectorProperty(
+        name="Species A Absorption", size=3,
+        default=(0.05, 1.75, 2.75), min=0.0,
+        update=_request_rebuild,
+        description="Set nonnegative scene-linear RGB absorption coefficients that color the derived preview for species A")
+    species_absorption_b: FloatVectorProperty(
+        name="Species B Absorption", size=3,
+        default=(2.75, 1.25, 0.05), min=0.0,
+        update=_request_rebuild,
+        description="Set nonnegative scene-linear RGB absorption coefficients that color the derived preview for species B")
+    species_reference_path_length: FloatProperty(
+        name="Preview Path Length", default=1.0, min=0.000001,
+        update=_request_rebuild,
+        description="Reference path length used only for the derived Beer-Lambert viewport preview")
     sample_type: EnumProperty(
         name="Transfer", items=_items(ParticleSampleType), default="FLIP",
         update=_request_live,
@@ -1250,6 +1304,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     surface_attribute_color: BoolProperty(
         name="Color", default=False, update=_request_reset,
         description="Allocate source color and transfer it to surface vertices")
+    surface_attribute_species: BoolProperty(
+        name="Clear Dye Species", default=False,
+        update=_request_output_refresh,
+        description="Publish authoritative concentrations as fluidsim_species on surface vertices")
     surface_attribute_source_id: BoolProperty(
         name="Source ID", default=False, update=_request_reset,
         description="Allocate deterministic source identity and transfer it to the surface")
@@ -1281,6 +1339,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     particles_attribute_color: BoolProperty(
         name="Color", default=False, update=_request_reset,
         description="Allocate and publish source color per liquid particle")
+    particles_attribute_species: BoolProperty(
+        name="Clear Dye Species", default=False,
+        update=_request_output_refresh,
+        description="Publish authoritative particle concentrations as fluidsim_species")
     particles_attribute_source_id: BoolProperty(
         name="Source ID", default=False, update=_request_reset,
         description="Allocate and publish deterministic source identity")

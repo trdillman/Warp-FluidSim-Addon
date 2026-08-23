@@ -28,6 +28,8 @@ class PreparedParticleSeed:
     source_id: int
     life: float
     use_lifespan: bool
+    species_concentration: tuple[float, float, float, float] = (
+        0.0, 0.0, 0.0, 0.0)
 
     def __post_init__(self):
         positions = np.array(self.positions, dtype=np.float32, copy=True, order="C")
@@ -198,6 +200,8 @@ def prepare_object_particles(scene, obj, velocity=(0.0, 0.0, 0.0),
         life=((float(pg.life_min) + float(pg.life_max)) * 0.5
               if pg.use_lifespan else 0.0),
         use_lifespan=bool(pg.use_lifespan),
+        species_concentration=tuple(float(value) for value in getattr(
+            pg, "species_concentration", (0.0, 0.0, 0.0, 0.0))),
     )
 
 

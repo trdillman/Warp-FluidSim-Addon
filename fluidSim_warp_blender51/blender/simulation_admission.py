@@ -114,6 +114,10 @@ class AdmissionSnapshot:
     resources: object
     capacity_plan: object
     depsgraph: object = None
+    species_transport_bytes: int = 0
+    species_cache_staging_bytes: int = 0
+    species_halo_leaf_count: int = 0
+    species_diffusion_substeps: int = 0
 
     def assert_evaluation_valid(self, scene):
         if int(getattr(scene, "frame_current", self.frame)) != self.frame:
@@ -298,6 +302,14 @@ def capture_snapshot(
             resources=resources,
             capacity_plan=capacity_plan,
             depsgraph=depsgraph,
+            species_transport_bytes=int(getattr(
+                capacity_plan, "species_transport_bytes", 0)),
+            species_cache_staging_bytes=int(getattr(
+                capacity_plan, "species_cache_staging_bytes", 0)),
+            species_halo_leaf_count=int(getattr(
+                capacity_plan, "species_halo_leaf_count", 0)),
+            species_diffusion_substeps=int(getattr(
+                capacity_plan, "species_diffusion_substeps", 0)),
         )
         snapshot.assert_evaluation_valid(scene)
         return snapshot
@@ -319,6 +331,14 @@ def replan_snapshot(
         settings, snapshot.footprints, snapshot.seeds,
         snapshot.collider_footprints, snapshot.resources,
         additional_transaction_bytes=additional_transaction_bytes)
+    snapshot.species_transport_bytes = int(getattr(
+        snapshot.capacity_plan, "species_transport_bytes", 0))
+    snapshot.species_cache_staging_bytes = int(getattr(
+        snapshot.capacity_plan, "species_cache_staging_bytes", 0))
+    snapshot.species_halo_leaf_count = int(getattr(
+        snapshot.capacity_plan, "species_halo_leaf_count", 0))
+    snapshot.species_diffusion_substeps = int(getattr(
+        snapshot.capacity_plan, "species_diffusion_substeps", 0))
     return snapshot
 
 

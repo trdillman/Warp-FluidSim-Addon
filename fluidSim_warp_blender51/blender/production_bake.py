@@ -562,6 +562,7 @@ class ProductionBakeBackend:
         )
         if checkpoint.frame != frame:
             raise ValueError("captured checkpoint frame does not match frame output")
+        cache.validate_species_bake_transaction(frame_path, checkpoint)
         checkpoint_path = (
             self.base_dir / "checkpoints" / f"checkpoint_{frame:06d}.npz"
         )

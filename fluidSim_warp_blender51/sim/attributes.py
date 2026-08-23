@@ -53,6 +53,8 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         "lifetime", "fluidsim_lifetime", "FLOAT", "POINT", 1, True, True),
     "color": AttributeSpec(
         "color", "fluidsim_color", "FLOAT_COLOR", "POINT", 4, True, True),
+    "species": AttributeSpec(
+        "species", "fluidsim_species", "FLOAT_COLOR", "POINT", 4, True, False),
     "source_id": AttributeSpec(
         "source_id", "fluidsim_source_id", "INT", "POINT", 1, True, True),
     "uid": AttributeSpec(
@@ -82,11 +84,11 @@ ATTRIBUTE_ALIASES = {
 
 OUTPUT_ATTRIBUTE_KEYS: dict[str, tuple[str, ...]] = {
     "surface": (
-        "velocity", "speed", "vorticity", "age", "lifetime", "color",
+        "velocity", "speed", "vorticity", "age", "lifetime", "color", "species",
         "source_id", "viscosity", "density", "motion",
     ),
     "particles": (
-        "velocity", "speed", "vorticity", "age", "lifetime", "color",
+        "velocity", "speed", "vorticity", "age", "lifetime", "color", "species",
         "source_id", "uid", "viscosity", "density",
     ),
     "whitewater": (
@@ -114,6 +116,7 @@ CACHE_ATTRIBUTE_NAMES: dict[str, dict[str, str]] = {
         "age": "particle_age",
         "lifetime": "particle_life",
         "color": "particle_color",
+        "species": "particle_species",
         "source_id": "particle_source_id",
         "uid": "particle_uid",
         "viscosity": "particle_viscosity",
@@ -162,8 +165,11 @@ def persistent_particle_channels(settings) -> tuple[str, ...]:
     required: set[str] = set()
     for output_kind in ("surface", "particles"):
         required.update(enabled_attribute_keys(settings, output_kind))
-    return tuple(key for key in ("color", "source_id", "uid")
-                 if key in required)
+    return tuple(
+        key for key in ("color", "source_id", "uid")
+        if key in required
+        and not (key == "color" and bool(getattr(settings, "species_enabled", False)))
+    )
 
 
 def stable_source_id(value: object) -> int:
@@ -183,6 +189,34 @@ def normalize_color(value: Iterable[float] | None) -> tuple[float, float, float,
     if len(items) != 4 or not np.all(np.isfinite(items)):
         raise ValueError("source color must contain three or four finite components")
     return tuple(float(np.clip(component, 0.0, 1.0)) for component in items)
+
+
+def derive_species_preview_colors(
+        concentrations,
+        absorption_rgb,
+        reference_path_length: float) -> np.ndarray:
+    """Derive scene-linear Beer-Lambert preview RGB from species authority."""
+    values = np.asarray(concentrations, dtype=np.float32)
+    if values.ndim != 2 or values.shape[1] != 4:
+        raise ValueError("species concentrations must have shape (N, 4)")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("species concentrations contain non-finite values")
+    tolerance = 1.0e-6
+    if (np.any(values[:, :2] < -tolerance)
+            or np.any(values[:, :2].sum(axis=1) > 1.0 + tolerance)
+            or np.any(np.abs(values[:, 2:]) > tolerance)):
+        raise ValueError("species concentrations violate the two-species simplex")
+    absorption = np.asarray(absorption_rgb, dtype=np.float32)
+    if (absorption.shape != (2, 3) or not np.all(np.isfinite(absorption))
+            or np.any(absorption < 0.0)):
+        raise ValueError("species absorption must be two nonnegative RGB triples")
+    path = float(reference_path_length)
+    if not np.isfinite(path) or path <= 0.0:
+        raise ValueError("species reference path length must be finite and positive")
+    result = np.ones((len(values), 4), dtype=np.float32)
+    if len(values):
+        result[:, :3] = np.exp(-path * (values[:, :2] @ absorption))
+    return np.ascontiguousarray(result)
 
 
 def speed_from_velocity(velocity) -> np.ndarray:

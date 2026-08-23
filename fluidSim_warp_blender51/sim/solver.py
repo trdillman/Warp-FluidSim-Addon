@@ -8,6 +8,8 @@ receives surface mesh / particle data for Blender display.
 from __future__ import annotations
 
 import gc
+import hashlib
+import json
 import math
 import time as _time
 from dataclasses import dataclass, field as dc_field
@@ -38,6 +40,12 @@ from .fields import (
     voxel_center_world,
 )
 from .particles import ParticleSystem, ParticleBins
+from .species import (
+    SpeciesPalette,
+    SpeciesReceipt,
+    SpeciesTransport,
+    species_transport_allocation_bytes,
+)
 from .attributes import persistent_particle_channels
 from .quality_contract import resolve_quality
 from .pressure import PressureSolver
@@ -464,6 +472,19 @@ class SolverSettings:
     count_stiffness: float = 0.0
     resolved_quality: object = dc_field(default=None, repr=False, compare=False)
 
+    # Two-species clear-dye transport. Persistent resources remain absent when
+    # disabled; later tasks own transport, sourcing, persistence, and output.
+    species_enabled: bool = False
+    species_count: int = 2
+    species_diffusivity: float = 0.0
+    species_max_diffusion_substeps: int = 16
+    species_ids: tuple = ("dye_a", "dye_b")
+    species_preview_swatches: tuple = (
+        (0.95, 0.12, 0.04), (0.04, 0.25, 0.95))
+    species_absorption_rgb: tuple = (
+        (0.05, 1.75, 2.75), (2.75, 1.25, 0.05))
+    species_reference_path_length: float = 1.0
+
     # Spatiotemporal FLIP (ST-FLIP, Braun et al. 2026).
     spacetime_enabled: bool = False
     spacetime_jitter_strength: float = 1.0
@@ -569,6 +590,32 @@ class SolverSettings:
     topology_expand: int = 1
     device: str = "cuda:0"
 
+    def __post_init__(self):
+        if not self.species_enabled:
+            return
+        if int(self.species_count) != 2:
+            raise ValueError("this species slice requires exactly 2 species")
+        if (not math.isfinite(float(self.species_diffusivity))
+                or float(self.species_diffusivity) < 0.0):
+            raise ValueError("species diffusivity must be finite and nonnegative")
+        if int(self.species_max_diffusion_substeps) < 1:
+            raise ValueError("species maximum diffusion substeps must be positive")
+        ids = tuple(str(value) for value in self.species_ids)
+        if len(ids) != 2 or any(not value for value in ids) or ids[0] == ids[1]:
+            raise ValueError("species IDs must contain two distinct nonempty values")
+        swatches = np.asarray(self.species_preview_swatches, dtype=np.float64)
+        if swatches.shape != (2, 3) or not np.all(np.isfinite(swatches)):
+            raise ValueError("species preview swatches must be two finite RGB triples")
+        absorption = np.asarray(self.species_absorption_rgb, dtype=np.float64)
+        if (absorption.shape != (2, 3)
+                or not np.all(np.isfinite(absorption))
+                or np.any(absorption < 0.0)):
+            raise ValueError(
+                "species absorption must be two nonnegative finite RGB triples")
+        if (not math.isfinite(float(self.species_reference_path_length))
+                or float(self.species_reference_path_length) <= 0.0):
+            raise ValueError("species reference path length must be finite and positive")
+
 
 class FrameStats:
     """Per-frame statistics for the profiler/UI (host mirror)."""
@@ -599,6 +646,7 @@ class FrameStats:
         self.pressure_iterations = 0
         self.pressure_residual = 0.0
         self.timers = {}
+        self.species_receipt = None
 
     def as_dict(self):
         vps = self.active_voxels / self.step_time if self.step_time > 0 else 0.0
@@ -635,6 +683,9 @@ class FrameStats:
             "particleInitializedVoxelRatio": self.active_particles / max(self.initialized_voxels, 1),
             "particleVoxelFillRatio": self.active_particles / max(self.active_voxels, 1),
             "timers": dict(self.timers),
+            "speciesReceipt": (
+                dict(self.species_receipt.__dict__)
+                if self.species_receipt is not None else None),
         }
 
 
@@ -645,12 +696,182 @@ _CHECKPOINT_FIELD_NAMES = (
     "density.data", "churn.data",
 )
 
+SPECIES_SCHEMA_VERSION = 1
+SPECIES_RESUME_ERROR = (
+    "species resume state is incompatible; regenerate the cache"
+)
+_SPECIES_SCALAR_NAMES = (
+    "species_schema_version",
+    "species_palette_hash",
+    "species_palette_json",
+    "species_ids_json",
+    "species_settings_json",
+    "species_cumulative_budget_json",
+    "species_receipt_json",
+)
+_SPECIES_RECEIPT_PAIR_NAMES = (
+    "before", "sources", "sinks", "after", "residual")
+
+
+def _json_scalar(value):
+    array = np.asarray(value)
+    if array.shape != ():
+        raise ValueError(SPECIES_RESUME_ERROR)
+    return array.item()
+
+
+def _finite_pair(value, *, nonnegative=False):
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(SPECIES_RESUME_ERROR)
+    result = tuple(float(component) for component in value)
+    if (not all(math.isfinite(component) for component in result)
+            or (nonnegative and any(component < 0.0 for component in result))):
+        raise ValueError(SPECIES_RESUME_ERROR)
+    return result
+
+
+def _decode_json_mapping(scalars, name):
+    value = json.loads(str(_json_scalar(scalars[name])))
+    if not isinstance(value, dict):
+        raise ValueError(SPECIES_RESUME_ERROR)
+    return value
+
+
+def _validate_receipt_json(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {
+            *_SPECIES_RECEIPT_PAIR_NAMES,
+            "min_concentration", "max_loading", "limiter_alpha",
+            "diffusion_substeps"}:
+        raise ValueError(SPECIES_RESUME_ERROR)
+    result = {
+        name: _finite_pair(value[name])
+        for name in _SPECIES_RECEIPT_PAIR_NAMES
+    }
+    for name in ("min_concentration", "max_loading", "limiter_alpha"):
+        result[name] = float(value[name])
+        if not math.isfinite(result[name]):
+            raise ValueError(SPECIES_RESUME_ERROR)
+    result["diffusion_substeps"] = int(value["diffusion_substeps"])
+    if (result["min_concentration"] < -1.0e-6
+            or result["max_loading"] > 1.0 + 1.0e-6
+            or not 0.0 <= result["limiter_alpha"] <= 1.0
+            or result["diffusion_substeps"] < 0):
+        raise ValueError(SPECIES_RESUME_ERROR)
+    return result
+
+
+def validate_species_resume_state(
+        arrays, scalars, particle_count, *, enabled,
+        expected_palette_hash=None):
+    """Validate and own an additive species resume record without mutation."""
+    marker_present = "species_schema_version" in scalars
+    if not marker_present:
+        if enabled:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        return None
+    try:
+        if int(_json_scalar(scalars["species_schema_version"])) != 1:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        if any(name not in scalars for name in _SPECIES_SCALAR_NAMES):
+            raise ValueError(SPECIES_RESUME_ERROR)
+        palette_hash = str(_json_scalar(scalars["species_palette_hash"]))
+        if (not palette_hash
+                or (expected_palette_hash is not None
+                    and palette_hash != str(expected_palette_hash))):
+            raise ValueError(SPECIES_RESUME_ERROR)
+        palette_text = str(_json_scalar(scalars["species_palette_json"]))
+        palette = json.loads(palette_text)
+        if not isinstance(palette, dict) or set(palette) != {
+                "ids", "absorption_rgb", "reference_path_length"}:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        canonical_palette = json.dumps(
+            palette, sort_keys=True, separators=(",", ":"))
+        if hashlib.sha256(canonical_palette.encode()).hexdigest() != palette_hash:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        ids = json.loads(str(_json_scalar(scalars["species_ids_json"])))
+        if (not isinstance(ids, list) or len(ids) != 2
+                or any(not isinstance(value, str) or not value for value in ids)
+                or ids[0] == ids[1] or palette["ids"] != ids):
+            raise ValueError(SPECIES_RESUME_ERROR)
+        absorption = np.asarray(palette["absorption_rgb"], dtype=np.float64)
+        path_length = float(palette["reference_path_length"])
+        if (absorption.shape != (2, 3) or not np.all(np.isfinite(absorption))
+                or np.any(absorption < 0.0) or not math.isfinite(path_length)
+                or path_length <= 0.0):
+            raise ValueError(SPECIES_RESUME_ERROR)
+
+        settings = _decode_json_mapping(scalars, "species_settings_json")
+        if set(settings) != {"diffusivity", "max_diffusion_substeps"}:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        diffusivity = float(settings["diffusivity"])
+        max_substeps = int(settings["max_diffusion_substeps"])
+        if (not math.isfinite(diffusivity) or diffusivity < 0.0
+                or max_substeps < 1):
+            raise ValueError(SPECIES_RESUME_ERROR)
+
+        cumulative = _decode_json_mapping(
+            scalars, "species_cumulative_budget_json")
+        if set(cumulative) != {"sources", "sinks"}:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        cumulative = {
+            "sources": _finite_pair(cumulative["sources"], nonnegative=True),
+            "sinks": _finite_pair(cumulative["sinks"], nonnegative=True),
+        }
+        receipt = _validate_receipt_json(json.loads(str(
+            _json_scalar(scalars["species_receipt_json"]))))
+
+        count = int(particle_count)
+        if count < 0:
+            raise ValueError(SPECIES_RESUME_ERROR)
+        volume = np.asarray(arrays["particle_represented_volume"])
+        concentration = np.asarray(arrays["particle_species_concentration"])
+        if (volume.dtype != np.dtype(np.float32)
+                or concentration.dtype != np.dtype(np.float32)
+                or volume.shape != (count,)
+                or concentration.shape != (count, 4)
+                or not np.all(np.isfinite(volume))
+                or not np.all(np.isfinite(concentration))
+                or np.any(volume <= 0.0)
+                or np.any(concentration[:, :2] < -1.0e-6)
+                or np.any(concentration[:, :2] > 1.0 + 1.0e-6)
+                or np.any(np.sum(concentration[:, :2], axis=1) > 1.0 + 1.0e-6)
+                or np.any(np.abs(concentration[:, 2:]) > 1.0e-6)):
+            raise ValueError(SPECIES_RESUME_ERROR)
+        for explicit, generic in (
+                (volume, arrays.get("particle_attr_represented_volume")),
+                (concentration, arrays.get("particle_attr_species_concentration"))):
+            if generic is not None and not np.array_equal(explicit, generic):
+                raise ValueError(SPECIES_RESUME_ERROR)
+        return {
+            "represented_volume": np.ascontiguousarray(volume.copy()),
+            "concentration": np.ascontiguousarray(concentration.copy()),
+            "ids": tuple(ids),
+            "palette": palette,
+            "palette_hash": palette_hash,
+            "settings": settings,
+            "cumulative_budget": cumulative,
+            "receipt": receipt,
+        }
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        if isinstance(exc, ValueError) and str(exc) == SPECIES_RESUME_ERROR:
+            raise
+        raise ValueError(SPECIES_RESUME_ERROR) from exc
+
 
 def _resolve_attr(root, dotted_name: str):
     value = root
     for component in dotted_name.split("."):
         value = getattr(value, component)
     return value
+
+
+def _persistent_particle_channels(settings) -> tuple[str, ...]:
+    channels = list(persistent_particle_channels(settings))
+    if bool(getattr(settings, "species_enabled", False)):
+        channels.extend(("represented_volume", "species_concentration"))
+    return tuple(channels)
 
 
 class FluidSolver:
@@ -727,7 +948,23 @@ class FluidSolver:
 
         self.particles = ParticleSystem(
             settings.max_particles, self.device,
-            persistent_particle_channels(settings))
+            _persistent_particle_channels(settings))
+        if settings.species_enabled:
+            palette = SpeciesPalette.create(
+                ids=settings.species_ids,
+                absorption_rgb=settings.species_absorption_rgb,
+                reference_path_length=settings.species_reference_path_length,
+            )
+            self.species = SpeciesTransport(
+                self.particles, g, self.device, enabled=True,
+                diffusivity=settings.species_diffusivity,
+                max_diffusion_substeps=settings.species_max_diffusion_substeps,
+                palette=palette,
+                collision_sdf=self.collision_sdf.data,
+                collision_mask_enabled=True,
+            )
+        self._species_cumulative_sources = (0.0, 0.0)
+        self._species_cumulative_sinks = (0.0, 0.0)
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
         self.whitewater = WhitewaterSystem(
             settings.max_whitewater, self.device,
@@ -819,7 +1056,7 @@ class FluidSolver:
         """Atomically grow particle/binner storage while preserving solver state."""
         from .memory_safety import release_cuda_memory, vram_snapshot
         from .particle_capacity import (
-            ParticleGrowthResult, plan_particle_growth,
+            ParticleGrowthResult, growth_target, plan_particle_growth,
         )
 
         current = int(self.particles.capacity)
@@ -837,10 +1074,20 @@ class FluidSolver:
             return result
 
         resources = vram_snapshot(self.device)
+        candidate_target = growth_target(current, required)
+        species_candidate = species_transport_allocation_bytes(
+            candidate_target,
+            int(self.grid.voxel_capacity),
+            getattr(self, "species", None) is not None,
+        )
         plan = plan_particle_growth(
             current, required,
             gpu_total_bytes=int(resources.get("gpu_total_bytes", 0)),
             gpu_free_bytes=int(resources.get("gpu_free_bytes", 0)),
+            additional_device_persistent_bytes=(
+                species_candidate.particle_resize_candidate_bytes),
+            # Growth invalidates _host_frame_cache; it does not stage cache data.
+            host_cache_staging_bytes=0,
         )
         if not plan.allowed:
             result = ParticleGrowthResult(
@@ -852,6 +1099,7 @@ class FluidSolver:
         grown_particles = None
         grown_bins = None
         grown_whitewater_workspace = None
+        grown_species = None
         try:
             # The old pools remain authoritative until every allocation and
             # copy, including deterministic whitewater emission scratch, has
@@ -861,9 +1109,12 @@ class FluidSolver:
                 plan.target, self.grid.voxel_capacity, self.device)
             grown_whitewater_workspace = (
                 self.whitewater.allocate_candidate_workspace(plan.target))
+            species = getattr(self, "species", None)
+            if species is not None:
+                grown_species = species.resized_copy(grown_particles)
             wp.synchronize_device(self.device)
         except Exception as exc:  # noqa: BLE001 - CUDA allocation surface
-            del grown_particles, grown_bins, grown_whitewater_workspace
+            del grown_particles, grown_bins, grown_whitewater_workspace, grown_species
             gc.collect()
             release_cuda_memory(self.device)
             result = ParticleGrowthResult(
@@ -874,8 +1125,11 @@ class FluidSolver:
             return result
 
         old_particles, old_bins = self.particles, self.bins
+        old_species = getattr(self, "species", None)
         self.particles = grown_particles
         self.bins = grown_bins
+        if old_species is not None:
+            self.species = grown_species
         self.whitewater.swap_candidate_workspace(grown_whitewater_workspace)
         self.settings.max_particles = int(plan.target)
         self._host_frame_cache = None
@@ -886,7 +1140,7 @@ class FluidSolver:
                 **dict(getattr(sourcing, "last_apply_result", {})),
                 "available": max(0, plan.target - self.particles.host_count),
             }
-        del old_particles, old_bins
+        del old_particles, old_bins, old_species
         gc.collect()
         release_cuda_memory(self.device)
         result = ParticleGrowthResult(
@@ -900,7 +1154,7 @@ class FluidSolver:
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing.reset()
-        expected_channels = persistent_particle_channels(self.settings)
+        expected_channels = _persistent_particle_channels(self.settings)
         if tuple(self.particles.optional_channels) != tuple(expected_channels):
             # Reset is the explicit transaction boundary for persistent output
             # inventory changes.  No live state is copied across this swap.
@@ -909,6 +1163,28 @@ class FluidSolver:
                 old_particles.capacity, self.device, expected_channels)
             del old_particles
         self.particles.clear()
+        self._species_cumulative_sources = (0.0, 0.0)
+        self._species_cumulative_sinks = (0.0, 0.0)
+        species = getattr(self, "species", None)
+        if bool(getattr(self.settings, "species_enabled", False)):
+            if species is not None and species.particles is self.particles:
+                species.reset()
+            else:
+                palette = SpeciesPalette.create(
+                    ids=self.settings.species_ids,
+                    absorption_rgb=self.settings.species_absorption_rgb,
+                    reference_path_length=self.settings.species_reference_path_length,
+                )
+                self.species = SpeciesTransport(
+                    self.particles, self.grid, self.device, enabled=True,
+                    diffusivity=self.settings.species_diffusivity,
+                    max_diffusion_substeps=self.settings.species_max_diffusion_substeps,
+                    palette=palette,
+                    collision_sdf=self.collision_sdf.data,
+                    collision_mask_enabled=True,
+                )
+        elif species is not None:
+            del self.species
         self.whitewater.clear()
         self.churn.zero()
         self.frame = 0
@@ -971,32 +1247,89 @@ class FluidSolver:
                 self.particles.attrs[name].numpy()[:particle_count],
                 dtype=np.float32)
         arrays.update(self.particles.checkpoint_arrays(particle_count))
+        species_state = self.export_species_resume_state(particle_count)
+        if species_state is not None:
+            arrays.update(species_state["arrays"])
         for dotted_name in _CHECKPOINT_FIELD_NAMES:
             arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
                 _resolve_attr(self, dotted_name).numpy()[:active_voxels])
 
+        scalars = {
+            "frame": int(self.frame),
+            "sim_time": float(self.sim_time),
+            "leaf_count": leaf_count,
+            "particle_count": particle_count,
+            "whitewater_count": whitewater_count,
+            "leaf_capacity": int(self.grid.capacity),
+            "particle_capacity": int(self.particles.capacity),
+            "whitewater_capacity": int(self.whitewater.capacity),
+            "whitewater_emit_seed": int(self._whitewater_emit_seed),
+            "st_step_seed": int(self._st_step_seed),
+            "st_previous_dt": float(self._st_previous_dt),
+            "st_reference_mass_cached": float(
+                self._st_reference_mass_cached),
+            "next_particle_uid": int(self.particles.next_uid),
+            "particle_optional_channels": ",".join(
+                self.particles.optional_channels),
+        }
+        if species_state is not None:
+            scalars.update(species_state["scalars"])
         return {
             "arrays": arrays,
-            "scalars": {
-                "frame": int(self.frame),
-                "sim_time": float(self.sim_time),
-                "leaf_count": leaf_count,
-                "particle_count": particle_count,
-                "whitewater_count": whitewater_count,
-                "leaf_capacity": int(self.grid.capacity),
-                "particle_capacity": int(self.particles.capacity),
-                "whitewater_capacity": int(self.whitewater.capacity),
-                "whitewater_emit_seed": int(self._whitewater_emit_seed),
-                "st_step_seed": int(self._st_step_seed),
-                "st_previous_dt": float(self._st_previous_dt),
-                "st_reference_mass_cached": float(
-                    self._st_reference_mass_cached),
-                "next_particle_uid": int(self.particles.next_uid),
-                "particle_optional_channels": ",".join(
-                    self.particles.optional_channels),
-            },
+            "scalars": scalars,
             "source_state": self.sourcing.export_checkpoint_state(),
         }
+
+    def export_species_resume_state(self, particle_count):
+        """Return the authoritative additive species record at a frame boundary."""
+        species = getattr(self, "species", None)
+        if species is None:
+            return None
+        palette = species.palette
+        palette_record = {
+            "ids": list(palette.ids),
+            "absorption_rgb": [list(row) for row in palette.absorption_rgb],
+            "reference_path_length": float(palette.reference_path_length),
+        }
+        palette_json = json.dumps(
+            palette_record, sort_keys=True, separators=(",", ":"))
+        if hashlib.sha256(palette_json.encode()).hexdigest() != palette.palette_hash:
+            raise ValueError("species palette hash does not match its payload")
+        receipt = getattr(getattr(self, "stats", None), "species_receipt", None)
+        receipt_record = None
+        if receipt is not None:
+            receipt_record = {
+                name: [float(value) for value in getattr(receipt, name)]
+                for name in _SPECIES_RECEIPT_PAIR_NAMES
+            }
+            receipt_record.update({
+                "min_concentration": float(receipt.min_concentration),
+                "max_loading": float(receipt.max_loading),
+                "limiter_alpha": float(receipt.limiter_alpha),
+                "diffusion_substeps": int(receipt.diffusion_substeps),
+            })
+        scalars = {
+            "species_schema_version": SPECIES_SCHEMA_VERSION,
+            "species_palette_hash": palette.palette_hash,
+            "species_palette_json": palette_json,
+            "species_ids_json": json.dumps(
+                list(palette.ids), separators=(",", ":")),
+            "species_settings_json": json.dumps({
+                "diffusivity": float(species.diffusivity),
+                "max_diffusion_substeps": int(species.max_diffusion_substeps),
+            }, sort_keys=True, separators=(",", ":")),
+            "species_cumulative_budget_json": json.dumps({
+                "sources": list(self._species_cumulative_sources),
+                "sinks": list(self._species_cumulative_sinks),
+            }, sort_keys=True, separators=(",", ":")),
+            "species_receipt_json": json.dumps(
+                receipt_record, sort_keys=True, separators=(",", ":")),
+        }
+        arrays = species.checkpoint_arrays(int(particle_count))
+        validate_species_resume_state(
+            arrays, scalars, int(particle_count), enabled=True,
+            expected_palette_hash=palette.palette_hash)
+        return {"arrays": arrays, "scalars": scalars}
 
     def _validate_checkpoint_state(self, state):
         if not isinstance(state, dict) or set(state) != {
@@ -1025,6 +1358,15 @@ class FluidSolver:
             raise ValueError("checkpoint leaf count exceeds current capacity")
         if counts["whitewater_count"] > self.whitewater.capacity:
             raise ValueError("checkpoint whitewater count exceeds current capacity")
+        species = getattr(self, "species", None)
+        species_state = validate_species_resume_state(
+            arrays,
+            scalars,
+            counts["particle_count"],
+            enabled=bool(getattr(self.settings, "species_enabled", False)),
+            expected_palette_hash=(
+                species.palette.palette_hash if species is not None else None),
+        )
         required_arrays = {
             "grid_leaf_coords", "grid_old_leaf_table",
             "particle_position", "particle_velocity", "particle_alive",
@@ -1062,6 +1404,40 @@ class FluidSolver:
                 raise ValueError(f"checkpoint array {name} uses object dtype")
             if value.dtype.kind in "fc" and not np.all(np.isfinite(value)):
                 raise ValueError(f"checkpoint array {name} is non-finite")
+        particle_count = counts["particle_count"]
+        particle_shapes = {
+            "particle_position": (particle_count, 3),
+            "particle_velocity": (particle_count, 3),
+            "particle_alive": (particle_count,),
+            "particle_time_offset": (particle_count,),
+        }
+        particle_shapes.update(
+            (f"particle_attr_{name}", (particle_count,))
+            for name in self.particles.ATTR_NAMES)
+        for name in self.particles.optional_channels:
+            particle_shapes[f"particle_attr_{name}"] = (
+                (particle_count, 4)
+                if name in {"color", "species_concentration"}
+                else (particle_count,))
+        for name, shape in particle_shapes.items():
+            if np.asarray(arrays[name]).shape != shape:
+                raise ValueError(f"{name} shape does not match particle_count")
+        alive = np.asarray(arrays["particle_alive"])
+        if np.any((alive != 0) & (alive != 1)):
+            raise ValueError("particle_alive must contain only 0 or 1")
+        whitewater_count = counts["whitewater_count"]
+        for name, shape in {
+                "whitewater_position": (whitewater_count, 3),
+                "whitewater_velocity": (whitewater_count, 3),
+                "whitewater_age": (whitewater_count,),
+                "whitewater_life": (whitewater_count,),
+                "whitewater_alive": (whitewater_count,),
+        }.items():
+            if np.asarray(arrays[name]).shape != shape:
+                raise ValueError(f"{name} shape does not match whitewater_count")
+        whitewater_alive = np.asarray(arrays["whitewater_alive"])
+        if np.any((whitewater_alive != 0) & (whitewater_alive != 1)):
+            raise ValueError("whitewater_alive must contain only 0 or 1")
         if np.asarray(arrays["grid_leaf_coords"]).shape != (
                 counts["leaf_count"], 3):
             raise ValueError("grid_leaf_coords shape does not match leaf_count")
@@ -1073,11 +1449,30 @@ class FluidSolver:
             key = f"field_{dotted_name.replace('.', '_')}"
             if np.asarray(arrays[key]).shape != (active_voxels,):
                 raise ValueError(f"{key} shape does not match active topology")
-        return arrays, scalars, counts
+        if "uid" in self.particles.optional_channels:
+            uid = np.asarray(arrays["particle_attr_uid"], dtype=np.int64)
+            if (np.any(uid <= 0) or len(np.unique(uid)) != particle_count
+                    or int(scalars["next_particle_uid"]) <= int(np.max(
+                        uid, initial=0))):
+                raise ValueError("restored particle UIDs are invalid")
+        source_state = state["source_state"]
+        if not isinstance(source_state, dict) or set(source_state) != {
+                "schema_version", "emit_seed", "initial_fired",
+                "session_generation"}:
+            raise ValueError("source checkpoint state has an invalid schema")
+        fired = source_state["initial_fired"]
+        if (int(source_state["schema_version"]) != 1
+                or not isinstance(fired, list)
+                or not all(isinstance(value, str) and value for value in fired)
+                or len(fired) != len(set(fired))
+                or int(source_state["emit_seed"]) < 0
+                or int(source_state["session_generation"]) < 0):
+            raise ValueError("source checkpoint state is invalid")
+        return arrays, scalars, counts, species_state
 
     def import_checkpoint_state(self, state):
         """Restore into a newly initialized, signature-compatible solver."""
-        arrays, scalars, counts = self._validate_checkpoint_state(state)
+        arrays, scalars, counts, species_state = self._validate_checkpoint_state(state)
         particle_count = counts["particle_count"]
         if particle_count > self.particles.capacity:
             growth = self.ensure_particle_capacity(particle_count)
@@ -1128,6 +1523,20 @@ class FluidSolver:
         self._st_reference_mass_cached = float(
             scalars["st_reference_mass_cached"])
         self._rebuild_transient_state_after_restore()
+        if species_state is not None:
+            self._species_cumulative_sources = species_state[
+                "cumulative_budget"]["sources"]
+            self._species_cumulative_sinks = species_state[
+                "cumulative_budget"]["sinks"]
+            species = getattr(self, "species", None)
+            if species is not None:
+                species.reset()
+            receipt = species_state["receipt"]
+            self.stats.species_receipt = (
+                SpeciesReceipt(**receipt) if receipt is not None else None)
+        else:
+            self._species_cumulative_sources = (0.0, 0.0)
+            self._species_cumulative_sinks = (0.0, 0.0)
         self.assert_checkpoint_invariants()
 
     def _rebuild_transient_state_after_restore(self):
@@ -1326,7 +1735,11 @@ class FluidSolver:
         if s.whitewater_enabled:
             g.mark_points(self.whitewater.position, self.whitewater.count,
                           self._nww_dim())
-        g.expand(s.topology_expand if expand is None else max(0, int(expand)))
+        topology_expand = (
+            int(s.topology_expand) if expand is None else max(0, int(expand)))
+        if bool(getattr(s, "species_enabled", False)):
+            topology_expand = max(1, topology_expand)
+        g.expand(topology_expand)
         # One 4-byte readback per rebuild: the fresh active leaf count bounds
         # every subsequent per-voxel launch this substep, which shrinks
         # dispatch from allocation capacity (possibly millions of voxels) to
@@ -1845,7 +2258,7 @@ class FluidSolver:
                 outputs=[p.alive], device=self.device,
             )
 
-    def _lifecycle(self, dt):
+    def _lifecycle(self, dt, *, capture_species_after=False):
         g = self.grid
         p = self.particles
         np_dim = self._np_dim()
@@ -1861,7 +2274,13 @@ class FluidSolver:
                     g.origin, g.voxel_size],
             outputs=[p.alive], device=self.device,
         )
-        p.compact(count_hint=np_dim)
+        species = getattr(self, "species", None)
+        ledger = (
+            species.compaction_sink_ledger() if species is not None else None)
+        p.compact(
+            count_hint=np_dim, species_sink_ledger=ledger)
+        if species is not None and capture_species_after:
+            species.capture_compacted_after()
 
     def _relax(self):
         s = self.settings
@@ -2116,6 +2535,10 @@ class FluidSolver:
                     self._index_particles()
             with self._phase("p2g"):
                 self._p2g(dt)
+            species = getattr(self, "species", None)
+            if species is not None:
+                with self._phase("species"):
+                    species.diffuse(dt)
             self._save_velocities()
             self.snippets.run(CustomKernelOrder.BEFORE_FORCES, self, time_ctx)
             with self._phase("forces"):
@@ -2138,7 +2561,8 @@ class FluidSolver:
                 self._g2p_advect(dt)
             self._sanitize_particles(dt)
             with self._phase("lifecycle"):
-                self._lifecycle(dt)
+                self._lifecycle(
+                    dt, capture_species_after=(substep_index == substeps - 1))
             with self._phase("relax"):
                 self._relax()
             sdf_ready = self.surface.after_substep()
@@ -2159,6 +2583,18 @@ class FluidSolver:
         whitewater_diagnostics = self.whitewater.refresh_diagnostics()
 
         st = self.stats
+        species = getattr(self, "species", None)
+        st.species_receipt = (
+            species.finalize_frame_receipt() if species is not None else None)
+        if st.species_receipt is not None:
+            self._species_cumulative_sources = tuple(
+                float(self._species_cumulative_sources[index]
+                      + st.species_receipt.sources[index])
+                for index in range(2))
+            self._species_cumulative_sinks = tuple(
+                float(self._species_cumulative_sinks[index]
+                      + st.species_receipt.sinks[index])
+                for index in range(2))
         st.step_time = _time.perf_counter() - t_start
         st.substeps = substeps
         st.cfl_substeps_clamped = cfl_clamped
@@ -2192,17 +2628,20 @@ class FluidSolver:
     def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
                                velocities=None, temperature=0.0, viscosity=0.0,
                                density=1.0, color=(0.1, 0.45, 1.0, 1.0),
-                               source_id=0, life=0.0, use_lifespan=False):
+                               source_id=0, life=0.0, use_lifespan=False, *,
+                               species_concentration=(0.0, 0.0, 0.0, 0.0)):
         return self.sourcing.inject_particles_exact(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
             color=color, source_id=source_id,
-            life=life, use_lifespan=use_lifespan)
+            life=life, use_lifespan=use_lifespan,
+            species_concentration=species_concentration)
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
                          density=1.0, color=(0.1, 0.45, 1.0, 1.0),
-                         source_id=0, life=0.0, use_lifespan=False):
+                         source_id=0, life=0.0, use_lifespan=False, *,
+                         species_concentration=(0.0, 0.0, 0.0, 0.0)):
         """Append external world-space points as liquid particles.
 
         ``positions``: (N,3) array-like. Optional per-particle ``velocities``
@@ -2219,6 +2658,7 @@ class FluidSolver:
             source_id=source_id,
             life=life,
             use_lifespan=use_lifespan,
+            species_concentration=species_concentration,
         )
 
     # -- output ---------------------------------------------------------------
