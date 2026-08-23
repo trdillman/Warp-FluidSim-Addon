@@ -1,0 +1,34 @@
+name: Warp Flow source checkpoint export
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/warp-flow-source-export.yml'
+      - 'automation/warp_flow_demo_validation/runtime.b64.part*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and verify source checkpoint
+        run: |
+          set -euo pipefail
+          mkdir -p export/source
+          cat automation/warp_flow_demo_validation/runtime.b64.part* | base64 --decode > export/source.tar.xz
+          echo '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46  export/source.tar.xz' | sha256sum -c -
+          tar -xJf export/source.tar.xz -C export/source
+          python -m compileall -q export/source
+          find export/source -type f -print0 | sort -z | xargs -0 sha256sum > export/SOURCE_SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warp-flow-source-checkpoint
+          path: export
+          if-no-files-found: error
+          retention-days: 30
