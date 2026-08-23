@@ -1,0 +1,214 @@
+name: Warp Flow GH Archive forensics
+
+on:
+  push:
+    branches:
+      - forensics/warp-flow-014-gharchive
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Download and filter relevant GitHub public events
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/raw evidence/comments
+          cat > /tmp/filter_events.py <<'PY'
+          from __future__ import annotations
+          import json
+          import sys
+
+          stamp = sys.argv[1]
+          target = "trdillman/liquid_warp_blender51_port"
+          for line in sys.stdin:
+              try:
+                  event = json.loads(line)
+              except Exception:
+                  continue
+              if event.get("repo", {}).get("name") != target:
+                  continue
+              event["_gharchive_hour"] = stamp
+              print(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
+          PY
+
+          : > evidence/repo-events.jsonl
+          : > evidence/downloads.tsv
+          stamps=(
+            2026-08-22-22
+            2026-08-22-23
+            2026-08-23-0
+            2026-08-23-1
+            2026-08-23-2
+            2026-08-23-3
+          )
+          for stamp in "${stamps[@]}"; do
+            url="https://data.gharchive.org/${stamp}.json.gz"
+            archive="evidence/raw/${stamp}.json.gz"
+            echo "Downloading $url"
+            curl --fail --location --retry 5 --retry-delay 3 --connect-timeout 30 \
+              --max-time 600 "$url" --output "$archive"
+            printf '%s\t%s\t%s\n' \
+              "$stamp" "$(stat -c %s "$archive")" "$(sha256sum "$archive" | cut -d' ' -f1)" \
+              >> evidence/downloads.tsv
+            gzip -dc "$archive" | python /tmp/filter_events.py "$stamp" \
+              >> evidence/repo-events.jsonl
+            rm -f "$archive"
+          done
+
+      - name: Analyze issue history and reconstruct deleted comment archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import base64
+          import hashlib
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path("evidence")
+          events = [
+              json.loads(line)
+              for line in (root / "repo-events.jsonl").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+          issue_events = []
+          comments = []
+          for event in events:
+              payload = event.get("payload") or {}
+              issue = payload.get("issue") or {}
+              if issue.get("number") != 1:
+                  continue
+              issue_events.append(event)
+              if event.get("type") != "IssueCommentEvent":
+                  continue
+              comment = payload.get("comment") or {}
+              body = comment.get("body") or ""
+              record = {
+                  "event_id": event.get("id"),
+                  "created_at": event.get("created_at"),
+                  "hour": event.get("_gharchive_hour"),
+                  "action": payload.get("action"),
+                  "comment_id": comment.get("id"),
+                  "comment_url": comment.get("html_url"),
+                  "author": (comment.get("user") or {}).get("login"),
+                  "body_length": len(body),
+                  "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                  "body": body,
+              }
+              comments.append(record)
+
+          with (root / "issue-1-events.jsonl").open("w", encoding="utf-8") as handle:
+              for event in issue_events:
+                  handle.write(json.dumps(event, separators=(",", ":"), ensure_ascii=False) + "\n")
+
+          for index, record in enumerate(sorted(comments, key=lambda item: (item["created_at"] or "", item["comment_id"] or 0))):
+              name = f"{index:03d}_{record['created_at'] or 'unknown'}_{record['comment_id'] or 'unknown'}_{record['action'] or 'unknown'}.txt"
+              name = name.replace(":", "-")
+              (root / "comments" / name).write_text(record["body"], encoding="utf-8")
+
+          def extract_base64(body: str) -> str:
+              fenced = re.findall(r"```(?:[A-Za-z0-9_-]+)?\s*([A-Za-z0-9+/=\s]{1000,})```", body, flags=re.S)
+              candidates = [re.sub(r"\s+", "", value) for value in fenced]
+              lines = []
+              for line in body.splitlines():
+                  value = line.strip()
+                  if len(value) >= 80 and re.fullmatch(r"[A-Za-z0-9+/=]+", value):
+                      lines.append(value)
+              if lines:
+                  candidates.append("".join(lines))
+              raw = re.sub(r"\s+", "", body)
+              if len(raw) >= 1000 and re.fullmatch(r"[A-Za-z0-9+/=]+", raw):
+                  candidates.append(raw)
+              return max(candidates, key=len, default="")
+
+          ordered = sorted(comments, key=lambda item: (item["created_at"] or "", item["comment_id"] or 0))
+          segments = []
+          segment_records = []
+          for record in ordered:
+              segment = extract_base64(record["body"])
+              if not segment:
+                  continue
+              segments.append(segment)
+              segment_records.append({
+                  key: record[key]
+                  for key in ("created_at", "action", "comment_id", "body_length", "body_sha256")
+              } | {"base64_length": len(segment)})
+
+          expected_size = 221174
+          expected_sha = "9e14e030a74d9774bc5d8df455ea1f855b9045bd06d619cdfe04334ed1db511e"
+          attempts = []
+          if segments:
+              joined = "".join(segments)
+              for label, values in (
+                  ("concatenated", [joined]),
+                  ("independent", segments),
+              ):
+                  try:
+                      if label == "concatenated":
+                          payload = base64.b64decode(values[0] + "=" * ((-len(values[0])) % 4), validate=False)
+                      else:
+                          payload = b"".join(
+                              base64.b64decode(value + "=" * ((-len(value)) % 4), validate=False)
+                              for value in values
+                          )
+                      digest = hashlib.sha256(payload).hexdigest()
+                      output = root / f"reconstructed-{label}.bin"
+                      output.write_bytes(payload)
+                      attempts.append({
+                          "strategy": label,
+                          "size": len(payload),
+                          "sha256": digest,
+                          "matches_expected_size": len(payload) == expected_size,
+                          "matches_expected_sha256": digest == expected_sha,
+                          "path": str(output),
+                      })
+                  except Exception as exc:
+                      attempts.append({"strategy": label, "error": repr(exc)})
+
+          summary = {
+              "repository_event_count": len(events),
+              "issue_1_event_count": len(issue_events),
+              "issue_comment_event_count": len(comments),
+              "comment_actions": {},
+              "comments": [
+                  {key: record[key] for key in record if key != "body"}
+                  for record in ordered
+              ],
+              "base64_segments": segment_records,
+              "reconstruction_attempts": attempts,
+              "expected_archive": {"size": expected_size, "sha256": expected_sha},
+          }
+          for record in comments:
+              action = record["action"] or "unknown"
+              summary["comment_actions"][action] = summary["comment_actions"].get(action, 0) + 1
+          (root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          (root / "SUMMARY.md").write_text(
+              "# Warp Flow GH Archive forensic result\n\n"
+              f"- Repository events: {len(events)}\n"
+              f"- Issue #1 events: {len(issue_events)}\n"
+              f"- Issue-comment events: {len(comments)}\n"
+              f"- Extracted Base64 segments: {len(segments)}\n"
+              f"- Expected archive: {expected_size:,} bytes, `{expected_sha}`\n\n"
+              + "## Reconstruction attempts\n\n"
+              + "```json\n" + json.dumps(attempts, indent=2) + "\n```\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+          find evidence -type f -print0 | sort -z | xargs -0 sha256sum > evidence/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: warp-flow-gharchive-forensics
+          path: evidence
+          if-no-files-found: error
+          retention-days: 30
