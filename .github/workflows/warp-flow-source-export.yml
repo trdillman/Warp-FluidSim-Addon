@@ -21,7 +21,9 @@ jobs:
       - name: Reconstruct source candidates
         run: |
           set -euo pipefail
-          mkdir -p export/candidates export/extracted
+          mkdir -p export/candidates export/extracted export/raw
+          cp automation/warp_flow_demo_validation/runtime.b64.part* export/raw/ 2>/dev/null || true
+          cp automation/warp_flow_demo_validation/source.b64.part* export/raw/ 2>/dev/null || true
           python - <<'PY'
           from __future__ import annotations
           import base64
