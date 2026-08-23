@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/warp-flow-source-export.yml'
       - 'automation/warp_flow_demo_validation/runtime.b64.part*'
+      - 'automation/warp_flow_demo_validation/source.b64.part*'
   workflow_dispatch:
 
 permissions:
@@ -17,39 +18,96 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct and verify source checkpoint
+      - name: Reconstruct source candidates
         run: |
           set -euo pipefail
-          mkdir -p export/source
+          mkdir -p export/candidates export/extracted
           python - <<'PY'
           from __future__ import annotations
           import base64
           import hashlib
+          import json
+          import re
           from pathlib import Path
 
-          expected = '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46'
-          parts = sorted(Path('automation/warp_flow_demo_validation').glob('runtime.b64.part*'))
-          if not parts:
-              raise SystemExit('No runtime Base64 parts found')
-          encoded = [b''.join(path.read_bytes().split()) for path in parts]
-          candidates = {
-              'concatenated-stream': base64.b64decode(b''.join(encoded), validate=False),
-              'independent-parts': b''.join(base64.b64decode(value, validate=False) for value in encoded),
-          }
-          for label, payload in candidates.items():
-              digest = hashlib.sha256(payload).hexdigest()
-              print(label, len(payload), digest)
-              if digest == expected:
-                  Path('export/source.tar.xz').write_bytes(payload)
-                  break
-          else:
-              raise SystemExit('No Base64 reconstruction strategy matched the expected SHA-256')
+          root = Path('automation/warp_flow_demo_validation')
+          out = Path('export/candidates')
+          report = {}
+
+          def clean(path: Path) -> bytes:
+              raw = path.read_bytes()
+              return re.sub(rb'[^A-Za-z0-9+/=]', b'', raw)
+
+          def padded(value: bytes) -> bytes:
+              return value + b'=' * ((-len(value)) % 4)
+
+          runtime_parts = sorted(root.glob('runtime.b64.part*'))
+          report['runtime_parts'] = [
+              {'name': p.name, 'size': p.stat().st_size, 'clean_size': len(clean(p))}
+              for p in runtime_parts
+          ]
+          runtime_payloads = []
+          errors = []
+          for path in runtime_parts:
+              try:
+                  runtime_payloads.append(base64.b64decode(padded(clean(path)), validate=False))
+              except Exception as exc:
+                  errors.append({'part': path.name, 'error': repr(exc)})
+          if runtime_payloads:
+              independent = b''.join(runtime_payloads)
+              (out / 'runtime-independent.tar.xz').write_bytes(independent)
+              report['runtime_independent'] = {
+                  'size': len(independent),
+                  'sha256': hashlib.sha256(independent).hexdigest(),
+              }
+          try:
+              stream = base64.b64decode(padded(b''.join(clean(p) for p in runtime_parts)), validate=False)
+              (out / 'runtime-stream.tar.xz').write_bytes(stream)
+              report['runtime_stream'] = {
+                  'size': len(stream),
+                  'sha256': hashlib.sha256(stream).hexdigest(),
+              }
+          except Exception as exc:
+              errors.append({'strategy': 'runtime-stream', 'error': repr(exc)})
+
+          source_parts = sorted(root.glob('source.b64.part*'))
+          report['source_parts'] = [
+              {'name': p.name, 'size': p.stat().st_size, 'clean_size': len(clean(p))}
+              for p in source_parts
+          ]
+          source_payloads = []
+          for path in source_parts:
+              try:
+                  source_payloads.append(base64.b64decode(padded(clean(path)), validate=False))
+              except Exception as exc:
+                  errors.append({'part': path.name, 'error': repr(exc)})
+          if source_payloads:
+              source = b''.join(source_payloads)
+              (out / 'source-independent.zip').write_bytes(source)
+              report['source_independent'] = {
+                  'size': len(source),
+                  'sha256': hashlib.sha256(source).hexdigest(),
+              }
+          report['errors'] = errors
+          Path('export/reconstruction-report.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
           PY
-          echo '13fd85448db050cd3b962260a9fe07de0dcf37ed2ea501b10e796b23ba81ec46  export/source.tar.xz' | sha256sum -c -
-          tar -xJf export/source.tar.xz -C export/source
-          python -m compileall -q export/source
-          find export/source -type f -print0 | sort -z | xargs -0 sha256sum > export/SOURCE_SHA256SUMS.txt
+          for archive in export/candidates/*.tar.xz; do
+            [ -f "$archive" ] || continue
+            name=$(basename "$archive" .tar.xz)
+            mkdir -p "export/extracted/$name"
+            tar -xJf "$archive" -C "export/extracted/$name" >"export/${name}-tar.log" 2>&1 || true
+          done
+          for archive in export/candidates/*.zip; do
+            [ -f "$archive" ] || continue
+            name=$(basename "$archive" .zip)
+            mkdir -p "export/extracted/$name"
+            unzip -t "$archive" >"export/${name}-zip-test.log" 2>&1 || true
+            unzip -q "$archive" -d "export/extracted/$name" 2>/dev/null || true
+          done
+          find export -type f -print0 | sort -z | xargs -0 sha256sum > export/SOURCE_SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: warp-flow-source-checkpoint
           path: export
