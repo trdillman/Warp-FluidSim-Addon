@@ -1,0 +1,35 @@
+name: Export certified Warp 1.16 wheel
+
+on:
+  push:
+    branches:
+      - automation/export-warp-1.16-wheel-20260825
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact NVIDIA Warp 1.16 CUDA 12 wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/NVIDIA/warp/releases/download/v1.16.0/warp_lang-1.16.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl'
+          name='warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl'
+          curl --fail --location --retry 5 "$url" -o "$name"
+          test "$(stat -c %s "$name")" = '163074461'
+          echo '78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b  warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl' | sha256sum -c -
+
+      - name: Upload certified wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: warp-lang-1.16.0-cu12-linux-x86_64
+          path: warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl
+          if-no-files-found: error
+          retention-days: 30
