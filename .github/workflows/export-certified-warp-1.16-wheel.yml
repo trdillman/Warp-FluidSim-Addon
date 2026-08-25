@@ -11,18 +11,20 @@ permissions:
 
 jobs:
   export:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, fluidsim-release]
     timeout-minutes: 20
+    env:
+      WARP_WHEEL_SOURCE: ${{ vars.WARP_1_16_WHEEL_SOURCE }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download exact NVIDIA Warp 1.16 CUDA 12 wheel
+      - name: Copy exact certified NVIDIA Warp 1.16 wheel
         shell: bash
         run: |
           set -euo pipefail
-          url='https://github.com/NVIDIA/warp/releases/download/v1.16.0/warp_lang-1.16.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl'
+          test -f "$WARP_WHEEL_SOURCE"
           name='warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl'
-          curl --fail --location --retry 5 "$url" -o "$name"
+          cp "$WARP_WHEEL_SOURCE" "$name"
           test "$(stat -c %s "$name")" = '163074461'
           echo '78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b  warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl' | sha256sum -c -
 
