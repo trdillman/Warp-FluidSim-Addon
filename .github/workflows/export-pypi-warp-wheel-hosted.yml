@@ -1,0 +1,49 @@
+name: Export Warp 1.16 wheel on hosted runner
+
+on:
+  push:
+    branches:
+      - automation/export-certified-warp-1.16
+    paths:
+      - .vendor-warp-hosted/READY
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download and verify Warp 1.16 wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p exported
+          python -m pip download --disable-pip-version-check --no-deps --dest exported 'warp-lang==1.16.0'
+          wheel=$(find exported -name '*.whl' -print -quit)
+          test -n "$wheel"
+          echo '96449fc1e3b354185e2f09434fb794b5953ab2e8673b104d7e7f48d5d418bb35  '"$wheel" > exported/SHA256SUMS.txt
+          sha256sum -c exported/SHA256SUMS.txt
+          python -m pip install --target exported/site "$wheel"
+          PYTHONPATH=exported/site python - <<'PY'
+          import json
+          import warp as wp
+          wp.init()
+          print(json.dumps({
+              'version': getattr(wp, '__version__', ''),
+              'module': wp.__file__,
+              'devices': [str(device) for device in wp.get_devices()],
+          }, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warp-lang-1.16.0-pypi-linux-x86_64
+          path: exported
+          if-no-files-found: error
+          retention-days: 90
