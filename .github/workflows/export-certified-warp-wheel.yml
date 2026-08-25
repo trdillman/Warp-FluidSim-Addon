@@ -1,0 +1,36 @@
+name: Export certified Warp 1.16 wheel
+
+on:
+  push:
+    branches:
+      - automation/export-certified-warp-1.16
+    paths:
+      - .vendor-warp/READY
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: [self-hosted, linux, x64, fluidsim-release]
+    timeout-minutes: 20
+    env:
+      WARP_WHEEL_SOURCE: ${{ vars.WARP_1_16_WHEEL_SOURCE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy and verify certified wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e "$WARP_WHEEL_SOURCE"
+          mkdir -p exported
+          cp "$WARP_WHEEL_SOURCE"/warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl exported/
+          echo '78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b  exported/warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl' > exported/SHA256SUMS.txt
+          sha256sum -c exported/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: certified-warp-lang-1.16.0-cu12-linux-x86_64
+          path: exported
+          if-no-files-found: error
+          retention-days: 90
