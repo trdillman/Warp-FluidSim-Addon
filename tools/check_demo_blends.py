@@ -20,7 +20,8 @@ from tools.repo_addon_loader import enable_repo_addon
 
 DEMOS = os.path.join(REPO, "demos")
 SCENES = (
-    "dam_break", "crown_splash", "force_fields", "adhesive_calender",
+    "dam_break", "crown_splash", "chromatic_vortex", "force_fields",
+    "adhesive_calender",
     "cache_export_playback_review", "paddle_stir",
     "mesh_solid_source", "mesh_shell_source", "point_source",
     "volume_source", "liquid_sink", "height_fill",
@@ -220,6 +221,39 @@ def check_scene(name):
                 bpy.ops.fluidsim.release()
         else:
             checks["viewport_playback_advances"] = False
+    elif name == "chromatic_vortex":
+        red_source = bpy.data.objects.get("Red Dye Initial Fill")
+        blue_source = bpy.data.objects.get("Blue Dye Initial Fill")
+        vortex = bpy.data.objects.get("Chromatic Mixing Vortex Force")
+        live_surface = bpy.data.objects.get("FluidSim Surface")
+        color_attr = (
+            live_surface.data.color_attributes.get("display_color")
+            if live_surface and live_surface.type == "MESH" else None)
+        live_colors = np.asarray(
+            [item.color[:3] for item in color_attr.data], dtype=np.float32
+        ) if color_attr and len(color_attr.data) else np.empty((0, 3))
+        checks.update({
+            "color_mixing_enabled": bool(
+                fs and fs.species_enabled and fs.species_mixing_rate > 0.0),
+            "two_colored_initial_fills": bool(
+                red_source and blue_source
+                and red_source.fluidsim.role == "SOURCE"
+                and blue_source.fluidsim.role == "SOURCE"
+                and red_source.fluidsim.emission_mode == "INITIAL_FILL"
+                and blue_source.fluidsim.emission_mode == "INITIAL_FILL"
+                and red_source.fluidsim.source_color[0]
+                > red_source.fluidsim.source_color[2]
+                and blue_source.fluidsim.source_color[2]
+                > blue_source.fluidsim.source_color[0]),
+            "owned_spin_force": bool(
+                vortex and vortex.fluidsim.role == "FORCE"
+                and vortex.fluidsim.force_type == "SPIN"
+                and vortex.fluidsim.force_strength > 0.0),
+            "live_two_color_output": bool(
+                len(live_colors)
+                and np.any(live_colors[:, 0] > live_colors[:, 2] + 0.15)
+                and np.any(live_colors[:, 2] > live_colors[:, 0] + 0.15)),
+        })
     elif name == "force_fields":
         force_fields = [
             obj for obj in scene.objects
