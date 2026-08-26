@@ -1,0 +1,144 @@
+{
+  "candidate": "Blender 5.2 Alpha / managed GPUVertBuf external lease",
+  "captured_at": "2026-07-14T07:43:00Z",
+  "candidate_executable": "F:/blender-gpu-interop-official-build/bin/blender.exe",
+  "candidate_executable_sha256": "DB2BC63CD7234F59251F88E7BA9C3D3F9C056DB8681FA0C54DD1E05B86B48B82",
+  "final_state": "complete",
+  "blocking_gate": null,
+  "resource_policy": {
+    "priority": "BelowNormal",
+    "logical_processor_affinity": 16,
+    "full_ctest_parallelism": 1
+  },
+  "lanes": [
+    {
+      "name": "blender_debug_non_unity_focused",
+      "result": "PASS",
+      "passed": 5,
+      "failed": 0,
+      "tests": [
+        "draw_pointcloud",
+        "gpu_vk_device_identity",
+        "gpu_vk_external_capabilities",
+        "gpu_vk_cuda_interop",
+        "gpu_vk_external_lifetime"
+      ]
+    },
+    {
+      "name": "blender_release_non_unity_build",
+      "result": "PASS",
+      "build_actions": 1155,
+      "failed_actions": 0
+    },
+    {
+      "name": "blender_release_non_unity_focused",
+      "result": "PASS",
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "name": "full_blender_ctest_baseline",
+      "command": "ctest --test-dir F:/blender-gpu-interop-official-build -C Release -j 1 --output-log F:/blender-gpu-interop-official-build/Testing/a02-sequential-repaired.log",
+      "result": "PASS",
+      "passed": 864,
+      "failed": 0,
+      "total": 864,
+      "elapsed_seconds": 2984.70,
+      "output_log_sha256": "11F62A1FBF99AD25E6E755ACB796F6E24E70985823DD11CA8B35437C5DC5DB3C",
+      "console_log_sha256": "E5CEB0B4897D697EA4E2DD457C5423C87FDA1682A10F84AAA9EF88422BCC0E13"
+    },
+    {
+      "name": "consumer_full_unit",
+      "command": "private-python -m pytest -q",
+      "result": "PASS",
+      "passed": 184,
+      "failed": 0,
+      "elapsed_seconds": 3.18,
+      "pytest_payload": "dist/release_test_tools_pytest_20260714 (test-only; not packaged)"
+    },
+    {
+      "name": "full_preinterop_production_gate",
+      "command": "private-python tools/run_production_gate.py --include-gui",
+      "result": "PASS",
+      "marker": "FULL-PRODUCTION-GATE-PASS",
+      "focused_pytest": "36/36",
+      "gui": "35/35",
+      "demo_analysis": "39/39",
+      "console_log": "final-full-production-gate.console.log",
+      "console_log_sha256": "05D372B1B60AF9D13EACF12D23E873BB084458EB7966841FCDCB02C4198E246D"
+    },
+    {
+      "name": "vulkan_validation_acceptance",
+      "result": "PASS",
+      "layer": "VK_LAYER_KHRONOS_validation",
+      "validation_diagnostics": 0,
+      "visible_particles": 4225,
+      "evidence": "acceptance.json"
+    },
+    {
+      "name": "real_solver_and_fault_gate",
+      "result": "PASS",
+      "published_frames": 24,
+      "bulk_host_position_bytes": 0,
+      "fault_recovery_seconds": 0.0022762,
+      "fallback_materialized_bytes": 359340
+    },
+    {
+      "name": "real_solver_stability",
+      "result": "PASS",
+      "frames": 1000,
+      "elapsed_seconds": 20.1107,
+      "published_frames": 1000,
+      "bulk_host_position_bytes": 0,
+      "evidence": "solver-stability.json"
+    },
+    {
+      "name": "validated_10000_frame_stress",
+      "result": "PASS",
+      "frames": 10000,
+      "validation_diagnostics": 0,
+      "published_bytes": 4000000000,
+      "evidence": "stress.json"
+    },
+    {
+      "name": "equivalent_workload_benchmarks",
+      "result": "PASS",
+      "particle_counts": [25000, 250000, 1000000],
+      "presentation_speedups": [1.7973, 2.9228, 4.3313],
+      "solver_native_to_cpu_ratio": 0.9588,
+      "solver_ratio_limit": 1.05,
+      "evidence": "benchmark.json"
+    },
+    {
+      "name": "opengl_cpu_fallback",
+      "result": "PASS",
+      "fallback_position_bytes": 124416,
+      "reason": "external GPUVertBuf requires the Vulkan backend"
+    },
+    {
+      "name": "lifecycle",
+      "result": "PASS",
+      "modes": ["undo", "load", "reload", "viewport", "teardown"]
+    },
+    {
+      "name": "isolated_packaged_saved_demo",
+      "result": "PASS",
+      "pythonpath": null,
+      "profile": "C:/gbi_profile_sanitized_20260714",
+      "warp_cache": "C:/gbi_warp_cache_20260714 (fresh; all kernels compiled)",
+      "path": "Windows system directories only",
+      "package_sha256": "1F1173058BE14D7148A78B3446F57724D153E8DAC20365D835CA429BB679EBDC",
+      "particles": 77798,
+      "published_frames": 3,
+      "bulk_host_position_bytes": 0,
+      "evidence": "packaged-demo.json"
+    },
+    {
+      "name": "independent_review",
+      "result": "PASS",
+      "critical_remaining": 0,
+      "high_remaining": 0,
+      "evidence": "review.md"
+    }
+  ]
+}

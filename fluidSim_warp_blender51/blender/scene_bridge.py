@@ -33,16 +33,32 @@ class Session:
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
         self.native_presenter = None
+        self._native_cleanup_pending = []
+        self.native_presenter_failed = False
         self.native_interop_error = ""
+        self.presentation_mode = "CPU"
+        self.presentation_reason = ""
+        self.presentation_bytes = 0
 
     @property
     def active(self):
         return self.solver is not None
 
     def _clear_runtime(self):
+        presenters = list(self._native_cleanup_pending)
+        self._native_cleanup_pending = []
         if self.native_presenter is not None:
-            self.native_presenter.close()
+            presenters.append(self.native_presenter)
             self.native_presenter = None
+
+        cleanup_errors = []
+        for presenter in presenters:
+            try:
+                presenter.close()
+            except Exception as error:
+                self._native_cleanup_pending.append(presenter)
+                cleanup_errors.append(str(error))
+        self.native_presenter_failed = False
         self.solver = None
         self.profiler = None
         self.start_frame = 1
@@ -51,7 +67,10 @@ class Session:
         self._collider_prev = {}
         self._collider_mesh_cache = {}
         self.collider_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
-        self.native_interop_error = ""
+        self.native_interop_error = "; ".join(cleanup_errors)
+        self.presentation_mode = "CPU"
+        self.presentation_reason = self.native_interop_error
+        self.presentation_bytes = 0
 
     def set_error(self, scene, message):
         self.error = str(message)
@@ -682,13 +701,32 @@ def _on_frame_change(scene, depsgraph):
     session().handle_frame_change(scene, depsgraph)
 
 
+_on_frame_change._bpy_persistent = True
+
+
+def _on_lifecycle_pre(_unused):
+    release_session()
+
+
+_on_lifecycle_pre._bpy_persistent = True
+
+
 def register_handlers():
     unregister_handlers()
     bpy.app.handlers.frame_change_post.append(_on_frame_change)
+    for handlers in (
+            bpy.app.handlers.load_pre,
+            bpy.app.handlers.undo_pre,
+            bpy.app.handlers.redo_pre):
+        handlers.append(_on_lifecycle_pre)
 
 
 def unregister_handlers():
-    handlers = bpy.app.handlers.frame_change_post
-    for fn in list(handlers):
-        if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
-            handlers.remove(fn)
+    for handlers in (
+            bpy.app.handlers.frame_change_post,
+            bpy.app.handlers.load_pre,
+            bpy.app.handlers.undo_pre,
+            bpy.app.handlers.redo_pre):
+        for fn in list(handlers):
+            if getattr(fn, "__module__", "").startswith("fluidSim_warp_blender51"):
+                handlers.remove(fn)

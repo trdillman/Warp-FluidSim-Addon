@@ -58,7 +58,10 @@ fluidSim_warp_blender51_synth_package/
 
 ## Native GPU interop lane
 
-- `docs/NATIVE_GPU_INTEROP.md`: supported scope, usage, results, and reproduction contract.
+- Blender source `GOALS.md`: product authority.
+- Blender source `GPU_BUFFER_INTEROP_NATIVE_FEATURE_PLAN.md`: active sequence and task tracker.
+- Blender source `GPU_BUFFER_INTEROP_ACCEPTANCE.md`: release definition of done.
+- `docs/NATIVE_GPU_INTEROP.md`: current baseline, usage, results, and reproduction commands.
 - `fluidSim_warp_blender51/blender/native_interop.py`: CUDA external-memory/timeline import and native
   particle presenter.
 - `demos/native_gpu_interop_particles.blend`: configured runnable consumer scene.

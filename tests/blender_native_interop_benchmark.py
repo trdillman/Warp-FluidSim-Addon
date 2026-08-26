@@ -1,6 +1,5 @@
-"""Compare steady-state CPU datablock presentation with native GPU interop."""
+"""Compare equivalent CPU and native PointCloud presentation workloads."""
 
-from tools.repo_addon_loader import enable_repo_addon
 import json
 from pathlib import Path
 import statistics
@@ -9,14 +8,18 @@ import time
 
 import bpy
 import gpu
-from mathutils import Matrix
+import numpy as np
+import warp as wp
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from tools.repo_addon_loader import enable_repo_addon
 
+COUNTS = (25_000, 250_000, 1_000_000)
 ITERATIONS = 20
+RADIUS = 0.02
 
 
 def percentile_95(values):
@@ -24,112 +27,134 @@ def percentile_95(values):
     return ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
 
 
-def draw_pending(presenter, offscreen):
-    with offscreen.bind():
-        with gpu.matrix.push_pop():
-            gpu.matrix.load_matrix(Matrix.Identity(4))
-            gpu.matrix.load_projection_matrix(Matrix.Identity(4))
-            presenter.draw()
+def redraw_viewport():
+    area = next(
+        area for area in bpy.context.window.screen.areas if area.type == "VIEW_3D"
+    )
+    region = next(region for region in area.regions if region.type == "WINDOW")
+    with bpy.context.temp_override(
+        area=area, region=region, space_data=area.spaces.active
+    ):
+        area.tag_redraw()
+        bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
 
 
-def configure_scene():
-    enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=True)
-    settings = bpy.context.scene.fluidsim
-    settings.voxel_size = 0.14
-    settings.max_particles = 120_000
-    settings.max_whitewater = 20_000
-    settings.whitewater_enabled = False
-    settings.surface_enabled = False
-    settings.liquid_view_mode = "PARTICLES"
-    settings.particle_display_fraction = 1.0
-    settings.particle_attribute_mode = "NONE"
-    assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
-    assert bpy.ops.fluidsim.initialize() == {"FINISHED"}, settings.status
-    return settings
+def sample(call):
+    start = time.perf_counter_ns()
+    call()
+    return (time.perf_counter_ns() - start) / 1_000_000.0
 
 
-def main():
-    settings = configure_scene()
+def summarize(samples):
+    return {
+        "median": statistics.median(samples),
+        "p95": percentile_95(samples),
+        "samples": samples,
+    }
+
+
+def source_positions(count):
+    indices = np.arange(count, dtype=np.float32)
+    side = float(np.ceil(np.sqrt(count)))
+    positions = np.empty((count, 3), dtype=np.float32)
+    positions[:, 0] = (indices % side) * 0.002
+    positions[:, 1] = np.floor(indices / side) * 0.002
+    positions[:, 2] = np.sin(indices * 0.01) * 0.01
+    return positions
+
+
+def benchmark_count(scene, count, device):
     from fluidSim_warp_blender51.blender import viewport
-    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.native_interop import NativeParticlePresenter
 
-    runtime = session()
-    runtime.solver.step_frame()
-    count = runtime.solver.particles.host_count
-    assert count > 0
+    host_source = source_positions(count)
+    device_source = wp.array(host_source, dtype=wp.vec3, device=device)
+    active_count = wp.array([count], dtype=wp.int32, device=device)
+    obj = bpy.data.objects.get(viewport.PARTICLES_NAME)
+    if obj is None:
+        pointcloud = bpy.data.pointclouds.new(viewport.PARTICLES_NAME)
+        obj = bpy.data.objects.new(viewport.PARTICLES_NAME, pointcloud)
+        scene.collection.objects.link(obj)
 
-    settings.native_gpu_interop = False
-    viewport.update_outputs(bpy.context.scene, runtime)
-    cpu_times = []
-    for _ in range(ITERATIONS):
-        start = time.perf_counter_ns()
-        viewport.update_outputs(bpy.context.scene, runtime)
-        cpu_times.append((time.perf_counter_ns() - start) / 1_000_000.0)
+    def cpu_frame():
+        viewport._swap_points(obj, device_source.numpy(), RADIUS)
+        redraw_viewport()
 
-    settings.native_gpu_interop = True
-    offscreen = gpu.types.GPUOffScreen(64, 64)
-    try:
-        viewport.update_outputs(bpy.context.scene, runtime)
-        assert runtime.native_presenter is not None, runtime.native_interop_error
-        draw_pending(runtime.native_presenter, offscreen)
-        native_times = []
-        for _ in range(ITERATIONS):
-            start = time.perf_counter_ns()
-            viewport.update_outputs(bpy.context.scene, runtime)
-            draw_pending(runtime.native_presenter, offscreen)
-            native_times.append((time.perf_counter_ns() - start) / 1_000_000.0)
-        with offscreen.bind():
-            gpu.state.active_framebuffer_get().read_color(0, 0, 1, 1, 4, 0, "UBYTE")
-    finally:
-        offscreen.free()
+    cpu_frame()
+    cpu_samples = [sample(cpu_frame) for _ in range(ITERATIONS)]
 
-    stats = runtime.native_presenter.bridge.stats
-    cpu_median = statistics.median(cpu_times)
-    native_median = statistics.median(native_times)
-    report = {
-        "environment": {
-            "backend": gpu.platform.backend_type_get(),
-            "device": runtime.native_presenter.bridge.device.name,
-            "device_uuid": str(runtime.native_presenter.bridge.device.uuid),
-            "warp_version": runtime.native_presenter.bridge.wp.__version__,
-            "blender_version": bpy.app.version_string,
-        },
-        "workload": {
-            "particle_count": count,
-            "iterations": ITERATIONS,
-            "bytes_per_frame": count * 12,
-            "surface_enabled": False,
-        },
-        "cpu_datablock_ms": {
-            "median": cpu_median,
-            "p95": percentile_95(cpu_times),
-            "samples": cpu_times,
+    obj, pointcloud = viewport._ensure_native_pointcloud(scene, count)
+    bpy.context.view_layer.update()
+    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
+    presenter = NativeParticlePresenter(count, pointcloud=evaluated, radius=RADIUS)
+
+    def native_frame():
+        presenter.publish_device_count(device_source, active_count, count)
+        redraw_viewport()
+
+    native_frame()
+    native_samples = [sample(native_frame) for _ in range(ITERATIONS)]
+    stats = dict(presenter.bridge.stats)
+    presenter.close()
+
+    cpu = summarize(cpu_samples)
+    native = summarize(native_samples)
+    assert stats["bulk_host_position_bytes"] == 0
+    assert stats["imports"] == 6
+    assert stats["maps"] == 2
+    return {
+        "particle_count": count,
+        "iterations": ITERATIONS,
+        "bytes_per_frame": count * 12,
+        "cpu_end_to_end_ms": {
+            **cpu,
             "bulk_host_position_bytes": count * 12 * ITERATIONS,
         },
-        "native_interop_ms": {
-            "median": native_median,
-            "p95": percentile_95(native_times),
-            "samples": native_times,
-            "bulk_host_position_bytes": stats["bulk_host_position_bytes"],
+        "native_end_to_end_ms": {
+            **native,
+            "bulk_host_position_bytes": 0,
             "imports": stats["imports"],
             "maps": stats["maps"],
         },
-        "median_speedup": cpu_median / native_median,
+        "median_speedup": cpu["median"] / native["median"],
+    }
+
+
+def main():
+    enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=True)
+    scene = bpy.context.scene
+    device = wp.get_device("cuda:0")
+    workloads = [benchmark_count(scene, count, device) for count in COUNTS]
+    assert workloads[0]["native_end_to_end_ms"]["median"] <= (
+        workloads[0]["cpu_end_to_end_ms"]["median"] * 1.1
+    )
+    assert workloads[1]["median_speedup"] >= 2.0
+    assert workloads[2]["median_speedup"] >= 2.0
+    report = {
+        "environment": {
+            "backend": gpu.platform.backend_type_get(),
+            "device": device.name,
+            "warp_version": wp.__version__,
+            "blender_version": bpy.app.version_string,
+        },
+        "workloads": workloads,
         "measurement_scope": (
-            "steady-state presentation only; native samples enqueue CUDA copy, timeline handoff, "
-            "and Vulkan draw, followed by one final framebuffer drain"
+            "same deterministic Warp allocation; CPU path includes device-to-host copy, PointCloud "
+            "replacement, and normal View3D redraw; native path includes shared-VBO publication and "
+            "the same normal View3D redraw"
         ),
     }
-    assert report["native_interop_ms"]["bulk_host_position_bytes"] == 0
-    assert report["native_interop_ms"]["imports"] == 3
-    assert report["native_interop_ms"]["maps"] == 1
     evidence_dir = REPO_ROOT / "docs" / "evidence" / "native_interop"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     output = evidence_dir / "benchmark.json"
     output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print("NATIVE_INTEROP_BENCHMARK", json.dumps(report, sort_keys=True))
-    bpy.ops.fluidsim.release()
-    bpy.ops.wm.quit_blender()
+
+    def quit_after_test():
+        bpy.ops.wm.quit_blender()
+        return None
+
+    bpy.app.timers.register(quit_after_test, first_interval=0.1)
 
 
 if __name__ == "__main__":

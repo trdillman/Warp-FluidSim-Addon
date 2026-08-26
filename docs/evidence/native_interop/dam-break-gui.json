@@ -1,0 +1,43 @@
+{
+  "addon_module": "C:\\gbi_profile_dam_break_20260714\\scripts\\addons\\fluidSim_warp_blender51\\__init__.py",
+  "animation_was_playing": true,
+  "backend": "Vulkan",
+  "blend": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop\\demos\\dam_break.blend",
+  "blender": "5.2.0 Alpha",
+  "device": "cuda:0",
+  "elapsed_seconds": 2.321,
+  "native_interop_error": "",
+  "native_stats": {
+    "bulk_host_position_bytes": 0,
+    "imports": 6,
+    "maps": 2,
+    "published_bytes": 38400000,
+    "published_frames": 4
+  },
+  "particle_count": 600000,
+  "passed": true,
+  "pointcloud_capacity": 600000,
+  "pointcloud_collections": [
+    {
+      "hide_render": false,
+      "hide_viewport": false,
+      "name": "FluidSim Output"
+    }
+  ],
+  "pointcloud_hide_get": false,
+  "pointcloud_hide_render": false,
+  "pointcloud_hide_viewport": false,
+  "pointcloud_type": "POINTCLOUD",
+  "pointcloud_visible": true,
+  "presentation_bytes": 0,
+  "presentation_mode": "Native GPU",
+  "presentation_reason": "",
+  "runtime_active": true,
+  "screenshot": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop\\docs\\evidence\\native_interop\\dam-break-viewport.png",
+  "screenshot_bytes": 625450,
+  "show_particles": true,
+  "solver_frame": 4,
+  "solver_frame_start": 1,
+  "timeline_end": 4,
+  "timeline_start": 1
+}

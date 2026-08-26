@@ -1,19 +1,48 @@
 # Native GPU Interop
 
-This branch adds an opt-in particle presentation path that keeps live Warp/CUDA positions on the GPU.
-Blender creates an exportable Vulkan VBO; CUDA imports and maps it once; each frame uses a device-to-device
-`wp.copy` and two directional timeline semaphores; Blender draws the same allocation with `GPUBatch`.
+## Status
+
+This branch contains the Windows/NVIDIA consumer for Blender's native PointCloud interop path. The
+implementation is release-candidate code until every gate in `GPU_BUFFER_INTEROP_ACCEPTANCE.md` has
+been rerun against one unchanged packaged build.
+
+Product authority, active sequencing, and release gates live in the Blender source tree:
+
+- `GOALS.md`
+- `GPU_BUFFER_INTEROP_NATIVE_FEATURE_PLAN.md`
+- `GPU_BUFFER_INTEROP_ACCEPTANCE.md`
+
+Blender creates exportable Vulkan VBOs and grants each one managed `GPUVertBufExternalLease`. CUDA
+imports each generation once and maps it persistently. Directional timeline semaphores transfer queue
+ownership each frame, and Blender's ordinary PointCloud/Draw Manager path draws the same allocations.
+
+The supported Python boundary is:
+
+```python
+lease = vbo.external_lease_acquire()
+descriptor = lease.descriptor_get()
+lease.release(value)
+# CUDA waits, writes, and signals completion.
+lease.acquire(value)
+lease.submit(value)
+# After CUDA destroys its imported memory and semaphores:
+lease.close()
+```
+
+One VBO grants one terminal lease. The lease strongly owns the VBO, carries a unique generation, and
+rejects duplicate acquisition, stale or post-close use, timeline regression, unmatched submission, and
+double close. Blender owns the exported Win32 handles; the consumer never calls `CloseHandle`.
 
 ## Supported lane
 
 - Branch: `codex/native-gpu-interop`
 - Windows, Vulkan, NVIDIA CUDA/Warp
-- Fixed-capacity liquid particles, host-known active count
-- Full display fraction and no particle attribute visualization
+- Two persistent presentation slots with safe capacity-generation replacement
+- GPU-written active count, draw command, bounds, position/radius, velocity, and supported color modes
 
-The Surface, whitewater, fractional display, attribute visualization, cache, export, and render-engine
-paths keep their existing CPU behavior. If native initialization or a capability check fails, the add-on
-records `session().native_interop_error` and automatically rebuilds the normal point-cloud datablock.
+Surface, whitewater, cache, export, and render-engine ingestion keep their existing CPU behavior. If
+native initialization, descriptor validation, device matching, import, or publication fails, the add-on
+records the persistent reason and byte cost and automatically rebuilds the normal PointCloud datablock.
 
 ## Use
 
@@ -21,8 +50,8 @@ Open `demos/native_gpu_interop_particles.blend` in an interop-enabled Blender bu
 Vulkan backend. In Fluid Simulation, click **Initialize Solver**, then enable **Live Preview** or play the
 timeline. `Native GPU Interop` is already enabled in the demo.
 
-The stock Blender 5.1 binary does not contain the private `GPUVertBuf` export methods used by this branch;
-on stock or non-Vulkan builds the automatic fallback remains available.
+Stock Blender does not contain this custom lease API; stock, OpenGL, and unsupported configurations use
+the automatic CPU fallback.
 
 ## Proven results
 
@@ -46,9 +75,9 @@ Evidence:
 
 ## Reproduce
 
-Run these scripts with the interop-enabled Blender executable, `--gpu-backend vulkan`, system Python
-environment enabled, this repository on `PYTHONPATH`, and the Blender 5.1 Python 3.13 NumPy plus Warp
-packages available:
+Run these scripts with the packaged interop-enabled Blender executable and `--gpu-backend vulkan`. The
+release build supplies pinned private Warp and NumPy packages; runtime must not borrow another Blender
+installation, a source worktree, user site-packages, or a separately installed CUDA Toolkit:
 
 ```text
 tests/blender_native_interop_acceptance.py

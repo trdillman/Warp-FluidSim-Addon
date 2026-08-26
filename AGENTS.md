@@ -4,15 +4,17 @@ Build the Blender 5.1 FluidSim Warp add-on from the synthesized requirements onl
 
 ## Active project: native GPU interop
 
-- Product authority remains the Blender source tree's `GOALS.md`; consumer sequencing and evidence live
-  in `docs/NATIVE_GPU_INTEROP_PHASE_PLAN.md` and `docs/NATIVE_GPU_INTEROP.md`.
-- Native presentation is Windows Vulkan + NVIDIA CUDA/Warp only. It is opt-in and must retain the CPU
-  point-cloud path as a reported fallback.
-- Reuse the Blender-owned exportable VBO and two directional timelines. Do not add a second allocation
-  owner, public provider ABI, indirect draw, bounds, surface interop, or Linux support in this milestone.
-- A passing import or screenshot is not completion. Require real solver frames, zero bulk host-position
-  bytes, persistent import/map counters, correct pixels, a forced fallback, benchmark JSON, and a saved
-  demo scene that reopens and advances.
+- Product authority remains the Blender source tree's `GOALS.md`; sequence and completion gates live in
+  `GPU_BUFFER_INTEROP_NATIVE_FEATURE_PLAN.md` and `GPU_BUFFER_INTEROP_ACCEPTANCE.md` there.
+- `docs/NATIVE_GPU_INTEROP.md` records the current consumer baseline and reproduction commands; it is not
+  a separate plan or completion authority.
+- Native presentation is bounded to Windows Vulkan + NVIDIA CUDA/Warp for this release. Preserve the CPU
+  point-cloud path and every existing surface, whitewater, cache, export, render, and display feature.
+- Reuse the Blender-owned external buffers and directional timelines. Route product drawing through the
+  existing PointCloud/Draw Manager path before adding a generic provider ABI or new geometry type.
+- A passing import, screenshot, draw handler, or benchmark is not feature completion. Require every gate
+  in the Blender acceptance contract, including parity, lifecycle, stress, packaging, and clean-install
+  evidence.
 
 ## Verified workflows
 

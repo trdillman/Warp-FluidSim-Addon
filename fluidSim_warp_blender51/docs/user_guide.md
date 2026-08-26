@@ -1,14 +1,14 @@
 # FluidSim Warp — User Guide
 
-GPU liquid simulation for Blender 5.1, powered by NVIDIA Warp / CUDA.
+GPU liquid simulation for the packaged Blender 5.2 build, powered by NVIDIA Warp / CUDA.
 The solver is a sparse-grid PIC/FLIP liquid simulator that runs entirely on
 the GPU and plays back **interactively in the viewport** — no cache baking is
 required. Optional npz caching and OBJ/PLY export are available as supplemental
 tools.
 
-> Requirements: **Blender 5.1**, an **NVIDIA GPU with CUDA**, and `warp-lang`
-> importable from Blender's Python. Open the **FluidSim** tab in the 3D
-> Viewport sidebar (press **N**).
+> Requirements: the supplied **Blender 5.2** build and an **NVIDIA CUDA GPU**.
+> The packaged build includes its pinned Warp and NumPy dependencies. Open the
+> **FluidSim** tab in the 3D Viewport sidebar (press **N**).
 
 ---
 
@@ -115,6 +115,37 @@ Particle and material display edits refresh the viewport output immediately.
 When only existing output/cache objects remain, visibility and material edits
 still apply to those objects; geometry-dependent surfacing requires an active
 solver frame.
+
+#### Native GPU Interop
+
+Enable **Native GPU Interop** under **Liquid Particles** when Blender uses the
+Vulkan backend. Warp then writes Blender-owned PointCloud position/radius
+buffers directly on the GPU. The normal Blender object, Draw Manager, material,
+selection, transform, visibility, depth, and culling paths remain active.
+
+The panel always reports the presentation **Mode**, fallback/materialization
+**Reason**, and CPU transfer byte cost. Attribute color modes may materialize
+one scalar per visible particle; positions remain GPU-resident. OpenGL,
+unsupported devices, import failures, and provider faults automatically return
+to a populated CPU PointCloud instead of disabling the existing workflow.
+
+Each native buffer is protected by one Blender-owned lease. The add-on imports
+its Win32 memory and semaphore handles once, destroys the CUDA imports first,
+then closes the Blender lease. Generation, Vulkan/CUDA identity, handle types,
+and required capabilities are checked before CUDA initialization; stale or
+incompatible descriptors therefore enter the reported CPU fallback instead of
+hanging playback or reusing an old allocation.
+
+If native mode falls back, leave the solver running when the CPU result is
+correct and inspect the persistent **Reason**. Use **Release Solver**, confirm
+the packaged Blender is running Vulkan on the intended NVIDIA GPU, then
+initialize again. The supplied Blender build owns its pinned private Warp and
+NumPy packages and must not be supplemented from user site-packages, another
+Blender installation, a source checkout, or a separate CUDA Toolkit.
+
+Surface meshes, whitewater, cache/export, and final render ingestion retain
+their established CPU paths in this release. They continue to work when native
+particle presentation is enabled.
 
 ### Viewport / Render Output
 Output collection name and overlay toggle. **Optional Cache / Export**: enable

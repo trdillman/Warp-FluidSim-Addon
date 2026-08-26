@@ -513,7 +513,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     pressure_iterations: IntProperty(name="Iterations", default=200, min=1, max=4000,
                                      update=_request_reset)
     pressure_tolerance: FloatProperty(
-        name="Tolerance", default=1.0e-5, min=0.0, precision=8,
+        name="Tolerance", default=1.0e-5, min=0.0, precision=6,
         update=_request_reset)
     multigrid: EnumProperty(name="Multigrid", items=_items(MultiGrid), default="OFF",
                             update=_request_reset)
@@ -538,7 +538,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     viscosity_iterations: IntProperty(name="Iterations", default=40, min=1, max=1000,
                                       update=_request_reset)
     viscosity_tolerance: FloatProperty(
-        name="Tolerance", default=1.0e-4, min=0.0, precision=8,
+        name="Tolerance", default=1.0e-4, min=0.0, precision=6,
         update=_request_reset)
 
     # -- Surface -------------------------------------------------------------------

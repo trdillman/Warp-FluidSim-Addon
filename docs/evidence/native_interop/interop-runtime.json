@@ -1,0 +1,79 @@
+{
+  "candidate_executable_sha256": "DB2BC63CD7234F59251F88E7BA9C3D3F9C056DB8681FA0C54DD1E05B86B48B82",
+  "backend": "VULKAN",
+  "provider": "Warp CUDA 1.12.1",
+  "device": "NVIDIA GeForce RTX 4080 SUPER",
+  "device_uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+  "draw_path": "PointCloud/DrawManager",
+  "resource_model": {
+    "slots": 2,
+    "imports_per_generation": 6,
+    "maps_per_generation": 2,
+    "persistent_mapping": true,
+    "release_timeline_signal_owner": "Blender",
+    "completion_timeline_signal_owner": "CUDA",
+    "memory_handle": "OPAQUE_WIN32",
+    "semaphore_handle": "OPAQUE_WIN32"
+  },
+  "runtime": {
+    "position_readback": false,
+    "bulk_host_position_bytes": 0,
+    "per_frame_import": false,
+    "per_frame_map": false,
+    "steady_state_global_wait": false,
+    "normal_pointcloud_draw": true,
+    "generation_replacement": {
+      "from_capacity": 4225,
+      "to_capacity": 6400,
+      "continued_drawing": true
+    },
+    "active_count": {
+      "source": "GPU device scalar",
+      "draw_submission": "conservative capacity draw with zero radius outside active count",
+      "bulk_position_readback": false
+    },
+    "bounds": {
+      "source": "authoritative FluidSim domain bounds",
+      "bulk_position_readback": false
+    },
+    "attributes": {
+      "native_position_and_radius": true,
+      "supported_modes": [
+        "NONE",
+        "HEIGHT",
+        "SPEED",
+        "TEMPERATURE",
+        "VISCOSITY",
+        "DENSITY",
+        "AGE",
+        "LIFE",
+        "TIME_OFFSET"
+      ],
+      "scalar_materialization_bytes_per_visible_particle": 4,
+      "same_frame_materialization_cache": true,
+      "position_materialization": false
+    }
+  },
+  "fault_and_fallback": {
+    "publish_failure_seconds": 0.0022762,
+    "timeout_seconds": 5.0,
+    "forced_fallback_materialized_bytes": 359340,
+    "opengl_fallback_materialized_bytes": 124416,
+    "cpu_pointcloud_populated": true,
+    "persistent_ui_fields": ["mode", "reason", "byte_cost"],
+    "opengl_fallback": true
+  },
+  "lifecycle": {
+    "load": "PASS",
+    "undo": "PASS",
+    "reload": "PASS",
+    "viewport": "PASS",
+    "teardown": "PASS",
+    "deferred_cleanup_retry_tests": "PASS"
+  },
+  "validation": {
+    "layer": "VK_LAYER_KHRONOS_validation",
+    "acceptance_diagnostics": 0,
+    "stress_diagnostics": 0
+  }
+}

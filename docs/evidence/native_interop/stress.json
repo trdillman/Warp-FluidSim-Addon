@@ -1,0 +1,86 @@
+{
+  "backend": "VULKAN",
+  "device": "NVIDIA GeForce RTX 4080 SUPER",
+  "frames": 10000,
+  "warmup_frames": 100,
+  "capacity": 25000,
+  "validation_layer": "VK_LAYER_KHRONOS_validation",
+  "samples": [
+    {
+      "frame": 100,
+      "handles": 1325,
+      "private_bytes": 1722609664
+    },
+    {
+      "frame": 1000,
+      "handles": 1325,
+      "private_bytes": 1727860736
+    },
+    {
+      "frame": 2000,
+      "handles": 1325,
+      "private_bytes": 1739350016
+    },
+    {
+      "frame": 3000,
+      "handles": 1325,
+      "private_bytes": 1751367680
+    },
+    {
+      "frame": 4000,
+      "handles": 1325,
+      "private_bytes": 1751433216
+    },
+    {
+      "frame": 5000,
+      "handles": 1325,
+      "private_bytes": 1751629824
+    },
+    {
+      "frame": 6000,
+      "handles": 1325,
+      "private_bytes": 1752354816
+    },
+    {
+      "frame": 7000,
+      "handles": 1325,
+      "private_bytes": 1724592128
+    },
+    {
+      "frame": 8000,
+      "handles": 1325,
+      "private_bytes": 1725448192
+    },
+    {
+      "frame": 9000,
+      "handles": 1326,
+      "private_bytes": 1725382656
+    },
+    {
+      "frame": 10000,
+      "handles": 1326,
+      "private_bytes": 1725448192
+    }
+  ],
+  "baseline": {
+    "frame": 100,
+    "handles": 1325,
+    "private_bytes": 1722609664
+  },
+  "final": {
+    "handles": 1316,
+    "private_bytes": 1727614976
+  },
+  "private_bytes_limit": 1808740147,
+  "slot_values": [
+    5000,
+    5000
+  ],
+  "bridge_stats": {
+    "imports": 6,
+    "maps": 2,
+    "published_frames": 10000,
+    "published_bytes": 4000000000,
+    "bulk_host_position_bytes": 0
+  }
+}

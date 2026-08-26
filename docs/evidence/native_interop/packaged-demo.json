@@ -1,0 +1,13 @@
+{
+  "backend": "VULKAN",
+  "addon_module": "C:\\gbi_profile_sanitized_20260714\\scripts\\addons\\fluidSim_warp_blender51\\__init__.py",
+  "blend_file": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop\\demos\\native_gpu_interop_particles.blend",
+  "particles": 77798,
+  "bridge_stats": {
+    "imports": 6,
+    "maps": 2,
+    "published_frames": 3,
+    "published_bytes": 24000000,
+    "bulk_host_position_bytes": 0
+  }
+}

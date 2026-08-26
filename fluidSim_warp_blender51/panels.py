@@ -435,6 +435,24 @@ class FLUIDSIM_PT_realtime_display(FluidSimPanel, bpy.types.Panel):
         sub = box.column(align=True)
         sub.enabled = fs.show_particles
         sub.prop(fs, "native_gpu_interop")
+        if fs.native_gpu_interop:
+            from .blender.scene_bridge import session
+
+            sess = session()
+            icon = "CHECKMARK" if sess.presentation_mode == "Native GPU" else "ERROR"
+            sub.label(text=f"Mode: {sess.presentation_mode}", icon=icon)
+            if sess.presentation_reason:
+                sub.label(text=sess.presentation_reason, icon="INFO")
+            if sess.presentation_mode == "Native GPU" and sess.native_presenter:
+                stats = sess.native_presenter.bridge.stats
+                sub.label(text=f"GPU publications: {stats['published_frames']:,} frames")
+                sub.label(text=f"Shared-buffer writes: {stats['published_bytes']:,} bytes")
+                sub.label(text=f"Persistent imports/maps: {stats['imports']} / {stats['maps']}")
+                sub.label(
+                    text=f"Host position readback: {stats['bulk_host_position_bytes']:,} bytes"
+                )
+            else:
+                sub.label(text=f"CPU transfer: {sess.presentation_bytes:,} bytes")
         sub.prop(fs, "particle_display_fraction")
         sub.prop(fs, "particle_display_scale")
         sub.prop(fs, "particle_attribute_mode")

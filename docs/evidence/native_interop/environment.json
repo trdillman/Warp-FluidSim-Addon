@@ -1,0 +1,44 @@
+{
+  "captured_at": "2026-07-14T07:43:00Z",
+  "platform": "Windows x64",
+  "blender": {
+    "version": "5.2.0 Alpha",
+    "branch": "codex/gpu-buffer-interop",
+    "base_commit": "f51c2552fb3ee3841dc6bad24947bfd51cc8df5f",
+    "executable": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+    "executable_size": 95957504,
+    "executable_sha256": "DB2BC63CD7234F59251F88E7BA9C3D3F9C056DB8681FA0C54DD1E05B86B48B82"
+  },
+  "consumer": {
+    "branch": "codex/native-gpu-interop",
+    "base_commit": "3135f8b4e1f14cff6fb01f6b402f9b6d2521a134"
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4080 SUPER",
+    "uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+    "driver": "610.47",
+    "memory_mib": 16376
+  },
+  "cuda": {
+    "toolkit_build_input": "12.9.86",
+    "warp_reported_driver_api": "13.3",
+    "warp": "1.12.1",
+    "runtime_source": "private Blender site-packages"
+  },
+  "vulkan_external_contract": {
+    "memory_handle": "OPAQUE_WIN32",
+    "semaphore_handle": "OPAQUE_WIN32",
+    "device_group_size": 1,
+    "dedicated_only": false,
+    "max_timeline_value_difference": 2147483647
+  },
+  "package": {
+    "path": "dist\\FluidSim-Warp-5.2-Native-Interop.zip",
+    "files": 43,
+    "uncompressed_bytes": 752624,
+    "sha256": "1F1173058BE14D7148A78B3446F57724D153E8DAC20365D835CA429BB679EBDC",
+    "isolated_profile": "C:\\gbi_profile_sanitized_20260714",
+    "fresh_warp_cache": "C:\\gbi_warp_cache_20260714",
+    "sanitized_path": "Windows system directories only"
+  }
+}

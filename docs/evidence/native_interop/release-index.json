@@ -1,0 +1,81 @@
+{
+  "release_state": "partial",
+  "captured_at": "2026-07-15T01:48:16Z",
+  "blocking_gate": "User live-counter review and refreshed final package save/reopen and GUI-inclusive evidence after the diagnostics update",
+  "candidate": {
+    "path": "F:/blender-gpu-interop-official-build/bin",
+    "executable": "F:/blender-gpu-interop-official-build/bin/blender.exe",
+    "executable_sha256": "DB2BC63CD7234F59251F88E7BA9C3D3F9C056DB8681FA0C54DD1E05B86B48B82",
+    "unchanged_across_runtime_gates": true
+  },
+  "repositories": {
+    "blender": {
+      "base_commit": "f51c2552fb3ee3841dc6bad24947bfd51cc8df5f",
+      "branch": "codex/gpu-buffer-interop",
+      "tracked_diff_sha256": "899d51f58e69c8a0b9a42b6da38ef0c90deae682",
+      "dirty_paths": 36
+    },
+    "consumer": {
+      "base_commit": "3135f8b4e1f14cff6fb01f6b402f9b6d2521a134",
+      "branch": "codex/native-gpu-interop",
+      "tracked_diff_sha256": "bcdb4d1285a099f3dfdd96c1b3d50228ba77240e",
+      "dirty_paths": 52
+    }
+  },
+  "pin_sha256": "AC916A58F2FF2E55A0ABCCED0B262C8B394C82617DB4CDBF86FF60E75B048959",
+  "package": {
+    "path": "dist/FluidSim-Warp-5.2-Native-Interop.zip",
+    "sha256": "2CA5A5D47ACF12544BDD6DD35DCB43ACD591F218F90F4036AF5B0B299E981E68",
+    "isolated_profile": "C:/gbi_profile_dam_break_20260714",
+    "fresh_warp_cache": "C:/gbi_warp_cache_20260714",
+    "sanitized_path": "Windows system directories only",
+    "private_numpy": "2.3.4",
+    "private_warp": "1.12.1"
+  },
+  "acceptance": [
+    {"id": "A-01", "result": "PASS", "evidence": "Non-unity Debug focused 5/5; official non-unity Release build and focused 5/5"},
+    {"id": "A-02", "result": "PASS", "evidence": "Official Release CTest 864/864 in 2984.70 seconds"},
+    {"id": "A-03", "result": "PASS", "evidence": "Matching UUID; six one-time imports and two persistent maps per two-slot generation"},
+    {"id": "A-04", "result": "PASS", "evidence": "Khronos validation acceptance and stress; zero diagnostics"},
+    {"id": "A-05", "result": "PASS", "evidence": "Real Warp kernel writes 4,225 shared positions and expected PointCloud pixels render"},
+    {"id": "A-06", "result": "PASS", "evidence": "Zero bulk host-position bytes; no per-frame import/map or steady global wait"},
+    {"id": "A-07", "result": "PASS", "evidence": "Two slots finish at distinct paired timeline values 5000/5000 without cross-satisfaction"},
+    {"id": "A-08", "result": "PASS", "evidence": "Capacity replacement 4,225 to 6,400 publishes a new generation and continues drawing"},
+    {"id": "A-09", "result": "PASS", "evidence": "GPU active count and authoritative bounds drive shrink, growth, and culling without position readback"},
+    {"id": "A-10", "result": "PASS", "evidence": "Position/radius plus all nine supported color modes pass contract and production coverage"},
+    {"id": "A-11", "result": "PASS", "evidence": "Transform, visibility, depth, selection, and culling acceptance pass"},
+    {"id": "A-12", "result": "PASS", "evidence": "Normal PointCloud/Draw Manager path renders framebuffer proof"},
+    {"id": "A-13", "result": "PARTIAL", "evidence": "Current consumer 185/185 passes; GUI-inclusive production evidence predates the live diagnostics update"},
+    {"id": "A-14", "result": "PASS", "evidence": "Forced native and OpenGL fallback populate CPU PointCloud with persistent reason and byte cost"},
+    {"id": "A-15", "result": "PASS", "evidence": "Zero position materialization; scalar attribute materialization is attributed and same-frame deduplicated"},
+    {"id": "A-16", "result": "PASS", "evidence": "Undo, load, reload, viewport visibility, and teardown pass"},
+    {"id": "A-17", "result": "PASS", "evidence": "Forced publish failure recovers to CPU in 0.0022762 seconds"},
+    {"id": "A-18", "result": "PASS", "evidence": "10,000 validated frames; stable handles/memory; 4.0 GB GPU-published"},
+    {"id": "A-19", "result": "PASS", "evidence": "Order-balanced canonical 600,000-particle whole-frame A/B is 1.155767x with 36.07% lower median process CPU time; 50,000-particle solver-plus-presentation result is neutral at 1.000305 native/CPU"},
+    {"id": "A-20", "result": "PARTIAL", "evidence": "Current package runs the visible 600,000-particle Dam Break with six imports, two maps, growing publications, and zero host-position readback; user counter review and refreshed save/reopen evidence remain"},
+    {"id": "A-21", "result": "PASS", "evidence": "Independent synchronization/lifetime re-review has zero unresolved critical/high findings"},
+    {"id": "A-22", "result": "PASS", "evidence": "Both diff checks pass; .pin unchanged; both known dirty trees preserved; no commit or push"}
+  ],
+  "artifacts": {
+    "environment.json": "CC028FFA15F5963B3EBD1B36BE71B41D527CC171471A4B6F6F3EFA826FA6B258",
+    "build-and-tests.json": "FBB8707231BEFCEAF25D6E70A83DB53D784D4DE1C0FE453726A5616EE6F20864",
+    "interop-runtime.json": "4E81CD775CD0DDBA75E5407BB167E2A591D51EC679D9913EFF9D287B86470F12",
+    "acceptance.json": "C0B4D04F56DEB7EC9764DE981E8CBE9A3C0479290243EBBA6832EA66B1EE422C",
+    "stress.json": "4AD4B70B17E6603E613BB4B30B13B291D3F450863E3079610BA3BADF4669E049",
+    "benchmark.json": "6B90212E89F13050322B810B5CECDCFDF4C15F8E53354A398E5B9725241B58D0",
+    "solver-stability.json": "E9D8098372BBD5C7E0AC328040E38CDF734D9FA5C989C444718BC2E1FCF3C7E1",
+    "parity.json": "D7EAE75D2230BB6B5BE7F3BBE0CAB9ADF98F486175D85D4C16C0C8B61FA4697F",
+    "packaged-demo.json": "C76D3A53A74F1F23ABA215B78519E69E95A6E2C0768E86673683D302883C41CF",
+    "lifecycle-load.json": "EABCE024E83BF39B12E5D8F38BDA0F9A078ECF33B26C939FAF1D918050106574",
+    "lifecycle-undo.json": "9614BE3729D6B489CF2E4CAC879C82F819E803C83D9C018506CD64D1B3D5E746",
+    "lifecycle-reload.json": "0966C1790468B42C236B5A9B8A33BE6991B0F08C1D4A8FCD83D6265AA46215B5",
+    "review.md": "14036D0718289A6E8ED9483AC5EB52862802717BC9D5EC6632DB5E1C6E67DAFD",
+    "demo.blend": "D1D7D256C8D109E35498C5BC7F810815A555C740CF817BC2605ED061792FB742",
+    "pointcloud_viewport.png": "7E90BA88D0526FFEA95378D2AC80F86941849862955962BE8B70C95F02DD7354",
+    "final-full-production-gate.console.log": "05D372B1B60AF9D13EACF12D23E873BB084458EB7966841FCDCB02C4198E246D",
+    "final-consumer-pytest.console.log": "083E2A58EBB60391D9F31C73803F9CF3424CAD0B1E15673A56A4CF0BF90BAC5D",
+    "final-packaged-save-reopen.console.log": "6648693708CDF6341FB5B1CC30A7B04DCEE0E626700818850AE6750D6A6E9C47",
+    "dam-break-gui.json": "E4B62EE003814289A987A597D5A0F79042FEC654B39D93D696594D7AEBC6FE9B",
+    "dam-break-viewport.png": "643A91AD3C67CA04EF32818B5544DE3C576352D83FF45F1913F87C604CD9116C"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "frames": 1000,
+  "elapsed_seconds": 20.11074329999974,
+  "baseline": {
+    "frame": 100,
+    "particles": 50000,
+    "handles": 1333,
+    "private_bytes": 1758154752
+  },
+  "final": {
+    "handles": 1323,
+    "private_bytes": 1539100672
+  },
+  "samples": [
+    {
+      "frame": 100,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1758154752
+    },
+    {
+      "frame": 200,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538592768
+    },
+    {
+      "frame": 300,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538756608
+    },
+    {
+      "frame": 400,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538756608
+    },
+    {
+      "frame": 500,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538785280
+    },
+    {
+      "frame": 600,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538797568
+    },
+    {
+      "frame": 700,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538809856
+    },
+    {
+      "frame": 800,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538822144
+    },
+    {
+      "frame": 900,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538834432
+    },
+    {
+      "frame": 1000,
+      "particles": 50000,
+      "handles": 1333,
+      "private_bytes": 1538834432
+    }
+  ],
+  "bridge_stats": {
+    "imports": 6,
+    "maps": 2,
+    "published_frames": 1000,
+    "published_bytes": 800000000,
+    "bulk_host_position_bytes": 0
+  }
+}

@@ -238,6 +238,11 @@ def test_simulation_panel_offers_safe_settings_for_gpu_capacity_error(monkeypatc
 
 def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    sess = scene_bridge.session()
+    sess.presentation_mode = "CPU Fallback"
+    sess.presentation_reason = "forced unavailable"
+    sess.presentation_bytes = 120000
     panels = _reload_module("fluidSim_warp_blender51.panels")
     fs = SimpleNamespace(
         liquid_view_mode="SURFACE_PARTICLES",
@@ -265,6 +270,7 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         surface_attribute_mode="NONE",
         surface_material=None,
         show_particles=True,
+        native_gpu_interop=True,
         particle_display_fraction=1.0,
         particle_display_scale=1.0,
         particle_attribute_mode="NONE",
@@ -312,6 +318,9 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "particle_material",
     }
     assert expected.issubset(set(layout.props))
+    assert {"text": "Mode: CPU Fallback", "icon": "ERROR"} in layout.labels
+    assert {"text": "forced unavailable", "icon": "INFO"} in layout.labels
+    assert {"text": "CPU transfer: 120,000 bytes", "icon": "NONE"} in layout.labels
     assert {
         "show_whitewater",
         "whitewater_enabled",
@@ -319,6 +328,56 @@ def test_realtime_display_panel_exposes_surface_and_particle_controls(monkeypatc
         "whitewater_attribute_mode",
         "whitewater_material",
     }.isdisjoint(layout.props)
+
+
+def test_realtime_display_panel_reports_live_native_interop_activity(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    sess = scene_bridge.session()
+    sess.presentation_mode = "Native GPU"
+    sess.presentation_reason = ""
+    sess.presentation_bytes = 0
+    sess.native_presenter = SimpleNamespace(
+        bridge=SimpleNamespace(
+            stats={
+                "imports": 6,
+                "maps": 2,
+                "published_frames": 9,
+                "published_bytes": 86_400_000,
+                "bulk_host_position_bytes": 0,
+            }
+        )
+    )
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+
+    class Settings(SimpleNamespace):
+        def __getattr__(self, _name):
+            return False
+
+    fs = Settings(
+        liquid_view_mode="PARTICLES",
+        show_surface=False,
+        surface_enabled=False,
+        show_particles=True,
+        native_gpu_interop=True,
+        show_whitewater=False,
+        whitewater_enabled=False,
+    )
+    layout = _Layout()
+    panel = panels.FLUIDSIM_PT_realtime_display()
+    panel.layout = layout
+
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert {"text": "Mode: Native GPU", "icon": "CHECKMARK"} in layout.labels
+    assert {"text": "GPU publications: 9 frames", "icon": "NONE"} in layout.labels
+    assert {
+        "text": "Shared-buffer writes: 86,400,000 bytes",
+        "icon": "NONE",
+    } in layout.labels
+    assert {"text": "Persistent imports/maps: 6 / 2", "icon": "NONE"} in layout.labels
+    assert {"text": "Host position readback: 0 bytes", "icon": "NONE"} in layout.labels
+    assert not any(label["text"].startswith("CPU transfer:") for label in layout.labels)
 
 
 def test_whitewater_panel_owns_all_whitewater_controls(monkeypatch):
@@ -540,6 +599,61 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
         "preferences",
         "properties",
     ]
+
+
+def test_lifecycle_handlers_release_before_load_undo_and_redo(monkeypatch):
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    handlers = SimpleNamespace(
+        frame_change_post=[],
+        load_pre=[],
+        undo_pre=[],
+        redo_pre=[],
+    )
+    fake_bpy.app = SimpleNamespace(handlers=handlers)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    calls = []
+    monkeypatch.setattr(scene_bridge, "release_session", lambda: calls.append("release"))
+
+    scene_bridge.register_handlers()
+    assert handlers.frame_change_post == [scene_bridge._on_frame_change]
+    assert handlers.load_pre == [scene_bridge._on_lifecycle_pre]
+    assert handlers.undo_pre == [scene_bridge._on_lifecycle_pre]
+    assert handlers.redo_pre == [scene_bridge._on_lifecycle_pre]
+    assert scene_bridge._on_lifecycle_pre._bpy_persistent is True
+
+    scene_bridge._on_lifecycle_pre(None)
+    assert calls == ["release"]
+    scene_bridge.unregister_handlers()
+    assert not any(
+        (handlers.frame_change_post, handlers.load_pre, handlers.undo_pre, handlers.redo_pre)
+    )
+
+
+def test_lifecycle_release_clears_session_and_retains_failed_cleanup(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    sess = scene_bridge.session()
+    allow_close = [False]
+
+    class Presenter:
+        def close(self):
+            if not allow_close[0]:
+                raise RuntimeError("teardown failed")
+
+    presenter = Presenter()
+    sess.solver = object()
+    sess.native_presenter = presenter
+
+    sess.release()
+
+    assert not sess.active
+    assert sess.native_presenter is None
+    assert sess._native_cleanup_pending == [presenter]
+    assert "teardown failed" in sess.native_interop_error
+
+    allow_close[0] = True
+    sess.release()
+    assert sess._native_cleanup_pending == []
 
 
 def test_surface_refresh_updates_active_solver_and_output(monkeypatch):

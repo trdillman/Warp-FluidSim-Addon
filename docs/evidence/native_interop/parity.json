@@ -1,0 +1,52 @@
+{
+  "candidate_executable_sha256": "DB2BC63CD7234F59251F88E7BA9C3D3F9C056DB8681FA0C54DD1E05B86B48B82",
+  "full_preinterop_production_gate": {
+    "result": "PASS",
+    "marker": "FULL-PRODUCTION-GATE-PASS",
+    "consumer_pytest": "184/184",
+    "gui_checks": "35/35",
+    "demo_analysis": "39/39"
+  },
+  "native_particle_modes": {
+    "display_fraction_range": [0.01, 1.0],
+    "display_scale": "PASS",
+    "attributes": {
+      "NONE": "PASS",
+      "HEIGHT": "PASS",
+      "SPEED": "PASS",
+      "TEMPERATURE": "PASS",
+      "VISCOSITY": "PASS",
+      "DENSITY": "PASS",
+      "AGE": "PASS",
+      "LIFE": "PASS",
+      "TIME_OFFSET": "PASS"
+    }
+  },
+  "object_behavior": {
+    "transform": "PASS",
+    "visibility": "PASS",
+    "depth_occlusion": "PASS",
+    "selection": "PASS",
+    "culling": "PASS"
+  },
+  "preserved_cpu_paths": {
+    "surface": "PASS",
+    "whitewater": "PASS",
+    "cache": "PASS",
+    "export": "PASS",
+    "render": "PASS",
+    "opengl_particle_fallback": "PASS"
+  },
+  "fallback_observability": {
+    "mode": "CPU Fallback",
+    "reason": "PASS",
+    "byte_cost": "PASS",
+    "populated_pointcloud": "PASS"
+  },
+  "materialization": {
+    "position_bytes": 0,
+    "attribute_scalar_bytes_per_visible_particle": 4,
+    "deduplicated_within_frame": true
+  },
+  "packaged_saved_demo": "PASS"
+}
