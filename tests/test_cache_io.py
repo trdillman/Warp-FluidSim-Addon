@@ -298,6 +298,17 @@ def test_sequence_metadata_reports_mixed_settings_boundaries(tmp_path):
         "changed": {"cfl": 1.0, "flip_ratio": 0.5}, "removed": []}
 
 
+def test_write_sequence_metadata_rejects_duplicate_normalized_frame_keys(tmp_path):
+    first = settings_record(SimpleNamespace(cfl=2.0))
+    second = settings_record(SimpleNamespace(cfl=1.0))
+
+    with pytest.raises(
+            ValueError, match="Duplicate settings record for frame 1"):
+        write_sequence_metadata(
+            str(tmp_path), 1, 1,
+            settings_records={1: first, "1": second})
+
+
 def test_settings_record_encodes_nonfinite_values_as_standard_json(tmp_path):
     record = settings_record(SimpleNamespace(
         finite=1.0, nan=float("nan"), positive=float("inf"),

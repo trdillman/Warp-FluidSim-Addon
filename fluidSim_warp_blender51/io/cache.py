@@ -551,12 +551,16 @@ def write_sequence_metadata(
         "scene_key": str(scene_key_value),
     }
     if settings_records:
-        normalized = {int(frame): record for frame, record in settings_records.items()
-                      if start <= int(frame) <= end}
-        segments = compact_settings_segments(normalized)
+        # Keep raw keys until compact_settings_segments normalizes them so a
+        # JSON key such as "1" cannot silently overwrite integer key 1.
+        filtered_records = {
+            frame: record for frame, record in settings_records.items()
+            if start <= int(frame) <= end
+        }
+        segments = compact_settings_segments(filtered_records)
         records_by_signature = {
             record["signature"]: record["settings"]
-            for record in normalized.values()
+            for record in filtered_records.values()
         }
         signatures = list(records_by_signature)
         baseline_signature = segments[0]["signature"] if segments else None

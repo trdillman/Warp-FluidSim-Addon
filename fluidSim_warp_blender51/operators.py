@@ -976,12 +976,21 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         sess.benchmark_result = data
         baseline_path = bpy.path.abspath(fs.benchmark_baseline)
         if self.save_baseline:
-            bench.save_benchmark(baseline_path, data)
+            try:
+                bench.save_benchmark(baseline_path, data)
+            except (OSError, TypeError, ValueError) as exc:
+                message = f"Benchmark baseline invalid: {baseline_path}: {exc}"
+                fs.status = message
+                self.report({"ERROR"}, message)
+                return {"CANCELLED"}
             self.report({"INFO"}, f"Benchmark baseline saved: {baseline_path}")
         else:
             try:
                 baseline = bench.load_benchmark(baseline_path)
-                sess.benchmark_compare = bench.compare_benchmark(data, baseline)
+                comparison = bench.compare_benchmark(data, baseline)
+                if comparison.get("error"):
+                    raise ValueError(comparison["error"])
+                sess.benchmark_compare = comparison
                 self.report(
                     {"INFO"},
                     f"Benchmark {sess.benchmark_compare['result']}: "
@@ -994,6 +1003,12 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
                     f"Benchmark complete (no baseline): "
                     f"{data['timeStepAverage'] * 1000:.1f} ms/frame avg, "
                     f"{data['voxelsPerSecondAverage'] / 1e6:.1f}M voxels/s")
+            except (OSError, TypeError, ValueError) as exc:
+                sess.benchmark_compare = None
+                message = f"Benchmark baseline invalid: {baseline_path}: {exc}"
+                fs.status = message
+                self.report({"ERROR"}, message)
+                return {"CANCELLED"}
         fs.status = f"Benchmark {data['result']}"
         return {"FINISHED"}
 
