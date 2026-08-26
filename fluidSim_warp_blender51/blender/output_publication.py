@@ -907,20 +907,28 @@ def prepare_live_payload(scene, host, publish_surface=True):
     """Perform one live readback/adaptation stage from an acquired frame."""
     fs = scene.fluidsim
     solver = host.solver
+    species_available = host._species_enabled()
+    particle_mode = str(fs.particle_attribute_mode)
+    surface_mode = str(fs.surface_attribute_mode)
+    if not species_available:
+        if particle_mode == "CLEAR_DYE":
+            particle_mode = "NONE"
+        if surface_mode == "CLEAR_DYE":
+            surface_mode = "NONE"
     step = _display_stride(fs)
     indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions, indices=indices,
+        solver, particle_mode, positions, indices=indices,
         host=host) if fs.show_particles else None)
     particle_inventory = enabled_attribute_keys(fs, "particles")
     particle_attributes = (host.output_attributes(
         fs, "particles", stride=step)
         if fs.show_particles and particle_inventory else {})
     particle_attributes.update(_attribute_map(
-        fs.particle_attribute_mode, particle_values))
-    if particle_values is not None and fs.particle_attribute_mode == "CLEAR_DYE":
+        particle_mode, particle_values))
+    if particle_values is not None and particle_mode == "CLEAR_DYE":
         particle_attributes["color"] = np.asarray(particle_values, dtype=np.float32)
 
     whitewater = (host.whitewater
@@ -933,16 +941,27 @@ def prepare_live_payload(scene, host, publish_surface=True):
         fs.whitewater_attribute_mode, whitewater_values)
 
     if publish_surface and fs.show_surface and fs.surface_enabled:
-        verts, tris = host.surface_mesh
-        surface_values = _surface_values(
-            solver, fs.surface_attribute_mode, verts, host=host)
-        surface_inventory = enabled_attribute_keys(fs, "surface")
-        surface_attributes = (host.output_attributes(
-            fs, "surface", positions=verts)
-            if surface_inventory else {})
-        surface_attributes.update(_attribute_map(
-            fs.surface_attribute_mode, surface_values))
-        if surface_values is not None and fs.surface_attribute_mode == "CLEAR_DYE":
+        clear_dye = surface_mode == "CLEAR_DYE"
+        if clear_dye:
+            surface_result = host.surface_result(species_colors=True)
+            verts, tris = surface_result.vertices, surface_result.triangles
+            surface_values = surface_result.colors
+            # Clear Dye is a surface-sized GPU result. Raw per-particle
+            # species remain available only through explicit advanced output,
+            # never as an implicit dependency of this live presentation mode.
+            surface_attributes = {}
+        else:
+            verts, tris = host.surface_mesh
+            surface_values = _surface_values(
+                solver, surface_mode, verts, host=host)
+            surface_inventory = enabled_attribute_keys(fs, "surface")
+            surface_attributes = (host.output_attributes(
+                fs, "surface", positions=verts)
+                if surface_inventory else {})
+        if not clear_dye:
+            surface_attributes.update(_attribute_map(
+                surface_mode, surface_values))
+        if surface_values is not None and surface_mode == "CLEAR_DYE":
             surface_attributes["color"] = np.asarray(surface_values, dtype=np.float32)
     else:
         verts = np.zeros((0, 3), dtype=np.float32)
@@ -953,12 +972,12 @@ def prepare_live_payload(scene, host, publish_surface=True):
         voxel_size=voxel_size,
         publish_surface=publish_surface,
         surface_visible=bool(fs.show_surface and fs.surface_enabled),
-        surface_attribute_mode=str(fs.surface_attribute_mode),
+        surface_attribute_mode=surface_mode,
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
         surface_attributes=surface_attributes,
         particles_visible=bool(fs.show_particles),
-        particle_attribute_mode=str(fs.particle_attribute_mode),
+        particle_attribute_mode=particle_mode,
         particle_radius=(voxel_size * 0.25
                          * getattr(fs, "particle_display_scale", 1.0)),
         particles=np.asarray(positions, dtype=np.float32),

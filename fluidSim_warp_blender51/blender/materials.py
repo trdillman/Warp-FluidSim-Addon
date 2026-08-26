@@ -109,7 +109,8 @@ def _new_particle_material():
     return mat
 
 
-def _new_attribute_material(name, fallback_color):
+def _new_attribute_material(
+        name, fallback_color, attribute_name="display_color"):
     """Legacy realtime debug material driven by display_color."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -119,9 +120,20 @@ def _new_attribute_material(name, fallback_color):
         bsdf.inputs["Base Color"].default_value = fallback_color
         bsdf.inputs["Roughness"].default_value = 0.2
         attr = nt.nodes.new("ShaderNodeAttribute")
-        attr.attribute_name = "display_color"
+        attr.attribute_name = attribute_name
         nt.links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
     mat.diffuse_color = fallback_color
+    mat["fluidsim_attribute_name"] = attribute_name
+    return mat
+
+
+def _ensure_attribute_name(mat, attribute_name):
+    if mat.get("fluidsim_attribute_name") == attribute_name:
+        return mat
+    for node in mat.node_tree.nodes:
+        if getattr(node, "bl_idname", "") == "ShaderNodeAttribute":
+            node.attribute_name = attribute_name
+    mat["fluidsim_attribute_name"] = attribute_name
     return mat
 
 
@@ -140,11 +152,19 @@ def _assign_material(obj, mat):
 
 def ensure_surface_material(scene, obj):
     fs = scene.fluidsim
-    if fs.surface_attribute_mode != "NONE":
-        mat = (
+    mode = str(fs.surface_attribute_mode)
+    if mode == "CLEAR_DYE" and not bool(getattr(fs, "species_enabled", False)):
+        mode = "NONE"
+    if mode != "NONE":
+        attribute_name = (
+            SIMULATION_COLOR_ATTRIBUTE
+            if mode == "CLEAR_DYE" else "display_color")
+        mat = _ensure_attribute_name((
             bpy.data.materials.get(SURFACE_ATTR_MATERIAL)
-            or _new_attribute_material(SURFACE_ATTR_MATERIAL, (0.1, 0.55, 1.0, 1.0))
-        )
+            or _new_attribute_material(
+                SURFACE_ATTR_MATERIAL, (0.1, 0.55, 1.0, 1.0),
+                attribute_name)
+        ), attribute_name)
     else:
         mat = fs.surface_material
         if mat is None:
@@ -155,7 +175,10 @@ def ensure_surface_material(scene, obj):
 
 def ensure_particle_material(scene, obj):
     fs = scene.fluidsim
-    if fs.particle_attribute_mode != "NONE":
+    mode = str(fs.particle_attribute_mode)
+    if mode == "CLEAR_DYE" and not bool(getattr(fs, "species_enabled", False)):
+        mode = "NONE"
+    if mode != "NONE":
         mat = (
             bpy.data.materials.get(PARTICLE_ATTR_MATERIAL)
             or _new_attribute_material(PARTICLE_ATTR_MATERIAL, (0.1, 0.55, 1.0, 1.0))

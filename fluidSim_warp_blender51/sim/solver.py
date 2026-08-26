@@ -77,12 +77,15 @@ from .kernels_core import (
 from .kernels_fluid import (
     ForceFieldProxy,
     k_particle_set_grid_data,
+    k_particle_set_grid_data_with_species,
     k_particle_set_grid_data_spacetime,
+    k_particle_set_grid_data_spacetime_with_species,
     k_spacetime_weights_to_phase_active,
     k_normalize_mac,
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
+    k_staggered_field_to_particle_with_species,
     k_apply_collider_material_to_grid,
     k_advect_particles,
     k_advect_particles_spacetime,
@@ -1769,6 +1772,11 @@ class FluidSolver:
         arrays = (*self.vel.arrays(), self.voxel_type.data,
                   self.voxel_counts.data, self.temperature.data,
                   self.viscosity_field.data, self.density.data)
+        species = getattr(self, "species", None)
+        if species is not None:
+            # The enabled sibling extends the existing active-grid clear path;
+            # local mixing never dispatches a dedicated scratch-clear kernel.
+            arrays += (species.mix_volume, species.species_mass)
         if clear_collision:
             arrays += (self.collision_vel, self.collision_friction,
                        self.collision_restitution)
@@ -1930,31 +1938,60 @@ class FluidSolver:
             return cached
         return max(1.0, float(self.quality.rest_particle_count))
 
-    def _p2g(self, dt=None):
+    def _p2g(self, dt=None, *, frame_owner=-1, substep_owner=-1):
         g = self.grid
         p = self.particles
         st = self.settings
+        species = getattr(self, "species", None)
+        exchange = (species.begin_exchange(
+            dt, species.diffusivity, frame=frame_owner, substep=substep_owner)
+            if species is not None else None)
         if st.spacetime_enabled:
             prev_dt = self._st_previous_dt if self._st_previous_dt > 0.0 else float(dt or (st.time_scale / max(st.frame_rate, 1.0)))
-            wp.launch(
-                k_particle_set_grid_data_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
+            if exchange is None:
+                wp.launch(
+                    k_particle_set_grid_data_spacetime, dim=self._np_dim(),
+                    inputs=[p.position, p.velocity, p.time_offset, p.count,
+                            g.leaf_table, g.voxels_dim, g.leaves_dim,
+                            g.origin, g.voxel_size, prev_dt],
+                    outputs=[self.vel.u, self.vel.v, self.vel.w,
+                             self.vel.wu, self.vel.wv, self.vel.ww],
+                    device=self.device)
+            else:
+                wp.launch(
+                    k_particle_set_grid_data_spacetime_with_species,
+                    dim=self._np_dim(), inputs=[
+                        p.position, p.velocity, p.time_offset,
+                        p.attr("represented_volume"),
+                        p.attr("species_concentration"), p.count,
                         g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, prev_dt],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
+                        g.origin, g.voxel_size, prev_dt,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        species.mix_volume, species.species_mass],
+                    device=self.device)
         else:
-            wp.launch(
-                k_particle_set_grid_data, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.count,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
+            if exchange is None:
+                wp.launch(
+                    k_particle_set_grid_data, dim=self._np_dim(),
+                    inputs=[p.position, p.velocity, p.count,
+                            g.leaf_table, g.voxels_dim, g.leaves_dim,
+                            g.origin, g.voxel_size],
+                    outputs=[self.vel.u, self.vel.v, self.vel.w,
+                             self.vel.wu, self.vel.wv, self.vel.ww],
+                    device=self.device)
+            else:
+                wp.launch(
+                    k_particle_set_grid_data_with_species, dim=self._np_dim(),
+                    inputs=[p.position, p.velocity,
+                            p.attr("represented_volume"),
+                            p.attr("species_concentration"), p.count,
+                            g.leaf_table, g.voxels_dim, g.leaves_dim,
+                            g.origin, g.voxel_size,
+                            self.vel.u, self.vel.v, self.vel.w,
+                            self.vel.wu, self.vel.wv, self.vel.ww,
+                            species.mix_volume, species.species_mass],
+                    device=self.device)
         wp.launch(
             k_normalize_mac, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
@@ -1998,6 +2035,10 @@ class FluidSolver:
                         g.num_leaves],
                 device=self.device,
             )
+        if exchange is not None:
+            species.complete_exchange_deposit(
+                exchange, frame=frame_owner, substep=substep_owner)
+        return exchange
 
     def _save_velocities(self):
         nv = self._nvox
@@ -2209,21 +2250,42 @@ class FluidSolver:
             device=self.device,
         )
 
-    def _g2p_advect(self, dt):
+    def _g2p_advect(self, dt, species_exchange=None, *,
+                    frame_owner=-1, substep_owner=-1):
         g = self.grid
         s = self.settings
         p = self.particles
-        wp.launch(
-            k_staggered_field_to_particle, dim=self._np_dim(),
-            inputs=[p.position, p.count,
+        species = getattr(self, "species", None)
+        if species_exchange is None:
+            wp.launch(
+                k_staggered_field_to_particle, dim=self._np_dim(),
+                inputs=[p.position, p.count,
+                        self.vel.u, self.vel.v, self.vel.w,
+                        self.vel.wu, self.vel.wv, self.vel.ww,
+                        self.vel_saved_u, self.vel_saved_v, self.vel_saved_w,
+                        g.leaf_table, g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size,
+                        int(s.sample_type), s.flip_ratio],
+                outputs=[p.velocity], device=self.device)
+        else:
+            mixing_fraction = species.prepare_exchange_g2p(
+                species_exchange, frame=frame_owner,
+                substep=substep_owner)
+            wp.launch(
+                k_staggered_field_to_particle_with_species,
+                dim=self._np_dim(), inputs=[
+                    p.position, p.count,
                     self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
                     self.vel_saved_u, self.vel_saved_v, self.vel_saved_w,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
-                    g.origin, g.voxel_size,
-                    int(s.sample_type), s.flip_ratio],
-            outputs=[p.velocity], device=self.device,
-        )
+                    g.origin, g.voxel_size, int(s.sample_type), s.flip_ratio,
+                    species.mix_volume, species.species_mass, mixing_fraction,
+                    p.attr("species_concentration"), p.velocity],
+                device=self.device)
+        if species is not None:
+            species.finish_exchange(
+                species_exchange, frame=frame_owner, substep=substep_owner)
         if s.spacetime_enabled:
             self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
             wp.launch(
@@ -2533,12 +2595,10 @@ class FluidSolver:
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:
                     self._index_particles()
-            with self._phase("p2g"):
-                self._p2g(dt)
             species = getattr(self, "species", None)
-            if species is not None:
-                with self._phase("species"):
-                    species.diffuse(dt)
+            with self._phase("p2g"):
+                species_exchange = self._p2g(
+                    dt, frame_owner=self.frame, substep_owner=substep_index)
             self._save_velocities()
             self.snippets.run(CustomKernelOrder.BEFORE_FORCES, self, time_ctx)
             with self._phase("forces"):
@@ -2558,7 +2618,12 @@ class FluidSolver:
                 self._collider_material_response()
             self._sanitize(dt)
             with self._phase("g2p"):
-                self._g2p_advect(dt)
+                if species is None:
+                    self._g2p_advect(dt)
+                else:
+                    self._g2p_advect(
+                        dt, species_exchange, frame_owner=self.frame,
+                        substep_owner=substep_index)
             self._sanitize_particles(dt)
             with self._phase("lifecycle"):
                 self._lifecycle(
@@ -2671,8 +2736,8 @@ class FluidSolver:
             self._host_frame_cache = HostFrame(self)
         return self._host_frame_cache
 
-    def surface_mesh(self):
-        return self.surface.mesh()
+    def surface_mesh(self, *, species_colors=False):
+        return self.surface.mesh(species_colors=species_colors)
 
     def particle_positions(self):
         n = self.particles.refresh_host_count()

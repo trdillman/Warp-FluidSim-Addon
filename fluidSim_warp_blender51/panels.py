@@ -1,4 +1,4 @@
-"""UI panels for the FluidSim Warp add-on (3D Viewport sidebar > FluidSim).
+"""FluidSim UI for the 3D View sidebar and object Physics Properties.
 
 Panel set mirrors the synthesized UI contract:
 Simulation, Domain / Sparse Grid, Particles, Sources, Colliders / Sinks,
@@ -922,6 +922,49 @@ class FLUIDSIM_PT_advanced_field_sources(FluidSimPanel, bpy.types.Panel):
         _draw_source_status(box, pg)
 
 
+class FLUIDSIM_PT_object_physics(bpy.types.Panel):
+    """Expose every object-owned FluidSim role in Blender Physics Properties."""
+
+    bl_label = "FluidSim Warp"
+    bl_idname = "FLUIDSIM_PT_object_physics"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "physics"
+
+    @classmethod
+    def poll(cls, context):
+        obj = getattr(context, "active_object", None)
+        return obj is not None and getattr(obj, "fluidsim", None) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        pg = obj.fluidsim
+
+        identity = layout.box()
+        identity.label(text=obj.name, icon="OBJECT_DATA")
+        identity.prop(pg, "role", text="FluidSim Role")
+        _draw_pending_banner(layout, context.scene, show_actions=True)
+
+        role = _presentation_role(pg)
+        if role == "SOURCE":
+            FLUIDSIM_PT_liquid_emitters.draw(self, context)
+            FLUIDSIM_PT_liquid_emitter_attributes.draw(self, context)
+        elif role == "SINK":
+            FLUIDSIM_PT_liquid_sinks.draw(self, context)
+        elif role == "COLLIDER":
+            FLUIDSIM_PT_colliders.draw(self, context)
+        elif role == "FORCE":
+            FLUIDSIM_PT_forces.draw(self, context)
+        elif role == "FIELD":
+            FLUIDSIM_PT_advanced_field_sources.draw(self, context)
+        else:
+            layout.label(
+                text="Choose a FluidSim Role to configure this object",
+                icon="INFO",
+            )
+
+
 class FLUIDSIM_PT_pressure(FluidSimPanel, bpy.types.Panel):
     bl_label = "Pressure Projection"
     bl_idname = "FLUIDSIM_PT_pressure"
@@ -1515,6 +1558,7 @@ CLASSES = (
     FLUIDSIM_PT_domain_height_fill,
     FLUIDSIM_PT_point_particle_injection,
     FLUIDSIM_PT_advanced_field_sources,
+    FLUIDSIM_PT_object_physics,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
     FLUIDSIM_PT_clear_dye_species,

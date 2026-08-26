@@ -141,17 +141,16 @@ def test_species_resize_candidate_reuses_capacity_invariant_device_state(
     original.diffusivity = 0.125
     original.max_diffusion_substeps = 7
     original.palette = object()
-    original.particle_delta = FakeArray(4, wp.vec4, "cpu")
+    original.particle_preview = FakeArray(4, wp.vec4, "cpu")
     original.mix_volume = FakeArray(1_536, float, "cpu")
     original.species_mass = FakeArray(1_536, wp.vec4, "cpu")
-    original.species_delta = FakeArray(1_536, wp.vec4, "cpu")
-    original.outgoing_conductance = FakeArray(1_536, float, "cpu")
-    original.global_alpha = FakeArray(1, float, "cpu")
     original._receipt = FakeArray(species_api.RECEIPT_SIZE, float, "cpu")
     original._frame_open = True
     original._after_captured = True
     original._last_receipt = object()
     original.frame_diffusion_substeps = 3
+    original._exchange_serial = 4
+    original._direct_exchange_index = 9
     grown_particles = SimpleNamespace(
         capacity=65_536,
         has_optional_channel=lambda name: name in {
@@ -164,11 +163,10 @@ def test_species_resize_candidate_reuses_capacity_invariant_device_state(
         (65_536, wp.vec4, "cpu")]
     assert copies == []
     assert grown.particles is grown_particles
-    assert grown.particle_delta is allocations[0]
-    assert grown.particle_delta is not original.particle_delta
+    assert grown.particle_preview is allocations[0]
+    assert grown.particle_preview is not original.particle_preview
     for name in (
-            "grid", "mix_volume", "species_mass", "species_delta",
-            "outgoing_conductance", "global_alpha", "_receipt", "palette"):
+            "grid", "mix_volume", "species_mass", "_receipt", "palette"):
         assert getattr(grown, name) is getattr(original, name)
     assert grown.diffusivity == original.diffusivity
     assert grown.max_diffusion_substeps == original.max_diffusion_substeps
@@ -191,6 +189,10 @@ def test_species_growth_candidate_charges_only_capacity_axis_allocations():
             inventory.particle_resize_candidate_bytes),
     )
 
+    assert inventory.particle_channels_bytes == target * 40
+    assert inventory.particle_preview_bytes == target * 16
+    assert inventory.voxel_scratch_bytes == 1_536 * 20
+    assert inventory.receipt_bytes == 11 * 4
     assert inventory.particle_resize_candidate_bytes == target * 56
     assert candidate.additional_device_persistent_bytes == target * 56
     assert candidate.device_transaction_peak_bytes == target * 192

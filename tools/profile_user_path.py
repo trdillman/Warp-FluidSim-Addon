@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import statistics
 import os
 import sys
@@ -210,6 +211,41 @@ def _expected_surface_publications(frames, cadence):
 def _warm_rows(rows):
     """Exclude the first lazy-compilation frames when enough samples exist."""
     return rows[3:] if len(rows) > 3 else rows
+
+
+def _synchronized_timing_row(*, sync_ms, solve_ms, view_ms, cache_ms=0.0):
+    """Build one additive timing row from synchronized phase durations."""
+    values = {
+        "sync_ms": float(sync_ms), "solve_ms": float(solve_ms),
+        "view_ms": float(view_ms), "cache_ms": float(cache_ms),
+    }
+    if any(not math.isfinite(value) or value < 0.0 for value in values.values()):
+        raise ValueError("timing phases must be finite and nonnegative")
+    return {**values, "total_ms": sum(values.values())}
+
+
+def measure_synchronized_frame(
+        scene, sess, output_publication, wp_module, *, sync_callback,
+        force_surface=True, clock=time.perf_counter):
+    """Measure the live sync/solve/publication path with device barriers."""
+    wp_module.synchronize_device(sess.solver.device)
+    begin = clock()
+    sync_callback()
+    wp_module.synchronize_device(sess.solver.device)
+    after_sync = clock()
+    stats = sess.solver.step_frame()
+    wp_module.synchronize_device(sess.solver.device)
+    after_solve = clock()
+    output_publication.update_outputs(
+        scene, sess, force_surface=bool(force_surface))
+    wp_module.synchronize_device(sess.solver.device)
+    after_view = clock()
+    timing = _synchronized_timing_row(
+        sync_ms=(after_sync - begin) * 1000.0,
+        solve_ms=(after_solve - after_sync) * 1000.0,
+        view_ms=(after_view - after_solve) * 1000.0,
+    )
+    return timing, stats
 
 
 def _validate_contract(args, summary, sess, device, output_counts):
@@ -419,21 +455,25 @@ def main():
     try:
         for f in range(args.frames):
             scene.frame_set(f + 1)
+            wp.synchronize_device(sess.solver.device)
             t0 = time.perf_counter()
             dg = bpy.context.evaluated_depsgraph_get()
             scene_bridge.sync_scene_to_solver(scene, sess, dg)
+            wp.synchronize_device(sess.solver.device)
             t1 = time.perf_counter()
             if solve_profiler is not None:
                 solve_profiler.enable()
             stats = sess.solver.step_frame()
             if solve_profiler is not None:
                 solve_profiler.disable()
+            wp.synchronize_device(sess.solver.device)
             t2 = time.perf_counter()
             in_output_path = True
             try:
                 output_publication.update_outputs(scene, sess)
             finally:
                 in_output_path = False
+            wp.synchronize_device(sess.solver.device)
             t3 = time.perf_counter()
             counts = _viewport_counts(bpy, args.particles)
             output_counts.append(counts)
@@ -442,14 +482,16 @@ def main():
                 tc = time.perf_counter()
                 cache_io.write_frame(scene, sess)
                 cache_ms = (time.perf_counter() - tc) * 1000.0
+            timing_row = _synchronized_timing_row(
+                sync_ms=(t1 - t0) * 1000.0,
+                solve_ms=(t2 - t1) * 1000.0,
+                view_ms=(t3 - t2) * 1000.0,
+                cache_ms=cache_ms,
+            )
             row = {
                 "frame": f,
                 "solver_frame": int(sess.solver.frame),
-                "sync_ms": (t1 - t0) * 1000.0,
-                "solve_ms": (t2 - t1) * 1000.0,
-                "view_ms": (t3 - t2) * 1000.0,
-                "cache_ms": cache_ms,
-                "total_ms": (t3 - t0) * 1000.0 + cache_ms,
+                **timing_row,
                 "particles": int(stats.active_particles),
                 "voxels": int(stats.active_voxels),
                 "whitewater": int(stats.whitewater_particles),

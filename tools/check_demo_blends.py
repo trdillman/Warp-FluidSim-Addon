@@ -24,6 +24,7 @@ SCENES = (
     "cache_export_playback_review", "paddle_stir",
     "mesh_solid_source", "mesh_shell_source", "point_source",
     "volume_source", "liquid_sink", "height_fill",
+    "chromatic_vortex",
 )
 EXPECTED_AUTO_SEEDS = {
     "crown_splash": {"Crown Pool Seed", "Crown Droplet Seed"},
@@ -368,6 +369,34 @@ def check_scene(name):
                 bpy.ops.fluidsim.release()
         else:
             checks["viewport_playback_advances"] = False
+    elif name == "chromatic_vortex":
+        red = bpy.data.objects.get("Red Dye Initial Fill")
+        blue = bpy.data.objects.get("Blue Dye Initial Fill")
+        vortex = bpy.data.objects.get("Chromatic Mixing Vortex Force")
+        checks.update({
+            "species_enabled": bool(
+                fs and fs.species_enabled and fs.species_count == 2
+                and fs.species_diffusivity > 0.0),
+            "red_blue_initial_fills": bool(
+                red and blue
+                and red.fluidsim.emission_mode == "INITIAL_FILL"
+                and blue.fluidsim.emission_mode == "INITIAL_FILL"
+                and tuple(red.fluidsim.species_concentration) == (1.0, 0.0, 0.0, 0.0)
+                and tuple(blue.fluidsim.species_concentration) == (0.0, 1.0, 0.0, 0.0)),
+            "single_vortex_force_no_propeller": bool(
+                vortex and vortex.field.type == "VORTEX"
+                and not any("propeller" in obj.name.lower() or "paddle" in obj.name.lower()
+                            for obj in scene.objects)),
+            "clear_dye_viewport": bool(
+                fs and fs.surface_attribute_mode == "CLEAR_DYE"
+                and fs.particle_attribute_mode == "CLEAR_DYE"),
+            "measured_real_mixing": bool(
+                scene.get("fluidsim_verified_initial_red_particles", 0) > 0
+                and scene.get("fluidsim_verified_initial_blue_particles", 0) > 0
+                and scene.get("fluidsim_verified_mixed_particles", 0)
+                >= scene.get("fluidsim_verified_mixed_required", 1)),
+            "review_readme": bpy.data.texts.get("README_Chromatic_Vortex") is not None,
+        })
 
     result["checks"] = checks
     surface = bpy.data.objects.get("FluidSim Surface")

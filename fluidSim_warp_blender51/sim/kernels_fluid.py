@@ -32,6 +32,7 @@ from .fields import (
     world_to_voxel,
 )
 from .registry import register, register_fn
+from .species import species_local_mixture_at_position
 
 # ---------------------------------------------------------------------------
 # Particle -> grid (P2G)
@@ -92,6 +93,92 @@ def k_particle_set_grid_data(
                         else:
                             wp.atomic_add(w, flat, wgt * comp)
                             wp.atomic_add(ww, flat, wgt)
+
+
+@wp.func
+def _deposit_fixed_species_cell_centered(
+    position: wp.vec3, represented_volume: float, concentration: wp.vec4,
+    leaf_table: wp.array(dtype=wp.int32), voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i, origin: wp.vec3, voxel_size: float,
+    mix_volume: wp.array(dtype=float), species_mass: wp.array(dtype=wp.vec4),
+):
+    q = world_to_voxel(position, origin, voxel_size) - wp.vec3(0.5)
+    base = voxel_floor(q)
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                flat = voxel_flat_index(
+                    leaf_table, voxels_dim, leaves_dim,
+                    wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz))
+                if flat >= 0:
+                    weight = (wp.where(dx == 1, f[0], 1.0 - f[0])
+                              * wp.where(dy == 1, f[1], 1.0 - f[1])
+                              * wp.where(dz == 1, f[2], 1.0 - f[2]))
+                    amount = represented_volume * weight
+                    wp.atomic_add(mix_volume, flat, amount)
+                    wp.atomic_add(species_mass, flat, wp.vec4(
+                        amount * concentration[0], amount * concentration[1],
+                        0.0, 0.0))
+
+
+@wp.kernel
+def k_particle_set_grid_data_with_species(
+    positions: wp.array(dtype=wp.vec3), velocities: wp.array(dtype=wp.vec3),
+    represented_volumes: wp.array(dtype=float),
+    concentrations: wp.array(dtype=wp.vec4), count: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32), voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i, origin: wp.vec3, voxel_size: float,
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    mix_volume: wp.array(dtype=float), species_mass: wp.array(dtype=wp.vec4),
+):
+    """Enabled sibling: one traversal deposits MAC velocity and species."""
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    vp = world_to_voxel(positions[tid], origin, voxel_size)
+    vel = velocities[tid]
+    for axis in range(3):
+        off = wp.vec3(0.5, 0.5, 0.5)
+        if axis == 0:
+            off = wp.vec3(0.0, 0.5, 0.5)
+        elif axis == 1:
+            off = wp.vec3(0.5, 0.0, 0.5)
+        else:
+            off = wp.vec3(0.5, 0.5, 0.0)
+        q = vp - off
+        base = voxel_floor(q)
+        f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+        comp = vel[axis]
+        for dz in range(2):
+            for dy in range(2):
+                for dx in range(2):
+                    flat = voxel_flat_index(
+                        leaf_table, voxels_dim, leaves_dim,
+                        wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz))
+                    if flat >= 0:
+                        weight = (wp.where(dx == 1, f[0], 1.0 - f[0])
+                                  * wp.where(dy == 1, f[1], 1.0 - f[1])
+                                  * wp.where(dz == 1, f[2], 1.0 - f[2]))
+                        if axis == 0:
+                            wp.atomic_add(u, flat, weight * comp)
+                            wp.atomic_add(wu, flat, weight)
+                        elif axis == 1:
+                            wp.atomic_add(v, flat, weight * comp)
+                            wp.atomic_add(wv, flat, weight)
+                        else:
+                            wp.atomic_add(w, flat, weight * comp)
+                            wp.atomic_add(ww, flat, weight)
+    _deposit_fixed_species_cell_centered(
+        positions[tid], represented_volumes[tid], concentrations[tid],
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        mix_volume, species_mass)
+
+
+register_fn(
+    k_particle_set_grid_data_with_species,
+    "fluidSimParticleSetGridDataWithSpecies")
 
 
 @wp.kernel
@@ -268,6 +355,71 @@ def k_particle_set_grid_data_spacetime(
                         else:
                             wp.atomic_add(w, flat, wgt * comp)
                             wp.atomic_add(ww, flat, wgt)
+
+
+@wp.kernel
+def k_particle_set_grid_data_spacetime_with_species(
+    positions: wp.array(dtype=wp.vec3), velocities: wp.array(dtype=wp.vec3),
+    time_offsets: wp.array(dtype=float),
+    represented_volumes: wp.array(dtype=float),
+    concentrations: wp.array(dtype=wp.vec4), count: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32), voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i, origin: wp.vec3, voxel_size: float,
+    previous_dt: float,
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    mix_volume: wp.array(dtype=float), species_mass: wp.array(dtype=wp.vec4),
+):
+    """ST-FLIP enabled sibling with the same cell-centred species deposit."""
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    safe_prev_dt = wp.max(wp.abs(previous_dt), 1.0e-8)
+    tau = wp.clamp(-time_offsets[tid] / safe_prev_dt, -0.5, 0.5)
+    wt = _st_temporal_weight(tau)
+    if wt <= 0.0:
+        return
+    vp = world_to_voxel(positions[tid], origin, voxel_size)
+    vel = velocities[tid]
+    for axis in range(3):
+        off = wp.vec3(0.5, 0.5, 0.5)
+        if axis == 0:
+            off = wp.vec3(0.0, 0.5, 0.5)
+        elif axis == 1:
+            off = wp.vec3(0.5, 0.0, 0.5)
+        else:
+            off = wp.vec3(0.5, 0.5, 0.0)
+        q = vp - off
+        base = voxel_floor(q)
+        comp = vel[axis]
+        for dz in range(2):
+            for dy in range(2):
+                for dx in range(2):
+                    ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                    flat = voxel_flat_index(
+                        leaf_table, voxels_dim, leaves_dim, ijk)
+                    if flat >= 0:
+                        weight = (wt * _st_spatial_weight_1d(q[0] - float(ijk[0]))
+                                  * _st_spatial_weight_1d(q[1] - float(ijk[1]))
+                                  * _st_spatial_weight_1d(q[2] - float(ijk[2])))
+                        if axis == 0:
+                            wp.atomic_add(u, flat, weight * comp)
+                            wp.atomic_add(wu, flat, weight)
+                        elif axis == 1:
+                            wp.atomic_add(v, flat, weight * comp)
+                            wp.atomic_add(wv, flat, weight)
+                        else:
+                            wp.atomic_add(w, flat, weight * comp)
+                            wp.atomic_add(ww, flat, weight)
+    _deposit_fixed_species_cell_centered(
+        positions[tid], represented_volumes[tid], concentrations[tid],
+        leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        mix_volume, species_mass)
+
+
+register_fn(
+    k_particle_set_grid_data_spacetime_with_species,
+    "fluidSimParticleSetGridDataSpacetimeWithSpecies")
 
 
 @wp.kernel
@@ -475,6 +627,54 @@ def k_staggered_field_to_particle(
 
 
 register_fn(k_staggered_field_to_particle, "fluidSimStaggeredVectorFieldToParticle")
+
+
+@wp.kernel
+def k_staggered_field_to_particle_with_species(
+    positions: wp.array(dtype=wp.vec3), count: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    u_old: wp.array(dtype=float), v_old: wp.array(dtype=float),
+    w_old: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i, leaves_dim: wp.vec3i, origin: wp.vec3,
+    voxel_size: float, sample_type: wp.int32, flip_ratio: float,
+    mix_volume: wp.array(dtype=float), species_mass: wp.array(dtype=wp.vec4),
+    mixing_fraction: float, concentrations: wp.array(dtype=wp.vec4),
+    velocities: wp.array(dtype=wp.vec3),
+):
+    """Enabled sibling: sample velocity and blend toward the local mixture."""
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    position = positions[tid]
+    vp = world_to_voxel(position, origin, voxel_size)
+    v_new = sample_mac_velocity(
+        u, v, w, wu, wv, ww, leaf_table, voxels_dim, leaves_dim, vp)
+    if sample_type == 0:
+        velocities[tid] = v_new
+    else:
+        v_old_s = sample_mac_velocity(
+            u_old, v_old, w_old, wu, wv, ww,
+            leaf_table, voxels_dim, leaves_dim, vp)
+        v_flip = velocities[tid] + (v_new - v_old_s)
+        velocities[tid] = flip_ratio * v_flip + (1.0 - flip_ratio) * v_new
+    value = concentrations[tid]
+    local = species_local_mixture_at_position(
+        position, leaf_table, voxels_dim, leaves_dim, origin, voxel_size,
+        mix_volume, species_mass, value)
+    fraction = wp.clamp(mixing_fraction, 0.0, 1.0)
+    next_a = wp.max(0.0, value[0] + fraction * (local[0] - value[0]))
+    next_b = wp.max(0.0, value[1] + fraction * (local[1] - value[1]))
+    loading = next_a + next_b
+    if loading > 1.0:
+        next_a = next_a / loading
+        next_b = next_b / loading
+    concentrations[tid] = wp.vec4(next_a, next_b, 0.0, 0.0)
+
+
+register_fn(
+    k_staggered_field_to_particle_with_species,
+    "fluidSimStaggeredVectorFieldToParticleWithSpecies")
 
 
 # ---------------------------------------------------------------------------

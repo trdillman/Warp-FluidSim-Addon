@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 import warp as wp
 
+from tools import profile_user_path
+
 from fluidSim_warp_blender51.sim.particles import ParticleSystem
 from fluidSim_warp_blender51.sim.constants import VOXEL_COLLISION, VOXEL_FLUID
 from fluidSim_warp_blender51.sim.fields import SparseGrid
@@ -27,6 +29,53 @@ from fluidSim_warp_blender51.sim.sourcing import (
     k_source_shapes_particles,
 )
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
+
+
+def test_user_path_timing_row_is_synchronized_and_additively_consistent():
+    row = profile_user_path._synchronized_timing_row(
+        sync_ms=1.0, solve_ms=2.0, view_ms=3.0, cache_ms=4.0)
+
+    assert row == {
+        "sync_ms": 1.0,
+        "solve_ms": 2.0,
+        "view_ms": 3.0,
+        "cache_ms": 4.0,
+        "total_ms": 10.0,
+    }
+
+
+def test_shared_viewport_measurer_barriers_every_live_phase():
+    events = []
+    ticks = iter((0.0, 0.001, 0.003, 0.006))
+
+    class Solver:
+        device = "cuda:0"
+
+        def step_frame(self):
+            events.append("solve")
+            return SimpleNamespace(active_particles=1)
+
+    wp_module = SimpleNamespace(
+        synchronize_device=lambda device: events.append(f"sync:{device}"))
+    publication = SimpleNamespace(
+        update_outputs=lambda _scene, _sess, force_surface: events.append(
+            f"publish:{force_surface}"))
+    session = SimpleNamespace(active=True, solver=Solver())
+
+    timing, stats = profile_user_path.measure_synchronized_frame(
+        object(), session, publication, wp_module,
+        sync_callback=lambda: events.append("scene_sync"),
+        clock=lambda: next(ticks))
+
+    assert events == [
+        "sync:cuda:0", "scene_sync", "sync:cuda:0", "solve",
+        "sync:cuda:0", "publish:True", "sync:cuda:0",
+    ]
+    assert timing == {
+        "sync_ms": 1.0, "solve_ms": 2.0, "view_ms": 3.0,
+        "cache_ms": 0.0, "total_ms": 6.0,
+    }
+    assert stats.active_particles == 1
 
 
 def test_particle_emission_saturates_device_and_host_counts():

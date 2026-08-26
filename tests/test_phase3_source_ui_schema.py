@@ -38,6 +38,27 @@ def test_role_panels_exist_in_approved_order_without_mixed_legacy_registration()
     assert "FLUIDSIM_PT_source_particle_attributes," not in classes_block
 
 
+def test_object_role_settings_have_a_physics_properties_entry_point():
+    source = _source(PANELS)
+    assert "class FLUIDSIM_PT_object_physics" in source
+    object_panel = source[source.index("class FLUIDSIM_PT_object_physics"):]
+    assert 'bl_space_type = "PROPERTIES"' in object_panel
+    assert 'bl_region_type = "WINDOW"' in object_panel
+    assert 'bl_context = "physics"' in object_panel
+    assert '.prop(pg, "role"' in object_panel
+    for role_panel in (
+        "FLUIDSIM_PT_liquid_emitters",
+        "FLUIDSIM_PT_liquid_emitter_attributes",
+        "FLUIDSIM_PT_liquid_sinks",
+        "FLUIDSIM_PT_colliders",
+        "FLUIDSIM_PT_forces",
+        "FLUIDSIM_PT_advanced_field_sources",
+    ):
+        assert f"{role_panel}.draw" in object_panel
+    classes_block = source[source.index("CLASSES = ("):]
+    assert "FLUIDSIM_PT_object_physics," in classes_block
+
+
 def test_presentation_rna_preserves_legacy_and_adds_only_approved_axes():
     source = _source(PROPERTIES)
     for legacy in (

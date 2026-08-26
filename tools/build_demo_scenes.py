@@ -17,6 +17,8 @@ not become source-control assets.
 5. paddle_stir      - keyframed rotating paddle in a cylindrical tank; the only
                       scene exercising the moving-collider velocity-coupling path
                       (build explicitly with `-- paddle_stir`).
+6. chromatic_vortex - red and blue initial fills mixed by one analytic VORTEX
+                      force, with clear-dye viewport coloring.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -1568,6 +1570,233 @@ def build_paddle_stir():
 
 
 # ---------------------------------------------------------------------------
+# Scene 6: chromatic vortex (species mixing driven by an analytic force)
+# ---------------------------------------------------------------------------
+
+def build_chromatic_vortex():
+    """Mix red and blue clear-dye species with one central VORTEX force."""
+    import bmesh
+    from mathutils import Vector
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    name = "chromatic_vortex"
+    scene = fresh_scene()
+    fs = scene.fluidsim
+    lo, hi = (-0.72, -0.72, 0.0), (0.72, 0.72, 1.18)
+    make_domain(scene, lo, hi, "Chromatic Vortex Domain")
+    fs.voxel_size = 0.045
+    fs.max_particles = 600_000
+    fs.min_substeps = 1
+    fs.max_substeps = 12
+    fs.flip_ratio = 0.94
+    fs.gravity = (0.0, 0.0, -4.0)
+    fs.whitewater_enabled = False
+    fs.species_enabled = True
+    fs.species_diffusivity = 2.0
+    fs.species_max_diffusion_substeps = 256
+    fs.species_id_a = "red_dye"
+    fs.species_id_b = "blue_dye"
+    fs.species_preview_swatch_a = (0.95, 0.025, 0.02)
+    fs.species_preview_swatch_b = (0.025, 0.08, 0.95)
+    fs.species_absorption_a = (0.05, 2.2, 2.8)
+    fs.species_absorption_b = (2.8, 1.6, 0.05)
+    fs.show_surface = True
+    fs.show_particles = True
+    fs.liquid_view_mode = "SURFACE_PARTICLES"
+    fs.particle_display_fraction = 0.5
+    fs.particle_display_scale = 0.72
+    fs.surface_attribute_mode = "CLEAR_DYE"
+    fs.particle_attribute_mode = "CLEAR_DYE"
+    fs.surface_attribute_species = True
+    fs.particles_attribute_species = True
+    fs.cache_enabled = False
+    fs.live = False
+    scene.frame_start = 1
+    scene.frame_end = 120
+    scene.frame_set(1)
+    scene["fluidsim_chromatic_vortex_demo"] = True
+    scene["fluidsim_species_expected"] = 2
+    scene["fluidsim_mixing_force_type"] = "VORTEX"
+
+    red = make_source_box(
+        scene, (-0.54, -0.34, 0.08), (-0.025, 0.34, 0.56),
+        "Red Dye Initial Fill", emit_rate=8.0, emission_mode="INITIAL_FILL")
+    red.fluidsim.species_concentration = (1.0, 0.0, 0.0, 0.0)
+    red.fluidsim.source_color = (0.95, 0.025, 0.02, 1.0)
+    red.display_type = "WIRE"
+    red.hide_render = True
+    red.show_name = False
+
+    blue = make_source_box(
+        scene, (0.025, -0.34, 0.08), (0.54, 0.34, 0.56),
+        "Blue Dye Initial Fill", emit_rate=8.0, emission_mode="INITIAL_FILL")
+    blue.fluidsim.species_concentration = (0.0, 1.0, 0.0, 0.0)
+    blue.fluidsim.source_color = (0.025, 0.08, 0.95, 1.0)
+    blue.display_type = "WIRE"
+    blue.hide_render = True
+    blue.show_name = False
+
+    bpy.ops.object.effector_add(type="VORTEX", location=(0.0, 0.0, 0.34))
+    vortex = bpy.context.active_object
+    vortex.name = "Chromatic Mixing Vortex Force"
+    vortex.show_name = False
+    vortex.show_in_front = True
+    vortex.empty_display_size = 0.34
+    vortex.field.strength = 8.0
+    vortex.field.falloff_power = 0.35
+    vortex.field.use_min_distance = True
+    vortex.field.distance_min = 0.08
+    vortex.field.use_max_distance = True
+    vortex.field.distance_max = 0.62
+
+    # Open, transparent vessel used only as review geometry; domain walls own
+    # containment and the single VORTEX owns mixing motion.
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=96, radius=0.625, depth=0.88, location=(0.0, 0.0, 0.44))
+    vessel = bpy.context.active_object
+    vessel.name = "Chromatic Glass Vessel"
+    bm = bmesh.new()
+    bm.from_mesh(vessel.data)
+    bm.faces.ensure_lookup_table()
+    cap_faces = [face for face in bm.faces if abs(face.normal.z) > 0.9]
+    bmesh.ops.delete(bm, geom=cap_faces, context="FACES")
+    bm.to_mesh(vessel.data)
+    bm.free()
+    vessel.data.update()
+    glass = bpy.data.materials.new("Chromatic Vessel Glass")
+    glass.use_nodes = True
+    glass.diffuse_color = (0.12, 0.22, 0.32, 0.16)
+    glass_bsdf = glass.node_tree.nodes.get("Principled BSDF")
+    if glass_bsdf is not None:
+        glass_bsdf.inputs["Base Color"].default_value = (0.08, 0.16, 0.24, 1.0)
+        glass_bsdf.inputs["Roughness"].default_value = 0.08
+        glass_bsdf.inputs["Metallic"].default_value = 0.05
+        if "Transmission Weight" in glass_bsdf.inputs:
+            glass_bsdf.inputs["Transmission Weight"].default_value = 0.75
+        if "Alpha" in glass_bsdf.inputs:
+            glass_bsdf.inputs["Alpha"].default_value = 0.16
+    if hasattr(glass, "surface_render_method"):
+        glass.surface_render_method = "DITHERED"
+    vessel.data.materials.append(glass)
+
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=96, radius=0.69, depth=0.06, location=(0.0, 0.0, -0.03))
+    plinth = bpy.context.active_object
+    plinth.name = "Chromatic Reactor Plinth"
+    plinth_mat = bpy.data.materials.new("Chromatic Reactor Plinth Material")
+    plinth_mat.diffuse_color = (0.018, 0.026, 0.045, 1.0)
+    plinth_mat.metallic = 0.65
+    plinth_mat.roughness = 0.22
+    plinth.data.materials.append(plinth_mat)
+
+    camera = _add_review_camera(
+        scene, "Chromatic Vortex Camera", (1.72, -2.15, 1.42),
+        target=(0.0, 0.0, 0.36), lens=58.0)
+    camera.data.clip_start = 0.02
+    camera.data.clip_end = 50.0
+    scene.camera = camera
+    area_data = bpy.data.lights.new("Chromatic Key", type="AREA")
+    area_data.energy = 950.0
+    area_data.shape = "DISK"
+    area_data.size = 3.5
+    area = bpy.data.objects.new("Chromatic Key", area_data)
+    scene.collection.objects.link(area)
+    area.location = (1.5, -1.7, 3.0)
+    area.rotation_euler = (Vector((0.0, 0.0, 0.35)) - area.location).to_track_quat(
+        "-Z", "Y").to_euler()
+    rim_data = bpy.data.lights.new("Chromatic Rim", type="AREA")
+    rim_data.energy = 650.0
+    rim_data.color = (0.32, 0.48, 1.0)
+    rim_data.size = 2.0
+    rim = bpy.data.objects.new("Chromatic Rim", rim_data)
+    scene.collection.objects.link(rim)
+    rim.location = (-1.1, 1.0, 2.1)
+    rim.rotation_euler = (Vector((0.0, 0.0, 0.4)) - rim.location).to_track_quat(
+        "-Z", "Y").to_euler()
+    scene.render.engine = "BLENDER_EEVEE"
+    scene.render.resolution_x = 720
+    scene.render.resolution_y = 720
+    scene.world.color = (0.006, 0.009, 0.018)
+    for screen in bpy.data.screens:
+        for area_view in screen.areas:
+            if area_view.type != "VIEW_3D":
+                continue
+            space = area_view.spaces.active
+            space.shading.type = "MATERIAL"
+            space.shading.use_scene_world = True
+            space.shading.use_scene_lights = True
+            space.overlay.show_extras = False
+            space.overlay.show_relationship_lines = False
+
+    add_text_block(
+        "README_Chromatic_Vortex",
+        "Chromatic Vortex Reactor\n"
+        "========================\n\n"
+        "Two authored Initial Fill sources inject authoritative red (1,0) and "
+        "blue (0,1) clear-dye species. One native Blender VORTEX force drives "
+        "the motion; there is no propeller, animated collider, or pre-colored "
+        "purple result. FluidSim derives surface and particle colors from the "
+        "live species concentrations.\n\n"
+        "The file opens at frame 1 with Live Simulation enabled. Press Play to "
+        "watch the interface stretch into a red/blue vortex and converge toward "
+        "purple where the liquids exchange color.\n")
+
+    # Prove the authored setup genuinely produces mixed concentrations before
+    # resetting and saving the manual-review scene at frame 1.
+    if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
+        plan = session().capacity_plan_for_scene(scene)
+        blockers = [] if plan is None else [
+            (item.code, item.required, item.available)
+            for item in plan.blockers]
+        raise RuntimeError(
+            f"{name}: failed to initialize verification run; "
+            f"capacity blockers={blockers!r}")
+    sess = session()
+    initial_count = sess.solver.particles.refresh_host_count()
+    if initial_count <= 0:
+        if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+            raise RuntimeError(f"{name}: Initial Fill source step failed")
+        initial_count = sess.solver.particles.refresh_host_count()
+    if initial_count <= 0:
+        raise RuntimeError(f"{name}: Initial Fill sources emitted no particles")
+    initial = sess.solver.particles.attr("species_concentration").numpy()[
+        :initial_count, :2]
+    red_count = int(np.count_nonzero(initial[:, 0] > 0.99))
+    blue_count = int(np.count_nonzero(initial[:, 1] > 0.99))
+    if red_count <= 0 or blue_count <= 0:
+        raise RuntimeError(
+            f"{name}: expected both source species, got red={red_count}, "
+            f"blue={blue_count}")
+    mixed_count = 0
+    mixed_required = max(256, int(math.ceil(initial_count * 0.05)))
+    for _frame in range(24):
+        if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+            raise RuntimeError(f"{name}: verification step failed")
+        count = sess.solver.particles.refresh_host_count()
+        values = sess.solver.particles.attr("species_concentration").numpy()[
+            :count, :2]
+        mixed_count = int(np.count_nonzero(
+            (values[:, 0] > 0.05) & (values[:, 1] > 0.05)))
+        if mixed_count >= mixed_required:
+            break
+    scene["fluidsim_verified_initial_red_particles"] = red_count
+    scene["fluidsim_verified_initial_blue_particles"] = blue_count
+    scene["fluidsim_verified_mixed_particles"] = mixed_count
+    scene["fluidsim_verified_mixed_required"] = mixed_required
+    if mixed_count < mixed_required:
+        raise RuntimeError(
+            f"{name}: verification run mixed {mixed_count:,} particles; "
+            f"required {mixed_required:,}")
+    log(
+        f"{name}: verified red={red_count:,}, blue={blue_count:,}, "
+        f"mixed={mixed_count:,}")
+    bpy.ops.fluidsim.release()
+    # Rendering invokes the render-frame handlers and resets the live frame-1
+    # output before save. Keep this review file's verified colored mesh intact.
+    save_live_playback_ready(name, preview=False)
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     os.makedirs(DEMOS, exist_ok=True)
@@ -1585,6 +1814,7 @@ def main():
         "liquid_sink": build_liquid_sink,
         "height_fill": build_height_fill,
         "paddle_stir": build_paddle_stir,
+        "chromatic_vortex": build_chromatic_vortex,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:

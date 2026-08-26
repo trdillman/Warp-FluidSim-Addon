@@ -24,6 +24,10 @@ PROFILE = importlib.util.module_from_spec(_PROFILE_SPEC)
 _PROFILE_SPEC.loader.exec_module(PROFILE)
 
 REPETITIONS = 5
+SOLVER_GATES = PROFILE.SOLVER_GATES
+# These limits validate retained schema-v2 receipts only. Schema-v3 release
+# children additionally carry the immutable SOLVER_GATES and fail closed on
+# every unsupported dynamic-species case.
 THRESHOLDS = {
     "repetitions": REPETITIONS,
     "transport_only_budget": 0.12,
@@ -236,8 +240,9 @@ def build_aggregate_report(child_paths, *, command=None):
         })
     metrics = _aggregate_metrics(children)
     checks = _aggregate_checks(children, paths, metrics)
-    return {
-        "schema_version": 1,
+    release_children = all(child.get("schema_version") == 3 for child in children)
+    report = {
+        "schema_version": 2 if release_children else 1,
         "status": "pass" if all(checks.values()) else "fail",
         "thresholds": dict(THRESHOLDS),
         "runner_provenance": _runner_provenance(command),
@@ -245,6 +250,22 @@ def build_aggregate_report(child_paths, *, command=None):
         "metrics": metrics,
         "checks": checks,
     }
+    if release_children:
+        report["solver_gates"] = {
+            name: dict(gate) for name, gate in SOLVER_GATES.items()}
+        report["release_case_status"] = {
+            name: [
+                child.get("release_gate", {}).get("cases", {}).get(
+                    name, {}).get("status")
+                for child in children
+            ]
+            for name in PROFILE.SOLVER_CASES
+        }
+        if any(status != "supported"
+               for statuses in report["release_case_status"].values()
+               for status in statuses):
+            report["status"] = "fail"
+    return report
 
 
 def _metrics_match(supplied, expected):
@@ -270,8 +291,21 @@ def validate_aggregate_report(report):
     errors = []
     if not isinstance(report, dict):
         return ["report", "status"]
-    if report.get("schema_version") != 1:
+    if report.get("schema_version") not in {1, 2}:
         errors.append("schema_version")
+    if report.get("schema_version") == 2:
+        expected_gates = {
+            name: dict(gate) for name, gate in SOLVER_GATES.items()}
+        if report.get("solver_gates") != expected_gates:
+            errors.append("solver_gates")
+        statuses = report.get("release_case_status")
+        if (not isinstance(statuses, dict)
+                or set(statuses) != set(PROFILE.SOLVER_CASES)
+                or any(not isinstance(values, list)
+                       or len(values) != REPETITIONS for values in statuses.values())
+                or any(status != "supported"
+                       for values in statuses.values() for status in values)):
+            errors.append("unsupported_cases")
     if report.get("thresholds") != THRESHOLDS:
         errors.append("thresholds")
     errors.extend(_validate_runner_provenance(report.get("runner_provenance")))

@@ -10,6 +10,7 @@ Ports of the fluid_surface_collision kernel group:
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 import numpy as np
 import warp as wp
 
@@ -30,6 +31,57 @@ from .fields import (
     field_read_i,
 )
 from .registry import register_fn
+
+
+@dataclass(frozen=True)
+class HostSurfaceResult:
+    vertices: np.ndarray
+    triangles: np.ndarray
+    colors: np.ndarray | None = None
+
+    def __iter__(self):
+        yield self.vertices
+        yield self.triangles
+
+    def __getitem__(self, index):
+        return (self.vertices, self.triangles)[index]
+
+
+@dataclass(frozen=True)
+class DeviceSurfaceResult:
+    vertices_world: wp.array
+    triangles: wp.array
+    vertex_count: int
+    triangle_count: int
+    colors: wp.array | None
+    device: object
+
+    def to_host(self):
+        """Synchronize once, then materialize the complete paired result."""
+        wp.synchronize_device(self.device)
+        vertices = np.ascontiguousarray(
+            self.vertices_world.numpy()[:self.vertex_count], dtype=np.float32)
+        triangle_values = self.triangles.numpy()[:self.triangle_count * 3]
+        triangles = np.ascontiguousarray(
+            triangle_values.reshape((-1, 3)), dtype=np.int32)
+        colors = None
+        if self.colors is not None:
+            colors = np.ascontiguousarray(
+                self.colors.numpy()[:self.vertex_count], dtype=np.float32)
+        return HostSurfaceResult(vertices, triangles, colors)
+
+
+@wp.kernel
+def k_surface_vertices_to_world(
+    vertices: wp.array(dtype=wp.vec3), offset: wp.vec3,
+    voxel_size: float, vertex_count: int,
+):
+    tid = wp.tid()
+    if tid < vertex_count:
+        vertices[tid] = offset + voxel_size * vertices[tid]
+
+
+register_fn(k_surface_vertices_to_world, "surface_vertices_to_world")
 
 
 class SurfacePipeline:
@@ -287,12 +339,19 @@ class SurfacePipeline:
         self.grid_key = None
         self.ensure_resources(force=True)
 
-    def mesh(self):
+    def mesh(self, *, species_colors=False):
         if self.solver.settings.surface_enabled and self.built_key != self.build_key():
             self.build(build_render=True, build_lowres=False)
-        key = self.build_key()
+        key = (self.build_key(), bool(species_colors))
         if self.mesh_cache is None or self.mesh_key != key:
-            self.mesh_cache = self.render_extractor.extract(self.render_sdf)
+            color_fn = None
+            if species_colors:
+                species = getattr(self.solver, "species", None)
+                if species is not None:
+                    color_fn = lambda vertices, count: species.derive_surface_colors(
+                        vertices, count, grid=self.grid)
+            self.mesh_cache = self.render_extractor.extract_device(
+                self.render_sdf, color_fn=color_fn).to_host()
             self.mesh_key = key
         return self.mesh_cache
 
@@ -743,9 +802,11 @@ class SurfaceExtractor:
         self._dense = None
         self._dense_dim = None
 
-    def _empty(self):
-        return (np.zeros((0, 3), dtype=np.float32),
-                np.zeros((0, 3), dtype=np.int32))
+    def _empty_device(self):
+        return DeviceSurfaceResult(
+            wp.empty(0, dtype=wp.vec3, device=self.device),
+            wp.empty(0, dtype=wp.int32, device=self.device),
+            0, 0, None, self.device)
 
     def _active_voxel_box(self):
         """Voxel-space (lo, hi exclusive) AABB of active leaves, or None."""
@@ -771,11 +832,11 @@ class SurfaceExtractor:
         hi = (b[3:] + 1) * C.LEAF_DIM
         return lo, hi
 
-    def extract(self, sdf_field, iso=0.0):
+    def extract_device(self, sdf_field, iso=0.0, *, color_fn=None):
         g = self.grid
         box = self._active_voxel_box()
         if box is None:
-            return self._empty()
+            return self._empty_device()
         lo, hi = box
         vdim = np.array([int(g.voxels_dim[0]), int(g.voxels_dim[1]),
                          int(g.voxels_dim[2])], dtype=np.int64)
@@ -817,16 +878,37 @@ class SurfaceExtractor:
             device=self.device,
         )
         self._mc.surface(self._dense, iso)
-        verts = self._mc.verts.numpy()
-        tris = self._mc.indices.numpy().reshape(-1, 3)
-        # Vertices are in dense sub-box index space; convert to world.
         vs = np.float32(g.voxel_size)
         offset = (np.asarray(g.origin, dtype=np.float32)
                   + (lo.astype(np.float32) + np.float32(0.5)) * vs)
-        verts = np.asarray(verts, dtype=np.float32)
-        verts *= vs
-        verts += offset
-        return verts, tris
+        return self._lease_marching_cubes_result(
+            offset=wp.vec3(*offset), voxel_size=float(vs), color_fn=color_fn)
+
+    def _lease_marching_cubes_result(self, *, offset, voxel_size, color_fn):
+        """Copy reusable marching-cubes views into one result-owned lease."""
+        source_vertices = self._mc.verts
+        source_indices = self._mc.indices
+        vertex_count = len(source_vertices)
+        index_count = len(source_indices)
+        vertices = wp.empty(vertex_count, dtype=wp.vec3, device=self.device)
+        indices = wp.empty(index_count, dtype=wp.int32, device=self.device)
+        if vertex_count:
+            wp.copy(vertices, source_vertices, count=vertex_count)
+        if index_count:
+            wp.copy(indices, source_indices, count=index_count)
+        triangle_count = index_count // 3
+        if vertex_count:
+            wp.launch(
+                k_surface_vertices_to_world, dim=vertex_count,
+                inputs=[vertices, offset, voxel_size, vertex_count],
+                device=self.device)
+        colors = (
+            color_fn(vertices, vertex_count) if color_fn is not None else None)
+        return DeviceSurfaceResult(
+            vertices, indices, vertex_count, triangle_count, colors, self.device)
+
+    def extract(self, sdf_field, iso=0.0):
+        return self.extract_device(sdf_field, iso).to_host()
 
 
 @wp.kernel

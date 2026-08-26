@@ -1,4 +1,4 @@
-"""GPU-resident conservative transport for two miscible clear-dye species."""
+"""GPU-resident artistic local mixing for two miscible clear-dye species."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from .constants import LEAF_VOLUME
-from .fields import positive_face_neighbor, voxel_flat_index, voxel_floor, world_to_voxel
+from .fields import voxel_flat_index, voxel_floor, world_to_voxel
 from .registry import register_fn
 
 
@@ -29,7 +29,7 @@ class SpeciesTransportAllocationBytes:
     """Pure-integer inventory matching one SpeciesTransport allocation."""
 
     particle_channels_bytes: int = 0
-    particle_delta_bytes: int = 0
+    particle_preview_bytes: int = 0
     voxel_scratch_bytes: int = 0
     receipt_bytes: int = 0
     host_cache_staging_bytes: int = 0
@@ -38,7 +38,7 @@ class SpeciesTransportAllocationBytes:
     def device_persistent_bytes(self) -> int:
         return int(
             self.particle_channels_bytes
-            + self.particle_delta_bytes
+            + self.particle_preview_bytes
             + self.voxel_scratch_bytes
             + self.receipt_bytes
         )
@@ -46,7 +46,7 @@ class SpeciesTransportAllocationBytes:
     @property
     def particle_resize_candidate_bytes(self) -> int:
         """Incremental species bytes allocated by a particle-capacity grow."""
-        return int(self.particle_channels_bytes + self.particle_delta_bytes)
+        return int(self.particle_channels_bytes + self.particle_preview_bytes)
 
 
 def species_transport_allocation_bytes(
@@ -61,13 +61,13 @@ def species_transport_allocation_bytes(
         # ParticleSystem owns primary and compaction buffers for both channels.
         particle_channels_bytes=(
             particle_capacity * 2 * (_FLOAT32_BYTES + _VEC4_BYTES)),
-        particle_delta_bytes=particle_capacity * _VEC4_BYTES,
-        # mix_volume/outgoing plus species_mass/delta. Positive-face validity
-        # and raw conductance are recomputed from sparse topology in the flux
-        # kernel rather than persisted in per-face scratch arrays.
-        voxel_scratch_bytes=voxel_capacity * (
-            2 * _FLOAT32_BYTES + 2 * _VEC4_BYTES),
-        receipt_bytes=(1 + RECEIPT_SIZE) * _FLOAT32_BYTES,
+        # GPU preview colors are persistent because callers consume them after
+        # the deriving launch returns.
+        particle_preview_bytes=particle_capacity * _VEC4_BYTES,
+        # The artistic local exchange needs only represented volume and species
+        # amount on the sparse grid. There is no face or limiter scratch.
+        voxel_scratch_bytes=voxel_capacity * (_FLOAT32_BYTES + _VEC4_BYTES),
+        receipt_bytes=RECEIPT_SIZE * _FLOAT32_BYTES,
         # Cache/checkpoint host staging is owned outside SpeciesTransport.
         host_cache_staging_bytes=0,
     )
@@ -109,23 +109,20 @@ class SpeciesReceipt:
     residual: tuple[float, float]
     min_concentration: float
     max_loading: float
+    # Legacy cache/report field names retained at this compatibility boundary.
+    # Local mixing has no limiter and executes once per admitted solver substep.
     limiter_alpha: float
     diffusion_substeps: int
 
 
-@wp.kernel
-def k_species_p2g_clear(
-    num_leaves: wp.array(dtype=wp.int32),
-    mix_volume: wp.array(dtype=float), mass: wp.array(dtype=wp.vec4),
-    delta: wp.array(dtype=wp.vec4), outgoing: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    mix_volume[tid] = 0.0
-    mass[tid] = wp.vec4(0.0)
-    delta[tid] = wp.vec4(0.0)
-    outgoing[tid] = 0.0
+@dataclass(frozen=True, eq=False)
+class ExchangeToken:
+    """Identifies one staged exchange owned by one global solver substep."""
+
+    _transport_identity: object
+    serial: int
+    frame: int
+    substep: int
 
 
 @wp.kernel
@@ -159,139 +156,18 @@ def k_species_p2g_accumulate(
 
 
 @wp.func
-def species_face_is_permeable(
-    volume_i: float, volume_j: float,
-    collision_i: float, collision_j: float,
-    collision_mask_enabled: int,
-) -> bool:
-    """Return whether one liquid-liquid face can carry species flux."""
-    if volume_i <= EPS or volume_j <= EPS:
-        return False
-    if collision_mask_enabled != 0:
-        # Match the solver-wide collision SDF convention: strictly negative
-        # samples are inside solid geometry; zero is a valid fluid boundary
-        # value and must not suppress species diffusion.
-        if collision_i < 0.0 or collision_j < 0.0:
-            return False
-    return True
-
-
-@wp.kernel
-def k_species_face_conductance_measure(
-    volume: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i), voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i, num_leaves: wp.array(dtype=wp.int32), raw: float,
-    collision_sdf: wp.array(dtype=float), collision_mask_enabled: int,
-    outgoing: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME or volume[tid] <= EPS:
-        return
-    for axis in range(3):
-        neighbor = positive_face_neighbor(
-            tid, axis, leaf_table, leaf_coords, voxels_dim, leaves_dim)
-        if neighbor >= 0 and species_face_is_permeable(
-                volume[tid], volume[neighbor],
-                collision_sdf[tid], collision_sdf[neighbor],
-                collision_mask_enabled):
-            wp.atomic_add(outgoing, tid, raw)
-            wp.atomic_add(outgoing, neighbor, raw)
-
-
-@wp.kernel
-def k_species_node_scale(
-    volume: wp.array(dtype=float), outgoing: wp.array(dtype=float),
-    num_leaves: wp.array(dtype=wp.int32), scale: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    if volume[tid] > EPS and outgoing[tid] > EPS:
-        scale[tid] = wp.min(1.0, volume[tid] / outgoing[tid])
-    else:
-        scale[tid] = 0.0
-
-
-@wp.kernel
-def k_species_face_flux_apply(
-    volume: wp.array(dtype=float), mass: wp.array(dtype=wp.vec4),
-    outgoing: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i), voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i, num_leaves: wp.array(dtype=wp.int32),
-    raw: float, collision_sdf: wp.array(dtype=float),
-    collision_mask_enabled: int, delta: wp.array(dtype=wp.vec4),
-    global_alpha: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid == 0:
-        global_alpha[0] = 1.0
-    if tid >= num_leaves[0] * LEAF_VOLUME or volume[tid] <= EPS:
-        return
-    ci = mass[tid] / volume[tid]
-    for axis in range(3):
-        neighbor = positive_face_neighbor(
-            tid, axis, leaf_table, leaf_coords, voxels_dim, leaves_dim)
-        if neighbor < 0:
-            continue
-        if not species_face_is_permeable(
-                volume[tid], volume[neighbor],
-                collision_sdf[tid], collision_sdf[neighbor],
-                collision_mask_enabled):
-            continue
-        cj = mass[neighbor] / volume[neighbor]
-        scale_i = float(0.0)
-        if outgoing[tid] > EPS:
-            scale_i = wp.min(1.0, volume[tid] / outgoing[tid])
-        scale_j = float(0.0)
-        if outgoing[neighbor] > EPS:
-            scale_j = wp.min(1.0, volume[neighbor] / outgoing[neighbor])
-        conductance = raw * wp.min(scale_i, scale_j)
-        change = wp.vec4(conductance * (cj[0] - ci[0]),
-                         conductance * (cj[1] - ci[1]), 0.0, 0.0)
-        wp.atomic_add(delta, tid, change)
-        wp.atomic_add(delta, neighbor, -change)
-
-
-@wp.func
-def species_alpha_candidate(value: wp.vec4, d: wp.vec4) -> float:
-    alpha = float(1.0)
-    if (wp.isnan(d[0]) or wp.isinf(d[0])
-            or wp.isnan(d[1]) or wp.isinf(d[1])):
-        alpha = 0.0
-    else:
-        if d[0] < 0.0:
-            alpha = wp.min(alpha, value[0] / -d[0])
-        elif d[0] > 0.0:
-            alpha = wp.min(alpha, (1.0 - value[0]) / d[0])
-        if d[1] < 0.0:
-            alpha = wp.min(alpha, value[1] / -d[1])
-        elif d[1] > 0.0:
-            alpha = wp.min(alpha, (1.0 - value[1]) / d[1])
-        total_delta = d[0] + d[1]
-        # Ignore sub-ULP cancellation left by tangent projection/interpolation.
-        # Treating an O(1e-15) positive sum as real at a fully loaded particle
-        # would force the global alpha to zero and freeze all diffusion.
-        if total_delta > EPS:
-            alpha = wp.min(alpha, (1.0 - value[0] - value[1]) / total_delta)
-    return wp.max(0.0, wp.min(1.0, alpha))
-
-
-@wp.kernel
-def k_species_g2p_delta(
-    positions: wp.array(dtype=wp.vec3), count: wp.array(dtype=wp.int32),
+def species_local_mixture_at_position(
+    position: wp.vec3,
     leaf_table: wp.array(dtype=wp.int32), voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i, origin: wp.vec3, voxel_size: float,
-    volume: wp.array(dtype=float), grid_delta: wp.array(dtype=wp.vec4),
-    concentration: wp.array(dtype=wp.vec4),
-    particle_delta: wp.array(dtype=wp.vec4), global_alpha: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= count[0]:
-        return
-    q = world_to_voxel(positions[tid], origin, voxel_size) - wp.vec3(0.5)
+    volume: wp.array(dtype=float), mass: wp.array(dtype=wp.vec4),
+    fallback: wp.vec4,
+) -> wp.vec4:
+    q = world_to_voxel(position, origin, voxel_size) - wp.vec3(0.5)
     base = voxel_floor(q)
     f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
-    result = wp.vec4(0.0)
+    represented = float(0.0)
+    represented_mass = wp.vec4(0.0)
     for dz in range(2):
         for dy in range(2):
             for dx in range(2):
@@ -301,86 +177,14 @@ def k_species_g2p_delta(
                     weight = (wp.where(dx == 1, f[0], 1.0 - f[0])
                               * wp.where(dy == 1, f[1], 1.0 - f[1])
                               * wp.where(dz == 1, f[2], 1.0 - f[2]))
-                    result += weight * grid_delta[flat] / volume[flat]
-    # When a fully loaded mixture has equal-and-opposite species changes,
-    # float32 scatter/interpolation can leave an O(1e-7) cancellation error.
-    # Project only that numerically tangent case.  A single-species Gaussian
-    # may also touch loading 1 at its peak, but its non-cancelling delta must
-    # diffuse loading normally and must never be converted into species B.
-    value = concentration[tid]
-    d0, d1 = result[0], result[1]
-    simplex_tolerance = float(1.0e-6)
-    delta_l1 = wp.abs(d0) + wp.abs(d1)
-    cancelling_full_mixture = (
-        value[0] + value[1] >= 1.0 - simplex_tolerance
-        and d0 * d1 < 0.0
-        and (wp.abs(d0 + d1) <= simplex_tolerance
-             or wp.abs(d0 + d1)
-             <= 1.0e-3 * wp.max(delta_l1, EPS)))
-    if cancelling_full_mixture:
-        normal = 0.5 * (d0 + d1)
-        d0 = d0 - normal
-        d1 = d1 - normal
-        if ((value[0] >= 1.0 - simplex_tolerance and d0 > 0.0)
-                or (value[1] >= 1.0 - simplex_tolerance and d1 > 0.0)
-                or (value[0] <= simplex_tolerance and d0 < 0.0)
-                or (value[1] <= simplex_tolerance and d1 < 0.0)):
-            d0, d1 = 0.0, 0.0
-    # Atomic accumulation may also leave an isolated sub-float32 outward
-    # delta at a pure simplex vertex (for example +3e-9 at c0 == 1).  Such a
-    # direction violates the diffusion maximum principle and carries no
-    # resolvable transport, so do not let it freeze the global limiter.
-    delta_l1 = wp.abs(d0) + wp.abs(d1)
-    if (delta_l1 <= simplex_tolerance
-            and ((value[0] >= 1.0 - simplex_tolerance and d0 > 0.0)
-                 or (value[1] >= 1.0 - simplex_tolerance and d1 > 0.0)
-                 or (value[0] <= simplex_tolerance and d0 < 0.0)
-                 or (value[1] <= simplex_tolerance and d1 < 0.0))):
-        d0, d1 = 0.0, 0.0
-    d = wp.vec4(d0, d1, 0.0, 0.0)
-    particle_delta[tid] = d
-    candidate = species_alpha_candidate(value, d)
-    if candidate < 1.0:
-        wp.atomic_min(global_alpha, 0, candidate)
-
-
-@wp.kernel
-def k_species_particle_alpha(
-    c: wp.array(dtype=wp.vec4), delta: wp.array(dtype=wp.vec4),
-    count: wp.array(dtype=wp.int32), candidates: wp.array(dtype=float),
-    global_alpha: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= count[0]:
-        return
-    alpha = species_alpha_candidate(c[tid], delta[tid])
-    candidates[tid] = alpha
-    if alpha < 1.0:
-        wp.atomic_min(global_alpha, 0, alpha)
-
-
-@wp.kernel
-def k_species_delta_apply(
-    c: wp.array(dtype=wp.vec4), delta: wp.array(dtype=wp.vec4),
-    count: wp.array(dtype=wp.int32), alpha: wp.array(dtype=float),
-    receipt: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= count[0]:
-        return
-    value, d, scale = c[tid], delta[tid], alpha[0]
-    updated0 = value[0] + scale * d[0]
-    updated1 = value[1] + scale * d[1]
-    # Full mixtures are projected onto the simplex tangent in G2P. Preserve
-    # that invariant exactly here instead of accumulating independent float32
-    # additions until viewport validation sees c0 + c1 > 1 + tolerance.
-    if (value[0] + value[1] >= 1.0 - 1.0e-6
-            and wp.abs(d[0] + d[1]) <= EPS):
-        updated1 = 1.0 - updated0
-    updated = wp.vec4(updated0, updated1, 0.0, 0.0)
-    c[tid] = updated
-    if tid == 0:
-        wp.atomic_min(receipt, MIN_ALPHA, scale)
+                    represented += weight * volume[flat]
+                    represented_mass += weight * mass[flat]
+    if represented > EPS:
+        local = represented_mass / represented
+        if (not wp.isnan(local[0]) and not wp.isinf(local[0])
+                and not wp.isnan(local[1]) and not wp.isinf(local[1])):
+            return wp.vec4(local[0], local[1], 0.0, 0.0)
+    return fallback
 
 
 @wp.kernel
@@ -414,8 +218,52 @@ def k_species_preview_derive(
 
 
 @wp.kernel
-def _k_init_alpha(alpha: wp.array(dtype=float)):
-    alpha[0] = 1.0
+def k_species_surface_color(
+    vertices_world: wp.array(dtype=wp.vec3), vertex_count: int,
+    leaf_table: wp.array(dtype=wp.int32), voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i, origin: wp.vec3, voxel_size: float,
+    volume: wp.array(dtype=float), mass: wp.array(dtype=wp.vec4),
+    absorption_a: wp.vec3, absorption_b: wp.vec3, path: float,
+    colors: wp.array(dtype=wp.vec4),
+):
+    tid = wp.tid()
+    if tid >= vertex_count:
+        return
+    q = world_to_voxel(vertices_world[tid], origin, voxel_size) - wp.vec3(0.5)
+    base = voxel_floor(q)
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    represented = float(0.0)
+    represented_mass = wp.vec4(0.0)
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                flat = voxel_flat_index(
+                    leaf_table, voxels_dim, leaves_dim,
+                    wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz))
+                if flat >= 0:
+                    weight = (wp.where(dx == 1, f[0], 1.0 - f[0])
+                              * wp.where(dy == 1, f[1], 1.0 - f[1])
+                              * wp.where(dz == 1, f[2], 1.0 - f[2]))
+                    represented += weight * volume[flat]
+                    represented_mass += weight * mass[flat]
+    concentration = wp.vec4(0.0)
+    if represented > EPS:
+        concentration = represented_mass / represented
+    absorb = path * (
+        concentration[0] * absorption_a + concentration[1] * absorption_b)
+    colors[tid] = wp.vec4(
+        wp.exp(-absorb[0]), wp.exp(-absorb[1]), wp.exp(-absorb[2]), 1.0)
+
+
+@wp.kernel
+def k_species_surface_field_clear(
+    num_leaves: wp.array(dtype=wp.int32), volume: wp.array(dtype=float),
+    mass: wp.array(dtype=wp.vec4),
+):
+    tid = wp.tid()
+    if tid < num_leaves[0] * LEAF_VOLUME:
+        volume[tid] = 0.0
+        mass[tid] = wp.vec4(0.0)
 
 
 @wp.kernel
@@ -445,16 +293,11 @@ def _k_record_amount_device(
     receipt[offset + 1] = receipt[offset + 1] + amount[1]
 
 
-register_fn(k_species_p2g_clear, "species_p2g_clear")
 register_fn(k_species_p2g_accumulate, "species_p2g_accumulate")
-register_fn(k_species_face_conductance_measure, "species_face_conductance_measure")
-register_fn(k_species_node_scale, "species_node_scale")
-register_fn(k_species_face_flux_apply, "species_face_flux_apply")
-register_fn(k_species_g2p_delta, "species_g2p_delta")
-register_fn(k_species_particle_alpha, "species_particle_alpha")
-register_fn(k_species_delta_apply, "species_delta_apply")
 register_fn(k_species_bounds_budget_reduce, "species_bounds_budget_reduce")
 register_fn(k_species_preview_derive, "species_preview_derive")
+register_fn(k_species_surface_color, "species_surface_color")
+register_fn(k_species_surface_field_clear, "species_surface_field_clear")
 
 
 class SpeciesTransport:
@@ -472,15 +315,13 @@ class SpeciesTransport:
         self.max_diffusion_substeps = int(max_diffusion_substeps)
         self.palette = palette
         if not math.isfinite(self.diffusivity) or self.diffusivity < 0.0:
-            raise ValueError("species diffusivity must be finite and nonnegative")
+            raise ValueError("species local mixing rate must be finite and nonnegative")
         if self.max_diffusion_substeps < 1:
-            raise ValueError("species maximum diffusion substeps must be positive")
+            raise ValueError("legacy species step limit must be positive")
         pc, vc = particles.capacity, grid.voxel_capacity
-        self.particle_delta = wp.zeros(pc, dtype=wp.vec4, device=device)
+        self.particle_preview = wp.zeros(pc, dtype=wp.vec4, device=device)
         self.mix_volume = wp.zeros(vc, dtype=float, device=device)
         self.species_mass = wp.zeros(vc, dtype=wp.vec4, device=device)
-        self.species_delta = wp.zeros(vc, dtype=wp.vec4, device=device)
-        self.outgoing_conductance = wp.zeros(vc, dtype=float, device=device)
         # Low-level fixtures may disable collision masking and reuse this
         # existing full-size scratch array as the unused kernel placeholder.
         # Production passes the solver-owned collision_sdf.data by identity.
@@ -489,7 +330,6 @@ class SpeciesTransport:
         if len(self.collision_sdf) < vc:
             raise ValueError("species collision SDF must cover voxel capacity")
         self.collision_mask_enabled = bool(collision_mask_enabled)
-        self.global_alpha = wp.zeros(1, dtype=float, device=device)
         self._receipt = wp.zeros(RECEIPT_SIZE, dtype=float, device=device)
         self._bounds_reducer = None
         self.last_bounds_reducer_error = ""
@@ -504,6 +344,17 @@ class SpeciesTransport:
         self._after_captured = False
         self._last_receipt = None
         self.frame_diffusion_substeps = 0
+        self._transport_identity = object()
+        self._exchange_serial = 0
+        self._pending_exchange = None
+        self._exchange_phase = None
+        self._pending_exchange_fraction = 0.0
+        self._noop_exchange_owner = None
+        self._surface_scratch_key = None
+        self._surface_volume = None
+        self._surface_mass = None
+        self._direct_exchange_state = None
+        self._direct_exchange_index = 0
         self.reset()
 
     @staticmethod
@@ -521,13 +372,20 @@ class SpeciesTransport:
         wp.launch(_k_init_receipt, dim=RECEIPT_SIZE,
                   inputs=[self._receipt], device=self.device)
         self.frame_diffusion_substeps = 0
+        self._pending_exchange = None
+        self._exchange_phase = None
+        self._pending_exchange_fraction = 0.0
+        self._noop_exchange_owner = None
+        self._surface_scratch_key = None
+        self._surface_volume = None
+        self._surface_mass = None
+        self._direct_exchange_state = None
+        self._direct_exchange_index = 0
         self._frame_open = True
         self._after_captured = False
 
     def reset(self):
-        for value in (self.particle_delta,
-                      self.mix_volume, self.species_mass, self.species_delta,
-                      self.outgoing_conductance, self.global_alpha):
+        for value in (self.particle_preview, self.mix_volume, self.species_mass):
             value.zero_()
         self._frame_open = False
         self._after_captured = False
@@ -549,7 +407,7 @@ class SpeciesTransport:
                 and particles.has_optional_channel("species_concentration")):
             raise ValueError("species transport requires both particle channels")
 
-        particle_delta = wp.zeros(
+        particle_preview = wp.zeros(
             int(particles.capacity), dtype=wp.vec4, device=self.device)
         grown = object.__new__(type(self))
         grown.particles = particles
@@ -561,10 +419,8 @@ class SpeciesTransport:
         grown.collision_sdf = getattr(self, "collision_sdf", self.mix_volume)
         grown.collision_mask_enabled = bool(getattr(
             self, "collision_mask_enabled", False))
-        grown.particle_delta = particle_delta
-        for name in (
-                "mix_volume", "species_mass", "species_delta",
-                "outgoing_conductance", "global_alpha", "_receipt"):
+        grown.particle_preview = particle_preview
+        for name in ("mix_volume", "species_mass", "_receipt"):
             setattr(grown, name, getattr(self, name))
         grown._bounds_reducer = getattr(self, "_bounds_reducer", None)
         grown.last_bounds_reducer_error = getattr(
@@ -573,6 +429,17 @@ class SpeciesTransport:
         grown._after_captured = self._after_captured
         grown._last_receipt = self._last_receipt
         grown.frame_diffusion_substeps = self.frame_diffusion_substeps
+        grown._transport_identity = object()
+        grown._exchange_serial = self._exchange_serial
+        grown._pending_exchange = None
+        grown._exchange_phase = None
+        grown._pending_exchange_fraction = 0.0
+        grown._noop_exchange_owner = None
+        grown._surface_scratch_key = None
+        grown._surface_volume = None
+        grown._surface_mass = None
+        grown._direct_exchange_state = None
+        grown._direct_exchange_index = self._direct_exchange_index
         return grown
 
     def _reduce(self, offset):
@@ -597,52 +464,165 @@ class SpeciesTransport:
             if self._last_receipt is None:
                 self._reduce(BEFORE)
 
-    def diffuse(self, dt):
+    def begin_exchange(self, dt, rate=None, *, frame=-1, substep=-1):
+        """Open one artistic local-mixture exchange owned by a solver substep."""
         dt = float(dt)
         if not math.isfinite(dt) or dt < 0.0:
-            raise ValueError("species diffusion dt must be finite and nonnegative")
-        h = float(self.grid.voxel_size)
-        count = (max(1, int(math.ceil(6.0 * self.diffusivity * dt / (h * h))))
-                 if self.diffusivity > 0.0 and dt > 0.0 else 0)
-        if count > self.max_diffusion_substeps:
-            raise ValueError("species diffusion substep demand exceeds admission")
-        if count == 0:
-            return
+            raise ValueError("species local mixing dt must be finite and nonnegative")
+        rate = self.diffusivity if rate is None else float(rate)
+        if not math.isfinite(rate) or rate < 0.0:
+            raise ValueError("species local mixing rate must be finite and nonnegative")
+        owner = (int(frame), int(substep))
+        if (self._pending_exchange is not None
+                or self._noop_exchange_owner is not None):
+            raise RuntimeError("species exchange is already pending")
+        self._exchange_serial += 1
+        if rate == 0.0 or dt == 0.0:
+            self._noop_exchange_owner = (*owner, self._exchange_serial)
+            return None
         self.begin_frame()
+        token = ExchangeToken(
+            self._transport_identity, self._exchange_serial, *owner)
+        self._pending_exchange = token
+        self._exchange_phase = "deposit_pending"
+        self._pending_exchange_fraction = max(
+            0.0, min(1.0, -math.expm1(-rate * dt)))
+        return token
+
+    def _validate_exchange_token(self, token, frame, substep):
+        if not isinstance(token, ExchangeToken):
+            raise RuntimeError("species exchange token is foreign")
+        if token._transport_identity is not self._transport_identity:
+            raise RuntimeError("species exchange token is foreign")
+        if token is not self._pending_exchange:
+            raise RuntimeError("species exchange token is stale")
+        if (token.frame, token.substep) != (int(frame), int(substep)):
+            raise RuntimeError("species exchange token owner does not match")
+
+    def complete_exchange_deposit(self, token, *, frame=-1, substep=-1):
+        """Record completion of the same-stream fused P2G mixture deposit."""
+        self._validate_exchange_token(token, frame, substep)
+        if self._exchange_phase != "deposit_pending":
+            raise RuntimeError("species exchange deposit is out of order")
+        self._exchange_phase = "deposit_complete"
+
+    def prepare_exchange_g2p(self, token, *, frame=-1, substep=-1):
+        """Return the fixed blend fraction and admit the fused G2P launch."""
+        self._validate_exchange_token(token, frame, substep)
+        if self._exchange_phase != "deposit_complete":
+            raise RuntimeError("species exchange G2P stage is out of order")
+        self._exchange_phase = "g2p_pending"
+        return self._pending_exchange_fraction
+
+    def finish_exchange(self, token, *, frame=-1, substep=-1):
+        """Close only after the same-stream fused local-mixture G2P is queued."""
+        if token is None:
+            if self._pending_exchange is not None:
+                raise RuntimeError("None cannot finish a pending species exchange")
+            owner = self._noop_exchange_owner
+            if owner is None or owner[:2] != (int(frame), int(substep)):
+                raise RuntimeError("no-op species exchange finish is stale")
+            self._noop_exchange_owner = None
+            return
+        self._validate_exchange_token(token, frame, substep)
+        if self._exchange_phase != "g2p_pending":
+            raise RuntimeError("species exchange G2P is incomplete")
+        self._pending_exchange = None
+        self._exchange_phase = None
+        self._pending_exchange_fraction = 0.0
+        self.frame_diffusion_substeps += 1
+
+    def diffuse(self, dt):
+        """Legacy-named driver exercising only fused P2G/G2P mixture work."""
+        from types import SimpleNamespace
+        from .kernels_fluid import (
+            k_particle_set_grid_data_with_species,
+            k_staggered_field_to_particle_with_species,
+        )
+
+        state = self._direct_exchange_state
+        if state is None:
+            capacity = self.grid.voxel_capacity
+            state = SimpleNamespace(
+                u=wp.zeros(capacity, dtype=float, device=self.device),
+                v=wp.zeros(capacity, dtype=float, device=self.device),
+                w=wp.zeros(capacity, dtype=float, device=self.device),
+                wu=wp.zeros(capacity, dtype=float, device=self.device),
+                wv=wp.zeros(capacity, dtype=float, device=self.device),
+                ww=wp.zeros(capacity, dtype=float, device=self.device),
+                old_u=wp.zeros(capacity, dtype=float, device=self.device),
+                old_v=wp.zeros(capacity, dtype=float, device=self.device),
+                old_w=wp.zeros(capacity, dtype=float, device=self.device),
+                sampled_velocity=wp.zeros(
+                    self.particles.capacity, dtype=wp.vec3, device=self.device),
+            )
+            self._direct_exchange_state = state
+        owner = self._direct_exchange_index
+        self._direct_exchange_index += 1
+        token = self.begin_exchange(
+            dt, self.diffusivity, frame=-2, substep=owner)
+        if token is None:
+            self.finish_exchange(None, frame=-2, substep=owner)
+            return
         p, g = self.particles, self.grid
-        raw = self.diffusivity * (dt / count) * h
-        for _ in range(count):
-            wp.launch(k_species_p2g_clear, dim=self._voxel_dim(), inputs=[
-                g.num_leaves, self.mix_volume, self.species_mass,
-                self.species_delta, self.outgoing_conductance],
-                device=self.device)
-            wp.launch(k_species_p2g_accumulate, dim=self._particle_dim(), inputs=[
-                p.position, p.attr("represented_volume"),
-                p.attr("species_concentration"), p.count, g.leaf_table,
-                g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
-                self.mix_volume, self.species_mass], device=self.device)
-            wp.launch(k_species_face_conductance_measure, dim=self._voxel_dim(),
-                inputs=[self.mix_volume, g.leaf_table, g.leaf_coords,
-                        g.voxels_dim, g.leaves_dim, g.num_leaves, raw,
-                        self.collision_sdf, int(self.collision_mask_enabled),
-                        self.outgoing_conductance],
-                device=self.device)
-            wp.launch(k_species_face_flux_apply, dim=self._voxel_dim(), inputs=[
-                self.mix_volume, self.species_mass, self.outgoing_conductance,
-                g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                g.num_leaves, raw, self.collision_sdf,
-                int(self.collision_mask_enabled), self.species_delta,
-                self.global_alpha],
-                device=self.device)
-            wp.launch(k_species_g2p_delta, dim=self._particle_dim(), inputs=[
-                p.position, p.count, g.leaf_table, g.voxels_dim, g.leaves_dim,
-                g.origin, g.voxel_size, self.mix_volume, self.species_delta,
-                p.attr("species_concentration"), self.particle_delta,
-                self.global_alpha], device=self.device)
-            wp.launch(k_species_delta_apply, dim=self._particle_dim(), inputs=[
-                p.attr("species_concentration"), self.particle_delta, p.count,
-                self.global_alpha, self._receipt], device=self.device)
-        self.frame_diffusion_substeps += count
+        voxel_dim = self._voxel_dim()
+        self.mix_volume[:voxel_dim].zero_()
+        self.species_mass[:voxel_dim].zero_()
+        wp.launch(k_particle_set_grid_data_with_species, dim=self._particle_dim(),
+            inputs=[p.position, p.velocity, p.attr("represented_volume"),
+                    p.attr("species_concentration"), p.count, g.leaf_table,
+                    g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
+                    state.u, state.v, state.w, state.wu, state.wv, state.ww,
+                    self.mix_volume, self.species_mass], device=self.device)
+        self.complete_exchange_deposit(token, frame=-2, substep=owner)
+        fraction = self.prepare_exchange_g2p(token, frame=-2, substep=owner)
+        wp.launch(k_staggered_field_to_particle_with_species,
+            dim=self._particle_dim(), inputs=[
+                p.position, p.count, state.u, state.v, state.w,
+                state.wu, state.wv, state.ww,
+                state.old_u, state.old_v, state.old_w,
+                g.leaf_table, g.voxels_dim, g.leaves_dim, g.origin,
+                g.voxel_size, 0, 0.0, self.mix_volume, self.species_mass,
+                fraction, p.attr("species_concentration"),
+                state.sampled_velocity], device=self.device)
+        self.finish_exchange(token, frame=-2, substep=owner)
+
+    def _surface_scratch(self, grid):
+        key = (id(grid), int(grid.voxel_capacity))
+        if self._surface_scratch_key != key:
+            self._surface_volume = wp.zeros(
+                grid.voxel_capacity, dtype=float, device=self.device)
+            self._surface_mass = wp.zeros(
+                grid.voxel_capacity, dtype=wp.vec4, device=self.device)
+            self._surface_scratch_key = key
+        return self._surface_volume, self._surface_mass
+
+    def derive_surface_colors(self, vertices_world, vertex_count, *, grid=None):
+        """Derive post-advection Beer-Lambert colors without particle readback."""
+        vertex_count = max(0, int(vertex_count))
+        colors = wp.empty(vertex_count, dtype=wp.vec4, device=self.device)
+        if vertex_count == 0:
+            return colors
+        if self._pending_exchange is not None:
+            raise RuntimeError("surface colors requested during a pending exchange")
+        p, g = self.particles, (self.grid if grid is None else grid)
+        volume, mass = self._surface_scratch(g)
+        voxel_dim = max(1, int(g.active_voxel_count))
+        wp.launch(k_species_surface_field_clear, dim=voxel_dim, inputs=[
+            g.num_leaves, volume, mass], device=self.device)
+        wp.launch(k_species_p2g_accumulate, dim=self._particle_dim(), inputs=[
+            p.position, p.attr("represented_volume"),
+            p.attr("species_concentration"), p.count, g.leaf_table,
+            g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
+            volume, mass], device=self.device)
+        absorption = self.palette.absorption_rgb
+        wp.launch(k_species_surface_color, dim=vertex_count, inputs=[
+            vertices_world, vertex_count, g.leaf_table, g.voxels_dim,
+            g.leaves_dim, g.origin, g.voxel_size, volume,
+            mass, wp.vec3(*absorption[0]),
+            wp.vec3(*absorption[1]), self.palette.reference_path_length,
+            colors], device=self.device)
+        return colors
 
     def record_source(self, amount):
         self.begin_frame()
@@ -717,8 +697,8 @@ class SpeciesTransport:
         wp.launch(k_species_preview_derive, dim=max(1, count), inputs=[
             self.particles.attr("species_concentration"), count,
             wp.vec3(*a[0]), wp.vec3(*a[1]), self.palette.reference_path_length,
-            self.particle_delta], device=self.device)
-        return self.particle_delta
+            self.particle_preview], device=self.device)
+        return self.particle_preview
 
     def checkpoint_arrays(self, count):
         return {"particle_represented_volume": np.ascontiguousarray(

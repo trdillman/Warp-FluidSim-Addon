@@ -92,6 +92,8 @@ class HostFrame:
 
     def invalidate_surface(self):
         self._values.pop("surface_mesh", None)
+        self._values.pop(("surface_result", False), None)
+        self._values.pop(("surface_result", True), None)
         for key in tuple(self._values):
             if isinstance(key, tuple) and key and key[0] == "surface_attributes":
                 self._values.pop(key, None)
@@ -190,12 +192,31 @@ class HostFrame:
 
     @property
     def surface_mesh(self):
+        result = self.surface_result(species_colors=False)
+        return result.vertices, result.triangles
+
+    def surface_result(self, *, species_colors=False):
+        """Return one geometry/color result paired to this solver frame."""
+        key = ("surface_result", bool(species_colors))
+
         def load():
             _HOST_OUTPUT_OPERATIONS["surface_extractions"] += 1
-            verts, tris = self.solver.surface_mesh()
-            return (np.ascontiguousarray(verts, dtype=np.float32),
-                    np.ascontiguousarray(tris, dtype=np.int32))
-        return self._get("surface_mesh", load)
+            try:
+                result = self.solver.surface_mesh(
+                    species_colors=bool(species_colors))
+            except TypeError:
+                if species_colors:
+                    raise
+                result = self.solver.surface_mesh()
+            if hasattr(result, "vertices") and hasattr(result, "triangles"):
+                return result
+            from .surface import HostSurfaceResult
+            verts, tris = result
+            return HostSurfaceResult(
+                np.ascontiguousarray(verts, dtype=np.float32),
+                np.ascontiguousarray(tris, dtype=np.int32), None)
+
+        return self._get(key, load)
 
     def particle_attr(self, name):
         def load():
@@ -323,6 +344,12 @@ class HostFrame:
         """Return every enabled channel for one output with strict alignment."""
         output_kind = str(output_kind).lower()
         keys = enabled_attribute_keys(settings, output_kind)
+        # Output settings are authored scene state and intentionally survive a
+        # solver reinitialization.  A disabled optional solver capability must
+        # therefore filter its stale output request before strict alignment is
+        # applied to the live particle count.
+        if not self._species_enabled():
+            keys = tuple(key for key in keys if key != "species")
         if not keys:
             return {}
         if output_kind == "particles":

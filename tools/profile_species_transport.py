@@ -18,6 +18,7 @@ import statistics
 import subprocess
 import sys
 import time
+from types import MappingProxyType
 
 import numpy as np
 
@@ -32,6 +33,39 @@ BUDGETS = {
     "allocation_relative_error": 0.05,
     "substep_host_synchronizations": 0,
 }
+
+
+def _frozen_gates(values):
+    return MappingProxyType({
+        name: MappingProxyType(dict(gate)) for name, gate in values.items()
+    })
+
+
+# Release thresholds are product requirements, not tuning knobs. Keep the
+# legacy v2 receipt budgets above solely so old receipts remain auditable.
+SOLVER_GATES = _frozen_gates({
+    "configured_inactive": {
+        "median_fraction": 0.01, "p95_delta_ms": 0.25},
+    "transport": {"median_fraction": 0.02, "p95_delta_ms": 0.50},
+    "mixing_n1_n4": {"median_fraction": 0.05, "p95_delta_ms": 1.00},
+})
+SOLVER_CASES = (
+    "disabled", "configured_inactive", "transport", "mixing_n1",
+    "mixing_n2", "mixing_n4", "mixing_n8",
+)
+RELEASE_INVENTORY_FIELDS = frozenset({
+    "active_particles", "active_leaves", "active_voxels",
+    "solver_substeps", "active_species", "chunk_count",
+    "launch_inventory", "readback_inventory", "cuda_allocation_bytes",
+    "reduction_backend",
+})
+MAD_SCALE = 1.4826
+RELEASE_MINIMUMS = {"frames": 60, "warmup": 15, "particles": 200_000}
+REQUIRED_TASK1A_CASES = frozenset({
+    "disabled", "configured_inactive", "transport", "mixing_n1",
+    "mixing_n2",
+})
+ALLOWED_UNSUPPORTED_CASES = frozenset({"mixing_n4", "mixing_n8"})
 
 CASE_NAMES = ("disabled", "transport_only", "diffusion_on")
 PRODUCTION_MINIMUMS = {"frames": 60, "warmup": 15, "particles": 200_000}
@@ -459,6 +493,245 @@ def _paired_overhead(value, before, after):
     return float(value) / baseline - 1.0
 
 
+def paired_case_metrics(samples):
+    """Reduce strict disabled-before/feature/disabled-after triplets."""
+    if not isinstance(samples, list) or not samples or len(samples) % 3:
+        raise ValueError("samples must be complete adjacent triplets")
+    grouped = {}
+    for offset in range(0, len(samples), 3):
+        before, feature, after = samples[offset:offset + 3]
+        if before.get("case") != "disabled":
+            raise ValueError("each feature requires disabled_before")
+        if after.get("case") != "disabled":
+            raise ValueError("each feature requires disabled_after")
+        name = feature.get("case")
+        if name == "disabled" or name not in SOLVER_CASES:
+            raise ValueError("unknown feature case")
+        try:
+            before_ms = float(before["ms"])
+            feature_ms = float(feature["ms"])
+            after_ms = float(after["ms"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("timings must be finite positive numbers") from exc
+        if any(not math.isfinite(value) or value <= 0.0
+               for value in (before_ms, feature_ms, after_ms)):
+            raise ValueError("timings must be finite positive numbers")
+        baseline = (before_ms + after_ms) * 0.5
+        grouped.setdefault(name, []).append({
+            "baseline_ms": baseline,
+            "feature_ms": feature_ms,
+            "fraction": feature_ms / baseline - 1.0,
+            "delta_ms": abs(feature_ms - baseline),
+        })
+
+    result = {}
+    for name, pairs in grouped.items():
+        fractions = [pair["fraction"] for pair in pairs]
+        median_fraction = statistics.median(fractions)
+        mad = statistics.median(
+            abs(value - median_fraction) for value in fractions)
+        result[name] = {
+            "baseline_ms": statistics.median(
+                pair["baseline_ms"] for pair in pairs),
+            "feature_median_ms": statistics.median(
+                pair["feature_ms"] for pair in pairs),
+            "median_fraction": median_fraction,
+            "scaled_mad": MAD_SCALE * mad,
+            "p95_delta_ms": _percentile(
+                [pair["delta_ms"] for pair in pairs], 0.95),
+            "pair_count": len(pairs),
+            "pairs": pairs,
+        }
+    return result
+
+
+def validate_release_cases(report, *, require_production=True):
+    """Fail closed when a release case is missing or only diagnostic."""
+    cases = report.get("cases") if isinstance(report, dict) else None
+    if not isinstance(cases, dict) or set(cases) != set(SOLVER_CASES):
+        return ["release_cases"]
+    errors = []
+    for case in cases.values():
+        if not isinstance(case, dict) or case.get("status") not in {
+                "supported", "unsupported"}:
+            errors.append("release_cases")
+            continue
+        if set(case.get("inventory", {})) != RELEASE_INVENTORY_FIELDS:
+            errors.append("release_inventory")
+        if (case.get("status") == "unsupported"
+                and not str(case.get("reason", "")).strip()):
+            errors.append("unsupported_reason")
+    if require_production and any(
+            case.get("status") == "unsupported" for case in cases.values()):
+        errors.append("unsupported_cases")
+    return sorted(set(errors))
+
+
+def release_case_plan():
+    """Describe only cases the currently loaded runtime can execute truthfully."""
+    return {
+        "disabled": {
+            "status": "supported", "enabled": False,
+            "active_species": 0, "diffusivity": 0.0},
+        "configured_inactive": {
+            "status": "supported", "enabled": True,
+            "active_species": 0, "diffusivity": 0.0},
+        "transport": {
+            "status": "supported", "enabled": True,
+            "active_species": 2, "diffusivity": 0.0},
+        "mixing_n1": {
+            "status": "supported", "enabled": True,
+            "active_species": 1, "diffusivity": 0.06},
+        "mixing_n2": {
+            "status": "supported", "enabled": True,
+            "active_species": 2, "diffusivity": 0.06},
+        "mixing_n4": {
+            "status": "unsupported",
+            "reason": "pre-redesign fixed vec4 storage exposes two species"},
+        "mixing_n8": {
+            "status": "unsupported",
+            "reason": "pre-redesign fixed vec4 storage exposes two species"},
+    }
+
+
+def _gate_for_case(name):
+    if name in {"mixing_n1", "mixing_n2", "mixing_n4"}:
+        return SOLVER_GATES["mixing_n1_n4"]
+    return SOLVER_GATES[name]
+
+
+def _release_checks(samples, cases, configuration, metrics, timed_provenance):
+    try:
+        frames = int(configuration["frames"])
+        minimums = (
+            frames >= RELEASE_MINIMUMS["frames"]
+            and int(configuration["warmup"]) >= RELEASE_MINIMUMS["warmup"]
+            and int(configuration["particles"]) >= RELEASE_MINIMUMS["particles"])
+    except (KeyError, TypeError, ValueError):
+        frames, minimums = 0, False
+    supported = {
+        name for name, case in cases.items()
+        if isinstance(case, dict) and case.get("status") == "supported"}
+    unsupported = set(cases) - supported
+    sample_counts = all(
+        metrics.get(name, {}).get("pair_count") == frames
+        for name in REQUIRED_TASK1A_CASES - {"disabled"})
+    gates = all(
+        metrics.get(name, {}).get("median_fraction", math.inf)
+        <= _gate_for_case(name)["median_fraction"]
+        and metrics.get(name, {}).get("p95_delta_ms", math.inf)
+        <= _gate_for_case(name)["p95_delta_ms"]
+        for name in REQUIRED_TASK1A_CASES - {"disabled"})
+    inventories = [cases.get(name, {}).get("inventory", {})
+                   for name in REQUIRED_TASK1A_CASES]
+    invariant_keys = (
+        "active_particles", "active_leaves", "active_voxels",
+        "solver_substeps")
+    invariants = bool(inventories) and all(
+        inventory.get(key) == inventories[0].get(key)
+        for inventory in inventories[1:] for key in invariant_keys)
+    inventory_values = all(
+        set(inventory) == RELEASE_INVENTORY_FIELDS
+        and all(isinstance(inventory.get(key), int) and inventory[key] >= 0
+                for key in (
+                    "active_particles", "active_leaves", "active_voxels",
+                    "solver_substeps", "active_species", "chunk_count",
+                    "cuda_allocation_bytes"))
+        and isinstance(inventory.get("launch_inventory"), dict)
+        and isinstance(inventory.get("readback_inventory"), dict)
+        for inventory in inventories)
+    expected_species = {
+        "disabled": (0, 0, "disabled"),
+        "configured_inactive": (0, 0, "native_cuda"),
+        "transport": (2, 1, "native_cuda"),
+        "mixing_n1": (1, 1, "native_cuda"),
+        "mixing_n2": (2, 1, "native_cuda"),
+    }
+    inventory_values = inventory_values and all(
+        cases[name]["inventory"]["active_particles"]
+        == int(configuration.get("particles", -1))
+        and (
+            cases[name]["inventory"]["active_species"],
+            cases[name]["inventory"]["chunk_count"],
+            cases[name]["inventory"]["reduction_backend"],
+        ) == expected_species[name]
+        for name in REQUIRED_TASK1A_CASES)
+    timed = (
+        isinstance(timed_provenance, dict)
+        and set(timed_provenance) == REQUIRED_TASK1A_CASES
+        and timed_provenance.get("disabled") == "disabled"
+        and all(timed_provenance.get(name) == "native_cuda"
+                for name in REQUIRED_TASK1A_CASES - {"disabled"})
+        and all(sample.get("reduction_backend") == (
+            "disabled" if sample.get("case") == "disabled"
+            else timed_provenance.get(sample.get("case")))
+                for sample in samples))
+    return {
+        "production_minimums": minimums,
+        "required_supported_cases": supported == REQUIRED_TASK1A_CASES,
+        "unsupported_scope": unsupported <= ALLOWED_UNSUPPORTED_CASES,
+        "adjacent_sample_counts": sample_counts,
+        "release_gates": gates,
+        "case_invariants": invariants,
+        "inventory_contract": inventory_values,
+        "timed_context_provenance": timed,
+    }
+
+
+def build_release_gate(*, samples, cases, configuration,
+                       timed_context_provenance, production):
+    """Build a replayable strict release receipt from executable observations."""
+    metrics = paired_case_metrics(samples)
+    checks = _release_checks(
+        samples, cases, configuration, metrics, timed_context_provenance)
+    return {
+        "schema_version": 1,
+        "status": ("pass" if production and all(checks.values()) else
+                   "fail" if production else "diagnostic"),
+        "production": bool(production),
+        "gates": {name: dict(gate) for name, gate in SOLVER_GATES.items()},
+        "configuration": dict(configuration),
+        "samples": list(samples),
+        "metrics": metrics,
+        "cases": cases,
+        "timed_context_provenance": dict(timed_context_provenance),
+        "checks": checks,
+    }
+
+
+def validate_release_gate(report, *, require_production=True):
+    """Replay strict metrics/checks and reject self-consistent fabrication."""
+    if not isinstance(report, dict):
+        return ["release_gate", "status"]
+    errors = []
+    try:
+        expected = build_release_gate(
+            samples=report["samples"], cases=report["cases"],
+            configuration=report["configuration"],
+            timed_context_provenance=report["timed_context_provenance"],
+            production=report.get("production") is True)
+    except (KeyError, TypeError, ValueError, statistics.StatisticsError):
+        return ["release_gate", "status"]
+    if report.get("schema_version") != 1:
+        errors.append("schema_version")
+    if report.get("gates") != expected["gates"]:
+        errors.append("gates")
+    if report.get("metrics") != expected["metrics"]:
+        errors.append("metrics_consistency")
+    if report.get("checks") != expected["checks"]:
+        errors.append("checks")
+    for name, ok in expected["checks"].items():
+        if not ok:
+            errors.append(name)
+    errors.extend(validate_release_cases(
+        {"cases": report.get("cases")}, require_production=False))
+    if require_production and report.get("production") is not True:
+        errors.append("production_evidence")
+    if report.get("status") != expected["status"] or errors:
+        errors.append("status")
+    return sorted(set(errors))
+
+
 def _percentile(values, percentile):
     ordered = sorted(float(value) for value in values)
     if not ordered:
@@ -787,8 +1060,11 @@ def validate_report(report, *, require_production=True):
     errors = []
     if not isinstance(report, dict):
         return ["report", "status"]
-    if report.get("schema_version") != 2:
+    if report.get("schema_version") not in {2, 3}:
         errors.append("schema_version")
+    if report.get("schema_version") == 3:
+        errors.extend(validate_release_gate(
+            report.get("release_gate"), require_production=require_production))
     if report.get("budgets") != BUDGETS:
         errors.append("budgets")
     configuration = report.get("configuration")
@@ -898,17 +1174,25 @@ def _points(count):
     return np.column_stack((x, y, z)).astype(np.float32) * scale + 0.2
 
 
-def _new_solver(args, *, enabled, diffusivity):
+def _new_solver(args, *, enabled, diffusivity, active_species=2):
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 
     solver = FluidSolver(_settings(args, enabled=enabled, diffusivity=diffusivity))
     points = _points(args.particles)
     midpoint = len(points) // 2
-    if enabled:
+    if enabled and active_species >= 2:
         solver.inject_particles_exact(
             points[:midpoint], species_concentration=(1.0, 0.0, 0.0, 0.0))
         solver.inject_particles_exact(
             points[midpoint:], species_concentration=(0.0, 1.0, 0.0, 0.0))
+    elif enabled and active_species == 1:
+        solver.inject_particles_exact(
+            points[:midpoint], species_concentration=(1.0, 0.0, 0.0, 0.0))
+        solver.inject_particles_exact(
+            points[midpoint:], species_concentration=(1.0, 0.0, 0.0, 0.0))
+    elif enabled:
+        solver.inject_particles_exact(points[:midpoint])
+        solver.inject_particles_exact(points[midpoint:])
     else:
         solver.inject_particles_exact(points[:midpoint])
         solver.inject_particles_exact(points[midpoint:])
@@ -946,7 +1230,10 @@ def _run_timed_schedule(
         import warp as wp_module
     samples = {name: [] for name in CASE_NAMES}
     work = {
-        name: {"solver_substeps_max": 0, "species_substeps_max": 0}
+        name: {
+            "solver_substeps_max": 0, "species_substeps_max": 0,
+            "reduction_backends": set(),
+        }
         for name in CASE_NAMES
     }
 
@@ -955,6 +1242,10 @@ def _run_timed_schedule(
         begin = clock()
         stats = contexts[name]["solver"].step_frame()
         wp_module.synchronize_device(device)
+        # Capture provenance from the solver that was actually timed. A later
+        # instrumented audit context cannot certify this sample.
+        work[name]["reduction_backends"].add(
+            _species_backend(contexts[name]["solver"]))
         samples[name].append((clock() - begin) * 1000.0)
         work[name]["solver_substeps_max"] = max(
             work[name]["solver_substeps_max"],
@@ -973,7 +1264,7 @@ def _run_timed_schedule(
     return samples, work
 
 
-def _audit_case(args, name, *, enabled, diffusivity):
+def _audit_case(args, name, *, enabled, diffusivity, active_species=2):
     import warp as wp
 
     tracker_output = []
@@ -996,7 +1287,9 @@ def _audit_case(args, name, *, enabled, diffusivity):
         gc.collect()
         tracker.clear()
         tracker.__enter__()
-        solver = _new_solver(args, enabled=enabled, diffusivity=diffusivity)
+        solver = _new_solver(
+            args, enabled=enabled, diffusivity=diffusivity,
+            active_species=active_species)
         tracker.report()
 
         def counted_launch(kernel, *args_, **kwargs_):
@@ -1049,7 +1342,10 @@ def _audit_case(args, name, *, enabled, diffusivity):
                     return original_native_launch(*args_, **kwargs_)
 
                 native_reducer.launch = counted_native_launch
-            array_type = type(species.global_alpha)
+            # Instrument the common Warp array type through storage that is
+            # part of every supported species model. The artistic local-mix
+            # path intentionally has no global-alpha limiter buffer.
+            array_type = type(species.mix_volume)
             original_numpy = array_type.numpy
 
             def counted_numpy(self, *args_, **kwargs_):
@@ -1116,6 +1412,102 @@ def _run_audit_pass(args, diffusion):
     }
 
 
+def _release_inventory(audit, *, active_species, backend):
+    return {
+        "active_particles": int(audit["active_particles"]),
+        "active_leaves": int(audit["active_leaf_count"]),
+        "active_voxels": int(audit["active_voxel_count"]),
+        "solver_substeps": int(audit["solver_substeps_max"]),
+        "active_species": int(active_species),
+        "chunk_count": 0 if active_species == 0 else 1,
+        "launch_inventory": audit["kernel_launches_by_phase"],
+        "readback_inventory": {
+            "substep_device_to_host_transfers": int(
+                audit["substep_device_to_host_transfers"])},
+        "cuda_allocation_bytes": int(audit["tracked_peak_cuda_bytes"]),
+        "reduction_backend": backend,
+    }
+
+
+def _run_strict_release_profile(args, wp_module, clock=time.perf_counter):
+    """Execute every Task1A case with its own adjacent disabled contexts."""
+    plan = release_case_plan()
+    samples = []
+    timed = {"disabled": "disabled"}
+    audits = {}
+
+    def measure(solver, name):
+        wp_module.synchronize_device(args.device)
+        begin = clock()
+        solver.step_frame()
+        wp_module.synchronize_device(args.device)
+        backend = _species_backend(solver)
+        samples.append({
+            "case": name, "ms": (clock() - begin) * 1000.0,
+            "reduction_backend": backend,
+        })
+        return backend
+
+    for name in REQUIRED_TASK1A_CASES - {"disabled"}:
+        spec = plan[name]
+        contexts = {
+            "before": _new_solver(
+                args, enabled=False, diffusivity=0.0, active_species=0),
+            "feature": _new_solver(
+                args, enabled=spec["enabled"],
+                diffusivity=spec["diffusivity"],
+                active_species=spec["active_species"]),
+            "after": _new_solver(
+                args, enabled=False, diffusivity=0.0, active_species=0),
+        }
+        try:
+            for _index in range(int(args.warmup)):
+                for solver in contexts.values():
+                    solver.step_frame()
+            observed = set()
+            for _index in range(int(args.frames)):
+                measure(contexts["before"], "disabled")
+                observed.add(measure(contexts["feature"], name))
+                measure(contexts["after"], "disabled")
+            timed[name] = next(iter(observed)) if len(observed) == 1 else "mixed"
+        finally:
+            for solver in contexts.values():
+                solver.release()
+
+    for name in REQUIRED_TASK1A_CASES:
+        spec = plan[name]
+        audits[name] = _audit_case(
+            args, name, enabled=spec["enabled"],
+            diffusivity=spec["diffusivity"],
+            active_species=spec["active_species"])
+    cases = {}
+    for name, spec in plan.items():
+        if spec["status"] == "supported":
+            cases[name] = {
+                "status": "supported", "reason": "",
+                "inventory": _release_inventory(
+                    audits[name], active_species=spec["active_species"],
+                    backend=timed[name]),
+            }
+        else:
+            cases[name] = {
+                "status": "unsupported", "reason": spec["reason"],
+                "inventory": {
+                    key: ({} if key in {
+                        "launch_inventory", "readback_inventory"} else None)
+                    for key in RELEASE_INVENTORY_FIELDS},
+            }
+    configuration = {
+        "frames": int(args.frames), "warmup": int(args.warmup),
+        "particles": int(args.particles),
+    }
+    production = all(
+        configuration[key] >= value for key, value in RELEASE_MINIMUMS.items())
+    return build_release_gate(
+        samples=samples, cases=cases, configuration=configuration,
+        timed_context_provenance=timed, production=production)
+
+
 def _git_output(*args):
     return subprocess.run(
         ["git", *args], cwd=ROOT, check=True, capture_output=True).stdout
@@ -1147,7 +1539,8 @@ def _provenance(args, wp, invocation):
 
 
 def _make_report(
-        args, diffusion, raw_samples, timed_backends, audit_cases, provenance):
+        args, diffusion, raw_samples, timed_backends, audit_cases, provenance,
+        release_gate):
     from fluidSim_warp_blender51.sim.memory_safety import (
         estimate_species_cache_staging_bytes,
         estimate_species_transport_bytes,
@@ -1169,7 +1562,7 @@ def _make_report(
         "diffusion_substeps": 2,
     }
     report = {
-        "schema_version": 2, "status": "diagnostic",
+        "schema_version": 3, "status": "diagnostic",
         "evidence_kind": (
             "production" if _production_configuration(configuration)
             else "diagnostic"),
@@ -1189,14 +1582,18 @@ def _make_report(
             "source_ir_hotpath": _source_ir_hotpath_audit(),
             "allocation": allocation,
         },
-        "metrics": {}, "checks": {},
+        "metrics": {}, "checks": {}, "release_gate": release_gate,
     }
     metrics, pairs = _recomputed_metrics(report)
     report["timing"]["paired_overheads"] = pairs
     report["metrics"] = metrics
     report["checks"] = _recomputed_checks(report, metrics)
     if report["evidence_kind"] == "production":
-        report["status"] = "pass" if all(report["checks"].values()) else "fail"
+        report["status"] = (
+            "pass" if all(report["checks"].values())
+            and not validate_release_gate(
+                report["release_gate"], require_production=True)
+            else "fail")
     return report
 
 
@@ -1226,22 +1623,24 @@ def main(argv=None):
     diffusion = 0.06
     contexts = _new_contexts(args, diffusion)
     try:
-        timed_backends = {
-            name: _species_backend(context["solver"])
-            for name, context in contexts.items()
-        }
         _run_warmup(contexts, args.warmup)
-        raw_samples, _timed_work = _run_timed_schedule(
+        raw_samples, timed_work = _run_timed_schedule(
             contexts, args.frames, args.device, wp_module=wp)
+        timed_backends = {}
+        for name, work in timed_work.items():
+            backends = work["reduction_backends"]
+            timed_backends[name] = (
+                next(iter(backends)) if len(backends) == 1 else "mixed")
     finally:
         _release_contexts(contexts)
     audit_cases = _run_audit_pass(args, diffusion)
+    release_gate = _run_strict_release_profile(args, wp)
     output = Path(args.json_out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.touch(exist_ok=True)
     report = _make_report(
         args, diffusion, raw_samples, timed_backends, audit_cases,
-        _provenance(args, wp, invocation))
+        _provenance(args, wp, invocation), release_gate)
     errors = validate_report(
         report, require_production=report["evidence_kind"] == "production")
     if errors and report["evidence_kind"] == "production":

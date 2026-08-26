@@ -99,6 +99,25 @@ def test_disabled_species_accessors_do_not_read_particle_state():
     assert host_output_operation_counts()["device_readbacks"] == 0
 
 
+def test_disabled_species_ignores_stale_species_output_toggles():
+    """A reinitialized solver may outlive authored Clear Dye UI choices."""
+    calls = {}
+    solver = _species_solver(calls, enabled=False)
+    settings = SimpleNamespace(
+        particles_attribute_species=True,
+        surface_attribute_species=True,
+    )
+    host = HostFrame(solver)
+
+    assert host.output_attributes(settings, "particles") == {}
+    assert host.output_attributes(
+        settings,
+        "surface",
+        positions=np.array([(0.5, 0.0, 0.0)], dtype=np.float32),
+    ) == {}
+    assert calls == {}
+
+
 def test_authoritative_species_and_derived_color_share_particle_and_surface_state():
     calls = {}
     solver = _species_solver(calls)
@@ -168,6 +187,28 @@ def test_live_publication_does_not_request_species_when_unselected():
     prepare_live_payload(scene, HostFrame(solver), publish_surface=False)
 
     assert "species" not in calls
+
+
+def test_live_publication_falls_back_when_species_is_disabled_but_clear_dye_stays_authored():
+    from fluidSim_warp_blender51.blender.output_publication import prepare_live_payload
+
+    calls = {}
+    solver = _species_solver(calls, enabled=False)
+    scene = _publication_scene(
+        show_surface=False,
+        particles_attribute_species=True,
+        particles_attribute_color=False,
+        surface_attribute_species=True,
+        surface_attribute_color=False,
+    )
+
+    payload = prepare_live_payload(
+        scene, HostFrame(solver), publish_surface=False)
+
+    assert payload.particle_attribute_mode == "NONE"
+    assert payload.particle_attributes == {}
+    assert payload.particles.shape == (3, 3)
+    assert calls == {"positions": 1}
 
 
 def test_live_publication_uses_current_output_only_species_toggle():

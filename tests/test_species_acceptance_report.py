@@ -123,16 +123,15 @@ def test_transport_estimate_matches_named_particle_and_voxel_inventory():
     )
 
     particle_capacity, voxel_capacity = 128, 1536
-    # live + replacement represented-volume/concentration channels, particle
-    # limiter scratch, 2 scalar + 2 vec4 voxel scratch, global alpha, and the
-    # fixed receipt ledger.
-    expected = particle_capacity * 56 + voxel_capacity * 40 + (1 + 11) * 4
+    # Live + replacement represented-volume/concentration channels, persistent
+    # particle preview, one scalar + one vec4 local-mixture grid, and receipt.
+    expected = particle_capacity * 56 + voxel_capacity * 20 + 11 * 4
     inventory = species_transport_allocation_bytes(
         particle_capacity, voxel_capacity, True)
     assert inventory.particle_channels_bytes == particle_capacity * 40
-    assert inventory.particle_delta_bytes == particle_capacity * 16
-    assert inventory.voxel_scratch_bytes == voxel_capacity * 40
-    assert inventory.receipt_bytes == 48
+    assert inventory.particle_preview_bytes == particle_capacity * 16
+    assert inventory.voxel_scratch_bytes == voxel_capacity * 20
+    assert inventory.receipt_bytes == 44
     assert inventory.device_persistent_bytes == expected
     assert inventory.host_cache_staging_bytes == 0
     assert SpeciesTransport.estimate_bytes(
@@ -151,6 +150,165 @@ def test_profile_parses_decimal_warp_memory_report_peak():
 def test_profile_overhead_uses_adjacent_disabled_pair_without_clamping():
     assert _PROFILE._paired_overhead(12.0, 10.0, 14.0) == 0.0
     assert _PROFILE._paired_overhead(9.0, 10.0, 10.0) == pytest.approx(-0.1)
+
+
+def test_species_release_thresholds_are_frozen_and_not_legacy_budgets():
+    assert dict(_PROFILE.SOLVER_GATES["configured_inactive"]) == {
+        "median_fraction": 0.01, "p95_delta_ms": 0.25}
+    assert dict(_PROFILE.SOLVER_GATES["transport"]) == {
+        "median_fraction": 0.02, "p95_delta_ms": 0.50}
+    assert dict(_PROFILE.SOLVER_GATES["mixing_n1_n4"]) == {
+        "median_fraction": 0.05, "p95_delta_ms": 1.00}
+    with pytest.raises(TypeError):
+        _PROFILE.SOLVER_GATES["transport"]["median_fraction"] = 0.12
+
+
+def test_each_feature_sample_has_adjacent_disabled_brackets():
+    metrics = _PROFILE.paired_case_metrics([
+        {"case": "disabled", "ms": 10.0},
+        {"case": "mixing_n2", "ms": 10.4},
+        {"case": "disabled", "ms": 10.2},
+    ])
+
+    assert metrics["mixing_n2"]["baseline_ms"] == pytest.approx(10.1)
+    assert metrics["mixing_n2"]["median_fraction"] == pytest.approx(
+        10.4 / 10.1 - 1.0)
+    with pytest.raises(ValueError, match="disabled_before"):
+        _PROFILE.paired_case_metrics([
+            {"case": "transport", "ms": 10.1},
+            {"case": "disabled", "ms": 10.0},
+            {"case": "disabled", "ms": 10.0},
+        ])
+
+
+def test_production_release_gate_rejects_recorded_unsupported_cases():
+    inventory = {
+        field: ({} if field in {"launch_inventory", "readback_inventory"}
+                else None)
+        for field in _PROFILE.RELEASE_INVENTORY_FIELDS
+    }
+    report = {
+        "cases": {
+            name: {"status": "supported", "inventory": dict(inventory)}
+            for name in _PROFILE.SOLVER_CASES
+        }
+    }
+    report["cases"]["mixing_n8"] = {
+        "status": "unsupported",
+        "reason": "pre-redesign fixed species width",
+        "inventory": dict(inventory),
+    }
+
+    assert _PROFILE.validate_release_cases(
+        report, require_production=False) == []
+    reloaded = json.loads(json.dumps(report, sort_keys=True))
+    assert _PROFILE.validate_release_cases(
+        reloaded, require_production=False) == []
+    assert _PROFILE.validate_release_cases(
+        report, require_production=True) == ["unsupported_cases"]
+
+
+def _strict_release_fixture(frames=3):
+    samples = []
+    cases = {}
+    supported = (
+        "configured_inactive", "transport", "mixing_n1", "mixing_n2")
+    feature_ms = {
+        "configured_inactive": 10.05,
+        "transport": 10.1,
+        "mixing_n1": 10.2,
+        "mixing_n2": 10.3,
+    }
+    for name in supported:
+        for _index in range(frames):
+            samples.extend((
+                {"case": "disabled", "ms": 10.0,
+                 "reduction_backend": "disabled"},
+                {"case": name, "ms": feature_ms[name],
+                 "reduction_backend": "native_cuda"},
+                {"case": "disabled", "ms": 10.0,
+                 "reduction_backend": "disabled"},
+            ))
+    invariants = {
+        "active_particles": 200_000, "active_leaves": 27,
+        "active_voxels": 13_824, "solver_substeps": 1,
+    }
+    for name in _PROFILE.SOLVER_CASES:
+        supported_case = name not in {"mixing_n4", "mixing_n8"}
+        cases[name] = {
+            "status": "supported" if supported_case else "unsupported",
+            "reason": "" if supported_case else "fixed-width storage",
+            "inventory": {
+                **invariants,
+                "active_species": {
+                    "disabled": 0, "configured_inactive": 0,
+                    "transport": 2, "mixing_n1": 1, "mixing_n2": 2,
+                }.get(name),
+                "chunk_count": 0 if name in {
+                    "disabled", "configured_inactive"} else (
+                    1 if supported_case else None),
+                "launch_inventory": {}, "readback_inventory": {},
+                "cuda_allocation_bytes": 0,
+                "reduction_backend": (
+                    "disabled" if name == "disabled" else
+                    "native_cuda" if supported_case else None),
+            },
+        }
+    return _PROFILE.build_release_gate(
+        samples=samples, cases=cases,
+        configuration={
+            "frames": frames,
+            "warmup": _PROFILE.RELEASE_MINIMUMS["warmup"],
+            "particles": 200_000,
+        },
+        timed_context_provenance={
+            "disabled": "disabled",
+            "configured_inactive": "native_cuda", "transport": "native_cuda",
+            "mixing_n1": "native_cuda", "mixing_n2": "native_cuda",
+        },
+        production=frames >= _PROFILE.RELEASE_MINIMUMS["frames"],
+    )
+
+
+def test_strict_solver_release_validator_recomputes_metrics_and_required_n2():
+    report = _strict_release_fixture(frames=_PROFILE.RELEASE_MINIMUMS["frames"])
+    assert _PROFILE.validate_release_gate(report, require_production=True) == []
+
+    forged = json.loads(json.dumps(report))
+    forged["metrics"]["mixing_n2"]["median_fraction"] = 0.0
+    assert "metrics_consistency" in _PROFILE.validate_release_gate(forged)
+
+    forged_inventory = json.loads(json.dumps(report))
+    for case in forged_inventory["cases"].values():
+        case["inventory"]["active_particles"] = 199_999
+    assert "inventory_contract" in _PROFILE.validate_release_gate(
+        forged_inventory)
+
+    missing_n2 = json.loads(json.dumps(report))
+    missing_n2["cases"]["mixing_n2"]["status"] = "unsupported"
+    missing_n2["cases"]["mixing_n2"]["reason"] = "fabricated unsupported"
+    assert "required_supported_cases" in _PROFILE.validate_release_gate(missing_n2)
+
+
+def test_strict_solver_release_rejects_fabricated_native_timed_provenance():
+    report = _strict_release_fixture(frames=_PROFILE.RELEASE_MINIMUMS["frames"])
+    forged = json.loads(json.dumps(report))
+    forged["timed_context_provenance"]["transport"] = "warp_atomic"
+
+    errors = _PROFILE.validate_release_gate(forged, require_production=True)
+
+    assert "timed_context_provenance" in errors
+
+
+def test_strict_solver_runtime_case_plan_executes_task1a_cases():
+    plan = _PROFILE.release_case_plan()
+
+    assert [name for name, case in plan.items() if case["status"] == "supported"] == [
+        "disabled", "configured_inactive", "transport", "mixing_n1",
+        "mixing_n2",
+    ]
+    assert plan["mixing_n4"]["status"] == "unsupported"
+    assert plan["mixing_n8"]["status"] == "unsupported"
 
 
 def _profile_audit_case(name):
@@ -237,9 +395,9 @@ def _passing_profile_receipt(*, frames=60, warmup=15, diagnostic=False):
             "cases": cases,
             "source_ir_hotpath": _PROFILE._source_ir_hotpath_audit(),
             "allocation": {
-                "admitted_species_device_bytes": 11_753_008,
+                "admitted_species_device_bytes": 11_476_524,
                 "admitted_species_cache_staging_bytes": 4_000_000,
-                "measured_species_peak_increment_bytes": 11_988_068,
+                "measured_species_peak_increment_bytes": 11_706_054,
             },
         },
         "metrics": {
@@ -248,10 +406,10 @@ def _passing_profile_receipt(*, frames=60, warmup=15, diagnostic=False):
             "diffusion_on_overhead_fraction": 0.2,
             "transport_only_p95_delta_ms": 0.5,
             "diffusion_on_p95_delta_ms": 2.0,
-            "admitted_species_device_bytes": 11_753_008,
+            "admitted_species_device_bytes": 11_476_524,
             "admitted_species_cache_staging_bytes": 4_000_000,
-            "measured_species_peak_increment_bytes": 11_988_068,
-            "allocation_relative_error": 0.019999986386464385,
+            "measured_species_peak_increment_bytes": 11_706_054,
+            "allocation_relative_error": 0.01999995817548937,
         },
         "checks": {
             "disabled_zero_species_resources": True,
@@ -332,14 +490,14 @@ def test_profile_source_ir_audit_exposes_current_hotpath_state_and_hashes():
     assert audit["compaction"]["native_postcompact_reducer_declared"] is True
     assert audit["compaction"]["native_device_count_pointer"] is True
     assert audit["compaction"]["native_float_cas_sites"] >= 2
-    assert audit["limiter"]["global_alpha_direct_write_sites"] == 1
-    assert audit["limiter"]["global_alpha_atomic_min_sites"] == 2
+    assert audit["limiter"]["global_alpha_direct_write_sites"] == 0
+    assert audit["limiter"]["global_alpha_atomic_min_sites"] == 0
     assert audit["limiter"][
-        "g2p_global_alpha_atomic_candidate_lt_one_guarded"] is True
+        "g2p_global_alpha_atomic_candidate_lt_one_guarded"] is False
     assert audit["limiter"][
-        "particle_alpha_atomic_candidate_lt_one_guarded"] is True
+        "particle_alpha_atomic_candidate_lt_one_guarded"] is False
     assert audit["limiter"][
-        "delta_apply_min_alpha_receipt_tid_zero_guarded"] is True
+        "delta_apply_min_alpha_receipt_tid_zero_guarded"] is False
     assert audit["scratch"]["face_delta_declared"] is False
     assert audit["scratch"]["face_delta_declaration_sites"] == 0
     assert audit["scratch"]["face_conductance_declared"] is False
@@ -352,7 +510,7 @@ def test_profile_validator_rejects_forged_source_ir_and_launch_inventory():
     forged["audit"]["source_ir_hotpath"]["source_sha256"][
         "fluidSim_warp_blender51/sim/species.py"] = "0" * 64
     forged["audit"]["source_ir_hotpath"]["limiter"][
-        "g2p_global_alpha_atomic_candidate_lt_one_guarded"] = False
+        "g2p_global_alpha_atomic_candidate_lt_one_guarded"] = True
     forged["audit"]["cases"]["diffusion_on"]["all_kernel_launches"] += 1
 
     errors = _PROFILE.validate_report(forged)
@@ -459,6 +617,10 @@ def test_timed_schedule_never_installs_warp_or_memory_wrappers():
     )
 
     class Solver:
+        def __init__(self, backend):
+            self.species = (None if backend == "disabled" else SimpleNamespace(
+                bounds_reduction_backend=backend))
+
         def step_frame(self):
             assert fake_wp.launch is launch
             assert fake_wp.synchronize is synchronize
@@ -470,18 +632,21 @@ def test_timed_schedule_never_installs_warp_or_memory_wrappers():
             )
 
     contexts = {
-        name: {"solver": Solver()}
-        for name in ("disabled", "transport_only", "diffusion_on")
+        "disabled": {"solver": Solver("disabled")},
+        "transport_only": {"solver": Solver("warp_atomic")},
+        "diffusion_on": {"solver": Solver("native_cuda")},
     }
     ticks = iter(float(value) for value in range(100))
 
-    samples, _work = _PROFILE._run_timed_schedule(
+    samples, work = _PROFILE._run_timed_schedule(
         contexts, frames=2, device="cuda:0", wp_module=fake_wp,
         clock=lambda: next(ticks))
 
     assert len(samples["disabled"]) == 5
     assert len(samples["transport_only"]) == 2
     assert len(samples["diffusion_on"]) == 2
+    assert work["transport_only"]["reduction_backends"] == {"warp_atomic"}
+    assert work["diffusion_on"]["reduction_backends"] == {"native_cuda"}
 
 
 def _write_profile_child(
@@ -967,7 +1132,7 @@ def test_steady_mixing_off_frame_launches_no_species_work(monkeypatch):
     assert second.diffusion_substeps == 0
 
 
-def test_one_diffusion_substep_uses_fused_six_launch_contract(monkeypatch):
+def test_one_local_mix_step_uses_only_fused_transfer_launches(monkeypatch):
     import warp as wp
 
     _particles, _grid, transport = _ACCEPTANCE._fixture(
@@ -984,10 +1149,12 @@ def test_one_diffusion_substep_uses_fused_six_launch_contract(monkeypatch):
     monkeypatch.setattr(wp, "launch", counted_launch)
     transport.diffuse(0.5)
 
-    assert len(launches) == 6
-    assert not any("node_scale" in key or "init_alpha" in key
-                   or "particle_alpha" in key
-                   for key in launches)
+    assert len(launches) == 2
+    assert any("particle_set_grid_data_with_species" in key for key in launches)
+    assert any("staggered_field_to_particle_with_species" in key
+               for key in launches)
+    assert not any(term in key for key in launches for term in (
+        "conductance", "flux", "alpha", "delta", "apply"))
 
 
 def test_diffusion_frame_reuses_prior_before_and_finalizes_after_once(monkeypatch):
@@ -1018,7 +1185,7 @@ def test_diffusion_frame_reuses_prior_before_and_finalizes_after_once(monkeypatc
     transport.diffuse(0.5)
     receipt = transport.finalize_frame_receipt()
 
-    assert len(launches) == 7  # init + six diffusion kernels
+    assert len(launches) == 3  # receipt init + fused P2G + fused G2P
     assert native_launches == ["fluid_species_postcompact_reduce"]
     assert receipt.before == pytest.approx(baseline.after, abs=1.0e-6)
     assert receipt.after == pytest.approx(baseline.after, abs=1.0e-6)
@@ -1112,7 +1279,8 @@ def test_particle_growth_retargets_species_and_preserves_authoritative_state():
         assert solver.particles is not old_particles
         assert solver.species is not old_species
         assert solver.species.particles is solver.particles
-        assert solver.species.particle_delta.shape[0] == solver.particles.capacity
+        assert solver.species.particle_preview.shape[0] == solver.particles.capacity
+        assert not hasattr(solver.species, "particle_delta")
         assert solver.species._last_receipt == last_receipt
         np.testing.assert_array_equal(
             solver.particles.attr("species_concentration").numpy()[:2], before_c)
