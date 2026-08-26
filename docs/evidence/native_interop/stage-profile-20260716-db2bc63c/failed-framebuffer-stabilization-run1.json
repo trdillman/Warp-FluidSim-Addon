@@ -1,0 +1,5 @@
+{
+  "passed": false,
+  "error": "AssertionError()",
+  "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\tests\\blender_native_interop_stage_profile.py\", line 167, in <module>\n    main()\n    ~~~~^^\n  File \"C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\tests\\blender_native_interop_stage_profile.py\", line 74, in main\n    workload = benchmark.benchmark_stage_ceiling(\n        bpy.context.scene,\n    ...<2 lines>...\n        args.first_mode,\n    )\n  File \"C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\tests\\blender_native_interop_benchmark.py\", line 206, in benchmark_stage_ceiling\n    assert packed_digest == no_repack_digest\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+}

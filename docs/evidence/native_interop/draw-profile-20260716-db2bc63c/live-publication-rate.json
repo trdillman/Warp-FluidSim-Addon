@@ -1,0 +1,10 @@
+{
+  "seconds": 2.009915590286255,
+  "frame_changes": 38,
+  "publications": 38,
+  "publications_per_frame_change": 1.0,
+  "scene_frame": 5,
+  "solver_frame": 4,
+  "mode": "Native GPU",
+  "host_bytes": 0
+}

@@ -50,3 +50,12 @@ fluidSim_warp_blender51_synth_package/
   `crown_splash` demo scenes.
 - `tools/analyze_demos.py`: analyzes their generated demo evidence.
 - `tools/check_demo_blends.py`: opens both canonical `.blend` files.
+
+## Native GPU interop lane
+
+- `docs/NATIVE_GPU_INTEROP.md`: supported scope, usage, results, and reproduction contract.
+- `fluidSim_warp_blender51/blender/native_interop.py`: CUDA external-memory/timeline import and native
+  particle presenter.
+- `demos/native_gpu_interop_particles.blend`: configured runnable consumer scene.
+- `docs/evidence/native_interop/`: framebuffer and benchmark evidence.
+- `tests/blender_native_interop_*`: direct draw, real solver, benchmark, and saved-demo runtime gates.

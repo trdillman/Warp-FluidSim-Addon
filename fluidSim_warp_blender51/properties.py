@@ -663,6 +663,15 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Surface Mesh", default=True, update=_sync_liquid_view_mode)
     show_particles: BoolProperty(
         name="Particles", default=False, update=_sync_liquid_view_mode)
+    native_gpu_interop: BoolProperty(
+        name="Native GPU Interop",
+        default=False,
+        update=_request_output_refresh,
+        description=(
+            "Present live particles from a CUDA-written Blender Vulkan buffer; "
+            "falls back to regular point-cloud output when unavailable"
+        ),
+    )
     show_whitewater: BoolProperty(name="Whitewater", default=True,
                                   update=_request_output_refresh)
     particle_display_fraction: FloatProperty(

@@ -1,0 +1,127 @@
+{
+  "passed": false,
+  "environment": {
+    "backend": "VULKAN",
+    "device": "NVIDIA GeForce RTX 4080 SUPER",
+    "warp_version": "1.12.1",
+    "blender_version": "5.2.0 Alpha",
+    "executable": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+    "executable_sha256_before": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "executable_sha256_after": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "addon_source": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715"
+  },
+  "measurement_scope": "unchanged shared VBO data; both modes retain lease, timeline, metadata, PointCloud binding, and normal View3D redraw",
+  "sample_spread_fraction": {
+    "packed": 0.28663719412877675,
+    "no_repack": 0.5257389146133579
+  },
+  "gates": {
+    "viewport_equivalent": true,
+    "active_count_matches": true,
+    "zero_bulk_host_position_bytes": true,
+    "fixed_imports_and_maps": true,
+    "packed_spread_within_10_percent": false,
+    "no_repack_spread_within_10_percent": false,
+    "idealized_reaches_2x": false,
+    "packing_below_1ms": true,
+    "packing_below_10_percent": true
+  },
+  "decision": "retain_current_publication",
+  "workload": {
+    "particle_count": 250000,
+    "iterations_per_mode": 8,
+    "frames_per_sample": 100,
+    "first_mode": "packed",
+    "packed_end_to_end_ms": {
+      "median": 18.189701499999998,
+      "p95": 20.712901000000002,
+      "max": 20.712901000000002,
+      "samples": [
+        20.712901000000002,
+        20.389570000000003,
+        19.848218,
+        19.35351,
+        17.025893,
+        16.675821,
+        15.499056000000001,
+        16.066264
+      ]
+    },
+    "no_repack_end_to_end_ms": {
+      "median": 17.654289499999997,
+      "p95": 24.618637,
+      "max": 24.618637,
+      "samples": [
+        23.022457,
+        24.618637,
+        19.169978,
+        18.938309999999998,
+        16.370269,
+        15.955319999999999,
+        16.15499,
+        15.33709
+      ]
+    },
+    "idealized_speedup": 1.030327586958399,
+    "viewport_digest": "3d465ceb735e2524b51b8e57439aa215abab2cf370c7c181afd5df5461a22f3d",
+    "viewport_equivalent": true,
+    "active_count": 250000,
+    "cuda_stage_ms": {
+      "external_wait_ms": {
+        "median": 0.245728000998497,
+        "p95": 1.1192320585250854,
+        "max": 1.1192320585250854,
+        "samples": [
+          1.1192320585250854,
+          0.2396160066127777,
+          0.245728000998497,
+          0.26316800713539124,
+          0.17612800002098083
+        ]
+      },
+      "position_pack_ms": {
+        "median": 0.011264000087976456,
+        "p95": 0.01228800043463707,
+        "max": 0.01228800043463707,
+        "samples": [
+          0.01228800043463707,
+          0.011264000087976456,
+          0.009216000325977802,
+          0.010239999741315842,
+          0.011264000087976456
+        ]
+      },
+      "metadata_ms": {
+        "median": 0.6133760213851929,
+        "p95": 1.1263999938964844,
+        "max": 1.1263999938964844,
+        "samples": [
+          1.1263999938964844,
+          0.449535995721817,
+          1.0199040174484253,
+          0.5713919997215271,
+          0.6133760213851929
+        ]
+      },
+      "cuda_publication_ms": {
+        "median": 0.8447999954223633,
+        "p95": 2.257920026779175,
+        "max": 2.257920026779175,
+        "samples": [
+          2.257920026779175,
+          0.7004160284996033,
+          1.2748479843139648,
+          0.8447999954223633,
+          0.8007680177688599
+        ]
+      }
+    },
+    "native_stats": {
+      "imports": 6,
+      "maps": 2,
+      "published_frames": 1615,
+      "published_bytes": 3244000000,
+      "bulk_host_position_bytes": 0
+    }
+  }
+}

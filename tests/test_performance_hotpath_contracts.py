@@ -72,6 +72,28 @@ def test_pcg_reuses_scalar_buffers_without_device_copy():
     assert "self.rz, self.rz_new = self.rz_new, self.rz" in batch_source
 
 
+def test_pcg_skips_redundant_full_grid_work_buffer_clears():
+    source = inspect.getsource(PressureSolver.solve_pcg)
+    assert "for array in (x, self.r, self.z, self.p_dir, self.ap)" not in source
+    assert "self.ap[:full_n].zero_()" not in source
+    assert source.count("x[:full_n].zero_()") == 2
+
+
+def test_pcg_cuda_conditional_path_does_not_preclassify_residual_on_host():
+    source = inspect.getsource(PressureSolver.solve_pcg)
+    conditional_anchor = '        if use_conditional:\n'
+    fallback_anchor = (
+        '        else:\n'
+        '            self.last_pcg_execution_mode = "host_batched"\n'
+    )
+    conditional_source = source.split(conditional_anchor, 1)[1].split(fallback_anchor, 1)[0]
+    fallback_source = source.split(fallback_anchor, 1)[1].split(
+        "        # Batched device-resident iterations", 1)[0]
+
+    assert "self.residual.numpy()" not in conditional_source
+    assert "self.residual.numpy()" in fallback_source
+
+
 def test_full_particle_allocation_skips_emission_and_reindex_signal(monkeypatch):
     launches = []
     monkeypatch.setattr(wp, "launch", lambda kernel, **kwargs: launches.append(kernel))

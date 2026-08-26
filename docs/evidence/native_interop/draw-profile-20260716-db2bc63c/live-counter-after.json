@@ -1,0 +1,9 @@
+{
+  "wall": 1784247275.867312,
+  "scene_frame": 31,
+  "solver_frame": 30,
+  "published_frames": 1351,
+  "published_bytes": 12969600000,
+  "host_bytes": 0,
+  "mode": "Native GPU"
+}

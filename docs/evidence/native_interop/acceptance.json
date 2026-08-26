@@ -1,0 +1,34 @@
+{
+  "backend": "VULKAN",
+  "device": "NVIDIA GeForce RTX 4080 SUPER",
+  "device_uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+  "particle_count": 4225,
+  "colored_pixels": 142063,
+  "shrunk_particle_count": 64,
+  "shrunk_colored_pixels": 3730,
+  "grown_capacity": 6400,
+  "grown_colored_pixels": 212984,
+  "culled_colored_pixels": 0,
+  "occluded_colored_pixels": 0,
+  "selection_roundtrip": true,
+  "generation_replaced": true,
+  "gpu_bounds_overrode_cpu_decoy": true,
+  "center_rgba": [
+    79,
+    178,
+    254,
+    255
+  ],
+  "center_blue_peak": 254,
+  "bridge_stats": {
+    "imports": 6,
+    "maps": 2,
+    "published_frames": 1,
+    "published_bytes": 102400,
+    "bulk_host_position_bytes": 0
+  },
+  "position_readback": false,
+  "validation_layer": "VK_LAYER_KHRONOS_validation",
+  "draw_path": "PointCloud/DrawManager",
+  "image": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop\\docs\\evidence\\native_interop\\pointcloud_viewport.png"
+}

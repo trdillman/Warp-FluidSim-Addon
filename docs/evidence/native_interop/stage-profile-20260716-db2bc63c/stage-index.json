@@ -1,0 +1,48 @@
+{
+  "status": "complete",
+  "decision": "retain_current_publication",
+  "spec": "C:\\Users\\Tyler\\.harness\\projects\\blender\\specs\\SPEC-20260716T031814Z.md",
+  "pipeline": "C:\\Users\\Tyler\\.harness\\projects\\blender\\orbit\\PIPELINE-20260716T031814Z.json",
+  "candidate": {
+    "path": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+    "sha256": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82"
+  },
+  "repositories": {
+    "blender": {
+      "path": "C:\\Users\\Tyler\\blender-5.1-source\\blender",
+      "branch": "codex/gpu-buffer-interop",
+      "base_commit": "f51c2552fb3ee3841dc6bad24947bfd51cc8df5f",
+      "tracked_diff_sha256": "828ffb4c6b274469a8fba212e0f815bd9faf5c64e3bfc38c79f573f77ed7e3dc",
+      "untracked_inventory_sha256": "228c58ecccaca1ad07763ee29af5084ee65fe4b622b7cbac1a403d38242a6b47"
+    },
+    "consumer": {
+      "path": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715",
+      "branch": "codex/native-gpu-interop-main-20260715",
+      "base_commit": "c182d3a39be9e9fce548df0a61ef2b1951974cf3",
+      "tracked_diff_sha256": "ca648f88cf99886e0048c046c2502efbbc551efff8a63d958147fa3f191ffb73",
+      "untracked_inventory_sha256": "6a4917817d7aa9abf1d5df5b4cfa1cccee5f7ce89c4b00459c9e07cdf3dd1729"
+    }
+  },
+  "pin_sha256": "ac916a58f2ff2e55a0abcced0b262c8b394c82617db4cdbf86ff60e75b048959",
+  "artifacts": {
+    "run1.json": "4773c7e6a1d6fd739b352cea0fb1bf49729836e27bec814b584d3ae05bf8bec3",
+    "run2.json": "7465e94da9374142fb2c237bee1914212981d2c14796b65a7c13ea605ea2fceb",
+    "run3.json": "f943a12a86748b86b6abcea00e62323032615d03288564a1e4eb83d3cf05658d",
+    "aggregate.json": "32f96fda0993a3ae433c9edd4955fe989b35f442a463b6946beec34e1f91a5c3",
+    "aggregate-eval.json": "32f96fda0993a3ae433c9edd4955fe989b35f442a463b6946beec34e1f91a5c3",
+    "dam-break-final.json": "086d6ccc937897bd73069ee7d9810ebfb73faae5016df14424ad10db44e84994",
+    "report.md": "595bacde6bf6fdfc25bb6bd7d957f943c638940a20e59b6deff64c87feb7b1df",
+    "audit.md": "7b17602d09f392810b4cd5c52c8f383851614def576882e9e860ea0445ace6cf",
+    "ship.md": "b4e61ea1a0bd936ba05512028484b8169ab465383b769a00741df6670966ac16",
+    "pytest-final.txt": "7939ad581fe405e721afe6c908b77d78de2680482b3a4703c1d58cdc2feeb4b0"
+  },
+  "verification": {
+    "consumer_tests": "232 passed",
+    "consumer_diff_check": "pass",
+    "blender_diff_check": "pass",
+    "independent_audit": "pass",
+    "harness_eval": "pass",
+    "owned_candidate_processes": 0
+  },
+  "ship": "skipped: task contract forbids commit/push and consumer has no remote"
+}

@@ -16,6 +16,7 @@ from fluidSim_warp_blender51.sim.constants import (
     LEAF_VOLUME,
     VOXEL_COLLISION,
     VOXEL_FLUID,
+    VOXEL_NONE,
 )
 from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
 from fluidSim_warp_blender51.sim.kernels_fluid import (
@@ -717,6 +718,93 @@ def test_sparse_grid_deferred_topology_preserves_overflow_error(cuda_device):
         grid.refresh_topology_counts()
 
 
+@pytest.mark.skipif(
+    not wp.is_conditional_graph_supported(), reason="CUDA conditional graph nodes unavailable")
+def test_pcg_persistent_inner_product_is_conditional_body_safe(cuda_device):
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    count = grid.voxel_capacity * 64
+    a_np = np.linspace(-1.0, 1.0, count, dtype=np.float32)
+    b_np = np.linspace(0.25, 1.25, count, dtype=np.float32)
+    a = wp.array(a_np, dtype=float, device=cuda_device)
+    b = wp.array(b_np, dtype=float, device=cuda_device)
+
+    expected = wp.zeros(1, dtype=float, device=cuda_device)
+    wp.utils.array_inner(a, b, out=expected, count=count)
+    expected_value = float(expected.numpy()[0])
+    for _ in range(3):
+        solver._persistent_inner_product(a, b, solver.p_ap, count)
+        assert float(solver.p_ap.numpy()[0]) == pytest.approx(
+            expected_value, rel=2.0e-5, abs=1.0e-3)
+
+    solver.p_ap.zero_()
+    with wp.ScopedCapture(device=cuda_device) as body_capture:
+        solver._persistent_inner_product(a, b, solver.p_ap, count)
+    condition = wp.zeros(1, dtype=wp.int32, device=cuda_device)
+    with wp.ScopedCapture(device=cuda_device):
+        wp.capture_while(condition=condition, while_body=body_capture.graph)
+
+
+@pytest.mark.skipif(
+    not wp.is_conditional_graph_supported(), reason="CUDA conditional graph nodes unavailable")
+def test_pcg_zero_rhs_classifies_without_host_batched_fallback(cuda_device):
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+    voxel_type_wp = wp.array(voxel_type, dtype=wp.int32, device=cuda_device)
+
+    solver.build_preconditioner(voxel_type_wp)
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+
+    assert status["converged"] is True
+    assert status["iterations"] == 0
+    assert status["residual"] == 0.0
+    assert solver.last_pcg_execution_mode == "cuda_conditional"
+
+    solver._pcg_dot = None
+    solver._pcg_native_available = False
+    solver._pcg_conditional_graphs.clear()
+    fallback = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+    assert fallback["converged"] is True
+    assert fallback["iterations"] == 0
+    assert solver.last_pcg_execution_mode == "host_batched"
+
+
+@pytest.mark.skipif(
+    not wp.is_conditional_graph_supported(), reason="CUDA conditional graph nodes unavailable")
+def test_pcg_non_finite_initial_residual_classifies_on_device(cuda_device):
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+    voxel_type_wp = wp.array(voxel_type, dtype=wp.int32, device=cuda_device)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0] = np.nan
+    _copy_float(solver.rhs, rhs, cuda_device)
+
+    solver.build_preconditioner(voxel_type_wp)
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+
+    assert status["converged"] is False
+    assert status["iterations"] == 0
+    assert status["reason"] == "non_finite_residual"
+    assert solver.last_pcg_execution_mode == "cuda_conditional"
+
+
 def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     """Convergence must still be detected with checkpoint-only readbacks."""
     grid = _one_leaf_grid(cuda_device)
@@ -743,6 +831,8 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     assert solver.should_project_pressure() is True
     assert solver.last_residual_squared < 1.0e-6 * 1.0e-6 * grid.voxel_capacity
     assert np.all(np.isfinite(solver.pressure.numpy()))
+    assert solver.last_pcg_execution_mode == "cuda_conditional"
+    assert solver._pcg_conditional_graphs
 
     commands = (
         solver._pcg_apply_cmd,
@@ -752,7 +842,7 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
         solver._pcg_beta_cmds,
         solver._pcg_pack_cmds,
     )
-    graphs = dict(solver._pcg_graphs)
+    graphs = dict(solver._pcg_conditional_graphs)
     assert graphs
     assert len(graphs) <= 8
     status = solver.solve_pcg(
@@ -771,7 +861,7 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
         solver._pcg_beta_cmds,
         solver._pcg_pack_cmds,
     )
-    assert solver._pcg_graphs == graphs
+    assert solver._pcg_conditional_graphs == graphs
     assert np.all(np.isfinite(solver.pressure.numpy()))
 
     status = solver.solve_pcg(
@@ -782,6 +872,40 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     )
     assert status["converged"] is True
     assert solver.last_iterations == 25
+
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=24,
+    )
+    assert status["converged"] is True
+    assert solver.last_iterations % 2 == 0
+    assert solver.last_pcg_execution_mode == "host_batched"
+
+    solver._pcg_dot = None
+    solver._pcg_native_available = False
+    solver._pcg_graphs.clear()
+    solver._pcg_conditional_graphs.clear()
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=400,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+    assert status["converged"] is True
+    assert solver.last_pcg_execution_mode == "host_batched"
+    solver._pcg_native_available = None
+
+    status = solver.solve_pcg(
+        voxel_type_wp,
+        max_iterations=0,
+        tolerance=1.0e-6,
+        check_every=25,
+    )
+    assert status["reason"] == "max_iterations"
+    assert solver.last_iterations == 0
+    assert solver.last_pcg_execution_mode == "host_batched"
 
     replacement = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
     _copy_int(replacement, voxel_type, cuda_device)
@@ -794,8 +918,92 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     )
     assert status["converged"] is True
     assert solver._pcg_apply_cmd is not previous_apply_cmd
-    assert solver._pcg_graphs
-    assert not any(graph in graphs.values() for graph in solver._pcg_graphs.values())
+    assert solver._pcg_conditional_graphs
+    assert not any(
+        graph in graphs.values()
+        for graph in solver._pcg_conditional_graphs.values()
+    )
+
+
+@pytest.mark.parametrize("check_every", [24, 25])
+@pytest.mark.parametrize("use_coarse_guess", [False, True])
+def test_pcg_overwrites_stale_active_work_buffers(
+    cuda_device, use_coarse_guess, check_every
+):
+    """Finite and non-finite stale work data must not affect a new solve."""
+    grid = _one_leaf_grid(cuda_device)
+    clean = PressureSolver(grid, cuda_device)
+    stale = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+    voxel_type_wp = wp.array(voxel_type, dtype=wp.int32, device=cuda_device)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0] = 1.0
+    rhs[1] = -1.0
+
+    for solver in (clean, stale):
+        _copy_float(solver.rhs, rhs, cuda_device)
+        solver.build_preconditioner(voxel_type_wp)
+    poison = np.full(grid.voxel_capacity, np.nan, dtype=np.float32)
+    for work_array in (stale.pressure, stale.r, stale.z, stale.p_dir, stale.ap):
+        _copy_float(work_array, poison, cuda_device)
+
+    kwargs = {
+        "max_iterations": 400,
+        "tolerance": 1.0e-6,
+        "use_coarse_guess": use_coarse_guess,
+        "check_every": check_every,
+    }
+    clean_status = clean.solve_pcg(voxel_type_wp, **kwargs)
+    stale_status = stale.solve_pcg(voxel_type_wp, **kwargs)
+
+    assert stale_status["converged"] == clean_status["converged"]
+    assert stale_status["reason"] == clean_status["reason"]
+    assert stale_status["project_velocity"] == clean_status["project_velocity"]
+    assert stale.last_iterations == clean.last_iterations
+    assert stale.last_residual_squared == pytest.approx(
+        clean.last_residual_squared, rel=2.0e-5, abs=1.0e-12
+    )
+    assert np.allclose(
+        stale.pressure.numpy(),
+        clean.pressure.numpy(),
+        rtol=2.0e-5,
+        atol=1.0e-6,
+    )
+    assert np.all(np.isfinite(stale.pressure.numpy()))
+
+
+def test_pcg_clears_pressure_when_a_fluid_voxel_becomes_air(cuda_device):
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_FLUID, dtype=np.int32)
+    voxel_type_wp = wp.array(voxel_type, dtype=wp.int32, device=cuda_device)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0] = 1.0
+    rhs[1] = -1.0
+    _copy_float(solver.rhs, rhs, cuda_device)
+    solver.build_preconditioner(voxel_type_wp)
+    first_status = solver.solve_pcg(
+        voxel_type_wp, max_iterations=400, tolerance=1.0e-6, check_every=25
+    )
+    assert first_status["converged"] is True
+
+    first_pressure = solver.pressure.numpy()
+    air_index = int(np.argmax(np.abs(first_pressure)))
+    assert abs(float(first_pressure[air_index])) > 1.0e-6
+    voxel_type[air_index] = VOXEL_NONE
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    fluid_indices = np.flatnonzero(voxel_type == VOXEL_FLUID)[:2]
+    rhs.fill(0.0)
+    rhs[fluid_indices[0]] = 1.0
+    rhs[fluid_indices[1]] = -1.0
+    _copy_float(solver.rhs, rhs, cuda_device)
+    solver.build_preconditioner(voxel_type_wp)
+    second_status = solver.solve_pcg(
+        voxel_type_wp, max_iterations=400, tolerance=1.0e-6, check_every=25
+    )
+
+    assert second_status["converged"] is True
+    assert solver.pressure.numpy()[air_index] == 0.0
 
 
 def test_pressure_pcg_reductions_ignore_inactive_allocation_tail(cuda_device):

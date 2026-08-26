@@ -1,0 +1,151 @@
+{
+  "passed": false,
+  "environment": {
+    "backend": "VULKAN",
+    "device": "NVIDIA GeForce RTX 4080 SUPER",
+    "warp_version": "1.12.1",
+    "blender_version": "5.2.0 Alpha",
+    "executable": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+    "executable_sha256_before": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "executable_sha256_after": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "addon_source": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715"
+  },
+  "measurement_scope": "unchanged shared VBO data; both modes retain lease, timeline, metadata, PointCloud binding, and normal View3D redraw",
+  "sample_spread_fraction": {
+    "packed": 0.263302024104114,
+    "no_repack": 0.36333668974352357
+  },
+  "gates": {
+    "viewport_equivalent": true,
+    "active_count_matches": true,
+    "zero_bulk_host_position_bytes": true,
+    "fixed_imports_and_maps": true,
+    "packed_spread_within_10_percent": false,
+    "no_repack_spread_within_10_percent": false,
+    "idealized_reaches_2x": false,
+    "packing_below_1ms": true,
+    "packing_below_10_percent": true
+  },
+  "decision": "retain_current_publication",
+  "workload": {
+    "particle_count": 250000,
+    "iterations_per_mode": 20,
+    "frames_per_sample": 10,
+    "first_mode": "packed",
+    "packed_end_to_end_ms": {
+      "median": 19.70452,
+      "p95": 22.49844,
+      "max": 22.49844,
+      "samples": [
+        21.34104,
+        19.06409,
+        19.37453,
+        18.327930000000002,
+        18.955350000000003,
+        19.93219,
+        17.310200000000002,
+        21.016489999999997,
+        19.40273,
+        22.49844,
+        22.3031,
+        19.62173,
+        19.28897,
+        18.96322,
+        19.787309999999998,
+        21.71324,
+        20.13211,
+        21.35971,
+        19.53791,
+        21.38147
+      ]
+    },
+    "no_repack_end_to_end_ms": {
+      "median": 20.334224999999996,
+      "p95": 25.0263,
+      "max": 25.0263,
+      "samples": [
+        21.51378,
+        19.77729,
+        20.45188,
+        18.41377,
+        22.752580000000002,
+        21.500890000000002,
+        17.63813,
+        21.95085,
+        17.8642,
+        19.78076,
+        19.77877,
+        21.48038,
+        20.21582,
+        20.216569999999997,
+        20.51859,
+        21.27033,
+        23.74905,
+        25.0263,
+        18.82574,
+        18.51683
+      ]
+    },
+    "idealized_speedup": 0.9690322596509089,
+    "viewport_digest": "3d465ceb735e2524b51b8e57439aa215abab2cf370c7c181afd5df5461a22f3d",
+    "viewport_equivalent": true,
+    "active_count": 250000,
+    "cuda_stage_ms": {
+      "external_wait_ms": {
+        "median": 0.187391996383667,
+        "p95": 1.0567679405212402,
+        "max": 1.0567679405212402,
+        "samples": [
+          1.0567679405212402,
+          0.004095999989658594,
+          0.21196800470352173,
+          0.187391996383667,
+          0.004095999989658594
+        ]
+      },
+      "position_pack_ms": {
+        "median": 0.01228800043463707,
+        "p95": 0.13209599256515503,
+        "max": 0.13209599256515503,
+        "samples": [
+          0.01228800043463707,
+          0.13209599256515503,
+          0.011264000087976456,
+          0.010239999741315842,
+          0.07884799689054489
+        ]
+      },
+      "metadata_ms": {
+        "median": 0.7874559760093689,
+        "p95": 1.4008320569992065,
+        "max": 1.4008320569992065,
+        "samples": [
+          0.7874559760093689,
+          1.2544000148773193,
+          0.5888000130653381,
+          1.4008320569992065,
+          0.6440960168838501
+        ]
+      },
+      "cuda_publication_ms": {
+        "median": 1.3905919790267944,
+        "p95": 1.8565119504928589,
+        "max": 1.8565119504928589,
+        "samples": [
+          1.8565119504928589,
+          1.3905919790267944,
+          0.8120319843292236,
+          1.598464012145996,
+          0.7270399928092957
+        ]
+      }
+    },
+    "native_stats": {
+      "imports": 6,
+      "maps": 2,
+      "published_frames": 415,
+      "published_bytes": 844000000,
+      "bulk_host_position_bytes": 0
+    }
+  }
+}

@@ -1,0 +1,496 @@
+{
+  "passed": false,
+  "blend": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\demos\\dam_break.blend",
+  "addon_module": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\fluidSim_warp_blender51\\__init__.py",
+  "environment": {
+    "backend": "VULKAN",
+    "blender_version": "5.2.0 Alpha",
+    "executable": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+    "executable_sha256_before": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "executable_sha256_after": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+    "addon_source": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715",
+    "process_limits_before": {
+      "priority_class": "0x4000",
+      "affinity_mask": "0xffff"
+    },
+    "process_limits_after": {
+      "priority_class": "0x4000",
+      "affinity_mask": "0xffff"
+    }
+  },
+  "measurement_scope": "canonical 600k Dam Break; solver is synchronized for GPU wall attribution; one native publication followed by paired visible and hidden redraws of the same frame",
+  "gates": {
+    "expected_executable": true,
+    "executable_unchanged": true,
+    "execution_limits_retained": true,
+    "vulkan_backend": true,
+    "canonical_blend": true,
+    "repository_addon": true,
+    "particle_count": true,
+    "gpu_draw_count_matches": true,
+    "visible_framebuffer_changed": true,
+    "zero_bulk_host_position_bytes": true,
+    "fixed_imports_and_maps": true,
+    "fixed_imports_and_maps_during_measurement": true,
+    "exact_publication_count": true,
+    "finite_timings": true,
+    "visible_batch_spread_within_10_percent": true,
+    "hidden_batch_spread_within_10_percent": false
+  },
+  "decision": "measurement_invalid",
+  "workload": {
+    "particle_count": 600000,
+    "first_mode": "visible",
+    "warmup_frames": 3,
+    "measured_frames": 12,
+    "batch_size": 3,
+    "samples": [
+      {
+        "index": 0,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 23.8877,
+        "presentation_host_ms": 2.9096,
+        "cuda_publication_ms": 1.075584053993225,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.4257279932498932,
+          "position_pack_ms": 0.01852799952030182,
+          "metadata_ms": 0.6277120113372803,
+          "cuda_publication_ms": 1.075584053993225
+        },
+        "visible_redraw_ms": 7.7755,
+        "hidden_redraw_ms": 9.2415,
+        "whole_frame_ms": 44.9431,
+        "process_cpu_ms": 31.25
+      },
+      {
+        "index": 1,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 23.2956,
+        "presentation_host_ms": 3.6679,
+        "cuda_publication_ms": 1.0303360223770142,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3648320138454437,
+          "position_pack_ms": 0.017696000635623932,
+          "metadata_ms": 0.6439679861068726,
+          "cuda_publication_ms": 1.0303360223770142
+        },
+        "visible_redraw_ms": 11.3082,
+        "hidden_redraw_ms": 9.9944,
+        "whole_frame_ms": 49.8375,
+        "process_cpu_ms": 125.0
+      },
+      {
+        "index": 2,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 27.3757,
+        "presentation_host_ms": 3.6745,
+        "cuda_publication_ms": 0.9207680225372314,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3500480055809021,
+          "position_pack_ms": 0.01744000054895878,
+          "metadata_ms": 0.5497599840164185,
+          "cuda_publication_ms": 0.9207680225372314
+        },
+        "visible_redraw_ms": 10.7618,
+        "hidden_redraw_ms": 9.5511,
+        "whole_frame_ms": 52.5664,
+        "process_cpu_ms": 218.75
+      },
+      {
+        "index": 3,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 51.233,
+        "presentation_host_ms": 3.6429,
+        "cuda_publication_ms": 1.2590080499649048,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.328575998544693,
+          "position_pack_ms": 0.017696000635623932,
+          "metadata_ms": 0.9089599847793579,
+          "cuda_publication_ms": 1.2590080499649048
+        },
+        "visible_redraw_ms": 9.105,
+        "hidden_redraw_ms": 8.4463,
+        "whole_frame_ms": 73.9918,
+        "process_cpu_ms": 187.5
+      },
+      {
+        "index": 4,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 36.5884,
+        "presentation_host_ms": 3.1285,
+        "cuda_publication_ms": 1.1200000047683716,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.40169599652290344,
+          "position_pack_ms": 0.017664000391960144,
+          "metadata_ms": 0.6967359781265259,
+          "cuda_publication_ms": 1.1200000047683716
+        },
+        "visible_redraw_ms": 8.3219,
+        "hidden_redraw_ms": 8.131,
+        "whole_frame_ms": 57.3534,
+        "process_cpu_ms": 62.5
+      },
+      {
+        "index": 5,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 61.1186,
+        "presentation_host_ms": 2.5486,
+        "cuda_publication_ms": 0.8383039832115173,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3816959857940674,
+          "position_pack_ms": 0.01775999926030636,
+          "metadata_ms": 0.43516799807548523,
+          "cuda_publication_ms": 0.8383039832115173
+        },
+        "visible_redraw_ms": 9.058,
+        "hidden_redraw_ms": 7.2879,
+        "whole_frame_ms": 81.1342,
+        "process_cpu_ms": 140.625
+      },
+      {
+        "index": 6,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 105.5233,
+        "presentation_host_ms": 3.7455,
+        "cuda_publication_ms": 1.0142079591751099,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.31254398822784424,
+          "position_pack_ms": 0.0197759997099638,
+          "metadata_ms": 0.6783999800682068,
+          "cuda_publication_ms": 1.0142079591751099
+        },
+        "visible_redraw_ms": 8.8713,
+        "hidden_redraw_ms": 8.5756,
+        "whole_frame_ms": 128.0838,
+        "process_cpu_ms": 187.5
+      },
+      {
+        "index": 7,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 135.465,
+        "presentation_host_ms": 2.8357,
+        "cuda_publication_ms": 0.7462080121040344,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3545919954776764,
+          "position_pack_ms": 0.01571200042963028,
+          "metadata_ms": 0.3725759983062744,
+          "cuda_publication_ms": 0.7462080121040344
+        },
+        "visible_redraw_ms": 8.3067,
+        "hidden_redraw_ms": 6.3512,
+        "whole_frame_ms": 153.8195,
+        "process_cpu_ms": 203.125
+      },
+      {
+        "index": 8,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 119.7837,
+        "presentation_host_ms": 3.2629,
+        "cuda_publication_ms": 0.8095359802246094,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.35766398906707764,
+          "position_pack_ms": 0.0161920003592968,
+          "metadata_ms": 0.43215999007225037,
+          "cuda_publication_ms": 0.8095359802246094
+        },
+        "visible_redraw_ms": 7.4404,
+        "hidden_redraw_ms": 6.9591,
+        "whole_frame_ms": 138.4719,
+        "process_cpu_ms": 187.5
+      },
+      {
+        "index": 9,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 120.825,
+        "presentation_host_ms": 2.9167,
+        "cuda_publication_ms": 0.840224027633667,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3763520121574402,
+          "position_pack_ms": 0.015615999698638916,
+          "metadata_ms": 0.4447999894618988,
+          "cuda_publication_ms": 0.840224027633667
+        },
+        "visible_redraw_ms": 7.8553,
+        "hidden_redraw_ms": 8.0439,
+        "whole_frame_ms": 140.7545,
+        "process_cpu_ms": 265.625
+      },
+      {
+        "index": 10,
+        "order": [
+          "visible",
+          "hidden"
+        ],
+        "solver_gpu_wall_ms": 119.8594,
+        "presentation_host_ms": 2.9333,
+        "cuda_publication_ms": 0.7080000042915344,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.3264960050582886,
+          "position_pack_ms": 0.01571200042963028,
+          "metadata_ms": 0.36217600107192993,
+          "cuda_publication_ms": 0.7080000042915344
+        },
+        "visible_redraw_ms": 7.4181,
+        "hidden_redraw_ms": 7.0519,
+        "whole_frame_ms": 138.1972,
+        "process_cpu_ms": 328.125
+      },
+      {
+        "index": 11,
+        "order": [
+          "hidden",
+          "visible"
+        ],
+        "solver_gpu_wall_ms": 127.0126,
+        "presentation_host_ms": 3.0431,
+        "cuda_publication_ms": 0.7190080285072327,
+        "cuda_stage_ms": {
+          "external_wait_ms": 0.36614400148391724,
+          "position_pack_ms": 0.01679999940097332,
+          "metadata_ms": 0.3323200047016144,
+          "cuda_publication_ms": 0.7190080285072327
+        },
+        "visible_redraw_ms": 8.038,
+        "hidden_redraw_ms": 7.9555,
+        "whole_frame_ms": 147.0136,
+        "process_cpu_ms": 203.125
+      }
+    ],
+    "solver_gpu_wall_ms": {
+      "median": 83.32095000000001,
+      "p95": 135.465,
+      "max": 135.465,
+      "samples": [
+        23.8877,
+        23.2956,
+        27.3757,
+        51.233,
+        36.5884,
+        61.1186,
+        105.5233,
+        135.465,
+        119.7837,
+        120.825,
+        119.8594,
+        127.0126
+      ]
+    },
+    "presentation_host_ms": {
+      "median": 3.0858,
+      "p95": 3.7455,
+      "max": 3.7455,
+      "samples": [
+        2.9096,
+        3.6679,
+        3.6745,
+        3.6429,
+        3.1285,
+        2.5486,
+        3.7455,
+        2.8357,
+        3.2629,
+        2.9167,
+        2.9333,
+        3.0431
+      ]
+    },
+    "cuda_publication_ms": {
+      "median": 0.8804960250854492,
+      "p95": 1.2590080499649048,
+      "max": 1.2590080499649048,
+      "samples": [
+        1.075584053993225,
+        1.0303360223770142,
+        0.9207680225372314,
+        1.2590080499649048,
+        1.1200000047683716,
+        0.8383039832115173,
+        1.0142079591751099,
+        0.7462080121040344,
+        0.8095359802246094,
+        0.840224027633667,
+        0.7080000042915344,
+        0.7190080285072327
+      ]
+    },
+    "visible_redraw_ms": {
+      "median": 8.3143,
+      "p95": 11.3082,
+      "max": 11.3082,
+      "samples": [
+        7.7755,
+        11.3082,
+        10.7618,
+        9.105,
+        8.3219,
+        9.058,
+        8.8713,
+        8.3067,
+        7.4404,
+        7.8553,
+        7.4181,
+        8.038
+      ]
+    },
+    "hidden_redraw_ms": {
+      "median": 8.08745,
+      "p95": 9.9944,
+      "max": 9.9944,
+      "samples": [
+        9.2415,
+        9.9944,
+        9.5511,
+        8.4463,
+        8.131,
+        7.2879,
+        8.5756,
+        6.3512,
+        6.9591,
+        8.0439,
+        7.0519,
+        7.9555
+      ]
+    },
+    "visible_redraw_batch_mean_ms": {
+      "median": 8.517216666666666,
+      "p95": 9.9485,
+      "max": 9.9485,
+      "samples": [
+        9.9485,
+        8.8283,
+        8.206133333333334,
+        7.770466666666667
+      ]
+    },
+    "hidden_redraw_batch_mean_ms": {
+      "median": 7.819416666666667,
+      "p95": 9.595666666666666,
+      "max": 9.595666666666666,
+      "samples": [
+        9.595666666666666,
+        7.955066666666667,
+        7.2953,
+        7.683766666666667
+      ]
+    },
+    "whole_frame_ms": {
+      "median": 104.60900000000001,
+      "p95": 153.8195,
+      "max": 153.8195,
+      "samples": [
+        44.9431,
+        49.8375,
+        52.5664,
+        73.9918,
+        57.3534,
+        81.1342,
+        128.0838,
+        153.8195,
+        138.4719,
+        140.7545,
+        138.1972,
+        147.0136
+      ]
+    },
+    "process_cpu_ms": {
+      "median": 187.5,
+      "p95": 328.125,
+      "max": 328.125,
+      "samples": [
+        31.25,
+        125.0,
+        218.75,
+        187.5,
+        62.5,
+        140.625,
+        187.5,
+        203.125,
+        187.5,
+        265.625,
+        328.125,
+        203.125
+      ]
+    },
+    "batch_spread_fraction": {
+      "visible": 0.0942564770378792,
+      "hidden": 0.10780607810316613
+    },
+    "visibility_difference": {
+      "mean_absolute_8bit": 7.641592723426336,
+      "max_absolute_8bit": 255,
+      "p99_absolute_8bit": 255.0,
+      "p999_absolute_8bit": 255.0,
+      "changed_bytes": 984419,
+      "changed_fraction": 0.09823364467329262,
+      "fraction_above_4": 0.09023390412325868,
+      "fraction_above_16": 0.06929868678401788
+    },
+    "viewport_state": {
+      "bounds": [
+        0.0,
+        -1.0014649629592896,
+        0.0,
+        5.599999904632568,
+        1.0014649629592896,
+        1.600000023841858
+      ],
+      "center": [
+        2.799999952316284,
+        0.0,
+        0.800000011920929
+      ],
+      "extent": 5.599999904632568,
+      "view_distance": 4.199999809265137,
+      "region_size": [
+        2100,
+        1193
+      ]
+    },
+    "gpu_draw_vertex_count": 4800000,
+    "gpu_point_count": 600000,
+    "native_stats_before": {
+      "imports": 6,
+      "maps": 2,
+      "published_frames": 3,
+      "published_bytes": 28800000,
+      "bulk_host_position_bytes": 0
+    },
+    "native_stats": {
+      "imports": 6,
+      "maps": 2,
+      "published_frames": 15,
+      "published_bytes": 144000000,
+      "bulk_host_position_bytes": 0
+    }
+  }
+}

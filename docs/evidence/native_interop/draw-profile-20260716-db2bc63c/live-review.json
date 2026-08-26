@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "error": null,
+  "pid": 44368,
+  "file": "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\demos\\dam_break.blend",
+  "addon_module": "C:\\Users\\Tyler\\AppData\\Local\\Temp\\codex-fluidsim-review-20260716T2005\\addons\\fluidSim_warp_blender51\\__init__.py",
+  "addon_enabled": true,
+  "addon_in_preferences": true,
+  "executable": "F:\\blender-gpu-interop-official-build\\bin\\blender.exe",
+  "executable_sha256": "db2bc63cd7234f59251f88e7ba9c3d3f9c056db8681fa0c54dd1e05b86b48b82",
+  "process_limits": {
+    "priority_class": "0x4000",
+    "affinity_mask": "0xffff"
+  },
+  "telemetry": {
+    "scene_frame": 5,
+    "solver_frame": 5,
+    "particle_count": 600000,
+    "presentation_mode": "Native GPU",
+    "presentation_reason": "",
+    "presentation_bytes": 0,
+    "imports": 6,
+    "maps": 2,
+    "published_frames": 5,
+    "bulk_host_position_bytes": 0,
+    "animation_playing": true
+  }
+}

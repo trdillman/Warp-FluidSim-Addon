@@ -244,8 +244,8 @@ def _swap_points(obj, positions, radius, colors=None):
     pc_old = obj.data
     pc = bpy.data.pointclouds.new(obj.name)
     n = len(positions)
-    pc.resize(n)
     if n:
+        pc.resize(n)
         pos_attr = pc.attributes.get("position")
         if pos_attr is None:
             pos_attr = pc.attributes.new("position", "FLOAT_VECTOR", "POINT")
@@ -264,6 +264,47 @@ def _swap_points(obj, positions, radius, colors=None):
         obj.data.materials.append(m)
     if pc_old is not None and pc_old.users == 0:
         bpy.data.pointclouds.remove(pc_old)
+
+
+def _ensure_native_pointcloud(scene, capacity):
+    obj = _ensure_object(
+        scene,
+        PARTICLES_NAME,
+        lambda: bpy.data.pointclouds.new(PARTICLES_NAME),
+    )
+    pointcloud = obj.data
+    if not isinstance(pointcloud, bpy.types.PointCloud) or len(pointcloud.points) != capacity:
+        old = pointcloud
+        pointcloud = bpy.data.pointclouds.new(PARTICLES_NAME)
+        pointcloud.resize(capacity)
+        materials = [material for material in (old.materials if old else [])]
+        obj.data = pointcloud
+        for material in materials:
+            pointcloud.materials.append(material)
+        if old is not None and old.users == 0:
+            if isinstance(old, bpy.types.Mesh):
+                bpy.data.meshes.remove(old)
+            else:
+                bpy.data.pointclouds.remove(old)
+    _set_native_pointcloud_bounds(scene, pointcloud)
+    return obj, pointcloud
+
+
+def _set_native_pointcloud_bounds(scene, pointcloud):
+    """Seed conservative domain bounds without materializing particle positions."""
+    if len(pointcloud.points) < 2:
+        return
+    from .scene_bridge import _domain_bounds
+
+    lo, hi = _domain_bounds(scene)
+    bounds = tuple(lo) + tuple(hi)
+    if tuple(pointcloud.get("native_interop_bounds", ())) == bounds:
+        return
+    position = pointcloud.attributes.get("position")
+    position.data[0].vector = lo
+    position.data[1].vector = hi
+    pointcloud["native_interop_bounds"] = bounds
+    pointcloud.update_tag()
 
 
 def _swap_vertex_cloud(obj, positions, colors=None):
@@ -390,15 +431,16 @@ def _attribute_map(mode, values):
     return {} if values is None else {mode: np.asarray(values)}
 
 
-def _solver_frame(scene, solver, publish_surface=True):
+def _solver_frame(scene, solver, publish_surface=True, *, include_particles=True):
     from ..sim.frame_output import HostFrame
 
     fs = scene.fluidsim
     host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
-    positions = (host.positions if fs.show_particles else
+    positions = (host.positions if fs.show_particles and include_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_values = (_particle_values(
-        solver, fs.particle_attribute_mode, positions, host=host) if fs.show_particles
+        solver, fs.particle_attribute_mode, positions, host=host)
+        if fs.show_particles and include_particles
         else None)
     whitewater = (host.whitewater
                   if fs.show_whitewater and fs.whitewater_enabled else
@@ -490,7 +532,7 @@ def _cached_frame(scene, frame_data):
     )
 
 
-def _render_outputs(scene, frame):
+def _render_outputs(scene, frame, *, include_particles=True):
     from . import materials
 
     fs = scene.fluidsim
@@ -511,7 +553,7 @@ def _render_outputs(scene, frame):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
-    if fs.show_particles:
+    if fs.show_particles and include_particles:
         positions = frame.particles
         values = frame.particle_attributes.get(fs.particle_attribute_mode)
         fraction = fs.particle_display_fraction
@@ -537,8 +579,10 @@ def _render_outputs(scene, frame):
                 lambda: bpy.data.meshes.new(PARTICLES_NAME),
             )
             _swap_vertex_cloud(obj, positions, colors)
+        obj.hide_viewport = False
+        obj.hide_render = False
         materials.ensure_particle_material(scene, obj)
-    else:
+    elif not fs.show_particles:
         _clear_points(PARTICLES_NAME)
 
     if fs.show_whitewater and fs.whitewater_enabled:
@@ -624,8 +668,135 @@ def update_outputs(scene, sess, *, force_surface=False):
         host.should_publish_surface(
             getattr(fs, "live_surface_publish_cadence", 4))
     )
+    native_particles = _update_native_particles(scene, sess)
+    frame = _solver_frame(scene, solver, publish_surface=publish_surface,
+                          include_particles=not native_particles)
     _render_outputs(
-        scene, _solver_frame(scene, solver, publish_surface=publish_surface))
+        scene,
+        frame,
+        include_particles=not native_particles,
+    )
+    if native_particles:
+        stats = sess.native_presenter.materialization_stats
+        sess.presentation_mode = "Native GPU"
+        sess.presentation_reason = stats["reason"]
+        sess.presentation_bytes = stats["bytes"]
+    else:
+        requested = bool(
+            scene.fluidsim.show_particles
+            and getattr(scene.fluidsim, "native_gpu_interop", False)
+        )
+        sess.presentation_mode = "CPU Fallback" if requested else "CPU"
+        sess.presentation_reason = (
+            sess.native_interop_error if requested else "Native interop disabled"
+        )
+        sess.presentation_bytes = frame.particles.nbytes + sum(
+            values.nbytes for values in frame.particle_attributes.values()
+        )
+
+
+def _update_native_particles(scene, sess):
+    fs = scene.fluidsim
+    presenter = getattr(sess, "native_presenter", None)
+    if presenter is not None and getattr(sess, "native_presenter_failed", False):
+        try:
+            presenter.close()
+        except Exception as exc:
+            sess.native_interop_error = f"native interop cleanup retry failed: {exc}"
+            return False
+        sess.native_presenter = None
+        sess.native_presenter_failed = False
+        presenter = None
+    requested = bool(
+        fs.show_particles
+        and getattr(fs, "native_gpu_interop", False)
+    )
+    if not requested:
+        if presenter is not None:
+            presenter.close()
+            sess.native_presenter = None
+        return False
+
+    try:
+        from .native_interop import NativeParticlePresenter, replace_native_particle_presenter
+
+        particles = sess.solver.particles
+        display_step = max(1, int(round(1.0 / fs.particle_display_fraction)))
+        display_capacity = (particles.capacity + display_step - 1) // display_step
+        display_count = (particles.host_count + display_step - 1) // display_step
+        published = False
+        if (presenter is None
+                or len(presenter.bridge.positions) != particles.capacity):
+            obj, pointcloud = _ensure_native_pointcloud(
+                scene, particles.capacity)
+            bpy.context.view_layer.update()
+            pointcloud = obj.evaluated_get(
+                bpy.context.evaluated_depsgraph_get()).data
+            radius = (float(fs.voxel_size) * 0.25 *
+                      float(fs.particle_display_scale))
+            sess.native_presenter = replace_native_particle_presenter(
+                presenter,
+                capacity=particles.capacity,
+                pointcloud=pointcloud,
+                radius=radius,
+                positions=particles.position,
+                active_count=particles.count,
+                output_count=display_capacity,
+                step=display_step,
+            )
+            presenter = sess.native_presenter
+            published = True
+        else:
+            obj = bpy.data.objects.get(PARTICLES_NAME)
+            _set_native_pointcloud_bounds(scene, obj.data)
+            pointcloud = obj.evaluated_get(
+                bpy.context.evaluated_depsgraph_get()).data
+            presenter.bind_pointcloud(pointcloud)
+        presenter.radius = (float(fs.voxel_size) * 0.25 *
+                            float(fs.particle_display_scale))
+        if not published:
+            presenter.publish_device_count(
+                particles.position,
+                particles.count,
+                display_capacity,
+                display_step,
+            )
+        if fs.particle_attribute_mode != "NONE":
+            values = presenter.materialize_display_values(
+                particles,
+                fs.particle_attribute_mode,
+                display_count,
+                display_step,
+                frame_id=getattr(sess.solver, "frame", None),
+            )
+            colors = np.zeros((particles.capacity, 4), dtype=np.float32)
+            colors[:display_count] = _values_to_colors(values)
+            _write_point_colors(obj.data, colors)
+            obj.data.update_tag()
+            bpy.context.view_layer.update()
+            pointcloud = obj.evaluated_get(
+                bpy.context.evaluated_depsgraph_get()).data
+            presenter.bind_pointcloud(pointcloud)
+        obj.hide_viewport = False
+        obj.hide_render = False
+        from . import materials
+        materials.ensure_particle_material(scene, obj)
+        sess.native_interop_error = ""
+        return True
+    except Exception as exc:
+        error_message = str(exc)
+        presenter = getattr(sess, "native_presenter", None)
+        if presenter is not None:
+            try:
+                presenter.close()
+            except Exception as cleanup_error:
+                sess.native_presenter_failed = True
+                error_message += f"; native interop cleanup failed: {cleanup_error}"
+            else:
+                sess.native_presenter = None
+                sess.native_presenter_failed = False
+        sess.native_interop_error = error_message
+        return False
 
 
 def update_outputs_from_cache_frame(scene, frame_data):

@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "decision": "retain_current_publication",
+  "run_paths": [
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\stage-profile-20260716-db2bc63c\\run1.json",
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\stage-profile-20260716-db2bc63c\\run2.json",
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\stage-profile-20260716-db2bc63c\\run3.json"
+  ],
+  "cross_process_spread_fraction": {
+    "packed": 0.03601300664142468,
+    "no_repack": 0.04303634042226388
+  },
+  "aggregate": {
+    "packed_batch_mean_median_ms": 13.977978700000001,
+    "no_repack_batch_mean_median_ms": 13.0688696,
+    "idealized_speedup_median": 1.0176594388888267,
+    "position_pack_median_ms": 0.010239999741315842
+  },
+  "gates": {
+    "at_least_three_fresh_processes": true,
+    "balanced_first_mode": true,
+    "individual_runs_passed": true,
+    "packed_cross_process_spread_within_10_percent": true,
+    "no_repack_cross_process_spread_within_10_percent": true,
+    "same_executable": true,
+    "same_executable_hash": true,
+    "same_addon_source": true,
+    "same_process_limits": true,
+    "same_particle_count": true
+  }
+}

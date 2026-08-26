@@ -1,0 +1,34 @@
+{
+  "passed": false,
+  "decision": "measurement_invalid",
+  "display_dominant_stage": null,
+  "run_paths": [
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\draw-profile-20260716-db2bc63c\\run1.json",
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\draw-profile-20260716-db2bc63c\\run2.json",
+    "C:\\Users\\Tyler\\Downloads\\liquid_warp_blender51_port\\liquid_warp_blender51_port_native_interop_main_20260715\\docs\\evidence\\native_interop\\draw-profile-20260716-db2bc63c\\run3.json"
+  ],
+  "cross_process_spread_fraction": {
+    "visible": 0.024820739140808974,
+    "hidden": 0.032561682352450855
+  },
+  "aggregate": {
+    "visible_redraw_median_ms": 7.576483333333333,
+    "hidden_redraw_median_ms": 6.67955,
+    "pointcloud_draw_delta_median_ms": 0.7636916666666664,
+    "cuda_publication_median_ms": 0.8729600012302399,
+    "solver_gpu_wall_median_ms": 92.17945
+  },
+  "gates": {
+    "at_least_three_fresh_processes": true,
+    "balanced_first_mode": true,
+    "individual_runs_passed": false,
+    "visible_cross_process_spread_within_10_percent": true,
+    "hidden_cross_process_spread_within_10_percent": true,
+    "positive_pointcloud_draw_delta": true,
+    "same_executable": true,
+    "same_executable_hash": true,
+    "same_addon_source": true,
+    "same_process_limits": true,
+    "same_particle_count": true
+  }
+}

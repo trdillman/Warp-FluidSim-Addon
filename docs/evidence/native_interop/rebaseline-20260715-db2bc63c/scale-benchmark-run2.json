@@ -1,0 +1,202 @@
+{
+  "environment": {
+    "backend": "VULKAN",
+    "device": "NVIDIA GeForce RTX 4080 SUPER",
+    "warp_version": "1.12.1",
+    "blender_version": "5.2.0 Alpha"
+  },
+  "workloads": [
+    {
+      "particle_count": 25000,
+      "iterations": 20,
+      "bytes_per_frame": 300000,
+      "cpu_end_to_end_ms": {
+        "median": 29.771,
+        "p95": 37.6075,
+        "samples": [
+          25.8557,
+          27.5108,
+          31.1499,
+          25.9378,
+          28.1703,
+          32.9008,
+          37.6075,
+          31.5644,
+          29.6445,
+          29.1312,
+          32.8693,
+          31.8323,
+          29.1719,
+          29.7396,
+          29.9166,
+          28.9599,
+          29.8024,
+          30.0513,
+          27.8649,
+          30.454
+        ],
+        "bulk_host_position_bytes": 6000000
+      },
+      "native_end_to_end_ms": {
+        "median": 19.74505,
+        "p95": 24.2953,
+        "samples": [
+          21.8285,
+          23.329,
+          21.827,
+          23.295,
+          24.2953,
+          23.5539,
+          21.6621,
+          17.9155,
+          22.1934,
+          19.8274,
+          16.8967,
+          18.5368,
+          20.4885,
+          17.6795,
+          18.359,
+          18.6273,
+          19.6627,
+          19.2603,
+          19.3398,
+          17.2975
+        ],
+        "bulk_host_position_bytes": 0,
+        "imports": 6,
+        "maps": 2
+      },
+      "median_speedup": 1.5077703019237734
+    },
+    {
+      "particle_count": 250000,
+      "iterations": 20,
+      "bytes_per_frame": 3000000,
+      "cpu_end_to_end_ms": {
+        "median": 33.5238,
+        "p95": 43.1064,
+        "samples": [
+          27.3851,
+          34.4861,
+          29.6392,
+          30.7125,
+          31.437,
+          33.7634,
+          31.2993,
+          33.5071,
+          35.6459,
+          33.5405,
+          32.561,
+          34.7975,
+          32.7945,
+          33.1123,
+          38.1437,
+          43.1064,
+          35.0901,
+          37.1494,
+          32.3196,
+          34.8143
+        ],
+        "bulk_host_position_bytes": 60000000
+      },
+      "native_end_to_end_ms": {
+        "median": 19.7969,
+        "p95": 23.6778,
+        "samples": [
+          23.3538,
+          21.1403,
+          23.6778,
+          22.4253,
+          22.4634,
+          19.5351,
+          23.2094,
+          20.6964,
+          19.0136,
+          19.1177,
+          20.6376,
+          17.4582,
+          18.9945,
+          18.6451,
+          18.1883,
+          19.9141,
+          20.9433,
+          19.0639,
+          19.6797,
+          17.857
+        ],
+        "bulk_host_position_bytes": 0,
+        "imports": 6,
+        "maps": 2
+      },
+      "median_speedup": 1.693386338265082
+    },
+    {
+      "particle_count": 1000000,
+      "iterations": 20,
+      "bytes_per_frame": 12000000,
+      "cpu_end_to_end_ms": {
+        "median": 46.6643,
+        "p95": 52.695,
+        "samples": [
+          50.2828,
+          46.3465,
+          48.2115,
+          50.0164,
+          50.8209,
+          44.349,
+          42.6668,
+          49.5267,
+          51.102,
+          52.695,
+          50.5149,
+          49.093,
+          45.244,
+          42.7646,
+          45.3843,
+          44.9635,
+          43.2774,
+          46.9821,
+          45.5025,
+          45.198
+        ],
+        "bulk_host_position_bytes": 240000000
+      },
+      "native_end_to_end_ms": {
+        "median": 20.49635,
+        "p95": 28.8959,
+        "samples": [
+          28.8959,
+          25.3578,
+          23.7221,
+          24.3879,
+          20.4653,
+          21.711,
+          20.8742,
+          19.2994,
+          20.2001,
+          19.3495,
+          19.8114,
+          18.964,
+          18.4157,
+          20.1737,
+          17.2025,
+          21.6219,
+          22.2047,
+          20.6362,
+          20.5274,
+          18.9568
+        ],
+        "bulk_host_position_bytes": 0,
+        "imports": 6,
+        "maps": 2
+      },
+      "median_speedup": 2.2767126829898983
+    }
+  ],
+  "gates": {
+    "25000_native_within_10_percent": true,
+    "250000_speedup_at_least_2x": false,
+    "1000000_speedup_at_least_2x": true
+  },
+  "measurement_scope": "same deterministic Warp allocation; CPU path includes device-to-host copy, PointCloud replacement, and normal View3D redraw; native path includes shared-VBO publication and the same normal View3D redraw"
+}

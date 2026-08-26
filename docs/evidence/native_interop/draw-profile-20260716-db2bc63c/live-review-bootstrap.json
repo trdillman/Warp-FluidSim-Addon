@@ -1,0 +1,40 @@
+{
+  "pid": 44368,
+  "file_before": "",
+  "enabled_before": [
+    "bl_pkg",
+    "fluidSim_warp_blender51",
+    "gpu_particle_nodes",
+    "hydra_storm",
+    "io_anim_bvh",
+    "io_curve_svg",
+    "io_mesh_uv_layout",
+    "io_scene_fbx",
+    "io_scene_gltf2",
+    "node_wrangler",
+    "pose_library"
+  ],
+  "enabled_after": [
+    "bl_pkg",
+    "fluidSim_warp_blender51",
+    "gpu_particle_nodes",
+    "hydra_storm",
+    "io_anim_bvh",
+    "io_curve_svg",
+    "io_mesh_uv_layout",
+    "io_scene_fbx",
+    "io_scene_gltf2",
+    "node_wrangler",
+    "pose_library"
+  ],
+  "addon_enabled": true,
+  "addon_in_preferences": true,
+  "addon_module": "C:\\Users\\Tyler\\AppData\\Local\\Temp\\codex-fluidsim-review-20260716T2005\\addons\\fluidSim_warp_blender51\\__init__.py",
+  "temporary_root": "C:\\Users\\Tyler\\AppData\\Local\\Temp\\codex-fluidsim-review-20260716T2005\\addons",
+  "temporary_identity": true,
+  "addon_version": [
+    1,
+    0,
+    241
+  ]
+}
