@@ -353,12 +353,12 @@ class SimulationAdmission:
     def _capture(
             self, scene, settings, resources, depsgraph=None, *,
             additional_transaction_bytes=0):
-        from ..io import cache
+        from . import cache_identity
 
         return capture_snapshot(
             scene, settings, resources, depsgraph=depsgraph,
             scene_identity=self._scene_identity(scene),
-            scene_key=cache.scene_key(scene),
+            scene_key=cache_identity.scene_key(scene),
             snippet_builder=self._snippet_builder,
             effect_builder=self._effect_builder,
             additional_transaction_bytes=additional_transaction_bytes,
@@ -668,7 +668,7 @@ class SimulationAdmission:
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False):
         from ..diagnostics.profiler import Profiler
-        from ..io import cache
+        from . import cache_identity
 
         candidate = None
         replacement_committed = False
@@ -706,7 +706,7 @@ class SimulationAdmission:
                 self.session.scene_identity = self._scene_identity(scene)
             self.session.scene_key = getattr(snapshot, "scene_key", None)
             if self.session.scene_key is None:
-                self.session.scene_key = cache.scene_key(scene)
+                self.session.scene_key = cache_identity.scene_key(scene)
             self.session.start_frame = int(getattr(
                 snapshot, "frame_start", getattr(scene, "frame_start", 1)))
             self.session.cache_written_start = None

@@ -305,7 +305,7 @@ class ProductionBakeBackend:
         return cached_parts[:2] == current_parts[:2]
 
     def resume_decision(self, scene) -> ResumeDecision:
-        from ..io import cache
+        from . import cache_identity
 
         base = self.cache_path(scene)
         try:
@@ -344,7 +344,7 @@ class ProductionBakeBackend:
                 "EFFECT_SIGNATURE_MISMATCH",
                 "Current applied Custom Effects inventory does not match the cache",
             )
-        signatures = cache.signature_bundle(
+        signatures = cache_identity.signature_bundle(
             scene, self._bpy().context.evaluated_depsgraph_get()
         )
         for key, code in (
@@ -405,15 +405,14 @@ class ProductionBakeBackend:
         )
 
     def _snapshot_live_state(self, scene) -> None:
-        from . import scene_bridge
-        from ..io import cache
+        from . import cache_identity, scene_bridge
 
         self.sess = scene_bridge.session()
         self._original_frame = int(scene.frame_current)
         self._original_live = bool(scene.fluidsim.live)
         self._original_session_active = bool(self.sess.owns_scene(scene))
         if self._original_session_active:
-            signatures = cache.signature_bundle(
+            signatures = cache_identity.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
             )
             from .effects import effect_identity
@@ -446,8 +445,7 @@ class ProductionBakeBackend:
         resume: bool = False,
         restart: bool = False,
     ) -> int | None:
-        from . import playback, scene_bridge
-        from ..io import cache
+        from . import cache_identity, playback, scene_bridge
 
         if self._initialized:
             raise RuntimeError("production bake backend is already initialized")
@@ -456,7 +454,7 @@ class ProductionBakeBackend:
         self.base_dir = self.cache_path(scene)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         depsgraph = self._bpy().context.evaluated_depsgraph_get()
-        self.signatures = cache.signature_bundle(scene, depsgraph)
+        self.signatures = cache_identity.signature_bundle(scene, depsgraph)
         from .effects import effect_identity
         self.effect_signature, self.effect_inventory = effect_identity(scene)
 

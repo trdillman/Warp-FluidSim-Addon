@@ -102,7 +102,8 @@ def _scene(frame=7, *, playback=True):
     )
 
 
-def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
+def _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity=None):
     import fluidSim_warp_blender51.blender as blender_pkg
     import fluidSim_warp_blender51.io as io_pkg
 
@@ -111,6 +112,14 @@ def _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport):
     monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setattr(blender_pkg, "output_publication", fake_viewport, raising=False)
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
+    if fake_identity is not None:
+        monkeypatch.setitem(
+            sys.modules,
+            "fluidSim_warp_blender51.blender.cache_identity",
+            fake_identity,
+        )
+        monkeypatch.setattr(
+            blender_pkg, "cache_identity", fake_identity, raising=False)
 
 
 def test_phase3_deep_modules_own_playback_and_production_bake(monkeypatch):
@@ -401,17 +410,20 @@ def test_cache_v2_playback_uses_the_v2_signature_bundle(monkeypatch):
         "format_version": 2,
         "scene_key": "v2-scene-key",
     }
-    fake_cache.signature_bundle = lambda _scene, depsgraph=None: {
+    fake_identity = types.ModuleType(
+        "fluidSim_warp_blender51.blender.cache_identity")
+    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
         "scene_key": "v2-scene-key",
     }
 
     def legacy_key_must_not_run(_scene):
         raise AssertionError("cache-v2 playback used the legacy scene key")
 
-    fake_cache.scene_key = legacy_key_must_not_run
+    fake_identity.scene_key = legacy_key_must_not_run
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
-    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+    _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity)
 
     scene_bridge.playback._check_cache_scene_key(
         scene,
@@ -435,7 +447,9 @@ def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
         "format_version": 2,
         "scene_key": "v2-scene-key",
     }
-    fake_cache.signature_bundle = lambda _scene, depsgraph=None: {
+    fake_identity = types.ModuleType(
+        "fluidSim_warp_blender51.blender.cache_identity")
+    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
         "scene_key": "v2-scene-key",
     }
     fake_cache.read_frame = lambda _base, _frame: frame_data
@@ -444,7 +458,8 @@ def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
     published = []
     fake_viewport.update_outputs_from_cache_frame = (
         lambda _scene, data: published.append(data))
-    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+    _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity)
 
     scene_bridge.playback.play_cache_frame(
         scene_bridge.session(), scene, frame=2)
@@ -465,6 +480,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     than draw a stale result as if it were current.
     """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_identity
     from fluidSim_warp_blender51.io import cache
 
     base = str(tmp_path)
@@ -483,7 +499,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         lambda _scene, data: drawn.append(int(data["frame"])))
     _install_cache_playback_modules(monkeypatch, cache, fake_viewport)
 
-    baked = cache.scene_key(scene)
+    baked = cache_identity.scene_key(scene)
     cache.write_sequence_metadata(base, 1, 10, scene_key_value=baked)
     cache._savez_fast_compressed(cache._frame_path(base, 7), {
         "format_version": np.array(cache.CACHE_FORMAT_VERSION, dtype=np.int32),

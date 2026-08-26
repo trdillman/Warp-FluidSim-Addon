@@ -239,6 +239,7 @@ def _check_cache_scene_key(scene, base, frame_data):
     import numpy as np
 
     from ..io import cache
+    from . import cache_identity
 
     frame = int(frame_data.get("frame", -1))
     metadata = cache.read_sequence_metadata(base) or {}
@@ -252,9 +253,9 @@ def _check_cache_scene_key(scene, base, frame_data):
             depsgraph = bpy.context.evaluated_depsgraph_get()
         except (AttributeError, RuntimeError):
             depsgraph = None
-        current = cache.signature_bundle(scene, depsgraph)["scene_key"]
+        current = cache_identity.signature_bundle(scene, depsgraph)["scene_key"]
     else:
-        current = cache.scene_key(scene)
+        current = cache_identity.scene_key(scene)
     for candidate in (metadata_key, frame_key):
         if candidate and candidate != current:
             raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(

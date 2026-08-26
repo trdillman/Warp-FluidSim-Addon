@@ -6,13 +6,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from fluidSim_warp_blender51.blender.cache_identity import source_signature
 from fluidSim_warp_blender51.io.cache import (
     available_frames,
     compact_settings_segments,
     read_frame,
     read_sequence_metadata,
     resolve_frame_range,
-    source_signature,
     settings_record,
     validate_contiguous_frames,
     write_frame,
