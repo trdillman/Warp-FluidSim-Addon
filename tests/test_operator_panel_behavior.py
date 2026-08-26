@@ -292,6 +292,64 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
         assert "UNDO" not in getattr(cls, "bl_options", set()), cls.__name__
 
 
+def test_liquid_view_hidden_state_round_trips_both_visibility_toggles(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    refreshes = []
+    monkeypatch.setattr(
+        properties, "_request_output_refresh",
+        lambda _self, _context: refreshes.append(True))
+    state = SimpleNamespace(
+        liquid_view_mode="SURFACE", show_surface=False, show_particles=False)
+
+    assert "HIDDEN" in {item[0] for item in properties.LIQUID_VIEW_ITEMS}
+    properties._sync_liquid_view_mode(state, None)
+    assert state.liquid_view_mode == "HIDDEN"
+
+    state.show_surface = True
+    state.show_particles = True
+    properties._apply_liquid_view_mode(state, None)
+    assert (state.show_surface, state.show_particles) == (False, False)
+    assert len(refreshes) == 2
+
+
+def test_legacy_snippet_rna_persists_permission_and_type_defaults(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    argument_schema = properties.FLUIDSIM_PG_snippet_argument.__annotations__
+    snippet_schema = properties.FLUIDSIM_PG_snippet.__annotations__
+    permission = argument_schema["field_permission"]
+    snippet_type = snippet_schema["snippet_type"]
+
+    assert "CustomKernelFieldPermission" in permission
+    assert "READ_WRITE" in permission
+    assert "CustomKernelType" in snippet_type
+    assert "KERNEL" in snippet_type
+
+
+def test_invalid_legacy_snippet_mutations_cancel_without_changing_state(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    empty = SimpleNamespace(snippets=[], active_snippet=-1)
+    empty_context = SimpleNamespace(scene=SimpleNamespace(fluidsim=empty))
+    no_arguments = SimpleNamespace(arguments=[])
+    argument_state = SimpleNamespace(snippets=[no_arguments], active_snippet=0)
+    argument_context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=argument_state))
+
+    cases = (
+        (operators.FLUIDSIM_OT_snippet_argument_add, empty_context, empty),
+        (operators.FLUIDSIM_OT_snippet_argument_remove,
+         argument_context, argument_state),
+    )
+    for operator_type, context, state in cases:
+        before = (list(state.snippets), state.active_snippet)
+        assert operator_type.poll(context) is False
+        assert operator_type().execute(context) == {"CANCELLED"}
+        assert (list(state.snippets), state.active_snippet) == before
+
+
 class _PermissiveSettings:
     """Settings stand-in that answers any property read.
 

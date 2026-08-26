@@ -84,7 +84,7 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
         pending = pending_ui_state(scene)
         if pending["action"] != "NONE":
             box = layout.box()
-            box.label(text=f"{pending['count']} change(s) staged for restart", icon="INFO")
+            box.label(text=pending["summary"], icon="INFO")
             box.label(text="Review and apply staged values in Scene Properties.")
 
         layout.separator()

@@ -14,6 +14,15 @@ def snippet_argument_names(pg):
     return names
 
 
+def snippet_field_permissions(pg):
+    """Map each authored field argument to its declared effect permission."""
+    return {
+        apg.field: getattr(apg, "field_permission", "READ_WRITE")
+        for apg in pg.arguments
+        if apg.mode == "FIELD"
+    }
+
+
 def validate_snippet_pg(pg):
     """Statically validate one snippet property group and mirror the result.
 
@@ -23,8 +32,13 @@ def validate_snippet_pg(pg):
     from ..sim import custom
 
     code = pg.text_block.as_string() if pg.text_block else ""
-    issues = custom.validate_snippet(
-        code, pg.run_over, snippet_argument_names(pg))
+    if getattr(pg, "snippet_type", "KERNEL") != "KERNEL":
+        issues = [custom.Issue(
+            "ERROR", 0, custom.FUNCTION_UNSUPPORTED_MESSAGE)]
+    else:
+        issues = custom.validate_snippet(
+            code, pg.run_over, snippet_argument_names(pg),
+            snippet_field_permissions(pg))
     errors = [i for i in issues if i.level == "ERROR"]
     pg.is_valid = not errors
     pg.validated_hash = custom.code_hash(code)
@@ -60,8 +74,10 @@ def snippet_from_pg(pg):
     from ..sim.enums import (
         CustomKernelArgumentMode,
         CustomKernelConstantType,
+        CustomKernelFieldPermission,
         CustomKernelOrder,
         CustomKernelRunOver,
+        CustomKernelType,
     )
 
     code = pg.text_block.as_string() if pg.text_block else ""
@@ -70,6 +86,8 @@ def snippet_from_pg(pg):
         args.append(CustomArgument(
             mode=CustomKernelArgumentMode[apg.mode],
             field=apg.field,
+            field_permission=CustomKernelFieldPermission[
+                getattr(apg, "field_permission", "READ_WRITE")],
             constant_type=CustomKernelConstantType[apg.constant_type],
             constant_name=apg.constant_name,
             constant_value=apg.constant_value,
@@ -77,6 +95,8 @@ def snippet_from_pg(pg):
     return CustomSnippet(
         enabled=pg.enabled,
         kernel_name=pg.kernel_name,
+        snippet_type=CustomKernelType[
+            getattr(pg, "snippet_type", "KERNEL")],
         order=CustomKernelOrder[pg.order],
         run_over=CustomKernelRunOver[pg.run_over],
         code=code,

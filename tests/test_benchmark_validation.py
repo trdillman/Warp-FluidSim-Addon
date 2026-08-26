@@ -16,11 +16,16 @@ from fluidSim_warp_blender51.diagnostics.benchmark import compare_benchmark
 
 def _benchmark_record(**changes):
     record = {
+        "totalTime": 0.2,
         "activeVoxelsAverage": 10,
         "activeVoxelsMinimum": 8,
         "activeVoxelsMaximum": 12,
         "timeStepAverage": 0.1,
+        "timeStepMinimum": 0.08,
+        "timeStepMaximum": 0.12,
         "voxelsPerSecondAverage": 100.0,
+        "voxelsPerSecondMinimum": 80.0,
+        "voxelsPerSecondMaximum": 120.0,
         "result": "completed",
     }
     record.update(changes)
@@ -63,11 +68,36 @@ def test_compare_benchmark_reports_malformed_exact_numbers(value):
     assert detail["error"] == "current must be a finite JSON number"
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "totalTime",
+        "timeStepMinimum",
+        "timeStepMaximum",
+        "voxelsPerSecondMinimum",
+        "voxelsPerSecondMaximum",
+    ],
+)
+@pytest.mark.parametrize("side", ["current", "baseline"])
+def test_compare_benchmark_validates_every_numeric_contract_field(field, side):
+    current = _benchmark_record()
+    baseline = _benchmark_record()
+    target = current if side == "current" else baseline
+    target[field] = None
+
+    report = compare_benchmark(current, baseline)
+
+    assert report["result"] == "fail"
+    assert report["error"] == f"{field}: {side} must be a finite JSON number"
+    assert report["contract"][field]["valid"] is False
+
+
 @pytest.mark.parametrize("payload", [None, "benchmark", [], 1, True])
 def test_compare_benchmark_reports_non_object_payload(payload):
     report = compare_benchmark(_benchmark_record(), payload)
 
     assert report == {
+        "contract": {},
         "exact": {},
         "performance": {},
         "result": "fail",
@@ -160,7 +190,8 @@ def test_benchmark_operator_cancels_with_actionable_malformed_baseline(
     assert fs.status.startswith("Benchmark baseline invalid:")
     assert messages[-1][0] == {"ERROR"}
     assert messages[-1][1] == fs.status
-    assert session.benchmark_compare is None
+    assert session.benchmark_compare["result"] == "fail"
+    assert session.benchmark_compare["error"] == fs.status
 
 
 def test_benchmark_operator_preserves_valid_baseline_comparison(

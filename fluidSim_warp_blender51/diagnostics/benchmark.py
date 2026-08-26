@@ -32,6 +32,9 @@ BENCHMARK_FIELDS = [
 EXACT_FIELDS = ["activeVoxelsAverage", "activeVoxelsMinimum", "activeVoxelsMaximum"]
 # Fields compared with relative tolerance (performance check).
 PERFORMANCE_FIELDS = ["timeStepAverage", "voxelsPerSecondAverage"]
+NUMERIC_CONTRACT_FIELDS = [
+    name for name in BENCHMARK_FIELDS if name != "result"
+]
 
 
 def _numeric_field_error(record: dict, name: str, side: str) -> str | None:
@@ -140,17 +143,32 @@ def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.2
     Exact fields must match exactly; performance fields must be within
     ``perf_tolerance`` relative deviation. Returns a comparison report.
     """
-    report = {"exact": {}, "performance": {}, "result": "pass"}
+    report = {
+        "contract": {}, "exact": {}, "performance": {}, "result": "pass",
+    }
     if not isinstance(current, dict):
         return {**report, "result": "fail", "error": "current must be a JSON object"}
     if not isinstance(baseline, dict):
         return {**report, "result": "fail", "error": "baseline must be a JSON object"}
 
-    for name in EXACT_FIELDS:
+    for name in NUMERIC_CONTRACT_FIELDS:
         error = (
             _numeric_field_error(current, name, "current")
             or _numeric_field_error(baseline, name, "baseline")
         )
+        detail = {
+            "current": current.get(name),
+            "baseline": baseline.get(name),
+            "valid": error is None,
+        }
+        if error is not None:
+            detail["error"] = error
+            report.setdefault("error", f"{name}: {error}")
+            report["result"] = "fail"
+        report["contract"][name] = detail
+
+    for name in EXACT_FIELDS:
+        error = report["contract"][name].get("error")
         detail = {
             "current": current.get(name),
             "baseline": baseline.get(name),
@@ -164,10 +182,7 @@ def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.2
             report["result"] = "fail"
 
     for name in PERFORMANCE_FIELDS:
-        error = (
-            _numeric_field_error(current, name, "current")
-            or _numeric_field_error(baseline, name, "baseline")
-        )
+        error = report["contract"][name].get("error")
         if error is not None:
             report["performance"][name] = {
                 "current": current.get(name),

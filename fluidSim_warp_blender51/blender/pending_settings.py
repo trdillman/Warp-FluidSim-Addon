@@ -429,6 +429,39 @@ def _pending_label(action):
     return "NONE"
 
 
+_PENDING_ACTION_PRESENTATION = {
+    "NONE": {
+        "summary_template": "",
+        "reason_detail": "",
+        "action_label": "",
+        "action_operator": "",
+    },
+    "RESET_PENDING": {
+        "summary_template": "{count} change(s) staged for reset",
+        "reason_detail": "will apply after reset",
+        "action_label": "Reset Now",
+        "action_operator": "fluidsim.apply_pending_reset",
+    },
+    "REINIT_PENDING": {
+        "summary_template": "{count} change(s) staged to reinitialize the solver",
+        "reason_detail": "will apply when the solver is reinitialized",
+        "action_label": "Reinitialize Now",
+        "action_operator": "fluidsim.apply_pending_reinitialize",
+    },
+}
+
+
+def _action_presentation(action, count):
+    presentation = _PENDING_ACTION_PRESENTATION.get(
+        action, _PENDING_ACTION_PRESENTATION["NONE"])
+    return {
+        "summary": presentation["summary_template"].format(count=count),
+        "reason_detail": presentation["reason_detail"],
+        "action_label": presentation["action_label"],
+        "action_operator": presentation["action_operator"],
+    }
+
+
 def _cache_pending_presentation(scene, state):
     action = _pending_label(state.pending_action)
     _scene_set(scene, "fluidsim_pending_action", action)
@@ -443,19 +476,27 @@ def pending_presentation(scene):
     if state is None:
         reasons = tuple(filter(None, str(_scene_get(
             scene, "fluidsim_pending_reasons", "")).splitlines()))
-        return {
-            "action": str(_scene_get(scene, "fluidsim_pending_action", "NONE")),
-            "count": int(_scene_get(scene, "fluidsim_pending_count", len(reasons))),
+        action = str(_scene_get(scene, "fluidsim_pending_action", "NONE"))
+        count = int(_scene_get(scene, "fluidsim_pending_count", len(reasons)))
+        result = {
+            "action": action,
+            "count": count,
             "reasons": reasons,
             "blocked_reason": str(_scene_get(
                 scene, "fluidsim_pending_blocked", "")),
         }
-    return {
-        "action": _pending_label(state.pending_action),
-        "count": len(state.pending_reasons),
+        result.update(_action_presentation(action, count))
+        return result
+    action = _pending_label(state.pending_action)
+    count = len(state.pending_reasons)
+    result = {
+        "action": action,
+        "count": count,
         "reasons": state.pending_reasons,
         "blocked_reason": state.blocked_reason,
     }
+    result.update(_action_presentation(action, count))
+    return result
 
 
 def refresh_pending_state(scene, sess=None, *, use_cached=False):

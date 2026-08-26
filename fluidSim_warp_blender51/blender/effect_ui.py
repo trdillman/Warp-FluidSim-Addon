@@ -261,10 +261,20 @@ class FLUIDSIM_OT_effect_remove(bpy.types.Operator):
 
     index: IntProperty(default=-1)
 
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        stack = getattr(scene, "fluidsim_effects", None)
+        if stack is None or not len(stack.items):
+            cls.poll_message_set("Select an effect first")
+            return False
+        return True
+
     def execute(self, context):
         stack = context.scene.fluidsim_effects
         index = self.index if self.index >= 0 else int(stack.active_index)
         if index < 0 or index >= len(stack.items):
+            self.report({"WARNING"}, "Select an effect first")
             return {"CANCELLED"}
         item = stack.items[index]
         text_names = [kernel.source_text.name for kernel in item.kernels if kernel.source_text]

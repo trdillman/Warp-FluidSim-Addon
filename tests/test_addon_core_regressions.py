@@ -22,11 +22,17 @@ from fluidSim_warp_blender51.sim.registry import (
 
 def _benchmark_record(**changes):
     record = {
+        "totalTime": 0.0,
         "activeVoxelsAverage": 0,
         "activeVoxelsMinimum": 0,
         "activeVoxelsMaximum": 0,
         "timeStepAverage": 0.0,
+        "timeStepMinimum": 0.0,
+        "timeStepMaximum": 0.0,
         "voxelsPerSecondAverage": 0.0,
+        "voxelsPerSecondMinimum": 0.0,
+        "voxelsPerSecondMaximum": 0.0,
+        "result": "completed",
     }
     record.update(changes)
     return record
@@ -62,6 +68,7 @@ def test_point_export_rejects_malformed_or_misaligned_arrays_before_write(tmp_pa
 
 def test_duplicate_kernel_identity_is_rejected_without_overwrite():
     name = "fluidSimRegressionDuplicateIdentity"
+    alias = "paradigmRegressionDuplicateIdentity"
 
     @register(name)
     def first():
@@ -75,6 +82,10 @@ def test_duplicate_kernel_identity_is_rejected_without_overwrite():
         assert KERNEL_REGISTRY[name].fn is first
     finally:
         KERNEL_REGISTRY.pop(name, None)
+        SOURCE_ALIASES.pop(alias, None)
+
+    assert name not in KERNEL_REGISTRY
+    assert alias not in SOURCE_ALIASES
 
 
 def test_multi_name_registration_failure_is_atomic():

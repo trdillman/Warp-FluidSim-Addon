@@ -213,7 +213,10 @@ class FLUIDSIM_PT_scene_pending(FluidSimScenePanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         pending = pending_ui_state(context.scene)
-        layout.label(text=f"{pending.get('count', 0)} staged change(s)", icon="INFO")
+        layout.label(
+            text=pending.get("summary", f"{pending.get('count', 0)} staged change(s)"),
+            icon="INFO",
+        )
         for reason in tuple(pending.get("reasons", ()))[:5]:
             _draw_wrapped(layout, reason, icon="DOT")
         if pending.get("blocked_reason"):

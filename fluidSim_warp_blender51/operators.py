@@ -991,7 +991,15 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
                 baseline = bench.load_benchmark(baseline_path)
                 comparison = bench.compare_benchmark(data, baseline)
                 if comparison.get("error"):
-                    raise ValueError(comparison["error"])
+                    message = (
+                        f"Benchmark baseline invalid: {baseline_path}: "
+                        f"{comparison['error']}"
+                    )
+                    comparison["error"] = message
+                    sess.benchmark_compare = comparison
+                    fs.status = message
+                    self.report({"ERROR"}, message)
+                    return {"CANCELLED"}
                 sess.benchmark_compare = comparison
                 self.report(
                     {"INFO"},
@@ -1006,8 +1014,14 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
                     f"{data['timeStepAverage'] * 1000:.1f} ms/frame avg, "
                     f"{data['voxelsPerSecondAverage'] / 1e6:.1f}M voxels/s")
             except (OSError, TypeError, ValueError) as exc:
-                sess.benchmark_compare = None
                 message = f"Benchmark baseline invalid: {baseline_path}: {exc}"
+                sess.benchmark_compare = {
+                    "contract": {},
+                    "exact": {},
+                    "performance": {},
+                    "result": "fail",
+                    "error": message,
+                }
                 fs.status = message
                 self.report({"ERROR"}, message)
                 return {"CANCELLED"}
@@ -1098,10 +1112,22 @@ class FLUIDSIM_OT_snippet_argument_add(bpy.types.Operator):
     bl_label = "Add Argument"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        fs = getattr(getattr(context, "scene", None), "fluidsim", None)
+        snippets = getattr(fs, "snippets", ())
+        index = getattr(fs, "active_snippet", -1)
+        if not isinstance(index, int) or not 0 <= index < len(snippets):
+            cls.poll_message_set("Select a legacy snippet first")
+            return False
+        return True
+
     def execute(self, context):
         fs = context.scene.fluidsim
-        if 0 <= fs.active_snippet < len(fs.snippets):
-            fs.snippets[fs.active_snippet].arguments.add()
+        if not self.poll(context):
+            self.report({"WARNING"}, "Select a legacy snippet first")
+            return {"CANCELLED"}
+        fs.snippets[fs.active_snippet].arguments.add()
         return {"FINISHED"}
 
 
@@ -1112,12 +1138,26 @@ class FLUIDSIM_OT_snippet_argument_remove(bpy.types.Operator):
     bl_label = "Remove Argument"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        fs = getattr(getattr(context, "scene", None), "fluidsim", None)
+        snippets = getattr(fs, "snippets", ())
+        index = getattr(fs, "active_snippet", -1)
+        if not isinstance(index, int) or not 0 <= index < len(snippets):
+            cls.poll_message_set("Select a legacy snippet first")
+            return False
+        if not len(snippets[index].arguments):
+            cls.poll_message_set("The active legacy snippet has no arguments")
+            return False
+        return True
+
     def execute(self, context):
         fs = context.scene.fluidsim
-        if 0 <= fs.active_snippet < len(fs.snippets):
-            snip = fs.snippets[fs.active_snippet]
-            if len(snip.arguments):
-                snip.arguments.remove(len(snip.arguments) - 1)
+        if not self.poll(context):
+            self.report({"WARNING"}, "The active legacy snippet has no arguments")
+            return {"CANCELLED"}
+        snip = fs.snippets[fs.active_snippet]
+        snip.arguments.remove(len(snip.arguments) - 1)
         return {"FINISHED"}
 
 
@@ -1197,7 +1237,8 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
             data = custom.preset_to_dict(
                 preset.label, preset.description, preset.order,
                 preset.run_over, preset.code, preset.arguments,
-                preset.frame_start, preset.frame_end, preset.frame_step)
+                preset.frame_start, preset.frame_end, preset.frame_step,
+                snippet_type=getattr(preset, "snippet_type", "KERNEL"))
             base_name = preset.preset_id
         else:  # USR:<filename>
             import os
@@ -1214,6 +1255,7 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
 
         pg = fs.snippets.add()
         pg.kernel_name = f"{base_name}_{len(fs.snippets)}"
+        pg.snippet_type = data.get("snippet_type", "KERNEL")
         pg.description = data.get("description", "")
         pg.order = data.get("order", "BEFORE_FORCES")
         pg.run_over = data.get("run_over", "PARTICLES")
@@ -1230,6 +1272,8 @@ class FLUIDSIM_OT_snippet_load_preset(bpy.types.Operator):
             else:
                 apg.mode = "FIELD"
                 apg.field = arg.get("field", "temperature")
+                apg.field_permission = arg.get(
+                    "field_permission", "READ_WRITE")
         text = bpy.data.texts.new(f"fluidsim_{pg.kernel_name}.py")
         text.write(data.get("code", ""))
         pg.text_block = text
@@ -1334,12 +1378,18 @@ class FLUIDSIM_OT_snippet_save_preset(bpy.types.Operator):
                              "type": apg.constant_type,
                              "value": apg.constant_value})
             else:
-                args.append({"mode": "FIELD", "field": apg.field})
+                args.append({
+                    "mode": "FIELD",
+                    "field": apg.field,
+                    "field_permission": getattr(
+                        apg, "field_permission", "READ_WRITE"),
+                })
         data = custom.preset_to_dict(
             self.preset_name or pg.kernel_name,
             pg.description or "User snippet",
             pg.order, pg.run_over, _snippet_code(pg), args,
-            pg.frame_start, pg.frame_end, pg.frame_step)
+            pg.frame_start, pg.frame_end, pg.frame_step,
+            snippet_type=getattr(pg, "snippet_type", "KERNEL"))
         path = custom.save_user_preset(user_snippet_dir(create=True), data)
         self.report({"INFO"}, f"Saved: {path}")
         return {"FINISHED"}

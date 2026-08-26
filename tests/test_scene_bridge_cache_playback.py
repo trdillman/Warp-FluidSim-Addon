@@ -1546,16 +1546,15 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
     assert calls == ["sync", ("step", 6)]
 
 
-def test_production_bake_failure_runs_backend_cleanup_and_preserves_error():
-    from fluidSim_warp_blender51.blender.production_bake import (
-        BakeController,
-        BakeStatus,
-    )
+def test_production_bake_failure_holds_cache_lease_through_cleanup(tmp_path):
+    from fluidSim_warp_blender51.blender import production_bake
 
     calls = []
+    cache_path = tmp_path / "cache"
+    scene = SimpleNamespace()
 
     class Backend:
-        base_dir = "//cache"
+        base_dir = cache_path
 
         def initialize(self, _scene, _start, _end, **_kwargs):
             calls.append("initialize")
@@ -1564,17 +1563,25 @@ def test_production_bake_failure_runs_backend_cleanup_and_preserves_error():
             raise RuntimeError("step failed")
 
         def fail(self, _scene, error):
-            calls.append(("fail", str(error)))
+            calls.append((
+                "fail", str(error),
+                production_bake.cache_path_is_active(cache_path),
+            ))
 
-    controller = BakeController(backend=Backend())
-    scene = SimpleNamespace()
+    controller = production_bake.BakeController(backend=Backend())
     controller.start(scene, 2, 4)
-    controller.tick(scene)
-    controller.tick(scene)
+    controller.reserve_cache_path(cache_path)
+    production_bake.register_active_bake(scene, controller)
+    try:
+        controller.tick(scene)
+        controller.tick(scene)
 
-    assert controller.status is BakeStatus.FAILED
-    assert "step failed" in controller.error
-    assert calls == ["initialize", ("fail", "step failed")]
+        assert controller.status is production_bake.BakeStatus.FAILED
+        assert "step failed" in controller.error
+        assert calls == ["initialize", ("fail", "step failed", True)]
+        assert production_bake.cache_path_is_active(cache_path) is False
+    finally:
+        production_bake.clear_active_bake(scene, controller)
 
 
 def test_production_bake_registry_is_scene_owned_and_compare_cleared():

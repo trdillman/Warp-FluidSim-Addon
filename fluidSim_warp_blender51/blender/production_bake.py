@@ -203,11 +203,15 @@ class BakeController:
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"
             self.message = f"Production bake failed: {exc}"
-            self.status = BakeStatus.FAILED
             try:
                 self.backend.fail(scene, exc)
             except Exception as cleanup_exc:  # do not hide the original failure
                 self.error += f"; cleanup failed: {cleanup_exc}"
+            finally:
+                # Keep the reserved cache path active through backend cleanup.
+                # Mutators may run from cleanup callbacks and must still see
+                # the bake lease until failure handling has fully finished.
+                self.status = BakeStatus.FAILED
             self._emit("bake_failed", error=self.error)
             return None
 

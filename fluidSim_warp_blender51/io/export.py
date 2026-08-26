@@ -124,6 +124,12 @@ def _remove_if_present(path: str) -> None:
 
 
 def _publish_bundle(artifacts) -> list[str]:
+    """Publish a prevalidated sibling bundle with in-process rollback.
+
+    Every payload is durably staged before any final path is replaced. A caught
+    publication failure restores the prior bundle, but separate filesystem
+    renames cannot provide crash-atomic multi-file publication.
+    """
     staged = {}
     backups = {}
     published = set()
@@ -192,7 +198,7 @@ def export_points_ply(positions: np.ndarray, path: str,
 
 
 def export_frame(solver, base_path: str) -> list:
-    """Export current frame surface + particles + whitewater next to base."""
+    """Export one validated frame bundle with rollback on ordinary failures."""
     _require_existing_parent(base_path)
     host = _host_frame(solver)
     artifacts = []

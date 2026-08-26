@@ -46,6 +46,7 @@ def test_effect_stack_exposes_expected_artist_actions():
         "fluidsim.effect_refresh_status",
     ):
         assert operator_id in source
+    assert "Select an effect first" in source
 
 
 def test_artist_mode_hides_raw_kernel_plumbing():

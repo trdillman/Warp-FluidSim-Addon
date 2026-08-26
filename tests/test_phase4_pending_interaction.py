@@ -395,6 +395,46 @@ def test_apply_reinitialize_with_no_pending_is_a_noop(monkeypatch):
     assert sess.solver is solver
 
 
+def test_pending_presentation_owns_reset_and_reinitialize_copy(monkeypatch):
+    bridge = _bridge(monkeypatch)
+
+    reset_scene = SimpleNamespace(
+        fluidsim_pending_action="RESET_PENDING",
+        fluidsim_pending_count=1,
+        fluidsim_pending_reasons="Reset: flip_ratio",
+        fluidsim_pending_blocked="",
+    )
+    reset = bridge.pending.pending_presentation(reset_scene)
+    assert reset["summary"] == "1 change(s) staged for reset"
+    assert reset["reason_detail"] == "will apply after reset"
+    assert reset["action_label"] == "Reset Now"
+    assert reset["action_operator"] == "fluidsim.apply_pending_reset"
+
+    reinitialize_scene = SimpleNamespace(
+        fluidsim_pending_action="REINIT_PENDING",
+        fluidsim_pending_count=2,
+        fluidsim_pending_reasons=(
+            "Reinitialize: voxel_size\nReinitialize: max_particles"),
+        fluidsim_pending_blocked="",
+    )
+    reinitialize = bridge.pending.pending_presentation(reinitialize_scene)
+    assert reinitialize["summary"] == (
+        "2 change(s) staged to reinitialize the solver")
+    assert reinitialize["reason_detail"] == (
+        "will apply when the solver is reinitialized")
+    assert reinitialize["action_label"] == "Reinitialize Now"
+    assert reinitialize["action_operator"] == (
+        "fluidsim.apply_pending_reinitialize")
+
+    reset_copy = " ".join((
+        reset["summary"], reset["reason_detail"], reset["action_label"]))
+    reinitialize_copy = " ".join((
+        reinitialize["summary"], reinitialize["reason_detail"],
+        reinitialize["action_label"]))
+    assert "restart" not in reset_copy.lower()
+    assert "restart" not in reinitialize_copy.lower()
+
+
 def test_revert_never_changes_device_preferences(monkeypatch):
     bridge = _bridge(monkeypatch)
     prefs = SimpleNamespace(device="cuda:0")
