@@ -61,7 +61,7 @@ def _scene(frame, *, catchup=8):
     )
 
 
-def _live_session(scene_bridge, *, last_frame):
+def _live_session(scene_bridge, scene, *, last_frame):
     """A Session that reports active, with the solver and sync stubbed out.
 
     ``handle_frame_change`` decides *how many* steps a frame change is worth
@@ -70,6 +70,7 @@ def _live_session(scene_bridge, *, last_frame):
     """
     sess = scene_bridge.Session()
     sess.solver = object()  # Session.active is `self.solver is not None`
+    sess.scene_identity = scene_bridge._scene_identity(scene)
     sess.start_frame = 1
     sess.last_frame = last_frame
     steps = []
@@ -87,9 +88,10 @@ def test_dropped_playback_frames_step_the_whole_gap_at_the_right_indices(
     because ``write_frame`` keys on the timeline index, not the solver's.
     """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    sess, steps = _live_session(scene_bridge, last_frame=3)
+    scene = _scene(7)
+    sess, steps = _live_session(scene_bridge, scene, last_frame=3)
 
-    scene_bridge.playback.handle_frame_change(sess, _scene(7), None)
+    scene_bridge.playback.handle_frame_change(sess, scene, None)
 
     assert steps == [4, 5, 6, 7]
     assert sess.last_frame == 7
@@ -100,7 +102,7 @@ def test_topology_capacity_refusal_pauses_without_releasing_live_solver(monkeypa
     from fluidSim_warp_blender51.sim.fields import TopologyCapacityError
 
     scene = _scene(4)
-    sess, _steps = _live_session(scene_bridge, last_frame=3)
+    sess, _steps = _live_session(scene_bridge, scene, last_frame=3)
     old_solver = sess.solver
     releases = []
     sess.release = lambda *args, **kwargs: releases.append((args, kwargs))
@@ -126,9 +128,10 @@ def test_first_frame_of_a_fresh_session_is_a_single_step(monkeypatch):
     timeline position and the first frame change bursts a full catch-up.
     """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    sess, steps = _live_session(scene_bridge, last_frame=-1)
+    scene = _scene(5)
+    sess, steps = _live_session(scene_bridge, scene, last_frame=-1)
 
-    scene_bridge.playback.handle_frame_change(sess, _scene(5), None)
+    scene_bridge.playback.handle_frame_change(sess, scene, None)
 
     assert steps == [5]
 
@@ -141,8 +144,8 @@ def test_a_jump_past_the_catchup_bound_reports_desync_and_takes_no_step(
     UI; taking one step instead silently desyncs. The bound picks neither.
     """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-    sess, steps = _live_session(scene_bridge, last_frame=3)
     scene = _scene(50)
+    sess, steps = _live_session(scene_bridge, scene, last_frame=3)
 
     scene_bridge.playback.handle_frame_change(sess, scene, None)
 
@@ -159,14 +162,16 @@ def test_the_catchup_bound_is_the_scene_property_not_a_constant(monkeypatch):
     """The bound is user-facing, so the handler must read it per scene."""
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
-    sess, steps = _live_session(scene_bridge, last_frame=3)
+    scene = _scene(20, catchup=2)
+    sess, steps = _live_session(scene_bridge, scene, last_frame=3)
     scene_bridge.playback.handle_frame_change(
-        sess, _scene(20, catchup=2), None)
+        sess, scene, None)
     assert steps == []
 
-    sess, steps = _live_session(scene_bridge, last_frame=3)
+    scene = _scene(20, catchup=32)
+    sess, steps = _live_session(scene_bridge, scene, last_frame=3)
     scene_bridge.playback.handle_frame_change(
-        sess, _scene(20, catchup=32), None)
+        sess, scene, None)
     assert steps == list(range(4, 21))
 
 
@@ -198,6 +203,7 @@ def test_step_never_implicitly_writes_legacy_cache(monkeypatch):
     sess.solver = SimpleNamespace(
         frame=9, sourcing=None, step_frame=lambda: stats)
     scene = _scene(9)
+    sess.scene_identity = scene_bridge._scene_identity(scene)
     scene.fluidsim.cache_enabled = True
 
     sess.step(scene, timeline_frame=4)
@@ -216,7 +222,7 @@ def test_unregister_handlers_releases_the_session(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     released = []
     monkeypatch.setattr(
-        scene_bridge.Session, "release",
+        scene_bridge.Session, "force_release",
         lambda self, *args, **kwargs: released.append(True))
     handlers = sys.modules["bpy"].app.handlers.frame_change_post
 
