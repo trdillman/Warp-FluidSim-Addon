@@ -35,6 +35,21 @@ class FakeWarp:
         return 12090
 
 
+def test_cached_probe_repairs_blender_gui_streams_that_disappear(monkeypatch):
+    monkeypatch.setattr(warp_runtime, "_import_warp", lambda: FakeWarp)
+    assert warp_runtime.probe_runtime(force=True).available is True
+
+    monkeypatch.setattr(warp_runtime.sys, "stdout", None)
+    monkeypatch.setattr(warp_runtime.sys, "stderr", None)
+
+    assert warp_runtime.probe_runtime().available is True
+
+    assert warp_runtime.sys.stdout.write("Warp info\n") == 10
+    assert warp_runtime.sys.stderr.write("Warp error\n") == 11
+    assert warp_runtime.sys.stdout.closed is False
+    assert warp_runtime.sys.stderr.closed is False
+
+
 def test_probe_reports_cuda_devices(monkeypatch):
     monkeypatch.setattr(warp_runtime, "_import_warp", lambda: FakeWarp)
     probe = warp_runtime.probe_runtime(force=True)

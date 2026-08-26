@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import os
+import sys
 from typing import Any
 
 EXPECTED_WARP_VERSION = "1.16.0"
 _UNAVAILABLE_DEVICE_ID = "__unavailable__"
+_DEVNULL_STREAM = None
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,23 @@ class RuntimeProbe:
     last_error: str = ""
 
 
+def ensure_host_streams() -> None:
+    """Give console-less Blender GUI sessions safe text output streams."""
+    global _DEVNULL_STREAM
+
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    if _DEVNULL_STREAM is None or _DEVNULL_STREAM.closed:
+        _DEVNULL_STREAM = open(  # noqa: SIM115 - process-lifetime stream
+            os.devnull, "w", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = _DEVNULL_STREAM
+    if sys.stderr is None:
+        sys.stderr = _DEVNULL_STREAM
+
+
 def _import_warp():
+    ensure_host_streams()
     import warp as wp
 
     return wp
@@ -133,6 +152,7 @@ def _cached_probe() -> RuntimeProbe:
 
 def probe_runtime(*, force: bool = False) -> RuntimeProbe:
     """Return the cached Warp/CUDA probe, optionally refreshing it."""
+    ensure_host_streams()
     if force:
         _cached_probe.cache_clear()
     return _cached_probe()
