@@ -963,7 +963,10 @@ def _on_interaction_state_update(*args):
 
 @persistent
 def _on_load_pre(_filepath):
-    session().release()
+    from . import playback
+
+    playback.clear_cache_cursors()
+    session().force_release()
     _INTERACTION_STATES.clear()
 
 

@@ -191,7 +191,9 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        _bridge().release_session()
+        if not _bridge().release_session(context.scene):
+            self.report({"WARNING"}, "Another scene owns the live solver")
+            return {"CANCELLED"}
         context.scene.fluidsim.status = "Solver released"
         return {"FINISHED"}
 
@@ -1718,11 +1720,12 @@ class _FLUIDSIM_OT_production_bake_modal:
                     int(fs.bake_end),
                     restart=bool(self.restart_existing),
                 )
+            controller.reserve_cache_path(backend.cache_path(scene))
+            production_bake.register_active_bake(scene, controller)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Production bake could not start: {exc}")
             return {"CANCELLED"}
         self._controller = controller
-        production_bake.register_active_bake(scene, controller)
         _ACTIVE_BAKE = controller
         _update_bake_rna(scene, controller)
         window_manager = context.window_manager

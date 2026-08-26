@@ -71,6 +71,11 @@ class BakeController:
         self._resume = False
         self._restart = False
         self._cancel_requested = False
+        self._reserved_cache_path: Path | None = None
+
+    def reserve_cache_path(self, path: Path | str) -> None:
+        """Reserve the resolved intended cache path before backend initialization."""
+        self._reserved_cache_path = Path(path).resolve()
 
     def start(self, scene, start: int, end: int, *, restart: bool = False) -> None:
         if self.status in {
@@ -218,16 +223,35 @@ class BakeController:
 
 
 _ACTIVE_BAKES: dict[int, BakeController] = {}
+_ACTIVE_STATUSES = {
+    BakeStatus.PREFLIGHT,
+    BakeStatus.INITIALIZING,
+    BakeStatus.RUNNING,
+    BakeStatus.CANCELLING,
+}
 
 
 def _scene_key(scene) -> int:
     pointer = getattr(scene, "as_pointer", None)
     if callable(pointer):
         try:
-            return int(pointer())
+            value = int(pointer())
+            if value:
+                return value
         except (ReferenceError, TypeError, ValueError):
             pass
     return id(scene)
+
+
+def _active_cache_path(controller) -> Path | None:
+    if getattr(controller, "status", None) not in _ACTIVE_STATUSES:
+        return None
+    reserved = getattr(controller, "_reserved_cache_path", None)
+    if reserved is not None:
+        return Path(reserved).resolve()
+    backend = getattr(controller, "backend", None)
+    base_dir = getattr(backend, "base_dir", None)
+    return None if base_dir is None else Path(base_dir).resolve()
 
 
 def register_active_bake(scene, controller: BakeController) -> None:
@@ -236,6 +260,12 @@ def register_active_bake(scene, controller: BakeController) -> None:
     existing = _ACTIVE_BAKES.get(key)
     if existing is not None and existing is not controller:
         raise RuntimeError("A Production Bake is already active for this scene")
+    intended_path = _active_cache_path(controller)
+    if intended_path is not None:
+        for owner in tuple(_ACTIVE_BAKES.values()):
+            if owner is not controller and _active_cache_path(owner) == intended_path:
+                raise RuntimeError(
+                    f"Production Bake cache path is already active: {intended_path}")
     _ACTIVE_BAKES[key] = controller
 
 
@@ -261,6 +291,15 @@ def clear_active_bake(scene, controller: BakeController | None = None) -> None:
     if existing is None or (controller is not None and existing is not controller):
         return
     _ACTIVE_BAKES.pop(key, None)
+
+
+def cache_path_is_active(path: Path | str) -> bool:
+    """Whether a registered running bake owns the resolved cache directory."""
+    candidate = Path(path).resolve()
+    return any(
+        _active_cache_path(controller) == candidate
+        for controller in tuple(_ACTIVE_BAKES.values())
+    )
 
 
 class ProductionBakeBackend:

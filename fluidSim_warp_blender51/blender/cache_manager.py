@@ -43,6 +43,18 @@ class CacheInspection:
         return not (self.missing_files or self.corrupt_files)
 
 
+def assert_cache_path_mutable(path: Path | str) -> Path:
+    """Return a resolved cache path or reject one owned by Production Bake."""
+    path = Path(path).expanduser().resolve()
+    from . import production_bake
+
+    if production_bake.cache_path_is_active(path):
+        raise RuntimeError(
+            "Production Bake is actively writing this cache; wait for the "
+            "bake to finish or cancel before changing cache files")
+    return path
+
+
 def is_managed_cache_directory(path: Path | str) -> bool:
     """Return whether ``path`` contains only recognizable FluidSim cache state.
 
@@ -210,6 +222,7 @@ def inspect_cache(path: Path | str) -> CacheInspection:
 
 
 def remove_orphans(path: Path | str) -> tuple[str, ...]:
+    assert_cache_path_mutable(path)
     inspection = inspect_cache(path)
     removed: list[str] = []
     base = Path(inspection.path)
@@ -225,7 +238,7 @@ def remove_orphans(path: Path | str) -> tuple[str, ...]:
 
 def free_cache(path: Path | str) -> Path | None:
     """Rename on the same volume before deletion; return retained trash on failure."""
-    path = Path(path).expanduser().resolve()
+    path = assert_cache_path_mutable(path)
     if not path.exists():
         return None
     path = _require_managed_cache_directory(path)
@@ -261,8 +274,8 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
 
 def move_cache(source: Path | str, destination: Path | str) -> Path:
     """Copy, verify, atomically publish, then remove the source."""
-    source = Path(source).expanduser().resolve()
-    destination = Path(destination).expanduser().resolve()
+    source = assert_cache_path_mutable(source)
+    destination = assert_cache_path_mutable(destination)
     if not source.is_dir():
         raise FileNotFoundError(f"cache source does not exist: {source}")
     source = _require_managed_cache_directory(source)
@@ -293,9 +306,11 @@ def validate_leaf_name(name: str) -> str:
 
 
 def rename_cache(path: Path | str, name: str) -> Path:
+    path = assert_cache_path_mutable(path)
     path = _require_managed_cache_directory(path)
     name = validate_leaf_name(name)
     destination = path.with_name(name)
+    assert_cache_path_mutable(destination)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
     os.replace(path, destination)

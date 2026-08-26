@@ -674,6 +674,7 @@ def test_live_solver_settings_apply_without_resetting_particle_state(monkeypatch
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
@@ -697,6 +698,7 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
@@ -751,6 +753,7 @@ def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
         use_gravity=True,
         gravity=(0.0, 0.0, -4.0),
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
     assert settings.gravity == (0.0, 0.0, -4.0)
@@ -884,6 +887,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
 
     sess.reset(scene, depsgraph=depsgraph)
 
@@ -923,6 +927,7 @@ def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
+    sess.scene_identity = id(scene)
     assert _pending_module()._apply_realtime_solver_settings(scene, sess)
 
     started = time.perf_counter()
@@ -946,6 +951,7 @@ def test_live_property_lifecycle_initializes_once_and_updates_status(monkeypatch
     def fake_initialize(scene_arg):
         init_calls.append(scene_arg)
         sess.solver = object()
+        sess.scene_identity = id(scene_arg)
         return sess
 
     monkeypatch.setattr(sess, "initialize", fake_initialize)
@@ -1011,6 +1017,7 @@ def test_frame_change_solver_error_disables_live_and_releases_session(monkeypatc
     )
     sess = scene_bridge.session()
     sess.solver = object()
+    sess.scene_identity = id(scene)
     sess.start_frame = 1
     sess.last_frame = 1
 
@@ -1203,6 +1210,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         status="",
     )
     scene = SimpleNamespace(fluidsim=fs)
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.SURFACE)
 
@@ -1239,6 +1247,7 @@ def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):
     scene = SimpleNamespace(
         fluidsim=SimpleNamespace(whitewater_enabled=False, status="")
     )
+    sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.WHITEWATER)
 
@@ -1295,12 +1304,14 @@ def test_clear_error_operator_resets_session_and_scene_error(monkeypatch):
 
 
 
-def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
+def test_modal_bake_registers_and_clears_deep_production_ownership(
+        monkeypatch, tmp_path):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
     from fluidSim_warp_blender51.blender import production_bake
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        cache_path=str(tmp_path / "cache"),
         checkpoint_interval=1,
         cache_compress=False,
         bake_start=1,
@@ -1323,6 +1334,7 @@ def test_modal_bake_registers_and_clears_deep_production_ownership(monkeypatch):
 
     assert operator.execute(context) == {"RUNNING_MODAL"}
     assert production_bake.active_bake(scene) is operator._controller
+    assert production_bake.cache_path_is_active(tmp_path / "cache")
 
     operator._controller.status = production_bake.BakeStatus.COMPLETE
     operator._controller.message = "Production bake complete"
