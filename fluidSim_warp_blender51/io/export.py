@@ -71,14 +71,18 @@ def _write_surface_obj(path: str, payload) -> None:
 def _points_payload(positions: np.ndarray,
                     velocities: np.ndarray | None = None):
     positions = np.asarray(positions)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("positions must have shape (N, 3)")
     with np.errstate(over="ignore", invalid="ignore"):
         positions = np.ascontiguousarray(positions, dtype=np.float32)
     if not np.isfinite(positions).all():
         raise ValueError("positions must be finite")
 
-    has_vel = velocities is not None and len(velocities) == len(positions)
+    has_vel = velocities is not None
     if has_vel:
         velocities = np.asarray(velocities)
+        if velocities.ndim != 2 or velocities.shape != positions.shape:
+            raise ValueError("velocities must match positions shape (N, 3)")
         with np.errstate(over="ignore", invalid="ignore"):
             velocities = np.ascontiguousarray(velocities, dtype=np.float32)
         if not np.isfinite(velocities).all():

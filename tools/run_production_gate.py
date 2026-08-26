@@ -11,6 +11,8 @@ Control surface
 - Default: headless/background validation only, ending in HEADLESS-GATE-PASS.
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
+- --no-rebuild-demos: validate the existing tracked demos without invoking the
+  demo builder. This preserves user-owned demo bytes in dirty checkouts.
 - BLENDER_EXE, BLENDER_PY, and PYTEST_PATH override runtime resolution.
 
 Debug surface
@@ -142,7 +144,8 @@ def _git_text(*args):
         return f"unavailable: {exc}"
 
 
-def _print_gate_metadata(blender_exe, blender_py, include_gui):
+def _print_gate_metadata(
+        blender_exe, blender_py, include_gui, no_rebuild_demos=False):
     status = _git_text("status", "--porcelain")
     ignored = _git_text("ls-files", "-ci", "--exclude-standard")
     print("\n== gate metadata ==")
@@ -153,6 +156,9 @@ def _print_gate_metadata(blender_exe, blender_py, include_gui):
     print(f"blender_exe: {blender_exe}")
     print(f"blender_py: {blender_py}")
     print(f"gui_acceptance: {'included' if include_gui else 'not-run-headless-gate'}")
+    print(
+        "demo_build_policy: "
+        f"{'existing-only' if no_rebuild_demos else 'rebuild-canonical'}")
 
 
 def _clear_gate_manifest():
@@ -195,6 +201,12 @@ def main(argv=None):
         action="store_true",
         help="also run tests/blender_gui_acceptance.py and report full production proof",
     )
+    parser.add_argument(
+        "--no-rebuild-demos",
+        action="store_true",
+        help=("skip canonical demo rebuilding while retaining demo analysis "
+              "and saved-blend checks"),
+    )
     args = parser.parse_args(argv)
     blender_exe = os.environ.get("BLENDER_EXE", DEFAULT_BLENDER_EXE)
     blender_py = os.environ.get("BLENDER_PY", DEFAULT_BLENDER_PY)
@@ -202,7 +214,8 @@ def main(argv=None):
     env = _env()
 
     _clear_gate_manifest()
-    _print_gate_metadata(blender_exe, blender_py, include_gui)
+    _print_gate_metadata(
+        blender_exe, blender_py, include_gui, args.no_rebuild_demos)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()
@@ -210,6 +223,7 @@ def main(argv=None):
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
         "tools/profile_user_path.py",
+        "tools/profile_species_transport.py",
         "tools/analyze_demos.py",
         "tools/build_demo_scenes.py",
         "tools/check_demo_blends.py",
@@ -222,6 +236,7 @@ def main(argv=None):
         "tests/blender_phase3_source_ui_acceptance.py",
         "tests/blender_capacity_planner_acceptance.py",
         "tests/blender_simulation_admission_acceptance.py",
+        "tests/blender_species_transport_acceptance.py",
         "tests/blender_closed_domain_stability_acceptance.py",
         "tests/blender_phase3_profile_safe_review.py",
         "tests/blender_phase4_live_interaction_acceptance.py",
@@ -285,16 +300,17 @@ def main(argv=None):
          "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
          os.path.abspath("artifacts/capacity_planner_acceptance.json")],
         reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
-    for scene_name in CANONICAL_DEMO_SCENES:
-        _run(f"demo cache build {scene_name}", [
-            blender_exe,
-            "--background",
-            "--factory-startup",
-            "--python",
-            "tools/build_demo_scenes.py",
-            "--",
-            scene_name,
-        ], reject_output=True, expect_marker="DEMO-BUILD-PASS")
+    if not args.no_rebuild_demos:
+        for scene_name in CANONICAL_DEMO_SCENES:
+            _run(f"demo cache build {scene_name}", [
+                blender_exe,
+                "--background",
+                "--factory-startup",
+                "--python",
+                "tools/build_demo_scenes.py",
+                "--",
+                scene_name,
+            ], reject_output=True, expect_marker="DEMO-BUILD-PASS")
     _run(
         "demo analysis", [blender_py, "tools/analyze_demos.py"], env=env,
         expect_marker="DEMO-ANALYSIS-PASS (18/18)")

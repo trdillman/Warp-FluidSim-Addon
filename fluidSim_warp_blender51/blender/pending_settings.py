@@ -104,6 +104,7 @@ _OUTPUT_REGISTRY_FIELDS = frozenset({
     "whitewater_attribute_mode", "whitewater_display_scale",
     "surface_material", "particle_material", "whitewater_material",
     "output_collection_name", "show_overlay",
+    "surface_attribute_species", "particles_attribute_species",
 })
 _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_enabled", "particle_radius_scale",
@@ -121,6 +122,7 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+    "species_diffusivity", "species_max_diffusion_substeps",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",
@@ -129,6 +131,10 @@ _RESET_REGISTRY_FIELDS = frozenset({
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
+    "species_enabled", "species_count", "species_id_a", "species_id_b",
+    "species_preview_swatch_a", "species_preview_swatch_b",
+    "species_absorption_a", "species_absorption_b",
+    "species_reference_path_length",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "snippets", "active_snippet", "snippet_library_selection",
@@ -232,6 +238,7 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+    "species_diffusivity", "species_max_diffusion_substeps",
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime",
 })
 
@@ -253,6 +260,10 @@ _SURFACE_SETTING_FIELDS = frozenset({
 _REINIT_SETTING_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles",
     "max_whitewater", "profiling_enabled", "profiling_sync",
+    "species_enabled", "species_count", "species_id_a", "species_id_b",
+    "species_preview_swatch_a", "species_preview_swatch_b",
+    "species_absorption_a", "species_absorption_b",
+    "species_reference_path_length",
 })
 _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
     "height_enabled", "height_base", "height_back_mode",
@@ -262,6 +273,7 @@ _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
 _RESET_OBJECT_FIELDS = frozenset({
     "role", "point_source_representation", "mesh_evaluation_mode",
     "emission_mode", "auto_inject_seed",
+    "species_concentration",
 })
 
 

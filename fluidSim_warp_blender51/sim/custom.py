@@ -133,15 +133,27 @@ def _add_target_names(tgt, names):
             _add_target_names(elt, names)
 
 
-def _collect_assigned_names(tree: ast.AST):
-    names = set()
+def _first_assignment_positions(tree: ast.AST):
+    """Return the source position after the first binding of each local."""
+    positions = {}
     for node in ast.walk(tree):
+        targets = []
         if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                _add_target_names(tgt, names)
+            targets = node.targets
         elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For)):
-            _add_target_names(node.target, names)
-    return names
+            targets = [node.target]
+        names = set()
+        for target in targets:
+            _add_target_names(target, names)
+        if not names:
+            continue
+        position = (
+            getattr(node, "end_lineno", node.lineno),
+            getattr(node, "end_col_offset", node.col_offset),
+        )
+        for name in names:
+            positions[name] = min(positions.get(name, position), position)
+    return positions
 
 
 def _suggest(name: str, candidates):
@@ -272,7 +284,8 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
     issues.extend(_field_permission_issues(tree, field_permissions))
 
     allowed = context_names(run_over) | set(arg_names)
-    assigned = _collect_assigned_names(tree)
+    first_assignments = _first_assignment_positions(tree)
+    assigned = set(first_assignments)
     known_all = sorted(allowed | set(KNOWN_FIELDS))
 
     for node in ast.walk(tree):
@@ -294,7 +307,10 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
                         f"attribute access '.{node.attr}' is only allowed on "
                         f"wp.* and C.*"))
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id not in allowed and node.id not in assigned:
+            if (node.id not in allowed
+                    and (node.id not in assigned
+                         or (node.lineno, node.col_offset)
+                         < first_assignments[node.id])):
                 extra = ""
                 if node.id in KNOWN_FIELDS:
                     extra = (" - it is a known solver field; declare it as a "
@@ -303,6 +319,16 @@ def validate_snippet(code: str, run_over: str = "VOXEL_LINEAR",
                     extra = _suggest(node.id, known_all)
                 issues.append(Issue(
                     "ERROR", node.lineno, f"unknown name '{node.id}'{extra}"))
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+            position = (
+                getattr(node, "end_lineno", node.lineno),
+                getattr(node, "end_col_offset", node.col_offset),
+            )
+            if name not in allowed and first_assignments.get(name) == position:
+                issues.append(Issue(
+                    "ERROR", node.lineno,
+                    f"unknown name '{name}' before augmented assignment"))
         elif isinstance(node, ast.Call) and node.keywords:
             issues.append(Issue(
                 "WARNING", node.lineno,

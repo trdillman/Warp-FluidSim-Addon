@@ -182,7 +182,10 @@ def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.2
 
         cur = float(current[name])
         base = float(baseline[name])
-        rel = abs(cur - base) / base if base else 0.0
+        # A zero baseline only matches another zero.  Previously every current
+        # value had a zero relative delta and false performance passes.
+        rel = (abs(cur - base) / abs(base) if base
+               else (0.0 if cur == 0.0 else float("inf")))
         ok = rel <= perf_tolerance
         report["performance"][name] = {
             "current": cur,

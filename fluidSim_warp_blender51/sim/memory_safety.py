@@ -24,6 +24,7 @@ WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
 TOPOLOGY_BYTES_PER_LEAF_CELL = 16
 # Live and candidate vec3i coordinate arrays.
 TOPOLOGY_COORD_BYTES_PER_LEAF = 24
+SPECIES_CACHE_BYTES_PER_PARTICLE = 4 + 16
 
 
 def release_cuda_memory(device_name: str | None) -> None:
@@ -219,6 +220,27 @@ def _surface_dense_voxels(settings, h: float) -> int:
     return int(dims[0] * dims[1] * dims[2])
 
 
+def estimate_species_transport_bytes(settings) -> int:
+    """Exact persistent and scratch device demand of species transport."""
+    if not bool(_value(settings, "species_enabled", False)):
+        return 0
+    from .species import SpeciesTransport
+
+    leaf_cells = _domain_leaf_cells(settings)
+    leaves = min(max(1, int(_value(settings, "leaf_capacity", 8192))), leaf_cells)
+    particles = max(0, int(_value(settings, "max_particles", 0)))
+    return int(SpeciesTransport.estimate_bytes(
+        particles, leaves * LEAF_VOLUME, True))
+
+
+def estimate_species_cache_staging_bytes(settings) -> int:
+    """Peak represented-volume and concentration cache staging demand."""
+    if not bool(_value(settings, "species_enabled", False)):
+        return 0
+    particles = max(0, int(_value(settings, "max_particles", 0)))
+    return particles * SPECIES_CACHE_BYTES_PER_PARTICLE
+
+
 def estimate_solver_bytes(settings) -> int:
     """Return a deliberately conservative peak-device-memory estimate."""
     leaf_cells = _domain_leaf_cells(settings)
@@ -250,6 +272,8 @@ def estimate_solver_bytes(settings) -> int:
             max(1, int(_value(settings, "leaf_capacity", 8192))) * scale)))
         estimate += render_leaves * LEAF_VOLUME * RENDER_BYTES_PER_VOXEL
         estimate += render_leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
+    estimate += estimate_species_transport_bytes(settings)
+    estimate += estimate_species_cache_staging_bytes(settings)
     return int(estimate)
 
 
@@ -271,6 +295,10 @@ def recommend_safe_settings(
         "surface_max_dense_dim": int(_value(settings, "surface_max_dense_dim", 256)),
         "surface_enabled": bool(_value(settings, "surface_enabled", True)),
         "surface_voxel_size": float(_value(settings, "surface_voxel_size", 0.0)),
+        "species_enabled": bool(_value(settings, "species_enabled", False)),
+        "species_diffusivity": float(_value(settings, "species_diffusivity", 0.0)),
+        "species_max_diffusion_substeps": int(_value(
+            settings, "species_max_diffusion_substeps", 16)),
         "domain_min": tuple(_value(settings, "domain_min", (-2.0, -2.0, 0.0))),
         "domain_max": tuple(_value(settings, "domain_max", (2.0, 2.0, 4.0))),
     }

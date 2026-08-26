@@ -15,6 +15,17 @@ def test_phase_slots_are_complete_and_unique():
     assert len(TIMER_PHASE_SLOTS) == len(set(TIMER_PHASE_SLOTS))
 
 
+def test_species_has_a_canonical_phase_slot_without_advection_aliasing():
+    assert TIMER_PHASE_SLOTS["species"] == 7
+    assert "advection" not in TIMER_PHASE_SLOTS
+
+    profiler = Profiler(device="cpu", sync=False)
+    profiler._wp = SimpleNamespace()
+    with profiler.track("species"):
+        pass
+    assert profiler.frame.timers["compute_7"] >= 0.0
+
+
 def test_unknown_profiler_phase_fails_instead_of_using_misc_slot():
     profiler = Profiler(device="cpu", sync=False)
     profiler._wp = SimpleNamespace()
@@ -22,6 +33,16 @@ def test_unknown_profiler_phase_fails_instead_of_using_misc_slot():
     with pytest.raises(KeyError, match="unknown profiler phase"):
         with profiler.track("typo"):
             pass
+
+
+def test_unknown_named_track_and_nonpositive_summary_window_fail_closed():
+    profiler = Profiler(device="cpu", sync=False)
+
+    with pytest.raises(KeyError, match="unknown profiler track"):
+        with profiler.track_track("typo"):
+            pass
+    with pytest.raises(ValueError, match="last_n must be positive"):
+        profiler.summary(0)
 
 
 def test_profile_tool_derives_labels_from_canonical_slots():

@@ -50,6 +50,24 @@ from .registry import register_fn
 from .attributes import normalize_color, stable_source_id
 
 
+def _normalize_species_concentration(value):
+    """Validate the two-species simplex at the deepest host sourcing seam."""
+    try:
+        result = tuple(float(component) for component in value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "species concentration must contain four finite lanes") from exc
+    if len(result) != 4 or not np.all(np.isfinite(result)):
+        raise ValueError("species concentration must contain four finite lanes")
+    if result[0] < 0.0 or result[1] < 0.0:
+        raise ValueError("species concentration active lanes must be nonnegative")
+    if result[0] + result[1] > 1.0:
+        raise ValueError("species concentration must remain in the simplex")
+    if result[2] != 0.0 or result[3] != 0.0:
+        raise ValueError("species concentration unused lanes must be zero")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Blend helper (BlendMode: 0 Add, 1 Replace, 2 Maximum, 3 Pull, 4 Blend)
 # ---------------------------------------------------------------------------
@@ -117,6 +135,7 @@ class SourceShape:
     viscosity: wp.float32
     density: wp.float32
     color: wp.vec4
+    species_concentration: wp.vec4
     source_numeric_id: wp.int32
     life_min: wp.float32
     life_max: wp.float32
@@ -150,6 +169,7 @@ class MeshSource:
     viscosity: wp.float32
     density: wp.float32
     color: wp.vec4
+    species_concentration: wp.vec4
     source_numeric_id: wp.int32
     life_min: wp.float32
     life_max: wp.float32
@@ -185,6 +205,7 @@ class SourceShapeDesc:
     viscosity: float = 0.0
     density: float = 1.0
     color: tuple = (0.1, 0.45, 1.0, 1.0)
+    species_concentration: tuple = (0.0, 0.0, 0.0, 0.0)
     source_numeric_id: int = 0
     life_min: float = 1.0e30
     life_max: float = 1.0e30
@@ -192,6 +213,10 @@ class SourceShapeDesc:
     emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
     source_id: str = ""
     runtime_source_key: str = ""
+
+    def __post_init__(self):
+        self.species_concentration = _normalize_species_concentration(
+            self.species_concentration)
 
     def aabb(self):
         """Return a conservative world AABB for topology marking."""
@@ -236,6 +261,7 @@ class SourceShapeDesc:
         shape.viscosity = float(self.viscosity)
         shape.density = float(self.density)
         shape.color = wp.vec4(*normalize_color(self.color))
+        shape.species_concentration = wp.vec4(*self.species_concentration)
         shape.source_numeric_id = int(
             self.source_numeric_id or stable_source_id(self.source_id))
         shape.life_min = float(self.life_min)
@@ -270,6 +296,7 @@ class MeshSourceDesc:
     viscosity: float = 0.0
     density: float = 1.0
     color: tuple = (0.1, 0.45, 1.0, 1.0)
+    species_concentration: tuple = (0.0, 0.0, 0.0, 0.0)
     source_numeric_id: int = 0
     life_min: float = 1.0e30
     life_max: float = 1.0e30
@@ -281,6 +308,10 @@ class MeshSourceDesc:
     evaluation_cadence: int = SourceEvaluationCadence.FIRST_SIM_FRAME
     vertices: object = None
     triangles: object = None
+
+    def __post_init__(self):
+        self.species_concentration = _normalize_species_concentration(
+            self.species_concentration)
 
     @property
     def role(self):
@@ -326,6 +357,7 @@ class MeshSourceDesc:
         source.viscosity = float(self.viscosity)
         source.density = float(self.density)
         source.color = wp.vec4(*normalize_color(self.color))
+        source.species_concentration = wp.vec4(*self.species_concentration)
         source.source_numeric_id = int(
             self.source_numeric_id or stable_source_id(self.source_id))
         source.life_min = float(self.life_min)
@@ -352,7 +384,12 @@ class HeightSourceDesc:
     emission_mode: int = SourceEmissionMode.INITIAL_FILL
     source_id: str = "builtin:height"
     color: tuple = (0.1, 0.45, 1.0, 1.0)
+    species_concentration: tuple = (0.0, 0.0, 0.0, 0.0)
     source_numeric_id: int = 0
+
+    def __post_init__(self):
+        self.species_concentration = _normalize_species_concentration(
+            self.species_concentration)
 
 
 @wp.func
@@ -734,7 +771,7 @@ register_fn(k_source_shapes, "fluidSimSourceShapes",
 
 
 @wp.kernel
-def k_source_shapes_particles(
+def k_source_shapes_particles_species(
     shapes: wp.array(dtype=SourceShape),
     num_shapes: int,
     leaf_coords: wp.array(dtype=wp.vec3i),
@@ -745,6 +782,8 @@ def k_source_shapes_particles(
     seed: int,
     color_enabled: int,
     source_id_enabled: int,
+    species_enabled: int,
+    represented_volume_value: float,
     capacity: int,
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -755,6 +794,9 @@ def k_source_shapes_particles(
     density: wp.array(dtype=float),
     product_color: wp.array(dtype=wp.vec4),
     product_source_id: wp.array(dtype=wp.int32),
+    represented_volume: wp.array(dtype=float),
+    species_concentration: wp.array(dtype=wp.vec4),
+    species_source_amount: wp.array(dtype=float),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -812,6 +854,95 @@ def k_source_shapes_particles(
                 product_color[slot] = s.color
             if source_id_enabled != 0:
                 product_source_id[slot] = s.source_numeric_id
+            if species_enabled != 0:
+                represented_volume[slot] = represented_volume_value
+                species_concentration[slot] = s.species_concentration
+                wp.atomic_add(
+                    species_source_amount, 0,
+                    represented_volume_value * s.species_concentration[0])
+                wp.atomic_add(
+                    species_source_amount, 1,
+                    represented_volume_value * s.species_concentration[1])
+            time_offset[slot] = 0.0
+            alive[slot] = 1
+            wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_source_shapes_particles(
+    shapes: wp.array(dtype=SourceShape),
+    num_shapes: int,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    seed: int,
+    color_enabled: int,
+    source_id_enabled: int,
+    capacity: int,
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    age: wp.array(dtype=float),
+    life: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
+    time_offset: wp.array(dtype=float),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
+):
+    """Stable species-disabled analytic particle-emission ABI."""
+    if emission_state[1] == 0:
+        return
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    pw = voxel_center_world(ijk, origin, voxel_size)
+    for si in range(num_shapes):
+        s = shapes[si]
+        if s.enabled == 0 or s.stype != 0 or s.mode != 1:
+            continue
+        if s.emission_mode == 0 and s.armed == 0:
+            continue
+        if shape_sdf_world(s, pw) > 0.0:
+            continue
+        have = voxel_counts[tid]
+        want = int(s.emit_rate)
+        if want <= have:
+            continue
+        state = wp.rand_init(seed, tid * 31 + si)
+        for e in range(want - have):
+            slot = wp.atomic_add(count, 0, 1)
+            if slot >= capacity:
+                wp.atomic_sub(count, 0, 1)
+                emission_state[3] = 1
+                return
+            jitter = wp.vec3(
+                (wp.randf(state) - 0.5) * voxel_size,
+                (wp.randf(state) - 0.5) * voxel_size,
+                (wp.randf(state) - 0.5) * voxel_size,
+            )
+            p = pw + jitter
+            positions[slot] = p
+            velocities[slot] = shape_force_velocity(s, p)
+            age[slot] = 0.0
+            if s.use_lifespan != 0:
+                life[slot] = s.life_min + wp.randf(state) * (
+                    s.life_max - s.life_min)
+            else:
+                life[slot] = 1.0e30
+            temperature[slot] = s.temperature
+            viscosity[slot] = s.viscosity
+            density[slot] = s.density
+            if color_enabled != 0:
+                product_color[slot] = s.color
+            if source_id_enabled != 0:
+                product_source_id[slot] = s.source_numeric_id
             time_offset[slot] = 0.0
             alive[slot] = 1
             wp.atomic_add(emission_state, 2, 1)
@@ -819,6 +950,9 @@ def k_source_shapes_particles(
 
 register_fn(k_source_shapes_particles, "fluidSimSourceShapesParticlesAttributes",
             notes="Particle-mode emission with per-voxel top-up to emit_rate.")
+register_fn(k_source_shapes_particles_species,
+            "fluidSimSourceShapesParticlesSpecies",
+            notes="Species-aware analytic particle emission.")
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +1025,7 @@ register_fn(
 
 
 @wp.kernel
-def k_mesh_source_particles(
+def k_mesh_source_particles_species(
     mesh_id: wp.uint64,
     source: MeshSource,
     query_radius: float,
@@ -903,6 +1037,8 @@ def k_mesh_source_particles(
     seed: int,
     color_enabled: int,
     source_id_enabled: int,
+    species_enabled: int,
+    represented_volume_value: float,
     capacity: int,
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -913,6 +1049,9 @@ def k_mesh_source_particles(
     density: wp.array(dtype=float),
     product_color: wp.array(dtype=wp.vec4),
     product_source_id: wp.array(dtype=wp.int32),
+    represented_volume: wp.array(dtype=float),
+    species_concentration: wp.array(dtype=wp.vec4),
+    species_source_amount: wp.array(dtype=float),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -976,6 +1115,104 @@ def k_mesh_source_particles(
             product_color[slot] = source.color
         if source_id_enabled != 0:
             product_source_id[slot] = source.source_numeric_id
+        if species_enabled != 0:
+            represented_volume[slot] = represented_volume_value
+            species_concentration[slot] = source.species_concentration
+            wp.atomic_add(
+                species_source_amount, 0,
+                represented_volume_value * source.species_concentration[0])
+            wp.atomic_add(
+                species_source_amount, 1,
+                represented_volume_value * source.species_concentration[1])
+        time_offset[slot] = 0.0
+        alive[slot] = 1
+        wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_mesh_source_particles(
+    mesh_id: wp.uint64,
+    source: MeshSource,
+    query_radius: float,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    seed: int,
+    color_enabled: int,
+    source_id_enabled: int,
+    capacity: int,
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    age: wp.array(dtype=float),
+    life: wp.array(dtype=float),
+    temperature: wp.array(dtype=float),
+    viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float),
+    product_color: wp.array(dtype=wp.vec4),
+    product_source_id: wp.array(dtype=wp.int32),
+    time_offset: wp.array(dtype=float),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
+):
+    """Stable species-disabled mesh-particle emission ABI."""
+    if emission_state[1] == 0:
+        return
+    tid = wp.tid()
+    if (tid >= num_leaves[0] * C.LEAF_VOLUME or source.enabled == 0
+            or source.stype != 0 or source.mode != 1
+            or (source.emission_mode == 0 and source.armed == 0)):
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    center = voxel_center_world(ijk, origin, voxel_size)
+    half_diagonal = 0.8660254037844386 * voxel_size
+    shell = wp.max(source.surface_thickness, 0.0) + half_diagonal
+    projection_radius = wp.max(query_radius, shell + half_diagonal)
+    center_query = wp.mesh_query_point_no_sign(mesh_id, center, shell)
+    if not center_query.result:
+        return
+    center_closest = wp.mesh_eval_position(
+        mesh_id, center_query.face, center_query.u, center_query.v)
+    if wp.length(center - center_closest) > shell:
+        return
+    have = voxel_counts[tid]
+    want = int(source.emit_rate)
+    if want <= have:
+        return
+    state = wp.rand_init(seed, tid * 31)
+    for emit_index in range(want - have):
+        jitter = wp.vec3(
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+        )
+        query = wp.mesh_query_point_no_sign(
+            mesh_id, center + jitter, projection_radius)
+        if not query.result:
+            continue
+        slot = wp.atomic_add(count, 0, 1)
+        if slot >= capacity:
+            wp.atomic_sub(count, 0, 1)
+            emission_state[3] = 1
+            return
+        position = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        positions[slot] = position
+        velocities[slot] = mesh_source_force_velocity(source, position)
+        age[slot] = 0.0
+        if source.use_lifespan != 0:
+            life[slot] = source.life_min + wp.randf(state) * (
+                source.life_max - source.life_min)
+        else:
+            life[slot] = 1.0e30
+        temperature[slot] = source.temperature
+        viscosity[slot] = source.viscosity
+        density[slot] = source.density
+        if color_enabled != 0:
+            product_color[slot] = source.color
+        if source_id_enabled != 0:
+            product_source_id[slot] = source.source_numeric_id
         time_offset[slot] = 0.0
         alive[slot] = 1
         wp.atomic_add(emission_state, 2, 1)
@@ -985,6 +1222,11 @@ register_fn(
     k_mesh_source_particles,
     "fluidSimMeshSourceParticles",
     notes="Triangle-projected mesh emission with per-voxel top-up.",
+)
+register_fn(
+    k_mesh_source_particles_species,
+    "fluidSimMeshSourceParticlesSpecies",
+    notes="Species-aware triangle-projected mesh emission.",
 )
 
 
@@ -1165,6 +1407,9 @@ def k_source_owned_points(
     default_source_id: int,
     color_enabled: int,
     source_id_enabled: int,
+    species_enabled: int,
+    represented_volume_value: float,
+    default_species_concentration: wp.vec4,
     default_lifespan: float,
     use_lifespan: int,
     capacity: int,
@@ -1177,6 +1422,9 @@ def k_source_owned_points(
     density: wp.array(dtype=float),
     product_color: wp.array(dtype=wp.vec4),
     product_source_id: wp.array(dtype=wp.int32),
+    represented_volume: wp.array(dtype=float),
+    species_concentration: wp.array(dtype=wp.vec4),
+    species_source_amount: wp.array(dtype=float),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -1218,6 +1466,15 @@ def k_source_owned_points(
         product_color[slot] = default_color
     if source_id_enabled != 0:
         product_source_id[slot] = default_source_id
+    if species_enabled != 0:
+        represented_volume[slot] = represented_volume_value
+        species_concentration[slot] = default_species_concentration
+        wp.atomic_add(
+            species_source_amount, 0,
+            represented_volume_value * default_species_concentration[0])
+        wp.atomic_add(
+            species_source_amount, 1,
+            represented_volume_value * default_species_concentration[1])
     time_offset[slot] = 0.0
     alive[slot] = 1
     wp.atomic_add(result, 0, 1)
@@ -1908,6 +2165,9 @@ def k_emit_compiled_source_particles(
     source_id_value: int,
     color_enabled: int,
     source_id_enabled: int,
+    species_enabled: int,
+    represented_volume_value: float,
+    species_concentration_value: wp.vec4,
     life_value: float,
     use_lifespan: int,
     capacity: int,
@@ -1921,6 +2181,9 @@ def k_emit_compiled_source_particles(
     density: wp.array(dtype=float),
     product_color: wp.array(dtype=wp.vec4),
     product_source_id: wp.array(dtype=wp.int32),
+    represented_volume: wp.array(dtype=float),
+    species_concentration: wp.array(dtype=wp.vec4),
+    species_source_amount: wp.array(dtype=float),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
@@ -1966,6 +2229,15 @@ def k_emit_compiled_source_particles(
             product_color[slot] = color_value
         if source_id_enabled != 0:
             product_source_id[slot] = source_id_value
+        if species_enabled != 0:
+            represented_volume[slot] = represented_volume_value
+            species_concentration[slot] = species_concentration_value
+            wp.atomic_add(
+                species_source_amount, 0,
+                represented_volume_value * species_concentration_value[0])
+            wp.atomic_add(
+                species_source_amount, 1,
+                represented_volume_value * species_concentration_value[1])
         time_offset[slot] = 0.0
         alive[slot] = 1
         wp.atomic_add(voxel_counts, flat, 1)
@@ -2138,6 +2410,8 @@ class DirectInjectionPacket:
     viscosity: float = 0.0
     density: float = 1.0
     color: tuple[float, float, float, float] = (0.1, 0.45, 1.0, 1.0)
+    species_concentration: tuple[float, float, float, float] = (
+        0.0, 0.0, 0.0, 0.0)
     source_id: int = 0
     life: float = 0.0
     use_lifespan: bool = False
@@ -2148,6 +2422,9 @@ class DirectInjectionPacket:
         ).reshape((-1, 3))
         object.__setattr__(self, "positions", positions)
         object.__setattr__(self, "color", normalize_color(self.color))
+        object.__setattr__(
+            self, "species_concentration",
+            _normalize_species_concentration(self.species_concentration))
         source_id = int(self.source_id)
         if source_id < 0 or source_id > np.iinfo(np.int32).max:
             raise ValueError("source_id must fit a non-negative int32")
@@ -2195,6 +2472,9 @@ class SourcePipeline:
         # aggregate result is read after the whole source batch.
         self._emission_state = wp.zeros(
             5, dtype=wp.int32, device=self.device)
+        self._species_source_amount = (
+            wp.zeros(2, dtype=float, device=self.device)
+            if getattr(owner, "species", None) is not None else None)
         self._emission_scratch_counts = wp.zeros(
             max(1, int(getattr(owner.grid, "voxel_capacity",
                                getattr(owner, "_nvox", 1)))),
@@ -2247,6 +2527,9 @@ class SourcePipeline:
         self.last_post_p2g_apply_count = 0
         self._emission_transaction_active = False
         self._emission_pending_fired = set()
+        species_source_amount = getattr(self, "_species_source_amount", None)
+        if species_source_amount is not None:
+            species_source_amount.zero_()
         owner = getattr(self, "owner", None)
         particles = getattr(owner, "particles", None)
         self.last_apply_result = {
@@ -2255,6 +2538,53 @@ class SourcePipeline:
             "available": int(getattr(particles, "capacity", 0)),
             "admitted": True,
         }
+
+    def _begin_species_receipt(self):
+        """Capture the pre-birth budget once, before any source mutation."""
+        species = getattr(self.owner, "species", None)
+        if species is not None:
+            species.begin_frame()
+        return species
+
+    def has_particle_sinks(self):
+        """Whether this configured batch can stamp a particle sink mask."""
+        if any(getattr(plan, "operation", None) == SourceOperation.SINK
+               for plan in getattr(self, "plans", ())):
+            return True
+        return any(
+            bool(getattr(source, "enabled", True))
+            and int(getattr(source, "stype", -1)) == 2
+            for source in getattr(self, "sources", ())
+        )
+
+    def _represented_particle_volume(self):
+        species = getattr(self.owner, "species", None)
+        if species is None:
+            return 0.0
+        resolved_ppv = float(self.owner.quality.rest_particle_count)
+        if not np.isfinite(resolved_ppv) or resolved_ppv <= 0.0:
+            raise ValueError(
+                "species particle birth requires positive resolved particles-per-voxel")
+        voxel_size = float(self.owner.settings.voxel_size)
+        return voxel_size * voxel_size * voxel_size / resolved_ppv
+
+    def _species_birth_args(self):
+        particles = self.owner.particles
+        enabled = getattr(self.owner, "species", None) is not None
+        amount = (self._species_source_amount if enabled
+                  else particles.optional_array("represented_volume"))
+        return (1 if enabled else 0, self._represented_particle_volume(), amount)
+
+    def _reset_species_source_amount(self):
+        self._begin_species_receipt()
+        if self._species_source_amount is not None:
+            self._species_source_amount.zero_()
+
+    def _record_species_sources(self):
+        species = getattr(self.owner, "species", None)
+        if species is None:
+            return
+        species.record_source_device(self._species_source_amount)
 
     def export_checkpoint_state(self):
         """Return deterministic source lifecycle/RNG state at a frame boundary."""
@@ -2462,6 +2792,9 @@ class SourcePipeline:
         analytic = tuple(getattr(self, "analytic_sources", self.sources))
         meshes = tuple(getattr(self, "mesh_sources", ()))
         height = self.height_source
+        for source in (*analytic, *meshes, height):
+            _normalize_species_concentration(getattr(
+                source, "species_concentration", (0.0, 0.0, 0.0, 0.0)))
         height_armed = self._legacy_source_armed(height, self._initial_fired)
         emit_height = bool(
             height.enabled and height.emit_particles and height_armed
@@ -2516,6 +2849,9 @@ class SourcePipeline:
                     source_id=getattr(height, "source_id", ""),
                     color=normalize_color(getattr(
                         height, "color", (0.1, 0.45, 1.0, 1.0))),
+                    species_concentration=_normalize_species_concentration(
+                        getattr(height, "species_concentration",
+                                (0.0, 0.0, 0.0, 0.0))),
                     source_numeric_id=int(getattr(
                         height, "source_numeric_id", 0)),
                 ))
@@ -2563,6 +2899,8 @@ class SourcePipeline:
                         or any(item.severity == "ERROR"
                                for item in region.diagnostics)):
                     continue
+                _normalize_species_concentration(
+                    plan.payload.species_concentration)
                 stable_id = str(plan.stable_id)
                 if (plan.lifecycle in {SourceLifecycle.ONCE,
                                        SourceLifecycle.DIRECT_APPEND}
@@ -2598,6 +2936,7 @@ class SourcePipeline:
             }
             return False
 
+        self._reset_species_source_amount()
         self._emission_state.zero_()
         self._compiled_result.zero_()
         wp.copy(self._emission_scratch_counts, owner.voxel_counts.data,
@@ -2705,6 +3044,7 @@ class SourcePipeline:
                     particles.next_uid = self._emission_uid_base + emitted
                 particles.refresh_host_count()
                 self.owner._host_frame_cache = None
+                self._record_species_sources()
             self.last_apply_result = {
                 "emitted": emitted,
                 "capacity_limited": False,
@@ -2757,6 +3097,8 @@ class SourcePipeline:
         empty_vector = self._compiled_empty_vector
         pressure = owner.pressure_solver.pressure
         particles = owner.particles
+        species_enabled, represented_volume_value, species_amount = (
+            self._species_birth_args())
         order = {
             SourceOperation.COLLISION: 0,
             SourceOperation.SINK: 1,
@@ -2845,6 +3187,9 @@ class SourcePipeline:
                         int(payload.source_id or stable_source_id(stable_id)),
                         1 if particles.has_optional_channel("color") else 0,
                         1 if particles.has_optional_channel("source_id") else 0,
+                        species_enabled, represented_volume_value,
+                        wp.vec4(*_normalize_species_concentration(
+                            payload.species_concentration)),
                         payload.lifespan,
                         1 if payload.use_lifespan else 0, particles.capacity,
                     ],
@@ -2854,6 +3199,9 @@ class SourcePipeline:
                              particles.attr("viscosity"), particles.attr("density"),
                              particles.optional_array("color"),
                              particles.optional_array("source_id"),
+                             particles.optional_array("represented_volume"),
+                             particles.optional_array("species_concentration"),
+                             species_amount,
                              particles.time_offset, particles.alive,
                              particles.count, self._compiled_result,
                              self._emission_state],
@@ -2877,6 +3225,9 @@ class SourcePipeline:
                         int(payload.source_id or stable_source_id(stable_id)),
                         1 if particles.has_optional_channel("color") else 0,
                         1 if particles.has_optional_channel("source_id") else 0,
+                        species_enabled, represented_volume_value,
+                        wp.vec4(*_normalize_species_concentration(
+                            payload.species_concentration)),
                         payload.lifespan,
                         1 if payload.use_lifespan else 0, particles.capacity,
                         owner.voxel_counts.data,
@@ -2887,6 +3238,9 @@ class SourcePipeline:
                              particles.attr("viscosity"), particles.attr("density"),
                              particles.optional_array("color"),
                              particles.optional_array("source_id"),
+                             particles.optional_array("represented_volume"),
+                             particles.optional_array("species_concentration"),
+                             species_amount,
                              particles.time_offset, particles.alive,
                              particles.count, self._compiled_result,
                              self._emission_state],
@@ -3097,55 +3451,85 @@ class SourcePipeline:
         )
 
         particles = owner.particles
+        species_enabled, represented_volume_value, species_amount = (
+            self._species_birth_args())
         if self._transaction_shape_count:
-            wp.launch(
-                k_source_shapes_particles, dim=owner._nvox,
-                inputs=[
-                    self._transaction_shapes, self._transaction_shape_count,
-                    grid.leaf_coords, grid.num_leaves, grid.origin,
-                    settings.voxel_size, owner.voxel_counts.data,
-                    self._transaction_emit_seed,
-                    1 if particles.has_optional_channel("color") else 0,
-                    1 if particles.has_optional_channel("source_id") else 0,
-                    particles.capacity,
-                ],
-                outputs=[particles.position, particles.velocity,
-                         particles.attr("age"), particles.attr("life"),
-                         particles.attr("temperature"),
-                         particles.attr("viscosity"),
-                         particles.attr("density"),
-                         particles.optional_array("color"),
-                         particles.optional_array("source_id"),
-                         particles.time_offset,
-                         particles.alive, particles.count,
-                         self._emission_state],
-                device=self.device,
-            )
+            common_inputs = [
+                self._transaction_shapes, self._transaction_shape_count,
+                grid.leaf_coords, grid.num_leaves, grid.origin,
+                settings.voxel_size, owner.voxel_counts.data,
+                self._transaction_emit_seed,
+                1 if particles.has_optional_channel("color") else 0,
+                1 if particles.has_optional_channel("source_id") else 0,
+            ]
+            common_outputs = [
+                particles.position, particles.velocity,
+                particles.attr("age"), particles.attr("life"),
+                particles.attr("temperature"), particles.attr("viscosity"),
+                particles.attr("density"), particles.optional_array("color"),
+                particles.optional_array("source_id"),
+            ]
+            if species_enabled:
+                wp.launch(
+                    k_source_shapes_particles_species, dim=owner._nvox,
+                    inputs=common_inputs + [
+                        species_enabled, represented_volume_value,
+                        particles.capacity],
+                    outputs=common_outputs + [
+                        particles.optional_array("represented_volume"),
+                        particles.optional_array("species_concentration"),
+                        species_amount, particles.time_offset, particles.alive,
+                        particles.count, self._emission_state],
+                    device=self.device,
+                )
+            else:
+                wp.launch(
+                    k_source_shapes_particles, dim=owner._nvox,
+                    inputs=common_inputs + [particles.capacity],
+                    outputs=common_outputs + [
+                        particles.time_offset, particles.alive,
+                        particles.count, self._emission_state],
+                    device=self.device,
+                )
         for mesh_index, source in enumerate(self._transaction_mesh_sources):
-            wp.launch(
-                k_mesh_source_particles, dim=owner._nvox,
-                inputs=[
-                    source.mesh.id, self._bake_struct(source),
-                    source.query_radius(), grid.leaf_coords,
-                    grid.num_leaves, grid.origin, settings.voxel_size,
-                    owner.voxel_counts.data,
-                    self._transaction_emit_seed + mesh_index + 1,
-                    1 if particles.has_optional_channel("color") else 0,
-                    1 if particles.has_optional_channel("source_id") else 0,
-                    particles.capacity,
-                ],
-                outputs=[particles.position, particles.velocity,
-                         particles.attr("age"), particles.attr("life"),
-                         particles.attr("temperature"),
-                         particles.attr("viscosity"),
-                         particles.attr("density"),
-                         particles.optional_array("color"),
-                         particles.optional_array("source_id"),
-                         particles.time_offset,
-                         particles.alive, particles.count,
-                         self._emission_state],
-                device=self.device,
-            )
+            common_inputs = [
+                source.mesh.id, self._bake_struct(source),
+                source.query_radius(), grid.leaf_coords,
+                grid.num_leaves, grid.origin, settings.voxel_size,
+                owner.voxel_counts.data,
+                self._transaction_emit_seed + mesh_index + 1,
+                1 if particles.has_optional_channel("color") else 0,
+                1 if particles.has_optional_channel("source_id") else 0,
+            ]
+            common_outputs = [
+                particles.position, particles.velocity,
+                particles.attr("age"), particles.attr("life"),
+                particles.attr("temperature"), particles.attr("viscosity"),
+                particles.attr("density"), particles.optional_array("color"),
+                particles.optional_array("source_id"),
+            ]
+            if species_enabled:
+                wp.launch(
+                    k_mesh_source_particles_species, dim=owner._nvox,
+                    inputs=common_inputs + [
+                        species_enabled, represented_volume_value,
+                        particles.capacity],
+                    outputs=common_outputs + [
+                        particles.optional_array("represented_volume"),
+                        particles.optional_array("species_concentration"),
+                        species_amount, particles.time_offset, particles.alive,
+                        particles.count, self._emission_state],
+                    device=self.device,
+                )
+            else:
+                wp.launch(
+                    k_mesh_source_particles, dim=owner._nvox,
+                    inputs=common_inputs + [particles.capacity],
+                    outputs=common_outputs + [
+                        particles.time_offset, particles.alive,
+                        particles.count, self._emission_state],
+                    device=self.device,
+                )
         return self._finish_emission_transaction()
 
     def _upload_direct_packets(self, packets):
@@ -3168,6 +3552,9 @@ class SourcePipeline:
     def _direct_packet_attempt(self, uploaded, required):
         """Run one device-authoritative admit/commit attempt for all packets."""
         particles = self.owner.particles
+        self._reset_species_source_amount()
+        species_enabled, represented_volume_value, species_amount = (
+            self._species_birth_args())
         initial_count = int(particles.refresh_host_count())
         uid_base = int(particles.next_uid)
         self._emission_state.zero_()
@@ -3194,6 +3581,8 @@ class SourcePipeline:
                     int(packet.source_id),
                     1 if particles.has_optional_channel("color") else 0,
                     1 if particles.has_optional_channel("source_id") else 0,
+                    species_enabled, represented_volume_value,
+                    wp.vec4(*packet.species_concentration),
                     float(packet.life),
                     1 if packet.use_lifespan else 0, particles.capacity,
                 ],
@@ -3204,6 +3593,9 @@ class SourcePipeline:
                     particles.attr("viscosity"), particles.attr("density"),
                     particles.optional_array("color"),
                     particles.optional_array("source_id"),
+                    particles.optional_array("represented_volume"),
+                    particles.optional_array("species_concentration"),
+                    species_amount,
                     particles.time_offset, particles.alive, particles.count,
                     self._compiled_result, self._emission_state,
                 ], device=self.device)
@@ -3228,6 +3620,7 @@ class SourcePipeline:
             total = particles.refresh_host_count() if emitted else initial
             if emitted:
                 self.owner._host_frame_cache = None
+                self._record_species_sources()
             return InjectionResult(
                 True, emitted, demand, available, False, int(total))
         return InjectionResult(False, 0, demand, available, True, initial)
@@ -3244,6 +3637,8 @@ class SourcePipeline:
                 viscosity=float(packet.viscosity),
                 density=float(packet.density),
                 color=tuple(getattr(packet, "color", (0.1, 0.45, 1.0, 1.0))),
+                species_concentration=tuple(getattr(
+                    packet, "species_concentration", (0.0, 0.0, 0.0, 0.0))),
                 source_id=int(getattr(packet, "source_id", 0)),
                 life=float(packet.life),
                 use_lifespan=bool(packet.use_lifespan),
@@ -3302,23 +3697,27 @@ class SourcePipeline:
     def inject_particles_exact(self, positions, velocity=(0.0, 0.0, 0.0),
                                velocities=None, temperature=0.0, viscosity=0.0,
                                density=1.0, color=(0.1, 0.45, 1.0, 1.0),
-                               source_id=0, life=0.0, use_lifespan=False):
+                               source_id=0, life=0.0, use_lifespan=False, *,
+                               species_concentration=(0.0, 0.0, 0.0, 0.0)):
         packet = DirectInjectionPacket(
             positions=positions, velocity=tuple(velocity),
             velocities=velocities, temperature=float(temperature),
             viscosity=float(viscosity), density=float(density),
             color=tuple(color), source_id=int(source_id),
+            species_concentration=species_concentration,
             life=float(life), use_lifespan=bool(use_lifespan))
         return self.inject_particle_packets_exact((packet,))
 
     def inject_particles(self, positions, velocity=(0.0, 0.0, 0.0),
                          velocities=None, temperature=0.0, viscosity=0.0,
                          density=1.0, color=(0.1, 0.45, 1.0, 1.0),
-                         source_id=0, life=0.0, use_lifespan=False):
+                         source_id=0, life=0.0, use_lifespan=False, *,
+                         species_concentration=(0.0, 0.0, 0.0, 0.0)):
         """Compatibility API: final total on success, zero on refusal/empty."""
         result = self.inject_particles_exact(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
             color=color, source_id=source_id,
-            life=life, use_lifespan=use_lifespan)
+            life=life, use_lifespan=use_lifespan,
+            species_concentration=species_concentration)
         return result.total if result.admitted and result.emitted else 0

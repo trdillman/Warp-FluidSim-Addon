@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim.capacity_planner import (
     CapacityVerdict,
@@ -73,6 +74,83 @@ def test_transaction_residency_is_included_in_peak_plan_and_signature():
     assert any(
         blocker.code == "MEMORY_ESTIMATE"
         for blocker in transactional.blockers)
+
+
+def test_species_voxel_scratch_is_refused_before_initial_transport_allocation(
+        monkeypatch):
+    """The exact 40-byte voxel inventory must participate in initial admission."""
+    from types import SimpleNamespace
+
+    from fluidSim_warp_blender51.blender import simulation_admission
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    disabled_settings = settings(species_enabled=False)
+    enabled_settings = settings(
+        species_enabled=True, species_diffusivity=0.1,
+        species_max_diffusion_substeps=16)
+    abundant = resources()
+    disabled = plan_initialization(
+        disabled_settings, (), (), (), abundant)
+    enabled = plan_initialization(
+        enabled_settings, (), (), (), abundant)
+    # The 8^3 domain contains one sparse leaf even though capacity permits 8.
+    expected_transport = 100 * 56 + 512 * 40 + 48
+    assert enabled.species_transport_bytes == expected_transport
+    assert enabled.estimated_bytes > disabled.estimated_bytes
+
+    boundary_budget = (
+        disabled.estimated_bytes
+        + (enabled.estimated_bytes - disabled.estimated_bytes) // 2)
+    constrained = {
+        "gpu_total_bytes": 64 * 1024**3,
+        "gpu_free_bytes": (boundary_budget * 10 + 8) // 9,
+    }
+    plan = plan_initialization(
+        enabled_settings, (), (), (), constrained)
+
+    assert disabled.estimated_bytes <= plan.budget_bytes
+    assert plan.budget_bytes < enabled.estimated_bytes
+    assert plan.verdict is CapacityVerdict.BLOCKED
+    assert any(blocker.code == "MEMORY_ESTIMATE" for blocker in plan.blockers)
+
+    allocations = []
+    session = SimpleNamespace(
+        solver=None,
+        error="",
+        _set_capacity_plan=lambda *_args, **_kwargs: None,
+        set_error=lambda _scene, message: setattr(session, "error", str(message)),
+    )
+    owner = simulation_admission.SimulationAdmission(
+        session,
+        scene_identity=lambda _scene: 1,
+        snippet_builder=lambda _scene: (),
+        applied_state_capture=lambda *_args, **_kwargs: None,
+        reset_settings_apply=lambda *_args, **_kwargs: None,
+    )
+    snapshot = SimpleNamespace(
+        capacity_plan=plan,
+        settings=enabled_settings,
+        frame_start=1,
+        release_transients=lambda: None,
+    )
+    scene = SimpleNamespace(
+        frame_start=1,
+        fluidsim=SimpleNamespace(status="", snippets=[]),
+    )
+    runtime_settings = SimpleNamespace(device="cuda:0", **enabled_settings)
+    monkeypatch.setattr(
+        simulation_admission, "build_settings", lambda _scene: runtime_settings)
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: constrained)
+    monkeypatch.setattr(owner, "_plan_scene", lambda *_args, **_kwargs: snapshot)
+    monkeypatch.setattr(
+        owner, "_prepare_solver_replacement",
+        lambda *_args, **_kwargs: allocations.append("solver"),
+    )
+
+    with pytest.raises(RuntimeError, match="stopped initialization before CUDA allocation"):
+        owner.initialize(scene)
+
+    assert allocations == []
 
 
 def test_unknown_particle_demand_fails_closed_without_inventing_a_count():

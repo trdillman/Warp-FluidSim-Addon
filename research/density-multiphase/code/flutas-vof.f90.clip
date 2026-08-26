@@ -1,0 +1,17 @@
+! Source: Multiphysics-Flow-Solvers/FluTAS src/vof.f90
+! URL: https://github.com/Multiphysics-Flow-Solvers/FluTAS/blob/598210616bebd51f7d51f61455f196e6f3479916/src/vof.f90
+! Owner: FluTAS project
+! Revision: 598210616bebd51f7d51f61455f196e6f3479916
+! Retrieved: 2026-08-22 UTC
+! License: MIT; see FluTAS-LICENSE.md. Narrow research function inventory.
+
+! Inspected routines and accelerated loops:
+!   advvof
+!   cmpt_vof_flux
+!   cmpt_nor_curv_1o
+!   cmpt_nor_curv_2o
+!   cmpt_d_thinc
+!
+! advvof reconstructs a bounded MTHINC interface, computes directional VOF
+! fluxes, and updates the phase indicator. The curvature routines compute
+! kappa = -div(normal). OpenACC directives place loops on the accelerator.

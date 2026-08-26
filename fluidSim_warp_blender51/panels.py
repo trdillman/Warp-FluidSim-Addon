@@ -700,6 +700,11 @@ class FLUIDSIM_PT_liquid_emitter_attributes(FluidSimPanel, bpy.types.Panel):
         col.prop(pg, "viscosity")
         col.prop(pg, "density", text="Density Attribute")
         col.prop(pg, "source_color", text="Simulation Color")
+        dye = col.column(align=True)
+        dye.enabled = bool(getattr(
+            getattr(getattr(context, "scene", None), "fluidsim", None),
+            "species_enabled", False))
+        dye.prop(pg, "species_concentration", text="Clear Dye Composition")
         col.prop(pg, "use_lifespan")
         if pg.use_lifespan:
             row = col.row(align=True)
@@ -954,6 +959,35 @@ class FLUIDSIM_PT_viscosity(FluidSimPanel, bpy.types.Panel):
         col.prop(fs, "viscosity_from_particles")
         col.prop(fs, "viscosity_iterations")
         col.prop(fs, "viscosity_tolerance")
+
+
+class FLUIDSIM_PT_clear_dye_species(FluidSimPanel, bpy.types.Panel):
+    bl_label = "Clear Dye Species"
+    bl_idname = "FLUIDSIM_PT_clear_dye_species"
+    bl_parent_id = "FLUIDSIM_PT_physics"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, context):
+        self.layout.prop(context.scene.fluidsim, "species_enabled", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        fs = context.scene.fluidsim
+        layout.enabled = fs.species_enabled
+        _draw_interaction_tier(layout, "Reinitialize Required", "FILE_REFRESH")
+        identity = layout.column(align=True)
+        identity.prop(fs, "species_id_a")
+        identity.prop(fs, "species_preview_swatch_a")
+        identity.prop(fs, "species_absorption_a")
+        identity.prop(fs, "species_id_b")
+        identity.prop(fs, "species_preview_swatch_b")
+        identity.prop(fs, "species_absorption_b")
+        identity.prop(fs, "species_reference_path_length")
+        _draw_interaction_tier(layout, "Reset Required", "FILE_REFRESH")
+        transport = layout.column(align=True)
+        transport.prop(fs, "species_diffusivity", text="Effective Diffusivity")
+        transport.prop(fs, "species_max_diffusion_substeps")
+        transport.label(text="Two miscible species in one constant-density carrier")
 
 
 class FLUIDSIM_PT_surface(FluidSimPanel, bpy.types.Panel):
@@ -1483,6 +1517,7 @@ CLASSES = (
     FLUIDSIM_PT_advanced_field_sources,
     FLUIDSIM_PT_pressure,
     FLUIDSIM_PT_viscosity,
+    FLUIDSIM_PT_clear_dye_species,
     FLUIDSIM_PT_realtime_display,
     FLUIDSIM_PT_snippets,
     FLUIDSIM_PT_snippet_editor,

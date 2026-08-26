@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from fluidSim_warp_blender51.io import cache as cache_module
 from fluidSim_warp_blender51.io.cache import (
     available_frames,
     compact_settings_segments,
@@ -40,6 +41,13 @@ def test_compact_settings_segments_rejects_duplicate_normalized_frames():
 
     with pytest.raises(ValueError, match="Duplicate settings record for frame 1"):
         compact_settings_segments(records)
+
+
+def test_read_sequence_metadata_treats_non_object_json_as_corrupt(tmp_path):
+    (tmp_path / "fluidsim_sequence.json").write_text(
+        '["not", "metadata"]', encoding="utf-8")
+
+    assert read_sequence_metadata(str(tmp_path)) is None
 
 
 class _PicklePayload:
@@ -169,8 +177,8 @@ def test_write_frame_uses_same_directory_temp_and_atomic_replace(tmp_path, monke
         assert os.path.dirname(src) == os.path.dirname(dst) == str(tmp_path)
         real_replace(src, dst)
 
-    monkeypatch.setattr("fluidSim_warp_blender51.io.cache.np.savez_compressed", fake_save)
-    monkeypatch.setattr("fluidSim_warp_blender51.io.cache.os.replace", fake_replace)
+    monkeypatch.setattr(cache_module.np, "savez_compressed", fake_save)
+    monkeypatch.setattr(cache_module.os, "replace", fake_replace)
 
     written = write_frame(scene, sess)
 

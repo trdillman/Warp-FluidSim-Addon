@@ -9,6 +9,7 @@ import warp as wp
 
 from .attributes import (
     ATTRIBUTE_SPECS,
+    derive_species_preview_colors,
     enabled_attribute_keys,
     motion_from_velocity,
     nearest_sample_indices,
@@ -95,6 +96,13 @@ class HostFrame:
             if isinstance(key, tuple) and key and key[0] == "surface_attributes":
                 self._values.pop(key, None)
 
+    def _live_count(self, owner_name):
+        key = (owner_name, "count")
+        return self._get(
+            key,
+            lambda: getattr(self.solver, owner_name).refresh_host_count(),
+        )
+
     def should_publish_surface(self, cadence):
         cadence = max(1, int(cadence))
         return self.frame <= 1 or cadence <= 1 or self.frame % cadence == 0
@@ -112,7 +120,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_positions()[::stride], dtype=np.float32)
-            n = self.solver.particles.refresh_host_count()
+            n = self._live_count("particles")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -127,7 +135,9 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particle_velocities(), dtype=np.float32)
-            n = self.solver.particles.refresh_host_count()
+            # Every lazy output must be correct when requested first; do not
+            # rely on positions having refreshed the host mirror beforehand.
+            n = self._live_count("particles")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -170,7 +180,7 @@ class HostFrame:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.whitewater_positions(), dtype=np.float32)
-            n = self.solver.whitewater.refresh_host_count()
+            n = self._live_count("whitewater")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
@@ -190,7 +200,8 @@ class HostFrame:
     def particle_attr(self, name):
         def load():
             try:
-                n = self.solver.particles.refresh_host_count()
+                n = self._live_count("particles")
+                # Warp 1.12.1 can fail converting sliced array views to NumPy.
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     self.solver.particles.attr(name).numpy()[:n])
@@ -198,10 +209,53 @@ class HostFrame:
                 return np.zeros(0, dtype=np.float32)
         return self._get(("particle", name), load)
 
+    def _species_enabled(self):
+        return bool(
+            getattr(getattr(self.solver, "settings", None),
+                    "species_enabled", False)
+            and getattr(self.solver, "species", None) is not None
+        )
+
+    def species_concentrations(self, stride=1):
+        """Read authoritative two-species concentrations only on request."""
+        stride = max(1, int(stride))
+        if not self._species_enabled():
+            return np.zeros((0, 4), dtype=np.float32)
+
+        def load():
+            count = self._live_count("particles")
+            if not count:
+                return np.zeros((0, 4), dtype=np.float32)
+            values = np.asarray(
+                self.particle_attr("species_concentration"), dtype=np.float32)
+            if values.shape != (count, 4):
+                raise RuntimeError(
+                    "enabled species concentrations are missing or misaligned")
+            return np.ascontiguousarray(values[::stride])
+
+        return self._get(("species_concentrations", stride), load)
+
+    def species_preview_colors(self, stride=1):
+        """Derive scene-linear preview RGB from cached concentrations."""
+        stride = max(1, int(stride))
+        if not self._species_enabled():
+            return np.zeros((0, 4), dtype=np.float32)
+
+        def load():
+            settings = self.solver.settings
+            return derive_species_preview_colors(
+                self.species_concentrations(stride),
+                settings.species_absorption_rgb,
+                settings.species_reference_path_length,
+            )
+
+        return self._get(("species_preview_colors", stride), load)
+
     def whitewater_attr(self, name):
         def load():
             try:
-                n = self.solver.whitewater.refresh_host_count()
+                n = self._live_count("whitewater")
+                # Warp 1.12.1 cannot convert sliced vec3 views to NumPy.
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     getattr(self.solver.whitewater, name).numpy()[:n])
@@ -213,7 +267,8 @@ class HostFrame:
         """Return one authoritative liquid-particle output channel."""
         stride = max(1, int(stride))
         key = str(key)
-        n = len(self.positions)
+        n = (self._live_count("particles") if hasattr(self.solver, "particles")
+             else len(self.positions))
         if key == "velocity":
             values = self.velocities
         elif key == "speed":
@@ -224,6 +279,10 @@ class HostFrame:
             values = self.particle_attr("age")
         elif key == "lifetime":
             values = self.particle_attr("life")
+        elif key == "species":
+            values = self.species_concentrations()
+        elif key == "color" and self._species_enabled():
+            values = self.species_preview_colors()
         elif key in {"color", "source_id", "uid", "viscosity", "density"}:
             values = self.particle_attr(key)
             if key in {"color", "source_id", "uid"} and len(values) != n:
@@ -289,21 +348,38 @@ class HostFrame:
                         1.0e-5,
                     ),
                 )
-                values = {
-                    key: np.ascontiguousarray(
-                        self.particle_attribute(key)[nearest]
-                    )
-                    for key in keys
-                }
+                values = {}
+                sampled_species = None
+                for key in keys:
+                    if self._species_enabled() and key in {"species", "color"}:
+                        if sampled_species is None:
+                            sampled_species = np.ascontiguousarray(
+                                self.species_concentrations()[nearest])
+                        values[key] = (
+                            sampled_species if key == "species" else
+                            derive_species_preview_colors(
+                                sampled_species,
+                                self.solver.settings.species_absorption_rgb,
+                                self.solver.settings.species_reference_path_length,
+                            )
+                        )
+                    else:
+                        values[key] = np.ascontiguousarray(
+                            self.particle_attribute(key)[nearest])
             else:
-                values = {
-                    key: np.zeros(
-                        (count,) if ATTRIBUTE_SPECS[key].components == 1
-                        else (count, ATTRIBUTE_SPECS[key].components),
-                        dtype=ATTRIBUTE_SPECS[key].numpy_dtype,
-                    )
-                    for key in keys
-                }
+                values = {}
+                for key in keys:
+                    shape = ((count,) if ATTRIBUTE_SPECS[key].components == 1
+                             else (count, ATTRIBUTE_SPECS[key].components))
+                    if self._species_enabled() and key == "color":
+                        values[key] = derive_species_preview_colors(
+                            np.zeros((count, 4), dtype=np.float32),
+                            self.solver.settings.species_absorption_rgb,
+                            self.solver.settings.species_reference_path_length,
+                        )
+                    else:
+                        values[key] = np.zeros(
+                            shape, dtype=ATTRIBUTE_SPECS[key].numpy_dtype)
         else:
             raise ValueError(f"unknown output kind {output_kind!r}")
         return {

@@ -562,6 +562,7 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
         temperature=0.0,
         viscosity=0.0,
         density=1.0,
+        species_concentration=(0.25, 0.75, 0.0, 0.0),
         use_lifespan=False,
         life_min=0.0,
         life_max=0.0,
@@ -596,6 +597,7 @@ def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch
     descriptor = sources.gather_sources(scene, sess)[0]
     assert descriptor.velocity == (1.0, 0.0, 0.0)
     assert descriptor.emission_mode.name == "CONTINUOUS_INFLOW"
+    assert descriptor.species_concentration == (0.25, 0.75, 0.0, 0.0)
     source_id = descriptor.source_id
     scene.frame_current = 2
     obj.matrix_world = _FakeMatrix(tx=1.0)

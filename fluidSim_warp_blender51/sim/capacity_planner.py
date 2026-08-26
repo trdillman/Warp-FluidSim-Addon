@@ -16,7 +16,12 @@ from typing import Any, Iterable, Mapping, Optional
 
 import numpy as np
 
-from .memory_safety import estimate_solver_bytes, safe_memory_budget
+from .memory_safety import (
+    estimate_solver_bytes,
+    estimate_species_cache_staging_bytes,
+    estimate_species_transport_bytes,
+    safe_memory_budget,
+)
 from .quality_contract import resolve_quality
 
 
@@ -84,6 +89,10 @@ class CapacityPlan:
     transaction_scratch_bytes: int = 0
     additional_transaction_bytes: int = 0
     required_leaf_coords: tuple[tuple[int, int, int], ...] = ()
+    species_transport_bytes: int = 0
+    species_cache_staging_bytes: int = 0
+    species_halo_leaf_count: int = 0
+    species_diffusion_substeps: int = 0
     suggestions: tuple[CapacitySuggestion, ...] = field(default_factory=tuple)
 
 
@@ -102,6 +111,12 @@ def _settings_dict(settings: Any) -> dict[str, Any]:
         "leaf_capacity": 8192,
         "particles_per_voxel": 8.0,
         "topology_expand": 1,
+        "species_enabled": False,
+        "species_diffusivity": 0.0,
+        "species_max_diffusion_substeps": 16,
+        "frame_rate": 24.0,
+        "time_scale": 1.0,
+        "min_substeps": 1,
         "max_whitewater": 0,
         "surface_enabled": True,
         "surface_resolution_mode": 0,
@@ -230,6 +245,11 @@ def _seed_leaf_coords(settings: Any, payloads: Iterable[Any]) -> set[tuple[int, 
 def _expanded_leaf_coords(settings: Any, coords: Iterable[tuple[int, int, int]]) -> tuple[tuple[int, int, int], ...]:
     dims = _leaf_dims(settings)
     radius = max(0, int(_value(settings, "topology_expand", 0)))
+    if bool(_value(settings, "species_enabled", False)):
+        # Conservative face diffusion needs an admitted leaf on every side of
+        # the source topology. This participates in preflight so an incomplete
+        # halo is rejected before the live grid can be mutated.
+        radius = max(radius, 1)
     expanded: set[tuple[int, int, int]] = set()
     for coord in coords:
         for dz in range(-radius, radius + 1):
@@ -259,6 +279,26 @@ def _aggregate_particles(source_demands: tuple[SourceDemand, ...],
                else DemandQuality.EXACT)
     return DemandValue(seed_count + sum(int(item.particles.value or 0)
                                         for item in source_demands), quality)
+
+
+def _species_diffusion_substeps(settings: Any) -> int:
+    """Bound the largest explicit diffusion step the scheduler can issue."""
+    if not bool(_value(settings, "species_enabled", False)):
+        return 0
+    diffusivity = float(_value(settings, "species_diffusivity", 0.0))
+    if diffusivity <= 0.0:
+        return 0
+    h = float(_value(settings, "voxel_size", 0.1))
+    frame_rate = float(_value(settings, "frame_rate", 24.0))
+    time_scale = float(_value(settings, "time_scale", 1.0))
+    min_substeps = max(1, int(_value(settings, "min_substeps", 1)))
+    if (not math.isfinite(diffusivity) or diffusivity < 0.0
+            or not math.isfinite(h) or h <= 0.0
+            or not math.isfinite(frame_rate) or frame_rate <= 0.0
+            or not math.isfinite(time_scale) or time_scale < 0.0):
+        return -1
+    dt = (time_scale / frame_rate) / min_substeps
+    return int(math.ceil(6.0 * diffusivity * dt / (h * h))) if dt > 0.0 else 0
 
 
 def _signature(settings: Any, demands: tuple[SourceDemand, ...],
@@ -320,6 +360,7 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
     leaf_coords.update(_seed_leaf_coords(settings, seeds))
     required_leaf_coords = _expanded_leaf_coords(settings, leaf_coords)
     leaf_count = len(required_leaf_coords)
+    base_leaf_count = len(leaf_coords)
     unknown_leaf_reasons = sorted({
         item.leaf_reason or f"{item.stable_id} leaf demand is unavailable"
         for item in sources if item.leaf_quality is DemandQuality.UNKNOWN
@@ -334,7 +375,14 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
                         else DemandQuality.EXACT)
         leaf_demand = DemandValue(leaf_count, leaf_quality)
 
-    staging_bytes = sum(item.staging_bytes for item in sources)
+    species_transport_bytes = estimate_species_transport_bytes(settings)
+    species_cache_staging_bytes = estimate_species_cache_staging_bytes(settings)
+    species_halo_leaf_count = (max(0, leaf_count - base_leaf_count)
+                               if bool(_value(settings, "species_enabled", False))
+                               else 0)
+    species_diffusion_substeps = _species_diffusion_substeps(settings)
+    source_staging_bytes = sum(item.staging_bytes for item in sources)
+    staging_bytes = source_staging_bytes + species_cache_staging_bytes
     # WP3 owns one int32 scratch occupancy entry per allocated sparse voxel.
     additional_transaction_bytes = max(
         0, int(additional_transaction_bytes))
@@ -342,7 +390,7 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
         max(1, int(_value(settings, "leaf_capacity", 0))) * 512 * 4
         + additional_transaction_bytes)
     estimated_bytes = int(
-        estimate_solver_bytes(settings) + staging_bytes
+        estimate_solver_bytes(settings) + source_staging_bytes
         + transaction_scratch_bytes)
     budget_bytes = int(safe_memory_budget(
         int(resources.get("gpu_total_bytes", 0)),
@@ -380,6 +428,19 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
             "MEMORY_ESTIMATE", estimated_bytes, budget_bytes, source_ids,
             "Conservative estimated allocation exceeds the live VRAM budget.",
         ))
+    max_diffusion_substeps = int(_value(
+        settings, "species_max_diffusion_substeps", 16))
+    if species_diffusion_substeps < 0:
+        blockers.append(CapacityBlocker(
+            "SPECIES_DIFFUSION_SETTINGS", None, max_diffusion_substeps,
+            source_ids, "Species diffusion timing inputs must be finite and positive.",
+        ))
+    elif species_diffusion_substeps > max_diffusion_substeps:
+        blockers.append(CapacityBlocker(
+            "SPECIES_DIFFUSION_SUBSTEPS", species_diffusion_substeps,
+            max_diffusion_substeps, source_ids,
+            "Explicit species diffusion exceeds the admitted substep cap.",
+        ))
 
     signature = _signature(
         settings, sources, seed_count, leaf_demand,
@@ -398,6 +459,10 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
         transaction_scratch_bytes=transaction_scratch_bytes,
         additional_transaction_bytes=additional_transaction_bytes,
         required_leaf_coords=required_leaf_coords,
+        species_transport_bytes=species_transport_bytes,
+        species_cache_staging_bytes=species_cache_staging_bytes,
+        species_halo_leaf_count=species_halo_leaf_count,
+        species_diffusion_substeps=max(0, species_diffusion_substeps),
     )
 
 

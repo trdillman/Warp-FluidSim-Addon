@@ -499,6 +499,8 @@ class SceneInputs:
             desc.density = pg.density
             desc.color = tuple(float(value) for value in getattr(
                 pg, "source_color", (0.1, 0.45, 1.0, 1.0)))
+            desc.species_concentration = tuple(float(value) for value in getattr(
+                pg, "species_concentration", (0.0, 0.0, 0.0, 0.0)))
             desc.use_lifespan = pg.use_lifespan
             desc.life_min = pg.life_min
             desc.life_max = pg.life_max

@@ -77,7 +77,7 @@ TIMER_PHASE_SLOTS = {
     "viscosity": 4,
     "pressure": 5,
     "g2p": 6,
-    "advection": 7,
+    "species": 7,
     "collision": 8,
     "sink": 9,
     "relax": 10,

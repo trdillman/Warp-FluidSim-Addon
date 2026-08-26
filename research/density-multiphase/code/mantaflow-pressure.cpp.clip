@@ -1,0 +1,23 @@
+/*
+Source: thunil/mantaflow source/plugin/pressure.cpp
+URL: https://github.com/thunil/mantaflow/blob/494445143507296d16e467160c1889be657f8f74/source/plugin/pressure.cpp
+Owner: MantaFlow project / Thuerey group
+Revision: 494445143507296d16e467160c1889be657f8f74
+Retrieved: 2026-08-22 UTC
+License: Apache-2.0; see MantaFlow-LICENSE.md. Narrow research pseudoclip.
+*/
+
+// solvePressureSystem():
+//   MakeLaplaceMatrix(...);
+//   ApplyGhostFluidDiagonal(...);
+//   solve with conjugate gradients and optional MIC/multigrid preconditioning.
+// correctVelocity():
+//   optional knCorrectVelocityGhostFluid(...).
+// solvePressure(): builds RHS, solves pressure, then corrects velocity.
+
+// Finding: this path uses the baseline constant-coefficient Laplacian. Its
+// Ghost Fluid hooks and solve sequencing are reusable ideas, but this is not
+// evidence of a material variable-density coefficient projection.
+
+// Rejected false friend: implicitdensityprojection.cpp uses “density” for
+// particle-number-density regularization, not liquid material density.

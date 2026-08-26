@@ -19,6 +19,8 @@ DIRECT_SETTING_FIELDS = (
     "dissipation_rate", "dissipation_target", "attraction_enabled",
     "attraction_strength", "attraction_max_distance",
     "particles_per_voxel", "count_stiffness",
+    "species_enabled", "species_count", "species_diffusivity",
+    "species_max_diffusion_substeps", "species_reference_path_length",
     "spacetime_enabled", "spacetime_jitter_strength",
     "spacetime_adaptive_jitter", "spacetime_phase_eta",
     "spacetime_phase_threshold", "spacetime_reference_mass",
@@ -161,6 +163,34 @@ def apply_scene_settings(fs, settings, fields=None):
         declared_target = SETTING_ALIASES.get(target, target)
         if (selected is None or source in selected) and hasattr(fs, source):
             setattr(settings, declared_target, enum_type[getattr(fs, source)])
+    palette_fields = {
+        "species_id_a", "species_id_b",
+        "species_preview_swatch_a", "species_preview_swatch_b",
+        "species_absorption_a", "species_absorption_b",
+        "species_reference_path_length",
+    }
+    if selected is None or selected & palette_fields:
+        if hasattr(fs, "species_id_a") and hasattr(fs, "species_id_b"):
+            settings.species_ids = (
+                str(fs.species_id_a), str(fs.species_id_b))
+        if (hasattr(fs, "species_preview_swatch_a")
+                and hasattr(fs, "species_preview_swatch_b")):
+            settings.species_preview_swatches = tuple(
+                tuple(float(component) for component in value)
+                for value in (fs.species_preview_swatch_a,
+                              fs.species_preview_swatch_b)
+            )
+        if (hasattr(fs, "species_absorption_a")
+                and hasattr(fs, "species_absorption_b")):
+            settings.species_absorption_rgb = tuple(
+                tuple(float(component) for component in value)
+                for value in (fs.species_absorption_a, fs.species_absorption_b)
+            )
+    for name in ("surface_attribute_species", "particles_attribute_species"):
+        if (selected is None or name in selected) and hasattr(fs, name):
+            # Output-only switches intentionally remain adapter facts; Task 6
+            # does not enlarge the core SolverSettings dataclass.
+            setattr(settings, name, bool(getattr(fs, name)))
     return settings
 
 

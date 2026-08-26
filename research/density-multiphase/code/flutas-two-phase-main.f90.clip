@@ -1,0 +1,20 @@
+! Source: FluTAS src/apps/two_phase_inc_isot/main__two_phase_inc_isot.f90
+! URL: https://github.com/Multiphysics-Flow-Solvers/FluTAS/blob/598210616bebd51f7d51f61455f196e6f3479916/src/apps/two_phase_inc_isot/main__two_phase_inc_isot.f90
+! Owner: FluTAS project
+! Revision: 598210616bebd51f7d51f61455f196e6f3479916
+! Retrieved: 2026-08-22 UTC
+! License: MIT; see FluTAS-LICENSE.md. Narrow research sequence clip.
+
+! Observed two-phase step sequence:
+!   call advvof(...)
+!   call update_property(... rho1, rho2, mu1, mu2 ...)
+!   ! velocity predictor / Runge-Kutta update
+!   call grav_tw_src(...)
+!   call pres_tw_src(...)
+!   call surft_src(...)
+!   call solver_gpu(...)
+!   call correc(...)
+
+! Finding: the implementation demonstrates an accelerator-resident ordering.
+! It uses dense/decomposed arrays and an FFT-oriented pressure path rather than
+! the required fixed-tile sparse variable-coefficient architecture.

@@ -300,6 +300,33 @@ def validate_optional_attributes(
     return inventory
 
 
+def validate_species_frame_payload(
+        frame_data, *, species_enabled=False,
+        expected_palette_hash=None):
+    """Validate additive authoritative species channels in one cache frame."""
+    from ..sim.solver import validate_species_resume_state
+
+    positions = np.asarray(frame_data.get("positions", ()))
+    if positions.ndim == 0:
+        raise ValueError("positions must have a particle dimension")
+    state = validate_species_resume_state(
+        frame_data,
+        frame_data,
+        len(positions),
+        enabled=bool(species_enabled),
+        expected_palette_hash=expected_palette_hash,
+    )
+    if state is None:
+        return None
+    count = len(positions)
+    return {
+        "particle_count": count,
+        "represented_volume_count": len(state["represented_volume"]),
+        "concentration_count": len(state["concentration"]),
+        "palette_hash": state["palette_hash"],
+    }
+
+
 def _frame_payload(solver, scene_key_value: str = ""):
     """Build one cache payload from the shared lazy host frame."""
     from ..sim.frame_output import HostFrame
@@ -368,6 +395,21 @@ def _frame_payload(solver, scene_key_value: str = ""):
             solver.settings, output_kind, positions=positions)
         for key, values in attributes.items():
             payload[cache_attribute_name(output_kind, key)] = values
+    species = getattr(solver, "species", None)
+    if species is not None:
+        if not hasattr(solver, "export_species_resume_state"):
+            raise ValueError("species-enabled solver cannot export resume state")
+        species_state = solver.export_species_resume_state(len(host.positions))
+        payload.update(species_state["arrays"])
+        payload.update({
+            name: np.asarray(value)
+            for name, value in species_state["scalars"].items()
+        })
+        validate_species_frame_payload(
+            payload,
+            species_enabled=True,
+            expected_palette_hash=species.palette.palette_hash,
+        )
     validate_optional_attributes(
         payload, particle_count=len(host.positions),
         whitewater_count=len(host.whitewater), surface_count=len(verts))
@@ -421,6 +463,53 @@ def authoritative_payload_counts(frame_data: dict) -> dict:
             raise ValueError(f"{group} payload has non-finite fields {nonfinite}")
         counts[group] = {name: int(len(value)) for name, value in arrays.items()}
     return counts
+
+
+def validate_species_bake_transaction(frame_path, checkpoint) -> None:
+    """Prove frame and checkpoint carry the same authoritative species state."""
+    try:
+        loaded = np.load(frame_path, allow_pickle=False)
+    except (EOFError, OSError, ValueError, zipfile.BadZipFile) as exc:
+        raise ValueError(f"species frame/checkpoint mismatch: {exc}") from exc
+    with loaded as data:
+        frame_data = {name: data[name] for name in data.files}
+    frame_marker = "species_schema_version" in frame_data
+    checkpoint_scalars = dict(checkpoint.scalars)
+    checkpoint_marker = "species_schema_version" in checkpoint_scalars
+    if frame_marker != checkpoint_marker:
+        raise ValueError("species frame/checkpoint mismatch: marker differs")
+    if not frame_marker:
+        return
+    try:
+        frame_state = validate_species_frame_payload(
+            frame_data, species_enabled=True,
+            expected_palette_hash=str(np.asarray(
+                frame_data["species_palette_hash"]).item()))
+        from ..sim.solver import validate_species_resume_state
+        checkpoint_state = validate_species_resume_state(
+            checkpoint.arrays,
+            checkpoint_scalars,
+            frame_state["particle_count"],
+            enabled=True,
+            expected_palette_hash=frame_state["palette_hash"],
+        )
+        if (not np.array_equal(
+                frame_data["particle_represented_volume"],
+                checkpoint_state["represented_volume"])
+                or not np.array_equal(
+                    frame_data["particle_species_concentration"],
+                    checkpoint_state["concentration"])
+                or any(str(np.asarray(frame_data[name]).item()) != str(
+                    checkpoint_scalars[name]) for name in (
+                        "species_palette_hash", "species_palette_json",
+                        "species_ids_json", "species_settings_json",
+                        "species_cumulative_budget_json",
+                        "species_receipt_json"))):
+            raise ValueError("species frame/checkpoint mismatch: payload differs")
+    except (KeyError, TypeError, ValueError) as exc:
+        if str(exc).startswith("species frame/checkpoint mismatch"):
+            raise
+        raise ValueError(f"species frame/checkpoint mismatch: {exc}") from exc
 
 
 def resolve_frame_range(
@@ -545,6 +634,11 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(data, dict):
+        # Valid JSON can still be corrupt sequence metadata.  Treat it like a
+        # truncated/unparseable supplemental cache rather than leaking an
+        # AttributeError from the playback handler.
+        return None
     if data.get("format_version") != CACHE_FORMAT_VERSION:
         raise ValueError(
             f"Unsupported cache metadata format_version "
@@ -651,7 +745,9 @@ def write_frame_v2_atomic(
     return path, digest, size
 
 
-def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
+def _read_v2_frame(
+        base_dir: str, frame: int, *, species_enabled=False,
+        expected_species_palette_hash=None) -> dict | None:
     from .cache_schema import load_manifest, manifest_path, verify_artifact
 
     manifest = load_manifest(manifest_path(base_dir))
@@ -693,12 +789,24 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
         result = {name: data[name] for name in data.files}
     authoritative_payload_counts(result)
     validate_optional_attributes(result)
+    validate_species_frame_payload(
+        result,
+        species_enabled=species_enabled,
+        expected_palette_hash=expected_species_palette_hash,
+    )
     return result
 
 
-def read_frame(base_dir: str, frame: int) -> dict | None:
+def read_frame(
+        base_dir: str, frame: int, *, species_enabled=False,
+        expected_species_palette_hash=None) -> dict | None:
     if detect_cache_format(base_dir) == 2:
-        return _read_v2_frame(base_dir, frame)
+        return _read_v2_frame(
+            base_dir,
+            frame,
+            species_enabled=species_enabled,
+            expected_species_palette_hash=expected_species_palette_hash,
+        )
     path = _frame_path(base_dir, frame)
     if not os.path.exists(path):
         return None
@@ -721,9 +829,14 @@ def read_frame(base_dir: str, frame: int) -> dict | None:
         try:
             result = {k: data[k] for k in data.files}
             validate_optional_attributes(result)
-            return result
         except (ValueError, pickle.UnpicklingError):
             return None
+    validate_species_frame_payload(
+        result,
+        species_enabled=species_enabled,
+        expected_palette_hash=expected_species_palette_hash,
+    )
+    return result
 
 
 def available_frames(base_dir: str) -> list:

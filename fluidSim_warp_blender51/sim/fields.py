@@ -102,6 +102,49 @@ def voxel_coord_of_flat(
 
 
 @wp.func
+def neighbor_flat_index(
+    flat_index: wp.int32,
+    axis: wp.int32,
+    direction: wp.int32,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+) -> wp.int32:
+    """Translate one sparse voxel by one axis step, or return ``-1``.
+
+    Reconstructing the global voxel coordinate makes leaf-local motion and a
+    7-to-0 leaf seam use the same flat-table lookup. Unallocated and domain
+    boundary neighbors are deliberately impermeable.
+    """
+    if flat_index < 0 or axis < 0 or axis > 2:
+        return wp.int32(-1)
+    ijk = voxel_coord_of_flat(leaf_coords, flat_index)
+    if axis == 0:
+        ijk = wp.vec3i(ijk[0] + direction, ijk[1], ijk[2])
+    elif axis == 1:
+        ijk = wp.vec3i(ijk[0], ijk[1] + direction, ijk[2])
+    else:
+        ijk = wp.vec3i(ijk[0], ijk[1], ijk[2] + direction)
+    return voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+
+
+@wp.func
+def positive_face_neighbor(
+    flat_index: wp.int32,
+    axis: wp.int32,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+) -> wp.int32:
+    """Return the +axis neighbor owned by ``flat_index``, or ``-1``."""
+    return neighbor_flat_index(
+        flat_index, axis, wp.int32(1), leaf_table, leaf_coords,
+        voxels_dim, leaves_dim)
+
+
+@wp.func
 def voxel_center_world(ijk: wp.vec3i, origin: wp.vec3, voxel_size: float) -> wp.vec3:
     return origin + wp.vec3(
         (float(ijk[0]) + 0.5) * voxel_size,

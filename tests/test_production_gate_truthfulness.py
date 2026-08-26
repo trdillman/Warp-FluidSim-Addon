@@ -34,7 +34,13 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
 
     assert "\nHEADLESS-GATE-PASS" in out
     assert "FULL-PRODUCTION-GATE-PASS" not in out
+    assert "demo_build_policy: rebuild-canonical" in out
     assert gui_calls == []
+    assert [label for label, *_rest in calls
+            if label.startswith("demo cache build ")] == [
+        "demo cache build dam_break",
+        "demo cache build crown_splash",
+    ]
     assert all(
         expect_marker
         for _label, _command, _env, reject_output, expect_marker in calls
@@ -64,6 +70,56 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     assert len(stability_calls) == 1
     assert "tests/blender_closed_domain_stability_acceptance.py" in stability_calls[0][0]
     assert stability_calls[0][1] == "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"
+
+
+def test_production_gate_no_rebuild_demos_preserves_checks(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(label, command, env=None, reject_output=False,
+                 expect_marker=None):
+        calls.append((label, command, env, reject_output, expect_marker))
+
+    monkeypatch.setattr(run_production_gate, "_run", fake_run)
+    monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
+    monkeypatch.setattr(
+        run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda: None)
+    monkeypatch.setenv("BLENDER_EXE", "blender")
+    monkeypatch.setenv("BLENDER_PY", "python")
+    monkeypatch.delenv("FLUIDSIM_USER_PATH_PROFILE", raising=False)
+
+    run_production_gate.main(["--no-rebuild-demos"])
+
+    labels = [label for label, *_rest in calls]
+    out = capsys.readouterr().out
+    assert "demo_build_policy: existing-only" in out
+    assert not any(label.startswith("demo cache build ") for label in labels)
+    assert "demo analysis" in labels
+    assert "demo blend checks" in labels
+    assert "\nHEADLESS-GATE-PASS" in out
+
+
+def test_production_gate_no_rebuild_demos_fails_closed_on_existing_demo_error(
+        monkeypatch, capsys):
+    def fake_run(label, command, env=None, reject_output=False,
+                 expect_marker=None):
+        if label == "demo analysis":
+            raise RuntimeError("existing demo analysis failed")
+
+    monkeypatch.setattr(run_production_gate, "_run", fake_run)
+    monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
+    monkeypatch.setattr(
+        run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
+    monkeypatch.setenv("BLENDER_EXE", "blender")
+    monkeypatch.setenv("BLENDER_PY", "python")
+    monkeypatch.delenv("FLUIDSIM_USER_PATH_PROFILE", raising=False)
+
+    with pytest.raises(RuntimeError, match="existing demo analysis failed"):
+        run_production_gate.main(["--no-rebuild-demos"])
+
+    assert "HEADLESS-GATE-PASS" not in capsys.readouterr().out
 
 
 def test_production_gate_include_gui_requires_foreground_gui_acceptance(

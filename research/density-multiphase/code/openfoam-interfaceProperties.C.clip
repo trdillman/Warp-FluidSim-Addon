@@ -1,0 +1,26 @@
+/*
+Source: OpenFOAM-13/src/twoPhaseModels/interfaceProperties/interfaceProperties.C
+URL: https://github.com/OpenFOAM/OpenFOAM-13/blob/18870c24d21c6b982e2cdec27b2f59738cca5f90/src/twoPhaseModels/interfaceProperties/interfaceProperties.C
+Owner: OpenFOAM Foundation
+Revision: 18870c24d21c6b982e2cdec27b2f59738cca5f90
+Retrieved: 2026-08-22 UTC
+License: GPL-3.0-or-later; see OpenFOAM-LICENSE.md. Narrow clip for research.
+*/
+
+void Foam::interfaceProperties::calculateK()
+{
+    const volVectorField gradAlpha1(fvc::grad(alpha1_));
+    surfaceVectorField nHatfv(fvc::interpolate(gradAlpha1));
+    correctContactAngle(nHatfv, gradAlpha1);
+    nHatf_ = nHatfv & mesh_.Sf();
+    K_ = -fvc::div(nHatf_);
+}
+
+Foam::tmp<Foam::surfaceScalarField>
+Foam::interfaceProperties::surfaceTensionForce() const
+{
+    return fvc::interpolate(sigmaK())*fvc::snGrad(alpha1_);
+}
+
+// Nearby upstream function correctContactAngle() obtains cos(theta), adjusts
+// the interface normal at wall patches, then normalizes it.

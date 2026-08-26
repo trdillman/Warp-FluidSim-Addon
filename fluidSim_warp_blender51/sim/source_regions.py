@@ -314,6 +314,7 @@ class PayloadPlan:
     viscosity: float = 0.0
     density: float = 1.0
     color: Vec4 = (0.1, 0.45, 1.0, 1.0)
+    species_concentration: Vec4 = (0.0, 0.0, 0.0, 0.0)
     source_id: int = 0
     lifespan: float = 0.0
     use_lifespan: bool = False

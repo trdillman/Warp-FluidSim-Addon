@@ -1,0 +1,23 @@
+/*
+Source: OpenFOAM-13/applications/modules/incompressibleVoF/incompressibleVoF.C
+URL: https://github.com/OpenFOAM/OpenFOAM-13/blob/18870c24d21c6b982e2cdec27b2f59738cca5f90/applications/modules/incompressibleVoF/incompressibleVoF.C
+Owner: OpenFOAM Foundation
+Revision: 18870c24d21c6b982e2cdec27b2f59738cca5f90
+Retrieved: 2026-08-22 UTC
+License: GPL-3.0-or-later; see OpenFOAM-LICENSE.md. Narrow clip for research.
+*/
+
+void Foam::solvers::incompressibleVoF::prePredictor()
+{
+    const dimensionedScalar& rho1 = mixture.rho1();
+    const dimensionedScalar& rho2 = mixture.rho2();
+    rhoPhi = alphaPhi1*rho1 + alphaPhi2*rho2;
+}
+
+void Foam::solvers::incompressibleVoF::pressureCorrector()
+{
+    incompressiblePressureCorrector();
+}
+
+// Evidence: phase-fraction fluxes construct a mass flux before the shared
+// incompressible pressure correction.
