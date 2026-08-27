@@ -2150,7 +2150,6 @@ class FluidSolver:
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
-        ww.update_type_counts(active_whitewater)
         return active_whitewater
 
     # -- CFL ----------------------------------------------------------------

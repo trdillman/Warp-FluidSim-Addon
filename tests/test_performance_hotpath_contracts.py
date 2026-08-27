@@ -249,6 +249,7 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
 
         def compact(self, count_hint):
             self.compact_hints.append(count_hint)
+            self.update_type_counts(count_hint)
 
         def update_type_counts(self, count_hint):
             self.type_count_hints.append(count_hint)
@@ -276,8 +277,8 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
         ))
 
     assert results == [
-        (11, [19], [11], [11]),
-        (11, [19], [11], [11]),
+        (11, [19], [19], [11]),
+        (11, [19], [19], [11]),
     ]
 
 
