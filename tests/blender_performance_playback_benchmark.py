@@ -705,7 +705,7 @@ def main(argv=None):
                 candidate for candidate in area.regions if candidate.type == "WINDOW")
             with bpy.context.temp_override(window=window, area=area, region=region):
                 bpy.ops.screen.animation_play()
-            return 0.1
+            return None
         except Exception as exc:  # noqa: BLE001 - report live setup failure
             return finish(repr(exc))
 

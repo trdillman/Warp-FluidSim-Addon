@@ -289,6 +289,16 @@ def test_runtime_inventory_accepts_exact_tracked_copy(monkeypatch, tmp_path):
     assert len(result["runtime_inventory_digest"]) == 64
 
 
+def test_animation_start_timer_is_one_shot():
+    source = Path(benchmark.__file__).read_text(encoding="utf-8")
+    start_block = source.split("    def start():", 1)[1].split(
+        "    bpy.app.timers.register(poll", 1)[0]
+
+    assert "bpy.ops.screen.animation_play()" in start_block
+    assert "            return None" in start_block
+    assert "            return 0.1" not in start_block
+
+
 def test_protected_finalization_reports_write_failure_after_restore():
     calls = []
     report, errors = benchmark._protected_finalize(
