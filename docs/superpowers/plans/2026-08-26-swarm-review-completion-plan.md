@@ -33,6 +33,11 @@
 - [x] Run CUDA cache/export acceptance: `CACHE-EXPORT-PIPELINE-PASS`.
 - [x] Resolve independent Terra/high final review to PASS with no actionable
   production finding.
-- [ ] Commit the isolated correction slice and integrate it into `master`
+- [x] Commit the isolated correction slice as `fe9c9e4` and integrate it into `master`
   without staging the original checkout's unrelated dirty file.
-- [ ] Re-run the authoritative focused and full gates on integrated `master`.
+- [x] Stabilize the documented root pytest import path and preserve loaded
+  submodule identity during root-package test reloads in `72733fb`.
+- [x] Re-run the authoritative full and Blender gates on integrated `master`:
+  `1136 passed`, `PHASE4-LIVE-INTERACTION-PASS`,
+  `HANDLER-PERSISTENCE-GATE-PASS`, `BACKGROUND-ACCEPTANCE-PASS`, and
+  `CACHE-EXPORT-PIPELINE-PASS`.

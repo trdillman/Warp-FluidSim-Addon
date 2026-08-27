@@ -27,7 +27,8 @@ Security lane intentionally excluded by user request.
 ## Proof completed before final review
 
 - Claim-focused integration: `309 passed`.
-- Full Python regression: `1135 passed`.
+- Full Python regression in the isolated worktree: `1135 passed`.
+- Full documented root command on integrated `master`: `1136 passed`.
 - `PHASE4-LIVE-INTERACTION-PASS`.
 - `HANDLER-PERSISTENCE-GATE-PASS`.
 - `BACKGROUND-ACCEPTANCE-PASS`.
