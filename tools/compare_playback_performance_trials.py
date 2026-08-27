@@ -166,6 +166,20 @@ def _validate_trial(report, baseline_head, candidate_head, index):
         errors.append(f"{label}: exact positive process PID binding is invalid")
     if report.get("surface_attribute_profile") != "all":
         errors.append(f"{label}: raw trial must use surface profile 'all'")
+    blend_digest = report.get("blend_sha256")
+    if (not isinstance(blend_digest, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", blend_digest) is None):
+        errors.append(f"{label}: blend_sha256 is missing or invalid")
+    for field in (
+            "blender_binary", "blender_version", "python_version", "device",
+            "viewport_output_kind"):
+        if not isinstance(report.get(field), str) or not report.get(field):
+            errors.append(f"{label}: {field} is missing or invalid")
+    for field in ("live_surface_publish_cadence", "timeline_advance_budget"):
+        if type(report.get(field)) is not int or report.get(field, 0) <= 0:
+            errors.append(f"{label}: {field} is missing or invalid")
+    if type(report.get("start_frame")) is not int:
+        errors.append(f"{label}: start_frame is missing or invalid")
     if report.get("required_frames") != REQUIRED_SAMPLES:
         errors.append(f"{label}: raw trial must require exactly 60 frames")
     if report.get("registered_handler_count") != 1:
@@ -223,6 +237,9 @@ def _aggregate_pair_metrics(pairs, field):
         "candidate_wins": sum(value < 0.0 for value in changes),
         "baseline_wins": sum(value > 0.0 for value in changes),
         "ties": sum(value == 0.0 for value in changes),
+        "candidate_p95_wins": sum(value < 0.0 for value in p95_changes),
+        "baseline_p95_wins": sum(value > 0.0 for value in p95_changes),
+        "p95_ties": sum(value == 0.0 for value in p95_changes),
     }
 
 
@@ -261,6 +278,8 @@ def _memory_summary(reports):
 def compare_trials(reports, *, baseline_head, candidate_head):
     baseline_head = _require_head(baseline_head, "baseline_head")
     candidate_head = _require_head(candidate_head, "candidate_head")
+    if baseline_head == candidate_head:
+        raise ValueError("baseline_head and candidate_head must differ")
     reports = [dict(report) for report in reports]
     errors = []
     if len(reports) != 28:
@@ -273,6 +292,51 @@ def compare_trials(reports, *, baseline_head, candidate_head):
         seen.add(key)
         errors.extend(_validate_trial(
             report, baseline_head, candidate_head, index))
+    process_pids = [report.get("owned_process_pid") for report in reports]
+    if (len(process_pids) != 28
+            or any(type(value) is not int or value <= 0 for value in process_pids)
+            or len(set(process_pids)) != 28):
+        errors.append(
+            "fresh-process evidence requires 28 unique positive owned_process_pid values")
+
+    comparable_fields = (
+        "blend_sha256",
+        "blender_binary",
+        "blender_version",
+        "python_version",
+        "device",
+        "requested_surface_attributes",
+        "configured_surface_attributes",
+        "published_surface_attributes",
+        "live_surface_publish_cadence",
+        "timeline_advance_budget",
+        "required_frames",
+        "start_frame",
+        "viewport_output_kind",
+        "surface_attribute_profile",
+        "measurement_kind",
+    )
+    if reports:
+        for field in comparable_fields:
+            expected_value = reports[0].get(field)
+            for index, report in enumerate(reports[1:], start=1):
+                if report.get(field) != expected_value:
+                    errors.append(
+                        f"trial[{index}]: {field} differs from the common "
+                        "workload/runtime identity")
+                    break
+        inventory_fields = (
+            reports[0].get("requested_surface_attributes"),
+            reports[0].get("configured_surface_attributes"),
+            reports[0].get("published_surface_attributes"),
+        )
+        if (any(not isinstance(value, list) or not value
+                for value in inventory_fields)
+                or not (inventory_fields[0] == inventory_fields[1]
+                        == inventory_fields[2])):
+            errors.append(
+                "all-profile requested/configured/published inventories must "
+                "be identical and non-empty")
     expected = {(pair_id, slot) for pair_id in PAIR_IDS for slot in SLOTS}
     missing = sorted(expected - seen)
     if missing:
@@ -342,13 +406,21 @@ def compare_trials(reports, *, baseline_head, candidate_head):
     candidate_faster = (
         handler["paired_percent_change_median"] < 0.0
         and surface["paired_percent_change_median"] < 0.0
+        and handler["paired_p95_percent_change_median"] < 0.0
+        and surface["paired_p95_percent_change_median"] < 0.0
         and handler["candidate_wins"] > handler["baseline_wins"]
-        and surface["candidate_wins"] > surface["baseline_wins"])
+        and surface["candidate_wins"] > surface["baseline_wins"]
+        and handler["candidate_p95_wins"] > handler["baseline_p95_wins"]
+        and surface["candidate_p95_wins"] > surface["baseline_p95_wins"])
     baseline_faster = (
         handler["paired_percent_change_median"] > 0.0
         and surface["paired_percent_change_median"] > 0.0
+        and handler["paired_p95_percent_change_median"] > 0.0
+        and surface["paired_p95_percent_change_median"] > 0.0
         and handler["baseline_wins"] > handler["candidate_wins"]
-        and surface["baseline_wins"] > surface["candidate_wins"])
+        and surface["baseline_wins"] > surface["candidate_wins"]
+        and handler["baseline_p95_wins"] > handler["candidate_p95_wins"]
+        and surface["baseline_p95_wins"] > surface["candidate_p95_wins"])
     direction = (
         "candidate_faster" if candidate_faster
         else "baseline_faster" if baseline_faster
@@ -362,8 +434,8 @@ def compare_trials(reports, *, baseline_head, candidate_head):
         "optimization_recommendation": {
             "direction": direction,
             "reason": (
-                "paired median direction and pair win counts agree on both "
-                "handler and surface-publication timings"
+                "paired median and p95 directions plus pair win counts agree "
+                "on both handler and surface-publication timings"
                 if direction != "mixed"
                 else "handler and surface paired directions do not agree"),
             "materiality_threshold_applied": False,

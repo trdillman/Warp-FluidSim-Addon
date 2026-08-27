@@ -27,6 +27,7 @@ def _variant(order, slot):
 def _trial(pair_number, slot, *, mutate=None):
     order = "baseline-first" if pair_number % 2 else "candidate-first"
     variant = _variant(order, slot)
+    process_pid = 10_000 + pair_number * 10 + SLOTS.index(slot)
     head = BASELINE_HEAD if variant == "baseline" else CANDIDATE_HEAD
     handler = 2.0 if variant == "baseline" else 1.5
     surface = 4.0 if variant == "baseline" else 3.0
@@ -55,10 +56,22 @@ def _trial(pair_number, slot, *, mutate=None):
         "runtime_inventory_missing": [],
         "runtime_inventory_mismatched": [],
         "process_pid_matches": True,
-        "owned_process_pid": 4321,
-        "expected_process_pid": 4321,
+        "owned_process_pid": process_pid,
+        "expected_process_pid": process_pid,
         "active_blend_matches": True,
         "cleanup_owner": "blender_mcp_launcher",
+        "blend_sha256": "d" * 64,
+        "blender_binary": "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe",
+        "blender_version": "5.1.0",
+        "python_version": "3.11.9",
+        "device": "cuda:0",
+        "requested_surface_attributes": ["motion", "velocity"],
+        "configured_surface_attributes": ["motion", "velocity"],
+        "published_surface_attributes": ["motion", "velocity"],
+        "live_surface_publish_cadence": 1,
+        "timeline_advance_budget": 60,
+        "start_frame": 1,
+        "viewport_output_kind": "surface",
         "registered_handler_count": 1,
         "registered_handler_identity": (
             "fluidSim_warp_blender51.blender.playback._on_frame_change"),
@@ -180,3 +193,62 @@ def test_full_heads_are_required():
     with pytest.raises(ValueError, match="40-character"):
         comparator.compare_trials(
             _dataset(), baseline_head="abc", candidate_head=CANDIDATE_HEAD)
+
+
+def test_candidate_is_not_recommended_when_p95_regresses_sharply():
+    reports = _dataset()
+    for report in reports:
+        if report["variant"] == "candidate":
+            report["all_handler_frame_samples"] = (
+                [9.0] * 10 + [1.0] * 47 + [100.0] * 3)
+            report["surface_publication_frame_samples"] = (
+                [12.0] * 10 + [2.0] * 47 + [200.0] * 3)
+    result = comparator.compare_trials(
+        reports, baseline_head=BASELINE_HEAD, candidate_head=CANDIDATE_HEAD)
+    assert result["evidence_completeness"]["complete"] is True
+    assert result["aggregate"]["handler"]["paired_percent_change_median"] < 0
+    assert result["aggregate"]["handler"]["paired_p95_percent_change_median"] >= 4900
+    assert result["optimization_recommendation"]["direction"] != "candidate_faster"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("blend_sha256", "e" * 64),
+        ("blender_binary", "D:/Other/blender.exe"),
+        ("blender_version", "5.2.0"),
+        ("device", "cpu"),
+        ("requested_surface_attributes", ["velocity"]),
+        ("configured_surface_attributes", ["velocity"]),
+        ("published_surface_attributes", ["velocity"]),
+        ("live_surface_publish_cadence", 2),
+        ("timeline_advance_budget", 121),
+        ("start_frame", 2),
+        ("viewport_output_kind", "particles"),
+    ),
+)
+def test_workload_or_runtime_identity_mismatch_fails_completeness(field, value):
+    reports = _dataset()
+    reports[0][field] = value
+    result = comparator.compare_trials(
+        reports, baseline_head=BASELINE_HEAD, candidate_head=CANDIDATE_HEAD)
+    assert result["evidence_completeness"]["complete"] is False
+    assert any(field in error for error in result["evidence_completeness"]["errors"])
+
+
+def test_repeated_process_pid_fails_fresh_process_evidence():
+    reports = _dataset()
+    reports[1]["owned_process_pid"] = reports[0]["owned_process_pid"]
+    reports[1]["expected_process_pid"] = reports[0]["owned_process_pid"]
+    result = comparator.compare_trials(
+        reports, baseline_head=BASELINE_HEAD, candidate_head=CANDIDATE_HEAD)
+    assert result["evidence_completeness"]["complete"] is False
+    assert any("28 unique positive" in error
+               for error in result["evidence_completeness"]["errors"])
+
+
+def test_baseline_and_candidate_heads_must_differ():
+    with pytest.raises(ValueError, match="must differ"):
+        comparator.compare_trials(
+            _dataset(), baseline_head=BASELINE_HEAD,
+            candidate_head=BASELINE_HEAD)
