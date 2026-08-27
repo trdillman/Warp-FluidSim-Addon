@@ -152,8 +152,22 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
 
 
 def _reload_module(name):
-    sys.modules.pop(name, None)
+    prefix = f"{name}."
+    for loaded_name in tuple(sys.modules):
+        if (loaded_name == name
+                or (name != "fluidSim_warp_blender51"
+                    and loaded_name.startswith(prefix))):
+            sys.modules.pop(loaded_name, None)
     return importlib.import_module(name)
+
+
+def test_reloading_addon_root_preserves_loaded_submodule_identities(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.sim import enums
+
+    _reload_module("fluidSim_warp_blender51")
+
+    assert sys.modules["fluidSim_warp_blender51.sim.enums"] is enums
 
 
 def _pending_module():
