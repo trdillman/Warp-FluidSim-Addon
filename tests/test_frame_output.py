@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim.frame_output import HostFrame
 
@@ -16,6 +17,19 @@ class _Array:
 
     def numpy(self):
         self.calls[self.name] = self.calls.get(self.name, 0) + 1
+        return self.value
+
+
+class _TransferSpyArray:
+    def __init__(self, value, transfers):
+        self.value = np.asarray(value)
+        self.transfers = transfers
+
+    def __getitem__(self, item):
+        return _TransferSpyArray(self.value[item], self.transfers)
+
+    def numpy(self):
+        self.transfers.append(len(self.value))
         return self.value
 
 
@@ -70,6 +84,60 @@ def test_host_frame_reads_each_requested_output_once_and_nothing_eagerly():
         "device_readbacks": 3,
         "surface_extractions": 1,
     }
+
+
+@pytest.mark.parametrize("live_count", [0, 2, 4])
+@pytest.mark.parametrize(
+    ("accessor", "source", "zero_skips_transfer"),
+    [
+        ("velocities", np.arange(12, dtype=np.float32).reshape(4, 3), True),
+        ("whitewater", np.arange(12, dtype=np.float32).reshape(4, 3), True),
+        ("particle_attr", np.arange(4, dtype=np.int32), False),
+        ("whitewater_attr", np.arange(4, dtype=np.int16), False),
+    ],
+)
+def test_host_frame_transfers_only_each_live_device_prefix(
+        live_count, accessor, source, zero_skips_transfer):
+    transfers = []
+    particles = SimpleNamespace(
+        refresh_host_count=lambda: live_count,
+        velocity=_TransferSpyArray(source, transfers),
+        attr=lambda _name: _TransferSpyArray(source, transfers),
+    )
+    whitewater = SimpleNamespace(
+        refresh_host_count=lambda: live_count,
+        position=_TransferSpyArray(source, transfers),
+        value=_TransferSpyArray(source, transfers),
+    )
+    frame = HostFrame(SimpleNamespace(
+        frame=1, particles=particles, whitewater=whitewater))
+
+    if accessor == "particle_attr":
+        actual = frame.particle_attr("value")
+    elif accessor == "whitewater_attr":
+        actual = frame.whitewater_attr("value")
+    else:
+        actual = getattr(frame, accessor)
+    expected = np.ascontiguousarray(source[:live_count])
+
+    np.testing.assert_array_equal(actual, expected)
+    assert actual.dtype == expected.dtype
+    assert actual.shape == expected.shape
+    assert actual.tobytes() == expected.tobytes()
+    assert transfers == ([] if live_count == 0 and zero_skips_transfer
+                         else [live_count])
+
+    if live_count:
+        assert not np.shares_memory(actual, source[live_count:])
+
+    if accessor == "particle_attr":
+        assert frame.particle_attr("value") is actual
+    elif accessor == "whitewater_attr":
+        assert frame.whitewater_attr("value") is actual
+    else:
+        assert getattr(frame, accessor) is actual
+    assert transfers == ([] if live_count == 0 and zero_skips_transfer
+                         else [live_count])
 
 
 def test_new_host_frame_rereads_requested_outputs():

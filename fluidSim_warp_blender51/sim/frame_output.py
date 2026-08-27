@@ -22,6 +22,11 @@ wp.set_module_options({"enable_backward": False})
 _HOST_OUTPUT_OPERATIONS = Counter()
 
 
+def _live_numpy(device_array, live_count):
+    """Transfer only the live device prefix to NumPy."""
+    return device_array[:live_count].numpy()
+
+
 @wp.kernel
 def k_sample_particle_vorticity(
     positions: wp.array(dtype=wp.vec3),
@@ -167,7 +172,8 @@ class HostFrame:
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.particles.velocity.numpy()[:n], dtype=np.float32)
+                    _live_numpy(self.solver.particles.velocity, n),
+                    dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
         return self._get("velocities", load)
 
@@ -210,7 +216,8 @@ class HostFrame:
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.whitewater.position.numpy()[:n], dtype=np.float32)
+                    _live_numpy(self.solver.whitewater.position, n),
+                    dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
         return self._get("whitewater", load)
 
@@ -270,7 +277,7 @@ class HostFrame:
                 n = self._live_count("particles")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.particles.attr(name).numpy()[:n])
+                    _live_numpy(self.solver.particles.attr(name), n))
             except (AttributeError, KeyError):
                 return np.zeros(0, dtype=np.float32)
         return self._get(("particle", name), load)
@@ -281,7 +288,7 @@ class HostFrame:
                 n = self._live_count("whitewater")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    getattr(self.solver.whitewater, name).numpy()[:n])
+                    _live_numpy(getattr(self.solver.whitewater, name), n))
             except AttributeError:
                 if name == "type":
                     from .whitewater_types import LEGACY_UNCLASSIFIED
