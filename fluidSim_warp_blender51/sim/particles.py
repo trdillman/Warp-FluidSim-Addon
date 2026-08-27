@@ -71,8 +71,12 @@ def k_compact_alive_scatter(
 ):
     tid = wp.tid()
     n = count_in[0]
+    if tid == 0 and n == 0:
+        count_out[0] = 0
     if tid >= n:
         return
+    if tid == n - 1:
+        count_out[0] = offsets[tid] + alive[tid]
     if alive[tid] == 0:
         return
     j = offsets[tid]
@@ -84,8 +88,6 @@ def k_compact_alive_scatter(
     dst_f3[j] = src_f3[tid]
     dst_f4[j] = src_f4[tid]
     dst_time_offset[j] = src_time_offset[tid]
-    if tid == n - 1:
-        count_out[0] = j + 1
 
 
 @wp.kernel
@@ -364,9 +366,6 @@ class ParticleSystem:
             count_in = self._count2
             count_out = self.count
         wp.utils.array_scan(alive, scan_tmp, inclusive=False)
-        wp.launch(k_last_offset_count, dim=1,
-                  inputs=[self.alive, self.scan_tmp, count_in, count_out],
-                  device=self.device)
         wp.launch(k_compact_alive_scatter, dim=n, inputs=[
             self.alive, self.scan_tmp, count_in,
             self.position, self.velocity,

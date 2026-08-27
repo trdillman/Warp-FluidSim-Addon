@@ -1167,6 +1167,93 @@ def test_liquid_particle_compact_count_hint_ignores_inactive_tail(cuda_device):
     assert np.allclose(psys.position.numpy()[:live, 0], [0.0, 2.0, 4.0, 5.0])
 
 
+@pytest.mark.parametrize(
+    ("case", "alive_prefix"),
+    [
+        ("zero_survivors", [0, 0, 0, 0]),
+        ("one_survivor", [0, 0, 0, 1]),
+        ("half_survive", [1, 0, 1, 0, 1, 0]),
+        ("last_input_dead", [1, 1, 1, 0]),
+    ],
+)
+def test_liquid_compaction_count_and_channels_stay_aligned(
+        cuda_device, case, alive_prefix):
+    """Count publication must preserve every channel for boundary patterns."""
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+
+    capacity = 10
+    n = len(alive_prefix)
+    psys = ParticleSystem(
+        capacity=capacity,
+        device=cuda_device,
+        optional_channels=("color", "source_id", "uid"),
+    )
+    index = np.arange(capacity, dtype=np.float32)
+    alive = np.ones(capacity, dtype=np.int32)
+    alive[:n] = np.asarray(alive_prefix, dtype=np.int32)
+    positions = np.stack((index, index + 10.0, index + 20.0), axis=1)
+    velocities = positions + 100.0
+    colors = np.stack(
+        (index + 200.0, index + 300.0, index + 400.0, index + 500.0),
+        axis=1,
+    )
+    source_ids = np.arange(600, 600 + capacity, dtype=np.int32)
+    uids = np.arange(700, 700 + capacity, dtype=np.int32)
+    time_offsets = index + 800.0
+
+    wp.copy(psys.position, wp.array(positions, dtype=wp.vec3, device=cuda_device))
+    wp.copy(psys.velocity, wp.array(velocities, dtype=wp.vec3, device=cuda_device))
+    _copy_int(psys.alive, alive, cuda_device)
+    _copy_int(psys.count, np.array([capacity], dtype=np.int32), cuda_device)
+    _copy_float(psys.time_offset, time_offsets, cuda_device)
+    for channel_index, name in enumerate(psys.ATTR_NAMES):
+        _copy_float(psys.attrs[name], index + 900.0 + channel_index * 100.0,
+                    cuda_device)
+    wp.copy(
+        psys.vec4_attrs["color"],
+        wp.array(colors, dtype=wp.vec4, device=cuda_device),
+    )
+    _copy_int(psys.int_attrs["source_id"], source_ids, cuda_device)
+    _copy_int(psys.int_attrs["uid"], uids, cuda_device)
+
+    psys.compact(count_hint=n)
+
+    survivor_indices = np.flatnonzero(np.asarray(alive_prefix, dtype=np.int32))
+    live = psys.refresh_host_count()
+    assert live == len(survivor_indices), case
+    assert np.allclose(psys.position.numpy()[:live], positions[survivor_indices])
+    assert np.allclose(psys.velocity.numpy()[:live], velocities[survivor_indices])
+    assert np.allclose(
+        psys.time_offset.numpy()[:live], time_offsets[survivor_indices])
+    for channel_index, name in enumerate(psys.ATTR_NAMES):
+        values = index + 900.0 + channel_index * 100.0
+        assert np.allclose(psys.attrs[name].numpy()[:live], values[survivor_indices])
+    assert np.allclose(
+        psys.vec4_attrs["color"].numpy()[:live], colors[survivor_indices])
+    assert np.array_equal(
+        psys.int_attrs["source_id"].numpy()[:live], source_ids[survivor_indices])
+    assert np.array_equal(
+        psys.int_attrs["uid"].numpy()[:live], uids[survivor_indices])
+
+
+def test_empty_no_hint_compaction_does_not_restore_stale_count(cuda_device):
+    """Clearing after a non-empty compact must not resurrect its output count."""
+    from fluidSim_warp_blender51.sim.particles import ParticleSystem
+
+    psys = ParticleSystem(capacity=4, device=cuda_device)
+    _copy_int(psys.alive, np.ones(4, dtype=np.int32), cuda_device)
+    _copy_int(psys.count, np.array([4], dtype=np.int32), cuda_device)
+    psys.compact()
+    assert psys.refresh_host_count() == 4
+
+    psys.clear()
+    assert psys.refresh_host_count() == 0
+    psys.compact()
+
+    assert psys.refresh_host_count() == 0
+    assert np.all(psys.alive.numpy() == 0)
+
+
 def test_compute_substeps_skips_cfl_readback_when_substeps_are_fixed(cuda_device):
     settings = SolverSettings(
         domain_min=(0.0, 0.0, 0.0),

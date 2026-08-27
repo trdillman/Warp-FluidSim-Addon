@@ -110,6 +110,20 @@ def test_pcg_reuses_scalar_buffers_without_device_copy():
     assert "self.rz, self.rz_new = self.rz_new, self.rz" in batch_source
 
 
+def test_particle_compaction_scatter_publishes_count_without_extra_launch():
+    """The bounded scatter must publish its final count before dead returns."""
+    from fluidSim_warp_blender51.sim import particles
+
+    scatter_source = inspect.getsource(particles.k_compact_alive_scatter)
+    compact_source = inspect.getsource(ParticleSystem.compact)
+
+    count_write = "count_out[0] = offsets[tid] + alive[tid]"
+    assert count_write in scatter_source
+    assert scatter_source.index("if tid == n - 1:") < scatter_source.index(
+        "if alive[tid] == 0:")
+    assert "wp.launch(k_last_offset_count" not in compact_source
+
+
 def test_pcg_centralizes_required_full_grid_work_buffer_clears():
     source = inspect.getsource(PressureSolver.solve_pcg)
     helper = inspect.getsource(PressureSolver._zero_pcg_vectors)
