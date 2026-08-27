@@ -1748,6 +1748,404 @@ def test_cache_playback_uses_per_scene_cursor_without_touching_live_owner(
     assert sess.last_frame == 19
 
 
+def test_cache_validation_cursor_reuses_scene_signature_across_validated_frames(
+        monkeypatch):
+    """Each new frame is read, while unchanged scene identity is hashed once."""
+    scene_bridge, scene, reads, signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene.frame_current = 8
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [("//cache", 7), ("//cache", 8)]
+    assert len(signature_calls) == 1
+
+
+def test_reverting_cache_identity_settings_retries_same_frame_with_restored_key(
+        monkeypatch):
+    """A failed validation must not pin the edited key after Revert."""
+    scene_bridge, scene, reads, signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+    scene.fluidsim.voxel_size = 0.1
+
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    monkeypatch.setattr(pending_settings, "_configured_device", lambda: "cuda:0")
+    pending_settings.capture_applied_state(scene)
+    cache_identity = sys.modules[
+        "fluidSim_warp_blender51.blender.cache_identity"]
+
+    def identity_from_restorable_setting(_scene, depsgraph=None):
+        signature_calls.append(depsgraph)
+        scene_key = (
+            "v2-scene-key"
+            if scene.fluidsim.voxel_size == 0.1
+            else "edited-scene-key"
+        )
+        return {
+            "scene_key": scene_key,
+            "source_signature": "v2-source-key",
+        }
+
+    cache_identity.signature_bundle = identity_from_restorable_setting
+    scene.fluidsim.voxel_size = 0.025
+    pending_settings.refresh_pending_state(scene)
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    assert "Cache playback error" in scene.fluidsim.status
+    assert scene_bridge.playback.cache_cursor_active(scene) is True
+
+    invalidations = []
+    invalidate = scene_bridge.playback.invalidate_cache_validation
+
+    def counted_invalidation(actual_scene):
+        invalidations.append(actual_scene)
+        invalidate(actual_scene)
+
+    monkeypatch.setattr(
+        scene_bridge.playback,
+        "invalidate_cache_validation",
+        counted_invalidation,
+    )
+    assert pending_settings.revert_pending_values(scene) is True
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert scene.fluidsim.voxel_size == 0.1
+    assert invalidations == [scene]
+    assert reads == [("//cache", 7), ("//cache", 7)]
+    assert len(signature_calls) == 2
+    assert scene.fluidsim.status == "Cache frame 7: 1 particles"
+
+
+def _install_cache_validation_probe(monkeypatch, *, scene=None):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = scene or _scene(frame=7, playback=True)
+    reads = []
+    signature_calls = []
+
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+
+    def read_for_playback(base, frame):
+        reads.append((base, frame))
+        return SimpleNamespace(
+            frame_data={
+                "frame": np.array(frame, dtype=np.int32),
+                "scene_key": np.array("v2-scene-key"),
+                "positions": np.zeros((1, 3), dtype=np.float32),
+                "whitewater": np.zeros((0, 3), dtype=np.float32),
+            },
+            metadata={
+                "format_version": 2,
+                "scene_key": "v2-scene-key",
+                "source_signature": "v2-source-key",
+            },
+            metadata_identity=("v2", "manifest-a"),
+        )
+
+    fake_cache.read_frame_for_playback = read_for_playback
+    fake_cache.read_sequence_metadata = lambda _base: (_ for _ in ()).throw(
+        AssertionError("playback re-read metadata after the validated frame read"))
+    fake_cache.resolve_frame_range = lambda _scene, **_kwargs: (
+        int(scene.fluidsim.cache_frame_start),
+        int(scene.fluidsim.cache_frame_end),
+    )
+    fake_identity = types.ModuleType(
+        "fluidSim_warp_blender51.blender.cache_identity")
+
+    def signature_bundle(_scene, depsgraph=None):
+        signature_calls.append(depsgraph)
+        return {
+            "scene_key": "v2-scene-key",
+            "source_signature": "v2-source-key",
+        }
+
+    fake_identity.signature_bundle = signature_bundle
+    fake_identity.scene_key = lambda _scene: "v2-scene-key"
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_viewport.update_outputs_from_cache_frame = lambda *_args: None
+    _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity)
+    return scene_bridge, scene, reads, signature_calls
+
+
+def test_same_frame_cursor_includes_cache_path_range_and_input_generation(
+        monkeypatch):
+    scene_bridge, scene, reads, signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene.fluidsim.cache_path = "//cache-b"
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene.fluidsim.cache_use_custom_range = True
+    scene.fluidsim.cache_frame_start = 2
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene_bridge.playback.invalidate_cache_validation(scene)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [
+        ("//cache", 7),
+        ("//cache-b", 7),
+        ("//cache-b", 7),
+        ("//cache-b", 7),
+    ]
+    # Range is part of the playback request identity, so changing it also
+    # recomputes the current-scene signature before accepting the cache.
+    assert len(signature_calls) == 4
+
+
+def test_depsgraph_output_filter_requires_collection_ownership_and_shared_data(
+        monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    pending = importlib.import_module(
+        "fluidSim_warp_blender51.blender.pending_settings")
+
+    class TaggedObject(dict):
+        def __init__(self, *, data=None, role=None):
+            super().__init__()
+            self.data = data
+            if role is not None:
+                self["fluidsim_output_kind"] = role
+
+    exclusive_data = object()
+    shared_data = object()
+    output = TaggedObject(data=exclusive_data, role="FluidSurface")
+    shared_output = TaggedObject(data=shared_data, role="FluidParticles")
+    shared_input = TaggedObject(data=shared_data)
+    tagged_impostor = TaggedObject(data=object(), role="FluidSurface")
+    collection = SimpleNamespace(objects=[output, shared_output])
+    scene = _scene()
+    scene.objects = [output, shared_output, shared_input, tagged_impostor]
+    scene.fluidsim.output_collection_name = "Owned Outputs"
+    monkeypatch.setattr(
+        pending.bpy,
+        "data",
+        SimpleNamespace(collections=SimpleNamespace(
+            get=lambda name: collection if name == "Owned Outputs" else None)),
+        raising=False,
+    )
+
+    def affects(updated_id):
+        depsgraph = SimpleNamespace(updates=[SimpleNamespace(id=updated_id)])
+        return pending._depsgraph_affects_cache_inputs(scene, depsgraph)
+
+    assert affects(output) is False
+    assert affects(exclusive_data) is False
+    assert affects(tagged_impostor) is True
+    assert affects(shared_data) is True
+
+
+def test_changed_validated_metadata_identity_recomputes_scene_signature(monkeypatch):
+    scene_bridge, scene, _reads, signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+    fake_cache = sys.modules["fluidSim_warp_blender51.io.cache"]
+
+    def read_for_playback(_base, frame):
+        return SimpleNamespace(
+            frame_data={
+                "frame": np.array(frame, dtype=np.int32),
+                "scene_key": np.array("v2-scene-key"),
+                "positions": np.zeros((1, 3), dtype=np.float32),
+                "whitewater": np.zeros((0, 3), dtype=np.float32),
+            },
+            metadata={"format_version": 2, "scene_key": "v2-scene-key"},
+            metadata_identity=("v2", f"manifest-{frame}"),
+        )
+
+    fake_cache.read_frame_for_playback = read_for_playback
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    scene.frame_current = 8
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert len(signature_calls) == 2
+
+
+def test_addon_output_only_depsgraph_updates_keep_same_frame_cursor(monkeypatch):
+    scene_bridge, scene, reads, _signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+
+    class TaggedOutput(dict):
+        pass
+
+    output = TaggedOutput(fluidsim_output_kind="FluidSimParticles")
+    output.data = object()
+    scene.objects = (output,)
+    scene.fluidsim.output_collection_name = "Owned Outputs"
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(
+        pending_settings.bpy,
+        "data",
+        SimpleNamespace(collections=SimpleNamespace(
+            get=lambda name: (
+                SimpleNamespace(objects=[output])
+                if name == "Owned Outputs" else None))),
+        raising=False,
+    )
+    monkeypatch.setattr(pending_settings, "refresh_pending_state", lambda *_args: None)
+    pending_settings._on_interaction_state_update(
+        scene,
+        SimpleNamespace(updates=[
+            SimpleNamespace(id=output),
+            SimpleNamespace(id=output.data),
+        ]),
+    )
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [("//cache", 7)]
+
+
+def test_inactive_cache_cursor_skips_output_ownership_scan(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    monkeypatch.setattr(
+        pending_settings.bpy,
+        "data",
+        SimpleNamespace(collections=SimpleNamespace(
+            get=lambda _name: (_ for _ in ()).throw(
+                AssertionError("inactive playback scanned output ownership")))),
+        raising=False,
+    )
+    monkeypatch.setattr(pending_settings, "refresh_pending_state", lambda *_args: None)
+
+    pending_settings._on_interaction_state_update(
+        scene, SimpleNamespace(updates=[SimpleNamespace(id=object())]))
+
+
+def test_cache_mode_transition_clears_active_validation_cursor(monkeypatch):
+    scene_bridge, scene, _reads, _signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    assert scene_bridge.playback.cache_cursor_active(scene) is True
+
+    scene.fluidsim.cache_playback_enabled = False
+    scene.fluidsim.live = False
+    scene_bridge.playback.set_cache_playback_enabled(scene, False)
+
+    assert scene_bridge.playback.cache_cursor_active(scene) is False
+
+
+def test_registered_setting_update_invalidates_same_frame_cache_cursor(monkeypatch):
+    scene_bridge, scene, reads, _signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(
+        pending_settings,
+        "session",
+        lambda: SimpleNamespace(owns_scene=lambda _scene: False),
+    )
+    pending_settings.request_scene_update(scene, pending_settings.SceneUpdate.LIVE)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [("//cache", 7), ("//cache", 7)]
+
+
+def test_unknown_depsgraph_undo_and_load_clear_same_frame_cursor(monkeypatch):
+    scene_bridge, scene, reads, _signature_calls = _install_cache_validation_probe(
+        monkeypatch)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(pending_settings, "refresh_pending_state", lambda *_args: None)
+    pending_settings._on_interaction_state_update(scene, object())
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    pending_settings._on_interaction_state_update(scene)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    pending_settings._on_load_pre("")
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [
+        ("//cache", 7),
+        ("//cache", 7),
+        ("//cache", 7),
+        ("//cache", 7),
+    ]
+
+
+@pytest.mark.parametrize("role", ["SOURCE", "SINK", "COLLIDER", "FORCE", "FIELD"])
+def test_tagged_input_depsgraph_update_invalidates_same_frame_cache_cursor(
+        monkeypatch, role):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=7, playback=True)
+    source = SimpleNamespace(fluidsim=SimpleNamespace(role=role))
+    scene.objects = (source,)
+    reads = []
+
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+
+    def read_for_playback(base, frame):
+        reads.append((base, frame))
+        return SimpleNamespace(
+            frame_data={
+                "frame": np.array(frame, dtype=np.int32),
+                "scene_key": np.array("v2-scene-key"),
+                "positions": np.zeros((1, 3), dtype=np.float32),
+                "whitewater": np.zeros((0, 3), dtype=np.float32),
+            },
+            metadata={"format_version": 2, "scene_key": "v2-scene-key"},
+            metadata_identity=("v2", "manifest-a"),
+        )
+
+    fake_cache.read_frame_for_playback = read_for_playback
+    fake_identity = types.ModuleType(
+        "fluidSim_warp_blender51.blender.cache_identity")
+    fake_identity.signature_bundle = lambda *_args, **_kwargs: {
+        "scene_key": "v2-scene-key",
+        "source_signature": "v2-source-key",
+    }
+    fake_identity.scene_key = lambda _scene: "v2-scene-key"
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_viewport.update_outputs_from_cache_frame = lambda *_args: None
+    _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity)
+
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(pending_settings, "refresh_pending_state", lambda *_args: None)
+    pending_settings._on_interaction_state_update(
+        scene, SimpleNamespace(updates=[SimpleNamespace(id=source)]))
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert reads == [("//cache", 7), ("//cache", 7)]
+
+
+def test_switching_scenes_invalidates_prior_same_frame_cache_cursor(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    first = _scene(frame=7, playback=True)
+    second = _scene(frame=7, playback=True)
+    published = []
+
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_frame_for_playback = lambda _base, frame: SimpleNamespace(
+        frame_data={
+            "frame": np.array(frame, dtype=np.int32),
+            "positions": np.zeros((1, 3), dtype=np.float32),
+            "whitewater": np.zeros((0, 3), dtype=np.float32),
+        },
+        metadata={},
+        metadata_identity=("v1", "manifest-a"),
+    )
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication")
+    fake_viewport.update_outputs_from_cache_frame = (
+        lambda scene, _data: published.append(scene))
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_viewport)
+
+    scene_bridge.playback._on_frame_change(first, depsgraph=object())
+    scene_bridge.playback._on_frame_change(second, depsgraph=object())
+    scene_bridge.playback._on_frame_change(first, depsgraph=object())
+
+    assert published == [first, second, first]
+
+
 def test_active_production_bake_path_is_resolved_and_deeply_immutable(tmp_path):
     from fluidSim_warp_blender51.blender import cache_manager, production_bake
 

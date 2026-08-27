@@ -7,7 +7,7 @@ stored as compressed .npz files.
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 import hashlib
 import json
@@ -35,6 +35,15 @@ from ..sim.whitewater_types import validate_type_values
 
 CACHE_FORMAT_VERSION = 1
 CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
+
+
+@dataclass(frozen=True)
+class PlaybackFrameRead:
+    """Playback-only frame result with identity from the validated metadata read."""
+
+    frame_data: dict
+    metadata: dict
+    metadata_identity: tuple
 
 SCENE_KEY_VERSION = "v1"
 # Settings that say where the solve runs, not what it computes: a cache baked
@@ -553,17 +562,7 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
 
     v2 = load_manifest(manifest_path(base_dir))
     if v2 is not None:
-        return {
-            "format_version": 2,
-            "frame_start": v2.frame_start,
-            "frame_end": v2.frame_end,
-            "frame_count": len(v2.frames),
-            "source": "production_bake",
-            "scene_key": v2.scene_key,
-            "settings_signature": v2.settings_signature,
-            "source_signature": v2.source_signature,
-            "last_committed_frame": v2.last_committed_frame,
-        }
+        return _v2_sequence_metadata(v2)
     path = _metadata_path(base_dir)
     if not os.path.exists(path):
         return None
@@ -688,10 +687,40 @@ def write_frame_v2_atomic(
     return path, digest, size
 
 
-def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
+def _v2_sequence_metadata(manifest) -> dict:
+    return {
+        "format_version": 2,
+        "frame_start": manifest.frame_start,
+        "frame_end": manifest.frame_end,
+        "frame_count": len(manifest.frames),
+        "source": "production_bake",
+        "scene_key": manifest.scene_key,
+        "settings_signature": manifest.settings_signature,
+        "source_signature": manifest.source_signature,
+        "last_committed_frame": manifest.last_committed_frame,
+    }
+
+
+def _v2_metadata_identity(manifest) -> tuple:
+    """Return immutable cache-header identity without retaining the manifest."""
+    return (
+        2,
+        manifest.scene_key,
+        manifest.settings_signature,
+        manifest.source_signature,
+        manifest.effect_signature,
+        manifest.frame_start,
+        manifest.frame_end,
+        manifest.last_committed_frame,
+        len(manifest.frames),
+        manifest.updated_at,
+    )
+
+
+def _read_v2_frame(base_dir: str, frame: int, *, manifest=None) -> dict | None:
     from .cache_schema import load_manifest, manifest_path, verify_artifact
 
-    manifest = load_manifest(manifest_path(base_dir))
+    manifest = manifest or load_manifest(manifest_path(base_dir))
     if manifest is None:
         return None
     entry = manifest.frames.get(int(frame))
@@ -777,6 +806,42 @@ def read_frame(base_dir: str, frame: int) -> dict | None:
             return result
         except (ValueError, pickle.UnpicklingError):
             return None
+
+
+def read_frame_for_playback(base_dir: str, frame: int) -> PlaybackFrameRead | None:
+    """Read one frame and return metadata from that same validation operation.
+
+    Cache-v2 loads and validates one manifest, then validates the requested
+    frame artifact against that exact manifest.  The frame payload remains
+    uncached: every distinct playback frame still performs its SHA/size check.
+    """
+    if detect_cache_format(base_dir) == 2:
+        from .cache_schema import load_manifest, manifest_path
+
+        manifest = load_manifest(manifest_path(base_dir))
+        if manifest is None:
+            return None
+        frame_data = _read_v2_frame(base_dir, frame, manifest=manifest)
+        if frame_data is None:
+            return None
+        return PlaybackFrameRead(
+            frame_data=frame_data,
+            metadata=_v2_sequence_metadata(manifest),
+            metadata_identity=_v2_metadata_identity(manifest),
+        )
+
+    frame_data = read_frame(base_dir, frame)
+    if frame_data is None:
+        return None
+    metadata = read_sequence_metadata(base_dir) or {}
+    encoded = json.dumps(
+        metadata, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    return PlaybackFrameRead(
+        frame_data=frame_data,
+        metadata=metadata,
+        metadata_identity=(1, hashlib.sha256(encoded).hexdigest()),
+    )
 
 
 def available_frames(base_dir: str) -> list:

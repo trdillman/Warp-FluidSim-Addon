@@ -833,6 +833,9 @@ def revert_pending_values(scene):
             domain.matrix_world = state.domain_matrix_snapshot
     finally:
         state.suppress_callbacks = False
+        from . import playback
+
+        playback.invalidate_cache_validation(scene)
     refresh_pending_state(scene, session())
     if (_configured_device() != state.applied_device
             and state.pending_action is SceneUpdate.REBUILD):
@@ -896,6 +899,9 @@ def _schedule_capacity_plan_refresh(scene):
 
 def update_particle_capacity_policy(scene):
     """Apply growth policy live and keep capacity plan/pending truth scene-owned."""
+    from . import playback
+
+    playback.invalidate_cache_validation(scene)
     sess = session()
     fs = scene.fluidsim
     if sess.owns_scene(scene):
@@ -928,6 +934,9 @@ def request_scene_update(scene, action: SceneUpdate):
     state = _interaction_state(scene)
     if state.suppress_callbacks:
         return
+    from . import playback
+
+    playback.invalidate_cache_validation(scene)
     reason = _SCENE_UPDATE_REASONS[action]
     if not sess.owns_scene(scene):
         try:
@@ -990,6 +999,121 @@ def request_scene_update(scene, action: SceneUpdate):
 # ---------------------------------------------------------------------------
 
 
+def _datablock_identity(value):
+    """Return a stable identity for Blender IDs and lightweight test doubles."""
+    try:
+        return ("pointer", int(value.as_pointer()))
+    except (AttributeError, ReferenceError, TypeError, ValueError):
+        return ("python", id(value))
+
+
+def _owned_output_update_ids(scene):
+    """Resolve actual, exclusively output-owned IDs without a scene-wide scan."""
+    output_tag = "fluidsim_output_kind"
+
+    def is_tagged(obj):
+        try:
+            return bool(obj.get(output_tag))
+        except (AttributeError, ReferenceError, TypeError):
+            return False
+
+    fs = getattr(scene, "fluidsim", None)
+    name = (getattr(fs, "output_collection_name", "")
+            or "FluidSim Output")
+    collections = getattr(getattr(bpy, "data", None), "collections", None)
+    try:
+        collection = collections.get(name) if collections is not None else None
+    except (AttributeError, ReferenceError, TypeError):
+        return set()
+    if collection is None:
+        return set()
+    try:
+        scene_objects = getattr(scene, "objects", ()) or ()
+        collection_objects = tuple(getattr(collection, "objects", ()) or ())
+    except (ReferenceError, TypeError):
+        return set()
+
+    scene_lookup = getattr(scene_objects, "get", None)
+    fallback_scene_objects = None
+
+    def is_in_scene(obj):
+        nonlocal fallback_scene_objects
+        name = getattr(obj, "name", None)
+        if callable(scene_lookup) and isinstance(name, str):
+            try:
+                return scene_lookup(name) is obj
+            except (ReferenceError, TypeError):
+                return False
+        if fallback_scene_objects is None:
+            try:
+                fallback_scene_objects = tuple(scene_objects)
+            except (ReferenceError, TypeError):
+                fallback_scene_objects = ()
+        obj_id = _datablock_identity(obj)
+        return any(
+            _datablock_identity(candidate) == obj_id
+            for candidate in fallback_scene_objects
+        )
+
+    owned_objects = []
+    for obj in collection_objects:
+        role = str(getattr(getattr(obj, "fluidsim", None), "role", "NONE"))
+        if is_in_scene(obj) and is_tagged(obj) and role == "NONE":
+            owned_objects.append(obj)
+
+    owned_object_ids = {_datablock_identity(obj) for obj in owned_objects}
+    data_by_id = {}
+    owned_data_users = {}
+    for obj in owned_objects:
+        data = getattr(obj, "data", None)
+        if data is None:
+            continue
+        data_id = _datablock_identity(data)
+        data_by_id[data_id] = data
+        owned_data_users[data_id] = owned_data_users.get(data_id, 0) + 1
+
+    exclusive_data_ids = set()
+    for data_id, owned_users in owned_data_users.items():
+        users = getattr(data_by_id[data_id], "users", None)
+        if type(users) is int:
+            if users == owned_users:
+                exclusive_data_ids.add(data_id)
+            continue
+        if fallback_scene_objects is None:
+            try:
+                fallback_scene_objects = tuple(scene_objects)
+            except (ReferenceError, TypeError):
+                fallback_scene_objects = ()
+        shared = any(
+            _datablock_identity(getattr(obj, "data", None)) == data_id
+            and _datablock_identity(obj) not in owned_object_ids
+            for obj in fallback_scene_objects
+            if getattr(obj, "data", None) is not None
+        )
+        if not shared:
+            exclusive_data_ids.add(data_id)
+    return owned_object_ids | exclusive_data_ids
+
+
+def _depsgraph_affects_cache_inputs(scene, depsgraph):
+    """Exclude owned output churn; treat every other/unknown update as input."""
+    updates = getattr(depsgraph, "updates", None)
+    if updates is None:
+        return True
+    try:
+        updates = tuple(updates)
+    except (ReferenceError, TypeError):
+        return True
+    output_update_ids = _owned_output_update_ids(scene)
+    for update in updates:
+        updated_id = getattr(update, "id", None)
+        if updated_id is None:
+            return True
+        if _datablock_identity(updated_id) not in output_update_ids:
+            return True
+    return False
+
+
 @persistent
 def _on_interaction_state_update(*args):
     """Refresh cached pending UI state after undo, drivers, or scripts."""
@@ -997,6 +1121,15 @@ def _on_interaction_state_update(*args):
         bpy.context, "scene", None)
     if scene is None:
         return
+    from . import playback
+
+    depsgraph = args[1] if len(args) > 1 else None
+    if depsgraph is None:
+        # Undo/script state is not accompanied by classifiable update IDs.
+        playback.clear_cache_cursors()
+    elif (playback.cache_cursor_active(scene)
+          and _depsgraph_affects_cache_inputs(scene, depsgraph)):
+        playback.invalidate_cache_validation(scene)
     state = _INTERACTION_STATES.get(_scene_identity(scene))
     if state is not None:
         refresh_pending_state(scene, session())

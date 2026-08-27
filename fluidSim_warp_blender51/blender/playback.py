@@ -22,6 +22,9 @@ _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
 _IN_MODE_TRANSITION = False
 _CACHE_CURSORS = {}
+_CACHE_VALIDATION_CURSORS = {}
+_CACHE_INPUT_GENERATIONS = {}
+_ACTIVE_CACHE_SCENE_ID = None
 
 _ACTIVE_BAKE_STATUSES = frozenset({
     "PREFLIGHT",
@@ -149,6 +152,24 @@ _CACHE_SCENE_KEY_MESSAGE = (
 )
 
 
+@dataclass(frozen=True)
+class CacheValidationCursor:
+    """Current-scene identity validated against one cache metadata identity."""
+
+    scene_key: str
+    source_signature: str
+    metadata_identity: object
+    playback_range: tuple
+
+
+@dataclass(frozen=True)
+class _CacheFrameCursor:
+    frame: int
+    cache_path: str
+    playback_range: tuple
+    input_generation: int
+
+
 def _bridge():
     # Lazy at the Blender seam: scene_bridge owns the singleton Solver Session
     # and imports this module only from adapter entry points.
@@ -238,11 +259,11 @@ def set_cache_playback_enabled(scene, enabled: bool):
             return False
     if enabled:
         sess.release(scene)
-        _CACHE_CURSORS.pop(_scene_identity(scene), None)
+        invalidate_cache_validation(scene)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
     else:
-        _CACHE_CURSORS.pop(_scene_identity(scene), None)
+        invalidate_cache_validation(scene)
         if getattr(fs, "live", False):
             set_live_enabled(scene, True)
     return True
@@ -262,10 +283,64 @@ def _scene_identity(scene):
 
 def clear_cache_cursors():
     """Clear all non-authoritative cache playback positions."""
+    global _ACTIVE_CACHE_SCENE_ID
     _CACHE_CURSORS.clear()
+    _CACHE_VALIDATION_CURSORS.clear()
+    _CACHE_INPUT_GENERATIONS.clear()
+    _ACTIVE_CACHE_SCENE_ID = None
 
 
-def _check_cache_scene_key(scene, base, frame_data):
+def _activate_cache_scene(scene):
+    """Drop prior-scene playback assumptions when Blender changes scenes."""
+    global _ACTIVE_CACHE_SCENE_ID
+    scene_id = _scene_identity(scene)
+    if (_ACTIVE_CACHE_SCENE_ID is not None
+            and _ACTIVE_CACHE_SCENE_ID != scene_id):
+        _CACHE_CURSORS.clear()
+        _CACHE_VALIDATION_CURSORS.clear()
+    _ACTIVE_CACHE_SCENE_ID = scene_id
+
+
+def invalidate_cache_validation(scene):
+    """Invalidate one scene after a cache-relevant input/settings mutation."""
+    scene_id = _scene_identity(scene)
+    _CACHE_INPUT_GENERATIONS[scene_id] = (
+        _CACHE_INPUT_GENERATIONS.get(scene_id, 0) + 1)
+    _CACHE_CURSORS.pop(scene_id, None)
+    _CACHE_VALIDATION_CURSORS.pop(scene_id, None)
+
+
+def cache_cursor_active(scene):
+    """Return whether a playback result or validation identity is reusable."""
+    scene_id = _scene_identity(scene)
+    return (
+        scene_id in _CACHE_CURSORS
+        or scene_id in _CACHE_VALIDATION_CURSORS
+    )
+
+
+def _cache_playback_range(scene):
+    fs = scene.fluidsim
+    custom_range = bool(getattr(fs, "cache_use_custom_range", False))
+    return (
+        custom_range,
+        int(getattr(fs, "cache_frame_start", 0)) if custom_range else None,
+        int(getattr(fs, "cache_frame_end", 0)) if custom_range else None,
+    )
+
+
+def _cache_frame_cursor(scene, frame):
+    fs = scene.fluidsim
+    scene_id = _scene_identity(scene)
+    return _CacheFrameCursor(
+        frame=int(frame),
+        cache_path=str(bpy.path.abspath(fs.cache_path)),
+        playback_range=_cache_playback_range(scene),
+        input_generation=_CACHE_INPUT_GENERATIONS.get(scene_id, 0),
+    )
+
+
+def _check_cache_scene_key(scene, base, frame_data, playback_read=None):
     """Refuse cache data stamped for materially different scene settings."""
     import numpy as np
 
@@ -273,18 +348,47 @@ def _check_cache_scene_key(scene, base, frame_data):
     from . import cache_identity
 
     frame = int(frame_data.get("frame", -1))
-    metadata = cache.read_sequence_metadata(base) or {}
+    metadata = (
+        playback_read.metadata
+        if playback_read is not None
+        else cache.read_sequence_metadata(base) or {}
+    )
     metadata_key = str(metadata.get("scene_key", ""))
     frame_key = (str(np.asarray(frame_data["scene_key"]).item())
                  if "scene_key" in frame_data else "")
     if not (metadata_key or frame_key):
         return
     if int(metadata.get("format_version", 1)) >= 2:
-        try:
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-        except (AttributeError, RuntimeError):
-            depsgraph = None
-        current = cache_identity.signature_bundle(scene, depsgraph)["scene_key"]
+        scene_id = _scene_identity(scene)
+        generation = _CACHE_INPUT_GENERATIONS.get(scene_id, 0)
+        cached = _CACHE_VALIDATION_CURSORS.get(scene_id)
+        metadata_identity = getattr(playback_read, "metadata_identity", None)
+        playback_range = _cache_playback_range(scene)
+        if (cached is not None
+                and cached[0] == str(base)
+                and cached[1] == generation
+                and cached[2].metadata_identity == metadata_identity
+                and cached[2].playback_range == playback_range):
+            current = cached[2].scene_key
+        else:
+            try:
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+            except (AttributeError, RuntimeError):
+                depsgraph = None
+            signatures = cache_identity.signature_bundle(scene, depsgraph)
+            current = signatures["scene_key"]
+            if playback_read is not None:
+                _CACHE_VALIDATION_CURSORS[scene_id] = (
+                    str(base),
+                    generation,
+                    CacheValidationCursor(
+                        scene_key=current,
+                        source_signature=str(
+                            signatures.get("source_signature", "")),
+                        metadata_identity=metadata_identity,
+                        playback_range=playback_range,
+                    ),
+                )
     else:
         current = cache_identity.scene_key(scene)
     for candidate in (metadata_key, frame_key):
@@ -313,11 +417,18 @@ def play_cache_frame(sess, scene, frame=None):
             raise FileNotFoundError(
                 f"Cache frame {frame} is outside playback range {start}-{end}")
     base = bpy.path.abspath(fs.cache_path)
-    frame_data = cache.read_frame(base, frame)
+    read_for_playback = getattr(cache, "read_frame_for_playback", None)
+    if callable(read_for_playback):
+        playback_read = read_for_playback(base, frame)
+        frame_data = (
+            playback_read.frame_data if playback_read is not None else None)
+    else:
+        playback_read = None
+        frame_data = cache.read_frame(base, frame)
     if frame_data is None:
         raise FileNotFoundError(
             f"Cache frame {frame} is missing or corrupt in {base}")
-    _check_cache_scene_key(scene, base, frame_data)
+    _check_cache_scene_key(scene, base, frame_data, playback_read)
     output_publication.update_outputs_from_cache_frame(scene, frame_data)
     fs.stat_particles = len(frame_data.get("positions", ()))
     fs.stat_whitewater = len(frame_data.get("whitewater", ()))
@@ -387,19 +498,22 @@ def ensure_session_before_frames(scene, reason):
 
 def handle_frame_change(sess, scene, depsgraph):
     """Interpret one Blender timeline event using the frozen preview policy."""
+    if scene is not None:
+        _activate_cache_scene(scene)
     fs = getattr(scene, "fluidsim", None)
     if fs is None or not fs.live:
         return
     frame = scene.frame_current
     if getattr(fs, "cache_playback_enabled", False):
         scene_id = _scene_identity(scene)
-        if _CACHE_CURSORS.get(scene_id) == frame:
+        cursor = _cache_frame_cursor(scene, frame)
+        if _CACHE_CURSORS.get(scene_id) == cursor:
             return
         try:
             play_cache_frame(sess, scene, frame)
             # Do not consume a timeline frame until publication succeeds. A
             # repaired/replaced cache can then be retried at the same frame.
-            _CACHE_CURSORS[scene_id] = frame
+            _CACHE_CURSORS[scene_id] = cursor
         except Exception as exc:  # noqa: BLE001 - never break playback
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"
@@ -493,7 +607,8 @@ def _on_frame_change(scene, depsgraph):
             and scene.frame_current == restore_frame):
         if getattr(getattr(scene, "fluidsim", None),
                    "cache_playback_enabled", False):
-            _CACHE_CURSORS[_scene_identity(scene)] = restore_frame
+            _CACHE_CURSORS[_scene_identity(scene)] = _cache_frame_cursor(
+                scene, restore_frame)
         else:
             sess = _bridge().session()
             if sess.owns_scene(scene):

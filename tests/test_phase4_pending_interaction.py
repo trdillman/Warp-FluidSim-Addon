@@ -91,6 +91,14 @@ def test_particle_capacity_policy_updates_live_without_restarting_or_rewriting_r
     scene = _scene()
     sess, solver = _activate(bridge, scene)
     solver.particles = SimpleNamespace(capacity=4096)
+    invalidated = []
+    playback = importlib.import_module(
+        "fluidSim_warp_blender51.blender.playback")
+    monkeypatch.setattr(
+        playback,
+        "invalidate_cache_validation",
+        lambda actual: invalidated.append(actual),
+    )
 
     scene.fluidsim.max_particles = 2048
     scene.fluidsim.auto_grow_particles = False
@@ -106,6 +114,7 @@ def test_particle_capacity_policy_updates_live_without_restarting_or_rewriting_r
     assert pending["action"] == "REINIT_PENDING"
     assert any("max_particles" in reason for reason in pending["reasons"])
     assert "active pool never shrinks automatically" in scene.fluidsim.status
+    assert invalidated == [scene]
 
 
 def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
