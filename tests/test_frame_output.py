@@ -2,8 +2,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import warp as wp
 
-from fluidSim_warp_blender51.sim.frame_output import HostFrame
+from fluidSim_warp_blender51.sim.frame_output import HostFrame, _live_numpy
 
 
 class _Array:
@@ -27,6 +28,14 @@ class _TransferSpyArray:
 
     def __getitem__(self, item):
         return _TransferSpyArray(self.value[item], self.transfers)
+
+    @property
+    def dtype(self):
+        return self.value.dtype
+
+    @property
+    def shape(self):
+        return self.value.shape
 
     def numpy(self):
         self.transfers.append(len(self.value))
@@ -88,16 +97,16 @@ def test_host_frame_reads_each_requested_output_once_and_nothing_eagerly():
 
 @pytest.mark.parametrize("live_count", [0, 2, 4])
 @pytest.mark.parametrize(
-    ("accessor", "source", "zero_skips_transfer"),
+    ("accessor", "source"),
     [
-        ("velocities", np.arange(12, dtype=np.float32).reshape(4, 3), True),
-        ("whitewater", np.arange(12, dtype=np.float32).reshape(4, 3), True),
-        ("particle_attr", np.arange(4, dtype=np.int32), False),
-        ("whitewater_attr", np.arange(4, dtype=np.int16), False),
+        ("velocities", np.arange(12, dtype=np.float32).reshape(4, 3)),
+        ("whitewater", np.arange(12, dtype=np.float32).reshape(4, 3)),
+        ("particle_attr", np.arange(4, dtype=np.int32)),
+        ("whitewater_attr", np.arange(4, dtype=np.int16)),
     ],
 )
 def test_host_frame_transfers_only_each_live_device_prefix(
-        live_count, accessor, source, zero_skips_transfer):
+        live_count, accessor, source):
     transfers = []
     particles = SimpleNamespace(
         refresh_host_count=lambda: live_count,
@@ -124,8 +133,7 @@ def test_host_frame_transfers_only_each_live_device_prefix(
     assert actual.dtype == expected.dtype
     assert actual.shape == expected.shape
     assert actual.tobytes() == expected.tobytes()
-    assert transfers == ([] if live_count == 0 and zero_skips_transfer
-                         else [live_count])
+    assert transfers == ([] if live_count == 0 else [live_count])
 
     if live_count:
         assert not np.shares_memory(actual, source[live_count:])
@@ -136,8 +144,25 @@ def test_host_frame_transfers_only_each_live_device_prefix(
         assert frame.whitewater_attr("value") is actual
     else:
         assert getattr(frame, accessor) is actual
-    assert transfers == ([] if live_count == 0 and zero_skips_transfer
-                         else [live_count])
+    assert transfers == ([] if live_count == 0 else [live_count])
+
+
+@pytest.mark.parametrize(
+    ("warp_dtype", "expected_shape", "expected_dtype"),
+    [
+        (wp.float32, (0,), np.float32),
+        (wp.int32, (0,), np.int32),
+        (wp.vec3, (0, 3), np.float32),
+    ],
+)
+def test_live_numpy_zero_prefix_preserves_warp_shape_and_dtype(
+        warp_dtype, expected_shape, expected_dtype):
+    values = wp.zeros(4, dtype=warp_dtype, device="cpu")
+
+    actual = _live_numpy(values, 0)
+
+    assert actual.shape == expected_shape
+    assert actual.dtype == expected_dtype
 
 
 def test_new_host_frame_rereads_requested_outputs():

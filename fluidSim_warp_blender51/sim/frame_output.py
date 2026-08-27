@@ -24,6 +24,16 @@ _HOST_OUTPUT_OPERATIONS = Counter()
 
 def _live_numpy(device_array, live_count):
     """Transfer only the live device prefix to NumPy."""
+    if live_count == 0:
+        dtype = device_array.dtype
+        scalar_dtype = getattr(dtype, "_wp_scalar_type_", dtype)
+        if getattr(scalar_dtype, "__module__", "").startswith("warp."):
+            numpy_dtype = wp.dtype_to_numpy(scalar_dtype)
+        else:
+            numpy_dtype = np.dtype(scalar_dtype)
+        array_shape = tuple(int(axis) for axis in device_array.shape)
+        element_shape = tuple(int(axis) for axis in getattr(dtype, "_shape_", ()))
+        return np.empty((0, *array_shape[1:], *element_shape), dtype=numpy_dtype)
     return device_array[:live_count].numpy()
 
 
