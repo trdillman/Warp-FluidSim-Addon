@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -97,6 +98,13 @@ SURFACE_ATTRIBUTE_NUMPY_CALLS_PER_PUBLICATION = {
     "off": 0,
     "default": 1,
     "all": 10,
+}
+SURFACE_ATTRIBUTE_BOOKKEEPING_NUMPY_CALLS_PER_PUBLICATION = {
+    "off": 0,
+    "default": 0,
+    # particle_vorticity refreshes the current device count before sizing its
+    # output.  This is bookkeeping, not an attribute payload transfer.
+    "all": 1,
 }
 
 
@@ -235,7 +243,121 @@ def _surface_evidence_binding_errors(evidence):
         for name in names:
             if values.get(name) in (None, ""):
                 errors.append(f"{section}.{name} is missing")
+
+    def credible_hex(section, name, length):
+        value = evidence.get(section, {}).get(name)
+        if value in (None, ""):
+            return
+        text = str(value)
+        if (re.fullmatch(rf"[0-9a-f]{{{length}}}", text) is None
+                or len(set(text)) < 8):
+            errors.append(
+                f"{section}.{name} is not a credible {length}-character hex identity")
+
+    credible_hex("source", "git_head", 40)
+    credible_hex("source", "addon_git_tree", 40)
+    credible_hex("source", "addon_source_sha256", 64)
+    credible_hex("source", "profiler_sha256", 64)
+    credible_hex("correctness", "fingerprint_sha256", 64)
+
+    process = evidence.get("process", {})
+    pid = process.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        errors.append("process.pid must be a positive integer")
+
+    workload = evidence.get("workload", {})
+    if workload.get("surface_enabled") is not True:
+        errors.append("workload.surface_enabled must be true")
+    for name in ("frames_requested", "frames_measured"):
+        value = workload.get(name)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(f"workload.{name} must be a positive integer")
+    if (isinstance(workload.get("frames_requested"), int)
+            and isinstance(workload.get("frames_measured"), int)
+            and workload["frames_requested"] != workload["frames_measured"]):
+        errors.append("workload.frames_measured must equal frames_requested")
+
+    correctness = evidence.get("correctness", {})
+    if correctness.get("surface_attribute_collection_complete") is not True:
+        errors.append(
+            "correctness.surface_attribute_collection_complete must be true")
+
+    verdict = evidence.get("verdict", {})
+    for name in (
+            "result", "validation_enabled", "contract_checks_passed",
+            "contract_failures", "surface_stage_activated",
+            "added_synchronization_calls", "comparison_eligible"):
+        if name not in verdict:
+            errors.append(f"verdict.{name} is missing")
+    if verdict.get("result") != "RAW-PROFILER-EVIDENCE-VALID":
+        errors.append("verdict.result is not RAW-PROFILER-EVIDENCE-VALID")
+    if verdict.get("validation_enabled") is not True:
+        errors.append("verdict.validation_enabled must be true")
+    if verdict.get("contract_checks_passed") is not True:
+        errors.append("verdict.contract_checks_passed must be true")
+    if verdict.get("contract_failures") != []:
+        errors.append("verdict.contract_failures must be empty")
+    if verdict.get("surface_stage_activated") is not True:
+        errors.append("verdict.surface_stage_activated must be true")
+    sync_calls = verdict.get("added_synchronization_calls")
+    if not isinstance(sync_calls, int) or isinstance(sync_calls, bool) or sync_calls != 0:
+        errors.append("verdict.added_synchronization_calls must be zero")
+    contention = evidence.get("contention", {})
+    if (contention.get("comparison_eligible") is True
+            and contention.get("classification")
+            != "all_gpu_clients_observed_clear"):
+        errors.append(
+            "contention.comparison_eligible requires all GPU clients to be observed")
+    if (verdict.get("comparison_eligible") is True
+            and contention.get("comparison_eligible") is not True):
+        errors.append(
+            "verdict.comparison_eligible exceeds contention evidence")
     return errors
+
+
+def _finalize_surface_evidence(
+        evidence, *, validation_enabled, checks, attribution_rows,
+        synchronization_calls):
+    """Create the final verdict before validating the evidence binding."""
+    contract_failures = [
+        check["name"] for check in checks if not check["ok"]]
+    contract_checks_passed = bool(checks and not contract_failures)
+    surface_stage_activated = any(
+        row["surface_build_calls"]
+        + row["surface_extract_calls"]
+        + row["surface_attribute_adaptation_calls"] > 0
+        for row in attribution_rows
+    )
+    synchronization_calls = int(synchronization_calls)
+    correctness_complete = evidence.get("correctness", {}).get(
+        "surface_attribute_collection_complete") is True
+    raw_valid = bool(
+        validation_enabled
+        and contract_checks_passed
+        and surface_stage_activated
+        and synchronization_calls == 0
+        and correctness_complete
+    )
+    evidence["correctness"][
+        "contract_checks_passed"] = contract_checks_passed
+    verdict = {
+        "result": (
+            "RAW-PROFILER-EVIDENCE-VALID" if raw_valid
+            else "RAW-PROFILER-EVIDENCE-INVALID"),
+        "validation_enabled": bool(validation_enabled),
+        "contract_checks_passed": contract_checks_passed,
+        "contract_failures": contract_failures,
+        "surface_stage_activated": surface_stage_activated,
+        "added_synchronization_calls": synchronization_calls,
+        "comparison_eligible": bool(
+            raw_valid
+            and evidence.get("contention", {}).get(
+                "comparison_eligible") is True),
+    }
+    evidence["verdict"] = verdict
+    errors = _surface_evidence_binding_errors(evidence)
+    evidence["binding_errors"] = errors
+    return verdict, errors
 
 
 def _install_surface_attribution(probe, solver, output_publication,
@@ -434,12 +556,19 @@ def _nvidia_smi_snapshot():
         "gpu_rows": [line.strip() for line in gpu.stdout.splitlines()
                      if line.strip()],
         "compute_processes": compute,
+        "graphics_clients": {
+            "available": False,
+            "reason": (
+                "nvidia-smi compute-app queries do not reliably enumerate "
+                "Windows WDDM graphics clients"
+            ),
+        },
     }
 
 
 def _contention_evidence(before, after, own_pid):
     if not before.get("available") or not after.get("available"):
-        classification = "unavailable"
+        classification = "telemetry_unavailable"
         other = []
     else:
         by_pid = {}
@@ -448,13 +577,21 @@ def _contention_evidence(before, after, own_pid):
                 if int(process["pid"]) != int(own_pid):
                     by_pid[int(process["pid"])] = process
         other = [by_pid[pid] for pid in sorted(by_pid)]
-        classification = (
-            "other_compute_processes_observed" if other
-            else "no_other_compute_processes_observed"
-        )
+        if other:
+            classification = "contended_compute_processes"
+        else:
+            classification = "graphics_clients_unavailable"
     return {
         "classification": classification,
-        "scope": "nvidia-smi compute-process snapshots before and after timing",
+        "comparison_eligible": False,
+        "comparison_ineligible_reason": (
+            "all GPU clients were not observable; evidence remains raw-only"
+            if not other else "other compute processes were observed"
+        ),
+        "scope": (
+            "nvidia-smi compute-process snapshots before and after timing; "
+            "Windows WDDM graphics clients are explicitly not observable"
+        ),
         "own_pid": int(own_pid),
         "other_compute_processes": other,
         "before": before,
@@ -472,7 +609,8 @@ def _update_array_digest(digest, name, values):
     digest.update(values.tobytes())
 
 
-def _output_correctness_evidence(bpy, rows, output_counts):
+def _output_correctness_evidence(
+        bpy, rows, output_counts, *, expected_surface_attributes=()):
     """Fingerprint observed outputs after timing, outside all timed regions."""
     digest = hashlib.sha256()
     facts = {
@@ -498,6 +636,8 @@ def _output_correctness_evidence(bpy, rows, output_counts):
         "loops": 0,
         "polygons": 0,
     }
+    attribute_inventory = []
+    attribute_errors = []
     if geometry["available"]:
         mesh = surface.data
         geometry.update({
@@ -520,6 +660,74 @@ def _output_correctness_evidence(bpy, rows, output_counts):
         _update_array_digest(digest, "surface_vertex_indices", vertex_indices)
         _update_array_digest(digest, "surface_loop_starts", loop_starts)
         _update_array_digest(digest, "surface_loop_totals", loop_totals)
+        attributes = getattr(mesh, "attributes", ())
+        actual_by_name = {
+            str(attribute.name): attribute
+            for attribute in attributes
+            if (str(attribute.name).startswith("fluidsim_")
+                or str(attribute.name) in {"velocity", "display_color"})
+        }
+        expected_names = set(str(name) for name in expected_surface_attributes)
+        if "display_color" in actual_by_name:
+            expected_names.add("display_color")
+        for name in sorted(expected_names):
+            attribute = actual_by_name.get(name)
+            if attribute is None:
+                attribute_errors.append(
+                    f"missing published surface attribute {name!r}")
+                continue
+            data_type = str(getattr(attribute, "data_type", ""))
+            domain = str(getattr(attribute, "domain", ""))
+            layout = {
+                "FLOAT": ("value", 1, np.dtype(np.float32)),
+                "INT": ("value", 1, np.dtype(np.int32)),
+                "FLOAT_VECTOR": ("vector", 3, np.dtype(np.float32)),
+                "FLOAT_COLOR": ("color", 4, np.dtype(np.float32)),
+            }.get(data_type)
+            if layout is None:
+                attribute_errors.append(
+                    f"surface attribute {name!r} has unsupported data type "
+                    f"{data_type!r}")
+                continue
+            property_name, components, dtype = layout
+            count = len(attribute.data)
+            if domain != "POINT":
+                attribute_errors.append(
+                    f"surface attribute {name!r} has domain {domain!r}, "
+                    "expected 'POINT'")
+            if count != geometry["vertices"]:
+                attribute_errors.append(
+                    f"surface attribute {name!r} has {count} values for "
+                    f"{geometry['vertices']} surface vertices")
+            values = np.empty(count * components, dtype=dtype)
+            try:
+                if len(values):
+                    attribute.data.foreach_get(property_name, values)
+            except Exception as exc:  # noqa: BLE001 - evidence must fail closed
+                attribute_errors.append(
+                    f"surface attribute {name!r} collection failed: {exc}")
+                continue
+            value_digest = hashlib.sha256(values.tobytes()).hexdigest()
+            record = {
+                "name": name,
+                "domain": domain,
+                "data_type": data_type,
+                "count": count,
+                "components": components,
+                "byte_count": values.nbytes,
+                "value_sha256": value_digest,
+            }
+            attribute_inventory.append(record)
+            digest.update(json.dumps(
+                record, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            _update_array_digest(digest, f"surface_attribute:{name}", values)
+        uncollected = sorted(set(actual_by_name) - expected_names)
+        if uncollected:
+            attribute_errors.append(
+                "uncollected published surface attributes: "
+                + ", ".join(repr(name) for name in uncollected))
+    else:
+        attribute_errors.append("surface mesh is unavailable")
     return {
         "fingerprint_sha256": digest.hexdigest(),
         "semantics": (
@@ -527,6 +735,9 @@ def _output_correctness_evidence(bpy, rows, output_counts):
             "approval or cross-run determinism"
         ),
         "surface_geometry": geometry,
+        "surface_attributes": attribute_inventory,
+        "surface_attribute_collection_complete": not attribute_errors,
+        "surface_attribute_collection_errors": attribute_errors,
         **facts,
     }
 
@@ -616,6 +827,14 @@ def expected_surface_attribute_readbacks(mode):
 def expected_surface_attribute_numpy_calls(mode):
     try:
         return SURFACE_ATTRIBUTE_NUMPY_CALLS_PER_PUBLICATION[
+            str(mode).lower()]
+    except KeyError as exc:
+        raise ValueError(f"unknown surface attribute profile {mode!r}") from exc
+
+
+def expected_surface_attribute_bookkeeping_numpy_calls(mode):
+    try:
+        return SURFACE_ATTRIBUTE_BOOKKEEPING_NUMPY_CALLS_PER_PUBLICATION[
             str(mode).lower()]
     except KeyError as exc:
         raise ValueError(f"unknown surface attribute profile {mode!r}") from exc
@@ -816,9 +1035,6 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "no output-path Warp synchronization",
            entrypoints["warp_synchronizations"] == 0,
            entrypoints["warp_synchronizations"])
-    binding_errors = _surface_evidence_binding_errors(summary["evidence"])
-    _check(checks, "surface evidence identity complete",
-           not binding_errors, "; ".join(binding_errors))
     expected_surface = _expected_surface_publications(
         frames, summary["config"]["live_surface_publish_cadence"])
     if not args.particles:
@@ -826,7 +1042,11 @@ def _validate_contract(args, summary, sess, device, output_counts):
             args.surface_attributes)
         attribute_numpy_calls = expected_surface_attribute_numpy_calls(
             args.surface_attributes)
-        expected_numpy = expected_surface * (5 + attribute_numpy_calls)
+        bookkeeping_numpy_calls = (
+            expected_surface_attribute_bookkeeping_numpy_calls(
+                args.surface_attributes))
+        expected_numpy = expected_surface * (
+            5 + attribute_numpy_calls + bookkeeping_numpy_calls)
         _check(checks, "surface readback entrypoints cadence-bounded",
                entrypoints["warp_array_numpy"] == expected_numpy,
                f"{entrypoints['warp_array_numpy']} == {expected_numpy}")
@@ -1131,8 +1351,14 @@ def main():
 
     phase2_costs = output_publication.output_cost_counts()
     host_output_operations = host_output_operation_counts()
+    from fluidSim_warp_blender51.sim.attributes import ATTRIBUTE_SPECS
+
+    expected_surface_attributes = tuple(
+        ATTRIBUTE_SPECS[key].blender_name
+        for key in enabled_surface_attributes)
     correctness_evidence = _output_correctness_evidence(
-        bpy, rows, output_counts)
+        bpy, rows, output_counts,
+        expected_surface_attributes=expected_surface_attributes)
     surface_attribution = _surface_attribution_summary(
         surface_probe.rows if surface_probe is not None else [],
         output_entrypoint_counts["surface_attribution_synchronizations"],
@@ -1177,6 +1403,8 @@ def main():
             "role": str(getattr(object_fs, "role", "")),
             "enabled": bool(getattr(object_fs, "enabled", False)),
         })
+    contention_evidence = _contention_evidence(
+        contention_before, contention_after, process_identity["pid"])
     evidence = {
         "claim": {
             "label": "RAW-PROFILER-EVIDENCE-NOT-APPROVAL",
@@ -1189,8 +1417,7 @@ def main():
         "source": source_identity,
         "runtime": runtime_identity,
         "process": process_identity,
-        "contention": _contention_evidence(
-            contention_before, contention_after, process_identity["pid"]),
+        "contention": contention_evidence,
         "workload": {
             "scene_name": str(scene.name),
             "frames_requested": int(args.frames),
@@ -1210,7 +1437,6 @@ def main():
         },
         "correctness": correctness_evidence,
     }
-    evidence["binding_errors"] = _surface_evidence_binding_errors(evidence)
     summary = {
         "result": "USER-PATH-PROFILE-PASS",
         "contract": USER_PATH_CONTRACT,
@@ -1241,17 +1467,51 @@ def main():
         "evidence": evidence,
         "frames": rows,
     }
-    if not args.no_validate:
-        checks = _validate_contract(args, summary, sess, sess.solver.device, output_counts)
-        summary["checks"] = checks
-        failed = [check for check in checks if not check["ok"]]
-        if failed:
-            summary["result"] = "USER-PATH-REGRESSION-FAIL"
+    checks = (
+        _validate_contract(
+            args, summary, sess, sess.solver.device, output_counts)
+        if not args.no_validate else [])
+    attribution_rows = surface_attribution.get("frames", ())
+    synchronization_calls = int(output_entrypoint_counts[
+        "surface_attribution_synchronizations"])
+    if args.surface_attribution:
+        verdict, binding_errors = _finalize_surface_evidence(
+            evidence,
+            validation_enabled=not args.no_validate,
+            checks=checks,
+            attribution_rows=attribution_rows,
+            synchronization_calls=synchronization_calls,
+        )
     else:
-        summary["checks"] = []
-    evidence["correctness"]["contract_checks_passed"] = bool(
-        summary["checks"] and all(check["ok"] for check in summary["checks"]))
-    if evidence["binding_errors"]:
+        contract_failures = [
+            check["name"] for check in checks if not check["ok"]]
+        contract_checks_passed = bool(checks and not contract_failures)
+        evidence["correctness"][
+            "contract_checks_passed"] = contract_checks_passed
+        verdict = {
+            "result": "RAW-PROFILER-EVIDENCE-NOT-REQUESTED",
+            "validation_enabled": not args.no_validate,
+            "contract_checks_passed": contract_checks_passed,
+            "contract_failures": contract_failures,
+            "surface_stage_activated": False,
+            "added_synchronization_calls": synchronization_calls,
+            "comparison_eligible": False,
+        }
+        evidence["verdict"] = verdict
+        binding_errors = []
+        evidence["binding_errors"] = binding_errors
+    if args.surface_attribution:
+        checks.append({
+            "name": "surface evidence binding complete",
+            "ok": not binding_errors,
+            "detail": "; ".join(binding_errors),
+        })
+    summary["checks"] = checks
+    if args.no_validate:
+        summary["result"] = "USER-PATH-RAW-NONAPPROVAL"
+    elif verdict["contract_failures"]:
+        summary["result"] = "USER-PATH-REGRESSION-FAIL"
+    elif binding_errors:
         summary["result"] = "USER-PATH-EVIDENCE-BINDING-FAIL"
     print("USER-PATH-PROFILE " + json.dumps(summary["means"]))
     print(f"scene: voxels={summary['voxels_mean']:.0f} "
@@ -1264,6 +1524,9 @@ def main():
             os.makedirs(parent, exist_ok=True)
         with open(args.json_out, "w") as fh:
             json.dump(summary, fh, indent=1)
+    if summary["result"] == "USER-PATH-RAW-NONAPPROVAL":
+        print(summary["result"])
+        sys.exit(0)
     if summary["result"] != "USER-PATH-PROFILE-PASS":
         print(summary["result"])
         sys.exit(1)
