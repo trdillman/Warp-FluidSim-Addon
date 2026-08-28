@@ -183,6 +183,11 @@ class SurfaceAttributeTransfer:
         self._target_capacity = 0
         self._sampled = None
         self._nearest = None
+        # Warp 1.16 CUDA zero-length slices cannot be materialized with
+        # ``.numpy()``. Keep an owned empty allocation for the direct API.
+        self._empty_nearest = wp.empty(
+            0, dtype=wp.int32, device=self.device
+        )
         self._grid = None
         self._grid_dim = 0
         self._prepared_signature = None
@@ -281,12 +286,14 @@ class SurfaceAttributeTransfer:
             raise ValueError("target count is outside the target buffer")
         signature = (id(targets_device), target_count, self._prepared_signature)
         if signature == self._nearest_signature:
+            if not target_count:
+                return self._empty_nearest
             return self._nearest[:target_count]
         self._nearest_signature = None
         self._ensure_target_capacity(max(1, target_count))
         if not target_count:
             self._nearest_signature = signature
-            return self._nearest[:0]
+            return self._empty_nearest
         if not self._sample_count:
             self._nearest[:target_count].fill_(-1)
             self._fallback_count.fill_(target_count)

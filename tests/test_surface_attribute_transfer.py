@@ -123,24 +123,38 @@ def test_surface_transfer_gathers_all_supported_dtypes_from_one_nearest_map(
         ([[0.0, 0.0, 0.0]], [], []),
     ],
 )
+@pytest.mark.parametrize("device", _devices())
 def test_surface_transfer_handles_empty_sources_and_targets(
-    positions, targets, expected
+    positions, targets, expected, device
 ):
     """Empty live prefixes must not launch invalid zero-size Warp work."""
-    transfer = _transfer_type()(device="cpu")
-    particles = _particles("cpu", positions)
+    transfer = _transfer_type()(device=device)
+    particles = _particles(device, positions)
     targets_device = wp.array(
         np.asarray(targets, dtype=np.float32).reshape((-1, 3)),
         dtype=wp.vec3,
-        device="cpu",
+        device=device,
     )
 
     transfer.prepare(particles, live_count=len(positions), cell_size=1.0)
-    actual = transfer.nearest_indices(
+    first_device = transfer.nearest_indices(
+        targets_device, target_count=len(targets)
+    )
+    first = first_device.numpy()
+    second = transfer.nearest_indices(
         targets_device, target_count=len(targets)
     ).numpy()
 
-    assert np.array_equal(actual, np.asarray(expected, dtype=np.int32))
+    expected_array = np.asarray(expected, dtype=np.int32)
+    assert first_device.dtype == wp.int32
+    assert first.shape == expected_array.shape
+    assert np.array_equal(first, expected_array)
+    assert np.array_equal(second, expected_array)
+    counts = transfer.operation_counts()
+    assert counts["local_lookups"] == 0
+    assert counts["fallback_launches"] == 0
+    assert counts["gathers"] == 0
+    assert counts["readbacks"] == 0
 
 
 def test_hash_collision_is_filtered_before_global_fallback():
