@@ -286,7 +286,8 @@ def _surface_evidence_binding_errors(evidence):
     for name in (
             "result", "validation_enabled", "contract_checks_passed",
             "contract_failures", "surface_stage_activated",
-            "added_synchronization_calls", "comparison_eligible"):
+            "added_synchronization_calls", "observed_synchronization_calls",
+            "comparison_eligible"):
         if name not in verdict:
             errors.append(f"verdict.{name} is missing")
     if verdict.get("result") != "RAW-PROFILER-EVIDENCE-VALID":
@@ -302,6 +303,12 @@ def _surface_evidence_binding_errors(evidence):
     sync_calls = verdict.get("added_synchronization_calls")
     if not isinstance(sync_calls, int) or isinstance(sync_calls, bool) or sync_calls != 0:
         errors.append("verdict.added_synchronization_calls must be zero")
+    observed_sync_calls = verdict.get("observed_synchronization_calls")
+    if (not isinstance(observed_sync_calls, int)
+            or isinstance(observed_sync_calls, bool)
+            or observed_sync_calls < 0):
+        errors.append(
+            "verdict.observed_synchronization_calls must be a nonnegative integer")
     contention = evidence.get("contention", {})
     if (contention.get("comparison_eligible") is True
             and contention.get("classification")
@@ -317,7 +324,7 @@ def _surface_evidence_binding_errors(evidence):
 
 def _finalize_surface_evidence(
         evidence, *, validation_enabled, checks, attribution_rows,
-        synchronization_calls):
+        added_synchronization_calls, observed_synchronization_calls=0):
     """Create the final verdict before validating the evidence binding."""
     contract_failures = [
         check["name"] for check in checks if not check["ok"]]
@@ -328,14 +335,15 @@ def _finalize_surface_evidence(
         + row["surface_attribute_adaptation_calls"] > 0
         for row in attribution_rows
     )
-    synchronization_calls = int(synchronization_calls)
+    added_synchronization_calls = int(added_synchronization_calls)
+    observed_synchronization_calls = int(observed_synchronization_calls)
     correctness_complete = evidence.get("correctness", {}).get(
         "surface_attribute_collection_complete") is True
     raw_valid = bool(
         validation_enabled
         and contract_checks_passed
         and surface_stage_activated
-        and synchronization_calls == 0
+        and added_synchronization_calls == 0
         and correctness_complete
     )
     evidence["correctness"][
@@ -348,7 +356,8 @@ def _finalize_surface_evidence(
         "contract_checks_passed": contract_checks_passed,
         "contract_failures": contract_failures,
         "surface_stage_activated": surface_stage_activated,
-        "added_synchronization_calls": synchronization_calls,
+        "added_synchronization_calls": added_synchronization_calls,
+        "observed_synchronization_calls": observed_synchronization_calls,
         "comparison_eligible": bool(
             raw_valid
             and evidence.get("contention", {}).get(
@@ -610,7 +619,8 @@ def _update_array_digest(digest, name, values):
 
 
 def _output_correctness_evidence(
-        bpy, rows, output_counts, *, expected_surface_attributes=()):
+        bpy, rows, output_counts, *, expected_surface_attributes=(),
+        surface_attribute_mode="NONE"):
     """Fingerprint observed outputs after timing, outside all timed regions."""
     digest = hashlib.sha256()
     facts = {
@@ -668,6 +678,9 @@ def _output_correctness_evidence(
                 or str(attribute.name) in {"velocity", "display_color"})
         }
         expected_names = set(str(name) for name in expected_surface_attributes)
+        display_color_required = str(surface_attribute_mode).upper() != "NONE"
+        if display_color_required:
+            expected_names.add("display_color")
         if "display_color" in actual_by_name:
             expected_names.add("display_color")
         for name in sorted(expected_names):
@@ -736,6 +749,9 @@ def _output_correctness_evidence(
         ),
         "surface_geometry": geometry,
         "surface_attributes": attribute_inventory,
+        "surface_attribute_mode": str(surface_attribute_mode),
+        "display_color_required": (
+            str(surface_attribute_mode).upper() != "NONE"),
         "surface_attribute_collection_complete": not attribute_errors,
         "surface_attribute_collection_errors": attribute_errors,
         **facts,
@@ -1358,7 +1374,8 @@ def main():
         for key in enabled_surface_attributes)
     correctness_evidence = _output_correctness_evidence(
         bpy, rows, output_counts,
-        expected_surface_attributes=expected_surface_attributes)
+        expected_surface_attributes=expected_surface_attributes,
+        surface_attribute_mode=str(fs.surface_attribute_mode))
     surface_attribution = _surface_attribution_summary(
         surface_probe.rows if surface_probe is not None else [],
         output_entrypoint_counts["surface_attribution_synchronizations"],
@@ -1425,6 +1442,7 @@ def main():
             "surface_enabled": bool(fs.surface_enabled),
             "surface_visible": bool(fs.show_surface),
             "surface_attributes": str(args.surface_attributes),
+            "surface_attribute_mode": str(fs.surface_attribute_mode),
             "enabled_surface_attributes": list(enabled_surface_attributes),
             "live_surface_publish_cadence": int(
                 fs.live_surface_publish_cadence),
@@ -1472,15 +1490,18 @@ def main():
             args, summary, sess, sess.solver.device, output_counts)
         if not args.no_validate else [])
     attribution_rows = surface_attribution.get("frames", ())
-    synchronization_calls = int(output_entrypoint_counts[
+    observed_synchronization_calls = int(output_entrypoint_counts[
         "surface_attribution_synchronizations"])
+    added_synchronization_calls = int(output_entrypoint_counts[
+        "warp_synchronizations"])
     if args.surface_attribution:
         verdict, binding_errors = _finalize_surface_evidence(
             evidence,
             validation_enabled=not args.no_validate,
             checks=checks,
             attribution_rows=attribution_rows,
-            synchronization_calls=synchronization_calls,
+            added_synchronization_calls=added_synchronization_calls,
+            observed_synchronization_calls=observed_synchronization_calls,
         )
     else:
         contract_failures = [
@@ -1494,7 +1515,8 @@ def main():
             "contract_checks_passed": contract_checks_passed,
             "contract_failures": contract_failures,
             "surface_stage_activated": False,
-            "added_synchronization_calls": synchronization_calls,
+            "added_synchronization_calls": added_synchronization_calls,
+            "observed_synchronization_calls": observed_synchronization_calls,
             "comparison_eligible": False,
         }
         evidence["verdict"] = verdict

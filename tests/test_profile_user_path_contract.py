@@ -123,6 +123,7 @@ def _valid_surface_evidence():
             "contract_failures": [],
             "surface_stage_activated": True,
             "added_synchronization_calls": 0,
+            "observed_synchronization_calls": 0,
             "comparison_eligible": False,
         },
     }
@@ -219,7 +220,7 @@ def test_unvalidated_surface_evidence_is_raw_only_and_never_comparison_eligible(
         validation_enabled=False,
         checks=[],
         attribution_rows=attribution_rows,
-        synchronization_calls=0,
+        added_synchronization_calls=0,
     )
 
     assert verdict["result"] == "RAW-PROFILER-EVIDENCE-INVALID"
@@ -241,7 +242,7 @@ def test_contract_failure_is_preserved_in_final_surface_verdict():
             "surface_extract_calls": 1,
             "surface_attribute_adaptation_calls": 1,
         }],
-        synchronization_calls=0,
+        added_synchronization_calls=0,
     )
 
     assert verdict["contract_failures"] == ["viewport mean bounded"]
@@ -266,6 +267,28 @@ def test_wddm_graphics_client_gap_keeps_contention_evidence_raw_only():
     assert evidence["classification"] == "graphics_clients_unavailable"
     assert evidence["comparison_eligible"] is False
     assert "raw-only" in evidence["comparison_ineligible_reason"]
+
+
+def test_existing_solver_synchronizations_do_not_count_as_added_output_sync():
+    evidence = _valid_surface_evidence()
+
+    verdict, errors = profile_user_path._finalize_surface_evidence(
+        evidence,
+        validation_enabled=True,
+        checks=[{"name": "runtime contract", "ok": True}],
+        attribution_rows=[{
+            "surface_build_calls": 1,
+            "surface_extract_calls": 1,
+            "surface_attribute_adaptation_calls": 1,
+        }],
+        added_synchronization_calls=0,
+        observed_synchronization_calls=6,
+    )
+
+    assert verdict["result"] == "RAW-PROFILER-EVIDENCE-VALID"
+    assert verdict["added_synchronization_calls"] == 0
+    assert verdict["observed_synchronization_calls"] == 6
+    assert errors == []
 
 
 def test_binding_rejects_comparison_eligibility_when_wddm_clients_are_unknown():
@@ -349,6 +372,7 @@ def test_correctness_fingerprint_binds_every_surface_attribute_and_display_color
         rows=[],
         output_counts=[],
         expected_surface_attributes=("fluidsim_speed",),
+        surface_attribute_mode="SPEED",
     )
 
     assert evidence["surface_attribute_collection_complete"] is True
@@ -376,12 +400,32 @@ def test_correctness_fingerprint_fails_closed_when_attribute_collection_is_incom
         rows=[],
         output_counts=[],
         expected_surface_attributes=("fluidsim_speed",),
+        surface_attribute_mode="NONE",
     )
 
     assert evidence["surface_attribute_collection_complete"] is False
     assert evidence["surface_attribute_collection_errors"] == [
         "missing published surface attribute 'fluidsim_speed'"
     ]
+
+
+def test_correctness_fingerprint_requires_display_color_from_configured_mode():
+    bpy = _fake_bpy_surface([
+        _FakeAttribute(
+            "fluidsim_speed", "FLOAT", "POINT", (1.0, 2.0), "value"),
+    ])
+
+    evidence = profile_user_path._output_correctness_evidence(
+        bpy,
+        rows=[],
+        output_counts=[],
+        expected_surface_attributes=("fluidsim_speed",),
+        surface_attribute_mode="SPEED",
+    )
+
+    assert evidence["surface_attribute_collection_complete"] is False
+    assert "missing published surface attribute 'display_color'" in evidence[
+        "surface_attribute_collection_errors"]
 
 
 def test_surface_instrumentation_wraps_only_observed_boundaries_and_restores():
