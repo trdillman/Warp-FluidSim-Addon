@@ -207,6 +207,14 @@ def test_surface_velocity_speed_and_motion_share_two_device_readbacks():
     assert set(attributes) == {"velocity", "speed", "motion"}
     assert calls == {"positions": 1, "velocities": 1}
     assert host_output_operation_counts()["device_readbacks"] == 2
+    assert frame.surface_attribute_transfer_counts() == {
+        "sample_gathers": 0,
+        "hash_grid_builds": 0,
+        "local_lookups": 0,
+        "fallback_launches": 0,
+        "gathers": 0,
+        "readbacks": 0,
+    }
 
 
 def test_surface_velocity_samples_mac_grid_with_one_device_readback():
@@ -248,6 +256,178 @@ def test_surface_velocity_samples_mac_grid_with_one_device_readback():
 
     np.testing.assert_allclose(values, [[1.0, 2.0, 3.0]], atol=1.0e-5)
     assert host_output_operation_counts()["device_readbacks"] == 1
+
+
+def test_opt_in_surface_particle_channels_share_one_gpu_nearest_map():
+    """Every enabled nearest channel must reuse one device lookup per frame."""
+    import warp as wp
+
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+
+    device = "cpu"
+    positions = np.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    channel_values = {
+        "age": (np.array([1, 2, 3], dtype=np.float32), wp.float32),
+        "life": (np.array([4, 5, 6], dtype=np.float32), wp.float32),
+        "color": (
+            np.array(
+                [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]],
+                dtype=np.float32,
+            ),
+            wp.vec4,
+        ),
+        "source_id": (np.array([7, 8, 9], dtype=np.int32), wp.int32),
+        "viscosity": (
+            np.array([0.1, 0.2, 0.3], dtype=np.float32),
+            wp.float32,
+        ),
+        "density": (
+            np.array([10, 20, 30], dtype=np.float32),
+            wp.float32,
+        ),
+    }
+    channels = {
+        key: wp.array(values, dtype=dtype, device=device)
+        for key, (values, dtype) in channel_values.items()
+    }
+    particles = SimpleNamespace(
+        position=wp.array(positions, dtype=wp.vec3, device=device),
+        velocity=wp.zeros(3, dtype=wp.vec3, device=device),
+        refresh_host_count=lambda: 3,
+        attr=lambda name: channels[name],
+    )
+    solver = SimpleNamespace(
+        frame=1,
+        device=device,
+        particles=particles,
+        grid=None,
+        vel=None,
+        settings=SimpleNamespace(
+            voxel_size=0.5, frame_rate=24.0, time_scale=1.0
+        ),
+    )
+    settings = SimpleNamespace()
+    nearest_keys = {
+        "vorticity",
+        "age",
+        "lifetime",
+        "color",
+        "source_id",
+        "viscosity",
+        "density",
+    }
+    for key, property_name in OUTPUT_TOGGLE_NAMES["surface"].items():
+        setattr(settings, property_name, key in nearest_keys)
+    frame = HostFrame(solver)
+    host_output_operation_counts(reset=True)
+
+    surface_positions = np.array(
+        [[0.1, 0.0, 0.0], [3.9, 0.0, 0.0]], np.float32
+    )
+    attributes = frame.output_attributes(
+        settings,
+        "surface",
+        positions=surface_positions,
+    )
+    repeated = frame.output_attributes(
+        settings, "surface", positions=surface_positions
+    )
+
+    assert np.array_equal(attributes["vorticity"], np.zeros((2, 3), np.float32))
+    assert np.array_equal(attributes["age"], np.array([1, 3], np.float32))
+    assert np.array_equal(attributes["lifetime"], np.array([4, 6], np.float32))
+    assert np.array_equal(
+        attributes["color"],
+        np.array([[1, 0, 0, 1], [0, 0, 1, 1]], np.float32),
+    )
+    assert np.array_equal(attributes["source_id"], np.array([7, 9], np.int32))
+    assert np.array_equal(attributes["viscosity"], np.array([0.1, 0.3], np.float32))
+    assert np.array_equal(attributes["density"], np.array([10, 30], np.float32))
+    assert all(
+        attributes[key].tobytes() == repeated[key].tobytes()
+        for key in attributes
+    )
+    assert frame.surface_attribute_transfer_counts() == {
+        "sample_gathers": 1,
+        "hash_grid_builds": 1,
+        "local_lookups": 1,
+        "fallback_launches": 1,
+        "gathers": 7,
+        "readbacks": 7,
+    }
+    assert host_output_operation_counts()["device_readbacks"] == 7
+
+    wp.copy(
+        channels["age"],
+        wp.array(np.array([11, 12, 13], np.float32), dtype=float, device=device),
+    )
+    frame.invalidate_surface()
+    refreshed = frame.output_attributes(
+        settings, "surface", positions=surface_positions
+    )
+
+    assert np.array_equal(refreshed["age"], np.array([11, 13], np.float32))
+    refreshed_counts = frame.surface_attribute_transfer_counts()
+    assert refreshed_counts["hash_grid_builds"] == 2
+    assert refreshed_counts["local_lookups"] == 2
+    assert refreshed_counts["gathers"] == 14
+    assert refreshed_counts["readbacks"] == 14
+    assert host_output_operation_counts()["device_readbacks"] == 14
+
+
+def test_surface_transfer_buffers_persist_across_host_frames():
+    """Frame invalidation must rebuild content without reallocating buffers."""
+    import warp as wp
+
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+
+    age = wp.array(np.array([2.0], np.float32), dtype=float, device="cpu")
+    particles = SimpleNamespace(
+        position=wp.array(
+            np.array([[0.0, 0.0, 0.0]], np.float32),
+            dtype=wp.vec3,
+            device="cpu",
+        ),
+        velocity=wp.zeros(1, dtype=wp.vec3, device="cpu"),
+        refresh_host_count=lambda: 1,
+        attr=lambda name: age if name == "age" else None,
+    )
+    solver = SimpleNamespace(
+        frame=1,
+        device="cpu",
+        particles=particles,
+        grid=None,
+        vel=None,
+        settings=SimpleNamespace(
+            voxel_size=0.5, frame_rate=24.0, time_scale=1.0
+        ),
+    )
+    settings = SimpleNamespace()
+    for key, property_name in OUTPUT_TOGGLE_NAMES["surface"].items():
+        setattr(settings, property_name, key == "age")
+    targets = np.array([[0.0, 0.0, 0.0]], np.float32)
+
+    HostFrame(solver).output_attributes(
+        settings, "surface", positions=targets
+    )
+    first_transfer = solver._surface_attribute_transfer
+    first_sample_buffer = first_transfer._sampled
+    solver.frame += 1
+    HostFrame(solver).output_attributes(
+        settings, "surface", positions=targets
+    )
+
+    assert solver._surface_attribute_transfer is first_transfer
+    assert solver._surface_attribute_transfer._sampled is first_sample_buffer
+    counts = first_transfer.operation_counts()
+    assert counts["hash_grid_builds"] == 2
+    assert counts["local_lookups"] == 2
 
 
 def test_each_attribute_refreshes_stale_host_count_when_requested_first():

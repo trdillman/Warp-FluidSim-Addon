@@ -53,10 +53,10 @@ def test_user_path_profile_resolves_surface_attribute_modes(monkeypatch):
         settings, "all") == tuple(OUTPUT_TOGGLE_NAMES["surface"])
     assert profile_user_path.expected_surface_attribute_readbacks("off") == 0
     assert profile_user_path.expected_surface_attribute_readbacks("default") == 1
-    assert profile_user_path.expected_surface_attribute_readbacks("all") == 9
+    assert profile_user_path.expected_surface_attribute_readbacks("all") == 8
     assert profile_user_path.expected_surface_attribute_numpy_calls("off") == 0
     assert profile_user_path.expected_surface_attribute_numpy_calls("default") == 1
-    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 10
+    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 8
 
     monkeypatch.setattr(
         sys, "argv", ["profile_user_path.py", "--", "--surface-attributes", "off"])

@@ -75,6 +75,7 @@ USER_PATH_CONTRACT = {
         "reset_probe",
         "phase2_costs",
         "host_output_operations",
+        "surface_attribute_transfer_operations",
         "output_entrypoint_counts",
         "surface_attribution",
         "evidence",
@@ -92,12 +93,13 @@ DEFAULT_SURFACE_ATTRIBUTE_KEYS = ("velocity", "motion")
 SURFACE_ATTRIBUTE_READBACKS_PER_PUBLICATION = {
     "off": 0,
     "default": 1,
-    "all": 9,
+    # One surface-velocity readback plus seven surface-sized GPU gathers.
+    "all": 8,
 }
 SURFACE_ATTRIBUTE_NUMPY_CALLS_PER_PUBLICATION = {
     "off": 0,
     "default": 1,
-    "all": 10,
+    "all": 8,
 }
 SURFACE_ATTRIBUTE_BOOKKEEPING_NUMPY_CALLS_PER_PUBLICATION = {
     "off": 0,
@@ -1234,7 +1236,11 @@ def main():
     from fluidSim_warp_blender51.sim.frame_output import (
         host_output_operation_counts,
     )
+    from fluidSim_warp_blender51.sim.surface_attribute_transfer import (
+        surface_attribute_transfer_operation_counts,
+    )
     host_output_operation_counts(reset=True)
+    surface_attribute_transfer_operation_counts(reset=True)
 
     contention_before = _nvidia_smi_snapshot()
     surface_probe = (
@@ -1367,6 +1373,9 @@ def main():
 
     phase2_costs = output_publication.output_cost_counts()
     host_output_operations = host_output_operation_counts()
+    surface_attribute_transfer_operations = (
+        surface_attribute_transfer_operation_counts()
+    )
     from fluidSim_warp_blender51.sim.attributes import ATTRIBUTE_SPECS
 
     expected_surface_attributes = tuple(
@@ -1480,6 +1489,9 @@ def main():
         "scene_stats_probe": scene_stats_probe,
         "phase2_costs": phase2_costs,
         "host_output_operations": host_output_operations,
+        "surface_attribute_transfer_operations": (
+            surface_attribute_transfer_operations
+        ),
         "output_entrypoint_counts": output_entrypoint_counts,
         "surface_attribution": surface_attribution,
         "evidence": evidence,

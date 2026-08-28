@@ -302,8 +302,9 @@ def test_binding_rejects_comparison_eligibility_when_wddm_clients_are_unknown():
     )
 
 
-def test_all_surface_attributes_account_for_vorticity_count_readback():
-    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 10
+def test_all_surface_attributes_account_for_gpu_gathers_and_one_count_readback():
+    assert profile_user_path.expected_surface_attribute_readbacks("all") == 8
+    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 8
     assert (
         profile_user_path.expected_surface_attribute_bookkeeping_numpy_calls("all")
         == 1
