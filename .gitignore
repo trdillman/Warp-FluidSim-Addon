@@ -21,6 +21,7 @@ Desktop.ini
 
 # Local tool/runtime state
 /.codex/
+/.desloppify/
 /blender/
 /.serena/
 /tmp/
