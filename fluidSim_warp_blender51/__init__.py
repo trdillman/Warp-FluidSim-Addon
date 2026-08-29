@@ -1,8 +1,9 @@
 """FluidSim Warp Blender extension registration.
 
 Release metadata is owned by ``blender_manifest.toml`` and runtime identity by
-``version.py``. Dependency probing is deliberately excluded from import-time
-registration so installed extensions use only package-declared wheels.
+``version.py``. Import-time registration neither probes nor installs runtime
+dependencies. The certified external Warp runtime is validated lazily through
+``runtime/warp_runtime.py``.
 """
 
 
