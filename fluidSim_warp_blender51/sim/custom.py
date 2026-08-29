@@ -795,7 +795,7 @@ def load_user_presets(directory: str) -> list:
             data["arguments"] = _normalized_preset_arguments(data["arguments"])
             data["_path"] = path
             presets.append(data)
-        except (OSError, ValueError):
+        except (OSError, TypeError, ValueError):
             continue
     return presets
 

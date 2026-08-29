@@ -252,6 +252,10 @@ def test_load_user_presets_skips_garbage(tmp_path):
     (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
     (tmp_path / "nocode.json").write_text("{\"label\": \"x\"}",
                                           encoding="utf-8")
+    (tmp_path / "bad_arguments.json").write_text(
+        '{"code": "pass", "arguments": [1]}', encoding="utf-8")
+    (tmp_path / "null_arguments.json").write_text(
+        '{"code": "pass", "arguments": null}', encoding="utf-8")
     (tmp_path / "readme.txt").write_text("ignore", encoding="utf-8")
     assert lib.load_user_presets(str(tmp_path)) == []
     assert lib.load_user_presets(str(tmp_path / "missing")) == []
