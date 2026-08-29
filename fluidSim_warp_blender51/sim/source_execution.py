@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 import numpy as np
 import warp as wp
 
@@ -44,6 +47,38 @@ from .source_kernels import (
 )
 
 
+@dataclass(frozen=True)
+class SourceRuntime:
+    """Concrete simulation dependencies required by source execution."""
+
+    device: str
+    grid: object
+    particles: object
+    settings: object
+    voxel_type: object
+    collision_sdf: object
+    collision_vel: object
+    vel: object
+    temperature: object
+    viscosity_field: object
+    density: object
+    voxel_counts: object
+    pressure_solver: object
+    active_voxel_count: Callable[[], int]
+    current_frame: Callable[[], int]
+    ensure_particle_capacity: Callable[[int], object] | None
+    invalidate_host_cache: Callable[[], None]
+    invalidate_particle_surface: Callable[[], None]
+
+    @property
+    def _nvox(self) -> int:
+        return max(1, int(self.active_voxel_count()))
+
+    @property
+    def frame(self) -> int:
+        return int(self.current_frame())
+
+
 class CompiledSourceExecution:
     def apply_compiled(self, batch, dt, *, transaction_ready=False, finalize=True):
         """Apply compiled operations in fixed precedence/semantic order."""
@@ -54,7 +89,7 @@ class CompiledSourceExecution:
 
         if not transaction_ready:
             self._begin_emission_transaction(batch, include_legacy=False)
-        owner, grid = self.owner, self.owner.grid
+        owner, grid = self.runtime, self.runtime.grid
         if self._compiled_empty_scalar is None:
             self._compiled_empty_scalar = wp.empty(0, dtype=float, device=self.device)
             self._compiled_empty_vector = wp.empty(0, dtype=wp.vec3, device=self.device)
@@ -238,7 +273,7 @@ class CompiledSourceExecution:
                         grid.voxels_dim,
                         grid.leaves_dim,
                         grid.origin,
-                        self.owner.settings.voxel_size,
+                        self.runtime.settings.voxel_size,
                         normalized_liquid_target(plan),
                         wp.vec3(*payload.velocity),
                         payload.temperature,
@@ -287,7 +322,7 @@ class CompiledSourceExecution:
         self.last_post_p2g_apply_count = 0
         if batch is None:
             return 0
-        owner, grid = self.owner, self.owner.grid
+        owner, grid = self.runtime, self.runtime.grid
         empty_scalar = self._compiled_empty_scalar
         empty_vector = self._compiled_empty_vector
         operations = {
@@ -387,7 +422,7 @@ class CompiledSourceExecution:
         self.last_pressure_apply_count = 0
         if batch is None:
             return 0
-        owner, grid = self.owner, self.owner.grid
+        owner, grid = self.runtime, self.runtime.grid
         empty_scalar = self._compiled_empty_scalar
         empty_vector = self._compiled_empty_vector
         for compiled in batch.sources:
@@ -470,7 +505,7 @@ class CompiledSourceExecution:
             for source in analytic_sources
         ):
             return
-        owner = self.owner
+        owner = self.runtime
         grid = owner.grid
         wp.launch(
             k_source_shape_forces,
@@ -521,7 +556,7 @@ class CompiledSourceExecution:
 
     def _prepare_legacy_emission(self):
         """Freeze legacy emitters and their deterministic seed for one batch."""
-        settings = self.owner.settings
+        settings = self.runtime.settings
         analytic = tuple(getattr(self, "analytic_sources", self.sources))
         meshes = tuple(getattr(self, "mesh_sources", ()))
         height = self.height_source
@@ -663,7 +698,7 @@ class CompiledSourceExecution:
         """Count a normalized source plan and enqueue one device admission gate."""
         from .source_regions import normalized_liquid_target
 
-        owner, grid, particles = self.owner, self.owner.grid, self.owner.particles
+        owner, grid, particles = self.runtime, self.runtime.grid, self.runtime.particles
         emission_plan = self._normalize_emission_plan(batch, include_legacy=include_legacy)
         compiled_candidates = emission_plan.compiled_sources
         self._emission_pending_fired = set(emission_plan.pending_fired)
@@ -761,12 +796,12 @@ class CompiledSourceExecution:
         return True
 
     def _request_particle_growth(self, required_total):
-        grow = getattr(self.owner, "ensure_particle_capacity", None)
+        grow = getattr(self.runtime, "ensure_particle_capacity", None)
         if callable(grow):
             return grow(required_total)
         from .particle_capacity import ParticleGrowthResult
 
-        current = int(getattr(self.owner.particles, "capacity", 0))
+        current = int(getattr(self.runtime.particles, "capacity", 0))
         return ParticleGrowthResult(
             "DISABLED",
             current,
@@ -783,7 +818,7 @@ class CompiledSourceExecution:
         required, admitted, emitted, invariant = map(int, values[:4])
         self._emission_available = int(values[4])
         self._emission_initial_count = max(
-            0, int(self.owner.particles.capacity) - self._emission_available
+            0, int(self.runtime.particles.capacity) - self._emission_available
         )
         self._emission_transaction_active = False
         if invariant:
@@ -808,7 +843,7 @@ class CompiledSourceExecution:
                 self._emit_shape_array = None
                 self._emit_shape_key = None
             if emitted:
-                particles = self.owner.particles
+                particles = self.runtime.particles
                 if particles.has_optional_channel("uid"):
                     wp.launch(
                         k_assign_emitted_uids,
@@ -823,7 +858,7 @@ class CompiledSourceExecution:
                     )
                     particles.next_uid = self._emission_uid_base + emitted
                 particles.refresh_host_count()
-                self.owner._host_frame_cache = None
+                self.runtime.invalidate_host_cache()
             self.last_apply_result = {
                 "emitted": emitted,
                 "capacity_limited": False,
@@ -839,7 +874,7 @@ class CompiledSourceExecution:
         total_required = self._emission_initial_count + required
         growth = self._request_particle_growth(total_required)
         policy = str(
-            getattr(self.owner.settings, "particle_growth_failure_policy", "DEFER")
+            getattr(self.runtime.settings, "particle_growth_failure_policy", "DEFER")
         ).upper()
         pause_requested = not growth.grew and policy == "PAUSE"
         self.last_apply_result = {
@@ -867,7 +902,7 @@ class CompiledSourceExecution:
             )
             batch = getattr(self, "_compiled_batch", None)
             if batch is None or dynamic:
-                batch = self.compile(frame=int(getattr(self.owner, "frame", 0)), substep=0)
+                batch = self.compile(frame=int(getattr(self.runtime, "frame", 0)), substep=0)
 
         include_legacy = bool(self.sources or self.height_source.enabled)
         self._begin_emission_transaction(batch, include_legacy=include_legacy)
@@ -876,7 +911,7 @@ class CompiledSourceExecution:
         if not include_legacy:
             return self._finish_emission_transaction()
 
-        owner = self.owner
+        owner = self.runtime
         grid = owner.grid
         settings = owner.settings
         analytic_sources = tuple(getattr(self, "analytic_sources", self.sources))
@@ -1060,7 +1095,7 @@ class CompiledSourceExecution:
 
     def _direct_packet_attempt(self, uploaded, required):
         """Run one device-authoritative admit/commit attempt for all packets."""
-        particles = self.owner.particles
+        particles = self.runtime.particles
         initial_count = int(particles.refresh_host_count())
         uid_base = int(particles.next_uid)
         self._emission_state.zero_()
@@ -1145,10 +1180,8 @@ class CompiledSourceExecution:
                 particles.next_uid = uid_base + emitted
             total = particles.refresh_host_count() if emitted else initial
             if emitted:
-                self.owner._host_frame_cache = None
-                surface = getattr(self.owner, "surface", None)
-                if surface is not None:
-                    surface.invalidate_particle_state()
+                self.runtime.invalidate_host_cache()
+                self.runtime.invalidate_particle_surface()
             return InjectionResult(True, emitted, demand, available, False, int(total))
         return InjectionResult(False, 0, demand, available, True, initial)
 
@@ -1174,7 +1207,7 @@ class CompiledSourceExecution:
         )
         required = sum(len(packet.positions) for packet in normalized)
         if not required:
-            particles = self.owner.particles
+            particles = self.runtime.particles
             result = InjectionResult(
                 True,
                 0,
@@ -1214,7 +1247,7 @@ class CompiledSourceExecution:
         if not result.admitted:
             policy = str(
                 getattr(
-                    self.owner.settings,
+                    self.runtime.settings,
                     "particle_growth_failure_policy",
                     "DEFER",
                 )

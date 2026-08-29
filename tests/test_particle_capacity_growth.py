@@ -82,21 +82,27 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     from fluidSim_warp_blender51.sim.particles import ParticleBins, ParticleSystem
     from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 16 * 1024**3,
-        "gpu_free_bytes": 14 * 1024**3,
-    })
+    monkeypatch.setattr(
+        memory_safety,
+        "vram_snapshot",
+        lambda _device: {
+            "gpu_total_bytes": 16 * 1024**3,
+            "gpu_free_bytes": 14 * 1024**3,
+        },
+    )
     monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda _device: None)
     monkeypatch.setattr(
         particle_capacity,
         "plan_particle_growth",
-        lambda *_args, **_kwargs: ParticleGrowthPlan(
-            4, 6, 8, 1024, 4096, True),
+        lambda *_args, **_kwargs: ParticleGrowthPlan(4, 6, 8, 1024, 4096, True),
     )
     particles = ParticleSystem(4, "cpu")
-    wp.copy(particles.position, wp.array(
-        np.asarray(((1.0, 2.0, 3.0),), np.float32),
-        dtype=wp.vec3, device="cpu"))
+    wp.copy(
+        particles.position,
+        wp.array(
+            np.asarray(((1.0, 2.0, 3.0),), np.float32), dtype=wp.vec3, device="cpu"
+        ),
+    )
     wp.copy(particles.count, wp.array((1,), dtype=wp.int32, device="cpu"))
     particles.host_count = 1
     owner = SimpleNamespace(
@@ -111,7 +117,8 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
         last_particle_growth=None,
     )
     owner.ensure_particle_capacity = types.MethodType(
-        FluidSolver.ensure_particle_capacity, owner)
+        FluidSolver.ensure_particle_capacity, owner
+    )
 
     result = owner.ensure_particle_capacity(6)
 
@@ -130,22 +137,26 @@ def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):
     from fluidSim_warp_blender51.sim.particles import ParticleBins, ParticleSystem
     from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
-    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
-        "gpu_total_bytes": 16 * 1024**3,
-        "gpu_free_bytes": 14 * 1024**3,
-    })
+    monkeypatch.setattr(
+        memory_safety,
+        "vram_snapshot",
+        lambda _device: {
+            "gpu_total_bytes": 16 * 1024**3,
+            "gpu_free_bytes": 14 * 1024**3,
+        },
+    )
     monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda _device: None)
     monkeypatch.setattr(
         particle_capacity,
         "plan_particle_growth",
-        lambda *_args, **_kwargs: ParticleGrowthPlan(
-            4, 6, 8, 1024, 4096, True),
+        lambda *_args, **_kwargs: ParticleGrowthPlan(4, 6, 8, 1024, 4096, True),
     )
     particles = ParticleSystem(4, "cpu")
     whitewater = WhitewaterSystem(4, "cpu", candidate_capacity=4)
     old_candidates = whitewater.candidates
     monkeypatch.setattr(
-        whitewater, "allocate_candidate_workspace",
+        whitewater,
+        "allocate_candidate_workspace",
         lambda _capacity: (_ for _ in ()).throw(RuntimeError("synthetic OOM")),
     )
     owner = SimpleNamespace(
@@ -160,7 +171,8 @@ def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):
         last_particle_growth=None,
     )
     owner.ensure_particle_capacity = types.MethodType(
-        FluidSolver.ensure_particle_capacity, owner)
+        FluidSolver.ensure_particle_capacity, owner
+    )
 
     result = owner.ensure_particle_capacity(6)
 
@@ -174,12 +186,16 @@ def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):
     assert "synthetic OOM" in result.reason
 
 
-@pytest.mark.parametrize(("policy", "pause_requested"), (
-    ("DEFER", False),
-    ("PAUSE", True),
-))
+@pytest.mark.parametrize(
+    ("policy", "pause_requested"),
+    (
+        ("DEFER", False),
+        ("PAUSE", True),
+    ),
+)
 def test_growth_failure_policy_preserves_source_batch_for_retry(
-        policy, pause_requested):
+    policy, pause_requested
+):
     from fluidSim_warp_blender51.sim.particle_capacity import ParticleGrowthResult
     from fluidSim_warp_blender51.sim.particles import ParticleSystem
     from fluidSim_warp_blender51.sim.sourcing import SourcePipeline
@@ -192,9 +208,20 @@ def test_growth_failure_policy_preserves_source_batch_for_retry(
         _nvox=1,
         settings=SimpleNamespace(particle_growth_failure_policy=policy),
         ensure_particle_capacity=lambda required: ParticleGrowthResult(
-            "BLOCKED", 2, 2, required, 4, reason="guarded"),
+            "BLOCKED", 2, 2, required, 4, reason="guarded"
+        ),
     )
-    pipeline = SourcePipeline(owner)
+    pipeline = SourcePipeline(
+        device=owner.device,
+        grid=owner.grid,
+        particles=owner.particles,
+        settings=owner.settings,
+        active_voxel_count=lambda: owner._nvox,
+        current_frame=lambda: 0,
+        ensure_particle_capacity=owner.ensure_particle_capacity,
+        invalidate_host_cache=lambda: None,
+        invalidate_particle_surface=lambda: None,
+    )
     points = np.asarray(((0.0, 0.0, 0.0),) * 3, np.float32)
 
     assert pipeline.inject_particles(points) == 0
@@ -224,9 +251,20 @@ def test_direct_injection_admits_against_device_count_not_stale_host_mirror():
         _nvox=1,
         settings=SimpleNamespace(particle_growth_failure_policy="DEFER"),
         ensure_particle_capacity=lambda required: ParticleGrowthResult(
-            "BLOCKED", 4, 4, required, 4, reason="guarded"),
+            "BLOCKED", 4, 4, required, 4, reason="guarded"
+        ),
     )
-    pipeline = SourcePipeline(owner)
+    pipeline = SourcePipeline(
+        device=owner.device,
+        grid=owner.grid,
+        particles=owner.particles,
+        settings=owner.settings,
+        active_voxel_count=lambda: owner._nvox,
+        current_frame=lambda: 0,
+        ensure_particle_capacity=owner.ensure_particle_capacity,
+        invalidate_host_cache=lambda: None,
+        invalidate_particle_surface=lambda: None,
+    )
     points = np.asarray(((0.0, 0.0, 0.0),) * 2, np.float32)
 
     assert pipeline.inject_particles(points) == 0

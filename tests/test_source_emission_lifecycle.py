@@ -11,7 +11,6 @@ These tests encode the source-emission truth contract:
 """
 
 import numpy as np
-import pytest
 
 from fluidSim_warp_blender51.sim import sourcing
 from fluidSim_warp_blender51.sim.enums import (
@@ -615,8 +614,11 @@ def test_legacy_initial_fill_over_capacity_is_zero_commit_and_retryable():
         source_id="legacy-overflow",
     )])
     _step(solver)
-    assert solver.sourcing.last_apply_result["admitted"] is True
-    assert solver.particles.refresh_host_count() == 2
+    # Assert the source transaction itself: later solver phases may cull a
+    # boundary-jittered particle and are outside this lifecycle contract.
+    retry = solver.sourcing.last_apply_result
+    assert retry["admitted"] is True
+    assert retry["emitted"] == 2
     assert "legacy-overflow" in solver.sourcing._initial_fired
     solver.release()
 

@@ -31,7 +31,7 @@ from .source_contracts import (
     SourceShape,
     SourceShapeDesc,
 )
-from .source_execution import CompiledSourceExecution
+from .source_execution import CompiledSourceExecution, SourceRuntime
 from .source_kernels import (
     _watertight_mesh_contains,
     blend_scalar,
@@ -156,9 +156,49 @@ __all__ = [
 class SourcePipeline(CompiledSourceExecution):
     """Own source state and the complete source-launch transaction."""
 
-    def __init__(self, owner):
-        self.owner = owner
-        self.device = owner.device
+    def __init__(
+        self,
+        *,
+        device,
+        grid,
+        particles,
+        settings,
+        active_voxel_count,
+        current_frame,
+        ensure_particle_capacity,
+        invalidate_host_cache,
+        invalidate_particle_surface,
+        voxel_type=None,
+        collision_sdf=None,
+        collision_velocity=None,
+        velocity=None,
+        temperature=None,
+        viscosity_field=None,
+        density=None,
+        voxel_counts=None,
+        pressure_solver=None,
+    ):
+        self.runtime = SourceRuntime(
+            device=device,
+            grid=grid,
+            particles=particles,
+            settings=settings,
+            voxel_type=voxel_type,
+            collision_sdf=collision_sdf,
+            collision_vel=collision_velocity,
+            vel=velocity,
+            temperature=temperature,
+            viscosity_field=viscosity_field,
+            density=density,
+            voxel_counts=voxel_counts,
+            pressure_solver=pressure_solver,
+            active_voxel_count=active_voxel_count,
+            current_frame=current_frame,
+            ensure_particle_capacity=ensure_particle_capacity,
+            invalidate_host_cache=invalidate_host_cache,
+            invalidate_particle_surface=invalidate_particle_surface,
+        )
+        self.device = device
         self.sources: list[SourceShapeDesc | MeshSourceDesc] = []
         self.analytic_sources: list[SourceShapeDesc] = []
         self.mesh_sources: list[MeshSourceDesc] = []
@@ -175,7 +215,7 @@ class SourcePipeline(CompiledSourceExecution):
         # aggregate result is read after the whole source batch.
         self._emission_state = wp.zeros(5, dtype=wp.int32, device=self.device)
         self._emission_scratch_counts = wp.zeros(
-            max(1, int(getattr(owner.grid, "voxel_capacity", getattr(owner, "_nvox", 1)))),
+            max(1, int(getattr(grid, "voxel_capacity", 0) or active_voxel_count())),
             dtype=wp.int32,
             device=self.device,
         )
@@ -194,7 +234,7 @@ class SourcePipeline(CompiledSourceExecution):
             "emitted": 0,
             "capacity_limited": False,
             "required": 0,
-            "available": int(owner.particles.capacity),
+            "available": int(particles.capacity),
             "admitted": True,
         }
         self.last_injection_result = None
@@ -291,7 +331,7 @@ class SourcePipeline(CompiledSourceExecution):
     def release(self):
         """Release all compiler-owned GPU values on solver teardown/failure."""
         self.reset()
-        self.owner = None
+        self.runtime = None
 
     def set_source_batch(self, batch):
         """Install both runtime representations without compatibility copies."""
@@ -342,7 +382,7 @@ class SourcePipeline(CompiledSourceExecution):
         """Compile current plans for the owner's sparse-grid context."""
         from .source_regions import CompileContext
 
-        owner, settings = self.owner, self.owner.settings
+        owner, settings = self.runtime, self.runtime.settings
         context = CompileContext(
             frame=int(frame),
             substep=int(substep),

@@ -703,7 +703,29 @@ class FluidSolver:
 
         self.pressure_solver = PressureSolver(g, self.device)
         self.viscosity_solver = ViscositySolver(g, self.device)
-        self.sourcing = SourcePipeline(self)
+        self.sourcing = SourcePipeline(
+            device=self.device,
+            grid=self.grid,
+            particles=self.particles,
+            settings=self.settings,
+            voxel_type=self.voxel_type,
+            collision_sdf=self.collision_sdf,
+            collision_velocity=self.collision_vel,
+            velocity=self.vel,
+            temperature=self.temperature,
+            viscosity_field=self.viscosity_field,
+            density=self.density,
+            voxel_counts=self.voxel_counts,
+            pressure_solver=self.pressure_solver,
+            active_voxel_count=lambda: getattr(self, "_nvox", 1),
+            current_frame=lambda: getattr(self, "frame", 0),
+            ensure_particle_capacity=self.ensure_particle_capacity,
+            invalidate_host_cache=lambda: setattr(
+                self, "_host_frame_cache", None),
+            invalidate_particle_surface=lambda: (
+                self.surface.invalidate_particle_state()
+                if getattr(self, "surface", None) is not None else None),
+        )
         self.surface = SurfacePipeline(self)
         self.surface_tension = SurfaceTensionSolver(self)
         self.color_mixing = self._new_color_mixing()

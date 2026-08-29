@@ -319,6 +319,29 @@ def _owner(*, host_count=0, capacity=8, refreshed_count=1):
     )
 
 
+def _pipeline(owner):
+    return SourcePipeline(
+        device=owner.device,
+        grid=owner.grid,
+        particles=owner.particles,
+        settings=owner.settings,
+        active_voxel_count=lambda: owner._nvox,
+        current_frame=lambda: 0,
+        ensure_particle_capacity=getattr(owner, "ensure_particle_capacity", None),
+        invalidate_host_cache=lambda: setattr(owner, "_host_frame_cache", None),
+        invalidate_particle_surface=lambda: None,
+        voxel_type=owner.voxel_type,
+        collision_sdf=owner.collision_sdf,
+        collision_velocity=owner.collision_vel,
+        velocity=owner.vel,
+        temperature=owner.temperature,
+        viscosity_field=owner.viscosity_field,
+        density=getattr(owner, "density", None),
+        voxel_counts=owner.voxel_counts,
+        pressure_solver=getattr(owner, "pressure_solver", None),
+    )
+
+
 def _record_warp(monkeypatch):
     arrays = []
     launches = []
@@ -390,7 +413,7 @@ def _record_warp(monkeypatch):
 def test_apply_owns_launch_order_cache_and_full_capacity_signal(monkeypatch):
     arrays, launches = _record_warp(monkeypatch)
     owner = _owner(host_count=8, capacity=8)
-    pipeline = SourcePipeline(owner)
+    pipeline = _pipeline(owner)
     pipeline.set_sources([SourceShapeDesc(mode=1)])
     pipeline.set_height_source(
         HeightSourceDesc(
@@ -428,7 +451,7 @@ def test_apply_owns_launch_order_cache_and_full_capacity_signal(monkeypatch):
 def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeypatch):
     arrays, launches = _record_warp(monkeypatch)
     owner = _owner()
-    pipeline = SourcePipeline(owner)
+    pipeline = _pipeline(owner)
     pipeline.set_height_source(
         HeightSourceDesc(
             enabled=True,
@@ -461,7 +484,7 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     # Admission reads the device counter in the kernel; the single host refresh
     # reports the committed total after the exact packet transaction.
     owner = _owner(refreshed_count=[0, 2])
-    pipeline = SourcePipeline(owner)
+    pipeline = _pipeline(owner)
 
     result = pipeline.inject_particles(
         np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]),

@@ -57,9 +57,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     wp.init()
     module_path = Path(wp.__file__).resolve()
     if expected_warp_root.resolve() not in module_path.parents:
-        raise AssertionError(
-            f"Warp loaded from {module_path}, expected under {expected_warp_root}"
-        )
+        raise AssertionError(f"Warp loaded from {module_path}, expected under {expected_warp_root}")
     if str(getattr(wp, "__version__", "")) != "1.16.0":
         raise AssertionError(f"unexpected Warp version {getattr(wp, '__version__', '')}")
 
@@ -72,9 +70,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     SourcePipeline = sourcing_module.SourcePipeline
 
     device = "cpu"
-    particles = ParticleSystem(
-        8, device, optional_channels=("color", "source_id", "uid")
-    )
+    particles = ParticleSystem(8, device, optional_channels=("color", "source_id", "uid"))
     owner = SimpleNamespace(
         device=device,
         particles=particles,
@@ -86,7 +82,17 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
             particle_growth_failure_policy="DEFER",
         ),
     )
-    pipeline = SourcePipeline(owner)
+    pipeline = SourcePipeline(
+        device=owner.device,
+        grid=owner.grid,
+        particles=owner.particles,
+        settings=owner.settings,
+        active_voxel_count=lambda: owner._nvox,
+        current_frame=lambda: 0,
+        ensure_particle_capacity=None,
+        invalidate_host_cache=lambda: setattr(owner, "_host_frame_cache", None),
+        invalidate_particle_surface=lambda: None,
+    )
     positions = np.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
         dtype=np.float32,
@@ -117,9 +123,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     np.testing.assert_array_equal(
         particles.int_attrs["source_id"].numpy()[:3], np.array([44, 44, 44])
     )
-    np.testing.assert_array_equal(
-        particles.int_attrs["uid"].numpy()[:3], np.array([1, 2, 3])
-    )
+    np.testing.assert_array_equal(particles.int_attrs["uid"].numpy()[:3], np.array([1, 2, 3]))
     if particles.next_uid != 4:
         raise AssertionError("UID counter did not advance transactionally")
 
@@ -130,12 +134,8 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     if particles.refresh_host_count() != 2:
         raise AssertionError("particle compaction produced the wrong count")
     np.testing.assert_allclose(particles.position.numpy()[:2], positions[[0, 2]])
-    np.testing.assert_array_equal(
-        particles.int_attrs["uid"].numpy()[:2], np.array([1, 3])
-    )
-    np.testing.assert_array_equal(
-        particles.int_attrs["source_id"].numpy()[:2], np.array([44, 44])
-    )
+    np.testing.assert_array_equal(particles.int_attrs["uid"].numpy()[:2], np.array([1, 3]))
+    np.testing.assert_array_equal(particles.int_attrs["source_id"].numpy()[:2], np.array([44, 44]))
     np.testing.assert_allclose(
         particles.vec4_attrs["color"].numpy()[:2],
         np.array([[0.2, 0.4, 0.8, 1.0], [0.2, 0.4, 0.8, 1.0]], dtype=np.float32),
@@ -150,14 +150,10 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     for name in particles.ATTR_NAMES:
         checkpoint[f"particle_attr_{name}"] = particles.attrs[name].numpy()[:2]
     checkpoint.update(particles.checkpoint_arrays(2))
-    restored = ParticleSystem(
-        8, device, optional_channels=("color", "source_id", "uid")
-    )
+    restored = ParticleSystem(8, device, optional_channels=("color", "source_id", "uid"))
     restored.restore_checkpoint_prefix(checkpoint, 2)
     restored.next_uid = particles.next_uid
-    np.testing.assert_array_equal(
-        restored.int_attrs["uid"].numpy()[:2], np.array([1, 3])
-    )
+    np.testing.assert_array_equal(restored.int_attrs["uid"].numpy()[:2], np.array([1, 3]))
     np.testing.assert_allclose(
         restored.vec4_attrs["color"].numpy()[:2],
         particles.vec4_attrs["color"].numpy()[:2],
@@ -168,20 +164,36 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     # DirectInjectionPacket rather than silently falling back to one velocity.
     compat_particles = ParticleSystem(4, device, optional_channels=("uid",))
     compat_owner = SimpleNamespace(
-        device=device, particles=compat_particles,
-        grid=SimpleNamespace(voxel_capacity=1), _nvox=1,
-        _host_frame_cache=None, settings=owner.settings,
+        device=device,
+        particles=compat_particles,
+        grid=SimpleNamespace(voxel_capacity=1),
+        _nvox=1,
+        _host_frame_cache=None,
+        settings=owner.settings,
     )
-    compat_pipeline = SourcePipeline(compat_owner)
-    compat_velocity = np.array(
-        [[3.0, 0.0, 0.0], [0.0, -2.0, 1.0]], dtype=np.float32
+    compat_pipeline = SourcePipeline(
+        device=compat_owner.device,
+        grid=compat_owner.grid,
+        particles=compat_owner.particles,
+        settings=compat_owner.settings,
+        active_voxel_count=lambda: compat_owner._nvox,
+        current_frame=lambda: 0,
+        ensure_particle_capacity=None,
+        invalidate_host_cache=lambda: setattr(compat_owner, "_host_frame_cache", None),
+        invalidate_particle_surface=lambda: None,
     )
+    compat_velocity = np.array([[3.0, 0.0, 0.0], [0.0, -2.0, 1.0]], dtype=np.float32)
     compat_packet = SimpleNamespace(
         positions=np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32),
-        velocity=(9.0, 9.0, 9.0), velocities=compat_velocity,
-        temperature=0.0, viscosity=0.0, density=1.0,
-        color=(1.0, 1.0, 1.0, 1.0), source_id=7,
-        life=0.0, use_lifespan=False,
+        velocity=(9.0, 9.0, 9.0),
+        velocities=compat_velocity,
+        temperature=0.0,
+        viscosity=0.0,
+        density=1.0,
+        color=(1.0, 1.0, 1.0, 1.0),
+        source_id=7,
+        life=0.0,
+        use_lifespan=False,
     )
     compat_result = compat_pipeline.inject_particle_packets_exact((compat_packet,))
     if not compat_result.admitted or compat_result.emitted != 2:
@@ -196,7 +208,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
 
     # Compile and execute the Phase-3 vorticity kernel against a valid sparse
     # single-leaf zero field.  Zero curl is exact and device-independent.
-    nvox = 8 ** 3
+    nvox = 8**3
     field = wp.zeros(nvox, dtype=float, device=device)
     weight = wp.ones(nvox, dtype=float, device=device)
     leaf_table = wp.array([0], dtype=wp.int32, device=device)
