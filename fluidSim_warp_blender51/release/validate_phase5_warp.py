@@ -121,7 +121,12 @@ def _launch_pipeline(surface_tension, grid, sdf, collision_sdf, coefficient, *, 
     }
 
 
-def validate(expected_warp_root: Path, module_name: str, *, device: str = "cpu") -> dict:
+def validate(
+    expected_warp_root: Path,
+    module_name: str = VALIDATION_PACKAGE,
+    *,
+    device: str = "cpu",
+) -> dict:
     wp.init()
     warp_module = Path(wp.__file__).resolve()
     expected_root = expected_warp_root.resolve()

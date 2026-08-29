@@ -80,7 +80,12 @@ def _copy(target, values, dtype, *, device: str) -> None:
     wp.copy(target, wp.array(values, dtype=dtype, device=device), count=len(values))
 
 
-def validate(expected_warp_root: Path, module_name: str, *, device: str = "cpu") -> dict:
+def validate(
+    expected_warp_root: Path,
+    module_name: str = VALIDATION_PACKAGE,
+    *,
+    device: str = "cpu",
+) -> dict:
     global _CLASSIFY, _TRANSITION
 
     wp.init()
