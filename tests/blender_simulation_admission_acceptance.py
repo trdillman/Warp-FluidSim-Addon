@@ -62,11 +62,17 @@ def main():
     fs.height_enabled = True
     fs.height_base = 0.2
     check("add custom effect",
-          bpy.ops.fluidsim.snippet_add() == {"FINISHED"})
+          bpy.ops.fluidsim.effect_add(
+              effect_id="fluidsim.vortex_force") == {"FINISHED"})
     check(
         "compile and apply custom effect",
         bpy.ops.fluidsim.effect_apply_stack(device="cuda:0") == {"FINISHED"},
     )
+    legacy = fs.snippets.add()
+    legacy.kernel_name = "legacy_admission_probe"
+    legacy.run_over = "PARTICLES"
+    legacy.text_block = bpy.data.texts.new("Legacy Admission Probe.py")
+    legacy.text_block.write("probe = 1.0\n")
 
     from fluidSim_warp_blender51.blender import simulation_admission, sources
     from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -126,7 +132,6 @@ def main():
                 for descriptor in snapshot.descriptors),
             "height": bool(getattr(snapshot.height_source, "enabled", False)),
             "seeds": len(snapshot.seeds),
-            "snippets": len(snapshot.snippets),
             "effects": len(snapshot.effects),
         })
         result = original_configure(owner, candidate, snapshot, scene_arg)
@@ -164,6 +169,19 @@ def main():
     check("seed committed", installed.get("seeds", 0) >= 1
           and sess.solver.particles.refresh_host_count() >= 1)
     check("custom effect captured", installed.get("effects", 0) >= 1)
+    migrated = [
+        item for item in scene.fluidsim_effects.items
+        if item.instance_id == "legacy-scene-0"
+    ]
+    check("legacy source consumed after migration", len(fs.snippets) == 0)
+    check(
+        "legacy effect disabled and untrusted",
+        len(migrated) == 1
+        and not migrated[0].enabled
+        and migrated[0].status == "DISABLED"
+        and migrated[0].trust_state == "UNTRUSTED_IMPORTED"
+        and bool(migrated[0].content_digest),
+    )
     check("outputs prepared", any(obj.type == "POINTCLOUD" for obj in scene.objects))
     check("CUDA meshes materialized only after preflight on candidate",
           materialized_meshes and materialized_meshes[-1] >= 1,

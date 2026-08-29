@@ -197,7 +197,7 @@ class Session:
 
     def _admission(self):
         if self._admission_owner is None:
-            from . import pending_settings, snippets
+            from . import pending_settings
             from .simulation_admission import SimulationAdmission
 
             def build_effect_stack(scene):
@@ -212,7 +212,6 @@ class Session:
 
             self._admission_owner = SimulationAdmission(
                 self, scene_identity=_scene_identity,
-                snippet_builder=snippets.build_snippets,
                 effect_builder=build_effect_stack,
                 applied_state_capture=pending_settings.capture_applied_state,
                 reset_settings_apply=pending_settings.apply_reset_solver_settings,
@@ -227,6 +226,10 @@ class Session:
     def initialize(self, scene, *, depsgraph=None,
                    ignore_memory_safeguard=False):
         """Admit one coherent Blender scene into a running Solver Session."""
+        if hasattr(bpy, "props"):
+            from .effects import migrate_legacy_snippets
+
+            migrate_legacy_snippets(scene)
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard)

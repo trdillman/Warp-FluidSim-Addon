@@ -732,9 +732,7 @@ class FluidSolver:
         self._host_frame_cache = None
         self.last_particle_growth = None
         self.features = FrameFeatures(device=self.device)
-        # Compatibility aliases: external diagnostics and one-release legacy
-        # snippet adapters still read these established attributes directly.
-        self.snippets = self.features.snippets
+        # Compatibility alias for diagnostics that read this established name.
         self.effects = self.features.effects
 
         self.colliders: list[ColliderDesc] = []
@@ -806,15 +804,6 @@ class FluidSolver:
     @property
     def height_source(self):
         return self.sourcing.height_source
-
-    def set_custom_snippets(self, snippets):
-        """Compatibility path for legacy v1 snippets.
-
-        New Blender integration installs a complete v2 candidate through
-        :meth:`set_custom_effect_candidate`; this adapter remains for one
-        migration release and preserves the old operator/script surface.
-        """
-        return self.features.set_legacy_snippets(snippets)
 
     def set_custom_effect_candidate(self, candidate):
         """Atomically install a fully compiled and sandboxed effect stack."""

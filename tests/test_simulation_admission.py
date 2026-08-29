@@ -93,7 +93,6 @@ def _owner(session, applied=None):
     return admission.SimulationAdmission(
         session,
         scene_identity=lambda _scene: 101,
-        snippet_builder=lambda _scene: (),
         applied_state_capture=applied or (lambda *_args, **_kwargs: None),
         reset_settings_apply=lambda *_args: None,
     )
@@ -244,8 +243,7 @@ def test_source_compiler_releases_when_compile_raises(monkeypatch):
         admission.capture_snapshot(
             scene, settings,
             {"gpu_total_bytes": 1024, "gpu_free_bytes": 1024},
-            depsgraph=depsgraph, scene_identity=1,
-            snippet_builder=lambda _scene: ())
+            depsgraph=depsgraph, scene_identity=1)
 
     assert released == [True]
 
@@ -283,8 +281,7 @@ def test_snapshot_captures_one_owned_scene_evaluation(monkeypatch):
 
     snapshot = admission.capture_snapshot(
         scene, settings, {}, depsgraph=depsgraph,
-        scene_identity=123, scene_key="owned-key",
-        snippet_builder=lambda _scene: ("owned-snippet",))
+        scene_identity=123, scene_key="owned-key")
     try:
         assert snapshot.scene_identity == 123
         assert snapshot.scene_key == "owned-key"
@@ -293,7 +290,6 @@ def test_snapshot_captures_one_owned_scene_evaluation(monkeypatch):
         assert snapshot.configured_device == "cpu"
         assert snapshot.domain_transform is None
         assert snapshot.domain_min == (0.0, 0.0, 0.0)
-        assert snapshot.snippets == ("owned-snippet",)
         assert compile_calls == [((), 7, "cpu")]
         assert releases == [True]
     finally:
@@ -310,7 +306,7 @@ def test_capacity_replan_reuses_original_owned_demand(monkeypatch):
         settings=SimpleNamespace(device="cpu"),
         profiling_enabled=False, profiling_sync=False,
         scene_inputs=inputs, descriptors=(), extra_plans=(), colliders=(),
-        force_fields=(), height_source=None, seeds=(), snippets=(),
+        force_fields=(), height_source=None, seeds=(),
         footprints=original_footprints, collider_footprints=(), resources={},
         capacity_plan=object(),
     )

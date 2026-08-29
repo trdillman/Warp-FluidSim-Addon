@@ -108,7 +108,6 @@ class AdmissionSnapshot:
     force_fields: tuple
     height_source: object
     seeds: tuple
-    snippets: tuple
     footprints: tuple
     collider_footprints: tuple
     resources: object
@@ -184,8 +183,8 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
 
 def capture_snapshot(
         scene, settings, resources, *, depsgraph=None, scene_identity=None,
-        scene_key="", snippet_builder=lambda _scene: (),
-        effect_builder=lambda _scene: (), additional_transaction_bytes=0):
+        scene_key="", effect_builder=lambda _scene: (),
+        additional_transaction_bytes=0):
     """Gather and compile one evaluated scene exactly once.
 
     The compiler is always released.  The returned SceneInputs owner is either
@@ -218,7 +217,6 @@ def capture_snapshot(
         force_fields = tuple(inputs.gather_force_fields(scene, depsgraph))
         height_source = inputs.gather_height_source(scene, depsgraph)
         seeds = tuple(sources.prepare_auto_seeds(scene, depsgraph))
-        snippets = tuple(snippet_builder(scene))
         effects = tuple(effect_builder(scene))
         # Register staged mesh descriptor bindings so every failure path can
         # break those references deterministically.
@@ -294,7 +292,6 @@ def capture_snapshot(
             force_fields=force_fields,
             height_source=height_source,
             seeds=seeds,
-            snippets=snippets,
             effects=effects,
             footprints=tuple(footprints),
             collider_footprints=collider_footprints,
@@ -340,12 +337,11 @@ def discard_prepared_solver(solver):
 class SimulationAdmission:
     """Deep admission owner used by one Solver Session."""
 
-    def __init__(self, session, *, scene_identity, snippet_builder,
+    def __init__(self, session, *, scene_identity,
                  applied_state_capture, reset_settings_apply,
                  effect_builder=None):
         self.session = session
         self._scene_identity = scene_identity
-        self._snippet_builder = snippet_builder
         self._effect_builder = effect_builder or (lambda _scene: ())
         self._capture_applied_state = applied_state_capture
         self._apply_reset_settings = reset_settings_apply
@@ -359,7 +355,6 @@ class SimulationAdmission:
             scene, settings, resources, depsgraph=depsgraph,
             scene_identity=self._scene_identity(scene),
             scene_key=cache_identity.scene_key(scene),
-            snippet_builder=self._snippet_builder,
             effect_builder=self._effect_builder,
             additional_transaction_bytes=additional_transaction_bytes,
         )
@@ -567,23 +562,6 @@ class SimulationAdmission:
         candidate.set_force_fields(snapshot.force_fields)
         candidate.set_height_source(snapshot.height_source)
 
-        enabled_legacy = tuple(
-            item for item in snapshot.snippets if bool(getattr(item, "enabled", True)))
-        enabled_effects = tuple(
-            item for item in snapshot.effects
-            if bool(getattr(item, "enabled", True)) and not bool(getattr(item, "muted", False)))
-        if enabled_legacy and enabled_effects:
-            raise RuntimeError(
-                "LEGACY_EFFECT_STACK_CONFLICT: legacy Custom Warp Snippets and "
-                "Custom Effects cannot execute together. Open Custom Effects and "
-                "migrate legacy snippets before initialization.")
-
-        legacy_errors = candidate.set_custom_snippets(snapshot.snippets)
-        if legacy_errors:
-            rendered = "; ".join(f"{name}: {error}" for name, error in legacy_errors)
-            raise RuntimeError(
-                "Legacy Custom Warp Snippet validation failed closed: " + rendered)
-
         from ..sim.effects.compiler import build_candidate_effects
         from .effects import trust_store_for_scene
 
@@ -689,7 +667,7 @@ class SimulationAdmission:
                 profiler = Profiler(
                     device=settings.device,
                     sync=bool(getattr(snapshot, "profiling_sync", False)))
-            candidate, snippet_errors = self._prepare_solver_replacement(
+            candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, profiler)
 
             # Replacement Cutover: the candidate has passed admission. This is
@@ -714,10 +692,6 @@ class SimulationAdmission:
             self.session.cache_settings_records = {}
             self.session.last_frame = -1
             self.session.frame_stats = []
-            for name, error in snippet_errors:
-                for pg in getattr(scene.fluidsim, "snippets", ()):
-                    if pg.kernel_name == name:
-                        pg.last_error = str(error)[:256]
             self._prepare_outputs(scene)
             fs = scene.fluidsim
             if initial_growth is not None:
@@ -759,7 +733,7 @@ class SimulationAdmission:
                 scene, depsgraph=depsgraph,
                 runtime_capacity=runtime_capacity, operation="RESET")
             settings = snapshot.settings
-            candidate, snippet_errors = self._prepare_solver_replacement(
+            candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
             self._commit_solver_replacement(
                 candidate, snapshot, profiler=self.session.profiler,
@@ -774,10 +748,6 @@ class SimulationAdmission:
             self.session.last_frame = -1
             self.session.frame_stats = []
             self.session.clear_error(scene)
-            for name, error in snippet_errors:
-                for pg in getattr(scene.fluidsim, "snippets", ()):
-                    if pg.kernel_name == name:
-                        pg.last_error = str(error)[:256]
             from . import output_publication
             output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(scene, self.session, reset_only=True)

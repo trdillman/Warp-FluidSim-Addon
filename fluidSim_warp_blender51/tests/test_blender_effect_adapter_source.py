@@ -74,10 +74,17 @@ def test_admission_uses_effect_stack_and_fails_closed_before_cutover():
     )[1]
 
 
-def test_legacy_snippets_cannot_be_mixed_silently_with_v2_effects():
+def test_legacy_snippets_are_migrated_before_v2_only_admission():
     admission = (ROOT / "blender" / "simulation_admission.py").read_text(encoding="utf-8")
-    assert "LEGACY_EFFECT_STACK_CONFLICT" in admission
-    assert "migrate legacy snippets" in admission.lower()
+    bridge = (ROOT / "blender" / "scene_bridge.py").read_text(encoding="utf-8")
+    effects_source = (ROOT / "blender" / "effects.py").read_text(encoding="utf-8")
+    assert "set_custom_snippets" not in admission
+    assert "snippet_builder" not in admission
+    assert "migrate_legacy_snippets(scene)" in bridge
+    assert "def _on_load_post" in effects_source
+    assert "@persistent" in effects_source
+    assert "register_handlers" in effects_source
+    assert "effect_builder=build_effect_stack" in bridge
 
 
 def test_scene_status_updates_match_instances_by_stable_id_not_collection_order():

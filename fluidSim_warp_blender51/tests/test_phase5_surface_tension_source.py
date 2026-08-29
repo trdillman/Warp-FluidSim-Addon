@@ -170,9 +170,11 @@ def test_source_emission_invalidates_same_key_surface_sdf_before_capillary_force
 
 
 def test_direct_particle_injection_invalidates_surface_and_render_products():
-    sourcing = (ROOT / "sim" / "sourcing.py").read_text(encoding="utf-8")
+    execution = (ROOT / "sim" / "source_execution.py").read_text(encoding="utf-8")
+    solver = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
     surface = (ROOT / "sim" / "surface.py").read_text(encoding="utf-8")
-    assert "surface.invalidate_particle_state()" in sourcing
+    assert "self.runtime.invalidate_particle_surface()" in execution
+    assert "self.surface.invalidate_particle_state()" in solver
     assert "def invalidate_particle_state" in surface
     method = surface[surface.index("def invalidate_particle_state") :]
     method_end = method.find("\n    def ", 1)

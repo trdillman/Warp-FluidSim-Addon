@@ -37,10 +37,11 @@ def test_phase4_keeps_one_simulation_pool_and_persists_type_state():
 
 def test_phase4_checkpoint_contract_is_explicit_and_fail_closed():
     source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
+    schema = (ROOT / "sim" / "checkpoint_state.py").read_text(encoding="utf-8")
     assert '"whitewater_type"' in source
     assert '"whitewater_type_schema_version"' in source
     assert "WHITEWATER_TYPE_SCHEMA_VERSION" in source
-    assert "unsupported whitewater type checkpoint schema" in source
+    assert "unsupported whitewater type checkpoint schema" in schema
     checkpoint = (ROOT / "io" / "checkpoint.py").read_text(encoding="utf-8")
     assert "validate_type_values" in checkpoint
     assert "allow_unclassified=False" in checkpoint

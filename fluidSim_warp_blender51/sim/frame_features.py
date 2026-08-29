@@ -5,10 +5,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from .custom import SnippetManager
 from .effects.enums import EffectStage
 from .effects.runtime import EffectRuntimeManager
-from .enums import CustomKernelOrder
 
 
 class FrameFeaturePhase(Enum):
@@ -20,28 +18,18 @@ class FrameFeaturePhase(Enum):
 
 
 _PHASE_HOOKS = {
-    FrameFeaturePhase.BEFORE_EMISSION: (
-        CustomKernelOrder.FIRST_STEP, EffectStage.BEFORE_EMISSION),
-    FrameFeaturePhase.BEFORE_SOURCING: (
-        CustomKernelOrder.BEFORE_SOURCING, None),
-    FrameFeaturePhase.AFTER_PARTICLE_TRANSFER: (
-        CustomKernelOrder.BEFORE_FORCES,
-        EffectStage.AFTER_PARTICLE_TRANSFER,
-    ),
-    FrameFeaturePhase.BEFORE_PRESSURE: (
-        CustomKernelOrder.BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION,
-        EffectStage.BEFORE_PRESSURE,
-    ),
-    FrameFeaturePhase.AFTER_PARTICLE_UPDATE: (
-        CustomKernelOrder.FINAL_STEP, EffectStage.AFTER_PARTICLE_UPDATE),
+    FrameFeaturePhase.BEFORE_EMISSION: EffectStage.BEFORE_EMISSION,
+    FrameFeaturePhase.BEFORE_SOURCING: None,
+    FrameFeaturePhase.AFTER_PARTICLE_TRANSFER: EffectStage.AFTER_PARTICLE_TRANSFER,
+    FrameFeaturePhase.BEFORE_PRESSURE: EffectStage.BEFORE_PRESSURE,
+    FrameFeaturePhase.AFTER_PARTICLE_UPDATE: EffectStage.AFTER_PARTICLE_UPDATE,
 }
 
 
 class FrameFeatures:
-    """Own legacy snippets, v2 effects, and their ordered frame hooks."""
+    """Own the admitted v2 effect stack and its ordered frame hooks."""
 
     def __init__(self, *, device: str):
-        self.snippets = SnippetManager()
         self.effects = EffectRuntimeManager(device=device)
 
     def begin_frame(self) -> None:
@@ -49,14 +37,7 @@ class FrameFeatures:
 
     @property
     def rebuild_topology_each_substep(self) -> bool:
-        return (
-            self.snippets.has_any()
-            or self.effects.requirements.rebuild_topology_each_substep
-        )
-
-    def set_legacy_snippets(self, snippets: Any) -> Any:
-        self.snippets.set_snippets(snippets)
-        return self.snippets.errors
+        return self.effects.requirements.rebuild_topology_each_substep
 
     def swap_candidate(self, candidate: Any) -> Any:
         return self.effects.swap_candidate(candidate)
@@ -68,9 +49,7 @@ class FrameFeatures:
             time_context: dict[str, Any],
     ) -> None:
         """Run the legacy and v2 hooks assigned to one semantic phase."""
-        snippet_order, effect_stage = _PHASE_HOOKS[phase]
-        if snippet_order is not None:
-            self.snippets.run(snippet_order, solver, time_context)
+        effect_stage = _PHASE_HOOKS[phase]
         if effect_stage is None:
             return
         requirements = self.effects.requirements_for_stage(effect_stage)
