@@ -107,7 +107,13 @@ def _install_bpy_stub(monkeypatch):
 
 
 def _reload_module(name):
-    sys.modules.pop(name, None)
+    operator_domain_prefix = "fluidSim_warp_blender51.operator_domains"
+    for loaded_name in tuple(sys.modules):
+        if loaded_name == name or (
+            name == "fluidSim_warp_blender51.operators"
+            and loaded_name.startswith(operator_domain_prefix)
+        ):
+            sys.modules.pop(loaded_name, None)
     return importlib.import_module(name)
 
 
@@ -121,13 +127,14 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
 
-    detected = {cls.__name__ for cls in operators.CLASSES
-                if _requires_live_solver(cls)}
+    detected = {cls.__name__ for cls in operators.CLASSES if _requires_live_solver(cls)}
     assert _KNOWN_SESSION_OPERATORS <= detected
 
     monkeypatch.setattr(
-        operators, "_bridge",
-        lambda: SimpleNamespace(session=lambda: SimpleNamespace(active=False)))
+        operators._operator_runtime,
+        "_bridge",
+        lambda: SimpleNamespace(session=lambda: SimpleNamespace(active=False)),
+    )
     context = SimpleNamespace(selected_objects=(), active_object=None)
 
     missing = []
@@ -146,10 +153,12 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     # Legacy export initializes the solver itself but still requires a ready
     # external Warp runtime.
     assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
-    assert not issubclass(operators.FLUIDSIM_OT_export_cache_sequence,
-                          operators._FLUIDSIM_OT_session_base)
-    assert not issubclass(operators.FLUIDSIM_OT_snippet_apply,
-                          operators._FLUIDSIM_OT_session_base)
+    assert not issubclass(
+        operators.FLUIDSIM_OT_export_cache_sequence, operators._FLUIDSIM_OT_session_base
+    )
+    assert not issubclass(
+        operators.FLUIDSIM_OT_snippet_apply, operators._FLUIDSIM_OT_session_base
+    )
 
 
 def test_clear_object_role_poll_explains_why_it_is_greyed_out(monkeypatch):
@@ -181,15 +190,17 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
 
     # A domain object that no longer exposes geometry (deleted / wrong type):
     # _domain_bounds raises, and a draw callback must not propagate that.
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        domain_object=SimpleNamespace(),
-        voxel_size=0.05,
-        particles_per_voxel=8,
-        max_particles=1000,
-        auto_grow_particles=True,
-        topology_expand=1,
-        open_boundaries=False,
-    ))
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            domain_object=SimpleNamespace(),
+            voxel_size=0.05,
+            particles_per_voxel=8,
+            max_particles=1000,
+            auto_grow_particles=True,
+            topology_expand=1,
+            open_boundaries=False,
+        )
+    )
     layout = _Layout()
     panel = ui_scene.FLUIDSIM_PT_scene_domain()
     panel.layout = layout
@@ -213,9 +224,9 @@ def test_released_solver_reports_no_surface_pipeline():
 
     extractor = SimpleNamespace(reset_buffers=lambda: None)
     surface = SimpleNamespace(
-        extractor=extractor, render_extractor=extractor, solver=object())
-    solver = SimpleNamespace(
-        _host_frame_cache=None, surface=surface, sourcing=None)
+        extractor=extractor, render_extractor=extractor, solver=object()
+    )
+    solver = SimpleNamespace(_host_frame_cache=None, surface=surface, sourcing=None)
 
     FluidSolver.release(solver)
 
@@ -223,8 +234,11 @@ def test_released_solver_reports_no_surface_pipeline():
     # gate on this; leaving a None behind turns the guard into an AttributeError
     # that masks the solver error being handled.
     assert not hasattr(solver, "surface")
-    assert (solver.surface.metadata() if hasattr(solver, "surface")
-            else {"voxel_size": 0.05}) == {"voxel_size": 0.05}
+    assert (
+        solver.surface.metadata()
+        if hasattr(solver, "surface")
+        else {"voxel_size": 0.05}
+    ) == {"voxel_size": 0.05}
 
 
 def test_mark_world_box_rejects_a_fully_out_of_domain_box(monkeypatch):
@@ -232,11 +246,17 @@ def test_mark_world_box_rejects_a_fully_out_of_domain_box(monkeypatch):
     fields = importlib.import_module("fluidSim_warp_blender51.sim.fields")
 
     launches = []
-    monkeypatch.setattr(fields.wp, "launch",
-                        lambda *args, **kwargs: launches.append(kwargs))
+    monkeypatch.setattr(
+        fields.wp, "launch", lambda *args, **kwargs: launches.append(kwargs)
+    )
     grid = SimpleNamespace(
-        voxel_size=0.1, origin=(0.0, 0.0, 0.0), voxels_dim=(64, 64, 64),
-        leaves_dim=(8, 8, 8), leaf_flags=None, device="cpu")
+        voxel_size=0.1,
+        origin=(0.0, 0.0, 0.0),
+        voxels_dim=(64, 64, 64),
+        leaves_dim=(8, 8, 8),
+        leaf_flags=None,
+        device="cpu",
+    )
 
     # Entirely below domain_min: clamping would glue it to the floor corner.
     with pytest.raises(ValueError):

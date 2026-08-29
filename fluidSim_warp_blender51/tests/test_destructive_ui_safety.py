@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OPERATORS = ROOT / "operators.py"
+OPERATORS = ROOT / "operator_domains" / "cache.py"
 
 
 def _block(source: str, class_name: str) -> str:

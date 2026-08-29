@@ -107,11 +107,18 @@ def test_comfortable_configuration_is_left_unchanged():
         surface_max_dense_dim=256,
     )
 
-    assert recommend_safe_settings(settings, 8 * 1024**3, {
-        "gpu_utilization": 20.0,
-        "cpu_utilization": 20.0,
-        "ram_utilization": 30.0,
-    }) == {}
+    assert (
+        recommend_safe_settings(
+            settings,
+            8 * 1024**3,
+            {
+                "gpu_utilization": 20.0,
+                "cpu_utilization": 20.0,
+                "ram_utilization": 30.0,
+            },
+        )
+        == {}
+    )
 
 
 def test_assessment_stops_before_allocation_and_returns_recovery_plan():
@@ -133,7 +140,7 @@ def test_assessment_stops_before_allocation_and_returns_recovery_plan():
 
 def test_capacity_recovery_ui_uses_scene_properties_and_verified_plan_flow():
     root = Path(__file__).parents[1] / "fluidSim_warp_blender51"
-    operators = (root / "operators.py").read_text()
+    operators = (root / "operator_domains" / "session.py").read_text(encoding="utf-8")
     panels = (root / "panels.py").read_text()
     scene_ui = (root / "blender" / "ui_scene.py").read_text()
 
@@ -206,7 +213,8 @@ def test_solver_release_breaks_gpu_owning_backreferences():
     solver = FluidSolver.__new__(FluidSolver)
     extractor = SimpleNamespace(reset_buffers=lambda: None)
     surface = SimpleNamespace(
-        solver=solver, extractor=extractor, render_extractor=extractor)
+        solver=solver, extractor=extractor, render_extractor=extractor
+    )
     host_frame = SimpleNamespace(solver=solver)
     sourcing = SimpleNamespace(owner=solver)
     solver.surface = surface
@@ -227,7 +235,8 @@ def test_solver_release_breaks_gpu_owning_backreferences():
 
 
 def test_cuda_release_collects_cycles_and_flushes_pool_before_restoring_threshold(
-        monkeypatch):
+    monkeypatch,
+):
     from fluidSim_warp_blender51.sim import memory_safety
 
     calls = []
@@ -235,7 +244,9 @@ def test_cuda_release_collects_cycles_and_flushes_pool_before_restoring_threshol
     fake_warp = SimpleNamespace(
         get_device=lambda name: calls.append(("device", name)) or device,
         get_mempool_release_threshold=lambda dev: calls.append(("get", dev)) or 123,
-        set_mempool_release_threshold=lambda dev, value: calls.append(("set", dev, value)),
+        set_mempool_release_threshold=lambda dev, value: calls.append(
+            ("set", dev, value)
+        ),
         synchronize_device=lambda dev: calls.append(("sync", dev)),
     )
     monkeypatch.setattr(memory_safety.gc, "collect", lambda: calls.append(("gc",)))
@@ -244,6 +255,10 @@ def test_cuda_release_collects_cycles_and_flushes_pool_before_restoring_threshol
     memory_safety.release_cuda_memory("cuda:0")
 
     assert calls == [
-        ("gc",), ("device", "cuda:0"), ("get", device),
-        ("set", device, 0), ("sync", device), ("set", device, 123),
+        ("gc",),
+        ("device", "cuda:0"),
+        ("get", device),
+        ("set", device, 0),
+        ("sync", device),
+        ("set", device, 123),
     ]

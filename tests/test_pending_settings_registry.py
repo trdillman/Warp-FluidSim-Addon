@@ -16,6 +16,7 @@ def _modules(monkeypatch):
     bpy = types.ModuleType("bpy")
     bpy.context = SimpleNamespace()
     bpy.app = SimpleNamespace(handlers=SimpleNamespace(frame_change_post=[]))
+
     class _Operator:
         @classmethod
         def poll_message_set(cls, _message):
@@ -25,16 +26,29 @@ def _modules(monkeypatch):
             pass
 
     bpy.types = SimpleNamespace(
-        PropertyGroup=object, Text=object, Object=object, Material=object,
-        Image=object, Operator=_Operator, Panel=object, AddonPreferences=object,
+        PropertyGroup=object,
+        Text=object,
+        Object=object,
+        Material=object,
+        Image=object,
+        Operator=_Operator,
+        Panel=object,
+        AddonPreferences=object,
     )
-    bpy.utils = SimpleNamespace(register_class=lambda _cls: None,
-                                unregister_class=lambda _cls: None)
+    bpy.utils = SimpleNamespace(
+        register_class=lambda _cls: None, unregister_class=lambda _cls: None
+    )
     bpy.props = types.ModuleType("bpy.props")
     for name in (
-            "BoolProperty", "CollectionProperty", "EnumProperty",
-            "FloatProperty", "FloatVectorProperty", "IntProperty",
-            "PointerProperty", "StringProperty"):
+        "BoolProperty",
+        "CollectionProperty",
+        "EnumProperty",
+        "FloatProperty",
+        "FloatVectorProperty",
+        "IntProperty",
+        "PointerProperty",
+        "StringProperty",
+    ):
         setattr(bpy.props, name, lambda **kwargs: kwargs.get("default"))
     monkeypatch.setitem(sys.modules, "bpy.props", bpy.props)
     mathutils = types.ModuleType("mathutils")
@@ -42,26 +56,31 @@ def _modules(monkeypatch):
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     for name in (
-            "fluidSim_warp_blender51.properties",
-            "fluidSim_warp_blender51.blender.pending_settings",
-            "fluidSim_warp_blender51.blender.scene_bridge"):
+        "fluidSim_warp_blender51.properties",
+        "fluidSim_warp_blender51.blender.pending_settings",
+        "fluidSim_warp_blender51.blender.scene_bridge",
+    ):
         sys.modules.pop(name, None)
     properties = importlib.import_module("fluidSim_warp_blender51.properties")
     pending = importlib.import_module(
-        "fluidSim_warp_blender51.blender.pending_settings")
+        "fluidSim_warp_blender51.blender.pending_settings"
+    )
     bridge = importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
     return properties, pending, bridge
 
 
 def _declared_scene_fields(properties):
-    tree = ast.parse(textwrap.dedent(
-        inspect.getsource(properties.FLUIDSIM_PG_settings)))
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_settings))
+    )
     return {
         node.target.id
         for node in tree.body[0].body
-        if (isinstance(node, ast.AnnAssign)
+        if (
+            isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
-            and isinstance(node.annotation, ast.Call))
+            and isinstance(node.annotation, ast.Call)
+        )
     }
 
 
@@ -72,8 +91,10 @@ def test_transition_registry_is_exhaustive_and_disjoint(monkeypatch):
     pending.validate_transition_registry(declared)
 
     assert set(pending.SETTING_TRANSITION_REGISTRY) == declared
-    assert all(isinstance(tier, pending.SettingTier)
-               for tier in pending.SETTING_TRANSITION_REGISTRY.values())
+    assert all(
+        isinstance(tier, pending.SettingTier)
+        for tier in pending.SETTING_TRANSITION_REGISTRY.values()
+    )
     assert len(pending.SETTING_TRANSITION_REGISTRY) == len(declared)
 
 
@@ -81,24 +102,34 @@ def test_special_particle_capacity_policy_is_explicit(monkeypatch):
     _properties, pending, _bridge = _modules(monkeypatch)
 
     assert pending.SETTING_TRANSITION_REGISTRY["max_particles"] is (
-        pending.SettingTier.REINITIALIZE)
+        pending.SettingTier.REINITIALIZE
+    )
     assert pending.SETTING_TRANSITION_REGISTRY["auto_grow_particles"] is (
-        pending.SettingTier.LIVE)
-    assert pending.SETTING_TRANSITION_REGISTRY[
-        "particle_growth_failure_policy"] is pending.SettingTier.LIVE
+        pending.SettingTier.LIVE
+    )
+    assert (
+        pending.SETTING_TRANSITION_REGISTRY["particle_growth_failure_policy"]
+        is pending.SettingTier.LIVE
+    )
     # Preserve the characterized Phase-3 behavior: this authored value is not
     # pushed into an active solver by the surface refresh callback.
-    assert pending.SETTING_TRANSITION_REGISTRY[
-        "spacetime_resync_surface"] is pending.SettingTier.AUTHORED_NEXT_RUN
+    assert (
+        pending.SETTING_TRANSITION_REGISTRY["spacetime_resync_surface"]
+        is pending.SettingTier.AUTHORED_NEXT_RUN
+    )
 
 
 def test_species_toggle_rebuilds_storage_but_rate_updates_live(monkeypatch):
     _properties, pending, _bridge = _modules(monkeypatch)
 
-    assert pending.SETTING_TRANSITION_REGISTRY[
-        "species_enabled"] is pending.SettingTier.RESET
-    assert pending.SETTING_TRANSITION_REGISTRY[
-        "species_mixing_rate"] is pending.SettingTier.LIVE
+    assert (
+        pending.SETTING_TRANSITION_REGISTRY["species_enabled"]
+        is pending.SettingTier.RESET
+    )
+    assert (
+        pending.SETTING_TRANSITION_REGISTRY["species_mixing_rate"]
+        is pending.SettingTier.LIVE
+    )
 
 
 def test_scene_bridge_no_longer_owns_pending_policy(monkeypatch):
@@ -123,7 +154,7 @@ def test_adapters_delegate_pending_policy_to_deep_owner(monkeypatch):
     _properties, _pending, _bridge = _modules(monkeypatch)
     root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
     sources = [
-        (root / "operators.py").read_text(encoding="utf-8"),
+        (root / "operator_domains" / "common.py").read_text(encoding="utf-8"),
         (root / "panels.py").read_text(encoding="utf-8"),
         (root / "blender" / "ui_common.py").read_text(encoding="utf-8"),
         (root / "blender" / "ui_scene.py").read_text(encoding="utf-8"),

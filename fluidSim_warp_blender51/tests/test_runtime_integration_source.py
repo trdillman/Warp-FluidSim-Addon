@@ -35,18 +35,21 @@ def test_preferences_use_enumerated_runtime_probe():
     assert "cuda_device_items" in source
     assert "probe_runtime" in source
     assert 'bl_idname = "fluidsim.refresh_runtime_probe"' in source
-    assert "StringProperty(\n        name=\"Device\"" not in source
+    assert 'StringProperty(\n        name="Device"' not in source
 
 
 def test_gpu_operators_have_runtime_poll_gates():
-    methods = _class_methods(ROOT / "operators.py")
+    methods = {
+        **_class_methods(ROOT / "operator_domains" / "session.py"),
+        **_class_methods(ROOT / "operator_domains" / "export.py"),
+    }
     for class_name in (
         "FLUIDSIM_OT_initialize",
         "FLUIDSIM_OT_toggle_live",
         "FLUIDSIM_OT_export_cache_sequence",
     ):
         assert "poll" in methods[class_name]
-    source = (ROOT / "operators.py").read_text(encoding="utf-8")
+    source = (ROOT / "operator_domains" / "common.py").read_text(encoding="utf-8")
     assert "def _runtime_poll(" in source
     assert "def _mutation_poll(" in source
     assert "runtime_status_for_device" in source
@@ -71,17 +74,15 @@ def test_simulation_and_cache_panels_surface_runtime_state():
 
 
 def test_support_report_operator_remains_available_when_runtime_is_broken():
-    tree = ast.parse((ROOT / "operators.py").read_text(encoding="utf-8"))
+    path = ROOT / "operator_domains" / "diagnostics.py"
+    text = path.read_text(encoding="utf-8")
+    tree = ast.parse(text)
     report_class = next(
         node
         for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "FLUIDSIM_OT_write_report"
     )
-    base_names = {
-        base.id for base in report_class.bases if isinstance(base, ast.Name)
-    }
+    base_names = {base.id for base in report_class.bases if isinstance(base, ast.Name)}
     assert "_FLUIDSIM_OT_session_base" not in base_names
-    source = ast.get_source_segment(
-        (ROOT / "operators.py").read_text(encoding="utf-8"), report_class
-    )
+    source = ast.get_source_segment(text, report_class)
     assert "if sess.active" in source

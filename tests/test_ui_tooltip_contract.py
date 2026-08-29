@@ -14,7 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROPERTIES = ROOT / "fluidSim_warp_blender51" / "properties.py"
 PANELS = ROOT / "fluidSim_warp_blender51" / "panels.py"
-OPERATORS = ROOT / "fluidSim_warp_blender51" / "operators.py"
+OPERATOR_MODULES = tuple(
+    (ROOT / "fluidSim_warp_blender51" / "operator_domains").glob("*.py")
+)
 PREFERENCES = ROOT / "fluidSim_warp_blender51" / "preferences.py"
 ENUMS = ROOT / "fluidSim_warp_blender51" / "sim" / "enums.py"
 
@@ -135,7 +137,12 @@ def _property_declarations(path: Path):
                 and statement.annotation.func.id in PROPERTY_FACTORIES
             ):
                 continue
-            yield owner.name, statement.target.id, statement.annotation, statement.lineno
+            yield (
+                owner.name,
+                statement.target.id,
+                statement.annotation,
+                statement.lineno,
+            )
 
 
 def _literal_keyword(call: ast.Call, keyword: str):
@@ -223,7 +230,8 @@ def test_directional_tooltips_do_not_reverse_solver_behavior():
 def test_public_operator_fields_have_actionable_tooltips():
     declarations = {
         (owner, field): (call, line)
-        for owner, field, call, line in _property_declarations(OPERATORS)
+        for path in OPERATOR_MODULES
+        for owner, field, call, line in _property_declarations(path)
     }
     assert PUBLIC_OPERATOR_FIELDS <= declarations.keys()
     for owner, field in sorted(PUBLIC_OPERATOR_FIELDS):

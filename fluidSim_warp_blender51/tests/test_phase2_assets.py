@@ -63,9 +63,7 @@ def test_phase2_examples_are_generated_nonempty_blender_files():
 
 def test_example_generator_uses_guided_setup_and_has_validator():
     generator = (ROOT / "release" / "generate_examples.py").read_text(encoding="utf-8")
-    validator = (ROOT / "release" / "validate_examples_blender.py").read_text(
-        encoding="utf-8"
-    )
+    validator = (ROOT / "release" / "validate_examples_blender.py").read_text(encoding="utf-8")
     assert "bpy.ops.fluidsim.setup_scene" in generator
     assert "QUICK_LIQUID" in generator
     assert "QUICK_VISCOUS" in generator
@@ -109,14 +107,14 @@ def test_installed_headless_entry_point_is_distinct_from_release_tooling():
     ):
         assert f'"{excluded}"' in manifest
 
+
 def test_guided_workflow_exposes_three_action_live_preview_path():
     scene_ui = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     launcher = (ROOT / "panels.py").read_text(encoding="utf-8")
-    operator = (ROOT / "operators.py").read_text(encoding="utf-8")
+    operator = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
     assert "Guided Setup…" in scene_ui
     assert "Start Live Preview" in scene_ui
     assert "Start Live Preview" in launcher
     assert "bridge.initialize_session(scene)" in operator
     assert "3. Press Play." in guide
-

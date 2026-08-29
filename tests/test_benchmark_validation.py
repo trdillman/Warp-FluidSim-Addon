@@ -136,13 +136,21 @@ def _install_bpy_stub(monkeypatch):
 def operators_module(monkeypatch):
     _install_bpy_stub(monkeypatch)
     module_name = "fluidSim_warp_blender51.operators"
-    previous = sys.modules.pop(module_name, None)
+    operator_domain_prefix = "fluidSim_warp_blender51.operator_domains"
+    previous = {
+        name: module
+        for name, module in tuple(sys.modules.items())
+        if name == module_name or name.startswith(operator_domain_prefix)
+    }
+    for name in previous:
+        sys.modules.pop(name, None)
     try:
         yield importlib.import_module(module_name)
     finally:
-        sys.modules.pop(module_name, None)
-        if previous is not None:
-            sys.modules[module_name] = previous
+        for name in tuple(sys.modules):
+            if name == module_name or name.startswith(operator_domain_prefix):
+                sys.modules.pop(name, None)
+        sys.modules.update(previous)
 
 
 @pytest.mark.parametrize(
@@ -156,7 +164,8 @@ def operators_module(monkeypatch):
     ],
 )
 def test_benchmark_operator_cancels_with_actionable_malformed_baseline(
-        monkeypatch, tmp_path, baseline_text, operators_module):
+    monkeypatch, tmp_path, baseline_text, operators_module
+):
     operators = operators_module
     from fluidSim_warp_blender51.diagnostics import benchmark as benchmark_module
 
@@ -169,7 +178,7 @@ def test_benchmark_operator_cancels_with_actionable_malformed_baseline(
     )
     session = SimpleNamespace(benchmark_result=None, benchmark_compare=None)
     monkeypatch.setattr(
-        operators,
+        operators._operator_runtime,
         "_bridge",
         lambda: SimpleNamespace(session=lambda: session),
     )
@@ -195,7 +204,8 @@ def test_benchmark_operator_cancels_with_actionable_malformed_baseline(
 
 
 def test_benchmark_operator_preserves_valid_baseline_comparison(
-        monkeypatch, tmp_path, operators_module):
+    monkeypatch, tmp_path, operators_module
+):
     operators = operators_module
     from fluidSim_warp_blender51.diagnostics import benchmark as benchmark_module
 
@@ -208,7 +218,7 @@ def test_benchmark_operator_preserves_valid_baseline_comparison(
     )
     session = SimpleNamespace(benchmark_result=None, benchmark_compare=None)
     monkeypatch.setattr(
-        operators,
+        operators._operator_runtime,
         "_bridge",
         lambda: SimpleNamespace(session=lambda: session),
     )

@@ -42,24 +42,30 @@ def test_activity_snapshot_has_one_authoritative_public_mode(monkeypatch):
 
     assert playback.activity_snapshot(scene(), owns_scene=False)["id"] == "IDLE"
     assert playback.activity_snapshot(scene(live=True), owns_scene=True)["id"] == "LIVE_PREVIEW"
-    assert playback.activity_snapshot(
-        scene(live=True, cache_playback_enabled=True), owns_scene=False
-    )["id"] == "CACHE_PLAYBACK"
-    assert playback.activity_snapshot(
-        scene(live=True, cache_playback_enabled=True, bake_status="RUNNING"),
-        owns_scene=True,
-    )["id"] == "PRODUCTION_BAKE"
+    assert (
+        playback.activity_snapshot(scene(live=True, cache_playback_enabled=True), owns_scene=False)[
+            "id"
+        ]
+        == "CACHE_PLAYBACK"
+    )
+    assert (
+        playback.activity_snapshot(
+            scene(live=True, cache_playback_enabled=True, bake_status="RUNNING"),
+            owns_scene=True,
+        )["id"]
+        == "PRODUCTION_BAKE"
+    )
 
 
 def test_common_panel_bases_target_native_blender_surfaces():
     source = (ROOT / "blender" / "ui_common.py").read_text(encoding="utf-8")
-    assert 'class FluidSimScenePanel' in source
+    assert "class FluidSimScenePanel" in source
     assert 'bl_space_type = "PROPERTIES"' in source
     assert 'bl_region_type = "WINDOW"' in source
     assert 'bl_context = "scene"' in source
-    assert 'class FluidSimObjectPanel' in source
+    assert "class FluidSimObjectPanel" in source
     assert 'bl_context = "object"' in source
-    assert 'class FluidSimView3DPanel' in source
+    assert "class FluidSimView3DPanel" in source
     assert 'bl_space_type = "VIEW_3D"' in source
     assert 'bl_category = "FluidSim"' in source
 
@@ -187,7 +193,7 @@ def test_phase4_and_phase5_controls_have_explicit_scene_owners():
 
 
 def test_cache_playback_uses_explicit_start_and_stop_actions():
-    source = (ROOT / "operators.py").read_text(encoding="utf-8")
+    source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     assert 'bl_idname = "fluidsim.cache_playback_start"' in source
     assert 'bl_idname = "fluidsim.cache_playback_stop"' in source
     start = _class_block(source, "FLUIDSIM_OT_cache_playback_start")
@@ -199,13 +205,13 @@ def test_cache_playback_uses_explicit_start_and_stop_actions():
 
 
 def test_stop_and_release_actions_do_not_depend_on_runtime_readiness():
-    source = (ROOT / "operators.py").read_text(encoding="utf-8")
+    source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     release = _class_block(source, "FLUIDSIM_OT_release")
     toggle = _class_block(source, "FLUIDSIM_OT_toggle_live")
     assert "_FLUIDSIM_OT_session_base" not in release.splitlines()[0]
     assert "if not sess.active:" in release
     assert "_runtime_poll" not in release
-    assert "if getattr(fs, \"live\", False):" in toggle
+    assert 'if getattr(fs, "live", False):' in toggle
     assert "return True" in toggle.split("def poll", 1)[1].split("def execute", 1)[0]
 
 
@@ -235,16 +241,14 @@ def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
     block = _class_block(scene_source, "FLUIDSIM_PT_scene_control")
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in block
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in block
-    operator_source = (ROOT / "operators.py").read_text(encoding="utf-8")
+    operator_source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     step_operator = _class_block(operator_source, "FLUIDSIM_OT_step")
     assert "invoke_props_dialog" in step_operator
 
 
 def test_cache_management_requires_a_resolved_existing_directory():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    helper = source.split("def _cache_directory", 1)[1].split(
-        "def _draw_capacity_plan", 1
-    )[0]
+    helper = source.split("def _cache_directory", 1)[1].split("def _draw_capacity_plan", 1)[0]
     assert "-> Path | None" in helper
     assert "if not raw:" in helper
     assert "return None" in helper
