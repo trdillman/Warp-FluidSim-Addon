@@ -86,9 +86,6 @@ PUBLIC_OPERATOR_FIELDS = {
     ("FLUIDSIM_OT_step", "frames"),
     ("FLUIDSIM_OT_tag_object", "role"),
     ("FLUIDSIM_OT_run_benchmark", "save_baseline"),
-    ("FLUIDSIM_OT_snippet_save_preset", "preset_name"),
-    ("FLUIDSIM_OT_snippet_edit_line", "line_text"),
-    ("FLUIDSIM_OT_snippet_line_add", "line_text"),
     ("FLUIDSIM_OT_export_frame", "filepath"),
 }
 

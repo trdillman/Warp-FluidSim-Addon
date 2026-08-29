@@ -173,7 +173,11 @@ def main():
         item for item in scene.fluidsim_effects.items
         if item.instance_id == "legacy-scene-0"
     ]
-    check("legacy source consumed after migration", len(fs.snippets) == 0)
+    check(
+        "legacy source preserved for recovery after migration",
+        len(fs.snippets) == 1
+        and fs.snippets[0].kernel_name == "legacy_admission_probe",
+    )
     check(
         "legacy effect disabled and untrusted",
         len(migrated) == 1
@@ -181,6 +185,23 @@ def main():
         and migrated[0].status == "DISABLED"
         and migrated[0].trust_state == "UNTRUSTED_IMPORTED"
         and bool(migrated[0].content_digest),
+    )
+    check("legacy migration marked complete", scene.fluidsim_effects.migration_complete)
+    from fluidSim_warp_blender51.blender.effects import migrate_legacy_snippets
+
+    repeat_migration = migrate_legacy_snippets(scene)
+    check(
+        "legacy migration is idempotent",
+        repeat_migration.migrated == 0
+        and len(fs.snippets) == 1
+        and len(
+            [
+                item
+                for item in scene.fluidsim_effects.items
+                if item.instance_id == "legacy-scene-0"
+            ]
+        )
+        == 1,
     )
     check("outputs prepared", any(obj.type == "POINTCLOUD" for obj in scene.objects))
     check("CUDA meshes materialized only after preflight on candidate",

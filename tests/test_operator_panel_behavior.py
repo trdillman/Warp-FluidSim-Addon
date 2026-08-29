@@ -310,10 +310,6 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
     undoable = {
         operators.FLUIDSIM_OT_setup_scene,
         operators.FLUIDSIM_OT_tag_object,
-        operators.FLUIDSIM_OT_snippet_add,
-        operators.FLUIDSIM_OT_snippet_remove,
-        operators.FLUIDSIM_OT_snippet_argument_add,
-        operators.FLUIDSIM_OT_snippet_argument_remove,
         operators.FLUIDSIM_OT_clear_error,
     }
     not_undoable = {
@@ -371,28 +367,19 @@ def test_legacy_snippet_rna_persists_permission_and_type_defaults(monkeypatch):
     assert "KERNEL" in snippet_type
 
 
-def test_invalid_legacy_snippet_mutations_cancel_without_changing_state(monkeypatch):
+def test_legacy_apply_forward_never_mutates_preserved_snippets(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
-    empty = SimpleNamespace(snippets=[], active_snippet=-1)
-    empty_context = SimpleNamespace(scene=SimpleNamespace(fluidsim=empty))
-    no_arguments = SimpleNamespace(arguments=[])
-    argument_state = SimpleNamespace(snippets=[no_arguments], active_snippet=0)
-    argument_context = SimpleNamespace(scene=SimpleNamespace(fluidsim=argument_state))
-
-    cases = (
-        (operators.FLUIDSIM_OT_snippet_argument_add, empty_context, empty),
-        (
-            operators.FLUIDSIM_OT_snippet_argument_remove,
-            argument_context,
-            argument_state,
-        ),
+    legacy = [SimpleNamespace(kernel_name="preserved")]
+    state = SimpleNamespace(snippets=legacy, active_snippet=0)
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=state))
+    operators.bpy.ops = SimpleNamespace(
+        fluidsim=SimpleNamespace(effect_apply_stack=lambda: {"FINISHED"})
     )
-    for operator_type, context, state in cases:
-        before = (list(state.snippets), state.active_snippet)
-        assert operator_type.poll(context) is False
-        assert operator_type().execute(context) == {"CANCELLED"}
-        assert (list(state.snippets), state.active_snippet) == before
+    before = (tuple(state.snippets), state.active_snippet)
+
+    assert operators.FLUIDSIM_OT_snippet_apply().execute(context) == {"FINISHED"}
+    assert (tuple(state.snippets), state.active_snippet) == before
 
 
 class _PermissiveSettings:

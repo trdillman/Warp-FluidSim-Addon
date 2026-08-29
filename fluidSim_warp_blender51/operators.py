@@ -37,25 +37,7 @@ from .operator_domains.diagnostics import (
     FLUIDSIM_OT_run_benchmark,
     FLUIDSIM_OT_write_report,
 )
-from .operator_domains.snippets import (
-    FLUIDSIM_OT_snippet_add,
-    FLUIDSIM_OT_snippet_remove,
-    FLUIDSIM_OT_snippet_argument_add,
-    FLUIDSIM_OT_snippet_argument_remove,
-    FLUIDSIM_OT_snippet_apply,
-    FLUIDSIM_OT_snippet_select,
-    FLUIDSIM_OT_snippet_load_preset,
-    FLUIDSIM_OT_snippet_validate,
-    FLUIDSIM_OT_snippet_autofix,
-    FLUIDSIM_OT_snippet_test,
-    FLUIDSIM_OT_snippet_save_preset,
-    FLUIDSIM_OT_snippet_insert_shortcut,
-    FLUIDSIM_OT_snippet_shortcut_field,
-    FLUIDSIM_OT_snippet_shortcut_constant,
-    FLUIDSIM_OT_snippet_edit_line,
-    FLUIDSIM_OT_snippet_line_add,
-    FLUIDSIM_OT_snippet_line_delete,
-)
+from .operator_domains.snippets import FLUIDSIM_OT_snippet_apply
 from .operator_domains.export import (
     FLUIDSIM_OT_export_frame,
     FLUIDSIM_OT_export_cache_sequence,
@@ -99,6 +81,7 @@ CLASSES = (
     FLUIDSIM_OT_cache_playback_start,
     FLUIDSIM_OT_cache_playback_stop,
     FLUIDSIM_OT_setup_scene,
+    FLUIDSIM_OT_snippet_apply,
     FLUIDSIM_OT_apply_product_preset,
     FLUIDSIM_OT_save_product_preset,
     FLUIDSIM_OT_bake_start,

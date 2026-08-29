@@ -752,9 +752,12 @@ def effect_report_state(scene) -> dict[str, object]:
 def build_effect_stack_for_admission(scene) -> tuple[EffectInstanceV2, ...]:
     """Return the exact applied stack or reject initialization before allocation."""
 
-    if tuple(getattr(getattr(scene, "fluidsim", None), "snippets", ())):
+    legacy = tuple(getattr(getattr(scene, "fluidsim", None), "snippets", ()))
+    stack = scene.fluidsim_effects
+    if legacy and not stack.migration_complete:
         raise RuntimeError(
-            "Legacy Custom Warp Snippets must be migrated before admission"
+            "Legacy Custom Warp Snippets must be copied to disabled, untrusted "
+            "Custom Effects before admission"
         )
     reason = production_blocking_reason(scene)
     if reason:
@@ -805,11 +808,15 @@ def migrate_legacy_snippets(scene) -> MigrationReport:
     from .snippets import snippet_from_pg
     from ..sim.custom import legacy_snippet_to_effect
 
+    existing_ids = {str(item.instance_id) for item in stack.items}
     warnings = []
     migrated = 0
     for index, legacy_pg in enumerate(legacy):
+        instance_id = f"legacy-scene-{index}"
+        if instance_id in existing_ids:
+            continue
         legacy_instance, item_warnings = legacy_snippet_to_effect(
-            snippet_from_pg(legacy_pg), instance_id=f"legacy-scene-{index}"
+            snippet_from_pg(legacy_pg), instance_id=instance_id
         )
         migrated_instance = replace(legacy_instance, enabled=False)
         pg = add_instance_to_scene(scene, migrated_instance, select=False)
@@ -817,13 +824,10 @@ def migrate_legacy_snippets(scene) -> MigrationReport:
         pg.status = "UNTRUSTED"
         warnings.extend(item_warnings)
         migrated += 1
-    legacy_collection = scene.fluidsim.snippets
-    legacy_collection.clear()
-    if hasattr(scene.fluidsim, "active_snippet"):
-        scene.fluidsim.active_snippet = 0
     stack.migration_complete = True
     stack.migration_report = (
-        f"Migrated {migrated} legacy snippet(s); disabled until reviewed and trusted. "
+        f"Copied {migrated} legacy snippet(s); originals preserved for recovery, "
+        "and v2 copies disabled until reviewed and trusted. "
         + " ".join(warnings)
     )
     refresh_stack_state(scene)

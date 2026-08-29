@@ -78,13 +78,27 @@ def test_legacy_snippets_are_migrated_before_v2_only_admission():
     admission = (ROOT / "blender" / "simulation_admission.py").read_text(encoding="utf-8")
     bridge = (ROOT / "blender" / "scene_bridge.py").read_text(encoding="utf-8")
     effects_source = (ROOT / "blender" / "effects.py").read_text(encoding="utf-8")
+    solver = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
+    frame_features = (ROOT / "sim" / "frame_features.py").read_text(encoding="utf-8")
     assert "set_custom_snippets" not in admission
     assert "snippet_builder" not in admission
+    assert "set_custom_snippets" not in solver
+    assert "SnippetManager" not in solver
+    assert "set_legacy_snippets" not in frame_features
+    assert "snippets.run" not in frame_features
     assert "migrate_legacy_snippets(scene)" in bridge
     assert "def _on_load_post" in effects_source
     assert "@persistent" in effects_source
     assert "register_handlers" in effects_source
     assert "effect_builder=build_effect_stack" in bridge
+    migration = effects_source.split("def migrate_legacy_snippets", 1)[1].split(
+        "def _migrate_loaded_scenes", 1
+    )[0]
+    assert "legacy_collection.clear" not in migration
+    assert "originals preserved for recovery" in migration
+    assert "migration_complete" in effects_source.split(
+        "def build_effect_stack_for_admission", 1
+    )[1].split("def trust_effect", 1)[0]
 
 
 def test_scene_status_updates_match_instances_by_stable_id_not_collection_order():

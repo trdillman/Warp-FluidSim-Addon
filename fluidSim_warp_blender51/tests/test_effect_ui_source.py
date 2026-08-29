@@ -85,10 +85,11 @@ def test_package_import_reads_the_validated_installed_archive_not_report_metadat
     assert "report.definition" not in source
 
 
-def test_legacy_snippet_authoring_operators_are_not_registered():
+def test_only_non_mutating_legacy_apply_forward_is_registered():
     source = (ROOT / "operators.py").read_text(encoding="utf-8")
     classes_block = source.split("CLASSES = (", 1)[1].split(")\n\n\ndef register", 1)[0]
-    assert "FLUIDSIM_OT_snippet_" not in classes_block
+    assert classes_block.count("FLUIDSIM_OT_snippet_") == 1
+    assert "FLUIDSIM_OT_snippet_apply" in classes_block
 
 
 def test_library_failures_and_live_draft_drift_are_visible_in_the_panel():

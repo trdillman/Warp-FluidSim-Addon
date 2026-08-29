@@ -48,7 +48,7 @@ class FrameFeatures:
             solver: Any,
             time_context: dict[str, Any],
     ) -> None:
-        """Run the legacy and v2 hooks assigned to one semantic phase."""
+        """Run the admitted v2 hooks assigned to one semantic phase."""
         effect_stage = _PHASE_HOOKS[phase]
         if effect_stage is None:
             return
