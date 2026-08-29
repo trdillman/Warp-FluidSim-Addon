@@ -5,12 +5,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from fluidSim_warp_blender51.sim import sourcing
+from fluidSim_warp_blender51.sim import source_kernels, sourcing
+
 # Import before monkeypatching Warp constructors in host-transaction tests.
 from fluidSim_warp_blender51.sim.source_regions import SourceCompiler  # noqa: F401
 from fluidSim_warp_blender51.sim.sourcing import (
     HeightSourceDesc,
-    MeshSourceDesc,
     SourceEmissionMode,
     SourcePipeline,
     SourceShapeDesc,
@@ -53,8 +53,8 @@ def _sample_degenerate_shape_field(
 ):
     tid = sourcing.wp.tid()
     values[tid] = sourcing.shape_local_sdf(
-        shape, points[tid], sourcing.wp.vec3(1.0, 1.0, 1.0),
-        radius, height)
+        shape, points[tid], sourcing.wp.vec3(1.0, 1.0, 1.0), radius, height
+    )
 
 
 @sourcing.wp.kernel
@@ -75,12 +75,12 @@ def test_cone_and_pyramid_exact_surface_sign_and_feature_distances(shape):
     side_point = (0.0, 0.5, 0.0) if shape == 3 else (0.5, 0.0, 0.0)
     points = np.asarray(
         [
-            (0.0, 0.0, 1.0),   # apex
+            (0.0, 0.0, 1.0),  # apex
             (0.0, 0.0, -1.0),  # base
-            side_point,         # sloped face
-            (0.0, 0.0, 0.0),    # interior
-            (0.0, 0.0, -1.25), # below base
-            (0.0, 0.0, -0.75), # inside above base
+            side_point,  # sloped face
+            (0.0, 0.0, 0.0),  # interior
+            (0.0, 0.0, -1.25),  # below base
+            (0.0, 0.0, -0.75),  # inside above base
             (1.0, 1.0, -1.0) if shape == 3 else (1.0, 0.0, -1.0),
         ],
         dtype=np.float32,
@@ -90,7 +90,11 @@ def test_cone_and_pyramid_exact_surface_sign_and_feature_distances(shape):
     sourcing.wp.launch(
         _sample_shape_local_field,
         dim=len(points),
-        inputs=[shape, sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device), values],
+        inputs=[
+            shape,
+            sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device),
+            values,
+        ],
         device=device,
     )
 
@@ -105,7 +109,8 @@ def test_cone_and_pyramid_exact_surface_sign_and_feature_distances(shape):
 @pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
 @pytest.mark.parametrize("voxel_size", (0.25, 0.1, 0.04))
 def test_cone_and_pyramid_resolution_offsets_follow_euclidean_side_distance(
-    shape, voxel_size,
+    shape,
+    voxel_size,
 ):
     boundary = np.array(
         (0.0, 0.5, 0.0) if shape == 3 else (0.5, 0.0, 0.0),
@@ -119,10 +124,15 @@ def test_cone_and_pyramid_resolution_offsets_follow_euclidean_side_distance(
     device = sourcing.wp.get_preferred_device()
     values = sourcing.wp.empty(2, dtype=float, device=device)
     sourcing.wp.launch(
-        _sample_shape_local_field, dim=2,
-        inputs=[shape, sourcing.wp.array(
-            points, dtype=sourcing.wp.vec3, device=device), values],
-        device=device)
+        _sample_shape_local_field,
+        dim=2,
+        inputs=[
+            shape,
+            sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device),
+            values,
+        ],
+        device=device,
+    )
     expected = voxel_size / np.sqrt(5.0)
     np.testing.assert_allclose(values.numpy(), (-expected, expected), atol=2.0e-6)
 
@@ -142,10 +152,15 @@ def test_cone_and_pyramid_world_transform_preserves_exact_distance(shape):
     device = sourcing.wp.get_preferred_device()
     values = sourcing.wp.empty(2, dtype=float, device=device)
     sourcing.wp.launch(
-        _sample_shape_world_field, dim=2,
-        inputs=[desc.to_struct(), sourcing.wp.array(
-            world, dtype=sourcing.wp.vec3, device=device), values],
-        device=device)
+        _sample_shape_world_field,
+        dim=2,
+        inputs=[
+            desc.to_struct(),
+            sourcing.wp.array(world, dtype=sourcing.wp.vec3, device=device),
+            values,
+        ],
+        device=device,
+    )
     assert abs(values.numpy()[0]) < 1.0e-6
     assert values.numpy()[1] > 0.0
 
@@ -153,31 +168,42 @@ def test_cone_and_pyramid_world_transform_preserves_exact_distance(shape):
 @pytest.mark.parametrize("shape", (3, 4), ids=("pyramid", "cone"))
 @pytest.mark.parametrize(("radius", "height"), ((0.0, 1.0), (1.0, 0.0), (0.0, 0.0)))
 def test_cone_and_pyramid_degenerate_dimensions_are_finite_and_nonnegative(
-    shape, radius, height,
+    shape,
+    radius,
+    height,
 ):
     points = np.asarray(
-        [(0.0, 0.0, 0.0), (0.25, 0.5, -0.75), (2.0, -1.0, 3.0)],
-        dtype=np.float32)
+        [(0.0, 0.0, 0.0), (0.25, 0.5, -0.75), (2.0, -1.0, 3.0)], dtype=np.float32
+    )
     device = sourcing.wp.get_preferred_device()
     values = sourcing.wp.empty(len(points), dtype=float, device=device)
     sourcing.wp.launch(
-        _sample_degenerate_shape_field, dim=len(points),
-        inputs=[shape, radius, height, sourcing.wp.array(
-            points, dtype=sourcing.wp.vec3, device=device), values],
-        device=device)
+        _sample_degenerate_shape_field,
+        dim=len(points),
+        inputs=[
+            shape,
+            radius,
+            height,
+            sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device),
+            values,
+        ],
+        device=device,
+    )
     sampled = values.numpy()
     assert np.isfinite(sampled).all()
     assert (sampled >= 0.0).all()
 
 
 def test_cone_and_pyramid_exact_distance_is_explicit_in_product_copy():
-    sourcing_text = (sourcing.__file__ and open(sourcing.__file__, encoding="utf-8").read())
+    kernel_text = open(source_kernels.__file__, encoding="utf-8").read()
     properties_text = open(
         "fluidSim_warp_blender51/properties.py", encoding="utf-8"
     ).read()
-    guide_text = open("fluidSim_warp_blender51/docs/user_guide.md", encoding="utf-8").read()
+    guide_text = open(
+        "fluidSim_warp_blender51/docs/user_guide.md", encoding="utf-8"
+    ).read()
 
-    assert "Exact Euclidean signed distance" in sourcing_text
+    assert "Exact Euclidean signed distance" in kernel_text
     assert "exact local Euclidean distance" in properties_text
     assert "exact Euclidean boundary distance" in guide_text
 
@@ -186,18 +212,31 @@ def test_cone_and_pyramid_exact_distance_is_explicit_in_product_copy():
 def test_watertight_mesh_inside_is_independent_of_triangle_winding(reverse_winding):
     vertices = np.asarray(
         [
-            (-1.0, -1.0, -1.0), (1.0, -1.0, -1.0),
-            (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0),
-            (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0),
-            (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0),
+            (-1.0, -1.0, -1.0),
+            (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0),
+            (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0),
+            (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
         ],
         dtype=np.float32,
     )
     triangles = np.asarray(
         [
-            (0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7),
-            (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5),
-            (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7),
+            (0, 2, 1),
+            (0, 3, 2),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (1, 2, 6),
+            (1, 6, 5),
+            (2, 3, 7),
+            (2, 7, 6),
+            (3, 0, 4),
+            (3, 4, 7),
         ],
         dtype=np.int32,
     )
@@ -300,8 +339,7 @@ def _record_warp(monkeypatch):
         lambda shape, **kwargs: DeviceArray(shape),
     )
     monkeypatch.setattr(sourcing.wp, "copy", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        sourcing.wp, "empty", lambda shape, **kwargs: ("empty", shape))
+    monkeypatch.setattr(sourcing.wp, "empty", lambda shape, **kwargs: ("empty", shape))
 
     def array(values, **kwargs):
         result = ("array", len(values), len(arrays))
@@ -309,14 +347,16 @@ def _record_warp(monkeypatch):
         return result
 
     monkeypatch.setattr(sourcing.wp, "array", array)
+
     def launch(kernel, **kwargs):
         launches.append((kernel, kwargs))
         inputs = kwargs.get("inputs", ())
         outputs = kwargs.get("outputs", ())
         if kernel in {
-                sourcing.k_count_source_shapes_particles,
-                sourcing.k_count_mesh_source_particles,
-                sourcing.k_count_compiled_source_particles}:
+            sourcing.k_count_source_shapes_particles,
+            sourcing.k_count_mesh_source_particles,
+            sourcing.k_count_compiled_source_particles,
+        }:
             inputs[-1].values[0] += 1
         elif kernel is sourcing.k_add_emission_demand:
             inputs[-1].values[0] += int(inputs[0])
@@ -326,16 +366,16 @@ def _record_warp(monkeypatch):
             state.values[4] = available
             state.values[1] = int(state.values[0] <= available)
         elif kernel in {
-                sourcing.k_source_shapes_particles,
-                sourcing.k_mesh_source_particles,
-                sourcing.k_emit_compiled_source_particles,
-                sourcing.k_source_owned_points}:
+            sourcing.k_source_shapes_particles,
+            sourcing.k_mesh_source_particles,
+            sourcing.k_emit_compiled_source_particles,
+            sourcing.k_source_owned_points,
+        }:
             state = outputs[-1]
             if state.values[1]:
                 state.values[2] += (
-                    int(inputs[6])
-                    if kernel is sourcing.k_source_owned_points else 1)
-
+                    int(inputs[6]) if kernel is sourcing.k_source_owned_points else 1
+                )
 
     monkeypatch.setattr(sourcing.wp, "launch", launch)
 
@@ -352,11 +392,13 @@ def test_apply_owns_launch_order_cache_and_full_capacity_signal(monkeypatch):
     owner = _owner(host_count=8, capacity=8)
     pipeline = SourcePipeline(owner)
     pipeline.set_sources([SourceShapeDesc(mode=1)])
-    pipeline.set_height_source(HeightSourceDesc(
-        enabled=True,
-        base_height=0.75,
-        emit_particles=False,
-    ))
+    pipeline.set_height_source(
+        HeightSourceDesc(
+            enabled=True,
+            base_height=0.75,
+            emit_particles=False,
+        )
+    )
 
     first_seed = pipeline._emit_seed
     assert pipeline.apply(1.0 / 24.0) is False
@@ -387,16 +429,18 @@ def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeyp
     arrays, launches = _record_warp(monkeypatch)
     owner = _owner()
     pipeline = SourcePipeline(owner)
-    pipeline.set_height_source(HeightSourceDesc(
-        enabled=True,
-        base_height=1.0,
-        velocity=(0.0, 0.0, 2.0),
-        emit_particles=True,
-        emit_rate=6.0,
-        # Cache reuse is only observable across repeated emissions, so this
-        # case needs the mode that emits every substep.
-        emission_mode=SourceEmissionMode.CONTINUOUS_INFLOW,
-    ))
+    pipeline.set_height_source(
+        HeightSourceDesc(
+            enabled=True,
+            base_height=1.0,
+            velocity=(0.0, 0.0, 2.0),
+            emit_particles=True,
+            emit_rate=6.0,
+            # Cache reuse is only observable across repeated emissions, so this
+            # case needs the mode that emits every substep.
+            emission_mode=SourceEmissionMode.CONTINUOUS_INFLOW,
+        )
+    )
 
     assert pipeline.apply(0.01) is True
     assert pipeline.apply(0.01) is True
@@ -436,8 +480,13 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     assert owner.particles.refresh_calls == 2
     assert owner._host_frame_cache is None
     assert pipeline.last_injection_result == sourcing.InjectionResult(
-        admitted=True, emitted=2, required=2, available=8,
-        capacity_limited=False, total=2)
+        admitted=True,
+        emitted=2,
+        required=2,
+        available=8,
+        capacity_limited=False,
+        total=2,
+    )
 
     assert pipeline.inject_particles([]) == 0
     assert len(launches) == 3
