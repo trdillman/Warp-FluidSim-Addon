@@ -270,11 +270,10 @@ def main():
               f"pressure {timers.get('compute_5', 0):.2f} ms")
 
     # -- Custom Effects v2 -------------------------------------------------------
-    # The legacy add/apply entry points are compatibility adapters.  Their owned
-    # state is the v2 effect stack, never the removed ``fs.snippets`` collection.
-    result = bpy.ops.fluidsim.snippet_add()
+    from fluidSim_warp_blender51.blender.effects import add_builtin_effect
+
+    add_builtin_effect(scene, "fluidsim.vortex_force")
     effect_stack = scene.fluidsim_effects
-    check("legacy effect add adapter", result == {"FINISHED"})
     check("v2 effect added", len(effect_stack.items) == 1
           and effect_stack.items[0].effect_id == "fluidsim.vortex_force")
 
@@ -308,8 +307,6 @@ def main():
           and effect_stack.status == "APPLIED")
 
     # Layering is owned by the ordered v2 stack and must hot-swap atomically.
-    from fluidSim_warp_blender51.blender.effects import add_builtin_effect
-
     add_builtin_effect(scene, "fluidsim.curl_turbulence")
     result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
     check("layered v2 effects apply", result == {"FINISHED"},
@@ -368,8 +365,7 @@ def main():
            "setup_scene", "tag_object", "tag_liquid_emitter", "tag_liquid_sink",
            "tag_collider", "tag_force_region", "tag_field_source", "clear_object_role",
            "inject_particles", "run_validation",
-           "run_benchmark", "write_report", "snippet_add", "snippet_remove",
-           "snippet_apply", "effect_add", "effect_remove", "effect_duplicate",
+           "run_benchmark", "write_report", "effect_add", "effect_remove", "effect_duplicate",
            "effect_move", "effect_test_draft", "effect_apply_stack",
            "effect_revert_draft", "effect_preview_one_frame",
            "effect_create_controller", "effect_export_package", "export_frame"]

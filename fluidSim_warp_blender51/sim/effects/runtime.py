@@ -72,6 +72,32 @@ class EffectExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class EffectCandidateInstallDiagnostic:
+    """Structured context for an unexpected candidate installation failure."""
+
+    phase: str
+    exception_type: str
+    message: str
+
+
+class EffectCandidateInstallError(RuntimeError):
+    """Raised when a valid candidate cannot be prepared for atomic install."""
+
+    def __init__(
+        self,
+        diagnostic: EffectCandidateInstallDiagnostic,
+        original_exception: Exception,
+    ):
+        self.diagnostic = diagnostic
+        self.original_exception = original_exception
+        super().__init__(
+            "Custom Effect candidate installation failed during "
+            f"{diagnostic.phase}: {diagnostic.exception_type}: "
+            f"{diagnostic.message}"
+        )
+
+
+@dataclass(frozen=True)
 class EffectRuntimeEntry:
     instance: Any
     compiled_effect: Any
@@ -215,8 +241,13 @@ class EffectRuntimeManager:
             return False
         try:
             prepared = _prepare_candidate(candidate)
-        except Exception:
-            return False
+        except Exception as exc:
+            diagnostic = EffectCandidateInstallDiagnostic(
+                phase="PREPARE_CANDIDATE",
+                exception_type=type(exc).__name__,
+                message=str(exc),
+            )
+            raise EffectCandidateInstallError(diagnostic, exc) from exc
         self.by_stage = prepared.by_stage
         self.applied_signature = prepared.signature
         self.inventory = prepared.inventory

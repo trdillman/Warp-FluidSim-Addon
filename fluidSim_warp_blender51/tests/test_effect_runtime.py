@@ -10,6 +10,7 @@ from fluidsim_testpkg.sim.effects.enums import (
     FieldAccess,
 )
 from fluidsim_testpkg.sim.effects.runtime import (
+    EffectCandidateInstallError,
     EffectExecutionError,
     EffectRuntimeManager,
     EffectRuntimeRequirements,
@@ -102,6 +103,31 @@ def test_failed_candidate_preserves_previous_applied_stack():
     assert manager.swap_candidate(FakeCandidate(False, (), ("compile failed",))) is False
     assert manager.applied_signature == previous_signature
     assert manager.entry_count == previous_entries == 1
+
+
+def test_candidate_preparation_error_preserves_stack_and_original_exception():
+    _instance_value, compiled = _instance("previous")
+    manager = EffectRuntimeManager(device="cpu")
+    assert manager.swap_candidate(FakeCandidate(True, (compiled,))) is True
+    previous_signature = manager.applied_signature
+    broken = FakeCompiledEffect(compiled.instance, compiled.kernels, success=False)
+
+    with pytest.raises(
+        EffectCandidateInstallError,
+        match="PREPARE_CANDIDATE: ValueError",
+    ) as captured:
+        manager.swap_candidate(FakeCandidate(True, (broken,)))
+
+    error = captured.value
+    assert error.diagnostic.phase == "PREPARE_CANDIDATE"
+    assert error.diagnostic.exception_type == "ValueError"
+    assert error.diagnostic.message == (
+        "candidate contains an unsuccessful compiled effect"
+    )
+    assert isinstance(error.original_exception, ValueError)
+    assert error.__cause__ is error.original_exception
+    assert manager.applied_signature == previous_signature
+    assert manager.entry_count == 1
 
 
 def test_stage_order_and_every_substep_launches(monkeypatch):
