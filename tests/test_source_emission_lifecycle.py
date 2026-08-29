@@ -21,7 +21,7 @@ from fluidSim_warp_blender51.sim.enums import (
     SourceShapeType,
 )
 from fluidSim_warp_blender51.sim.sourcing import (
-    MeshSourceDesc, SourcePipeline, SourceShapeDesc,
+    MeshSourceDesc, SourceApplyResult, SourcePipeline, SourceShapeDesc,
 )
 from fluidSim_warp_blender51.sim.source_regions import (
     AnalyticRegionPlan, PayloadPlan, PointRegionPlan, SourceKey, SourcePlan,
@@ -578,10 +578,9 @@ def test_aggregate_direct_append_exact_fit_commits_every_source():
     _step(solver)
 
     assert solver.particles.refresh_host_count() == 4
-    assert solver.sourcing.last_apply_result == {
-        "emitted": 4, "capacity_limited": False,
-        "required": 4, "available": 4, "admitted": True,
-    }
+    assert solver.sourcing.last_apply_result == SourceApplyResult(
+        emitted=4, capacity_limited=False,
+        required=4, available=4, admitted=True)
     assert solver.sourcing._initial_fired == {"direct-a", "direct-b"}
     solver.release()
 

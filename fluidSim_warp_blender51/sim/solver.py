@@ -889,10 +889,8 @@ class FluidSolver:
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing._compiled_batch = None
-            sourcing.last_apply_result = {
-                **dict(getattr(sourcing, "last_apply_result", {})),
-                "available": max(0, plan.target - self.particles.host_count),
-            }
+            sourcing.update_available_capacity(
+                plan.target - self.particles.host_count)
         del old_particles, old_bins
         gc.collect()
         release_cuda_memory(self.device)

@@ -23,6 +23,7 @@ from .source_contracts import (
     DirectInjectionPacket,
     InjectionResult,
     NormalizedEmissionPlan,
+    SourceApplyResult,
     SourceShape,
     SourceShapeDesc,
 )
@@ -710,13 +711,13 @@ class CompiledSourceExecution:
         self._emission_available = max(0, int(particles.capacity) - self._emission_initial_count)
         self._emission_transaction_active = attempted
         if not attempted:
-            self.last_apply_result = {
-                "emitted": 0,
-                "capacity_limited": False,
-                "required": 0,
-                "available": self._emission_available,
-                "admitted": True,
-            }
+            self.last_apply_result = SourceApplyResult(
+                emitted=0,
+                capacity_limited=False,
+                required=0,
+                available=self._emission_available,
+                admitted=True,
+            )
             return False
 
         self._emission_state.zero_()
@@ -822,14 +823,14 @@ class CompiledSourceExecution:
         )
         self._emission_transaction_active = False
         if invariant:
-            self.last_apply_result = {
-                "emitted": emitted,
-                "capacity_limited": True,
-                "required": required,
-                "available": self._emission_available,
-                "admitted": False,
-                "invariant_violation": True,
-            }
+            self.last_apply_result = SourceApplyResult(
+                emitted=emitted,
+                capacity_limited=True,
+                required=required,
+                available=self._emission_available,
+                admitted=False,
+                invariant_violation=True,
+            )
             raise RuntimeError(
                 "source emission exceeded capacity after admission; "
                 "the solver session must be discarded"
@@ -859,13 +860,13 @@ class CompiledSourceExecution:
                     particles.next_uid = self._emission_uid_base + emitted
                 particles.refresh_host_count()
                 self.runtime.invalidate_host_cache()
-            self.last_apply_result = {
-                "emitted": emitted,
-                "capacity_limited": False,
-                "required": required,
-                "available": self._emission_available,
-                "admitted": True,
-            }
+            self.last_apply_result = SourceApplyResult(
+                emitted=emitted,
+                capacity_limited=False,
+                required=required,
+                available=self._emission_available,
+                admitted=True,
+            )
             return bool(emitted)
 
         # Guarded commit kernels have made no particle/lifecycle/RNG changes.
@@ -877,20 +878,20 @@ class CompiledSourceExecution:
             getattr(self.runtime.settings, "particle_growth_failure_policy", "DEFER")
         ).upper()
         pause_requested = not growth.grew and policy == "PAUSE"
-        self.last_apply_result = {
-            "emitted": 0,
-            "capacity_limited": True,
-            "required": required,
-            "available": self._emission_available,
-            "admitted": False,
-            "deferred": True,
-            "pause_requested": pause_requested,
-            "growth_status": growth.status,
-            "growth_previous": growth.previous,
-            "growth_current": growth.current,
-            "growth_target": growth.target,
-            "growth_reason": growth.reason,
-        }
+        self.last_apply_result = SourceApplyResult(
+            emitted=0,
+            capacity_limited=True,
+            required=required,
+            available=self._emission_available,
+            admitted=False,
+            deferred=True,
+            pause_requested=pause_requested,
+            growth_status=growth.status,
+            growth_previous=growth.previous,
+            growth_current=growth.current,
+            growth_target=growth.target,
+            growth_reason=growth.reason,
+        )
         return False
 
     def apply(self, dt):
@@ -1217,14 +1218,14 @@ class CompiledSourceExecution:
                 int(particles.host_count),
             )
             self.last_injection_result = result
-            self.last_apply_result = {
-                "emitted": 0,
-                "capacity_limited": False,
-                "required": 0,
-                "available": result.available,
-                "admitted": True,
-                "total": result.total,
-            }
+            self.last_apply_result = SourceApplyResult(
+                emitted=0,
+                capacity_limited=False,
+                required=0,
+                available=result.available,
+                admitted=True,
+                total=result.total,
+            )
             return result
 
         uploaded = self._upload_direct_packets(normalized)
@@ -1236,14 +1237,14 @@ class CompiledSourceExecution:
                 result = self._direct_packet_attempt(uploaded, required)
 
         self.last_injection_result = result
-        self.last_apply_result = {
-            "emitted": result.emitted,
-            "capacity_limited": result.capacity_limited,
-            "required": result.required,
-            "available": result.available,
-            "admitted": result.admitted,
-            "total": result.total,
-        }
+        self.last_apply_result = SourceApplyResult(
+            emitted=result.emitted,
+            capacity_limited=result.capacity_limited,
+            required=result.required,
+            available=result.available,
+            admitted=result.admitted,
+            total=result.total,
+        )
         if not result.admitted:
             policy = str(
                 getattr(
@@ -1252,16 +1253,20 @@ class CompiledSourceExecution:
                     "DEFER",
                 )
             ).upper()
-            self.last_apply_result.update(
-                {
-                    "deferred": True,
-                    "pause_requested": policy == "PAUSE",
-                    "growth_status": growth.status,
-                    "growth_previous": growth.previous,
-                    "growth_current": growth.current,
-                    "growth_target": growth.target,
-                    "growth_reason": growth.reason,
-                }
+            self.last_apply_result = SourceApplyResult(
+                emitted=result.emitted,
+                capacity_limited=result.capacity_limited,
+                required=result.required,
+                available=result.available,
+                admitted=result.admitted,
+                total=result.total,
+                deferred=True,
+                pause_requested=policy == "PAUSE",
+                growth_status=growth.status,
+                growth_previous=growth.previous,
+                growth_current=growth.current,
+                growth_target=growth.target,
+                growth_reason=growth.reason,
             )
         return result
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import warp as wp
@@ -283,6 +285,54 @@ class NormalizedEmissionPlan:
     @property
     def attempted(self) -> bool:
         return bool(self.compiled_sources or self.legacy_attempted)
+
+
+@dataclass(frozen=True)
+class SourceApplyResult(Mapping[str, object]):
+    """Complete immutable receipt for one source application attempt."""
+
+    emitted: int
+    capacity_limited: bool
+    required: int
+    available: int
+    admitted: bool
+    deferred: bool = False
+    pause_requested: bool = False
+    growth_status: str = "UNCHANGED"
+    growth_previous: int = 0
+    growth_current: int = 0
+    growth_target: int = 0
+    growth_reason: str = ""
+    invariant_violation: bool = False
+    total: int = 0
+
+    _FIELDS: ClassVar[tuple[str, ...]] = (
+        "emitted",
+        "capacity_limited",
+        "required",
+        "available",
+        "admitted",
+        "deferred",
+        "pause_requested",
+        "growth_status",
+        "growth_previous",
+        "growth_current",
+        "growth_target",
+        "growth_reason",
+        "invariant_violation",
+        "total",
+    )
+
+    def __getitem__(self, key: str) -> object:
+        if key not in self._FIELDS:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._FIELDS)
+
+    def __len__(self) -> int:
+        return len(self._FIELDS)
 
 
 @dataclass(frozen=True)

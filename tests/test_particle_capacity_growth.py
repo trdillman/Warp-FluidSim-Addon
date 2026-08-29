@@ -119,6 +119,8 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     owner.ensure_particle_capacity = types.MethodType(
         FluidSolver.ensure_particle_capacity, owner
     )
+    owner.sourcing.update_available_capacity = lambda available: (
+        owner.sourcing.last_apply_result.update(available=available))
 
     result = owner.ensure_particle_capacity(6)
 

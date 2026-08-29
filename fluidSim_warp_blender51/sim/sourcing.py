@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import warp as wp
 
@@ -27,6 +29,7 @@ from .source_contracts import (
     MeshSource,
     MeshSourceDesc,
     NormalizedEmissionPlan,
+    SourceApplyResult,
     SourceBatch,
     SourceShape,
     SourceShapeDesc,
@@ -101,6 +104,7 @@ __all__ = [
     "MeshSourceDesc",
     "HeightSourceDesc",
     "NormalizedEmissionPlan",
+    "SourceApplyResult",
     "SourceBatch",
     "DirectInjectionPacket",
     "InjectionResult",
@@ -230,13 +234,13 @@ class SourcePipeline(CompiledSourceExecution):
         self._transaction_height_armed = False
         self._compiled_empty_scalar = None
         self._compiled_empty_vector = None
-        self.last_apply_result = {
-            "emitted": 0,
-            "capacity_limited": False,
-            "required": 0,
-            "available": int(particles.capacity),
-            "admitted": True,
-        }
+        self.last_apply_result = SourceApplyResult(
+            emitted=0,
+            capacity_limited=False,
+            required=0,
+            available=int(particles.capacity),
+            admitted=True,
+        )
         self.last_injection_result = None
         self.last_pressure_apply_count = 0
         self.last_post_p2g_apply_count = 0
@@ -270,15 +274,18 @@ class SourcePipeline(CompiledSourceExecution):
         self.last_post_p2g_apply_count = 0
         self._emission_transaction_active = False
         self._emission_pending_fired = set()
-        owner = getattr(self, "owner", None)
-        particles = getattr(owner, "particles", None)
-        self.last_apply_result = {
-            "emitted": 0,
-            "capacity_limited": False,
-            "required": 0,
-            "available": int(getattr(particles, "capacity", 0)),
-            "admitted": True,
-        }
+        particles = getattr(getattr(self, "runtime", None), "particles", None)
+        self.last_apply_result = SourceApplyResult(
+            emitted=0,
+            capacity_limited=False,
+            required=0,
+            available=int(getattr(particles, "capacity", 0)),
+            admitted=True,
+        )
+
+    def update_available_capacity(self, available: int) -> None:
+        """Refresh capacity truth without exposing mutable result internals."""
+        self.last_apply_result = replace(self.last_apply_result, available=max(0, int(available)))
 
     def export_checkpoint_state(self):
         """Return deterministic source lifecycle/RNG state at a frame boundary."""
