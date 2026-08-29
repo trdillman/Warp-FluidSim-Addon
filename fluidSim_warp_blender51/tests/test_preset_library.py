@@ -55,6 +55,25 @@ def test_user_cannot_override_builtin(tmp_path: Path):
         library.save_user_preset(_user_preset("preview_water"), tmp_path)
 
 
+def test_discovery_and_load_propagate_invalid_user_preset(tmp_path: Path):
+    (tmp_path / "broken.json").write_text(
+        '{"schema_version": 1, "id": "broken"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        library.discover_presets(tmp_path)
+    with pytest.raises(ValueError):
+        library.load_preset("USER:broken", tmp_path)
+
+
+@pytest.mark.parametrize("error", [ImportError("no bpy"), RuntimeError("no profile")])
+def test_discovery_tolerates_only_unavailable_user_profile(monkeypatch, error):
+    monkeypatch.setattr(library, "user_presets", lambda _directory=None: (_ for _ in ()).throw(error))
+
+    assert library.discover_presets() == library.built_in_presets()
+
+
 def test_apply_preset_rolls_back_on_assignment_failure():
     class Target:
         voxel_size = 0.05

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
 import tempfile
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
 
-from .schema import PresetV1, SETTING_SPECS
 from ..version import VERSION_STRING
+from .schema import SETTING_SPECS, PresetV1
 
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources" / "presets"
 _MIGRATION_MARKER = ".fluidsim_presets_migrated_v1"
@@ -97,7 +97,7 @@ def discover_presets(directory: Path | None = None) -> tuple[PresetRecord, ...]:
     builtins = built_in_presets()
     try:
         users = user_presets(directory)
-    except (ImportError, RuntimeError, ValueError):
+    except (ImportError, RuntimeError):
         users = ()
     return builtins + users
 
