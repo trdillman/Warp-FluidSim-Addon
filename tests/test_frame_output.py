@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from fluidSim_warp_blender51.sim.frame_output import HostFrame
+from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload, HostFrame
 
 
 class _Array:
@@ -448,7 +448,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path):
 
     output_publication.prepare_live_payload(
         SimpleNamespace(fluidsim=fs), solver.host_frame())
-    payload = cache._frame_payload(solver)
+    payload = cache._frame_payload(CacheFramePayload.capture(
+        solver, settings_signature="test-settings"))
     export.export_frame(solver, str(tmp_path / "frame"))
 
     assert set(payload) == {

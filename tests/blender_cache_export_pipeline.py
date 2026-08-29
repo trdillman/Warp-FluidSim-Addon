@@ -187,25 +187,25 @@ def main():
         output_publication.update_outputs = forbidden_output_publication
 
         # Observe the real production write seam.  This proves each on-disk
-        # payload has the same full counts as the solver immediately before the
-        # write, rather than merely proving that a self-consistent decimated
+        # payload has the same full counts as the immutable simulation/output
+        # snapshot, rather than merely proving that a self-consistent decimated
         # payload was written.
         write_observations = []
         active_bake = ["first"]
         original_cache_write = cache.write_frame_v2_atomic
 
-        def observed_cache_write(base_dir, solver, frame, **kwargs):
-            solver_particles = int(solver.particles.refresh_host_count())
-            solver_whitewater = int(solver.whitewater.refresh_host_count())
+        def observed_cache_write(base_dir, frame_payload, frame, **kwargs):
+            solver_particles = len(frame_payload.positions)
+            solver_whitewater = len(frame_payload.whitewater)
             result = original_cache_write(
-                base_dir, solver, frame, **kwargs)
+                base_dir, frame_payload, frame, **kwargs)
             path = result[0]
             with np.load(path, allow_pickle=False) as data:
                 payload = {name: data[name] for name in data.files}
             write_observations.append({
                 "bake": active_bake[0],
                 "frame": int(frame),
-                "solver_frame": int(solver.frame),
+                "solver_frame": int(frame_payload.frame),
                 "preview_policy": {
                     "fraction": float(fs.particle_display_fraction),
                     "scale": float(fs.particle_display_scale),

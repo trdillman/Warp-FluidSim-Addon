@@ -28,7 +28,6 @@ from ..sim.attributes import (
     SUPPORTED_ATTRIBUTE_SCHEMA_VERSIONS,
     SURFACE_TRANSFER_METHOD,
     cache_attribute_name,
-    enabled_attribute_keys,
     validate_attribute_values,
 )
 from ..sim.whitewater_types import validate_type_values
@@ -214,13 +213,6 @@ def compact_settings_segments(settings_records: dict) -> list[dict]:
     return segments
 
 
-def _attribute_inventory(settings) -> dict[str, list[str]]:
-    return {
-        output_kind: list(enabled_attribute_keys(settings, output_kind))
-        for output_kind in OUTPUT_ATTRIBUTE_KEYS
-    }
-
-
 _ATTRIBUTE_KEYS_BY_SCHEMA: dict[int, dict[str, tuple[str, ...]]] = {
     # Phase 3 did not persist a whitewater type channel.  Keep its ordered
     # inventory readable while requiring type for newly written Phase-4 data.
@@ -320,78 +312,59 @@ def validate_optional_attributes(
     return inventory
 
 
-def _frame_payload(solver, scene_key_value: str = ""):
-    """Build one cache payload from the shared lazy host frame."""
-    from ..sim.frame_output import HostFrame
-
-    host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
-    empty_verts = np.zeros((0, 3), np.float32)
-    empty_tris = np.zeros((0, 3), np.int32)
-    verts, tris = (host.surface_mesh if solver.settings.surface_enabled else
-                   (empty_verts, empty_tris))
-    surface_metadata = (solver.surface.metadata() if hasattr(solver, "surface") else {
-        "voxel_size": getattr(solver.settings, "voxel_size", 0.05)})
-    record = settings_record(solver.settings)
+def _frame_payload(frame, scene_key_value: str = ""):
+    """Validate and encode one materialized cache-frame payload."""
     payload = {
         "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
-        "settings_signature": np.array(record["signature"]),
+        "settings_signature": np.array(frame.settings_signature),
         "scene_key": np.array(str(scene_key_value)),
-        "positions": host.positions,
-        "velocities": host.velocities,
-        "whitewater": host.whitewater,
-        "surface_verts": verts,
-        "surface_tris": tris,
-        "frame": solver.frame,
-        "voxel_size": np.array(getattr(solver.settings, "voxel_size", 0.05), dtype=np.float32),
-        "surface_voxel_size": np.array(surface_metadata["voxel_size"], dtype=np.float32),
-        "surface_resolution_multiplier": np.array(getattr(solver.settings, "surface_resolution_multiplier", 1.0), dtype=np.float32),
-        "surface_resolution_mode": np.array(int(getattr(solver.settings, "surface_resolution_mode", 0)), dtype=np.int32),
-        "surface_update_cadence": np.array(int(getattr(solver.settings, "surface_update_cadence", 1)), dtype=np.int32),
-        "surface_smooth_iterations": np.array(int(getattr(solver.settings, "surface_smooth_iterations", 0)), dtype=np.int32),
-        "particle_age": host.particle_attr("age"),
-        "particle_life": host.particle_attr("life"),
-        "particle_temperature": host.particle_attr("temperature"),
-        "particle_viscosity": host.particle_attr("viscosity"),
-        "particle_density": host.particle_attr("density"),
-        "particle_time_offset": host.particle_attr("time_offset"),
-        "whitewater_velocities": host.whitewater_attr("velocity"),
-        "whitewater_age": host.whitewater_attr("age"),
-        "whitewater_life": host.whitewater_attr("life"),
-        "whitewater_type": host.whitewater_attr("type"),
-        "whitewater_required": np.array(
-            int(getattr(getattr(solver, "stats", None), "whitewater_required", 0)),
-            dtype=np.int32),
-        "whitewater_available": np.array(
-            int(getattr(getattr(solver, "stats", None), "whitewater_available", 0)),
-            dtype=np.int32),
-        "whitewater_admitted": np.array(
-            int(getattr(getattr(solver, "stats", None), "whitewater_admitted", 0)),
-            dtype=np.int32),
-        "whitewater_dropped": np.array(
-            int(getattr(getattr(solver, "stats", None), "whitewater_dropped", 0)),
-            dtype=np.int32),
-        "whitewater_policy": np.array(str(getattr(
-            getattr(solver, "stats", None), "whitewater_policy",
-            "FIXED_CAPACITY_DETERMINISTIC_DROPS"))),
-        "whitewater_status": np.array(str(getattr(
-            getattr(solver, "stats", None), "whitewater_status", "OK"))),
+        "positions": frame.positions,
+        "velocities": frame.velocities,
+        "whitewater": frame.whitewater,
+        "surface_verts": frame.surface_verts,
+        "surface_tris": frame.surface_tris,
+        "frame": frame.frame,
+        "voxel_size": np.array(frame.voxel_size, dtype=np.float32),
+        "surface_voxel_size": np.array(frame.surface_voxel_size, dtype=np.float32),
+        "surface_resolution_multiplier": np.array(
+            frame.surface_resolution_multiplier, dtype=np.float32),
+        "surface_resolution_mode": np.array(
+            frame.surface_resolution_mode, dtype=np.int32),
+        "surface_update_cadence": np.array(
+            frame.surface_update_cadence, dtype=np.int32),
+        "surface_smooth_iterations": np.array(
+            frame.surface_smooth_iterations, dtype=np.int32),
+        "particle_age": frame.particle_attributes["age"],
+        "particle_life": frame.particle_attributes["life"],
+        "particle_temperature": frame.particle_attributes["temperature"],
+        "particle_viscosity": frame.particle_attributes["viscosity"],
+        "particle_density": frame.particle_attributes["density"],
+        "particle_time_offset": frame.particle_attributes["time_offset"],
+        "whitewater_velocities": frame.whitewater_attributes["velocity"],
+        "whitewater_age": frame.whitewater_attributes["age"],
+        "whitewater_life": frame.whitewater_attributes["life"],
+        "whitewater_type": frame.whitewater_attributes["type"],
+        "whitewater_required": np.array(frame.whitewater_required, dtype=np.int32),
+        "whitewater_available": np.array(frame.whitewater_available, dtype=np.int32),
+        "whitewater_admitted": np.array(frame.whitewater_admitted, dtype=np.int32),
+        "whitewater_dropped": np.array(frame.whitewater_dropped, dtype=np.int32),
+        "whitewater_policy": np.array(frame.whitewater_policy),
+        "whitewater_status": np.array(frame.whitewater_status),
         "attribute_schema_version": np.array(
             ATTRIBUTE_SCHEMA_VERSION, dtype=np.int32),
         "attribute_inventory_json": np.array(json.dumps(
-            _attribute_inventory(solver.settings),
+            dict(frame.attribute_inventory),
             sort_keys=True, separators=(",", ":"))),
         "surface_attribute_transfer_method": np.array(
             SURFACE_TRANSFER_METHOD),
     }
-    for output_kind, positions in (
-            ("surface", verts), ("particles", None), ("whitewater", None)):
-        attributes = host.output_attributes(
-            solver.settings, output_kind, positions=positions)
+    for output_kind, attributes in frame.output_attributes.items():
         for key, values in attributes.items():
             payload[cache_attribute_name(output_kind, key)] = values
     validate_optional_attributes(
-        payload, particle_count=len(host.positions),
-        whitewater_count=len(host.whitewater), surface_count=len(verts))
+        payload, particle_count=len(frame.positions),
+        whitewater_count=len(frame.whitewater),
+        surface_count=len(frame.surface_verts))
     return payload
 
 
@@ -586,20 +559,26 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
     return data
 
 
-def write_frame(scene, sess, frame=None) -> str:
+def write_frame(
+    scene,
+    frame_payload,
+    frame=None,
+    *,
+    scene_key_value: str = "",
+) -> str:
     """Atomically write one cache frame at an explicit timeline index.
 
-    ``frame=None`` preserves the low-level solver-frame API for standalone
-    callers. Live/timeline callers must pass ``scene.frame_current`` so cache
-    names and playback use the same indexing basis.
+    The caller owns solver readback and passes a materialized
+    ``CacheFramePayload`` value from the simulation/output boundary.
+    Live/timeline callers may override its frame with ``scene.frame_current``
+    so cache names and playback use the same indexing basis.
     """
     import bpy
 
     fs = scene.fluidsim
     base = bpy.path.abspath(fs.cache_path)
     os.makedirs(base, exist_ok=True)
-    solver = sess.solver
-    frame = int(solver.frame if frame is None else frame)
+    frame = int(frame_payload.frame if frame is None else frame)
     path = _frame_path(base, frame)
     fd, tmp_path = tempfile.mkstemp(
         prefix=f"{os.path.basename(path)}.",
@@ -610,7 +589,7 @@ def write_frame(scene, sess, frame=None) -> str:
     try:
         _savez_fast_compressed(
             tmp_path,
-            _frame_payload(solver, getattr(sess, "scene_key", "")))
+            _frame_payload(frame_payload, scene_key_value))
         os.replace(tmp_path, path)
     except Exception:
         if os.path.exists(tmp_path):
@@ -660,18 +639,23 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
 
 
 def write_frame_v2_atomic(
-        base_dir: str | os.PathLike[str], solver, frame: int, *,
+        base_dir: str | os.PathLike[str], frame_payload, frame: int, *,
         scene_key_value: str, settings_signature: str,
         source_signature: str, effect_signature: str = "",
-        effect_inventory=(), compressed: bool = False) -> tuple[Path, str, int]:
+        effect_inventory=(), simulation_time: float = 0.0,
+        compressed: bool = False) -> tuple[Path, str, int]:
     """Write a strict cache-v2 frame before its manifest transaction commits."""
     frame = int(frame)
-    payload = _frame_payload(solver, scene_key_value)
+    if frame_payload.settings_signature != str(settings_signature):
+        raise ValueError(
+            "cache-frame settings signature does not match sequence metadata"
+        )
+    payload = _frame_payload(frame_payload, scene_key_value)
     payload.update({
         "format_version": np.array(2, dtype=np.int32),
         "frame": np.array(frame, dtype=np.int32),
-        "solver_frame": np.array(int(solver.frame), dtype=np.int32),
-        "simulation_time": np.array(float(solver.sim_time), dtype=np.float64),
+        "solver_frame": np.array(frame_payload.frame, dtype=np.int32),
+        "simulation_time": np.array(float(simulation_time), dtype=np.float64),
         "settings_signature": np.array(str(settings_signature)),
         "source_signature": np.array(str(source_signature)),
         "effect_signature": np.array(str(effect_signature)),
@@ -680,9 +664,9 @@ def write_frame_v2_atomic(
             sort_keys=True, separators=(",", ":"), allow_nan=False)),
     })
     authoritative_payload_counts(payload)
-    if int(solver.frame) != frame:
+    if frame_payload.frame != frame:
         raise ValueError(
-            f"solver frame {int(solver.frame)} does not match cache frame {frame}")
+            f"solver frame {frame_payload.frame} does not match cache frame {frame}")
     path = _v2_frame_path(base_dir, frame)
     digest, size = _write_npz_atomic(path, payload, compressed=compressed)
     return path, digest, size

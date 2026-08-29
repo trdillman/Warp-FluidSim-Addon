@@ -18,6 +18,14 @@ from fluidSim_warp_blender51.io.cache import (
     write_frame,
     write_sequence_metadata,
 )
+from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload
+
+
+def _cache_frame(solver):
+    return CacheFramePayload.capture(
+        solver,
+        settings_signature=settings_record(solver.settings)["signature"],
+    )
 
 
 class _SourceObject(dict):
@@ -141,9 +149,7 @@ def test_write_frame_stores_format_version_and_read_frame_loads_it(tmp_path, mon
         whitewater_positions=lambda: np.zeros((0, 3), dtype=np.float32),
     )
     scene = SimpleNamespace(fluidsim=SimpleNamespace(cache_path=str(tmp_path)))
-    sess = SimpleNamespace(solver=solver)
-
-    written = write_frame(scene, sess)
+    written = write_frame(scene, _cache_frame(solver))
     loaded = read_frame(str(tmp_path), 3)
 
     assert written == str(tmp_path / "fluidsim_00003.npz")
@@ -172,7 +178,7 @@ def test_write_frame_explicit_timeline_index_overrides_solver_counter(
         whitewater_positions=lambda: np.zeros((0, 3), dtype=np.float32),
     )
     scene = SimpleNamespace(fluidsim=SimpleNamespace(cache_path=str(tmp_path)))
-    written = write_frame(scene, SimpleNamespace(solver=solver), frame=2)
+    written = write_frame(scene, _cache_frame(solver), frame=2)
 
     assert written == str(tmp_path / "fluidsim_00002.npz")
     assert read_frame(str(tmp_path), 2) is not None
@@ -209,7 +215,6 @@ def test_write_frame_uses_same_directory_temp_and_atomic_replace(tmp_path, monke
         particle_velocities=lambda: np.zeros((0, 3), dtype=np.float32),
         whitewater_positions=lambda: np.zeros((0, 3), dtype=np.float32),
     )
-    sess = SimpleNamespace(solver=solver)
     calls = {}
     real_savez_compressed = np.savez_compressed
     real_replace = os.replace
@@ -228,7 +233,7 @@ def test_write_frame_uses_same_directory_temp_and_atomic_replace(tmp_path, monke
     monkeypatch.setattr("fluidSim_warp_blender51.io.cache.np.savez_compressed", fake_save)
     monkeypatch.setattr("fluidSim_warp_blender51.io.cache.os.replace", fake_replace)
 
-    written = write_frame(scene, sess)
+    written = write_frame(scene, _cache_frame(solver))
 
     assert written == str(tmp_path / "fluidsim_00006.npz")
     assert calls["replace"][1] == written

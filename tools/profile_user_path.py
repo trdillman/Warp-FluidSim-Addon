@@ -454,6 +454,7 @@ def main():
     # already completed, matching the Phase 1 baseline profile boundary.
     output_publication.output_cost_counts(reset=True)
     from fluidSim_warp_blender51.sim.frame_output import (
+        CacheFramePayload,
         host_output_operation_counts,
     )
     host_output_operation_counts(reset=True)
@@ -516,7 +517,16 @@ def main():
             cache_ms = 0.0
             if args.cache:
                 tc = time.perf_counter()
-                cache_io.write_frame(scene, sess)
+                cache_io.write_frame(
+                    scene,
+                    CacheFramePayload.capture(
+                        sess.solver,
+                        settings_signature=cache_io.settings_record(
+                            sess.solver.settings
+                        )["signature"],
+                    ),
+                    scene_key_value=sess.scene_key,
+                )
                 cache_ms = (time.perf_counter() - tc) * 1000.0
             row = {
                 "frame": f,

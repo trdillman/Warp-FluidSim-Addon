@@ -65,7 +65,7 @@ def _solver(log, count):
 def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache
-    from fluidSim_warp_blender51.sim.frame_output import HostFrame
+    from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload, HostFrame
 
     count = 64
     log = []
@@ -92,7 +92,8 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     assert len(frame.particle_attributes["speed"]) == 16
     assert np.array_equal(frame.particles[:, 0], np.arange(0, 64, 4))
 
-    payload = cache._frame_payload(solver)
+    payload = cache._frame_payload(CacheFramePayload.capture(
+        solver, settings_signature="test-settings"))
 
     # Half two: the full-fidelity consumer in the same frame still gets
     # every particle; a shared cache key would have handed it the 16.

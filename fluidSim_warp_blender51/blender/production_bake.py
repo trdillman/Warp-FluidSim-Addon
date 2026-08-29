@@ -560,6 +560,7 @@ class ProductionBakeBackend:
     def step_and_commit(self, scene, frame: int) -> FrameEntry:
         from . import playback, scene_bridge
         from ..io import cache
+        from ..sim.frame_output import CacheFramePayload
 
         if not self._initialized or self.manifest is None or self.sess is None:
             raise RuntimeError("production bake backend is not initialized")
@@ -589,15 +590,20 @@ class ProductionBakeBackend:
                 f"solver advanced to frame {self.sess.solver.frame}, expected {frame}"
             )
 
+        frame_payload = CacheFramePayload.capture(
+            self.sess.solver,
+            settings_signature=self.manifest.settings_signature,
+        )
         frame_path, frame_digest, frame_size = cache.write_frame_v2_atomic(
             self.base_dir,
-            self.sess.solver,
+            frame_payload,
             frame,
             scene_key_value=self.manifest.scene_key,
             settings_signature=self.manifest.settings_signature,
             source_signature=self.manifest.source_signature,
             effect_signature=self.effect_signature,
             effect_inventory=self.effect_inventory,
+            simulation_time=float(self.sess.solver.sim_time),
             compressed=self.compressed,
         )
         checkpoint = capture_solver(

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
 import warp as wp
@@ -410,3 +413,103 @@ class HostFrame:
             key: validate_attribute_values(ATTRIBUTE_SPECS[key], value, count)
             for key, value in values.items()
         }
+
+
+@dataclass(frozen=True)
+class CacheFramePayload:
+    """Fully materialized simulation output accepted by cache persistence."""
+
+    frame: int
+    settings_signature: str
+    positions: np.ndarray
+    velocities: np.ndarray
+    whitewater: np.ndarray
+    surface_verts: np.ndarray
+    surface_tris: np.ndarray
+    voxel_size: float
+    surface_voxel_size: float
+    surface_resolution_multiplier: float
+    surface_resolution_mode: int
+    surface_update_cadence: int
+    surface_smooth_iterations: int
+    particle_attributes: Mapping[str, np.ndarray]
+    whitewater_attributes: Mapping[str, np.ndarray]
+    output_attributes: Mapping[str, Mapping[str, np.ndarray]]
+    attribute_inventory: Mapping[str, tuple[str, ...]]
+    whitewater_required: int
+    whitewater_available: int
+    whitewater_admitted: int
+    whitewater_dropped: int
+    whitewater_policy: str
+    whitewater_status: str
+
+    @classmethod
+    def capture(cls, solver, *, settings_signature: str):
+        """Materialize one solver frame at the simulation/output boundary."""
+        host = solver.host_frame() if hasattr(solver, "host_frame") else HostFrame(solver)
+        settings = solver.settings
+        empty_verts = np.zeros((0, 3), np.float32)
+        empty_tris = np.zeros((0, 3), np.int32)
+        verts, tris = (
+            host.surface_mesh
+            if bool(getattr(settings, "surface_enabled", False))
+            else (empty_verts, empty_tris)
+        )
+        surface_metadata = (
+            solver.surface.metadata()
+            if hasattr(solver, "surface")
+            else {"voxel_size": getattr(settings, "voxel_size", 0.05)}
+        )
+        output_attributes = {
+            output_kind: MappingProxyType(host.output_attributes(
+                settings, output_kind, positions=positions
+            ))
+            for output_kind, positions in (
+                ("surface", verts),
+                ("particles", None),
+                ("whitewater", None),
+            )
+        }
+        stats = getattr(solver, "stats", None)
+        return cls(
+            frame=int(getattr(solver, "frame", 0)),
+            settings_signature=str(settings_signature),
+            positions=host.positions,
+            velocities=host.velocities,
+            whitewater=host.whitewater,
+            surface_verts=verts,
+            surface_tris=tris,
+            voxel_size=float(getattr(settings, "voxel_size", 0.05)),
+            surface_voxel_size=float(surface_metadata["voxel_size"]),
+            surface_resolution_multiplier=float(getattr(
+                settings, "surface_resolution_multiplier", 1.0)),
+            surface_resolution_mode=int(getattr(
+                settings, "surface_resolution_mode", 0)),
+            surface_update_cadence=int(getattr(
+                settings, "surface_update_cadence", 1)),
+            surface_smooth_iterations=int(getattr(
+                settings, "surface_smooth_iterations", 0)),
+            particle_attributes=MappingProxyType({
+                name: host.particle_attr(name)
+                for name in (
+                    "age", "life", "temperature", "viscosity", "density",
+                    "time_offset",
+                )
+            }),
+            whitewater_attributes=MappingProxyType({
+                name: host.whitewater_attr(name)
+                for name in ("velocity", "age", "life", "type")
+            }),
+            output_attributes=MappingProxyType(output_attributes),
+            attribute_inventory=MappingProxyType({
+                output_kind: enabled_attribute_keys(settings, output_kind)
+                for output_kind in ("particles", "whitewater", "surface")
+            }),
+            whitewater_required=int(getattr(stats, "whitewater_required", 0)),
+            whitewater_available=int(getattr(stats, "whitewater_available", 0)),
+            whitewater_admitted=int(getattr(stats, "whitewater_admitted", 0)),
+            whitewater_dropped=int(getattr(stats, "whitewater_dropped", 0)),
+            whitewater_policy=str(getattr(
+                stats, "whitewater_policy", "FIXED_CAPACITY_DETERMINISTIC_DROPS")),
+            whitewater_status=str(getattr(stats, "whitewater_status", "OK")),
+        )
