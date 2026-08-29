@@ -77,7 +77,7 @@ def test_phase5_presets_are_strict_and_physically_labelled(tmp_path):
 
 
 def test_frame_stats_source_guards_json_against_infinity():
-    source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
+    source = (ROOT / "sim" / "frame_runtime.py").read_text(encoding="utf-8")
     assert '"capillaryDt": (' in source
     assert "math.isfinite(self.capillary_dt)" in source
     # The pure default is still representable in strict JSON after the guard.
@@ -102,17 +102,18 @@ def test_capillary_constraint_uses_authored_units_and_safety():
 
 
 def test_capillary_limit_is_not_skipped_before_first_source_emission():
-    tree = ast.parse((ROOT / "sim" / "solver.py").read_text(encoding="utf-8"))
-    method = next(
+    tree = ast.parse((ROOT / "sim" / "frame_runtime.py").read_text(
+        encoding="utf-8"))
+    selector = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_compute_substeps"
+        if isinstance(node, ast.FunctionDef) and node.name == "select_substeps"
     )
     particle_branch = next(
         node
-        for node in method.body
+        for node in selector.body
         if isinstance(node, ast.If)
-        and "self.particles.host_count" in ast.unparse(node.test)
+        and "has_particles" in ast.unparse(node.test)
     )
     calls_inside_particle_branch = {
         node.func.id
@@ -121,7 +122,7 @@ def test_capillary_limit_is_not_skipped_before_first_source_emission():
     }
     calls_in_method = {
         node.func.id
-        for node in ast.walk(method)
+        for node in ast.walk(selector)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert "capillary_dt" in calls_in_method
