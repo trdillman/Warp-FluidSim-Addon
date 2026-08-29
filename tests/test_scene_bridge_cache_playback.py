@@ -473,6 +473,46 @@ def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
     assert scene.fluidsim.stat_whitewater_invalid_types == 1
 
 
+def test_cache_playback_reports_recoverable_render_sync_warning(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2)
+    frame_data = {
+        "frame": np.array(2),
+        "scene_key": np.array("v2-scene-key"),
+        "positions": np.zeros((3, 3), dtype=np.float32),
+        "whitewater": np.zeros((0, 3), dtype=np.float32),
+    }
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_sequence_metadata = lambda _base: {
+        "format_version": 2,
+        "scene_key": "v2-scene-key",
+    }
+    fake_cache.read_frame = lambda _base, _frame: frame_data
+    fake_identity = types.ModuleType(
+        "fluidSim_warp_blender51.blender.cache_identity"
+    )
+    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
+        "scene_key": "v2-scene-key",
+    }
+    warning = "Render input synchronization failed: RuntimeError: offline"
+    fake_viewport = types.ModuleType(
+        "fluidSim_warp_blender51.blender.output_publication"
+    )
+    fake_viewport.update_outputs_from_cache_frame = (
+        lambda _scene, _data: SimpleNamespace(warning=warning)
+    )
+    _install_cache_playback_modules(
+        monkeypatch, fake_cache, fake_viewport, fake_identity
+    )
+
+    scene_bridge.playback.play_cache_frame(
+        scene_bridge.session(), scene, frame=2
+    )
+
+    assert scene.fluidsim.status == f"Cache frame 2: 3 particles — {warning}"
+    assert scene_bridge.current_error(scene) == warning
+
+
 def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
         monkeypatch, tmp_path):
     """A cache is only an answer to the scene it was baked from.

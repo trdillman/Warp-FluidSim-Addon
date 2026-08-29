@@ -318,7 +318,9 @@ def play_cache_frame(sess, scene, frame=None):
         raise FileNotFoundError(
             f"Cache frame {frame} is missing or corrupt in {base}")
     _check_cache_scene_key(scene, base, frame_data)
-    output_publication.update_outputs_from_cache_frame(scene, frame_data)
+    publication = output_publication.update_outputs_from_cache_frame(
+        scene, frame_data
+    )
     fs.stat_particles = len(frame_data.get("positions", ()))
     fs.stat_whitewater = len(frame_data.get("whitewater", ()))
 
@@ -362,7 +364,12 @@ def play_cache_frame(sess, scene, frame=None):
     fs.stat_surface_tension_status = "CACHE_PLAYBACK"
     fs.stat_surface_tension_message = ""
     fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
-    sess.clear_error(scene)
+    warning = str(getattr(publication, "warning", "") or "")
+    if warning:
+        sess.set_error(scene, warning)
+        fs.status = f"{fs.status} — {warning}"
+    else:
+        sess.clear_error(scene)
     return frame_data
 
 

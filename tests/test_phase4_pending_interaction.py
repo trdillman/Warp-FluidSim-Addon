@@ -272,6 +272,23 @@ def test_st_reference_calibration_cache_scales_distinct_density_without_recomput
     assert calls == [1]
 
 
+def test_pending_publication_warning_updates_scene_and_session(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene)
+    warning = "Render input synchronization failed: RuntimeError: offline"
+
+    recorded = bridge.pending._record_publication_warning(
+        scene,
+        sess,
+        SimpleNamespace(warning=warning),
+    )
+
+    assert recorded is True
+    assert scene.fluidsim.status == f"Output published with warning: {warning}"
+    assert sess.current_error(scene) == warning
+
+
 def test_midrun_reset_edit_is_pending_without_resetting(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()

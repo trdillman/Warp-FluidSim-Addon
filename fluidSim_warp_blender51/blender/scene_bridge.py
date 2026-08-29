@@ -386,7 +386,11 @@ class Session:
         if publish_outputs:
             from . import output_publication
 
-            output_publication.update_outputs(scene, self)
+            publication = output_publication.update_outputs(scene, self)
+            warning = str(getattr(publication, "warning", "") or "")
+            if warning:
+                self.set_error(scene, warning)
+                fs.status = f"{fs.status} — {warning}"
         return stats
 
     def reset(self, scene, *, depsgraph=None):

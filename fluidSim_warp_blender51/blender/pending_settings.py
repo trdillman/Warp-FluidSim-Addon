@@ -918,6 +918,15 @@ def update_particle_capacity_policy(scene):
     _tag_view3d_redraw()
 
 
+def _record_publication_warning(scene, sess, publication) -> bool:
+    warning = str(getattr(publication, "warning", "") or "")
+    if not warning:
+        return False
+    sess.set_error(scene, warning)
+    scene.fluidsim.status = f"Output published with warning: {warning}"
+    return True
+
+
 def request_scene_update(scene, action: SceneUpdate):
     """Apply property changes immediately where the live session allows it."""
     from . import output_publication
@@ -945,8 +954,11 @@ def request_scene_update(scene, action: SceneUpdate):
                 # Cache/export playback leaves Blender output objects behind
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.
-                output_publication.refresh_existing_output_settings(scene)
-                scene.fluidsim.status = reason
+                publication = output_publication.refresh_existing_output_settings(
+                    scene
+                )
+                warning = str(getattr(publication, "warning", "") or "")
+                scene.fluidsim.status = warning or reason
             elif action not in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
                 scene.fluidsim.status = reason
         finally:
@@ -974,14 +986,21 @@ def request_scene_update(scene, action: SceneUpdate):
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
         output_publication.prepare_outputs(scene)
-        output_publication.update_outputs(scene, sess, force_surface=True)
+        publication = output_publication.update_outputs(
+            scene, sess, force_surface=True
+        )
+        _record_publication_warning(scene, sess, publication)
     elif action is SceneUpdate.WHITEWATER:
         _apply_realtime_whitewater_settings(scene, sess)
         output_publication.prepare_outputs(scene)
-        output_publication.update_outputs(scene, sess)
+        publication = output_publication.update_outputs(scene, sess)
+        _record_publication_warning(scene, sess, publication)
     elif action is SceneUpdate.OUTPUT:
         output_publication.prepare_outputs(scene)
-        output_publication.update_outputs(scene, sess, force_surface=True)
+        publication = output_publication.update_outputs(
+            scene, sess, force_surface=True
+        )
+        _record_publication_warning(scene, sess, publication)
     _tag_view3d_redraw()
 
 

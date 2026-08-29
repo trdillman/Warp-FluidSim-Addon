@@ -43,6 +43,37 @@ COLOR_ATTR = "display_color"
 _VISUALIZATION_VALUE_KEY = "__visualization__"
 # Live point count of a padded output cloud; see _swap_points.
 POINT_COUNT_TAG = "fluidsim_live_point_count"
+
+
+@dataclass(frozen=True)
+class RenderInputSyncResult:
+    """Recoverable render-input synchronization outcome after publication."""
+
+    synchronized: bool
+    phase: str = "RENDER_INPUT_SYNC"
+    exception: Exception | None = None
+
+    @property
+    def warning(self) -> str:
+        if self.synchronized or self.exception is None:
+            return ""
+        return (
+            f"Render input synchronization failed: "
+            f"{type(self.exception).__name__}: {self.exception}"
+        )
+
+
+def _sync_render_inputs(scene) -> RenderInputSyncResult:
+    """Synchronize render adapters without discarding publication success."""
+    try:
+        from .geometry_nodes import sync_render_inputs
+
+        sync_render_inputs(scene)
+    except Exception as exc:  # noqa: BLE001 - returned to recovery boundaries
+        return RenderInputSyncResult(False, exception=exc)
+    return RenderInputSyncResult(True)
+
+
 LEGACY_UNCLASSIFIED_COUNT_TAG = "fluidsim_legacy_unclassified_count"
 # Headroom keeps steady-state waste near 15% of ~32 B/point.
 _POINT_CAPACITY_HEADROOM = 1.15
@@ -1323,12 +1354,7 @@ def publish_payload(scene, payload):
     else:
         for name in WHITEWATER_OUTPUT_NAMES:
             _hide_and_clear_output(scene, name)
-    try:
-        from .geometry_nodes import sync_render_inputs
-
-        sync_render_inputs(scene)
-    except Exception:  # noqa: BLE001 - output publication must remain recoverable
-        pass
+    return _sync_render_inputs(scene)
 
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
@@ -1385,12 +1411,7 @@ def refresh_existing_output_settings(scene):
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(obj, radius)
             _ensure_material(ensure_material, scene, obj)
-    try:
-        from .geometry_nodes import sync_render_inputs
-
-        sync_render_inputs(scene)
-    except Exception:  # noqa: BLE001 - metadata refresh is best-effort
-        pass
+    return _sync_render_inputs(scene)
 
 
 def ensure_render_visibility(scene):
@@ -1446,13 +1467,13 @@ def update_outputs(scene, sess, *, force_surface=False):
     )
     payload = prepare_live_payload(
         scene, host, publish_surface=publish_surface)
-    publish_payload(scene, payload)
+    return publish_payload(scene, payload)
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
-    publish_payload(scene, prepare_cache_payload(scene, frame_data))
+    return publish_payload(scene, prepare_cache_payload(scene, frame_data))
 
 
 def _clear_points(scene, name):

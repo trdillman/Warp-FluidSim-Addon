@@ -543,6 +543,32 @@ def test_cache_update_prepares_cache_payload_without_live_readback(monkeypatch):
     ]
 
 
+def test_render_input_sync_failure_returns_structured_warning(monkeypatch):
+    import sys
+
+    from fluidSim_warp_blender51.blender import output_publication
+
+    failure = RuntimeError("render adapter unavailable")
+    geometry_nodes = SimpleNamespace(
+        sync_render_inputs=lambda _scene: (_ for _ in ()).throw(failure)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "fluidSim_warp_blender51.blender.geometry_nodes",
+        geometry_nodes,
+    )
+
+    result = output_publication._sync_render_inputs(object())
+
+    assert result.synchronized is False
+    assert result.phase == "RENDER_INPUT_SYNC"
+    assert result.exception is failure
+    assert result.warning == (
+        "Render input synchronization failed: RuntimeError: "
+        "render adapter unavailable"
+    )
+
+
 def test_publisher_only_path_poisons_actual_solver_warp_and_blender_entrypoints(
         monkeypatch):
     import warp as wp
