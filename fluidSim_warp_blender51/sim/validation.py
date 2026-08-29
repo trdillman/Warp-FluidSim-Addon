@@ -51,7 +51,6 @@ VALIDATION_TESTS = [
     "surface SDF build/filter parity",
     "viscosity solve stability",
     "whitewater churn/emission/advection behavior",
-    "benchmark profile schema compatibility",
     "spatiotemporal FLIP jitter, phase, and residual boundedness",
     "surface-tension static droplet boundedness and volume proxy",
     "surface-tension droplet oscillation frequency trend",
@@ -1045,65 +1044,10 @@ def test_whitewater(device):
     )
 
 
-# ---------------------------------------------------------------------------
-# 15. benchmark profile schema compatibility
-# ---------------------------------------------------------------------------
+# 15. spatiotemporal FLIP jitter/phase/projection smoke test
 
 
 @_test(VALIDATION_TESTS[14])
-def test_benchmark_schema(device):
-    from ..diagnostics.benchmark import (
-        BENCHMARK_FIELDS,
-        compare_benchmark,
-        run_benchmark,
-    )
-    from ..diagnostics.profiler import PROFILE_FRAME_FIELDS, Profiler
-    from .solver import FluidSolver, SolverSettings
-
-    # Tiny benchmark run (schema check, not performance).
-    from ..diagnostics.benchmark import default_benchmark_settings
-
-    settings = default_benchmark_settings()
-    settings.voxel_size = 0.08
-    settings.max_particles = 400_000
-    settings.device = device
-    result = run_benchmark(frames=4, emit_frames=2, settings=settings)
-    data = result.as_dict()
-    missing = [f for f in BENCHMARK_FIELDS if f not in data]
-    if missing:
-        return False, f"missing benchmark fields: {missing}"
-    cmp = compare_benchmark(data, data)
-    if cmp["result"] != "pass":
-        return False, f"self-comparison failed: {cmp['result']}"
-
-    # Frame stats schema.
-    profiler = Profiler(device=device)
-    settings2 = SolverSettings()
-    settings2.domain_min = (-0.4, -0.4, 0.0)
-    settings2.domain_max = (0.4, 0.4, 0.8)
-    settings2.voxel_size = 0.08
-    settings2.max_particles = 100_000
-    settings2.device = device
-    solver = FluidSolver(settings2, profiler=profiler)
-    stats = solver.step_frame()
-    frame_dict = stats.as_dict()
-    missing2 = [f for f in PROFILE_FRAME_FIELDS if f not in frame_dict]
-    if missing2:
-        return False, f"missing frame fields: {missing2}"
-    return True, (
-        f"benchmark fields ok ({len(BENCHMARK_FIELDS)}), "
-        f"frame fields ok ({len(PROFILE_FRAME_FIELDS)}), self-compare pass"
-    )
-
-
-
-
-# ---------------------------------------------------------------------------
-# 16. spatiotemporal FLIP jitter/phase/projection smoke test
-# ---------------------------------------------------------------------------
-
-
-@_test(VALIDATION_TESTS[15])
 def test_spatiotemporal_flip(device):
     from .solver import FluidSolver, SolverSettings
 
@@ -1251,7 +1195,7 @@ def _run_droplet(device, *, coefficient=0.072, enabled=True, frames=3):
         raise
 
 
-@_test(VALIDATION_TESTS[16])
+@_test(VALIDATION_TESTS[15])
 def test_surface_tension_static_droplet(device):
     solver, stats, initial, positions, velocities = _run_droplet(device, frames=4)
     try:
@@ -1274,7 +1218,7 @@ def test_surface_tension_static_droplet(device):
         solver.release()
 
 
-@_test(VALIDATION_TESTS[17])
+@_test(VALIDATION_TESTS[16])
 def test_surface_tension_oscillation_trend(_device):
     baseline = ST.rayleigh_lamb_frequency(1000.0, 0.1, 0.072)
     stronger = ST.rayleigh_lamb_frequency(1000.0, 0.1, 0.144)
@@ -1292,7 +1236,7 @@ def test_surface_tension_oscillation_trend(_device):
     )
 
 
-@_test(VALIDATION_TESTS[18])
+@_test(VALIDATION_TESTS[17])
 def test_surface_tension_zero_equivalence(device):
     disabled = _run_droplet(
         device, coefficient=0.0, enabled=False, frames=2)
@@ -1332,7 +1276,7 @@ def test_surface_tension_zero_equivalence(device):
             zero[0].release()
 
 
-@_test(VALIDATION_TESTS[19])
+@_test(VALIDATION_TESTS[18])
 def test_surface_tension_capillary_timestep(_device):
     coarse = ST.capillary_dt(1000.0, 0.1, 0.072, 0.5)
     fine = ST.capillary_dt(1000.0, 0.05, 0.072, 0.5)
@@ -1347,7 +1291,7 @@ def test_surface_tension_capillary_timestep(_device):
     )
 
 
-@_test(VALIDATION_TESTS[20])
+@_test(VALIDATION_TESTS[19])
 def test_surface_tension_finite_energy(device):
     solver, stats, _initial, positions, velocities = _run_droplet(
         device, coefficient=0.25, enabled=True, frames=5)

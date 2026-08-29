@@ -76,7 +76,7 @@ def main() -> None:
     module = _installed_module()
     runtime = importlib.import_module(f"{module}.runtime.warp_runtime")
     preferences = importlib.import_module(f"{module}.preferences")
-    validation = importlib.import_module(f"{module}.sim.validation")
+    validation = importlib.import_module(f"{module}.diagnostics.validation")
     probe = runtime.probe_runtime(force=True)
     if probe.warp_version != EXPECTED_WARP_VERSION:
         raise AssertionError(

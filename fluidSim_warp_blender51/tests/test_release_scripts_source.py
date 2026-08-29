@@ -43,6 +43,7 @@ def test_blender_smoke_proves_external_warp_cpu_execution_and_lifecycle():
 def test_gpu_regression_targets_certified_runtime_and_full_suite():
     source = (ROOT / "release" / "gpu_regression_blender.py").read_text(encoding="utf-8")
     assert "validation.run_all" in source
+    assert 'f"{module}.diagnostics.validation"' in source
     assert "EXPECTED_BLENDER_VERSION = (5, 1, 0)" in source
     assert 'EXPECTED_WARP_VERSION = "1.16.0"' in source
     assert "bpy.app.version[:3]" in source

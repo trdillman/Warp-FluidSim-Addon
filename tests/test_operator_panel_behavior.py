@@ -195,15 +195,23 @@ def test_validation_operator_uses_configured_device(monkeypatch):
         def as_dict(self):
             return {"name": self.name, "passed": self.passed}
 
-    fake_validation = types.ModuleType("fluidSim_warp_blender51.sim.validation")
+    fake_validation = types.ModuleType(
+        "fluidSim_warp_blender51.diagnostics.validation"
+    )
     def _run_all(device):
         seen["device"] = device
         return [_Result()]
 
     fake_validation.run_all = _run_all
-    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.sim.validation", fake_validation)
-    import fluidSim_warp_blender51.sim as sim_pkg
-    monkeypatch.setattr(sim_pkg, "validation", fake_validation, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "fluidSim_warp_blender51.diagnostics.validation",
+        fake_validation,
+    )
+    import fluidSim_warp_blender51.diagnostics as diagnostics_pkg
+    monkeypatch.setattr(
+        diagnostics_pkg, "validation", fake_validation, raising=False
+    )
     monkeypatch.setattr(
         operators,
         "_bridge",

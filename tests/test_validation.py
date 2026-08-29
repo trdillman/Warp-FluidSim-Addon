@@ -19,7 +19,7 @@ def main():
         print("FATAL: CUDA not available")
         return 2
 
-    from fluidSim_warp_blender51.sim import validation
+    from fluidSim_warp_blender51.diagnostics import validation
 
     print(f"device: {wp.get_device(device).name}")
     print(f"running {len(validation.VALIDATION_TESTS)} validation tests\n")

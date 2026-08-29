@@ -934,7 +934,7 @@ class FLUIDSIM_OT_run_validation(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         bridge = _bridge()
         sess = bridge.session()
         try:
-            from .sim import validation
+            from .diagnostics import validation
 
             results = validation.run_all(device=_configured_device())
         except Exception as exc:  # noqa: BLE001
