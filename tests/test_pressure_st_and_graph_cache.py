@@ -112,3 +112,15 @@ def test_pcg_graph_cache_evicts_lru_instead_of_flushing(cuda_device):
         f"got {captures} in {elapsed:.3f}s")
     # a cold key evicts one entry, so the cache stays full instead of resetting
     assert len(solver._pcg_graphs) == 8
+
+
+def test_native_pcg_module_unloads_on_pressure_solver_release(cuda_device):
+    from fluidSim_warp_blender51.sim import cuda_reduction
+
+    solver = _prepared_solver(cuda_device)
+    assert len(cuda_reduction._MODULE_CACHE.entries) == 1
+
+    solver.release()
+
+    assert cuda_reduction._MODULE_CACHE.entries == {}
+    solver.release()

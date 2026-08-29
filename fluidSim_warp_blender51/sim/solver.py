@@ -1127,6 +1127,10 @@ class FluidSolver:
 
     def release(self):
         """Break GPU-owning backreferences before the session drops this solver."""
+        pressure_solver = getattr(self, "pressure_solver", None)
+        if pressure_solver is not None:
+            pressure_solver.release()
+
         host_frame = self._host_frame_cache
         if host_frame is not None:
             host_frame.solver = None

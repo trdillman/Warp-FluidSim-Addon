@@ -786,27 +786,31 @@ def test_divergence_reduction(device):
     src.emit_rate = 8.0
 
     solver = FluidSolver(settings)
-    solver.set_sources([src])
-    solver.step_frame()
-    solver.set_sources([])
-    for _ in range(2):
+    try:
+        solver.set_sources([src])
         solver.step_frame()
+        solver.set_sources([])
+        for _ in range(2):
+            solver.step_frame()
 
-    # Measure divergence of the CURRENT velocity field, project, re-measure.
-    div_before = _divergence_norm(solver)
-    solver.pressure_solver.build_preconditioner(solver.voxel_type.data)
-    solver.pressure_solver.solve_pcg(
-        solver.voxel_type.data, max_iterations=400, tolerance=1.0e-7
-    )
-    solver.pressure_solver.project(
-        solver.vel, solver.voxel_type.data, solver.collision_vel
-    )
-    div_after = _divergence_norm(solver)
-    reduced = div_after < div_before * 0.05 or div_after < 1.0e-4
-    return reduced, (
-        f"max |divergence| {div_before:.3e} -> {div_after:.3e} "
-        f"({solver.pressure_solver.last_iterations} PCG iterations)"
-    )
+        # Measure divergence of the CURRENT velocity field, project, re-measure.
+        div_before = _divergence_norm(solver)
+        solver.pressure_solver.build_preconditioner(solver.voxel_type.data)
+        solver.pressure_solver.solve_pcg(
+            solver.voxel_type.data, max_iterations=400, tolerance=1.0e-7
+        )
+        solver.pressure_solver.project(
+            solver.vel, solver.voxel_type.data, solver.collision_vel
+        )
+        div_after = _divergence_norm(solver)
+        reduced = div_after < div_before * 0.05 or div_after < 1.0e-4
+        result = reduced, (
+            f"max |divergence| {div_before:.3e} -> {div_after:.3e} "
+            f"({solver.pressure_solver.last_iterations} PCG iterations)"
+        )
+    finally:
+        solver.release()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -853,23 +857,26 @@ def test_solver_convergence(device):
 
     collision_vel = wp.zeros(grid.voxel_capacity, dtype=wp.vec3, device=device)
     ps = P.PressureSolver(grid, device)
+    try:
+        ps.build_rhs(vel, voxel_type.data, collision_vel, voxel_counts.data)
+        ps.build_preconditioner(voxel_type.data)
+        ps.solve_jacobi(voxel_type.data, iterations=400)
+        res_jacobi = ps.measure_residual(voxel_type.data)
 
-    ps.build_rhs(vel, voxel_type.data, collision_vel, voxel_counts.data)
-    ps.build_preconditioner(voxel_type.data)
-    ps.solve_jacobi(voxel_type.data, iterations=400)
-    res_jacobi = ps.measure_residual(voxel_type.data)
+        ps.build_rhs(vel, voxel_type.data, collision_vel, voxel_counts.data)
+        ps.solve_pcg(voxel_type.data, max_iterations=400, tolerance=1.0e-8)
+        res_pcg = ps.last_residual
 
-    ps.build_rhs(vel, voxel_type.data, collision_vel, voxel_counts.data)
-    ps.solve_pcg(voxel_type.data, max_iterations=400, tolerance=1.0e-8)
-    res_pcg = ps.last_residual
-
-    rhs = ps.rhs.numpy()
-    rhs_norm = float(np.linalg.norm(rhs))
-    ok = res_jacobi < rhs_norm * 0.05 and res_pcg < rhs_norm * 1.0e-3
-    return ok, (
-        f"|rhs|={rhs_norm:.3e}, Jacobi residual {res_jacobi:.3e}, "
-        f"PCG residual {res_pcg:.3e} ({ps.last_iterations} iters)"
-    )
+        rhs = ps.rhs.numpy()
+        rhs_norm = float(np.linalg.norm(rhs))
+        ok = res_jacobi < rhs_norm * 0.05 and res_pcg < rhs_norm * 1.0e-3
+        result = ok, (
+            f"|rhs|={rhs_norm:.3e}, Jacobi residual {res_jacobi:.3e}, "
+            f"PCG residual {res_pcg:.3e} ({ps.last_iterations} iters)"
+        )
+    finally:
+        ps.release()
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -803,9 +803,8 @@ def test_pcg_zero_rhs_classifies_without_host_batched_fallback(cuda_device):
     assert status["residual"] == 0.0
     assert solver.last_pcg_execution_mode == "cuda_conditional"
 
-    solver._pcg_dot = None
+    solver._release_native_pcg_dot()
     solver._pcg_native_available = False
-    solver._pcg_conditional_graphs.clear()
     fallback = solver.solve_pcg(
         voxel_type_wp,
         max_iterations=400,
@@ -920,10 +919,8 @@ def test_pcg_converges_with_batched_device_resident_checkpoints(cuda_device):
     assert solver.last_iterations % 2 == 0
     assert solver.last_pcg_execution_mode == "host_batched"
 
-    solver._pcg_dot = None
+    solver._release_native_pcg_dot()
     solver._pcg_native_available = False
-    solver._pcg_graphs.clear()
-    solver._pcg_conditional_graphs.clear()
     status = solver.solve_pcg(
         voxel_type_wp,
         max_iterations=400,

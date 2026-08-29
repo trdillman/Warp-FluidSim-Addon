@@ -1240,6 +1240,9 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     viewport_overlay = _reload_module(
         "fluidSim_warp_blender51.blender.viewport_overlay"
     )
+    cuda_reduction = _reload_module(
+        "fluidSim_warp_blender51.sim.cuda_reduction"
+    )
     operators = _reload_module("fluidSim_warp_blender51.operators")
     panels = _reload_module("fluidSim_warp_blender51.panels")
     preferences = _reload_module("fluidSim_warp_blender51.preferences")
@@ -1252,6 +1255,11 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
     monkeypatch.setattr(render, "unregister_handlers", lambda: calls.append("render"))
     monkeypatch.setattr(
         playback, "unregister_handlers", lambda: calls.append("playback")
+    )
+    monkeypatch.setattr(
+        cuda_reduction,
+        "reset_cuda_module_cache",
+        lambda: calls.append("cuda"),
     )
     monkeypatch.setattr(
         pending_settings, "unregister_handlers", lambda: calls.append("pending")
@@ -1268,6 +1276,7 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
         "render",
         "pending",
         "playback",
+        "cuda",
         "panels",
         "operators",
         "preferences",

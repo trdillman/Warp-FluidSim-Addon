@@ -1361,6 +1361,14 @@ class PressureSolver:
     # Captured CUDA graphs kept alive at once, evicted least-recently-used.
     _PCG_GRAPH_CAPACITY = 8
 
+    def __del__(self):
+        # Cyclic validation/benchmark owners may reach GC without an explicit
+        # release. Never let their native lease outlive the captured graphs.
+        try:
+            self.release()
+        except Exception:
+            pass
+
     def __init__(self, grid, device):
         self.grid = grid
         self.device = device
@@ -1494,6 +1502,26 @@ class PressureSolver:
         self._pcg_native_available = True
         self.last_pcg_native_error = ""
         return True
+
+    def _release_native_pcg_dot(self):
+        """Drop captured graphs before releasing their native kernel lease."""
+        dot = self._pcg_dot
+        self._pcg_dot = None
+        self._pcg_graphs.clear()
+        self._pcg_conditional_graphs.clear()
+        if dot is not None:
+            dot.release()
+
+    def release(self):
+        """Release captured PCG work and its native CUDA module lease."""
+        self._release_native_pcg_dot()
+        self._pcg_voxel_type = None
+        self._pcg_apply_cmd = None
+        self._pcg_update_cmd = None
+        self._pcg_update_p_cmd = None
+        self._pcg_alpha_cmds = None
+        self._pcg_beta_cmds = None
+        self._pcg_pack_cmds = None
 
     def _record_pcg_iterations(self, work_n, batch, start_parity):
         parity = start_parity
@@ -2100,7 +2128,7 @@ class PressureSolver:
                 conditional_graphs = self._get_pcg_conditional_graphs(
                     work_n, check_every, max_iterations, tol_sq)
             except Exception as exc:
-                self._pcg_dot = None
+                self._release_native_pcg_dot()
                 self._pcg_native_available = False
                 self.last_pcg_native_error = f"{type(exc).__name__}: {exc}"
         use_conditional = conditional_graphs is not None

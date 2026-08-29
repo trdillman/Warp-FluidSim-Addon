@@ -117,24 +117,31 @@ def run_benchmark(
     sources = sources if sources is not None else default_benchmark_sources()
 
     solver = FluidSolver(settings)
-    solver.set_sources(sources)
+    try:
+        solver.set_sources(sources)
 
-    result = BenchmarkResult()
-    t_begin = time.perf_counter()
-    for f in range(frames):
-        if f == emit_frames:
-            solver.set_sources([])
-        stats = solver.step_frame()
-        result.step_times.append(stats.step_time)
-        result.active_voxels.append(stats.active_voxels)
-        vps = stats.active_voxels / stats.step_time if stats.step_time > 0 else 0.0
-        result.voxels_per_second.append(vps)
-        result.frames += 1
-        if progress is not None:
-            progress(f + 1, frames, stats)
-    result.total_time = time.perf_counter() - t_begin
-    result.result = "completed"
-    return result
+        result = BenchmarkResult()
+        t_begin = time.perf_counter()
+        for f in range(frames):
+            if f == emit_frames:
+                solver.set_sources([])
+            stats = solver.step_frame()
+            result.step_times.append(stats.step_time)
+            result.active_voxels.append(stats.active_voxels)
+            vps = (
+                stats.active_voxels / stats.step_time
+                if stats.step_time > 0
+                else 0.0
+            )
+            result.voxels_per_second.append(vps)
+            result.frames += 1
+            if progress is not None:
+                progress(f + 1, frames, stats)
+        result.total_time = time.perf_counter() - t_begin
+        result.result = "completed"
+        return result
+    finally:
+        solver.release()
 
 
 def compare_benchmark(current: dict, baseline: dict, perf_tolerance: float = 0.25) -> dict:
@@ -222,5 +229,5 @@ def save_benchmark(path: str, result: dict) -> None:
 
 
 def load_benchmark(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)

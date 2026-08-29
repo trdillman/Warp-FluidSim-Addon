@@ -217,8 +217,12 @@ def test_solver_release_breaks_gpu_owning_backreferences():
     )
     host_frame = SimpleNamespace(solver=solver)
     sourcing = SimpleNamespace(owner=solver)
+    release_calls = []
+    pressure_solver = SimpleNamespace(
+        release=lambda: release_calls.append("pressure"))
     solver.surface = surface
     solver.sourcing = sourcing
+    solver.pressure_solver = pressure_solver
     solver._host_frame_cache = host_frame
 
     solver.release()
@@ -232,6 +236,7 @@ def test_solver_release_breaks_gpu_owning_backreferences():
     assert not hasattr(solver, "surface")
     assert solver.sourcing is None
     assert solver._host_frame_cache is None
+    assert release_calls == ["pressure"]
 
 
 def test_cuda_release_collects_cycles_and_flushes_pool_before_restoring_threshold(

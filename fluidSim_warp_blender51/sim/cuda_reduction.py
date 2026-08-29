@@ -7,11 +7,13 @@ import hashlib
 import inspect
 import os
 import tempfile
+import threading
+from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 
 import warp as wp
 from warp._src import build, context
-
 
 _CUDA_SOURCE = r"""
 extern "C" __global__ void fluid_dot_reduce(
@@ -45,7 +47,50 @@ extern "C" __global__ void fluid_dot_reduce(
 }
 """
 
-_MODULES = {}
+@dataclass
+class _CudaModuleEntry:
+    runtime: object
+    device: object
+    module: object
+    kernel: object
+    references: int = 0
+
+
+class _CudaModuleCache:
+    """Own native modules independently of this module's reloadable globals."""
+
+    def __init__(self):
+        self.entries = {}
+        self.lock = threading.RLock()
+
+    def release(self, key, entry):
+        with self.lock:
+            cached = self.entries.get(key)
+            if cached is not entry:
+                return
+            if cached.references > 1:
+                cached.references -= 1
+                return
+            wp.synchronize_device(cached.device)
+            _unload_native_module(
+                cached.runtime, cached.device, cached.module)
+            del self.entries[key]
+            cached.references = 0
+
+    def reset(self):
+        with self.lock:
+            active = sum(entry.references for entry in self.entries.values())
+            if active:
+                raise RuntimeError(
+                    "Cannot reset native CUDA module cache with "
+                    f"{active} active lease(s)")
+            for key, entry in list(self.entries.items()):
+                wp.synchronize_device(entry.device)
+                _unload_native_module(entry.runtime, entry.device, entry.module)
+                del self.entries[key]
+
+
+_MODULE_CACHE = _CudaModuleCache()
 
 
 def _build_cuda(cu_path, arch, output_path):
@@ -55,11 +100,25 @@ def _build_cuda(cu_path, arch, output_path):
     build.build_cuda(cu_path, arch, output_path, **kwargs)
 
 
-def _load_kernel(device):
-    key = (id(device), int(device.context), device.arch)
-    cached = _MODULES.get(key)
-    if cached is not None:
-        return cached[1:]
+def _module_key(device):
+    """Identify the native runtime/context, independent of device wrappers."""
+    return (id(context.runtime), int(device.context), int(device.arch))
+
+
+def _unload_native_module(runtime, device, module):
+    guard = getattr(device, "context_guard", None)
+    with guard if guard is not None else nullcontext():
+        runtime.core.wp_cuda_unload_module(device.context, module)
+
+
+def _acquire_kernel(device):
+    key = _module_key(device)
+    owner = _MODULE_CACHE
+    with owner.lock:
+        cached = owner.entries.get(key)
+        if cached is not None:
+            cached.references += 1
+            return owner, key, cached
 
     identity = (
         _CUDA_SOURCE,
@@ -86,22 +145,52 @@ def _load_kernel(device):
             except FileNotFoundError:
                 pass
 
-    for attempt in range(2):
-        if not cubin_path.exists():
-            compile_kernel()
-        module = build.load_cuda(str(cubin_path), device)
-        kernel = None
-        if module:
-            kernel = context.runtime.core.wp_cuda_get_kernel(
-                device.context, module, b"fluid_dot_reduce")
-        if kernel:
-            _MODULES[key] = (device, module, kernel)
-            return module, kernel
-        if module:
-            context.runtime.core.wp_cuda_unload_module(device.context, module)
-        if attempt == 0:
-            cubin_path.unlink(missing_ok=True)
+    with owner.lock:
+        cached = owner.entries.get(key)
+        if cached is not None:
+            cached.references += 1
+            return owner, key, cached
+        for attempt in range(2):
+            if not cubin_path.exists():
+                compile_kernel()
+            module = build.load_cuda(str(cubin_path), device)
+            kernel = None
+            try:
+                if module:
+                    kernel = context.runtime.core.wp_cuda_get_kernel(
+                        device.context, module, b"fluid_dot_reduce")
+            except Exception:
+                if module:
+                    _unload_native_module(context.runtime, device, module)
+                raise
+            if kernel:
+                entry = _CudaModuleEntry(
+                    runtime=context.runtime,
+                    device=device,
+                    module=module,
+                    kernel=kernel,
+                    references=1,
+                )
+                owner.entries[key] = entry
+                return owner, key, entry
+            if module:
+                _unload_native_module(context.runtime, device, module)
+            if attempt == 0:
+                cubin_path.unlink(missing_ok=True)
     raise RuntimeError("Failed to load the native CUDA dot-product kernel")
+
+
+def _release_kernel(key, entry, owner=None):
+    (owner or _MODULE_CACHE).release(key, entry)
+
+
+def reset_cuda_module_cache():
+    """Unload orphaned native modules after Solver Session teardown.
+
+    Active leases make reset unsafe because captured CUDA graphs may still
+    reference their kernels. Callers must release the Solver Session first.
+    """
+    _MODULE_CACHE.reset()
 
 
 class CudaDotProduct:
@@ -112,8 +201,20 @@ class CudaDotProduct:
         if not device.is_cuda:
             raise RuntimeError("CudaDotProduct requires a CUDA device")
         self.device = device
-        self._module, self._kernel = _load_kernel(device)
+        self._cache_owner, self._cache_key, self._entry = _acquire_kernel(device)
+        self._module = self._entry.module
+        self._kernel = self._entry.kernel
         self._max_blocks = max(1, int(device.sm_count) * 2)
+
+    def release(self):
+        """Release this reduction's native-module lease exactly once."""
+        entry = getattr(self, "_entry", None)
+        if entry is None:
+            return
+        _release_kernel(self._cache_key, entry, self._cache_owner)
+        self._entry = None
+        self._module = None
+        self._kernel = None
 
     def launch(self, a, b, output, count):
         a_ptr = ctypes.c_void_p(a.ptr)

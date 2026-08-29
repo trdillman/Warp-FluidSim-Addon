@@ -82,6 +82,7 @@ def unregister():
         ("render handlers", "blender.render", "unregister_handlers"),
         ("pending handlers", "blender.pending_settings", "unregister_handlers"),
         ("playback handlers", "blender.playback", "unregister_handlers"),
+        ("native CUDA cache", "sim.cuda_reduction", "reset_cuda_module_cache"),
         ("legacy effect migration handlers", "blender.effects", "unregister_handlers"),
         ("source migration handlers", "blender.sources", "unregister_handlers"),
         ("full viewport settings UI", "blender.ui_view3d", "unregister"),
