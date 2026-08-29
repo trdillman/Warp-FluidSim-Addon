@@ -7,20 +7,20 @@ that a conservative memory estimate guarantees allocation success.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
 import hashlib
 import json
 import math
-from typing import Any, Iterable, Mapping, Optional
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 import numpy as np
 
 from . import constants as C
 from .memory_safety import estimate_solver_bytes, safe_memory_budget
-from .surface_tension_math import (
-    required_sdf_splat_radius_voxels, required_topology_expand_leaves)
 from .quality_contract import resolve_quality
+from .surface_tension_math import required_sdf_splat_radius_voxels, required_topology_expand_leaves
 
 
 class DemandQuality(Enum):
@@ -36,7 +36,7 @@ class CapacityVerdict(Enum):
 
 @dataclass(frozen=True)
 class DemandValue:
-    value: Optional[int]
+    value: int | None
     quality: DemandQuality
     reason: str = ""
 
@@ -54,8 +54,8 @@ class SourceDemand:
 @dataclass(frozen=True)
 class CapacityBlocker:
     code: str
-    required: Optional[int]
-    available: Optional[int]
+    required: int | None
+    available: int | None
     source_ids: tuple[str, ...] = ()
     message: str = ""
 
@@ -174,7 +174,7 @@ def _seed_count(payload: Any) -> int:
         raise ValueError("seed payload has no countable positions") from None
 
 
-def _seed_positions(payload: Any) -> Optional[np.ndarray]:
+def _seed_positions(payload: Any) -> np.ndarray | None:
     positions = getattr(payload, "positions", payload)
     if isinstance(positions, (int, np.integer)):
         return None
@@ -324,52 +324,61 @@ def _signature(settings: Any, demands: tuple[SourceDemand, ...],
     return hashlib.sha256(encoded).hexdigest()
 
 
-def plan_initialization(settings: Any, source_footprints: Iterable[Any],
-                        seed_payloads: Iterable[Any],
-                        collider_footprints: Iterable[Any],
-                        resources: Mapping[str, Any], *,
-                        additional_transaction_bytes: int = 0) -> CapacityPlan:
-    """Plan one initial population without allocating or mutating solver state.
-
-    ``additional_transaction_bytes`` accounts for memory that must remain
-    resident while the candidate is allocated, such as an authoritative live
-    solver during transactional replacement.
-    """
+def _collect_particle_demands(
+        source_footprints: Iterable[Any],
+        seed_payloads: Iterable[Any],
+) -> tuple[tuple[SourceDemand, ...], tuple[Any, ...], int, DemandValue]:
+    """Normalize source and seed particle demand without mutating inputs."""
     sources = tuple(_source_demand(item) for item in source_footprints)
     seeds = tuple(seed_payloads)
     try:
         seed_count = sum(_seed_count(payload) for payload in seeds)
     except ValueError as exc:
         sources += (SourceDemand(
-            "<automatic-seeds>", DemandValue(None, DemandQuality.UNKNOWN, str(exc))),)
+            "<automatic-seeds>",
+            DemandValue(None, DemandQuality.UNKNOWN, str(exc)),
+        ),)
         seed_count = 0
-    particle_demand = _aggregate_particles(sources, seed_count)
+    return sources, seeds, seed_count, _aggregate_particles(sources, seed_count)
 
+
+def _collect_leaf_demand(
+        settings: Any,
+        sources: tuple[SourceDemand, ...],
+        seeds: tuple[Any, ...],
+        collider_footprints: Iterable[Any],
+) -> tuple[tuple[tuple[int, int, int], ...], DemandValue]:
+    """Aggregate source, collider, and seed topology into sparse leaf demand."""
     leaf_coords = {coord for item in sources for coord in item.leaf_coords}
     for footprint in collider_footprints:
         leaf_coords.update(tuple(int(axis) for axis in coord)
                            for coord in getattr(footprint, "leaf_coords", ()))
     leaf_coords.update(_seed_leaf_coords(settings, seeds))
     required_leaf_coords = _expanded_leaf_coords(settings, leaf_coords)
-    leaf_count = len(required_leaf_coords)
-    unknown_leaf_reasons = sorted({
+    unknown_reasons = sorted({
         item.leaf_reason or f"{item.stable_id} leaf demand is unavailable"
         for item in sources if item.leaf_quality is DemandQuality.UNKNOWN
     })
-    if unknown_leaf_reasons:
-        leaf_demand = DemandValue(
-            None, DemandQuality.UNKNOWN, "; ".join(unknown_leaf_reasons))
+    if unknown_reasons:
+        demand = DemandValue(
+            None, DemandQuality.UNKNOWN, "; ".join(unknown_reasons))
     else:
-        leaf_quality = (DemandQuality.UPPER_BOUND
-                        if any(item.leaf_quality is DemandQuality.UPPER_BOUND
-                               for item in sources)
-                        else DemandQuality.EXACT)
-        leaf_demand = DemandValue(leaf_count, leaf_quality)
+        quality = (DemandQuality.UPPER_BOUND
+                   if any(item.leaf_quality is DemandQuality.UPPER_BOUND
+                          for item in sources)
+                   else DemandQuality.EXACT)
+        demand = DemandValue(len(required_leaf_coords), quality)
+    return required_leaf_coords, demand
 
+
+def _capacity_budget(
+        settings: Any,
+        sources: tuple[SourceDemand, ...],
+        resources: Mapping[str, Any],
+        additional_transaction_bytes: int,
+) -> tuple[int, int, int, int]:
+    """Return staging, scratch, estimated, and safe-budget byte counts."""
     staging_bytes = sum(item.staging_bytes for item in sources)
-    # WP3 owns one int32 scratch occupancy entry per allocated sparse voxel.
-    additional_transaction_bytes = max(
-        0, int(additional_transaction_bytes))
     transaction_scratch_bytes = (
         max(1, int(_value(settings, "leaf_capacity", 0))) * 512 * 4
         + additional_transaction_bytes)
@@ -381,30 +390,46 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
         int(resources.get("gpu_free_bytes", 0)),
         additional_transaction_bytes,
     ))
+    return (
+        staging_bytes,
+        transaction_scratch_bytes,
+        estimated_bytes,
+        budget_bytes,
+    )
+
+
+def _capacity_blockers(
+        settings: Any,
+        sources: tuple[SourceDemand, ...],
+        particle_demand: DemandValue,
+        leaf_demand: DemandValue,
+        estimated_bytes: int,
+        budget_bytes: int,
+) -> tuple[CapacityBlocker, ...]:
+    """Construct the complete admission verdict evidence."""
     blockers: list[CapacityBlocker] = []
     source_ids = tuple(item.stable_id for item in sources)
+    particle_capacity = int(_value(settings, "max_particles", 0))
+    leaf_capacity = int(_value(settings, "leaf_capacity", 0))
     if particle_demand.quality is DemandQuality.UNKNOWN:
         blockers.append(CapacityBlocker(
-            "PARTICLE_DEMAND_UNKNOWN", None,
-            int(_value(settings, "max_particles", 0)), source_ids,
+            "PARTICLE_DEMAND_UNKNOWN", None, particle_capacity, source_ids,
             particle_demand.reason or "Particle demand cannot be proven safe.",
         ))
-    elif int(particle_demand.value or 0) > int(_value(settings, "max_particles", 0)):
+    elif int(particle_demand.value or 0) > particle_capacity:
         blockers.append(CapacityBlocker(
             "PARTICLE_CAPACITY", particle_demand.value,
-            int(_value(settings, "max_particles", 0)), source_ids,
+            particle_capacity, source_ids,
             "Initial seeds and liquid sources exceed particle capacity.",
         ))
     if leaf_demand.quality is DemandQuality.UNKNOWN:
         blockers.append(CapacityBlocker(
-            "LEAF_DEMAND_UNKNOWN", None,
-            int(_value(settings, "leaf_capacity", 0)), source_ids,
+            "LEAF_DEMAND_UNKNOWN", None, leaf_capacity, source_ids,
             leaf_demand.reason or "Sparse leaf demand cannot be proven safe.",
         ))
-    elif leaf_count > int(_value(settings, "leaf_capacity", 0)):
+    elif int(leaf_demand.value or 0) > leaf_capacity:
         blockers.append(CapacityBlocker(
-            "LEAF_CAPACITY", leaf_count,
-            int(_value(settings, "leaf_capacity", 0)), source_ids,
+            "LEAF_CAPACITY", leaf_demand.value, leaf_capacity, source_ids,
             "Initial source topology exceeds sparse leaf capacity.",
         ))
     if budget_bytes <= 0 or estimated_bytes > budget_bytes:
@@ -412,7 +437,35 @@ def plan_initialization(settings: Any, source_footprints: Iterable[Any],
             "MEMORY_ESTIMATE", estimated_bytes, budget_bytes, source_ids,
             "Conservative estimated allocation exceeds the live VRAM budget.",
         ))
+    return tuple(blockers)
 
+
+def plan_initialization(settings: Any, source_footprints: Iterable[Any],
+                        seed_payloads: Iterable[Any],
+                        collider_footprints: Iterable[Any],
+                        resources: Mapping[str, Any], *,
+                        additional_transaction_bytes: int = 0) -> CapacityPlan:
+    """Plan one initial population without allocating or mutating solver state.
+
+    ``additional_transaction_bytes`` accounts for memory that must remain
+    resident while the candidate is allocated, such as an authoritative live
+    solver during transactional replacement.
+    """
+    sources, seeds, seed_count, particle_demand = _collect_particle_demands(
+        source_footprints, seed_payloads)
+    required_leaf_coords, leaf_demand = _collect_leaf_demand(
+        settings, sources, seeds, collider_footprints)
+    additional_transaction_bytes = max(0, int(additional_transaction_bytes))
+    (
+        staging_bytes,
+        transaction_scratch_bytes,
+        estimated_bytes,
+        budget_bytes,
+    ) = _capacity_budget(
+        settings, sources, resources, additional_transaction_bytes)
+    blockers = _capacity_blockers(
+        settings, sources, particle_demand, leaf_demand,
+        estimated_bytes, budget_bytes)
     signature = _signature(
         settings, sources, seed_count, leaf_demand,
         additional_transaction_bytes)
@@ -454,6 +507,184 @@ def _adjustment_score(base: Mapping[str, Any], changes: Mapping[str, Any]) -> fl
     return score + max(0, semantic_count - 1) * 0.02
 
 
+def _estimate_candidate_bytes(
+        candidate: Mapping[str, Any], plan: CapacityPlan) -> int:
+    return int(
+        estimate_solver_bytes(candidate) + plan.staging_bytes
+        + max(1, int(candidate["leaf_capacity"])) * 512 * 4
+        + plan.additional_transaction_bytes)
+
+
+def _capacity_only_suggestion(
+        plan: CapacityPlan,
+        base: Mapping[str, Any],
+) -> CapacitySuggestion | None:
+    if plan.particle_demand.value is None or plan.leaf_demand.value is None:
+        return None
+    required = {
+        "max_particles": max(
+            int(base.get("max_particles") or 0),
+            int(plan.particle_demand.value)),
+        "leaf_capacity": max(
+            int(base.get("leaf_capacity") or 0),
+            int(plan.leaf_demand.value)),
+    }
+    changes = {name: value for name, value in required.items()
+               if value != base.get(name)}
+    candidate = dict(base)
+    candidate.update(required)
+    estimate = _estimate_candidate_bytes(candidate, plan)
+    if not changes or estimate > plan.budget_bytes:
+        return None
+    return CapacitySuggestion(
+        "Preserve authored domain and resolution", changes, estimate,
+        int(plan.budget_bytes),
+        ("Raises only the fixed GPU capacities required by this scene.",),
+        key="preserve_simulation", priority=0,
+        adjustment_score=_adjustment_score(base, changes),
+    )
+
+
+def _tightened_domain_candidate(
+        plan: CapacityPlan,
+        base: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if not plan.required_leaf_coords:
+        return None
+    h = max(1.0e-4, float(base["voxel_size"]))
+    authored_min = tuple(float(value) for value in base["domain_min"])
+    authored_max = tuple(float(value) for value in base["domain_max"])
+    leaf_min = tuple(min(coord[axis] for coord in plan.required_leaf_coords)
+                     for axis in range(3))
+    leaf_max = tuple(max(coord[axis] for coord in plan.required_leaf_coords)
+                     for axis in range(3))
+    domain_min = tuple(max(
+        authored_min[axis], authored_min[axis] + leaf_min[axis] * 8.0 * h)
+        for axis in range(3))
+    domain_max = tuple(min(
+        authored_max[axis],
+        authored_min[axis] + (leaf_max[axis] + 1) * 8.0 * h)
+        for axis in range(3))
+    if domain_min == authored_min and domain_max == authored_max:
+        return None
+    candidate = dict(base)
+    candidate.update({
+        "domain_min": domain_min,
+        "domain_max": domain_max,
+        "max_particles": max(
+            int(base["max_particles"]),
+            int(plan.particle_demand.value or 0)),
+        "leaf_capacity": max(
+            int(base["leaf_capacity"]),
+            int(plan.leaf_demand.value or 0)),
+    })
+    return candidate
+
+
+def _tightened_domain_suggestion(
+        plan: CapacityPlan,
+        base: Mapping[str, Any],
+        candidate: Mapping[str, Any] | None,
+) -> CapacitySuggestion | None:
+    if candidate is None:
+        return None
+    estimate = _estimate_candidate_bytes(candidate, plan)
+    if estimate > plan.budget_bytes:
+        return None
+    changes = {
+        name: candidate[name]
+        for name in ("domain_min", "domain_max", "max_particles", "leaf_capacity")
+        if candidate[name] != base.get(name)
+    }
+    return CapacitySuggestion(
+        "Tighten empty X/Y/Z domain margins", changes,
+        estimate, int(plan.budget_bytes),
+        ("Changes domain bounds; review collision and boundary margins.",
+         "Only the displayed empty margins will be changed after approval."),
+        key="tighten_empty_margins", priority=10,
+        adjustment_score=_adjustment_score(base, changes),
+    )
+
+
+def _coarser_resolution_suggestion(
+        plan: CapacityPlan,
+        base: Mapping[str, Any],
+) -> CapacitySuggestion | None:
+    """Find the first bounded coarser-resolution candidate within budget."""
+    candidate = dict(base)
+    original_h = max(1.0e-4, float(candidate.get("voxel_size") or 0.1))
+    for step in range(1, 33):
+        candidate["voxel_size"] = original_h * (1.05 ** step)
+        candidate["max_particles"] = max(
+            int(candidate.get("max_particles") or 0),
+            int(plan.particle_demand.value or 0),
+        )
+        domain_leaf_count = math.prod(_leaf_dims(candidate))
+        required_leaves = min(
+            int(plan.leaf_demand.value or 0), domain_leaf_count)
+        candidate["leaf_capacity"] = max(
+            int(candidate.get("leaf_capacity") or 0), required_leaves)
+        estimate = _estimate_candidate_bytes(candidate, plan)
+        if estimate > plan.budget_bytes:
+            continue
+        changes = {
+            name: candidate[name]
+            for name in ("voxel_size", "max_particles", "leaf_capacity")
+            if candidate[name] != base.get(name)
+        }
+        if not changes:
+            return None
+        return CapacitySuggestion(
+            "Preserve bounds with coarser resolution", changes,
+            estimate, int(plan.budget_bytes),
+            ("Increases voxel size and reduces spatial resolution.",),
+            key="coarser_resolution", priority=10,
+            adjustment_score=_adjustment_score(base, changes),
+        )
+    return None
+
+
+def _balanced_suggestion(
+        plan: CapacityPlan,
+        base: Mapping[str, Any],
+        tightened: Mapping[str, Any] | None,
+) -> CapacitySuggestion | None:
+    if tightened is None:
+        return None
+    balanced = dict(tightened)
+    original_h = max(1.0e-4, float(base.get("voxel_size") or 0.1))
+    balanced["voxel_size"] = original_h * 1.10
+    balanced["leaf_capacity"] = max(
+        int(plan.leaf_demand.value or 0),
+        min(int(base["leaf_capacity"]), math.prod(_leaf_dims(balanced))))
+    estimate = _estimate_candidate_bytes(balanced, plan)
+    if estimate > plan.budget_bytes:
+        return None
+    changes = {
+        name: balanced[name]
+        for name in ("domain_min", "domain_max", "voxel_size",
+                     "max_particles", "leaf_capacity")
+        if balanced[name] != base.get(name)
+    }
+    return CapacitySuggestion(
+        "Balanced bounds, resolution, and capacity", changes,
+        estimate, int(plan.budget_bytes),
+        ("Combines a 10% voxel-size increase with empty-margin tightening.",
+         "Review all authored tradeoffs before applying."),
+        key="balanced", priority=10,
+        adjustment_score=_adjustment_score(base, changes),
+    )
+
+
+def _rank_suggestions(
+        suggestions: Iterable[CapacitySuggestion | None],
+) -> tuple[CapacitySuggestion, ...]:
+    return tuple(sorted(
+        (item for item in suggestions if item is not None),
+        key=lambda item: (item.priority, item.adjustment_score, item.label),
+    ))
+
+
 def suggest_configurations(
         plan: CapacityPlan, settings: Any) -> tuple[CapacitySuggestion, ...]:
     """Return ranked, non-mutating alternatives for a blocked plan.
@@ -469,142 +700,10 @@ def suggest_configurations(
         # No automatic parameter edit can make an unbounded source truthful.
         return ()
     base = _settings_dict(settings)
-    budget = int(plan.budget_bytes)
-    suggestions: list[CapacitySuggestion] = []
-
-    if plan.particle_demand.value is not None and plan.leaf_demand.value is not None:
-        required = {
-            "max_particles": max(int(base.get("max_particles") or 0),
-                                 int(plan.particle_demand.value)),
-            "leaf_capacity": max(int(base.get("leaf_capacity") or 0),
-                                 int(plan.leaf_demand.value)),
-        }
-        changes = {name: value for name, value in required.items()
-                   if value != base.get(name)}
-        candidate = dict(base)
-        candidate.update(required)
-        estimate = (estimate_solver_bytes(candidate) + plan.staging_bytes
-                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4
-                    + plan.additional_transaction_bytes)
-        if changes and estimate <= budget:
-            suggestions.append(CapacitySuggestion(
-                "Preserve authored domain and resolution", changes, int(estimate),
-                int(budget), ("Raises only the fixed GPU capacities required by this scene.",),
-                key="preserve_simulation", priority=0,
-                adjustment_score=_adjustment_score(base, changes),
-            ))
-
-    tightened = None
-    if plan.required_leaf_coords:
-        h = max(1.0e-4, float(base["voxel_size"]))
-        authored_min = tuple(float(value) for value in base["domain_min"])
-        authored_max = tuple(float(value) for value in base["domain_max"])
-        leaf_min = tuple(min(coord[axis] for coord in plan.required_leaf_coords)
-                         for axis in range(3))
-        leaf_max = tuple(max(coord[axis] for coord in plan.required_leaf_coords)
-                         for axis in range(3))
-        domain_min = tuple(max(
-            authored_min[axis], authored_min[axis] + leaf_min[axis] * 8.0 * h)
-            for axis in range(3))
-        domain_max = tuple(min(
-            authored_max[axis],
-            authored_min[axis] + (leaf_max[axis] + 1) * 8.0 * h)
-            for axis in range(3))
-        if domain_min != authored_min or domain_max != authored_max:
-            tightened = dict(base)
-            tightened.update({
-                "domain_min": domain_min,
-                "domain_max": domain_max,
-                "max_particles": max(
-                    int(base["max_particles"]),
-                    int(plan.particle_demand.value or 0)),
-                "leaf_capacity": max(
-                    int(base["leaf_capacity"]),
-                    int(plan.leaf_demand.value or 0)),
-            })
-            estimate = (estimate_solver_bytes(tightened) + plan.staging_bytes
-                        + int(tightened["leaf_capacity"]) * 512 * 4
-                        + plan.additional_transaction_bytes)
-            if estimate <= budget:
-                changes = {
-                    "domain_min": domain_min, "domain_max": domain_max,
-                    "max_particles": tightened["max_particles"],
-                    "leaf_capacity": tightened["leaf_capacity"],
-                }
-                changes = {name: value for name, value in changes.items()
-                           if value != base.get(name)}
-                suggestions.append(CapacitySuggestion(
-                    "Tighten empty X/Y/Z domain margins", changes,
-                    int(estimate), int(budget),
-                    ("Changes domain bounds; review collision and boundary margins.",
-                     "Only the displayed empty margins will be changed after approval."),
-                    key="tighten_empty_margins", priority=10,
-                    adjustment_score=_adjustment_score(base, changes),
-                ))
-
-    # Bounded monotonic search.  This preserves authored bounds and density but
-    # trades spatial resolution for fewer leaves and a smaller surface grid.
-    candidate = dict(base)
-    original_h = max(1.0e-4, float(candidate.get("voxel_size") or 0.1))
-    for step in range(1, 33):
-        candidate["voxel_size"] = original_h * (1.05 ** step)
-        if plan.particle_demand.value is not None:
-            candidate["max_particles"] = max(
-                int(candidate.get("max_particles") or 0),
-                int(plan.particle_demand.value),
-            )
-        # A larger voxel size cannot increase the number of domain leaf cells.
-        domain_leaf_count = math.prod(_leaf_dims(candidate))
-        required_leaves = min(int(plan.leaf_demand.value or 0), domain_leaf_count)
-        candidate["leaf_capacity"] = max(
-            int(candidate.get("leaf_capacity") or 0), required_leaves)
-        estimate = (estimate_solver_bytes(candidate) + plan.staging_bytes
-                    + max(1, int(candidate["leaf_capacity"])) * 512 * 4
-                    + plan.additional_transaction_bytes)
-        if estimate <= budget:
-            changes = {
-                name: candidate[name]
-                for name in ("voxel_size", "max_particles", "leaf_capacity")
-                if candidate[name] != base.get(name)
-            }
-            if changes:
-                suggestions.append(CapacitySuggestion(
-                    "Preserve bounds with coarser resolution", changes,
-                    int(estimate), int(budget),
-                    ("Increases voxel size and reduces spatial resolution.",),
-                    key="coarser_resolution", priority=10,
-                    adjustment_score=_adjustment_score(base, changes),
-                ))
-            break
-
-    # Balanced candidates combine only bounded, explicit changes and retain
-    # the old demand as an upper bound.  They are intentionally suggestions,
-    # not a hidden auto-tuning path.
-    if tightened is not None:
-        balanced = dict(tightened)
-        balanced["voxel_size"] = original_h * 1.10
-        balanced["leaf_capacity"] = max(
-            int(plan.leaf_demand.value or 0),
-            min(int(base["leaf_capacity"]), math.prod(_leaf_dims(balanced))))
-        estimate = (estimate_solver_bytes(balanced) + plan.staging_bytes
-                    + int(balanced["leaf_capacity"]) * 512 * 4
-                    + plan.additional_transaction_bytes)
-        if estimate <= budget:
-            changes = {
-                name: balanced[name]
-                for name in ("domain_min", "domain_max", "voxel_size",
-                             "max_particles", "leaf_capacity")
-                if balanced[name] != base.get(name)
-            }
-            suggestions.append(CapacitySuggestion(
-                "Balanced bounds, resolution, and capacity", changes,
-                int(estimate), int(budget),
-                ("Combines a 10% voxel-size increase with empty-margin tightening.",
-                 "Review all authored tradeoffs before applying."),
-                key="balanced", priority=10,
-                adjustment_score=_adjustment_score(base, changes),
-            ))
-    return tuple(sorted(
-        suggestions,
-        key=lambda item: (item.priority, item.adjustment_score, item.label),
+    tightened = _tightened_domain_candidate(plan, base)
+    return _rank_suggestions((
+        _capacity_only_suggestion(plan, base),
+        _tightened_domain_suggestion(plan, base, tightened),
+        _coarser_resolution_suggestion(plan, base),
+        _balanced_suggestion(plan, base, tightened),
     ))
