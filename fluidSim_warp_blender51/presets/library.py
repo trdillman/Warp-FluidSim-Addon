@@ -44,11 +44,17 @@ def _root_package() -> str:
 def user_preset_dir(*, create: bool = False) -> Path:
     import bpy
 
-    return Path(
-        bpy.utils.extension_path_user(
-            _root_package(), path="presets", create=create
+    package = _root_package()
+    if package.startswith("bl_ext."):
+        return Path(
+            bpy.utils.extension_path_user(
+                package, path="presets", create=create
+            )
         )
-    )
+    directory = Path(bpy.utils.user_resource("CONFIG")) / package / "presets"
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 def _read(path: Path) -> PresetV1:

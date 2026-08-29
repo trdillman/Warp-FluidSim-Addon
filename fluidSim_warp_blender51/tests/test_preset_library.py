@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -72,6 +73,40 @@ def test_discovery_tolerates_only_unavailable_user_profile(monkeypatch, error):
     monkeypatch.setattr(library, "user_presets", lambda _directory=None: (_ for _ in ()).throw(error))
 
     assert library.discover_presets() == library.built_in_presets()
+
+
+def test_user_preset_dir_supports_legacy_addon_loading(monkeypatch, tmp_path):
+    utils = SimpleNamespace(
+        user_resource=lambda resource_type: str(tmp_path),
+        extension_path_user=lambda *args, **kwargs: pytest.fail(
+            "legacy add-on must not use the extension-only storage API"
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", SimpleNamespace(utils=utils))
+
+    directory = library.user_preset_dir(create=True)
+
+    assert directory == tmp_path / "fluidsim_testpkg" / "presets"
+    assert directory.is_dir()
+
+
+def test_user_preset_dir_uses_extension_namespace_when_available(
+        monkeypatch, tmp_path):
+    calls = []
+    utils = SimpleNamespace(
+        extension_path_user=lambda package, **kwargs: (
+            calls.append((package, kwargs)) or str(tmp_path)
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", SimpleNamespace(utils=utils))
+    monkeypatch.setattr(
+        library, "__package__", "bl_ext.user_default.fluidsim.presets"
+    )
+
+    assert library.user_preset_dir(create=True) == tmp_path
+    assert calls == [
+        ("bl_ext.user_default.fluidsim", {"path": "presets", "create": True})
+    ]
 
 
 def test_apply_preset_rolls_back_on_assignment_failure():
