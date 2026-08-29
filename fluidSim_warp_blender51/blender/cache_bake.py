@@ -38,12 +38,13 @@ def run_synchronous(
     )
     controller = BakeController(
         backend=backend, progress_callback=progress_callback)
-    register_active_bake(scene, controller)
     try:
         if resume:
             controller.resume(scene, end=end)
         else:
             controller.start(scene, start, end, restart=restart)
+        controller.reserve_cache_path(backend.cache_path(scene))
+        register_active_bake(scene, controller)
         while controller.status in {
             BakeStatus.INITIALIZING,
             BakeStatus.RUNNING,

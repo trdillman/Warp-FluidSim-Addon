@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from fluidsim_testpkg.blender.production_bake import BakeController, BakeStatus
 from fluidsim_testpkg.io.cache_schema import CacheManifestV2, ResumeDecision
@@ -121,3 +124,62 @@ def test_invalid_range_and_overlapping_start_are_rejected():
     controller.start(object(), 1, 2)
     with pytest.raises(RuntimeError, match="already active"):
         controller.start(object(), 1, 2)
+
+
+def test_public_synchronous_bake_reserves_cache_path_before_initialization(
+        monkeypatch, tmp_path):
+    from fluidsim_testpkg.blender import cache_bake, production_bake
+
+    cache_path = tmp_path / "cache"
+    active_during_initialize = []
+    registration_state = []
+
+    class Backend:
+        def __init__(self, **_kwargs):
+            self.base_dir = Path()
+
+        def cache_path(self, _scene):
+            return cache_path
+
+        def initialize(self, _scene, start, _end, **_kwargs):
+            active_during_initialize.append(
+                production_bake.cache_path_is_active(cache_path))
+            self.base_dir = cache_path
+            return start
+
+        def step_and_commit(self, _scene, _frame):
+            pass
+
+        def finish(self, _scene):
+            pass
+
+        def cancel(self, _scene):
+            pass
+
+        def fail(self, _scene, _error):
+            pass
+
+    monkeypatch.setattr(production_bake, "ProductionBakeBackend", Backend)
+    real_register = production_bake.register_active_bake
+
+    def register(scene_arg, controller):
+        registration_state.append(
+            (controller.status, controller._reserved_cache_path))
+        return real_register(scene_arg, controller)
+
+    monkeypatch.setattr(production_bake, "register_active_bake", register)
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            bake_start=1,
+            bake_end=1,
+            checkpoint_interval=1,
+            cache_compress=False,
+        ))
+
+    result = cache_bake.run_synchronous(scene)
+
+    assert active_during_initialize == [True]
+    assert registration_state == [
+        (production_bake.BakeStatus.INITIALIZING, cache_path.resolve())]
+    assert result.status is production_bake.BakeStatus.COMPLETE
+    assert production_bake.cache_path_is_active(cache_path) is False

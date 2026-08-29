@@ -7,7 +7,7 @@
 - Scan boundary: commits after the automation boundary `2026-08-26T14:38:25Z`, plus the required ordered coverage pass.
 - Initial HEAD: `8c6dbd20f07512195782f953dce3cd3a4a7ccbe7`.
 - A concurrent documentation commit advanced HEAD during the scan to `6e65adfc2197b31964b0a6787c8622f50027fac5`; it changes only `AGENTS.md` and was checked separately.
-- Pre-existing untracked planning/source files and concurrent unstaged code/demo edits were preserved. Only this report, the targeted loader catch, and its regression fixtures belong to this scan.
+- Pre-existing untracked planning/source files and concurrent unstaged code/demo edits were preserved. Only this report, the targeted loader/bake fixes, and their regression fixtures belong to this scan.
 
 ## Ordered review coverage
 
@@ -15,7 +15,7 @@
 2. `8c6dbd2` — species-v2 reconciliation plan: current implementation/candidate separation is explicit; no implementation bug found.
 3. `3fa56cb` — swarm completion plan and claim matrix: reviewed for evidence drift; one report-only finding below.
 4. `72733fb` — `pytest.ini` and operator-panel test isolation: package roots and submodule-identity assertion are coherent; no defect found.
-5. `fe9c9e4` — all 24 changed production, test, and review/spec paths: one malformed-user-preset regression reproduced and fixed below; no second new defect was established.
+5. `fe9c9e4` — all 24 changed production, test, and review/spec paths: the malformed-user-preset regression and a cross-file public bake-lease gap were reproduced and fixed below; no other new defect was established.
 6. Whole package inventory: all 252 tracked files under `fluidSim_warp_blender51/` and `fluidSim_synth/` were included in the coverage ledger. All 193 Python files parsed successfully; 19 JSON files parsed successfully; the tracked `.fseffect` archive passed ZIP integrity checking; `compileall` passed. Binary demo assets were preserved and not semantically re-authored.
 
 ## Findings, highest severity first
@@ -27,6 +27,12 @@
 Minimal fix: catch `TypeError` at the existing loader boundary. Added regression fixtures to `tests/test_snippet_library.py` for both malformed shapes.
 
 Evidence: the pre-fix reproduction raised `TypeError: 'int' object is not iterable` at `_normalized_preset_arguments`; after the fix, the malformed files are skipped and valid preset round-trip behavior remains green.
+
+### P2 — fixed: public synchronous bake did not hold its cache lease before initialization
+
+`fluidSim_warp_blender51/blender/cache_bake.py` registered a new `BakeController` while it was still `IDLE`, never reserved `backend.cache_path(scene)`, and only then called `start()`/`resume()`. `production_bake._active_cache_path()` consequently had no pre-initialization path to expose for this public workflow. The operator-owned modal path already starts/resumes, reserves, and registers in that order, so the defect was limited to the synchronous compatibility path.
+
+Minimal fix: start/resume first, reserve the resolved backend cache path, then register the active controller. Added a fake-backend regression asserting registration sees `INITIALIZING` plus the resolved lease and that initialization observes the active cache path. This protects cache-mutator guards and duplicate-path detection during backend setup.
 
 ### P2 — report-only: historical completion claims are not pinned to proof
 
@@ -45,7 +51,8 @@ The full Python suite reached `1133 passed, 3 failed`. The failures were `test_r
 ## Verification and limits
 
 - Passed: `python -m compileall -q fluidSim_warp_blender51 fluidSim_synth`.
-- Passed: `python -m pytest -q fluidSim_warp_blender51/tests` → `397 passed`.
+- Passed: `python -m pytest -q fluidSim_warp_blender51/tests` → `398 passed`.
+- Passed: `python -m pytest -q fluidSim_warp_blender51/tests/test_bake_state_machine.py tests/test_snippet_library.py` → `45 passed`.
 - Passed: complete scan-focused regression set → `246 passed`.
 - Passed: `python -m pytest -q tests/test_snippet_library.py tests/test_performance_hotpath_contracts.py` → `53 passed`.
 - The full suite was run on a moving worktree and is not a clean exact-HEAD receipt. Its three order-sensitive failures remain reported above.
