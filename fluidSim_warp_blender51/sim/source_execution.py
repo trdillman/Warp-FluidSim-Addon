@@ -1310,10 +1310,19 @@ class CompiledSourceExecution:
         life=0.0,
         use_lifespan=False,
     ):
-        """Append one particle packet and return exact admission truth."""
+        """Append one particle packet and return exact admission truth.
+
+        Supply either one constant ``velocity`` or per-particle ``velocities``.
+        Providing both is ambiguous and rejected before device work begins.
+        """
+        constant_velocity = tuple(float(component) for component in velocity)
+        if velocities is not None and constant_velocity != (0.0, 0.0, 0.0):
+            raise ValueError(
+                "direct injection accepts either velocity or velocities, not both"
+            )
         packet = DirectInjectionPacket(
             positions=positions,
-            velocity=tuple(velocity),
+            velocity=constant_velocity,
             velocities=velocities,
             temperature=float(temperature),
             viscosity=float(viscosity),
@@ -1341,11 +1350,13 @@ class CompiledSourceExecution:
         """Return the legacy lossy count: final total, or zero for refusal/empty.
 
         Prefer :meth:`inject_particles`; this mapping cannot distinguish an
-        admitted empty request from a refused transaction.
+        admitted empty request from a refused transaction. When both velocity
+        forms are supplied, this compatibility adapter preserves the former
+        precedence rule by discarding the constant velocity.
         """
         result = self.inject_particles(
             positions,
-            velocity=velocity,
+            velocity=(0.0, 0.0, 0.0) if velocities is not None else velocity,
             velocities=velocities,
             temperature=temperature,
             viscosity=viscosity,

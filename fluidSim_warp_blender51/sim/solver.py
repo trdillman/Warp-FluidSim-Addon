@@ -2275,8 +2275,9 @@ class FluidSolver:
                          source_id=0, life=0.0, use_lifespan=False):
         """Append external world-space points and return exact admission truth.
 
-        ``positions``: (N,3) array-like. Optional per-particle ``velocities``
-        override the constant ``velocity``. Uses fluidSimSourceParticles.
+        ``positions``: (N,3) array-like. Supply either constant ``velocity`` or
+        per-particle ``velocities``; supplying both is rejected. Uses
+        fluidSimSourceParticles.
         """
         return self.sourcing.inject_particles(
             positions,

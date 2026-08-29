@@ -519,3 +519,24 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     assert pipeline.inject_particles_legacy_total([]) == 0
     assert len(launches) == 3
     assert owner.particles.refresh_calls == 2
+
+
+def test_inject_particles_rejects_overlapping_velocity_inputs(monkeypatch):
+    _arrays, launches = _record_warp(monkeypatch)
+    pipeline = _pipeline(_owner(refreshed_count=[0, 1]))
+    positions = np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
+    velocities = np.array([[4.0, 5.0, 6.0]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="either velocity or velocities"):
+        pipeline.inject_particles(
+            positions,
+            velocity=(1.0, 2.0, 3.0),
+            velocities=velocities,
+        )
+
+    assert launches == []
+    assert pipeline.inject_particles_legacy_total(
+        positions,
+        velocity=(1.0, 2.0, 3.0),
+        velocities=velocities,
+    ) == 1
