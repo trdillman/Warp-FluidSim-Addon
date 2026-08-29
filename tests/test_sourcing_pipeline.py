@@ -492,7 +492,9 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
         temperature=2.0,
     )
 
-    assert result == 2
+    assert result.admitted is True
+    assert result.emitted == 2
+    assert result.total == 2
     assert len(arrays) == 1
     assert [kernel for kernel, _ in launches] == [
         sourcing.k_add_emission_demand,
@@ -511,6 +513,9 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
         total=2,
     )
 
-    assert pipeline.inject_particles([]) == 0
+    empty = pipeline.inject_particles([])
+    assert empty.admitted is True
+    assert empty.emitted == 0
+    assert pipeline.inject_particles_legacy_total([]) == 0
     assert len(launches) == 3
     assert owner.particles.refresh_calls == 2

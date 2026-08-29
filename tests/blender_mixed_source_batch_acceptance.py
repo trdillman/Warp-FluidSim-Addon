@@ -122,8 +122,9 @@ def main():
 
     solver = FluidSolver(settings(3))
     try:
-        assert solver.inject_particles(
-            np.asarray(((0.0, 0.0, 0.5),), np.float32)) == 1
+        injection = solver.inject_particles(
+            np.asarray(((0.0, 0.0, 0.5),), np.float32))
+        assert injection.admitted and injection.emitted == 1
         solver.particles.host_count = 0
         packets = (
             DirectInjectionPacket(np.asarray(

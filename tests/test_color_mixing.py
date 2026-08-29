@@ -25,11 +25,11 @@ def test_mixing_blends_existing_particle_colors_in_one_neighborhood():
         species_mixing_rate=20.0,
     ))
     try:
-        solver.inject_particles_exact(
+        solver.inject_particles(
             [(0.50, 0.50, 0.50)],
             color=(1.0, 0.0, 0.0, 1.0),
         )
-        solver.inject_particles_exact(
+        solver.inject_particles(
             [(0.51, 0.50, 0.50)],
             color=(0.0, 0.0, 1.0, 1.0),
         )

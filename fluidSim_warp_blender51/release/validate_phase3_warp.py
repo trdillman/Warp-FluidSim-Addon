@@ -101,7 +101,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
         [[0.0, 1.0, 0.0], [0.0, 2.0, 0.0], [0.0, 3.0, 0.0]],
         dtype=np.float32,
     )
-    injected = pipeline.inject_particles_exact(
+    injected = pipeline.inject_particles(
         positions,
         velocities=velocities,
         temperature=0.25,

@@ -2262,7 +2262,8 @@ class FluidSolver:
                                velocities=None, temperature=0.0, viscosity=0.0,
                                density=1.0, color=(0.1, 0.45, 1.0, 1.0),
                                source_id=0, life=0.0, use_lifespan=False):
-        return self.sourcing.inject_particles_exact(
+        """Compatibility alias for :meth:`inject_particles`."""
+        return self.inject_particles(
             positions, velocity=velocity, velocities=velocities,
             temperature=temperature, viscosity=viscosity, density=density,
             color=color, source_id=source_id,
@@ -2272,7 +2273,7 @@ class FluidSolver:
                          velocities=None, temperature=0.0, viscosity=0.0,
                          density=1.0, color=(0.1, 0.45, 1.0, 1.0),
                          source_id=0, life=0.0, use_lifespan=False):
-        """Append external world-space points as liquid particles.
+        """Append external world-space points and return exact admission truth.
 
         ``positions``: (N,3) array-like. Optional per-particle ``velocities``
         override the constant ``velocity``. Uses fluidSimSourceParticles.
@@ -2290,8 +2291,26 @@ class FluidSolver:
             use_lifespan=use_lifespan,
         )
 
-    # -- output ---------------------------------------------------------------
+    def inject_particles_legacy_total(self, positions, velocity=(0.0, 0.0, 0.0),
+                                      velocities=None, temperature=0.0, viscosity=0.0,
+                                      density=1.0, color=(0.1, 0.45, 1.0, 1.0),
+                                      source_id=0, life=0.0, use_lifespan=False):
+        """Return the legacy lossy total count; prefer :meth:`inject_particles`."""
+        return self.sourcing.inject_particles_legacy_total(
+            positions,
+            velocity=velocity,
+            velocities=velocities,
+            temperature=temperature,
+            viscosity=viscosity,
+            density=density,
+            color=color,
+            source_id=source_id,
+            life=life,
+            use_lifespan=use_lifespan,
+        )
 
+
+    # -- output ---------------------------------------------------------------
     def host_frame(self):
         """Return the lazy host snapshot for the current solver frame."""
         if (self._host_frame_cache is None or

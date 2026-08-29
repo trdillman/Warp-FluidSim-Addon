@@ -70,11 +70,11 @@ def main():
     assert approved == {"FINISHED"}, approved
     assert scene_bridge.session().active
     assert not scene_bridge.current_error(scene)
-    injected = scene_bridge.session().solver.inject_particles(np.asarray([
+    injection = scene_bridge.session().solver.inject_particles(np.asarray([
         (-0.1, -0.1, 0.5), (0.1, -0.1, 0.5),
         (-0.1, 0.1, 0.5), (0.1, 0.1, 0.5),
     ], dtype=np.float32))
-    assert injected == 4, injected
+    assert injection.admitted and injection.emitted == 4, injection
     result = bpy.ops.fluidsim.step()
     print("MEMORY-GATE-STEP", result, scene_bridge.session().active,
           scene_bridge.session().solver.grid.active_leaf_count)

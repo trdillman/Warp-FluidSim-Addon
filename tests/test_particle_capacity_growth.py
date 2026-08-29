@@ -226,7 +226,8 @@ def test_growth_failure_policy_preserves_source_batch_for_retry(
     )
     points = np.asarray(((0.0, 0.0, 0.0),) * 3, np.float32)
 
-    assert pipeline.inject_particles(points) == 0
+    injection = pipeline.inject_particles(points)
+    assert not injection.admitted and injection.emitted == 0
     result = pipeline.last_apply_result
     assert result["admitted"] is False
     assert result["deferred"] is True
@@ -269,7 +270,8 @@ def test_direct_injection_admits_against_device_count_not_stale_host_mirror():
     )
     points = np.asarray(((0.0, 0.0, 0.0),) * 2, np.float32)
 
-    assert pipeline.inject_particles(points) == 0
+    injection = pipeline.inject_particles(points)
+    assert not injection.admitted and injection.emitted == 0
     result = pipeline.last_apply_result
     assert result["admitted"] is False
     assert result["required"] == 2

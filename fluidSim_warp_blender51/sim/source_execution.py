@@ -1283,19 +1283,19 @@ class CompiledSourceExecution:
         life=0.0,
         use_lifespan=False,
     ):
-        packet = DirectInjectionPacket(
-            positions=positions,
-            velocity=tuple(velocity),
+        """Compatibility alias for the structured direct-injection API."""
+        return self.inject_particles(
+            positions,
+            velocity=velocity,
             velocities=velocities,
-            temperature=float(temperature),
-            viscosity=float(viscosity),
-            density=float(density),
-            color=tuple(color),
-            source_id=int(source_id),
-            life=float(life),
-            use_lifespan=bool(use_lifespan),
+            temperature=temperature,
+            viscosity=viscosity,
+            density=density,
+            color=color,
+            source_id=source_id,
+            life=life,
+            use_lifespan=use_lifespan,
         )
-        return self.inject_particle_packets_exact((packet,))
 
     def inject_particles(
         self,
@@ -1310,8 +1310,40 @@ class CompiledSourceExecution:
         life=0.0,
         use_lifespan=False,
     ):
-        """Compatibility API: final total on success, zero on refusal/empty."""
-        result = self.inject_particles_exact(
+        """Append one particle packet and return exact admission truth."""
+        packet = DirectInjectionPacket(
+            positions=positions,
+            velocity=tuple(velocity),
+            velocities=velocities,
+            temperature=float(temperature),
+            viscosity=float(viscosity),
+            density=float(density),
+            color=tuple(color),
+            source_id=int(source_id),
+            life=float(life),
+            use_lifespan=bool(use_lifespan),
+        )
+        return self.inject_particle_packets_exact((packet,))
+
+    def inject_particles_legacy_total(
+        self,
+        positions,
+        velocity=(0.0, 0.0, 0.0),
+        velocities=None,
+        temperature=0.0,
+        viscosity=0.0,
+        density=1.0,
+        color=(0.1, 0.45, 1.0, 1.0),
+        source_id=0,
+        life=0.0,
+        use_lifespan=False,
+    ):
+        """Return the legacy lossy count: final total, or zero for refusal/empty.
+
+        Prefer :meth:`inject_particles`; this mapping cannot distinguish an
+        admitted empty request from a refused transaction.
+        """
+        result = self.inject_particles(
             positions,
             velocity=velocity,
             velocities=velocities,

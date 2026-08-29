@@ -55,9 +55,9 @@ def main():
     )
     solver = FluidSolver(settings)
     try:
-        solver.inject_particles_exact(
+        solver.inject_particles(
             [(0.50, 0.50, 0.50)], color=(1.0, 0.0, 0.0, 1.0))
-        solver.inject_particles_exact(
+        solver.inject_particles(
             [(0.51, 0.50, 0.50)], color=(0.0, 0.0, 1.0, 1.0))
         solver.step_frame()
         mixed = solver.particles.attr("color").numpy()[:2]

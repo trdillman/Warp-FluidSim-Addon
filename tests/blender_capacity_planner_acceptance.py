@@ -292,13 +292,13 @@ def main():
         points = np.asarray((
             (-0.2, 0.0, 0.7), (0.0, 0.0, 0.7), (0.2, 0.0, 0.7),
         ), np.float32)
-        emitted = runtime.inject_particles(points)
-        assert emitted == 3
+        injection = runtime.inject_particles(points)
+        assert injection.admitted and injection.emitted == 3
         assert runtime.particles.refresh_host_count() == 3
         assert runtime.particles.capacity > 2
         cases.append({
             "name": "live_direct_append_auto_growth",
-            "emitted": emitted,
+            "emitted": injection.emitted,
             "runtime_capacity": runtime.particles.capacity,
             "growth_status": runtime.last_particle_growth.status,
         })

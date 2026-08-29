@@ -446,8 +446,9 @@ def test_direct_packet_exact_fit_preserves_attributes_and_public_totals():
     np.testing.assert_allclose(
         np.sort(solver.particles.attr("viscosity").numpy()[:3]),
         (3.0, 7.0, 7.0))
-    assert solver.inject_particles(
-        np.array(((0.4, 0.0, 0.7),), np.float32)) == 4
+    injection = solver.inject_particles(
+        np.array(((0.4, 0.0, 0.7),), np.float32))
+    assert injection.admitted and injection.emitted == 1 and injection.total == 4
     solver.release()
 
 
@@ -456,13 +457,15 @@ def test_direct_injection_refuses_whole_batch_from_stale_host_count():
     settings.max_particles = 3
     settings.auto_grow_particles = False
     solver = FluidSolver(settings)
-    assert solver.inject_particles(np.array(((0.0, 0.0, 0.5),), np.float32)) == 1
+    injection = solver.inject_particles(np.array(((0.0, 0.0, 0.5),), np.float32))
+    assert injection.admitted and injection.emitted == 1
 
     # Deliberately stale mirror: device count is one, so only two slots remain.
     solver.particles.host_count = 0
     points = np.array(((-0.2, 0.0, 0.7), (0.0, 0.0, 0.7),
                        (0.2, 0.0, 0.7)), np.float32)
-    assert solver.inject_particles(points) == 0
+    injection = solver.inject_particles(points)
+    assert not injection.admitted and injection.emitted == 0
     result = solver.sourcing.last_injection_result
     assert result.admitted is False
     assert result.required == 3
@@ -662,7 +665,8 @@ def test_direct_inject_rejects_before_partial_append_when_auto_growth_is_disable
     points = np.array(((-0.2, 0.0, 0.7), (0.0, 0.0, 0.7),
                        (0.2, 0.0, 0.7)), np.float32)
 
-    assert solver.inject_particles(points) == 0
+    injection = solver.inject_particles(points)
+    assert not injection.admitted and injection.emitted == 0
     assert solver.particles.refresh_host_count() == 0
     result = solver.sourcing.last_apply_result
     assert result["emitted"] == 0
