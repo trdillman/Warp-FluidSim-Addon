@@ -13,7 +13,7 @@ from pathlib import Path
 import bpy
 
 # Resolve package source when Blender executes this file directly.
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
 
@@ -45,7 +45,7 @@ def _base_tree(name: str, kind: str):
     tree["fluidsim_asset_key"] = name
     tree["fluidsim_source_revision"] = ASSET_REVISION
     tree["fluidsim_output_kind"] = kind
-    tree["fluidsim_generated_by"] = "release/generate_geometry_nodes.py"
+    tree["fluidsim_generated_by"] = "tools/release/generate_geometry_nodes.py"
     _socket(tree, "Geometry", "INPUT", "NodeSocketGeometry")
     _socket(tree, "Material", "INPUT", "NodeSocketMaterial")
     _socket(tree, "Geometry", "OUTPUT", "NodeSocketGeometry")

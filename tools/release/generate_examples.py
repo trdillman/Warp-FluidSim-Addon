@@ -1,7 +1,7 @@
 """Generate the current FluidSim example .blend files from Blender primitives.
 
 Usage:
-    blender --background --factory-startup --python release/generate_examples.py -- \\
+    blender --background --factory-startup --python tools/release/generate_examples.py -- \\
       --module fluidsim_dev --output resources/examples
 
 The selected module must resolve to this source tree or an installed FluidSim
@@ -236,7 +236,7 @@ def main() -> None:
             {
                 "file": name,
                 "path": str((args.output / name).resolve()),
-                "generated_by": "release/generate_custom_effect_demos.py",
+                "generated_by": "tools/release/generate_custom_effect_demos.py",
                 "exists": (args.output / name).is_file(),
             }
             for name in CUSTOM_EFFECT_EXAMPLE_NAMES

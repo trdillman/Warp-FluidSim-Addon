@@ -8,6 +8,7 @@ from fluidsim_testpkg.blender import setup_wizard
 from fluidsim_testpkg.presets import library
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 EXPECTED_PRESETS = {
     "preview_water",
     "production_water",
@@ -57,13 +58,13 @@ def test_phase2_examples_are_generated_nonempty_blender_files():
     readme = (directory / "README.md").read_text(encoding="utf-8")
     for filename in EXPECTED_EXAMPLES:
         assert filename in readme
-    assert "release/generate_examples.py" in readme
+    assert "../tools/release/generate_examples.py" in readme
     assert "does not require CUDA" in readme
 
 
 def test_example_generator_uses_guided_setup_and_has_validator():
-    generator = (ROOT / "release" / "generate_examples.py").read_text(encoding="utf-8")
-    validator = (ROOT / "release" / "validate_examples_blender.py").read_text(encoding="utf-8")
+    generator = (TOOLS_RELEASE / "generate_examples.py").read_text(encoding="utf-8")
+    validator = (TOOLS_RELEASE / "validate_examples_blender.py").read_text(encoding="utf-8")
     assert "bpy.ops.fluidsim.setup_scene" in generator
     assert "QUICK_LIQUID" in generator
     assert "QUICK_VISCOUS" in generator
@@ -89,23 +90,18 @@ def test_selected_mesh_filter_rejects_non_mesh_objects():
     assert setup_wizard._selected_meshes(context) == (mesh, source)
 
 
-def test_installed_headless_entry_point_is_distinct_from_release_tooling():
+def test_installed_headless_entry_point_is_the_only_release_runtime_tool():
     runner = (ROOT / "release" / "run_headless_bake.py").read_text(encoding="utf-8")
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
     assert "os._exit" in runner
     assert '"release/run_headless_bake.py"' not in manifest
-    for excluded in (
-        "release/build_extension.py",
-        "release/generate_examples.py",
-        "release/generate_geometry_nodes.py",
-        "release/smoke_test_blender.py",
-        "release/validate_examples_blender.py",
-        "release/validate_phase3_blender.py",
-        "release/validate_phase3_warp.py",
-        "release/validate_phase4_blender.py",
-        "release/validate_phase4_warp.py",
-    ):
-        assert f'"{excluded}"' in manifest
+    assert not any(
+        path.name != "run_headless_bake.py"
+        for path in (ROOT / "release").glob("*.py")
+        if path.name != "__init__.py"
+    )
+    assert (TOOLS_RELEASE / "build_extension.py").is_file()
+    assert "release/build_extension.py" not in manifest
 
 
 def test_guided_workflow_exposes_three_action_live_preview_path():

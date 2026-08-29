@@ -10,6 +10,7 @@ from fluidsim_testpkg.presets import library
 from fluidsim_testpkg.sim.surface_tension_math import capillary_dt
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 
 
 def _assignment_literal(path: Path, name: str):
@@ -143,12 +144,13 @@ def test_release_workflow_and_package_include_phase5_gates():
         encoding="utf-8"
     )
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
-    build = (ROOT / "release/build_extension.py").read_text(encoding="utf-8")
-    smoke = (ROOT / "release/smoke_test_blender.py").read_text(encoding="utf-8")
-    assert workflow.count("release/validate_phase5_warp.py") == 2
+    build = (TOOLS_RELEASE / "build_extension.py").read_text(encoding="utf-8")
+    smoke = (TOOLS_RELEASE / "smoke_test_blender.py").read_text(encoding="utf-8")
+    assert workflow.count("../tools/release/validate_phase5_warp.py") == 2
     assert "--device cpu" in workflow
     assert "--device cuda:0" in workflow
-    assert "release/validate_phase5_blender.py" in manifest
+    assert (TOOLS_RELEASE / "validate_phase5_blender.py").is_file()
+    assert "validate_phase5_blender.py" not in manifest
     assert '"sim/surface_tension.py"' in build
     assert '"sim/surface_tension_math.py"' in build
     assert "water_surface_tension.json" in smoke
@@ -193,7 +195,7 @@ def test_optional_scratch_accounting_is_reversible():
 
 
 def test_phase3_warp_regression_is_not_bound_to_an_old_checkout_name():
-    source = (ROOT / "release" / "validate_phase3_warp.py").read_text(
+    source = (TOOLS_RELEASE / "validate_phase3_warp.py").read_text(
         encoding="utf-8"
     )
     assert "fluidsim_phase3_work.sim" not in source
@@ -232,7 +234,7 @@ def test_solver_capillary_halo_respects_authored_surface_splat_radius():
 
 
 def test_phase5_blender_validator_tracks_native_properties_panel_identity():
-    source = (ROOT / "release" / "validate_phase5_blender.py").read_text(
+    source = (TOOLS_RELEASE / "validate_phase5_blender.py").read_text(
         encoding="utf-8"
     )
     assert '"FLUIDSIM_PT_sim_surface_tension"' in source

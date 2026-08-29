@@ -11,8 +11,8 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from urllib.request import urlopen
 
-ROOT = Path(__file__).resolve().parents[1]
-LOCK_PATH = ROOT / "release" / "wheels.lock.json"
+ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
+LOCK_PATH = Path(__file__).resolve().with_name("wheels.lock.json")
 WHEEL_DIR = ROOT / "build" / "external-warp-wheel"
 _CHUNK_SIZE = 1024 * 1024
 
@@ -107,7 +107,7 @@ def _locked_files(lock: dict) -> dict[str, dict]:
         if not isinstance(filename, str) or Path(filename).name != filename:
             raise RuntimeError(f"invalid wheel filename in lock: {filename!r}")
         if not isinstance(metadata, dict):
-            raise RuntimeError(f"invalid wheel metadata for {filename}")
+            raise TypeError(f"invalid wheel metadata for {filename}")
         result[filename] = metadata
     return result
 

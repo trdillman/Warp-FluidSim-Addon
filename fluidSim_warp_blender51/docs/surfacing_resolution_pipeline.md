@@ -68,7 +68,7 @@ Smooth Iterations: 1 for viewport, higher for export tests
 P0 consolidates surfacing and ST-FLIP acceptance into the installed-package NVIDIA GPU gate:
 
 ```bash
-python release/build_extension.py \
+python ../tools/release/build_extension.py \
   --blender /absolute/path/to/blender \
   --output dist \
   --gpu-regression-platform linux-x64 \

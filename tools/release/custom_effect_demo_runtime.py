@@ -189,7 +189,7 @@ def _particle_fixture(
     device: str,
     canary_count: int = 4,
 ) -> tuple[_DemoSolver, dict[str, np.ndarray]]:
-    active = int(len(positions))
+    active = len(positions)
     capacity = active + int(canary_count)
     position_canary = np.array([91.0, 92.0, 93.0], dtype=np.float32)
     velocity_canary = np.array([81.0, 82.0, 83.0], dtype=np.float32)

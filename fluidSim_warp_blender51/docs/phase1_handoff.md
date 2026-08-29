@@ -30,6 +30,6 @@ Implement Tasks 4–6 from `FluidSim_High_ROI_Implementation_Plan.md`:
 
 ## Validation constraints
 
-The sandbox used for P0 exposed no NVIDIA CUDA driver. A separately provisioned Warp binary imported and executed a real CPU kernel inside Blender, while the CUDA preflight correctly reported no device. Before a public release, run `release/gpu_regression_blender.py` on a self-hosted NVIDIA runner and attach its JSON report.
+The sandbox used for P0 exposed no NVIDIA CUDA driver. A separately provisioned Warp binary imported and executed a real CPU kernel inside Blender, while the CUDA preflight correctly reported no device. Before a public release, run `../tools/release/gpu_regression_blender.py` on a self-hosted NVIDIA runner and attach its JSON report.
 
 Windows packaging is not part of this baseline. Add it only with a checksum-locked Warp 1.16.0+cu12 Windows wheel and a clean Blender 5.2 Windows install/smoke run.

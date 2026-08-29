@@ -768,7 +768,7 @@ def main() -> None:
         if extension is not None:
             try:
                 extension.unregister()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - preserve the primary gate failure.
                 pass
 
 

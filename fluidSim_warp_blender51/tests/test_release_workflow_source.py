@@ -20,10 +20,10 @@ def test_release_workflow_has_static_dual_package_and_gpu_gates():
     assert "self-hosted" in source and "nvidia" in source
     assert "BLENDER_5_1_EXECUTABLE" in source
     assert "WARP_1_16_WHEEL_SOURCE" in source
-    assert "release/fetch_warp_wheels.py" in source
+    assert "../tools/release/fetch_warp_wheels.py" in source
     assert "--source" in source
-    assert "release/build_extension.py" in source
-    assert "release/gpu_regression_blender.py" in source
+    assert "../tools/release/build_extension.py" in source
+    assert "../tools/release/gpu_regression_blender.py" in source
     assert "windows-latest" not in source
     assert "windows_x64" in source
 
@@ -41,8 +41,8 @@ def test_workflow_uploads_both_platform_packages_checksums_and_reports():
 
 def test_installed_release_oracles_match_the_1_0_255_identity():
     for relative in (
-        "release/smoke_test_blender.py",
-        "release/validate_phase5_blender.py",
+        "../tools/release/smoke_test_blender.py",
+        "../tools/release/validate_phase5_blender.py",
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "1.0.252" not in source
@@ -85,16 +85,16 @@ def test_workflow_uses_warp_only_as_external_validation_input():
 
 def test_workflow_has_custom_effect_cpu_blender_and_required_cuda_gates():
     source = _workflow()
-    assert "release/validate_custom_effects_warp.py" in source
+    assert "../tools/release/validate_custom_effects_warp.py" in source
     assert "--device cpu" in source
-    assert "release/validate_custom_effects_blender.py" in source
+    assert "../tools/release/validate_custom_effects_blender.py" in source
     assert "--device cuda:0" in source
     assert "custom-effects-warp-cuda-validation.json" in source
 
 
 def test_workflow_runs_and_uploads_native_properties_ui_blender_gate():
     source = _workflow()
-    assert source.count("release/validate_properties_ui_blender.py") == 1
+    assert source.count("../tools/release/validate_properties_ui_blender.py") == 1
     assert "properties-ui-blender-validation.json" in source
     assert "--module fluidsim_ci_source" in source
     assert "--expected-warp-root \"$RUNNER_TEMP/external-warp-site\"" in source

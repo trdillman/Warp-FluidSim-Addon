@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 
-from fluidsim_testpkg.release import (
+from tools.release import (
     validate_phase3_warp,
     validate_phase4_warp,
     validate_phase5_warp,

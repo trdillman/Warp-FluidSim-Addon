@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-GENERATOR = ROOT / "release" / "generate_custom_effect_demos.py"
-VALIDATOR = ROOT / "release" / "validate_custom_effects_blender.py"
-RUNTIME = ROOT / "release" / "custom_effect_demo_runtime.py"
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
+GENERATOR = TOOLS_RELEASE / "generate_custom_effect_demos.py"
+VALIDATOR = TOOLS_RELEASE / "validate_custom_effects_blender.py"
+RUNTIME = TOOLS_RELEASE / "custom_effect_demo_runtime.py"
 EXAMPLES = ROOT / "resources" / "examples"
 
 DEMO_NAMES = (
@@ -96,8 +97,8 @@ def test_blender_validator_treats_reported_operator_rejection_as_expected_and_pr
 
 
 def test_standard_example_release_tools_include_custom_effect_demo_inventory():
-    generator = (ROOT / "release" / "generate_examples.py").read_text(encoding="utf-8")
-    validator = (ROOT / "release" / "validate_examples_blender.py").read_text(encoding="utf-8")
+    generator = (TOOLS_RELEASE / "generate_examples.py").read_text(encoding="utf-8")
+    validator = (TOOLS_RELEASE / "validate_examples_blender.py").read_text(encoding="utf-8")
     for name in DEMO_NAMES:
         assert name in generator
         assert name in validator
@@ -107,7 +108,7 @@ def test_standard_example_release_tools_include_custom_effect_demo_inventory():
 
 
 def test_installed_smoke_proves_custom_effects_workflow_and_package_assets():
-    smoke = (ROOT / "release" / "smoke_test_blender.py").read_text(encoding="utf-8")
+    smoke = (TOOLS_RELEASE / "smoke_test_blender.py").read_text(encoding="utf-8")
     for token in (
         "def _assert_custom_effects",
         "FLUIDSIM_PT_custom_effects",

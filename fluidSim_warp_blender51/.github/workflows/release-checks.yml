@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
       - name: Verify binary-free source metadata
         run: >-
-          python release/build_extension.py --verify-only
+          python ../tools/release/build_extension.py --verify-only
           --json-report release-environment-report.json
       - name: Run pure-Python tests
         run: python -m pytest -q
@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           rm -rf "$RUNNER_TEMP/external-warp-wheel" "$RUNNER_TEMP/external-warp-site"
-          python release/fetch_warp_wheels.py --source "$WARP_WHEEL_SOURCE" --wheel-dir "$RUNNER_TEMP/external-warp-wheel" --offline
+          python ../tools/release/fetch_warp_wheels.py --source "$WARP_WHEEL_SOURCE" --wheel-dir "$RUNNER_TEMP/external-warp-wheel" --offline
           mkdir -p "$RUNNER_TEMP/external-warp-site"
           python -m zipfile -e "$RUNNER_TEMP/external-warp-wheel/warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl" "$RUNNER_TEMP/external-warp-site"
           echo "PYTHONPATH=$RUNNER_TEMP/external-warp-site" >> "$GITHUB_ENV"
@@ -77,14 +77,14 @@ jobs:
       - name: Validate Phase 4 whitewater kernels on Warp CPU
         shell: bash
         run: |
-          python release/validate_phase4_warp.py \
+          python ../tools/release/validate_phase4_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cpu \
             --report-json dist/phase4-warp-cpu-validation.json
       - name: Validate Phase 5 surface-tension kernels on Warp CPU
         shell: bash
         run: |
-          python release/validate_phase5_warp.py \
+          python ../tools/release/validate_phase5_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cpu \
             --report-json dist/phase5-warp-cpu-validation.json
@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          python release/validate_custom_effects_warp.py \
+          python ../tools/release/validate_custom_effects_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cpu \
             --report-json dist/custom-effects-warp-cpu-validation.json
@@ -106,7 +106,7 @@ jobs:
           FLUIDSIM_ALLOW_EFFECT_CPU_VALIDATION=1 \
           "$BLENDER" --background --factory-startup --offline-mode \
             --python-use-system-env --python-exit-code 1 \
-            --python release/validate_custom_effects_blender.py -- \
+            --python ../tools/release/validate_custom_effects_blender.py -- \
             --module fluidsim_ci_source \
             --examples resources/examples \
             --work-dir "$RUNNER_TEMP/custom-effects-blender" \
@@ -122,7 +122,7 @@ jobs:
           FLUIDSIM_EXTERNAL_WARP_ROOT="$RUNNER_TEMP/external-warp-site" \
           "$BLENDER" --background --factory-startup --offline-mode \
             --python-use-system-env --python-exit-code 1 \
-            --python release/validate_properties_ui_blender.py -- \
+            --python ../tools/release/validate_properties_ui_blender.py -- \
             --module fluidsim_ci_source \
             --work-dir "$RUNNER_TEMP/properties-ui-blender" \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
@@ -130,7 +130,7 @@ jobs:
       - name: Build, inspect, install, reload, execute Warp, and uninstall
         shell: bash
         run: |
-          python release/build_extension.py \
+          python ../tools/release/build_extension.py \
             --blender "$BLENDER" \
             --output dist \
             --smoke-platform linux-x64 \
@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           rm -rf "$RUNNER_TEMP/external-warp-wheel" "$RUNNER_TEMP/external-warp-site"
-          python release/fetch_warp_wheels.py --source "$WARP_WHEEL_SOURCE" --wheel-dir "$RUNNER_TEMP/external-warp-wheel" --offline
+          python ../tools/release/fetch_warp_wheels.py --source "$WARP_WHEEL_SOURCE" --wheel-dir "$RUNNER_TEMP/external-warp-wheel" --offline
           mkdir -p "$RUNNER_TEMP/external-warp-site"
           python -m zipfile -e "$RUNNER_TEMP/external-warp-wheel/warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl" "$RUNNER_TEMP/external-warp-site"
           echo "PYTHONPATH=$RUNNER_TEMP/external-warp-site" >> "$GITHUB_ENV"
@@ -187,14 +187,14 @@ jobs:
       - name: Validate Phase 4 whitewater kernels on CUDA
         shell: bash
         run: |
-          python release/validate_phase4_warp.py \
+          python ../tools/release/validate_phase4_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cuda:0 \
             --report-json dist/phase4-warp-cuda-validation.json
       - name: Validate Phase 5 surface-tension kernels on CUDA
         shell: bash
         run: |
-          python release/validate_phase5_warp.py \
+          python ../tools/release/validate_phase5_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cuda:0 \
             --report-json dist/phase5-warp-cuda-validation.json
@@ -202,7 +202,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          python release/validate_custom_effects_warp.py \
+          python ../tools/release/validate_custom_effects_warp.py \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cuda:0 \
             --report-json dist/custom-effects-warp-cuda-validation.json
@@ -212,18 +212,18 @@ jobs:
           FLUIDSIM_EXTERNAL_WARP_ROOT="$RUNNER_TEMP/external-warp-site" \
           "$BLENDER" --background --factory-startup --offline-mode \
             --python-use-system-env --python-exit-code 1 \
-            --python release/validate_custom_effects_blender.py -- \
+            --python ../tools/release/validate_custom_effects_blender.py -- \
             --module fluidsim_ci_source \
             --examples resources/examples \
             --work-dir "$RUNNER_TEMP/custom-effects-blender-cuda" \
             --expected-warp-root "$RUNNER_TEMP/external-warp-site" \
             --device cuda:0 \
             --report-json dist/custom-effects-blender-cuda-validation.json
-      # build_extension invokes release/gpu_regression_blender.py inside the installed package.
+      # build_extension invokes ../tools/release/gpu_regression_blender.py inside the installed package.
       - name: Build and run all GPU validations plus ten preview frames
         shell: bash
         run: |
-          python release/build_extension.py \
+          python ../tools/release/build_extension.py \
             --blender "$BLENDER" \
             --output dist \
             --gpu-regression-platform linux-x64 \

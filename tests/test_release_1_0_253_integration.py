@@ -10,8 +10,9 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
-COLLISION_GUARD = ROOT / "release" / "candidate_collision_guard_1_0_253.json"
-UPDATE_GUARD = ROOT / "release" / "candidate_integration_1_0_255.json"
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
+COLLISION_GUARD = TOOLS_RELEASE / "candidate_collision_guard_1_0_253.json"
+UPDATE_GUARD = TOOLS_RELEASE / "candidate_integration_1_0_255.json"
 
 
 def _assigned(path: Path, name: str):

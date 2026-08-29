@@ -1,1 +1,1 @@
-"""Developer-only release tooling for FluidSim packages."""
+"""Installed command-line shims required by packaged FluidSim extensions."""

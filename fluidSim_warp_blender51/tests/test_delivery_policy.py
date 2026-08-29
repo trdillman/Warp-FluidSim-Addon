@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fluidsim_testpkg.release import delivery_policy
+from tools.release import delivery_policy
 
 
 def _zip_bytes(entries: dict[str, bytes]) -> bytes:

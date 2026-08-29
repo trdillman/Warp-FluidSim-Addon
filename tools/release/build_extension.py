@@ -12,14 +12,16 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
-import tomllib
 import zipfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+import tomllib
+
+TOOL_ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 REQUIRED_EXTENSION_ID = "fluidsim_warp"
 REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
 REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
@@ -27,28 +29,7 @@ REQUIRED_WARP_VERSION = "1.16.0"
 REQUIRED_WARP_DISTRIBUTION = "1.16.0+cu12"
 REQUIRED_BLENDER_MIN = "5.1.0"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
-RELEASE_ONLY_RELATIVE_PATHS = {
-    "release/build_extension.py",
-    "release/candidate_collision_guard_1_0_253.json",
-    "release/delivery_policy.py",
-    "release/fetch_warp_wheels.py",
-    "release/custom_effect_demo_runtime.py",
-    "release/generate_custom_effect_demos.py",
-    "release/generate_examples.py",
-    "release/generate_geometry_nodes.py",
-    "release/gpu_regression_blender.py",
-    "release/smoke_test_blender.py",
-    "release/validate_examples_blender.py",
-    "release/validate_custom_effects_blender.py",
-    "release/validate_custom_effects_warp.py",
-    "release/validate_phase3_blender.py",
-    "release/validate_phase3_warp.py",
-    "release/validate_phase4_blender.py",
-    "release/validate_phase4_warp.py",
-    "release/validate_phase5_blender.py",
-    "release/validate_phase5_warp.py",
-    "release/wheels.lock.json",
-}
+RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
 RELEASE_ONLY_PATHS = {
     "tests",
     "demo_outputs",
@@ -62,8 +43,16 @@ Runner = Callable[..., Any]
 _BLENDER_ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
+def _tool_root_for(addon_root: Path) -> Path:
+    """Return the sibling developer-tool directory for an add-on source tree."""
+    addon_root = Path(addon_root).resolve()
+    if addon_root == ROOT.resolve():
+        return TOOL_ROOT
+    return addon_root.parent / "tools" / "release"
+
+
 def _looks_like_blender_file(payload: bytes) -> bool:
-    return payload.startswith(b"BLENDER") or payload.startswith(_BLENDER_ZSTD_MAGIC)
+    return payload.startswith((b"BLENDER", _BLENDER_ZSTD_MAGIC))
 
 
 @dataclass(frozen=True)
@@ -149,7 +138,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"could not read JSON metadata {path}: {exc}") from exc
     if not isinstance(value, dict):
-        raise RuntimeError(f"expected a JSON object in {path}")
+        raise TypeError(f"expected a JSON object in {path}")
     return value
 
 
@@ -182,7 +171,7 @@ def _sha256_bytes(payload: bytes) -> str:
 
 
 def _collision_guard(root: Path) -> dict[str, str]:
-    guard_path = root / "release" / "candidate_collision_guard_1_0_253.json"
+    guard_path = _tool_root_for(root) / "candidate_collision_guard_1_0_253.json"
     guard = _read_json(guard_path)
     candidate_sha256 = guard.get("candidate_sha256")
     if (
@@ -197,7 +186,7 @@ def _collision_guard(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     for relative, digest in forbidden.items():
         if not isinstance(relative, str):
-            raise RuntimeError("candidate collision guard paths must be strings")
+            raise TypeError("candidate collision guard paths must be strings")
         path = PurePosixPath(relative)
         if path.is_absolute() or ".." in path.parts or str(path) != relative:
             raise RuntimeError(f"unsafe candidate collision guard path: {relative!r}")
@@ -225,13 +214,13 @@ def _verify_source_collision_guard(root: Path, forbidden: Mapping[str, str]) -> 
 def _locked_files(lock: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     files = lock.get("files")
     if not isinstance(files, dict) or not files:
-        raise RuntimeError("release/wheels.lock.json must contain a non-empty files object")
+        raise RuntimeError("tools/release/wheels.lock.json must contain a non-empty files object")
     result: dict[str, dict[str, Any]] = {}
     for filename, metadata in files.items():
         if not isinstance(filename, str) or PurePosixPath(filename).name != filename:
             raise RuntimeError(f"invalid locked wheel filename: {filename!r}")
         if not isinstance(metadata, dict):
-            raise RuntimeError(f"invalid lock metadata for {filename}")
+            raise TypeError(f"invalid lock metadata for {filename}")
         result[filename] = metadata
     return result
 
@@ -263,8 +252,6 @@ def verify_source_tree(root: Path) -> SourceVerification:
         "resources/examples/custom_effects/renders/05_custom_effects_vortex.png",
         "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
         "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
-        "release/wheels.lock.json",
-        "release/candidate_collision_guard_1_0_253.json",
     )
     missing_required = [name for name in required if not (root / name).is_file()]
     if missing_required:
@@ -278,7 +265,7 @@ def verify_source_tree(root: Path) -> SourceVerification:
         raise RuntimeError(f"missing required release files: {missing_required}")
 
     manifest = _read_toml(root / "blender_manifest.toml")
-    lock = _read_json(root / "release" / "wheels.lock.json")
+    lock = _read_json(_tool_root_for(root) / "wheels.lock.json")
     collision_guard = _collision_guard(root)
     files = _locked_files(lock)
     if lock.get("warp_version") != REQUIRED_WARP_VERSION:
@@ -321,23 +308,6 @@ def verify_source_tree(root: Path) -> SourceVerification:
         "__pycache__/", ".*", "*.zip", "*.whl", "wheels/",
         "tests/", "demo_outputs/", "artifacts/",
         "pyproject.toml", "requirements-dev.txt",
-        "release/build_extension.py", "release/delivery_policy.py",
-        "release/candidate_collision_guard_1_0_253.json",
-        "release/fetch_warp_wheels.py", "release/generate_examples.py",
-        "release/custom_effect_demo_runtime.py",
-        "release/generate_custom_effect_demos.py",
-        "release/generate_geometry_nodes.py",
-        "release/gpu_regression_blender.py", "release/smoke_test_blender.py",
-        "release/validate_examples_blender.py",
-        "release/validate_custom_effects_blender.py",
-        "release/validate_custom_effects_warp.py",
-        "release/validate_phase3_blender.py",
-        "release/validate_phase3_warp.py",
-        "release/validate_phase4_blender.py",
-        "release/validate_phase4_warp.py",
-        "release/validate_phase5_blender.py",
-        "release/validate_phase5_warp.py",
-        "release/wheels.lock.json",
     }
     if not required_patterns.issubset(build_patterns):
         missing_patterns = sorted(required_patterns - build_patterns)
@@ -445,16 +415,11 @@ def _is_forbidden_runtime_payload(relative: str) -> bool:
         return True
     if any(part == "warp" or part.startswith("warp_lang-") for part in lower_parts):
         return True
-    if filename.startswith("blender-") and (
-        filename.endswith(".zip")
-        or filename.endswith(".tar.xz")
-        or filename.endswith(".tar.gz")
-        or filename.endswith(".tgz")
+    if filename.startswith("blender-") and filename.endswith(
+        (".zip", ".tar.xz", ".tar.gz", ".tgz")
     ):
         return True
-    if filename == "blender" and (not lower_parts or lower_parts[0] != "blender"):
-        return True
-    return False
+    return filename == "blender" and (not lower_parts or lower_parts[0] != "blender")
 
 
 def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecord]:
@@ -953,7 +918,7 @@ def main(argv: list[str] | None = None) -> int:
                 blender,
                 package,
                 repo_dir,
-                root / "release" / "smoke_test_blender.py",
+                TOOL_ROOT / "smoke_test_blender.py",
                 extra_env={"FLUIDSIM_SMOKE_REPORT": str(smoke_report)},
             )
             payload["smoke_platform"] = args.smoke_platform
@@ -967,7 +932,7 @@ def main(argv: list[str] | None = None) -> int:
                 blender,
                 package,
                 repo_dir,
-                root / "release" / "gpu_regression_blender.py",
+                TOOL_ROOT / "gpu_regression_blender.py",
                 extra_env={"FLUIDSIM_GPU_REPORT": str(report_path)},
             )
             payload["gpu_regression_platform"] = args.gpu_regression_platform

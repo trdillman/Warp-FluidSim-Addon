@@ -83,11 +83,12 @@ def test_splash_preset_exposes_typed_output_policy():
         assert key in settings
 
 
-def test_phase4_release_proof_scripts_are_present_but_not_packaged():
+def test_phase4_release_proof_scripts_are_tools_owned_and_not_packaged():
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
-    for relative in (
-        "release/validate_phase4_warp.py",
-        "release/validate_phase4_blender.py",
+    tools_release = ROOT.parent / "tools" / "release"
+    for name in (
+        "validate_phase4_warp.py",
+        "validate_phase4_blender.py",
     ):
-        assert (ROOT / relative).is_file()
-        assert f'"{relative}"' in manifest
+        assert (tools_release / name).is_file()
+        assert name not in manifest

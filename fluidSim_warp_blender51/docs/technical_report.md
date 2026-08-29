@@ -61,8 +61,9 @@ fluidsim_warp/
 The solver remains authoritative for simulation semantics. `io/` owns durable
 serialization, `blender/production_bake.py` owns transaction orchestration, and
 `blender/setup_wizard.py` owns product onboarding. The package boundary keeps
-`sim/` free of `bpy`; release-only build/smoke/example-generation tools are
-excluded from the installed archive except the headless entry point.
+`sim/` free of `bpy`. Repository-level `../tools/release/` owns build, smoke,
+generation, and validation workflows; the runtime package retains only the
+installed headless entry point.
 
 ---
 
@@ -445,7 +446,7 @@ Rayleigh–Lamb oscillation trend oracle, zero-coefficient full-solver
 equivalence, capillary timestep trends, and finite-energy/diagnostic guards.
 Failures are reported rather than crashing the suite.
 
-`release/validate_phase5_warp.py` is a separate supplied-package gate. It
+`../tools/release/validate_phase5_warp.py` is a separate supplied-package gate. It
 executes all P5 kernels on one analytic sparse leaf, validates inward force,
 finite/clamped curvature and acceleration, linear coefficient scaling,
 collision exclusion, MAC integration, optional-scratch lifecycle, and timestep
@@ -454,7 +455,7 @@ particle pool, proving that capillarity selects 27 requested substeps in the
 probe case and reports the authored clamp to 8. CPU execution proves code paths;
 `cuda:0` execution is required for release certification.
 
-`release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
+`../tools/release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
 treating source strings as UI proof. It draws 49 authored surfaces, validates
 one collapsed root plus 51 View3D mirrors with exact poll/draw parity, exercises
 domain/input contexts and all six output kinds in Physics Properties, revalidates

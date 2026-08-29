@@ -1,7 +1,7 @@
 # FluidSim 1.0.251 examples
 
 These files are generated entirely from Blender primitives by
-`release/generate_examples.py`. They contain no baked simulation data and no
+`../tools/release/generate_examples.py`. They contain no baked simulation data and no
 third-party assets. They are distributed under the project GPL-3.0-or-later
 license.
 
@@ -27,7 +27,7 @@ From the repository root, with the source tree importable as a package name:
 
 ```bash
 /path/to/supplied/blender --background --factory-startup \
-  --python-use-system-env --python release/generate_examples.py -- \
+  --python-use-system-env --python ../tools/release/generate_examples.py -- \
   --module fluidsim_phase5_repo --output resources/examples \
   --report-json /tmp/fluidsim-example-generation.json
 ```

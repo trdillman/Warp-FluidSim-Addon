@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 ASSET = ROOT / "resources" / "geometry_nodes" / "fluidsim_render_nodes.blend"
 
 
@@ -15,7 +16,7 @@ def test_bundled_geometry_nodes_asset_is_generated_blender_content():
 
 
 def test_asset_generator_preserves_shader_attributes_on_point_instances():
-    source = (ROOT / "release" / "generate_geometry_nodes.py").read_text(
+    source = (TOOLS_RELEASE / "generate_geometry_nodes.py").read_text(
         encoding="utf-8"
     )
     for name in (
@@ -52,14 +53,15 @@ def test_installer_is_revisioned_idempotent_and_user_safe():
     assert "current_revision != ASSET_REVISION" in source
 
 
-def test_phase3_runtime_asset_is_packaged_but_generators_are_excluded():
+def test_phase3_runtime_asset_is_packaged_and_generators_are_tools_owned():
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
     assert "resources/geometry_nodes/fluidsim_render_nodes.blend" not in manifest
-    for excluded in (
-        "release/generate_geometry_nodes.py",
-        "release/validate_phase3_blender.py",
-        "release/validate_phase3_warp.py",
-        "release/validate_phase4_blender.py",
-        "release/validate_phase4_warp.py",
+    for tool in (
+        "generate_geometry_nodes.py",
+        "validate_phase3_blender.py",
+        "validate_phase3_warp.py",
+        "validate_phase4_blender.py",
+        "validate_phase4_warp.py",
     ):
-        assert f'"{excluded}"' in manifest
+        assert (TOOLS_RELEASE / tool).is_file()
+        assert f"release/{tool}" not in manifest

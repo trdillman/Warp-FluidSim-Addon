@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 
 
 def test_manifest_declares_no_bundled_python_wheels():
@@ -14,7 +15,7 @@ def test_manifest_declares_no_bundled_python_wheels():
 
 def test_warp_lock_is_validation_metadata_only():
     manifest = tomllib.loads((ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
-    lock = json.loads((ROOT / "release" / "wheels.lock.json").read_text(encoding="utf-8"))
+    lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
     assert lock["warp_version"] == "1.16.0"
     assert lock["distribution_version"] == "1.16.0+cu12"
     runtime_platforms = {item["platform"] for item in lock["files"].values()}
@@ -23,24 +24,11 @@ def test_warp_lock_is_validation_metadata_only():
     assert not list((ROOT / "wheels").glob("*.whl"))
 
 
-def test_manifest_excludes_runtime_binary_and_development_paths_from_build():
+def test_manifest_excludes_only_addon_owned_non_runtime_paths_from_build():
     manifest = tomllib.loads((ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
     patterns = set(manifest["build"]["paths_exclude_pattern"])
     assert {
         "tests/",
-        "release/build_extension.py",
-        "release/delivery_policy.py",
-        "release/fetch_warp_wheels.py",
-        "release/generate_examples.py",
-        "release/generate_geometry_nodes.py",
-        "release/gpu_regression_blender.py",
-        "release/smoke_test_blender.py",
-        "release/validate_examples_blender.py",
-        "release/validate_phase3_blender.py",
-        "release/validate_phase3_warp.py",
-        "release/validate_phase4_blender.py",
-        "release/validate_phase4_warp.py",
-        "release/wheels.lock.json",
         "demo_outputs/",
         "artifacts/",
         "pyproject.toml",
@@ -50,3 +38,4 @@ def test_manifest_excludes_runtime_binary_and_development_paths_from_build():
         "*.whl",
         "wheels/",
     }.issubset(patterns)
+    assert not any(pattern.startswith("release/") for pattern in patterns)

@@ -183,7 +183,7 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
     finally:
         try:
             addon.unregister()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - preserve the primary gate failure.
             pass
 
 

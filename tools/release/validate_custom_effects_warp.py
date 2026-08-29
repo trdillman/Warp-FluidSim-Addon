@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report-json", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
     package_name = "fluidsim_testpkg"
     if str(root.parent) not in sys.path:
         sys.path.insert(0, str(root.parent))

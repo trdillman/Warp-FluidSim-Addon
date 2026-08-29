@@ -15,6 +15,11 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from .tool_loading import load_addon_relative_tool
+except ImportError:  # Blender executes this file directly via --python.
+    from tool_loading import load_addon_relative_tool
+
 import bpy
 import numpy as np
 
@@ -427,7 +432,9 @@ def main() -> None:
     addon.register()
     try:
         effects = importlib.import_module(f"{args.module}.blender.effects")
-        runtime_module = importlib.import_module(f"{args.module}.release.custom_effect_demo_runtime")
+        runtime_module = load_addon_relative_tool(
+            args.module, "custom_effect_demo_runtime"
+        )
         package_module = importlib.import_module(f"{args.module}.sim.effects.package")
         simulation = runtime_module.run_all_demos(args.work_dir, device=args.device)
         records = {item["name"]: item for item in simulation["demos"]}

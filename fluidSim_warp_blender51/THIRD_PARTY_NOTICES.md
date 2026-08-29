@@ -22,12 +22,12 @@ The upstream Warp distribution carries its own complete license inventory, inclu
 - `blender_manifest.toml` declares no Python wheels.
 - Release inspection rejects `.whl` payloads, Blender runtime archives, Warp package directories, and Warp distribution metadata inside the installable extension.
 - FluidSim performs no runtime network request, `pip` invocation, or automatic dependency installation.
-- `release/wheels.lock.json` records the exact external Warp validation binary and checksum; it is metadata, not a bundled dependency.
+- `../tools/release/wheels.lock.json` records the exact external Warp validation binary and checksum; it is metadata, not a bundled dependency.
 
 ## Bundled first-party render resource
 
 `resources/geometry_nodes/fluidsim_render_nodes.blend` is generated from
-`release/generate_geometry_nodes.py` using the supplied Blender 5.2.0 LTS
+`../tools/release/generate_geometry_nodes.py` using the supplied Blender 5.2.0 LTS
 package. The six P4 node groups and generated resource are FluidSim project
 content covered by the project GPL-3.0-or-later license. The file contains no Blender,
 Warp, CUDA, wheel, or other third-party runtime binary payload.

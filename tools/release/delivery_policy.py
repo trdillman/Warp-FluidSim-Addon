@@ -22,16 +22,11 @@ def _is_forbidden_member(name: str) -> bool:
         return True
     if any(part == "warp" or part.startswith("warp_lang-") for part in parts):
         return True
-    if filename.startswith("blender-") and (
-        filename.endswith(".zip")
-        or filename.endswith(".tar.xz")
-        or filename.endswith(".tar.gz")
-        or filename.endswith(".tgz")
+    if filename.startswith("blender-") and filename.endswith(
+        (".zip", ".tar.xz", ".tar.gz", ".tgz")
     ):
         return True
-    if filename == "blender" and (not parts or parts[0] != "blender"):
-        return True
-    return False
+    return filename == "blender" and (not parts or parts[0] != "blender")
 
 
 def _scan_zip(

@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import warp as wp
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
 

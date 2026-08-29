@@ -3,10 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
+
+
+def test_runtime_release_package_contains_only_installed_command_shims():
+    runtime_files = {
+        path.name
+        for path in (ROOT / "release").iterdir()
+        if path.is_file() and path.suffix == ".py"
+    }
+    assert runtime_files == {"__init__.py", "run_headless_bake.py"}
+    assert (TOOLS_RELEASE / "build_extension.py").is_file()
+    assert (TOOLS_RELEASE / "smoke_test_blender.py").is_file()
+    assert (TOOLS_RELEASE / "validate_phase5_blender.py").is_file()
 
 
 def test_blender_smoke_proves_external_warp_cpu_execution_and_lifecycle():
-    source = (ROOT / "release" / "smoke_test_blender.py").read_text(encoding="utf-8")
+    source = (TOOLS_RELEASE / "smoke_test_blender.py").read_text(encoding="utf-8")
     assert 'EXPECTED_WARP_VERSION = "1.16.0"' in source
     assert "EXPECTED_BLENDER_VERSION = (5, 1, 0)" in source
     assert "EXPECTED_FLUIDSIM_VERSION = (1, 0, 255)" in source
@@ -41,7 +54,7 @@ def test_blender_smoke_proves_external_warp_cpu_execution_and_lifecycle():
 
 
 def test_gpu_regression_targets_certified_runtime_and_full_suite():
-    source = (ROOT / "release" / "gpu_regression_blender.py").read_text(encoding="utf-8")
+    source = (TOOLS_RELEASE / "gpu_regression_blender.py").read_text(encoding="utf-8")
     assert "validation.run_all" in source
     assert 'f"{module}.diagnostics.validation"' in source
     assert "EXPECTED_BLENDER_VERSION = (5, 1, 0)" in source

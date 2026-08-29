@@ -90,10 +90,10 @@ Two strict presets are included:
 ```bash
 python -m pytest -q
 python -m compileall -q -f .
-python release/build_extension.py --verify-only --root .
+python ../tools/release/build_extension.py --verify-only --root .
 
 PYTHONPATH=/mnt/data:/mnt/data/warp_lang_1_16_external \
-python release/validate_phase5_warp.py \
+python ../tools/release/validate_phase5_warp.py \
   --expected-warp-root /mnt/data/warp_lang_1_16_external \
   --module fluidsim_phase5_repo \
   --device cpu \
@@ -103,7 +103,7 @@ PYTHONPATH=/mnt/data:/mnt/data/warp_lang_1_16_external \
 FLUIDSIM_EXTERNAL_WARP_ROOT=/mnt/data/warp_lang_1_16_external \
 /mnt/data/blender-5.2.0-linux-x64/blender \
   --background --factory-startup --offline-mode --python-use-system-env \
-  --python-exit-code 1 --python release/validate_phase5_blender.py -- \
+  --python-exit-code 1 --python ../tools/release/validate_phase5_blender.py -- \
   --module fluidsim_phase5_repo \
   --work-dir /mnt/data/phase5_blender_validation_work \
   --expected-warp-root /mnt/data/warp_lang_1_16_external \

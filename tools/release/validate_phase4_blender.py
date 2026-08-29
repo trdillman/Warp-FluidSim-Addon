@@ -290,7 +290,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
         bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False)
         reopened_scene = bpy.context.scene
         reopened = {}
-        for name, _expected_count in expected_counts.items():
+        for name in expected_counts:
             obj = publication.output_object(reopened_scene, name)
             if obj is None:
                 raise AssertionError(f"{name} did not survive save/reopen")
@@ -331,7 +331,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
     finally:
         try:
             addon.unregister()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - preserve the primary gate failure.
             pass
 
 

@@ -39,7 +39,7 @@ Important controls:
 Run the installed-package NVIDIA GPU gate from the source checkout:
 
 ```bash
-python release/build_extension.py \
+python ../tools/release/build_extension.py \
   --blender /absolute/path/to/blender \
   --output dist \
   --gpu-regression-platform linux-x64 \

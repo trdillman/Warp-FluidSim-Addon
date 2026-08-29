@@ -7,7 +7,11 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 PACKAGE_NAME = "fluidsim_testpkg"
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 if PACKAGE_NAME not in sys.modules:
     package = ModuleType(PACKAGE_NAME)

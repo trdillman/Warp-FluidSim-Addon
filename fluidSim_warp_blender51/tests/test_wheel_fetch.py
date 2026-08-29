@@ -6,9 +6,10 @@ import pathlib
 import tomllib
 
 import pytest
-from fluidsim_testpkg.release import fetch_warp_wheels
+from tools.release import fetch_warp_wheels
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 SHA256 = "78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b"
 SIZE = 163074461
@@ -16,7 +17,7 @@ SIZE = 163074461
 
 def test_lock_pins_exact_external_warp_validation_wheel():
     manifest = tomllib.loads((ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
-    lock = json.loads((ROOT / "release" / "wheels.lock.json").read_text(encoding="utf-8"))
+    lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
     assert "wheels" not in manifest or manifest["wheels"] == []
     assert lock["warp_version"] == "1.16.0"
     assert lock["distribution_version"] == "1.16.0+cu12"

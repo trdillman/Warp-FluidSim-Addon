@@ -11,6 +11,11 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+try:
+    from .tool_loading import load_addon_relative_tool
+except ImportError:  # Blender executes this file directly via --python.
+    from tool_loading import load_addon_relative_tool
+
 import bpy
 import numpy as np
 
@@ -197,7 +202,7 @@ def _package_library_validation(module_name: str, runtime_module, work_dir: Path
         effects_module.add_instance_to_scene(bpy.context.scene, instance)
         installed = effect_library.installed_package_for_effect(definition.effect_id)
         if not callable(effect_library.rename_installed_package):
-            raise AssertionError("Rename Package service is unavailable")
+            raise TypeError("Rename Package service is unavailable")
         rename_result = bpy.ops.fluidsim.effect_rename_installed(
             new_effect_id="demo.library-wave-renamed",
             new_name="Library Wave Renamed",
@@ -340,7 +345,9 @@ def main() -> None:
     addon = importlib.import_module(args.module)
     addon.register()
     try:
-        runtime_module = importlib.import_module(f"{args.module}.release.custom_effect_demo_runtime")
+        runtime_module = load_addon_relative_tool(
+            args.module, "custom_effect_demo_runtime"
+        )
         rerun = runtime_module.run_all_demos(args.work_dir / "rerun", device=args.device)
         rerun_by_name = {item["name"]: item for item in rerun["demos"]}
         records = [

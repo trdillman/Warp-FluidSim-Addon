@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fluidsim_testpkg.release import build_extension
+from tools.release import build_extension
 
 EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 PAYLOAD = b"external-wheel-payload"
@@ -38,26 +38,6 @@ paths_exclude_pattern = [
   "*.whl",
   "wheels/",
   "tests/",
-  "release/build_extension.py",
-  "release/candidate_collision_guard_1_0_253.json",
-  "release/delivery_policy.py",
-  "release/fetch_warp_wheels.py",
-  "release/custom_effect_demo_runtime.py",
-  "release/generate_custom_effect_demos.py",
-  "release/generate_examples.py",
-  "release/generate_geometry_nodes.py",
-  "release/gpu_regression_blender.py",
-  "release/smoke_test_blender.py",
-  "release/validate_examples_blender.py",
-  "release/validate_custom_effects_blender.py",
-  "release/validate_custom_effects_warp.py",
-  "release/validate_phase3_blender.py",
-  "release/validate_phase3_warp.py",
-  "release/validate_phase4_blender.py",
-  "release/validate_phase4_warp.py",
-  "release/validate_phase5_blender.py",
-  "release/validate_phase5_warp.py",
-  "release/wheels.lock.json",
   "demo_outputs/",
   "artifacts/",
   "pyproject.toml",
@@ -70,6 +50,8 @@ paths_exclude_pattern = [
 
 def _write_project(root: Path) -> None:
     (root / "release").mkdir(parents=True)
+    tool_root = root.parent / "tools" / "release"
+    tool_root.mkdir(parents=True, exist_ok=True)
     (root / "wheels").mkdir()
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
@@ -107,7 +89,7 @@ def _write_project(root: Path) -> None:
     (render_dir / "fluidsim_render_nodes.blend").write_bytes(
         b"BLENDER" + b"\0" * 50_001
     )
-    (root / "release" / "wheels.lock.json").write_text(
+    (tool_root / "wheels.lock.json").write_text(
         json.dumps(
             {
                 "warp_version": "1.16.0",
@@ -124,7 +106,7 @@ def _write_project(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (root / "release" / "candidate_collision_guard_1_0_253.json").write_text(
+    (tool_root / "candidate_collision_guard_1_0_253.json").write_text(
         json.dumps(
             {
                 "candidate_sha256": "0" * 64,

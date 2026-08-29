@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR = ROOT / "release" / "validate_properties_ui_blender.py"
-SMOKE = ROOT / "release" / "smoke_test_blender.py"
+TOOLS_RELEASE = ROOT.parent / "tools" / "release"
+VALIDATOR = TOOLS_RELEASE / "validate_properties_ui_blender.py"
+SMOKE = TOOLS_RELEASE / "smoke_test_blender.py"
 
 
 def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():
@@ -57,9 +58,10 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         assert panel_id in source
 
 
-def test_properties_validator_remains_release_only_and_is_not_packaged():
+def test_properties_validator_is_tools_owned_and_not_packaged():
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
-    assert '"release/validate_properties_ui_blender.py"' in manifest
+    assert VALIDATOR.is_file()
+    assert "validate_properties_ui_blender.py" not in manifest
 
 
 def test_properties_validator_exercises_all_authored_panels_and_object_role_matrix():
