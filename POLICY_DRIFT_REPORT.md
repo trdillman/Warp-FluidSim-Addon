@@ -1,84 +1,118 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-22T04:41:09.889232+00:00
-audit_unit: 'C:\tmp\fluidsim-main-release'
-git_head: bb6d3fc5a5be9b944d4316c46aeb9ed47f011409
-gate_run_at: 2026-08-22T04:41:09.889232+00:00
+generated_at: 2026-08-30T09:47:34.449493+00:00
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
+git_head: 41a02c843c79081a79514f08861cab46dea2d46c
+gate_run_at: 2026-08-30T09:47:34.449493+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5
+demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
+git_dirty: true
 ---
 
-# Policy Drift Report — root unit
+# Policy Drift Report: root unit
+
+## Audit conclusion
+
+The current executable FluidSim/Warp path is not supported as a narrow
+heuristic implementation. A fresh GUI-inclusive production gate ran against
+HEAD `41a02c843c79081a79514f08861cab46dea2d46c` and the evidence-only dirty tree,
+used Blender 5.1 with external Warp 1.16.0 on CUDA 12.9 / RTX 4080 SUPER,
+advanced live playback, emitted visible surface and whitewater output, and
+finished with `FULL-PRODUCTION-GATE-PASS`. The nested package suite and
+package verification also pass independently.
+
+The promoted demo evidence and nested technical report are synchronized to the
+same gate artifact. The opt-in paddle acceptance threshold remains explicitly
+marked uncalibrated. Earlier gate attempts exposed and led to fixes for stale
+particle-pool ownership, structured injection receipts, Windows output
+encoding, and a retired GUI test operator; the final stable-HEAD gate passed.
 
 ## Strongest live evidence
 
-- `python tools/run_production_gate.py --include-gui`
-  passed at proof HEAD `bb6d3fc5a5be9b944d4316c46aeb9ed47f011409`;
-  the run wrote the full-gate
-  manifest, `FULL-PRODUCTION-GATE-PASS`, `GUI-ACCEPTANCE-PASS (40/40)`,
-  `GUI-PLAYBACK-PROBE-PASS`, and `SAVED-DEMO-GUI-PLAYBACK-PASS`.
-- The generated demo analysis is `result: pass`, 18/18 bounded checks, and the
-  checked-in `demos/analysis_report.json` is byte-for-byte synchronized with
-  `artifacts/demo_analysis/analysis_report.json`, SHA-256
-  `db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5`.
-- The four promoted metrics moved within their bounded tolerances relative to
-  the previous proof; the shift is GPU floating-point nondeterminism across
-  bakes, not a behavioral change, and every bounded check still passes.
+- `artifacts/production_gate_manifest.json` records gate time
+  `2026-08-30T09:47:34.449493+00:00`, proof HEAD `41a02c843c79`,
+  `FULL-PRODUCTION-GATE-PASS`, GUI inclusion, and generated demo artifact hash
+  `ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4`.
+- The gate recorded `GUI-ACCEPTANCE-PASS (40/40)` and
+  `SAVED-DEMO-GUI-PLAYBACK-PASS` at the same proof HEAD.
+- The current root Python suite passed `1177` tests before the final gate.
 
 ## Findings
 
-### PD-ROOT-001 — Resolved: GUI playback world-box contract
+### PD-ROOT-001: stale report authority was recurring (documentation drift)
 
-The acceptance fixture no longer feeds an intentionally out-of-domain UI
-region into the live solver. The shared sparse-grid rejection remains strict,
-and `tests/test_scene_bridge_cache_playback.py` covers preservation of its
-actionable diagnostic.
+Before this audit, this report named `C:\tmp\fluidsim-main-release`, HEAD
+`bb6d3fc5...`, and an old artifact hash. The report has been refreshed to this
+checkout, current HEAD, and current gate metadata. The completed local card is
+`backlog/tasks/TASK-POLICY-DRIFT-014-REPORT-AUTHORITY-RECURRENCE.md`.
 
-### PD-ROOT-002 — Resolved: report authority recurrence
+### PD-ROOT-002: checked-in demo evidence recurrence repaired (validation drift)
 
-The full-gate manifest and `tools/validate_policy_drift_reports.py` now bind
-both reports, the checked-in demo JSON, promoted documentation metrics, active
-cards, artifact hash, verdict, and proof HEAD. Evidence-only descendants remain
-valid; any intervening non-evidence commit makes validation fail closed.
+The generated artifact and checked-in `demos/analysis_report.json` now match
+byte-for-byte at SHA-256
+`ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4`.
+`demos/ANALYSIS.md` and the nested technical report promote the same four
+metrics. Recurrence tracking remains in
+`backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md`.
 
-### PD-ROOT-003 — Resolved: 1.0.253 integration proof staleness
+### PD-ROOT-003: paddle spin-up acceptance uses an uncalibrated margin (validation drift)
 
-The previous report predated the 1.0.253 candidate integration. This report
-binds the merged implementation to the fresh GUI-inclusive gate at `8dfc393`
-and to this isolated merge worktree.
+`tools/analyze_demos.py` labels `PADDLE_SPINUP_MOMENTUM_MARGIN = 0.3` as
+`UNCALIBRATED` and a placeholder. The current real `paddle_stir` bake passes
+10/10 over 96 frames and 158,220 particles, but the acceptance boundary has
+not been measured across scale or degraded-motion cases. Repair is tracked by
+`backlog/tasks/TASK-POLICY-DRIFT-016-PADDLE-SPINUP-THRESHOLD-CALIBRATION.md`.
 
-## Known non-blocking exceptions
+### PD-ROOT-004: full GUI gate was intermittently non-reproducible (validation drift)
 
-- `C:\Python314\python.exe -m pytest -q` passed all 1,033 tests before the committed-HEAD
-  production run. There is no repository-wide Python exception in this proof.
-- `demos/paddle_stir` is an opt-in moving-collider demo outside the canonical
-  18/18 gate set. Fresh standalone rebuilds on both baseline and integration
-  score 10/10; the documented pi-crossing velocity failure did not reproduce.
+Earlier full-gate attempts reproduced distinct failures in capacity retry,
+demo receipt compatibility, output encoding, and stale GUI test setup. Each
+was fixed without weakening the checks. The final gate passed `40/40` GUI
+acceptance and saved-demo playback. Recurrence tracking remains in
+`backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md`.
+
+## Scope boundary and non-findings
+
+The dirty worktree contains only the evidence files promoted after the proof
+commit. Current real
+runtime evidence shows live GPU stepping, surface publication, whitewater
+objects, GUI panel draws, pending-setting behavior, rendering, and saved-demo
+playback. Static fallback terms found in materials, custom-effect paths, and
+test fixtures are intentional or test-only and have no contradictory runtime
+evidence. The nested package's stale technical report is owned by that unit's
+report and backlog, not silently folded into this root unit.
 
 ## Machine-readable audit footer
 
-generated_at: 2026-08-22T04:41:09.889232+00:00
-audit_unit: 'C:\tmp\fluidsim-main-release'
-git_head: bb6d3fc5a5be9b944d4316c46aeb9ed47f011409
-gate_run_at: 2026-08-22T04:41:09.889232+00:00
+```yaml
+generated_at: 2026-08-30T09:47:34.449493+00:00
+generated_at_utc: 2026-08-30T09:47:34.449493Z
+escalated: false
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
+git_head: 41a02c843c79081a79514f08861cab46dea2d46c
+gate_run_at: 2026-08-30T09:47:34.449493+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: db54a00937e3e612297e1320cb999b22427f3607344a3872b14ad96e4451ebe5
+demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
 freshness: fresh
 status: fresh
-blocking_criticality: none
+blocking_criticality: medium
 human_decision_required: false
-strongest_live_verification:
-  - 'PASS: python tools/run_production_gate.py --include-gui; FULL-PRODUCTION-GATE-PASS.'
-  - 'PASS: GUI-ACCEPTANCE-PASS (40/40) and SAVED-DEMO-GUI-PLAYBACK-PASS.'
-  - 'PASS: generated demo analysis result=pass, 18/18 bounded checks.'
-  - 'PASS: C:\Python314\python.exe -m pytest -q; 1043 passed.'
-files_that_need_correction: []
-active_backlog_tasks: []
+strongest_live_verification_commands_artifacts:
+  - 'rtk python tools/run_production_gate.py --include-gui -> artifacts/production_gate_manifest.json'
+  - 'rtk python -m pytest -q -> 1177 passed during this audit'
+  - 'rtk python tools/analyze_demos.py paddle_stir -> DEMO-ANALYSIS-PASS (10/10)'
+  - 'artifacts/production_gate_manifest.json -> FULL-PRODUCTION-GATE-PASS at 41a02c843c79'
+files_that_need_correction:
+  - 'tools/analyze_demos.py'
+active_backlog_tasks:
+  - 'backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md'
+  - 'backlog/tasks/TASK-POLICY-DRIFT-016-PADDLE-SPINUP-THRESHOLD-CALIBRATION.md'
+  - 'backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md'
 repair_checklist:
-  - '[x] Repair the out-of-domain GUI fixture and preserve the primary error.'
-  - '[x] Bind current reports to the full-gate manifest and artifact hash.'
-  - '[x] Synchronize checked-in demo evidence and promoted documentation.'
-  - '[x] Rebind the stale proof and correct the misbound audit_unit.'
+  - 'Synchronize generated demo metrics and hashes into every promoted report.'
+  - 'Calibrate paddle spin-up using repeated real scale and negative cases.'
+  - 'Make full GUI gate failures reproducible and preserve diagnostic context.'
+```
