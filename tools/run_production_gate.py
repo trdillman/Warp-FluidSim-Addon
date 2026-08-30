@@ -93,7 +93,7 @@ def _run(label, command, env=None, reject_output=False, expect_marker=None):
         stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
-        errors="replace",
+        errors="backslashreplace",
     )
     output = result.stdout or ""
     if output:

@@ -154,7 +154,9 @@ def test_gate_lane_tolerates_non_utf8_child_output(capsys):
         "encoded lane", command, reject_output=True,
         expect_marker="LANE-PASS")
 
-    assert "LANE-PASS" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "\\x9d" in output
+    assert "LANE-PASS" in output
 
 
 def test_playback_validator_recomputes_and_requires_stored_verdict(tmp_path):
