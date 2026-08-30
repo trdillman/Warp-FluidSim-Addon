@@ -246,9 +246,7 @@ def _on_cache_playback_changed(self, context):
         self.status = f"Cache playback toggle failed: {exc}"
 
 
-# ---------------------------------------------------------------------------
 # Snippet library dropdown (examples + user-saved presets)
-# ---------------------------------------------------------------------------
 
 
 def user_snippet_dir(create=False) -> str:
@@ -336,9 +334,7 @@ def _product_preset_items(_self, _context):
     return _PRODUCT_PRESET_ITEMS
 
 
-# ---------------------------------------------------------------------------
 # Custom snippet argument / snippet property groups
-# ---------------------------------------------------------------------------
 
 
 class FLUIDSIM_PG_snippet_argument(bpy.types.PropertyGroup):
@@ -422,9 +418,7 @@ class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
         description="Run this snippet every Nth frame")
 
 
-# ---------------------------------------------------------------------------
 # Object-level settings (sources / colliders / sinks)
-# ---------------------------------------------------------------------------
 
 
 def _mesh_object_poll(_settings, obj):
@@ -750,13 +744,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     )
 
 
-# ---------------------------------------------------------------------------
 # Scene-level settings
-# ---------------------------------------------------------------------------
 
 
 class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
-    # -- Simulation -----------------------------------------------------------
+    # Simulation
     live: BoolProperty(
         name="Live Simulation", default=False,
         update=_on_live_changed,
@@ -797,7 +789,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Use Scene Gravity", default=True, update=_request_live,
         description="Enable to use the scene gravity vector; disable to use the custom Gravity value below")
 
-    # -- Domain / sparse grid -------------------------------------------------
+    # Domain / sparse grid
     voxel_size: FloatProperty(
         name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
         update=_request_rebuild,
@@ -822,7 +814,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
                      "pressure solve treats sparse-grid padding beyond the "
                      "domain box as open space)")
 
-    # -- Particles -------------------------------------------------------------
+    # Particles
     max_particles: IntProperty(
         name="Initial Particle Reserve", default=2_000_000, min=1024,
         max=50_000_000, update=_request_particle_capacity,
@@ -891,7 +883,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Limit Percent", default=0.5, min=0.0, max=1.0,
         update=_request_live,
         description="Set the fraction of speed above Max Speed removed each step; higher values damp excess speed more strongly, while lower values retain more of it")
-    # -- Global forces ---------------------------------------------------------
+    # Global forces
     directional_force: FloatVectorProperty(
         name="Directional Acceleration", size=3, default=(0.0, 0.0, 0.0),
         subtype="ACCELERATION", update=_request_live,
@@ -947,7 +939,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Scale anti-clumping pressure derived from particle counts; higher values separate crowded particles more strongly, while zero disables this correction")
 
-    # -- Spatiotemporal FLIP (beta) -------------------------------------------
+    # Spatiotemporal FLIP (beta)
     spacetime_enabled: BoolProperty(
         name="Enable ST-FLIP (Beta)", default=False, update=_request_reset,
         description="Enable the experimental spatiotemporal FLIP path for large time steps; disable to use the standard FLIP path; changing this resets the solver")
@@ -998,7 +990,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Seed", default=1729, min=0, max=2147483647, update=_request_reset,
         description="Set the deterministic ST-FLIP jitter sequence; changing it produces a different sampling pattern without changing overall strength")
 
-    # -- Pressure ---------------------------------------------------------------
+    # Pressure
     pressure_solver: EnumProperty(
         name="Solver", items=_items(ProjectNonDivergentSolver), default="PCG",
         update=_request_live,
@@ -1016,7 +1008,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Remove solved pressures below this fraction of the frame's pressure range; higher values suppress more small pressure detail, while zero keeps all solved values")
 
-    # -- Viscosity ---------------------------------------------------------------
+    # Viscosity
     viscosity_enabled: BoolProperty(
         name="Enable Viscosity", default=False, update=_request_live,
         description="Enable the implicit viscosity solve to make liquid resist shear; disable it for inviscid motion and lower compute cost")
@@ -1041,7 +1033,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Set the viscosity residual required for early convergence; lower values demand a tighter solve and may take longer, while higher values stop sooner")
 
-    # -- Surface tension -----------------------------------------------------------
+    # Surface tension
     surface_tension_enabled: BoolProperty(
         name="Enable Surface Tension", default=False, update=_request_reset,
         description="Enable continuum-surface-force capillarity from the liquid SDF; changing allocation state resets the solver")
@@ -1066,7 +1058,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Set normalized 7-point smoothing passes for SDF normals; more passes reduce curvature noise but soften small capillary features")
 
-    # -- Clear dye color mixing ---------------------------------------------------
+    # Clear dye color mixing
     species_enabled: BoolProperty(
         name="Enable Color Mixing", default=False, update=_request_reset,
         description="Mix the existing source colors on the GPU; changing color-channel storage resets the solver")
@@ -1075,7 +1067,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Control how quickly nearby liquid particle colors approach their local mixture; zero preserves source colors")
 
-    # -- Surface -------------------------------------------------------------------
+    # Surface
     surface_enabled: BoolProperty(
         name="Generate Surface", default=True,
         update=_request_surface_refresh,
@@ -1173,7 +1165,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_surface_refresh,
         description="Blend each smoothing pass with the current SDF; higher values soften the surface more, while zero prevents smoothing")
 
-    # -- Whitewater -------------------------------------------------------------
+    # Whitewater
     whitewater_enabled: BoolProperty(
         name="Enable Whitewater", default=False,
         update=_request_whitewater_refresh,
@@ -1257,7 +1249,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Multiply base lifetime while particles are classified as spray")
 
-    # -- Height source ------------------------------------------------------------
+    # Height source
     height_enabled: BoolProperty(
         name="Height Fill", default=False,
         update=_request_reset,
@@ -1289,7 +1281,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Emit Particles", default=True, update=_request_reset,
         description="Enable to seed liquid particles in the height region; disable to keep the height configuration without creating particles")
 
-    # -- Viewport display / output --------------------------------------------------
+    # Viewport display / output
     liquid_view_mode: EnumProperty(
         name="Liquid View",
         items=LIQUID_VIEW_ITEMS,
@@ -1342,7 +1334,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Choose the fast combined pool, separate typed outputs, or both",
     )
-    # -- Production render attributes -------------------------------------------
+    # Production render attributes
     # Inventory changes are reset-tier because color/source/UID channels are
     # allocated only when selected and cache signatures include every toggle.
     surface_attribute_velocity: BoolProperty(
@@ -1456,7 +1448,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Set the Blender collection name that owns generated outputs; changing it moves or creates outputs under the new collection")
 
-    # -- Custom snippets ----------------------------------------------------------
+    # Custom snippets
     snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
     active_snippet: IntProperty(default=0)
     snippet_library_selection: EnumProperty(
@@ -1478,7 +1470,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Value", default=1.0,
         description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
 
-    # -- Guided setup / product presets -------------------------------------------
+    # Guided setup / product presets
     setup_mode: EnumProperty(
         name="Setup Mode",
         items=(
@@ -1503,7 +1495,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         description="Identifier of the last successfully applied product preset",
     )
 
-    # -- Production bake -----------------------------------------------------------
+    # Production bake
     cache_format: EnumProperty(
         name="Cache Format",
         items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
@@ -1538,7 +1530,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Bake Message", default="", options={"SKIP_SAVE"},
     )
 
-    # -- Diagnostics ---------------------------------------------------------------
+    # Diagnostics
     profiling_enabled: BoolProperty(
         name="Enable Profiling", default=False, update=_request_rebuild,
         description="Enable per-phase solver timing collection for diagnostics; disable to avoid synchronization and measurement overhead")
@@ -1560,7 +1552,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Baseline", subtype="FILE_PATH", default="//fluidsim_benchmark.json",
         description="Select the JSON baseline used for performance comparison; changing it changes which recorded timings determine regressions")
 
-    # -- Cache (optional, supplemental only) -----------------------------------------
+    # Cache (optional, supplemental only)
     cache_enabled: BoolProperty(
         name="Enable Cache", default=False,
         description="Enable to record simulated frames to Cache Path during playback; disable to run without writing cache files")
@@ -1591,7 +1583,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         min=0,
         description="Set the last frame included in custom cache operations; higher values extend the cache sequence and values below Start produce an invalid range")
 
-    # -- Status mirrors (read-only UI feedback) ----------------------------------------
+    # Status mirrors (read-only UI feedback)
     status: StringProperty(name="Status", default="Solver not initialized")
     stat_particles: IntProperty(default=0)
     stat_voxels: IntProperty(default=0)

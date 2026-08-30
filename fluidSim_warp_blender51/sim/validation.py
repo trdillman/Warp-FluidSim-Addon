@@ -148,9 +148,7 @@ def _voxel_centers(grid):
     return centers
 
 
-# ---------------------------------------------------------------------------
 # 1. sparse tiled leaf-grid coordinate/index roundtrip
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -186,9 +184,7 @@ def test_leaf_grid_roundtrip(device):
     return bad == 0, f"{total} voxels roundtripped, {bad} failures"
 
 
-# ---------------------------------------------------------------------------
 # 2. leaf-local addressing / start vector reconstruction
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[1])
@@ -209,9 +205,7 @@ def test_leaf_addressing(device):
     return bad == 0, f"{len(leaf_coords)} leaves validated, {bad} mismatches"
 
 
-# ---------------------------------------------------------------------------
 # 3. field precision parity 16/32-bit
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[2])
@@ -232,9 +226,7 @@ def test_precision_parity(device):
     return max_rel < 5.0e-3, f"max relative error {max_rel:.2e} (limit 5e-3)"
 
 
-# ---------------------------------------------------------------------------
 # 4. particle-to-grid count/average/active masks
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[3])
@@ -268,9 +260,7 @@ def test_p2g_masks(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 5. grid-to-particle sampling
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[4])
@@ -299,9 +289,7 @@ def test_g2p_sampling(device):
     return err < 1.0e-4, f"max abs sampling error {err:.2e} (constant field)"
 
 
-# ---------------------------------------------------------------------------
 # 6. source shape coverage + particle attribute transfer
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[5])
@@ -355,9 +343,7 @@ def test_source_shapes(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 7. height-field sourcing flat/profile behavior
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[6])
@@ -462,9 +448,7 @@ def test_height_field_sourcing(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 8. NanoVDB/OpenVDB volume sourcing kernels
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[7])
@@ -699,9 +683,7 @@ def test_volume_sourcing_kernels(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 9. collision/sink voxel bit behavior
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[8])
@@ -749,9 +731,7 @@ def test_collision_sink_bits(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 10. pressure projection divergence reduction
-# ---------------------------------------------------------------------------
 
 
 def _divergence_norm(solver):
@@ -813,9 +793,7 @@ def test_divergence_reduction(device):
     return result
 
 
-# ---------------------------------------------------------------------------
 # 11. Jacobi and PCG residual convergence
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[10])
@@ -879,9 +857,7 @@ def test_solver_convergence(device):
     return result
 
 
-# ---------------------------------------------------------------------------
 # 12. surface SDF build/filter parity
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[11])
@@ -931,9 +907,7 @@ def test_surface_sdf(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 13. viscosity solve stability
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[12])
@@ -986,9 +960,7 @@ def test_viscosity_stability(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 14. whitewater churn/emission/advection
-# ---------------------------------------------------------------------------
 
 
 @_test(VALIDATION_TESTS[13])
@@ -1132,9 +1104,7 @@ def test_spatiotemporal_flip(device):
     )
 
 
-# ---------------------------------------------------------------------------
 # 17-21. surface-tension physics and capillary stability
-# ---------------------------------------------------------------------------
 
 
 def _surface_tension_settings(device, *, coefficient=0.072, enabled=True):
@@ -1327,11 +1297,6 @@ def test_surface_tension_finite_energy(device):
         )
     finally:
         solver.release()
-
-
-# ---------------------------------------------------------------------------
-# runner
-# ---------------------------------------------------------------------------
 
 
 def run_all(device: str = "cuda:0", progress=None) -> list[ValidationResult]:

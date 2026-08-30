@@ -35,9 +35,7 @@ from .fields import (
 )
 from .registry import register, register_fn
 
-# ---------------------------------------------------------------------------
 # Clear kernels (coreClearScalar*/Vector*)
-# ---------------------------------------------------------------------------
 
 
 def _make_clear_kernel(dtype):
@@ -66,10 +64,8 @@ register_fn(k_clear_f32, "coreClearScalarFloat32", "coreClearScalarField")
 register_fn(k_clear_v3, "coreClearVectorField")
 
 
-# ---------------------------------------------------------------------------
 # Sync kernels (device buffer copies; the original synchronized host/device
 # mirrors — under Warp the canonical implementation is a device-device copy)
-# ---------------------------------------------------------------------------
 
 
 def sync_copy(dst: wp.array, src: wp.array, count: int | None = None):
@@ -86,10 +82,8 @@ for _n in (
                 notes="device-resident copy; host mirrors eliminated")
 
 
-# ---------------------------------------------------------------------------
 # Reductions (coreReduceSum*, coreReduce*DotPartialLinear*)
 # Warp device primitives replace workgroup-size-specialized OpenCL trees.
-# ---------------------------------------------------------------------------
 
 
 def reduce_sum(src: wp.array, out: wp.array):
@@ -109,9 +103,7 @@ for _sz in (128, 256, 512, 1024):
                 strategy="tiled")
 
 
-# ---------------------------------------------------------------------------
 # Conversions / clamp / remap
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -164,9 +156,7 @@ register_fn(k_clamp_scalar_field, "coreClampScalarField")
 register_fn(k_remap_scalar_field, "coreRemapScalarField")
 
 
-# ---------------------------------------------------------------------------
 # Vector magnitude conversions
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -215,9 +205,7 @@ register_fn(k_staggered_to_magnitude, "coreConvertFieldStaggeredVectorToMagnitud
             notes="audit item resolved: symmetric axis-pair averaging")
 
 
-# ---------------------------------------------------------------------------
 # Max active value (core_misc) — masked absolute max over active voxels
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -247,9 +235,7 @@ def k_max_vec3_magnitude(
 register_fn(k_max_active_value, "coreComputeMaxActiveValue")
 
 
-# ---------------------------------------------------------------------------
 # Scale field (control ramps)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -307,9 +293,7 @@ register_fn(k_ramp_to_scale_field_volume, "coreRampToScaleFieldVolume")
 register_fn(k_ramp_to_scale_field_particle, "coreRampToScaleFieldParticle")
 
 
-# ---------------------------------------------------------------------------
 # Sort/gather kernels (coreSort*) — apply a permutation to attribute buffers
-# ---------------------------------------------------------------------------
 
 
 def _make_gather_kernel(dtype):
@@ -344,9 +328,7 @@ register_fn(k_gather_v3, "coreSortVectorFloat32", "coreSortVectorField")
 register_fn(k_gather_c2, "coreSortCoupleField")
 
 
-# ---------------------------------------------------------------------------
 # SDF utilities (core_sdf_collision)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -555,9 +537,7 @@ register_fn(k_recompute_collision_bit_from_sdf, "coreRecomputeCollisionBitFromSd
 register_fn(k_sdf_to_gradient, "coreSDFToGradient")
 
 
-# ---------------------------------------------------------------------------
 # Generic particle <-> grid transfer (core_particle_grid_transfer)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel

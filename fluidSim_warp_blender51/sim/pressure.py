@@ -141,9 +141,7 @@ def st_beta_for_cell_face(
         return 0.0
     return st_face_beta(axis, face_flat, wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
 
-# ---------------------------------------------------------------------------
 # Divergence + matrix helpers
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -419,9 +417,7 @@ def k_jacobi_iteration(
 
 
 
-# ---------------------------------------------------------------------------
 # ST-FLIP variable-coefficient pressure matrix from space-time accumulators
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -565,9 +561,7 @@ def k_jacobi_iteration_st(
                     acc += beta * x_in[n]
     x_out[tid] = acc * inv_diag[tid]
 
-# ---------------------------------------------------------------------------
 # PCG scalar update kernels (device-resident alpha/beta)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -886,9 +880,7 @@ def k_update_p_indexed(
     p[tid] = z[tid] + beta[0] * p[tid]
 
 
-# ---------------------------------------------------------------------------
 # Electrostatic leaf aggregates (coarse long-range solve / multigrid)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -994,9 +986,7 @@ def k_sample_down_residual(
     wp.atomic_add(leaf_rhs, tid // LEAF_VOLUME, r[tid])
 
 
-# ---------------------------------------------------------------------------
 # Projection + post ops
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -1277,9 +1267,6 @@ def k_pressure_scale(
     x[tid] = x[tid] * scale
 
 
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
 
 register_fn(k_compute_divergence,
             "fluidSimProjectNonDivergentComputeDivergence",
@@ -1350,9 +1337,7 @@ register_fn(k_pressure_threshold_apply, "fluidSimPressureThresholdApply")
 register_fn(k_pressure_scale, "fluidSimPressureScale")
 
 
-# ---------------------------------------------------------------------------
 # Host-orchestrated solver driver (GPU-resident state)
-# ---------------------------------------------------------------------------
 
 
 class PressureSolver:

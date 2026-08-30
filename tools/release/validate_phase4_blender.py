@@ -280,7 +280,6 @@ def validate(module_name: str, work_dir: Path) -> dict:
             if _live_count(publication, publication.output_object(scene, name)) != 0:
                 raise AssertionError("legacy whitewater was falsely classified")
 
-        # Republish typed data for persistence and F12 proof.
         fs.whitewater_output_mode = "SEPARATE"
         publication.publish_payload(scene, typed_payload)
         render_path = work_dir / "phase4_typed_whitewater.png"

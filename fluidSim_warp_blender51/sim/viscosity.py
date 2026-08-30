@@ -30,9 +30,7 @@ from .pressure import (
 )
 from .registry import register_fn
 
-# ---------------------------------------------------------------------------
 # Explicit smoothing path
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -81,9 +79,7 @@ def k_viscosity_smooth(
         w_out[tid] = w_in[tid]
 
 
-# ---------------------------------------------------------------------------
 # Implicit path: (I + c*D - c*L) x = u  with c = dt*nu/h^2 per voxel
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -259,9 +255,7 @@ register_fn(k_update_p, "fluidSimForceViscosityUpdateP")
 register_fn(k_viscosity_apply_collision, "fluidSimForceViscosityApplyCollision")
 
 
-# ---------------------------------------------------------------------------
 # Host-orchestrated driver
-# ---------------------------------------------------------------------------
 
 
 class ViscositySolver:

@@ -111,9 +111,7 @@ from .kernels_fluid import (
 )
 
 
-# ---------------------------------------------------------------------------
 # ST-FLIP host-side calibration helpers
-# ---------------------------------------------------------------------------
 
 
 def _st_poly6_1d_host(r: float) -> float:
@@ -145,9 +143,7 @@ def _motion_leaf_radius(max_speed: float, frame_dt: float,
     return int(math.ceil(travel / leaf_world_size)) + 1
 
 
-# ---------------------------------------------------------------------------
 # Small helper kernels owned by the orchestrator
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -351,9 +347,7 @@ def k_sanitize_particles(
         velocities[tid] = v * (max_speed / speed)
 
 
-# ---------------------------------------------------------------------------
 # Host-side source / collider descriptors (filled by the Blender bridge)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -760,7 +754,7 @@ class FluidSolver:
         # proportional to live work (see TASK-POLICY-DRIFT-002).
         self._nvox = 1
 
-    # -- host configuration -------------------------------------------------
+    # Host configuration
 
     def set_source_batch(self, legacy_descriptors=(), native_plans=()):
         """Atomically install the complete runtime source snapshot."""
@@ -877,9 +871,7 @@ class FluidSolver:
         self._host_frame_cache = None
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
-            sourcing._compiled_batch = None
-            sourcing.update_available_capacity(
-                plan.target - self.particles.host_count)
+            sourcing.replace_particle_storage(self.particles)
         del old_particles, old_bins
         gc.collect()
         release_cuda_memory(self.device)
@@ -901,6 +893,8 @@ class FluidSolver:
             old_particles = self.particles
             self.particles = ParticleSystem(
                 old_particles.capacity, self.device, expected_channels)
+            if sourcing is not None:
+                sourcing.replace_particle_storage(self.particles)
             del old_particles
         self.particles.clear()
         self.color_mixing = self._new_color_mixing()
@@ -1165,7 +1159,7 @@ class FluidSolver:
         self.force_fields = []
         self._force_fields_dev = None
 
-    # -- active-work launch bounds -------------------------------------------
+    # Active-work launch bounds
 
     def _np_dim(self):
         """Live liquid-particle launch bound (host mirror upper bound).
@@ -1181,7 +1175,7 @@ class FluidSolver:
         """Live whitewater launch bound (same contract as ``_np_dim``)."""
         return max(1, min(self.whitewater.capacity, self.whitewater.host_count))
 
-    # -- render surfacing compatibility -------------------------------------
+    # Render surfacing compatibility
 
     def _render_surface_voxel_size(self):
         return (self.surface.voxel_size() if hasattr(self, "surface")
@@ -1222,7 +1216,6 @@ class FluidSolver:
             return p._position2
         return p.position
 
-    # -- profiling helper ----------------------------------------------------
 
     def _phase(self, name):
         if self.profiler is not None:
@@ -1230,7 +1223,6 @@ class FluidSolver:
         import contextlib
         return contextlib.nullcontext()
 
-    # -- topology ------------------------------------------------------------
 
     def _rebuild_topology(self, expand=None):
         g = self.grid
@@ -1299,7 +1291,7 @@ class FluidSolver:
         self.churn.data, self.churn_tmp.data = self.churn_tmp.data, self.churn.data
         return g.active_leaf_count
 
-    # -- per-substep phases ----------------------------------------------------
+    # Per-substep phases
 
     def _clear_grid_fields(self, clear_collision=True):
         # Clear only the active slot range: the topology rebuild that
@@ -1980,7 +1972,7 @@ class FluidSolver:
         ww.update_type_counts(active_whitewater)
         return active_whitewater
 
-    # -- CFL ----------------------------------------------------------------
+    # CFL
 
     def _collider_max_speed(self):
         """Max collider surface speed this frame: |linear| + |angular| * tip radius.
@@ -2080,7 +2072,6 @@ class FluidSolver:
         gmag = math.sqrt(sum(x * x for x in s.gravity))
         return _motion_leaf_radius(vmax, frame_dt, gmag, s.voxel_size)
 
-    # -- main entry -----------------------------------------------------------
 
     def step_frame(self):
         """Advance one display frame (interactive playback entry point)."""
@@ -2245,7 +2236,7 @@ class FluidSolver:
             st.timers = self.profiler.collect()
         return st
 
-    # -- direct particle injection ---------------------------------------------
+    # Direct particle injection
 
     def inject_particle_packets_exact(self, packets):
         """Internal exact all-or-zero packet transaction."""
@@ -2304,7 +2295,6 @@ class FluidSolver:
         )
 
 
-    # -- output ---------------------------------------------------------------
     def host_frame(self):
         """Return the lazy host snapshot for the current solver frame."""
         if (self._host_frame_cache is None or

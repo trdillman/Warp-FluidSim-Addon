@@ -22,6 +22,7 @@ DEFAULT_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 ALLOWED_EVIDENCE_PATTERNS = (
     "POLICY_DRIFT_REPORT.md",
     "demos/POLICY_DRIFT_REPORT.md",
+    "fluidSim_warp_blender51/POLICY_DRIFT_REPORT.md",
     "demos/ANALYSIS.md",
     "fluidSim_warp_blender51/docs/technical_report.md",
     "demos/analysis_report.json",

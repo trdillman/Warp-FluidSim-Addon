@@ -287,6 +287,14 @@ class SourcePipeline(CompiledSourceExecution):
         """Refresh capacity truth without exposing mutable result internals."""
         self.last_apply_result = replace(self.last_apply_result, available=max(0, int(available)))
 
+    def replace_particle_storage(self, particles) -> None:
+        """Rebind source execution after the solver atomically swaps its pool."""
+        self.runtime = replace(self.runtime, particles=particles)
+        self._compiled_batch = None
+        self.update_available_capacity(
+            int(particles.capacity) - int(particles.host_count)
+        )
+
     def export_checkpoint_state(self):
         """Return deterministic source lifecycle/RNG state at a frame boundary."""
         if self._emission_transaction_active:

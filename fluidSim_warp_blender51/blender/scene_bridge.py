@@ -18,9 +18,7 @@ from .simulation_admission import capacity_blocking_message
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
-# ---------------------------------------------------------------------------
 # Session state
-# ---------------------------------------------------------------------------
 
 
 class Session:
@@ -444,14 +442,10 @@ def current_error(scene) -> str:
     return session().current_error(scene)
 
 
-# ---------------------------------------------------------------------------
 # Settings translation
-# ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
 # Session lifecycle
-# ---------------------------------------------------------------------------
 
 
 def refresh_capacity_plan(scene, depsgraph=None, *, operation=None):

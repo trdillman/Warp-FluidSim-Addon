@@ -134,8 +134,3 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
         fs.status = f"Exported {count} cache frame(s) to {base}"
         self.report({"INFO"}, fs.status)
         return {"FINISHED"}
-
-
-# ---------------------------------------------------------------------------
-# Product presets and guided workflow
-# ---------------------------------------------------------------------------

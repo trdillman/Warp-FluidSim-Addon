@@ -392,7 +392,7 @@ class TurbulenceType(IntEnum):
     PERLIN = 1
 
 
-# Blender EnumProperty item helpers -----------------------------------------
+# Blender EnumProperty item helpers
 
 # User-facing effects for enums exposed by the add-on UI.  Blender displays
 # these strings while users hover dropdown choices, so repeating the label is

@@ -16,9 +16,7 @@ TOOL_PROFILER_LABEL = "FluidSim Profiler 1.0"
 BLENDER_TARGET = "5.1+"
 BACKEND_TARGET = "NVIDIA Warp / CUDA"
 
-# ---------------------------------------------------------------------------
 # Voxel type bit masks (Bit_Core_VoxelType)
-# ---------------------------------------------------------------------------
 VOXEL_NONE = 0
 VOXEL_COLLISION = 1
 VOXEL_SINK = 2
@@ -36,16 +34,13 @@ VOXEL_COLLISION_Z = 4096
 VOXEL_ACTIVE = 8192
 VOXEL_COLOR = 16384
 
-# Const_Core
 REDUCE_CHUNK = 4
 
 # Const_FluidSim (0 == derive at runtime)
 PARTICLE_SEPARATION_SIZE = 0.0
 MAX_PARTICLE_COUNT = 0
 
-# ---------------------------------------------------------------------------
 # Sparse tiled leaf grid: leaves are 8x8x8 voxel tiles in a flat leaf table.
-# ---------------------------------------------------------------------------
 LEAF_DIM = 8
 LEAF_SHIFT = 3          # log2(LEAF_DIM)
 LEAF_MASK = LEAF_DIM - 1

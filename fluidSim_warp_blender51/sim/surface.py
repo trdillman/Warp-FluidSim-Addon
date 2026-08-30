@@ -345,9 +345,7 @@ class SurfacePipeline:
                 "active_leaves": leaves, "active_voxels": leaves * C.LEAF_VOLUME}
 
 
-# ---------------------------------------------------------------------------
 # Surface SDF build (union of particle spheres, splatted into the grid)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -406,9 +404,7 @@ register_fn(k_build_surface_sdf, "fluidSimBuildSurfaceSdf",
             notes="Union-of-spheres particle splat with atomic min distance.")
 
 
-# ---------------------------------------------------------------------------
 # Surface smoothing filters
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -601,9 +597,7 @@ register_fn(k_smooth_surface_sdf_mean_curvature, "fluidSimSmoothSurfaceSdfMeanCu
             notes="Explicit mean curvature flow with stable step size.")
 
 
-# ---------------------------------------------------------------------------
 # SDF -> axis collision classification (per-face solid fractions/bits)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -736,9 +730,7 @@ register_fn(k_expand_shift_axis_velocity_in_collider,
             notes="Collider face velocity override + one-ring extrapolation.")
 
 
-# ---------------------------------------------------------------------------
 # Marching cubes surface extraction (host orchestrated, GPU compute)
-# ---------------------------------------------------------------------------
 
 
 class SurfaceExtractor:

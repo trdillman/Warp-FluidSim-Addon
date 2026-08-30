@@ -127,8 +127,3 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
         context.scene.fluidsim.status = f"Saved user preset: {path.name}"
         self.report({"INFO"}, context.scene.fluidsim.status)
         return {"FINISHED"}
-
-
-# ---------------------------------------------------------------------------
-# Responsive production bake and cache operations
-# ---------------------------------------------------------------------------

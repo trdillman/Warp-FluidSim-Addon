@@ -38,9 +38,7 @@ from .fields import (
 )
 from .registry import register_fn
 
-# ---------------------------------------------------------------------------
 # Blend helper (BlendMode: 0 Add, 1 Replace, 2 Maximum, 3 Pull, 4 Blend)
-# ---------------------------------------------------------------------------
 from .source_contracts import (
     MeshSource,
     SourceShape,
@@ -81,9 +79,7 @@ def blend_vec(old: wp.vec3, new: wp.vec3, mode: int, t: float):
     return old + (new - old) * wp.clamp(t, 0.0, 1.0)
 
 
-# ---------------------------------------------------------------------------
 # Source shape description (GPU struct array)
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -304,9 +300,7 @@ def mesh_source_force_velocity(source: MeshSource, pw: wp.vec3):
     return source.velocity
 
 
-# ---------------------------------------------------------------------------
 # Analytic FORCE regions: force-stage application to valid MAC faces
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -370,9 +364,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # fluidSimSourceShapes: collisions, sinks, activation, and FIELD compatibility
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -462,9 +454,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # fluidSimSourceShapesParticlesAttributes: particle-mode emission
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -558,9 +548,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # Evaluated-mesh surface sources and solid/surface sinks
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -725,9 +713,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # fluidSimSourceHeight: height-field sourcing (flat level or profile grid)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -798,9 +784,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # fluidSimSourceResolveType: precedence resolution after all sourcing
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -828,9 +812,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # fluidSimSourceParticles: append externally provided particles
-# ---------------------------------------------------------------------------
 
 
 # Retained for the synthesized snippet-inventory compatibility contract. Live
@@ -969,9 +951,7 @@ def k_source_owned_points(
     wp.atomic_add(emission_state, 2, 1)
 
 
-# ---------------------------------------------------------------------------
 # Particle attribute sourcing for a contiguous slot range [start, start+n)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -1076,9 +1056,7 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # core field-to-field sourcing
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -1215,10 +1193,8 @@ register_fn(
 )
 
 
-# ---------------------------------------------------------------------------
 # Volume (NanoVDB via wp.Volume) sourcing. OpenVDB names are aliases: the
 # Blender bridge converts OpenVDB grids to NanoVDB volumes on load.
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel

@@ -27,9 +27,7 @@ from .constants import (
 )
 from .quality_contract import AuthoredQualitySettings, resolve_quality
 
-# ---------------------------------------------------------------------------
 # Warp address helpers (shared by every kernel module)
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -122,7 +120,7 @@ def voxel_floor(p: wp.vec3) -> wp.vec3i:
     return wp.vec3i(int(wp.floor(p[0])), int(wp.floor(p[1])), int(wp.floor(p[2])))
 
 
-# --- scalar field sampling --------------------------------------------------
+# Scalar field sampling.
 
 
 @wp.func
@@ -219,7 +217,7 @@ def sample_vec3_trilinear(
     return default
 
 
-# --- staggered (MAC) velocity sampling ---------------------------------------
+# Staggered MAC velocity sampling.
 # Component c face samples live at voxel lower faces:
 #   u stored at (i-1/2, j, k) -> voxel-space sample point offset (0, .5, .5)
 
@@ -290,9 +288,7 @@ def is_collision_voxel(vt: wp.int32) -> wp.bool:
     return (vt & VOXEL_COLLISION) != 0
 
 
-# ---------------------------------------------------------------------------
 # Topology kernels
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -408,9 +404,7 @@ def k_allocate_leaves(
     leaf_coords[slot] = wp.vec3i(tid % nx, (tid // nx) % ny, tid // (nx * ny))
 
 
-# ---------------------------------------------------------------------------
 # Python-side containers
-# ---------------------------------------------------------------------------
 
 
 class TopologyCapacityError(RuntimeError):

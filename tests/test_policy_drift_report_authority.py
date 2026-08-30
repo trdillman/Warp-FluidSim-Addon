@@ -73,6 +73,12 @@ def test_evidence_only_commit_after_the_proof_head_is_not_drift(
     assert errors == []
 
 
+def test_nested_package_report_is_gate_evidence():
+    assert validator._is_evidence_path(
+        "fluidSim_warp_blender51/POLICY_DRIFT_REPORT.md"
+    )
+
+
 def test_non_evidence_commit_after_the_proof_head_is_drift(
         tmp_path, monkeypatch):
     monkeypatch.setattr(validator, "ROOT", tmp_path)

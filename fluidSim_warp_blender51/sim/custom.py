@@ -28,9 +28,7 @@ from .enums import (
 )
 
 
-# ---------------------------------------------------------------------------
 # Known snippet context (kept in sync with runtime templates below)
-# ---------------------------------------------------------------------------
 
 # Mirrors FIELD_ACCESSORS keys used by snippet declarations. Grid fields run
 # over voxels; particle_* fields run over particles.
@@ -73,9 +71,7 @@ def code_hash(code: str) -> str:
     return hashlib.sha1(code.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-# ---------------------------------------------------------------------------
 # Static validation
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -368,9 +364,7 @@ def is_valid(code: str, run_over: str = "VOXEL_LINEAR", arg_names=(),
                        code, run_over, arg_names, field_permissions))
 
 
-# ---------------------------------------------------------------------------
 # Auto-fix
-# ---------------------------------------------------------------------------
 
 _SMART_CHARS = {
     "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
@@ -462,9 +456,7 @@ def autofix_snippet(code: str):
     return fixed, fixes
 
 
-# ---------------------------------------------------------------------------
 # Example presets
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -496,7 +488,7 @@ def _c(name, value, ctype="FLOAT"):
 
 
 EXAMPLE_PRESETS = (
-    # -- Impressive ---------------------------------------------------------
+    # Impressive
     SnippetPreset(
         preset_id="vortex_tornado",
         label="Vortex Tornado",
@@ -541,7 +533,7 @@ EXAMPLE_PRESETS = (
             "turb * (strength * solver_time_step)\n"
         ),
     ),
-    # -- Creative -----------------------------------------------------------
+    # Creative
     SnippetPreset(
         preset_id="moses_split",
         label="Moses Split",
@@ -582,7 +574,7 @@ EXAMPLE_PRESETS = (
             "particle_velocity[particle_index] = velocity + push * solver_time_step\n"
         ),
     ),
-    # -- Learning -----------------------------------------------------------
+    # Learning
     SnippetPreset(
         preset_id="learn_fields_cooling",
         label="Learn: Fields & Indexing",
@@ -637,7 +629,7 @@ EXAMPLE_PRESETS = (
             "    particle_velocity[particle_index] = velocity * (max_speed / speed)\n"
         ),
     ),
-    # -- Utility / fun ------------------------------------------------------
+    # Utility / fun
     SnippetPreset(
         preset_id="whirlpool_drain",
         label="Whirlpool Drain",
@@ -725,9 +717,7 @@ def preset_by_id(preset_id: str):
     return None
 
 
-# ---------------------------------------------------------------------------
 # User preset persistence (JSON files, one per preset)
-# ---------------------------------------------------------------------------
 
 
 def _normalized_preset_arguments(arguments):
@@ -800,9 +790,7 @@ def load_user_presets(directory: str) -> list:
     return presets
 
 
-# ---------------------------------------------------------------------------
 # Shortcuts (Houdini-wrangle-style quick insertions)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -816,7 +804,7 @@ class Shortcut:
 
 
 SHORTCUTS = (
-    # Context ---------------------------------------------------------------
+    # Context
     Shortcut("ctx_world_pos", "World Position", "Context",
              "pos = world_position", "VOXEL",
              "Voxel centre in world space (wp.vec3)"),
@@ -829,7 +817,7 @@ SHORTCUTS = (
     Shortcut("ctx_flow_dir", "Flow Direction", "Context",
              "flow_dir = velocity / (wp.length(velocity) + 1.0e-6)",
              "PARTICLES", "Normalized velocity direction"),
-    # Time --------------------------------------------------------------------
+    # Time
     Shortcut("time_dt", "Substep dt", "Time",
              "dt = solver_time_step", "ANY",
              "Seconds advanced by this substep (scale forces by this)"),
@@ -840,7 +828,7 @@ SHORTCUTS = (
              "Oscillator driven by simulation time"),
     Shortcut("time_frame", "Frame Number", "Time",
              "f = float(frame)", "ANY", "Current frame as a float"),
-    # Math ----------------------------------------------------------------------
+    # Math
     Shortcut("math_lerp", "Lerp", "Math",
              "mixed = wp.lerp(0.0, 1.0, 0.5)  # a, b, t", "ANY",
              "Linear interpolation"),
@@ -855,7 +843,7 @@ SHORTCUTS = (
              "state = wp.rand_init(42)\n"
              "turb = wp.curlnoise(state, position * 1.5)",
              "PARTICLES", "Divergence-free vector noise"),
-    # Constants -------------------------------------------------------------------
+    # Constants
     Shortcut("const_leaf", "Leaf Constants", "Constants",
              "vol = C.LEAF_VOLUME  # 512 voxels per leaf (8x8x8)", "VOXEL",
              "Sparse-grid leaf constants from sim.constants"),
@@ -880,9 +868,7 @@ def shortcut_by_id(shortcut_id: str):
 
 
 
-# ---------------------------------------------------------------------------
 # Runtime compilation and launch
-# ---------------------------------------------------------------------------
 
 # Field name -> (dtype string, accessor on solver)
 FIELD_ACCESSORS = {
@@ -1239,9 +1225,7 @@ class SnippetManager:
         return any(self._by_order.values())
 
 
-# ---------------------------------------------------------------------------
 # Custom Effects v2 compatibility conversion
-# ---------------------------------------------------------------------------
 
 
 def legacy_snippet_to_effect(snippet: CustomSnippet, *, instance_id: str | None = None):

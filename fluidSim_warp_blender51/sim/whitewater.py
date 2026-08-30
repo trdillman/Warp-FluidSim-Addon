@@ -130,9 +130,7 @@ def whitewater_life_multiplier(
     return wp.max(result, 1.0e-6)
 
 
-# ---------------------------------------------------------------------------
 # Churn: measure of local turbulence used to drive whitewater emission.
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -213,9 +211,7 @@ register_fn(k_compute_churn, "fluidSimComputeChurn",
             notes="Curl + neighbor velocity variance, exponential decay.")
 
 
-# ---------------------------------------------------------------------------
 # Emission
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -393,9 +389,7 @@ register_fn(k_commit_whitewater_candidates, "fluidSimEmitWhiteWater",
             notes="Fixed-capacity deterministic admission with explicit drops.")
 
 
-# ---------------------------------------------------------------------------
 # Advection: foam (on surface), spray (ballistic), bubbles (drag toward fluid)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -557,9 +551,7 @@ register_fn(k_advect_whitewater, "fluidSimAdvectWhiteWater",
             notes="Persistent foam/bubble/spray types with hysteretic transitions.")
 
 
-# ---------------------------------------------------------------------------
 # Whitewater grid data (density splat used for rendering/emission limits)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -616,9 +608,7 @@ def k_count_whitewater_types(
     wp.atomic_add(type_counts, bucket, 1)
 
 
-# ---------------------------------------------------------------------------
 # Host-side whitewater particle container
-# ---------------------------------------------------------------------------
 
 
 class WhitewaterSystem:

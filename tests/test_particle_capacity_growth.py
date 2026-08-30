@@ -119,8 +119,11 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     owner.ensure_particle_capacity = types.MethodType(
         FluidSolver.ensure_particle_capacity, owner
     )
-    owner.sourcing.update_available_capacity = lambda available: (
-        owner.sourcing.last_apply_result.update(available=available))
+    def replace_particle_storage(replacement):
+        owner.sourcing.particles = replacement
+        owner.sourcing._compiled_batch = None
+
+    owner.sourcing.replace_particle_storage = replace_particle_storage
 
     result = owner.ensure_particle_capacity(6)
 
@@ -130,6 +133,7 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     assert owner.whitewater.candidate_capacity == 8
     assert owner.settings.max_particles == 8
     np.testing.assert_allclose(owner.particles.position.numpy()[0], (1.0, 2.0, 3.0))
+    assert owner.sourcing.particles is owner.particles
     assert owner.sourcing._compiled_batch is None
 
 

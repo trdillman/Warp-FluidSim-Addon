@@ -1,3 +1,4 @@
+import sys
 import time
 
 import pytest
@@ -137,6 +138,23 @@ def test_blender_lane_missing_positive_marker_fails_with_zero_exit(monkeypatch):
         run_production_gate._run(
             "Blender lane", ["blender"], reject_output=True,
             expect_marker="LANE-PASS")
+
+
+def test_gate_lane_tolerates_non_utf8_child_output(capsys):
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; "
+            "sys.stdout.buffer.write(b'\\x9d\\nLANE-PASS\\n')"
+        ),
+    ]
+
+    run_production_gate._run(
+        "encoded lane", command, reject_output=True,
+        expect_marker="LANE-PASS")
+
+    assert "LANE-PASS" in capsys.readouterr().out
 
 
 def test_playback_validator_recomputes_and_requires_stored_verdict(tmp_path):

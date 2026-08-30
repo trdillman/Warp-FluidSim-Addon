@@ -1004,9 +1004,7 @@ def request_scene_update(scene, action: SceneUpdate):
     _tag_view3d_redraw()
 
 
-# ---------------------------------------------------------------------------
 # Pending Settings handlers
-# ---------------------------------------------------------------------------
 
 
 @persistent

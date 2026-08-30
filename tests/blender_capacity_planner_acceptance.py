@@ -109,8 +109,13 @@ def main():
         aggregate.step_frame()
         retry_count = aggregate.particles.refresh_host_count()
         retry_result = dict(aggregate.sourcing.last_apply_result)
-        assert retry_count == 4
-        assert retry_result["admitted"] is True
+        assert retry_count == 4, {
+            "retry_count": retry_count,
+            "capacity": aggregate.particles.capacity,
+            "result": retry_result,
+            "fired": sorted(aggregate.sourcing._initial_fired),
+        }
+        assert retry_result["admitted"] is True, retry_result
         cases.append({
             "name": "aggregate_growth_retry_commits_whole_batch",
             "count": retry_count,

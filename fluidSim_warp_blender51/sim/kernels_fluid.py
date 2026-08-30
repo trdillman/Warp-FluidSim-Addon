@@ -33,9 +33,7 @@ from .fields import (
 )
 from .registry import register, register_fn
 
-# ---------------------------------------------------------------------------
 # Particle -> grid (P2G)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -159,9 +157,7 @@ def k_particle_to_grid_active(
 
 
 
-# ---------------------------------------------------------------------------
 # Spatiotemporal FLIP (ST-FLIP) P2G / phase helpers
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -338,9 +334,7 @@ register_fn(k_particle_to_count, "fluidSimParticleToCount")
 register_fn(k_particle_to_grid_active, "fluidSimParticleToGridActive")
 
 
-# ---------------------------------------------------------------------------
 # Grid -> particle (G2P): PIC/FLIP blend
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -477,9 +471,7 @@ def k_staggered_field_to_particle(
 register_fn(k_staggered_field_to_particle, "fluidSimStaggeredVectorFieldToParticle")
 
 
-# ---------------------------------------------------------------------------
 # Advection (fluid_advection)
-# ---------------------------------------------------------------------------
 
 
 @wp.func
@@ -950,9 +942,7 @@ register_fn(k_advect_particles_spacetime, "fluidSimAdvectParticlesSpatiotemporal
 register_fn(k_resync_particle_positions_spacetime, "fluidSimResyncParticlePositionsSpatiotemporal")
 
 
-# ---------------------------------------------------------------------------
 # Forces (fluid_forces_attraction)
-# ---------------------------------------------------------------------------
 
 
 @wp.struct
@@ -1407,9 +1397,7 @@ register_fn(k_forces_diffusion, "fluidSimForcesDiffusion")
 register_fn(k_dissipate_particle_attribute, "fluidSimForcesDissipateParticleAttribute")
 
 
-# ---------------------------------------------------------------------------
 # Attraction (mask fields steering fluid)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -1540,9 +1528,7 @@ register_fn(k_attract_direction, "fluidSimAttractDirection")
 register_fn(k_attract_sdf_gradient_direction, "fluidSimAttractSdfGradientDirection")
 
 
-# ---------------------------------------------------------------------------
 # Particle indexing / sorting (fluid_particle_indexing_sorting)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
@@ -1674,9 +1660,7 @@ def k_leaf_sort_voxel_type_tracked(
 register_fn(k_leaf_sort_voxel_type_tracked, "fluidSimLeafSortVoxelTypeTracked")
 
 
-# ---------------------------------------------------------------------------
 # Lifecycle (fluid_particles_lifecycle_transfer, fluid_misc)
-# ---------------------------------------------------------------------------
 
 
 @wp.kernel
