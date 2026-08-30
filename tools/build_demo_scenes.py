@@ -56,6 +56,16 @@ def log(msg):
     print(f"[demo] {msg}", flush=True)
 
 
+def admitted_total(result, *, label):
+    """Return the cumulative count from a successful structured injection."""
+    if not result.admitted:
+        raise RuntimeError(
+            f"{label} particle injection rejected: required={result.required:,}, "
+            f"available={result.available:,}, growth={result.growth_status or 'none'}"
+        )
+    return int(result.total)
+
+
 def lattice(lo, hi, spacing):
     """Regular particle lattice filling [lo, hi) with given spacing."""
     axes = [np.arange(lo[i] + 0.5 * spacing, hi[i], spacing, dtype=np.float32)
@@ -433,12 +443,16 @@ def build_crown_splash():
     sess = session()
     pool_depth = 0.05
     pool = lattice((0.0, 0.0, 0.0), (0.8, 0.8, pool_depth), 0.005)
-    n_pool = sess.solver.inject_particles(pool)
+    n_pool = admitted_total(
+        sess.solver.inject_particles(pool), label="crown_splash pool")
     drop_center = (0.4, 0.4, 0.2)
     drop_radius = 0.045
     drop_speed = 3.5
     drop = sphere_lattice(drop_center, drop_radius, 0.005)
-    n_all = sess.solver.inject_particles(drop, velocity=(0.0, 0.0, -drop_speed))
+    n_all = admitted_total(
+        sess.solver.inject_particles(drop, velocity=(0.0, 0.0, -drop_speed)),
+        label="crown_splash droplet",
+    )
     log(f"crown_splash: pool {n_pool:,} + droplet {n_all - n_pool:,} particles")
     add_camera_light(scene, (0.4, -1.05, 0.42), (1.35, 0.0, 0.0))
     run_scene("crown_splash", 48)
@@ -681,7 +695,10 @@ def build_force_fields():
         for x, y, _z in positions
     ]
     points = np.concatenate(point_sets, axis=0)
-    injected = sess.solver.inject_particles(points, velocity=(0.6, 0.15, 0.1))
+    injected = admitted_total(
+        sess.solver.inject_particles(points, velocity=(0.6, 0.15, 0.1)),
+        label="force_fields seed",
+    )
     log(f"force_fields: injected {injected:,} particles")
     bpy.ops.fluidsim.step(frames=18)
     scene.frame_set(19)
@@ -1149,10 +1166,16 @@ def build_adhesive_calender():
     if len(sess.solver.force_fields) != 3:
         raise RuntimeError(
             f"expected 3 force proxies, got {len(sess.solver.force_fields)}")
-    low_total = sess.solver.inject_particles(
-        low_points, viscosity=CALENDER_LOW_VISCOSITY)
-    high_total = sess.solver.inject_particles(
-        high_points, viscosity=CALENDER_HIGH_VISCOSITY)
+    low_total = admitted_total(
+        sess.solver.inject_particles(
+            low_points, viscosity=CALENDER_LOW_VISCOSITY),
+        label="adhesive_calender low-viscosity lane",
+    )
+    high_total = admitted_total(
+        sess.solver.inject_particles(
+            high_points, viscosity=CALENDER_HIGH_VISCOSITY),
+        label="adhesive_calender high-viscosity lane",
+    )
     injected = high_total
     if low_total != lane_count or high_total != particle_count:
         raise RuntimeError(
@@ -1499,7 +1522,8 @@ def build_paddle_stir():
                    (tank_inner_radius, tank_inner_radius, pool_depth), 0.010)
     radial = np.hypot(pool[:, 0], pool[:, 1])
     pool = pool[radial < (tank_inner_radius - 1.5 * fs.voxel_size)]
-    n_pool = sess.solver.inject_particles(pool)
+    n_pool = admitted_total(
+        sess.solver.inject_particles(pool), label="paddle_stir pool")
     log(f"paddle_stir: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
     add_camera_light(scene, (0.95, -1.30, 1.05), (1.10, 0.0, 0.62))
     series = run_scene("paddle_stir", total, advance_timeline=True)
