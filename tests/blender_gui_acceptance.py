@@ -488,7 +488,10 @@ def _run_phase(phase, scene):
             bpy.ops.object.select_all(action="DESELECT")
             src.select_set(True)
             bpy.context.view_layer.objects.active = src
-        bpy.ops.fluidsim.snippet_add()
+        result = bpy.ops.fluidsim.effect_add(
+            effect_id="fluidsim.vortex_force")
+        if result != {"FINISHED"}:
+            raise RuntimeError(f"Custom Effect setup failed: {sorted(result)}")
         scene.fluidsim_effects.items[-1].enabled = False
         _draw_all_panels_smoke(
             "demo configured, solver inactive", STATE.get("source_name"))
