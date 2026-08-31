@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-30T09:47:34.449493+00:00
+generated_at: 2026-08-31T18:41:50.058126+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 41a02c843c79081a79514f08861cab46dea2d46c
-gate_run_at: 2026-08-30T09:47:34.449493+00:00
+git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
+gate_run_at: 2026-08-31T18:41:50.058126+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
-git_dirty: true
+demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
+git_dirty: false
 ---
 
 # Policy Drift Report: nested package unit
@@ -34,17 +34,17 @@ that those lanes were rerun during this refresh.
   ..\artifacts\package_verify_only.json` returned `release_ready: true`,
   extension `fluidsim_warp`, version `1.0.255`, and external Warp 1.16.0
   runtime metadata.
-- Parent `artifacts/production_gate_manifest.json` records current HEAD
-  `41a02c843c79`, real CUDA/Warp execution, GUI `40/40`, saved-demo playback,
+- Parent `artifacts/production_gate_manifest.json` records proof HEAD
+  `07963107f422`, real CUDA/Warp execution, GUI `40/40`, saved-demo playback,
   and `FULL-PRODUCTION-GATE-PASS`.
 
 ## Findings
 
 ### PD-PKG-001: technical report proof snapshot repaired (documentation drift)
 
-The promoted section now names parent proof HEAD `41a02c843c79`, the current
+The promoted section now names parent proof HEAD `07963107f422`, the current
 four demo metrics, and generated artifact hash
-`ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4`.
+`371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
 Package-local results remain explicitly historical. Recurrence tracking is in
 `fluidSim_warp_blender51/backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`.
 
@@ -61,15 +61,15 @@ gate-reproducibility findings.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-08-30T09:47:34.449493+00:00
-generated_at_utc: 2026-08-30T09:47:34.449493Z
+generated_at: 2026-08-31T18:41:50.058126+00:00
+generated_at_utc: 2026-08-31T18:41:50.058126Z
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 41a02c843c79081a79514f08861cab46dea2d46c
-gate_run_at: 2026-08-30T09:47:34.449493+00:00
+git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
+gate_run_at: 2026-08-31T18:41:50.058126+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
+demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
 freshness: fresh
 status: fresh
 blocking_criticality: medium

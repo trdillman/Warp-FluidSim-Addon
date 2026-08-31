@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-30T09:47:34.449493+00:00
+generated_at: 2026-08-31T18:41:50.058126+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 41a02c843c79081a79514f08861cab46dea2d46c
-gate_run_at: 2026-08-30T09:47:34.449493+00:00
+git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
+gate_run_at: 2026-08-31T18:41:50.058126+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
-git_dirty: true
+demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
+git_dirty: false
 ---
 
 # Policy Drift Report: root unit
@@ -17,7 +17,7 @@ git_dirty: true
 
 The current executable FluidSim/Warp path is not supported as a narrow
 heuristic implementation. A fresh GUI-inclusive production gate ran against
-HEAD `41a02c843c79081a79514f08861cab46dea2d46c` and the evidence-only dirty tree,
+HEAD `07963107f422a1d1399c7fd150c6c2314e563cad` and a clean tracked tree,
 used Blender 5.1 with external Warp 1.16.0 on CUDA 12.9 / RTX 4080 SUPER,
 advanced live playback, emitted visible surface and whitewater output, and
 finished with `FULL-PRODUCTION-GATE-PASS`. The nested package suite and
@@ -32,9 +32,9 @@ encoding, and a retired GUI test operator; the final stable-HEAD gate passed.
 ## Strongest live evidence
 
 - `artifacts/production_gate_manifest.json` records gate time
-  `2026-08-30T09:47:34.449493+00:00`, proof HEAD `41a02c843c79`,
+  `2026-08-31T18:41:50.058126+00:00`, proof HEAD `07963107f422`,
   `FULL-PRODUCTION-GATE-PASS`, GUI inclusion, and generated demo artifact hash
-  `ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4`.
+  `371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
 - The gate recorded `GUI-ACCEPTANCE-PASS (40/40)` and
   `SAVED-DEMO-GUI-PLAYBACK-PASS` at the same proof HEAD.
 - The current root Python suite passed `1177` tests before the final gate.
@@ -52,7 +52,7 @@ checkout, current HEAD, and current gate metadata. The completed local card is
 
 The generated artifact and checked-in `demos/analysis_report.json` now match
 byte-for-byte at SHA-256
-`ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4`.
+`371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
 `demos/ANALYSIS.md` and the nested technical report promote the same four
 metrics. Recurrence tracking remains in
 `backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md`.
@@ -87,15 +87,15 @@ report and backlog, not silently folded into this root unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-08-30T09:47:34.449493+00:00
-generated_at_utc: 2026-08-30T09:47:34.449493Z
+generated_at: 2026-08-31T18:41:50.058126+00:00
+generated_at_utc: 2026-08-31T18:41:50.058126Z
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 41a02c843c79081a79514f08861cab46dea2d46c
-gate_run_at: 2026-08-30T09:47:34.449493+00:00
+git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
+gate_run_at: 2026-08-31T18:41:50.058126+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: ddbd3eaa843df1dcd88bb0ff1f82bf6fd6591f9c7e5329fa4ae7eeb4b33dc0b4
+demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
 freshness: fresh
 status: fresh
 blocking_criticality: medium
@@ -104,7 +104,7 @@ strongest_live_verification_commands_artifacts:
   - 'rtk python tools/run_production_gate.py --include-gui -> artifacts/production_gate_manifest.json'
   - 'rtk python -m pytest -q -> 1177 passed during this audit'
   - 'rtk python tools/analyze_demos.py paddle_stir -> DEMO-ANALYSIS-PASS (10/10)'
-  - 'artifacts/production_gate_manifest.json -> FULL-PRODUCTION-GATE-PASS at 41a02c843c79'
+  - 'artifacts/production_gate_manifest.json -> FULL-PRODUCTION-GATE-PASS at 07963107f422'
 files_that_need_correction:
   - 'tools/analyze_demos.py'
 active_backlog_tasks:
