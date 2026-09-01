@@ -175,7 +175,11 @@ def apply_scene_settings(fs, settings, fields=None):
 
 
 def apply_gravity(scene, settings):
-    fs = scene.fluidsim
+    # Lazy import: scene_bridge -> simulation_admission -> solver_settings is a
+    # top-level cycle, so the active-domain accessor is pulled at call time.
+    from .scene_bridge import active_domain_settings
+
+    fs = active_domain_settings(scene)
     if not hasattr(fs, "gravity"):
         return settings
     if (getattr(fs, "use_scene_gravity", False)
@@ -197,8 +201,9 @@ def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
     from ..sim.solver import SolverSettings
+    from .scene_bridge import active_domain_settings
 
-    fs = scene.fluidsim
+    fs = active_domain_settings(scene)
     settings = SolverSettings()
     settings.device = str(configured_device())
     settings.domain_min, settings.domain_max = domain_bounds(scene)

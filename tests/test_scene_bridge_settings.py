@@ -303,3 +303,65 @@ def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
     source = inspect.getsource(pending_settings.request_scene_update)
 
     assert source.count("force_surface=True") == 2
+
+
+def test_active_domain_settings_prefers_migrated_object_group(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+
+    domain_group = SimpleNamespace(voxel_size=0.02, max_particles=9_000_000)
+    domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
+
+    # Migrated (schema_version == 1) with a domain object: the object's group
+    # is canonical, NOT the stale mirror still sitting on scene.fluidsim.
+    migrated = SimpleNamespace(
+        schema_version=1, domain_object=domain_obj, voxel_size=0.5, max_particles=1)
+    scene = SimpleNamespace(fluidsim=migrated)
+    assert scene_bridge.active_domain_object(scene) is domain_obj
+    assert scene_bridge.active_domain_settings(scene) is domain_group
+
+    # Pre-migration (schema_version == 0): fall back to scene.fluidsim so the
+    # read path survives the transition before the load_post handler runs.
+    pre = SimpleNamespace(schema_version=0, domain_object=domain_obj, voxel_size=0.5)
+    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=pre)) is pre
+
+    # Migrated but no domain object yet (setup-wizard ordering): fall back.
+    orphan = SimpleNamespace(schema_version=1, domain_object=None, voxel_size=0.5)
+    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=orphan)) is orphan
+
+    # No fluidsim at all: None, never a raise.
+    assert scene_bridge.active_domain_settings(SimpleNamespace()) is None
+
+
+def test_build_settings_reads_domain_fields_from_migrated_object(monkeypatch):
+    _install_scene_bridge_stubs(monkeypatch)
+    # Bind through the freshly-imported submodule identity (not the possibly
+    # stale ``blender`` package attribute), so the ``domain_bounds`` patch below
+    # lands on the same module object whose ``build_settings`` we invoke.
+    import fluidSim_warp_blender51.blender.solver_settings as solver_settings
+
+    # Isolate the settings-projection path from domain geometry.
+    monkeypatch.setattr(
+        solver_settings, "domain_bounds",
+        lambda scene: ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
+
+    domain_group = SimpleNamespace(
+        voxel_size=0.02, max_particles=9_000_000,
+        use_scene_gravity=False, gravity=(0.0, 0.0, -3.0))
+    domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            schema_version=1, domain_object=domain_obj,
+            # Stale mirror values the solver must NOT read post-migration.
+            voxel_size=0.5, max_particles=1,
+            use_scene_gravity=True, gravity=(0.0, 0.0, 0.0)),
+        render=SimpleNamespace(fps=24, fps_base=1),
+        use_gravity=True, gravity=(0.0, 0.0, -9.81))
+
+    settings = solver_settings.build_settings(scene)
+
+    # Domain solver config comes from obj.fluidsim_domain, not scene.fluidsim.
+    assert settings.voxel_size == 0.02
+    assert settings.max_particles == 9_000_000
+    # apply_gravity reads use_scene_gravity/gravity from the domain group too:
+    # the group opts out of scene gravity, so -3.0 (its own), not -9.81 (scene).
+    assert settings.gravity == (0.0, 0.0, -3.0)
