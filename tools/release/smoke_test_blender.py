@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import bpy
@@ -424,8 +426,7 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_PT_effect_packages": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_effect_warp_code": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_viewport_status": ("VIEW_3D", ""),
-        "FLUIDSIM_VIEW3D_PT_full_settings": ("VIEW_3D", ""),
-        "FLUIDSIM_VIEW3D_PT_scene_control": ("VIEW_3D", ""),
+        "FLUIDSIM_VIEW3D_PT_live_tuning": ("VIEW_3D", ""),
         "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }
@@ -490,12 +491,41 @@ def _assert_custom_effects(module: str) -> dict[str, object]:
     item = bpy.context.scene.fluidsim_effects.items[0]
     if len(signature) != 64 or len(inventory) != 1 or item.status != "APPLIED":
         raise AssertionError("installed Custom Effects identity/status is invalid")
+
+    package_module = importlib.import_module(f"{module}.sim.effects.package")
+    effect_library = importlib.import_module(f"{module}.blender.effect_library")
+    imported_definition = replace(
+        definitions[0],
+        effect_id="smoke.imported-vortex",
+        name="Imported Vortex Smoke",
+        built_in=False,
+        package_origin="smoke://installed-package",
+    )
+    with tempfile.TemporaryDirectory(prefix="fluidsim_effect_import_") as temp_dir:
+        incoming = Path(temp_dir) / "imported-vortex.fseffect"
+        package_module.write_effect_package(incoming, imported_definition)
+        _require_finished(
+            "import Custom Effects package",
+            bpy.ops.fluidsim.effect_import_package(
+                filepath=str(incoming), conflict="replace"
+            ),
+        )
+    imported = effect_library.installed_package_for_effect(
+        imported_definition.effect_id
+    )
+    imported_item = bpy.context.scene.fluidsim_effects.items[
+        bpy.context.scene.fluidsim_effects.active_index
+    ]
+    if not imported.path.is_file() or imported_item.enabled:
+        raise AssertionError("installed Custom Effects package import did not persist disabled")
     return {
         "builtin_count": len(definitions),
         "builtin_ids": [definition.effect_id for definition in definitions],
         "signature": signature,
         "status": item.status,
         "device": "cpu",
+        "imported_package": True,
+        "imported_effect_id": imported_definition.effect_id,
     }
 
 def _assert_save_reopen_persistence(module: str) -> Path:

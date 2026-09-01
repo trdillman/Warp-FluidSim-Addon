@@ -1851,34 +1851,95 @@ def test_contextual_domain_actions_revalidate_object_role_and_identity(monkeypat
     )
 
 
-def test_viewport_full_workflow_is_collapsed_below_compact_status(monkeypatch):
+def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
+    """The N-panel is a HUD + lean Live Tuning shelf, not a 50-panel mirror.
+
+    D1/D5: the full Scene workflow is no longer re-hosted in the sidebar. The
+    only sidebar body panel is a shallow Live Tuning shelf exposing the four
+    per-iteration knobs bound to the solver's owner (``active_domain_settings``)
+    plus a jump back to the authoritative Properties workflow.
+    """
     _install_bpy_stub(monkeypatch)
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
     module_path = root / "blender" / "ui_view3d.py"
-    assert module_path.is_file(), "1.0.255 full View3D workflow adapter is missing"
+    assert module_path.is_file(), "View3D sidebar adapter is missing"
 
     ui_view3d = _reload_module("fluidSim_warp_blender51.blender.ui_view3d")
     panels = _reload_module("fluidSim_warp_blender51.panels")
     assert panels.FLUIDSIM_PT_viewport_status in panels.CLASSES
 
-    full_settings = ui_view3d.FLUIDSIM_VIEW3D_PT_full_settings
-    assert full_settings.bl_parent_id == "FLUIDSIM_PT_viewport_status"
-    assert full_settings.bl_options == {"DEFAULT_CLOSED"}
-
     classes = ui_view3d.VIEW3D_PANEL_CLASSES
     assert len({cls.bl_idname for cls in classes}) == len(classes)
-    mirrors = {cls.bl_idname: cls for cls in classes}
-    for source in ui_view3d.VIEW3D_SOURCE_PANELS:
-        mirror = mirrors[ui_view3d._mirror_id(source.bl_idname)]
-        source_parent = str(getattr(source, "bl_parent_id", "") or "")
-        expected_parent = (
-            ui_view3d._mirror_id(source_parent)
-            if source_parent
-            else full_settings.bl_idname
+    ids = {cls.bl_idname for cls in classes}
+
+    # The verbatim full-mirror scaffold is gone.
+    assert "FLUIDSIM_VIEW3D_PT_full_settings" not in ids
+    assert not any(
+        hasattr(ui_view3d, name)
+        for name in ("VIEW3D_SOURCE_PANELS", "_make_panel_mirror", "_mirror_id")
+    ), "the N-panel full-mirror scaffold must be removed"
+
+    # Exactly one lean shelf panel, parented under the compact status launcher.
+    tuning = ui_view3d.FLUIDSIM_VIEW3D_PT_live_tuning
+    assert tuning in classes
+    assert tuning.bl_parent_id == "FLUIDSIM_PT_viewport_status"
+
+    # N-panel nesting depth <= 3 (success-criterion §11).
+    parents = {
+        panels.FLUIDSIM_PT_viewport_status.bl_idname: str(
+            getattr(panels.FLUIDSIM_PT_viewport_status, "bl_parent_id", "") or ""
         )
-        assert mirror.bl_parent_id == expected_parent
+    }
+    for cls in classes:
+        parents[cls.bl_idname] = str(getattr(cls, "bl_parent_id", "") or "")
+
+    def depth(pid, seen=()):
+        parent = parents.get(pid, "")
+        if not parent or parent in seen:
+            return 1
+        return 1 + depth(parent, seen + (pid,))
+
+    assert max(depth(pid) for pid in parents) <= 3
+
+    # The shelf edits the solver's owner and offers the jump-back operator.
+    domain_settings = SimpleNamespace(
+        domain_object=None,
+        voxel_size=0.037,
+        particles_per_voxel=12,
+        flip_ratio=0.97,
+        particle_display_fraction=0.5,
+    )
+    scene_settings = SimpleNamespace(domain_object=None, schema_version=1)
+    domain_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim_domain=domain_settings,
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = domain_obj
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene, object=domain_obj)
+
+    panel = tuning()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    drawn = {call["name"]: call for call in panel.layout.prop_calls}
+    assert set(drawn) == {
+        "voxel_size",
+        "particles_per_voxel",
+        "flip_ratio",
+        "particle_display_fraction",
+    }, "Live Tuning must draw exactly the four per-iteration knobs"
+    for name, call in drawn.items():
+        assert call["data"] is domain_settings, (
+            f"{name} must bind to active_domain_settings (the owner the solver reads)"
+        )
+    assert any(
+        op["id"] == "fluidsim.open_scene_properties"
+        for op in panel.layout.operators
+    ), "Live Tuning must offer a jump back to the full Properties workflow"
 
 
 def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):

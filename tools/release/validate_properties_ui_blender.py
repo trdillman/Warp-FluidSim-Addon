@@ -294,16 +294,16 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
     if (viewport["space"], viewport["region"]) != ("VIEW_3D", "UI"):
         raise AssertionError(f"compact viewport launcher metadata is incorrect: {viewport}")
     records["FLUIDSIM_PT_viewport_status"] = viewport
-    full_settings = _panel_metadata("FLUIDSIM_VIEW3D_PT_full_settings")
+    live_tuning = _panel_metadata("FLUIDSIM_VIEW3D_PT_live_tuning")
     if (
-        (full_settings["space"], full_settings["region"])
+        (live_tuning["space"], live_tuning["region"])
         != ("VIEW_3D", "UI")
-        or full_settings["parent"] != "FLUIDSIM_PT_viewport_status"
-        or not full_settings["closed"]
+        or live_tuning["parent"] != "FLUIDSIM_PT_viewport_status"
+        or not live_tuning["closed"]
     ):
         raise AssertionError(
-            f"collapsed viewport settings root is incorrect: {full_settings}")
-    records["FLUIDSIM_VIEW3D_PT_full_settings"] = full_settings
+            f"lean viewport Live Tuning shelf is incorrect: {live_tuning}")
+    records["FLUIDSIM_VIEW3D_PT_live_tuning"] = live_tuning
     physics_root = _panel_metadata("FLUIDSIM_PT_physics_root")
     if (
         physics_root["space"],
@@ -451,53 +451,32 @@ def _assert_all_authored_draws(work_dir: Path) -> dict[str, int]:
     return result
 
 
-def _assert_view3d_mirrors(module_name: str) -> dict[str, int]:
+def _assert_view3d_live_tuning(module_name: str) -> dict[str, object]:
+    """The sidebar is a lean Live Tuning shelf, not a full mirror tree (D1/D5).
+
+    Assert the shelf draws exactly the per-iteration knobs plus the jump back to
+    the authoritative Properties workflow, and that the deleted full-mirror
+    scaffold no longer exists on the module.
+    """
     ui_view3d = importlib.import_module(f"{module_name}.blender.ui_view3d")
-    result: dict[str, int] = {}
-    root_events = _draw("FLUIDSIM_VIEW3D_PT_full_settings", bpy.context)
-    result["FLUIDSIM_VIEW3D_PT_full_settings"] = len(root_events)
-    for source in ui_view3d.VIEW3D_SOURCE_PANELS:
-        source_id = str(source.bl_idname)
-        mirror_id = ui_view3d._mirror_id(source_id)
-        metadata = _panel_metadata(mirror_id)
-        source_parent = str(getattr(source, "bl_parent_id", "") or "")
-        expected_parent = (
-            ui_view3d._mirror_id(source_parent)
-            if source_parent
-            else "FLUIDSIM_VIEW3D_PT_full_settings"
-        )
-        if (
-            (metadata["space"], metadata["region"]) != ("VIEW_3D", "UI")
-            or metadata["parent"] != expected_parent
-        ):
+    for removed in ("VIEW3D_SOURCE_PANELS", "_make_panel_mirror", "_mirror_id"):
+        if hasattr(ui_view3d, removed):
             raise AssertionError(
-                f"viewport mirror metadata drift for {mirror_id}: {metadata}")
-        source_poll = getattr(source, "poll", None)
-        source_visible = (
-            bool(source.poll(bpy.context)) if callable(source_poll) else True
-        )
-        mirror = _panel(mirror_id)
-        mirror_poll = getattr(mirror, "poll", None)
-        mirror_visible = (
-            bool(mirror.poll(bpy.context)) if callable(mirror_poll) else True
-        )
-        if mirror_visible != source_visible:
-            raise AssertionError(
-                f"viewport mirror poll drift for {source_id}: "
-                f"source={source_visible}, mirror={mirror_visible}"
-            )
-        if not source_visible:
-            result[mirror_id] = 0
-            continue
-        source_events = _draw(source_id, bpy.context)
-        mirror_events = _draw(mirror_id, bpy.context)
-        if mirror_events != source_events:
-            raise AssertionError(
-                f"viewport mirror draw drift for {source_id}: "
-                f"{len(source_events)} != {len(mirror_events)} events"
-            )
-        result[mirror_id] = len(mirror_events)
-    return result
+                f"full-mirror scaffold survived on ui_view3d: {removed}")
+    if hasattr(bpy.types, "FLUIDSIM_VIEW3D_PT_full_settings"):
+        raise AssertionError("collapsed full-settings mirror is still registered")
+
+    events = _draw("FLUIDSIM_VIEW3D_PT_live_tuning", bpy.context)
+    props = tuple(e["property"] for e in events if e["kind"] == "prop")
+    expected = tuple(ui_view3d.LIVE_TUNING_PROPS)
+    if props != expected:
+        raise AssertionError(
+            f"Live Tuning shelf knobs drifted: {props} != {expected}")
+    operators = {e["operator"] for e in events if e["kind"] == "operator"}
+    if "fluidsim.open_scene_properties" not in operators:
+        raise AssertionError(
+            "Live Tuning shelf is missing the Scene Properties jump-back")
+    return {"knobs": list(props), "events": len(events)}
 
 
 def _activate_object(obj) -> None:
@@ -692,7 +671,7 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_VIEW3D_PT_live_tuning",
         "FLUIDSIM_PT_physics_root",
     ):
         if hasattr(bpy.types, panel_id):
@@ -705,7 +684,7 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_VIEW3D_PT_live_tuning",
         "FLUIDSIM_PT_physics_root",
     ):
         _panel(panel_id)
@@ -748,7 +727,7 @@ def main() -> None:
         report["panel_metadata"] = _assert_metadata()
         report["draws"] = _assert_scene_and_object_draws(options.module)
         report["all_authored_draws"] = _assert_all_authored_draws(options.work_dir)
-        report["viewport_mirrors"] = _assert_view3d_mirrors(options.module)
+        report["viewport_live_tuning"] = _assert_view3d_live_tuning(options.module)
         report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()
         report["field_payload_coherence"] = _assert_field_payload_coherence()
