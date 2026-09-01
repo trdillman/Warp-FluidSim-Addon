@@ -12,6 +12,7 @@ from .ui_common import (
     activity_ui_state,
     draw_property,
     draw_property_grid,
+    draw_readout_grid,
     draw_status_message,
     pending_ui_state,
 )
@@ -319,36 +320,6 @@ class FLUIDSIM_PT_scene_pending(FluidSimScenePanel, bpy.types.Panel):
         row.operator("fluidsim.revert_pending", text="Revert Pending Values", icon="LOOP_BACK")
 
 
-class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Runtime Statistics"
-    bl_idname = "FLUIDSIM_PT_scene_runtime_stats"
-    bl_parent_id = "FLUIDSIM_PT_scene_control"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        if not FluidSimScenePanel.poll(context):
-            return False
-        state = activity_ui_state(context.scene)
-        return bool(state["owns_scene"] or state["id"] == "CACHE_PLAYBACK")
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        draw_property_grid(
-            layout,
-            fs,
-            (
-                "stat_particles",
-                "stat_voxels",
-                "stat_whitewater",
-                "stat_step_ms",
-                "stat_substeps",
-                "stat_cfl_clamped",
-            ),
-        )
-
-
 class FLUIDSIM_PT_scene_live_timeline(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Live Timeline Recovery"
     bl_idname = "FLUIDSIM_PT_scene_live_timeline"
@@ -578,14 +549,8 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
                 "surface_tension_smoothing_iterations",
             ),
         )
-        stats = layout.box()
-        stats.label(text="Capillary Stability", icon="TIME")
-        stats.prop(fs, "stat_capillary_dt", text="Stable Timestep")
-        stats.prop(fs, "stat_capillary_substeps_required", text="Required Substeps")
-        stats.prop(fs, "stat_substep_limiter", text="Selected Limiter")
-        stats.prop(fs, "stat_capillary_clamped", text="Clamped by Max Substeps")
-        if fs.stat_surface_tension_message:
-            _draw_wrapped(stats, fs.stat_surface_tension_message, icon="INFO")
+        # Capillary-stability readbacks are consolidated into the Diagnostics
+        # telemetry panel (D4); this control panel stays edit-only.
 
 
 class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
@@ -920,44 +885,6 @@ class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterAdvancedChild, FluidSimScenePan
         draw_property_grid(spray, fs, ("ww_spray_drag", "ww_spray_gravity_scale", "ww_spray_life_multiplier"))
 
 
-class FLUIDSIM_PT_whitewater_stats(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Admission Status"
-    bl_idname = "FLUIDSIM_PT_whitewater_stats"
-    bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return (
-            _WhitewaterChild.poll(context)
-            and _advanced_visible(context)
-            and (
-                activity_ui_state(context.scene)["owns_scene"]
-                or activity_ui_state(context.scene)["id"] == "CACHE_PLAYBACK"
-            )
-        )
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        draw_property_grid(
-            layout,
-            fs,
-            (
-                "stat_whitewater",
-                "stat_whitewater_foam",
-                "stat_whitewater_bubbles",
-                "stat_whitewater_spray",
-                "stat_whitewater_invalid_types",
-                "stat_whitewater_required",
-                "stat_whitewater_admitted",
-                "stat_whitewater_dropped",
-                "stat_whitewater_policy",
-                "stat_whitewater_status",
-            ),
-        )
-
-
 class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Viewport & Outputs"
     bl_idname = "FLUIDSIM_PT_scene_outputs"
@@ -1227,6 +1154,71 @@ class FLUIDSIM_PT_scene_diagnostics(FluidSimScenePanel, bpy.types.Panel):
         layout.operator("fluidsim.run_validation", text="Run Validation Suite", icon="CHECKMARK")
 
 
+class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
+    # Read-only solver telemetry consolidated here from the former control-panel
+    # readbacks (D4): runtime counts, capillary stability, and whitewater
+    # admission.  The ``bl_idname`` is preserved (the GUI-acceptance gate resolves
+    # this panel by id) but it now parents under Diagnostics, and every value is a
+    # label -- no control panel renders a ``stat_*`` readback (spec §11).
+    bl_label = "Telemetry"
+    bl_idname = "FLUIDSIM_PT_scene_runtime_stats"
+    bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        if not FluidSimScenePanel.poll(context):
+            return False
+        state = activity_ui_state(context.scene)
+        return bool(state["owns_scene"] or state["id"] == "CACHE_PLAYBACK")
+
+    def draw(self, context):
+        layout = _layout(self)
+        fs = context.scene.fluidsim
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_particles", "Particles"),
+                ("stat_voxels", "Voxels"),
+                ("stat_whitewater", "Whitewater"),
+                ("stat_step_ms", "Step (ms)"),
+                ("stat_substeps", "Substeps"),
+                ("stat_cfl_clamped", "CFL Clamped"),
+            ),
+            title="Runtime",
+        )
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_capillary_dt", "Stable Timestep"),
+                ("stat_capillary_substeps_required", "Required Substeps"),
+                ("stat_substep_limiter", "Selected Limiter"),
+                ("stat_capillary_clamped", "Clamped by Max Substeps"),
+            ),
+            title="Capillary Stability",
+        )
+        if getattr(fs, "stat_surface_tension_message", ""):
+            _draw_wrapped(layout, fs.stat_surface_tension_message, icon="INFO")
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_whitewater_foam", "Foam"),
+                ("stat_whitewater_bubbles", "Bubbles"),
+                ("stat_whitewater_spray", "Spray"),
+                ("stat_whitewater_invalid_types", "Invalid Types"),
+                ("stat_whitewater_required", "Required"),
+                ("stat_whitewater_admitted", "Admitted"),
+                ("stat_whitewater_dropped", "Dropped"),
+                ("stat_whitewater_policy", "Policy"),
+                ("stat_whitewater_status", "Status"),
+            ),
+            title="Whitewater Admission",
+        )
+
+
 class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Profiling"
     bl_idname = "FLUIDSIM_PT_diagnostics_profiling"
@@ -1297,7 +1289,6 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
     FLUIDSIM_PT_scene_pending,
-    FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_scene_live_timeline,
     FLUIDSIM_PT_scene_setup,
     FLUIDSIM_PT_scene_presets,
@@ -1326,7 +1317,6 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_whitewater_classification,
     FLUIDSIM_PT_whitewater_life,
     FLUIDSIM_PT_whitewater_dynamics,
-    FLUIDSIM_PT_whitewater_stats,
     FLUIDSIM_PT_scene_outputs,
     FLUIDSIM_PT_output_display,
     FLUIDSIM_PT_output_materials,
@@ -1341,6 +1331,7 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_cache_bake,
     FLUIDSIM_PT_cache_manage,
     FLUIDSIM_PT_scene_diagnostics,
+    FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_diagnostics_profiling,
     FLUIDSIM_PT_diagnostics_benchmark,
     FLUIDSIM_PT_diagnostics_report,

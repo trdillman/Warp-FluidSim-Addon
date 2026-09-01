@@ -2829,3 +2829,181 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
         and not (_literal_description(annotation) or "").strip()
     )
     assert not missing, f"fields missing a non-empty description=: {missing}"
+
+
+def test_draw_readout_grid_emits_labels_not_props(monkeypatch):
+    """D4 readout helper: a read-only telemetry grid is drawn as *labels*, never
+    as ``prop()`` controls (readbacks are not editable).  Missing attributes are
+    skipped -- the same compatibility tolerance ``draw_property_grid`` gives -- and
+    the box header defaults to "Readouts" but accepts a per-group title."""
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+
+    layout = _Layout()
+    data = SimpleNamespace(
+        stat_particles=1234,
+        stat_cfl_clamped=True,
+        stat_substep_limiter="CAPILLARY",
+    )
+    ui_common.draw_readout_grid(
+        layout,
+        data,
+        (
+            ("stat_particles", "Particles"),
+            ("stat_cfl_clamped", "CFL Clamped"),
+            ("stat_substep_limiter", "Selected Limiter"),
+            ("stat_absent", "Absent"),  # not on ``data`` -> skipped, no crash
+        ),
+        title="Runtime",
+    )
+
+    # Readbacks are labels, never editable properties.
+    assert layout.props == []
+    assert layout.prop_calls == []
+
+    texts = [item["text"] for item in layout.labels]
+    assert "Runtime" in texts          # box header uses the supplied title
+    assert "Particles" in texts        # key label
+    assert "1234" in texts             # int value label
+    assert "CFL Clamped" in texts
+    assert "Yes" in texts              # bool rendered human-readably
+    assert "CAPILLARY" in texts        # enum/string value passthrough
+    assert "Absent" not in texts       # a missing attribute draws nothing
+
+    # Default header when no title is supplied.
+    default_layout = _Layout()
+    ui_common.draw_readout_grid(
+        default_layout, data, (("stat_particles", "Particles"),)
+    )
+    assert "Readouts" in [item["text"] for item in default_layout.labels]
+
+
+def _diagnostics_subtree_ids(ui_scene):
+    """Ids of every Scene panel whose ancestor chain reaches Diagnostics."""
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    under = set()
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        node = cls
+        for _ in range(20):
+            if node is None:
+                break
+            if node.bl_idname == "FLUIDSIM_PT_scene_diagnostics":
+                under.add(cls.bl_idname)
+                break
+            parent_id = getattr(node, "bl_parent_id", "")
+            node = by_id.get(parent_id) if parent_id else None
+    return under
+
+
+def _stat_property_renders(draw_func):
+    """`stat_*` names a panel draws as a *property* readback -- via
+    ``layout.prop(data, "stat_...")`` or a ``stat_*`` handed to
+    ``draw_property_grid`` / ``draw_readout_grid``.  A ``stat_*`` read into a
+    synthesized *label* (e.g. the Status heartbeat's ``getattr``/f-string) is a
+    summary string, not a readback field, and is intentionally not matched."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(draw_func)))
+    hits = []
+
+    def _literal_stats(node):
+        found = []
+        for elt in getattr(node, "elts", ()):
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                if elt.value.startswith("stat_"):
+                    found.append(elt.value)
+            elif isinstance(elt, ast.Tuple) and elt.elts:  # (name, label) pairs
+                first = elt.elts[0]
+                if (
+                    isinstance(first, ast.Constant)
+                    and isinstance(first.value, str)
+                    and first.value.startswith("stat_")
+                ):
+                    found.append(first.value)
+        return found
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        fname = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if fname == "prop" and len(node.args) >= 2:
+            arg = node.args[1]
+            if (
+                isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and arg.value.startswith("stat_")
+            ):
+                hits.append(arg.value)
+        elif fname in {"draw_property_grid", "draw_readout_grid"}:
+            for arg in node.args:
+                if isinstance(arg, ast.Tuple):
+                    hits.extend(_literal_stats(arg))
+    return hits
+
+
+def test_no_control_panel_renders_a_stat_readback(monkeypatch):
+    """Success criterion (spec §11): read-only ``stat_*`` telemetry is
+    consolidated into the Diagnostics cluster.  Every Scene panel *outside* the
+    Diagnostics subtree must not render a ``stat_*`` as a property readback.  The
+    physics-workspace mirrors derive their draw from these scene sources, so a
+    clean scene surface keeps the mirrored surface clean too."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    diagnostics = _diagnostics_subtree_ids(ui_scene)
+    offenders = {}
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        if cls.bl_idname in diagnostics:
+            continue
+        stats = _stat_property_renders(cls.draw)
+        if stats:
+            offenders[cls.bl_idname] = stats
+    assert not offenders, f"control panels still rendering stat_* readbacks: {offenders}"
+
+
+def test_diagnostics_telemetry_consolidates_readouts(monkeypatch):
+    """The relocated telemetry lands in the Diagnostics cluster and surfaces the
+    runtime / capillary / whitewater-admission stats as labels (not props).  The
+    stable ``FLUIDSIM_PT_scene_runtime_stats`` id is preserved (the GUI-acceptance
+    gate resolves the panel by that id) but now parents under Diagnostics, and the
+    standalone whitewater ``Admission Status`` control panel is gone."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    assert "FLUIDSIM_PT_whitewater_stats" not in by_id
+    telemetry = by_id["FLUIDSIM_PT_scene_runtime_stats"]
+    assert telemetry.bl_parent_id == "FLUIDSIM_PT_scene_diagnostics"
+
+    fs = SimpleNamespace(
+        stat_particles=4321,
+        stat_voxels=10,
+        stat_whitewater=3,
+        stat_step_ms=4.5,
+        stat_substeps=2,
+        stat_cfl_clamped=False,
+        stat_capillary_dt=0.001,
+        stat_capillary_substeps_required=3,
+        stat_substep_limiter="CAPILLARY",
+        stat_capillary_clamped=True,
+        stat_surface_tension_message="",
+        stat_whitewater_foam=1,
+        stat_whitewater_bubbles=1,
+        stat_whitewater_spray=1,
+        stat_whitewater_invalid_types=0,
+        stat_whitewater_required=5,
+        stat_whitewater_admitted=7,
+        stat_whitewater_dropped=2,
+        stat_whitewater_policy="CLAMP",
+        stat_whitewater_status="DROPPED",
+    )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    root = _Layout()
+    panel = telemetry()
+    panel.layout = root
+    panel.draw(context)
+
+    assert not any(str(name).startswith("stat_") for name in root.props)
+    texts = [item["text"] for item in root.labels]
+    assert "4321" in texts        # runtime particle count
+    assert "CAPILLARY" in texts   # capillary limiter readback
+    assert "7" in texts           # whitewater admitted count

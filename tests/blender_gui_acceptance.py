@@ -518,10 +518,14 @@ def _run_phase(phase, scene):
               and str(sess.solver.device).startswith("cuda"))
         _draw_all_panels_smoke(
             "solver initialized", STATE.get("source_name"))
+        # Post-D4 the runtime stats are consolidated into the Diagnostics
+        # telemetry panel (same stable id) and rendered as read-only labels, so
+        # the particle count surfaces under its "Particles" key label rather than
+        # as an editable property.
         _assert_panel_state(
             "FLUIDSIM_PT_scene_runtime_stats",
             "initialized stats",
-            property_name="stat_particles",
+            label_contains="Particles",
         )
         STATE["phase"] = "play"
         return 0.2

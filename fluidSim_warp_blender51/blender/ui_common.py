@@ -138,3 +138,36 @@ def draw_property_grid(layout, data, names: tuple[str, ...], *, columns: int = 2
     for name in names:
         draw_property(grid, data, name)
     return grid
+
+
+def _format_readout(value) -> str:
+    """Human-readable string for a read-only telemetry value."""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
+def draw_readout_grid(layout, data, pairs, *, title: str = "Readouts") -> None:
+    """Draw read-only telemetry as a titled box of right-aligned key/value labels.
+
+    ``pairs`` is a sequence of ``(attr_name, display_label)``.  Each *present*
+    attribute becomes one key label plus one right-aligned value label -- never a
+    ``prop()`` control, because a readback is not editable.  Missing attributes
+    are skipped, mirroring ``draw_property_grid``'s tolerance of compatibility
+    fields.  This is deliberately **not** ``draw_property_grid``: that helper
+    edits RNA properties; this one renders derived text only.
+    """
+    box = layout.box()
+    box.label(text=title, icon="INFO")
+    grid = box.grid_flow(
+        row_major=True, columns=2, even_columns=True, even_rows=False, align=True
+    )
+    for name, display in pairs:
+        if data is None or not hasattr(data, name):
+            continue
+        grid.label(text=str(display))
+        value_row = grid.row(align=True)
+        value_row.alignment = "RIGHT"
+        value_row.label(text=_format_readout(getattr(data, name)))

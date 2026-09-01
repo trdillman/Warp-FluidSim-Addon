@@ -138,7 +138,6 @@ def test_scene_properties_children_follow_the_field_ownership_plan():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     parents = {
         "FLUIDSIM_PT_scene_pending": "FLUIDSIM_PT_scene_control",
-        "FLUIDSIM_PT_scene_runtime_stats": "FLUIDSIM_PT_scene_control",
         "FLUIDSIM_PT_scene_live_timeline": "FLUIDSIM_PT_scene_control",
         "FLUIDSIM_PT_scene_presets": "FLUIDSIM_PT_scene_setup",
         "FLUIDSIM_PT_scene_capacity": "FLUIDSIM_PT_scene_domain",
@@ -160,6 +159,8 @@ def test_scene_properties_children_follow_the_field_ownership_plan():
         "FLUIDSIM_PT_diagnostics_profiling": "FLUIDSIM_PT_scene_diagnostics",
         "FLUIDSIM_PT_diagnostics_benchmark": "FLUIDSIM_PT_scene_diagnostics",
         "FLUIDSIM_PT_diagnostics_report": "FLUIDSIM_PT_scene_diagnostics",
+        # D4: runtime telemetry consolidated under Diagnostics (was scene_control).
+        "FLUIDSIM_PT_scene_runtime_stats": "FLUIDSIM_PT_scene_diagnostics",
     }
     for child, parent in parents.items():
         block = _class_block(source, child)
@@ -177,6 +178,9 @@ def test_height_fill_does_not_duplicate_domain_sampling():
 
 def test_phase4_and_phase5_controls_have_explicit_scene_owners():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
+    # D4: the surface-tension panel is edit-only; capillary-stability readbacks
+    # (stat_capillary_dt / stat_substep_limiter) moved to the Diagnostics
+    # telemetry panel, so they are no longer owned controls here.
     surface_tension = _class_block(source, "FLUIDSIM_PT_sim_surface_tension")
     for name in (
         "surface_tension_enabled",
@@ -185,8 +189,6 @@ def test_phase4_and_phase5_controls_have_explicit_scene_owners():
         "surface_tension_band_voxels",
         "surface_tension_safety",
         "surface_tension_smoothing_iterations",
-        "stat_capillary_dt",
-        "stat_substep_limiter",
     ):
         assert name in surface_tension
     classification = _class_block(source, "FLUIDSIM_PT_whitewater_classification")

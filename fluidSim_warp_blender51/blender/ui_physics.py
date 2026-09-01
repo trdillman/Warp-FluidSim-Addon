@@ -291,13 +291,15 @@ SURFACE_PANEL_CLASSES = _make_panel_mirrors(
     accepted_kinds=frozenset({"SURFACE"}),
 )
 
+# Admission-Status readbacks were consolidated into the scene Diagnostics
+# telemetry panel (D4), so the per-object physics mirror no longer carries them;
+# the mirror stays edit-only, matching the scene surface it derives from.
 WHITEWATER_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_scene_whitewater,
     ui_scene.FLUIDSIM_PT_whitewater_emission,
     ui_scene.FLUIDSIM_PT_whitewater_classification,
     ui_scene.FLUIDSIM_PT_whitewater_life,
     ui_scene.FLUIDSIM_PT_whitewater_dynamics,
-    ui_scene.FLUIDSIM_PT_whitewater_stats,
 )
 WHITEWATER_PANEL_CLASSES = _make_panel_mirrors(
     WHITEWATER_SOURCE_PANELS,
