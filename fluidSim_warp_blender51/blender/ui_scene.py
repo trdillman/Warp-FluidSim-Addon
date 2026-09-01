@@ -213,9 +213,9 @@ class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
 
 
 class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Session & Status"
+    bl_label = "Status & Runtime"
     bl_idname = "FLUIDSIM_PT_scene_control"
-    bl_order = 0
+    bl_order = 2
 
     def draw(self, context):
         layout = _layout(self)
@@ -241,43 +241,17 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
         )
         runtime.operator("fluidsim.refresh_runtime_probe", text="Re-detect GPU" if not runtime_ready else "Re-detect", icon="FILE_REFRESH")
 
-        actions = layout.row(align=True)
-        if state["id"] == "LIVE_PREVIEW":
-            actions.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
-        elif state["id"] == "CACHE_PLAYBACK":
-            actions.operator(
-                "fluidsim.cache_playback_stop",
-                text="Stop Cache Playback",
-                icon="PAUSE",
-            )
-        elif state["id"] == "PRODUCTION_BAKE":
-            actions.operator(
-                "fluidsim.bake_cancel",
-                text="Cancel Production Bake",
-                icon="CANCEL",
-            )
-        else:
-            start = actions.row(align=True)
-            start.enabled = runtime_ready
-            start.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
-        if state["owns_scene"] and state["id"] != "PRODUCTION_BAKE":
-            actions.operator("fluidsim.release", text="Release Solver", icon="X")
-        elif not state["owns_scene"] and state["id"] == "IDLE":
-            initialize = actions.row(align=True)
-            initialize.enabled = runtime_ready
-            initialize.operator("fluidsim.initialize", text="Initialize Solver", icon="MOD_FLUIDSIM")
-
-        if state["owns_scene"] and state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
-            step_once = layout.row(align=True)
-            step_once.enabled = runtime_ready
-            step_once.operator_context = "EXEC_DEFAULT"
-            op = step_once.operator("fluidsim.step", text="Step One Frame", icon="FRAME_NEXT")
-            op.frames = 1
-            step_many = layout.row(align=True)
-            step_many.enabled = runtime_ready
-            step_many.operator_context = "INVOKE_DEFAULT"
-            step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
-            step_many.operator("fluidsim.reset", text="Reset Simulation", icon="FILE_REFRESH")
+        # Compact one-line live telemetry: last step cost, substep count, and
+        # whether the CFL condition forced a clamp. Read-only status only —
+        # transport lives in FLUIDSIM_PT_scene_transport, lifecycle in
+        # FLUIDSIM_PT_scene_lifecycle.
+        step_ms = float(getattr(fs, "stat_step_ms", 0.0) or 0.0)
+        substeps = int(getattr(fs, "stat_substeps", 0) or 0)
+        cfl_clamped = bool(getattr(fs, "stat_cfl_clamped", False))
+        layout.label(
+            text=f"{step_ms:.1f} ms · {substeps} substeps · CFL {'clamped' if cfl_clamped else 'ok'}",
+            icon="TIME",
+        )
 
         error = current_error(scene)
         if error:

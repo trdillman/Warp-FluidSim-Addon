@@ -2249,3 +2249,34 @@ def test_lifecycle_offers_initialize_when_not_owning_scene(monkeypatch):
     assert ops["fluidsim.initialize"]["alert"] is False
     # Nothing destructive is offered before the solver owns the scene.
     assert "fluidsim.release" not in ops and "fluidsim.reset" not in ops
+
+
+def test_status_hub_is_read_only_with_live_strip(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "LIVE_PREVIEW", "owns_scene": True,
+                                       "label": "Live Preview", "icon": "PLAY"})
+    fs = SimpleNamespace(status="", height_error="",
+                         stat_step_ms=12.5, stat_substeps=3, stat_cfl_clamped=True)
+    panel = ui_scene.FLUIDSIM_PT_scene_control()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    labels = "".join(l["text"] for l in panel.layout.labels)
+    # State name is shown.
+    assert "Live Preview" in labels
+    # Labeled runtime recovery (from Task 0.4) is retained.
+    probe = [op for op in panel.layout.operators
+             if op["id"] == "fluidsim.refresh_runtime_probe"]
+    assert probe and probe[0].get("text")
+    # Compact one-line step_ms · substeps · CFL strip.
+    assert "·" in labels and "3" in labels and "12.5" in labels
+    # No transport or lifecycle controls leak back into the read-only hub.
+    op_ids = {op["id"] for op in panel.layout.operators}
+    assert op_ids.isdisjoint({
+        "fluidsim.toggle_live", "fluidsim.step", "fluidsim.reset",
+        "fluidsim.release", "fluidsim.initialize",
+    })
