@@ -127,6 +127,17 @@ def _whitewater_enabled(context):
     return bool(fs is not None and getattr(fs, "whitewater_enabled", False))
 
 
+def _advanced_visible(context):
+    """True unless the user has chosen the Basic interface (D2 two-tier gate).
+
+    Fail-open: a missing settings group or `ui_mode` never hides a panel, so a
+    partially-initialised scene keeps the full surface rather than silently
+    dropping deep-config panels.
+    """
+    fs = getattr(getattr(context, "scene", None), "fluidsim", None)
+    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+
+
 class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Transport"
     bl_idname = "FLUIDSIM_PT_scene_transport"
@@ -387,6 +398,10 @@ class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):
     bl_parent_id = "FLUIDSIM_PT_scene_domain"
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context):
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+
     def draw(self, context):
         layout = _layout(self)
         fs = context.scene.fluidsim
@@ -424,6 +439,12 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_scene_simulation"
     bl_order = 40
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        # "Advanced Physics" gate (spec §5.3): the whole 12-panel sim_* fan
+        # inherits this parent's visibility, so it collapses in Basic mode.
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -691,7 +712,14 @@ class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
 class _SurfaceChild:
     @classmethod
     def poll(cls, context):
-        return FluidSimScenePanel.poll(context) and _surface_enabled(context)
+        # Every surface child (resolution/cadence, splat, the full filter chain)
+        # is deep-config, so the whole set is Advanced-only.  The parent keeps
+        # the surface_enabled toggle (and Basic Smoothing surrogate) visible.
+        return (
+            FluidSimScenePanel.poll(context)
+            and _surface_enabled(context)
+            and _advanced_visible(context)
+        )
 
 
 class FLUIDSIM_PT_surface_resolution(_SurfaceChild, FluidSimScenePanel, bpy.types.Panel):
@@ -773,6 +801,15 @@ class _WhitewaterChild:
         return FluidSimScenePanel.poll(context) and _whitewater_enabled(context)
 
 
+class _WhitewaterAdvancedChild(_WhitewaterChild):
+    """Whitewater children beyond Emission/Amount (classification, lifetime,
+    per-stream dynamics) are Advanced-only; Emission stays in the Basic set."""
+
+    @classmethod
+    def poll(cls, context):
+        return _WhitewaterChild.poll(context) and _advanced_visible(context)
+
+
 class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Emission"
     bl_idname = "FLUIDSIM_PT_whitewater_emission"
@@ -795,7 +832,7 @@ class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.
         )
 
 
-class FLUIDSIM_PT_whitewater_classification(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_classification(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Classification"
     bl_idname = "FLUIDSIM_PT_whitewater_classification"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -808,7 +845,7 @@ class FLUIDSIM_PT_whitewater_classification(_WhitewaterChild, FluidSimScenePanel
         layout.label(text="Types are persistent: Foam 0 · Bubble 1 · Spray 2", icon="INFO")
 
 
-class FLUIDSIM_PT_whitewater_life(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_life(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Lifetime"
     bl_idname = "FLUIDSIM_PT_whitewater_life"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -819,7 +856,7 @@ class FLUIDSIM_PT_whitewater_life(_WhitewaterChild, FluidSimScenePanel, bpy.type
         draw_property_grid(layout, context.scene.fluidsim, ("ww_life_min", "ww_life_max"))
 
 
-class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Dynamics"
     bl_idname = "FLUIDSIM_PT_whitewater_dynamics"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -851,9 +888,13 @@ class FLUIDSIM_PT_whitewater_stats(_WhitewaterChild, FluidSimScenePanel, bpy.typ
 
     @classmethod
     def poll(cls, context):
-        return _WhitewaterChild.poll(context) and (
-            activity_ui_state(context.scene)["owns_scene"]
-            or activity_ui_state(context.scene)["id"] == "CACHE_PLAYBACK"
+        return (
+            _WhitewaterChild.poll(context)
+            and _advanced_visible(context)
+            and (
+                activity_ui_state(context.scene)["owns_scene"]
+                or activity_ui_state(context.scene)["id"] == "CACHE_PLAYBACK"
+            )
         )
 
     def draw(self, context):
@@ -953,6 +994,12 @@ class FLUIDSIM_PT_output_attributes(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_output_attributes"
     bl_parent_id = "FLUIDSIM_PT_scene_outputs"
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        # The per-attribute export inventory (surface/particle/whitewater
+        # toggles) is Advanced-only; its children inherit this gate.
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)

@@ -2289,3 +2289,50 @@ def test_settings_group_has_ui_mode_and_quality(monkeypatch):
     assert {"DRAFT", "PREVIEW", "FINAL", "CUSTOM"} <= {i[0] for i in properties.QUALITY_ITEMS}
     ann = properties.FLUIDSIM_PG_settings.__annotations__
     assert "ui_mode" in ann and "quality" in ann
+
+
+def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _ctx(ui_mode):
+        return SimpleNamespace(
+            scene=SimpleNamespace(
+                fluidsim=SimpleNamespace(
+                    ui_mode=ui_mode,
+                    surface_enabled=True,
+                    whitewater_enabled=True,
+                )
+            )
+        )
+
+    basic = _ctx("BASIC")
+    adv = _ctx("ADVANCED")
+
+    # The Simulation Physics fan is the "Advanced Physics" gate: its whole
+    # subtree (the 12 sim_* panels) collapses in Basic and returns in Advanced.
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(basic) is False
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(adv) is True
+
+    # The other deep-config clusters that live under Basic-visible parents are
+    # each gated too: capacity/safety, the surface filter chain, per-stream
+    # whitewater dynamics, and the persistent-attribute inventory.
+    for cls in (
+        ui_scene.FLUIDSIM_PT_scene_capacity,
+        ui_scene.FLUIDSIM_PT_surface_filters,
+        ui_scene.FLUIDSIM_PT_whitewater_dynamics,
+        ui_scene.FLUIDSIM_PT_output_attributes,
+    ):
+        assert cls.poll(basic) is False, cls.__name__
+        assert cls.poll(adv) is True, cls.__name__
+
+    # Feature front doors and the Basic essentials stay put in both modes so the
+    # surface never reflows out from under the user (anti-reflow invariant).
+    for cls in (
+        ui_scene.FLUIDSIM_PT_scene_domain,
+        ui_scene.FLUIDSIM_PT_scene_surface,
+        ui_scene.FLUIDSIM_PT_scene_whitewater,
+        ui_scene.FLUIDSIM_PT_whitewater_emission,
+    ):
+        assert cls.poll(basic) is True, cls.__name__
+        assert cls.poll(adv) is True, cls.__name__
