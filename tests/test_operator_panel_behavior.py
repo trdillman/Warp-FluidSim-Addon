@@ -2146,3 +2146,23 @@ def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
     op.layout = _Layout()
     op.draw(context)
     assert "mode" in op.layout.props
+
+
+def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", False, "no CUDA device"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"})
+    long_status = "Solver halted: " + "x" * 200
+    fs = SimpleNamespace(status=long_status, height_error="")
+    ctx = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    panel = ui_scene.FLUIDSIM_PT_scene_control()
+    panel.layout = _Layout()
+    panel.draw(ctx)
+    probe_ops = [op for op in panel.layout.operators
+                 if op["id"] == "fluidsim.refresh_runtime_probe"]
+    assert probe_ops and probe_ops[0].get("text")
+    joined = "".join(l["text"] for l in panel.layout.labels)
+    assert long_status[-20:] in joined

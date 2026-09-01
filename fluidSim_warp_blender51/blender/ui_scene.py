@@ -143,7 +143,7 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
         row.label(text=state["label"], icon=state["icon"])
         status = str(getattr(fs, "status", "") or "")
         if status:
-            row.label(text=status[:80])
+            _draw_wrapped(layout, status)
         height_error = str(getattr(fs, "height_error", "") or "")
         if height_error:
             draw_status_message(layout, height_error, "ERROR")
@@ -154,7 +154,7 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
             text=(f"{selected} · {runtime_message}" if selected else runtime_message),
             icon="CHECKMARK" if runtime_ready else "ERROR",
         )
-        runtime.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+        runtime.operator("fluidsim.refresh_runtime_probe", text="Re-detect GPU" if not runtime_ready else "Re-detect", icon="FILE_REFRESH")
 
         actions = layout.row(align=True)
         if state["id"] == "LIVE_PREVIEW":
