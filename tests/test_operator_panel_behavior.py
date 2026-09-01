@@ -3007,3 +3007,66 @@ def test_diagnostics_telemetry_consolidates_readouts(monkeypatch):
     assert "4321" in texts        # runtime particle count
     assert "CAPILLARY" in texts   # capillary limiter readback
     assert "7" in texts           # whitewater admitted count
+
+
+def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
+    """D9: the Advanced surface Filters panel presents the four post-process
+    passes (filter / dilate / erode / smooth) as four labeled ``box()`` sections
+    instead of a flat ten-prop list.  Each pass's controls live entirely inside
+    one box, the four boxes are distinct, and every box carries a header naming
+    its pass."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    fs = SimpleNamespace(
+        surface_filter_type="MEDIAN",
+        surface_filter_iterations=1,
+        surface_filter_strength=1.0,
+        surface_dilate_iterations=1,
+        surface_dilate_strength=1.0,
+        surface_erode_iterations=1,
+        surface_erode_strength=1.0,
+        surface_smooth_type="LAPLACIAN",
+        surface_smooth_iterations=1,
+        surface_smooth_strength=1.0,
+    )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    root = _Layout()
+    panel = ui_scene.FLUIDSIM_PT_surface_filters()
+    panel.layout = root
+    panel.draw(context)
+
+    pass_props = {
+        "filter": {
+            "surface_filter_type",
+            "surface_filter_iterations",
+            "surface_filter_strength",
+        },
+        "dilate": {"surface_dilate_iterations", "surface_dilate_strength"},
+        "erode": {"surface_erode_iterations", "surface_erode_strength"},
+        "smooth": {
+            "surface_smooth_type",
+            "surface_smooth_iterations",
+            "surface_smooth_strength",
+        },
+    }
+    scope_of = {}
+    for entry in root.prop_scopes:
+        scope_of.setdefault(entry["name"], entry["boxes"])
+
+    # Each pass lives entirely inside one (non-empty) box scope.
+    pass_scopes = {}
+    for name, members in pass_props.items():
+        scopes = {scope_of[p] for p in members if p in scope_of}
+        assert len(scopes) == 1, f"{name} pass split across boxes: {scopes}"
+        (scope,) = scopes
+        assert scope, f"{name} pass not wrapped in a box()"
+        pass_scopes[name] = scope
+
+    # The four passes occupy four distinct boxes.
+    assert len(set(pass_scopes.values())) == 4, "passes must occupy four distinct boxes"
+
+    # Every box carries a header label naming its pass.
+    texts = [item["text"].lower() for item in root.labels]
+    for header in ("filter", "dilate", "erode", "smooth"):
+        assert any(header in t for t in texts), f"missing '{header}' box header"

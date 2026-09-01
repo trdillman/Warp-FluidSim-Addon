@@ -764,22 +764,38 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        # D9: the four post-process passes are chunked into their own labeled
+        # boxes so the filter chain reads as four sequential sections rather than
+        # a flat ten-prop wall.  Each strength knob stays gated on its pass having
+        # a non-zero iteration count.
         layout = _layout(self)
         fs = context.scene.fluidsim
-        layout.prop(fs, "surface_filter_type")
-        layout.prop(fs, "surface_filter_iterations")
+
+        flt = layout.box()
+        flt.label(text="Filter", icon="FILTER")
+        flt.prop(fs, "surface_filter_type")
+        flt.prop(fs, "surface_filter_iterations")
         if fs.surface_filter_iterations > 0:
-            layout.prop(fs, "surface_filter_strength")
-        layout.prop(fs, "surface_dilate_iterations")
+            flt.prop(fs, "surface_filter_strength")
+
+        dilate = layout.box()
+        dilate.label(text="Dilate", icon="FULLSCREEN_ENTER")
+        dilate.prop(fs, "surface_dilate_iterations")
         if fs.surface_dilate_iterations > 0:
-            layout.prop(fs, "surface_dilate_strength")
-        layout.prop(fs, "surface_erode_iterations")
+            dilate.prop(fs, "surface_dilate_strength")
+
+        erode = layout.box()
+        erode.label(text="Erode", icon="FULLSCREEN_EXIT")
+        erode.prop(fs, "surface_erode_iterations")
         if fs.surface_erode_iterations > 0:
-            layout.prop(fs, "surface_erode_strength")
-        layout.prop(fs, "surface_smooth_type")
-        layout.prop(fs, "surface_smooth_iterations")
+            erode.prop(fs, "surface_erode_strength")
+
+        smooth = layout.box()
+        smooth.label(text="Smooth", icon="MOD_SMOOTH")
+        smooth.prop(fs, "surface_smooth_type")
+        smooth.prop(fs, "surface_smooth_iterations")
         if fs.surface_smooth_iterations > 0:
-            layout.prop(fs, "surface_smooth_strength")
+            smooth.prop(fs, "surface_smooth_strength")
 
 
 class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
