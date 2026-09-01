@@ -89,20 +89,21 @@ def _side_effect_free_copy():
         return nullcontext()
 
 
-def _resolve_or_create_domain(scene):
-    """Return the scene's domain object, creating/designating one if unset.
+def create_domain_object(scene):
+    """Create, link and designate a fresh FluidSim domain object.
 
-    The only bpy-touching helper, keeping the pure layer testable. Returns
-    None only when ``scene.fluidsim`` is absent (the pure orchestrator then
-    no-ops, preserving data). Today's model is exactly one domain per scene,
-    so an unset domain deterministically gets a freshly created object.
+    The single source of domain-object creation. Both the migration load
+    handler (for an unset scene) and the ``VIEW3D_MT_add`` operator route
+    through here so every domain reproduces the canonical fallback geometry
+    and becomes the scene's designated ``fluidsim.domain_object``. Unlike
+    :func:`_resolve_or_create_domain`, this always creates a new object and
+    re-designates it -- the Add-menu path uses that to introduce an
+    additional domain and make it the active one. Returns None only when
+    ``scene.fluidsim`` is absent.
     """
     fs = getattr(scene, "fluidsim", None)
     if fs is None:
         return None
-    existing = getattr(fs, "domain_object", None)
-    if existing is not None:
-        return existing
     mesh = bpy.data.meshes.new("FluidSim Domain")
     verts, faces = _default_domain_geometry()
     mesh.from_pydata(verts, [], faces)
@@ -111,6 +112,24 @@ def _resolve_or_create_domain(scene):
     scene.collection.objects.link(obj)
     fs.domain_object = obj
     return obj
+
+
+def _resolve_or_create_domain(scene):
+    """Return the scene's domain object, creating/designating one if unset.
+
+    The only bpy-touching helper, keeping the pure layer testable. Returns
+    None only when ``scene.fluidsim`` is absent (the pure orchestrator then
+    no-ops, preserving data). Today's load-time model is exactly one domain
+    per scene, so an unset domain deterministically gets a freshly created
+    object.
+    """
+    fs = getattr(scene, "fluidsim", None)
+    if fs is None:
+        return None
+    existing = getattr(fs, "domain_object", None)
+    if existing is not None:
+        return existing
+    return create_domain_object(scene)
 
 
 @persistent

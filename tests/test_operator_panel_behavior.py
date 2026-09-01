@@ -2095,6 +2095,63 @@ def test_object_role_panel_leads_with_native_type_dropdown_then_batch_helpers(mo
     } <= op_ids, "the Apply-to-Selected batch tag operators must remain available"
 
 
+def test_add_menu_exposes_a_fluid_domain_entry(monkeypatch):
+    """The ``VIEW3D_MT_add`` draw contributes a first-class Fluid Domain entry.
+
+    Spec O4/§7 makes a domain an Add-menu citizen. The contributed operator
+    carries a stable idname and a non-empty tooltip, and the drawn menu entry
+    reads "Fluid Domain (FluidSim)".
+    """
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    op_cls = menus.FLUIDSIM_OT_add_domain
+    assert op_cls.bl_idname == "fluidsim.add_domain"
+    assert str(getattr(op_cls, "bl_description", "")).strip(), (
+        "the Add-menu operator must carry a non-empty tooltip"
+    )
+
+    menu_self = SimpleNamespace(layout=_Layout())
+    menus.draw_add_menu(menu_self, SimpleNamespace())
+    add_ops = [op for op in menu_self.layout.operators if op["id"] == "fluidsim.add_domain"]
+    assert add_ops, "VIEW3D_MT_add draw must contribute the fluidsim.add_domain entry"
+    assert add_ops[0].get("text") == "Fluid Domain (FluidSim)"
+
+
+def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypatch):
+    """Executing the operator creates a domain object and makes it the active one.
+
+    Multiple domain objects may coexist; the designated ``fluidsim.domain_object``
+    is the active one. Adding a domain therefore creates a fresh object, migrates
+    the scene settings onto it, and selects/activates it.
+    """
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    created = SimpleNamespace(name="FluidSim Domain", selected=False)
+    created.select_set = lambda value: setattr(created, "selected", value)
+    monkeypatch.setattr(menus.migration, "create_domain_object", lambda scene: created)
+    migrated = []
+    monkeypatch.setattr(
+        menus.migration,
+        "migrate_domain_settings_schema",
+        lambda scene, obj: migrated.append(obj) or True,
+    )
+
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
+    active_holder = SimpleNamespace(active=None)
+    context = SimpleNamespace(
+        scene=scene,
+        view_layer=SimpleNamespace(objects=active_holder),
+    )
+
+    result = menus.FLUIDSIM_OT_add_domain().execute(context)
+    assert result == {"FINISHED"}
+    assert migrated == [created], "the new domain's settings must be migrated onto it"
+    assert created.selected is True
+    assert active_holder.active is created, "the new domain becomes the active object"
+
+
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
