@@ -492,7 +492,13 @@ class _Layout:
         self.labels.append({"text": text, "icon": icon})
 
     def operator(self, operator_id, **kwargs):
-        self.operators.append({"id": operator_id, **kwargs})
+        # `enabled`/`alert` record the effective greyout/red-alert state of the
+        # sub-layout the operator was drawn into (operators, unlike props, carry
+        # no `prop_states` entry). Additive keys; existing tests read `["id"]`
+        # and specific kwargs only.
+        self.operators.append(
+            {"id": operator_id, "enabled": self.enabled, "alert": self.alert, **kwargs}
+        )
         return SimpleNamespace()
 
     def popover(self, **kwargs):
@@ -2166,3 +2172,40 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     assert probe_ops and probe_ops[0].get("text")
     joined = "".join(l["text"] for l in panel.layout.labels)
     assert long_status[-20:] in joined
+
+
+def test_transport_keeps_step_buttons_present_but_greyed_when_not_ready(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", False, "not ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_transport()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
+
+    op_ids = [op["id"] for op in panel.layout.operators]
+    assert "fluidsim.toggle_live" in op_ids
+    # Step One + Step Many always present (anti-reflow), never hidden.
+    assert op_ids.count("fluidsim.step") == 2
+    # Both step buttons drawn under a disabled sub-layout (greyed, not hidden).
+    step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
+    assert step_ops and all(op["enabled"] is False for op in step_ops)
+
+
+def test_transport_enables_step_buttons_when_runtime_ready(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_transport()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
+
+    step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
+    assert len(step_ops) == 2 and all(op["enabled"] is True for op in step_ops)

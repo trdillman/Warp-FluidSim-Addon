@@ -127,6 +127,57 @@ def _whitewater_enabled(context):
     return bool(fs is not None and getattr(fs, "whitewater_enabled", False))
 
 
+class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Transport"
+    bl_idname = "FLUIDSIM_PT_scene_transport"
+    bl_order = 0
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        state = activity_ui_state(scene)
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+
+        # Primary Start/Stop occupies its own full-width, emphasised row so it
+        # never shares space with the step controls below it.
+        primary = layout.row(align=True)
+        primary.scale_y = 1.3
+        if state["id"] == "LIVE_PREVIEW":
+            primary.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
+        elif state["id"] == "CACHE_PLAYBACK":
+            primary.operator(
+                "fluidsim.cache_playback_stop",
+                text="Stop Cache Playback",
+                icon="PAUSE",
+            )
+        elif state["id"] == "PRODUCTION_BAKE":
+            primary.operator(
+                "fluidsim.bake_cancel",
+                text="Cancel Production Bake",
+                icon="CANCEL",
+            )
+        else:
+            primary.enabled = runtime_ready
+            primary.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
+
+        # Step One / Step Many are ALWAYS emitted (anti-reflow): greyed out when
+        # the solver cannot single-step, never hidden, so buttons never move.
+        can_step = bool(
+            runtime_ready
+            and state["owns_scene"]
+            and state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}
+        )
+        step_once = layout.row(align=True)
+        step_once.enabled = can_step
+        step_once.operator_context = "EXEC_DEFAULT"
+        op = step_once.operator("fluidsim.step", text="Step One Frame", icon="FRAME_NEXT")
+        op.frames = 1
+        step_many = layout.row(align=True)
+        step_many.enabled = can_step
+        step_many.operator_context = "INVOKE_DEFAULT"
+        step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
+
+
 class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Session & Status"
     bl_idname = "FLUIDSIM_PT_scene_control"
@@ -1144,6 +1195,7 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
 
 
 SCENE_PANEL_CLASSES = (
+    FLUIDSIM_PT_scene_transport,
     FLUIDSIM_PT_scene_control,
     FLUIDSIM_PT_scene_pending,
     FLUIDSIM_PT_scene_runtime_stats,
