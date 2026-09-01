@@ -409,8 +409,10 @@ def _run_phase(phase, scene):
             return None
         check("gui mode", not bpy.app.background)
         _draw_all_panels_smoke("addon enabled, solver inactive")
+        # After the D3 hub split the Initialize action lives in the dedicated
+        # Lifecycle panel; the read-only Status hub no longer draws operators.
         _assert_panel_state(
-            "FLUIDSIM_PT_scene_control",
+            "FLUIDSIM_PT_scene_lifecycle",
             "uninitialized status",
             operator_id="fluidsim.initialize",
         )
