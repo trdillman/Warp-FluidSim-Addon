@@ -2055,6 +2055,46 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     assert domain_panel.poll(context) is False
 
 
+def test_object_role_panel_leads_with_native_type_dropdown_then_batch_helpers(monkeypatch):
+    """Role is a native Type dropdown; the tag operators become batch helpers (D6).
+
+    The primary control is ``obj.fluidsim.role`` drawn as a dropdown (drawn
+    first), and the per-selection tag operators are retained below as
+    "Apply to Selected" batch helpers.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_object = _reload_module("fluidSim_warp_blender51.blender.ui_object")
+
+    settings = SimpleNamespace(role="NONE", enabled=False)
+    obj = SimpleNamespace(fluidsim=settings)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace())
+    context = SimpleNamespace(scene=scene, object=obj, selected_objects=(obj,))
+
+    assert ui_object.FLUIDSIM_PT_object_role.poll(context) is True
+
+    panel = ui_object.FLUIDSIM_PT_object_role()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    # Dropdown is the primary control: the first property drawn is ``role``,
+    # bound to the object's own settings.
+    assert panel.layout.props[0] == "role", (
+        "the native Type dropdown (role) must be the first control drawn"
+    )
+    role_calls = [c for c in panel.layout.prop_calls if c["name"] == "role"]
+    assert role_calls and role_calls[0]["data"] is settings
+
+    # The batch tag helpers are retained below.
+    op_ids = {op["id"] for op in panel.layout.operators}
+    assert {
+        "fluidsim.tag_liquid_emitter",
+        "fluidsim.tag_liquid_sink",
+        "fluidsim.tag_collider",
+        "fluidsim.tag_force_region",
+        "fluidsim.tag_field_source",
+    } <= op_ids, "the Apply-to-Selected batch tag operators must remain available"
+
+
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
