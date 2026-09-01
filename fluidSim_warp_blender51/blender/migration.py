@@ -62,10 +62,31 @@ def migrate_domain_settings_schema(scene, domain_obj) -> bool:
         return False
     target = domain_obj.fluidsim_domain
     field_names = migrated_field_names(type(fs))
-    copy_domain_settings(fs, target, field_names)
-    target.schema_version = _TARGET_SCHEMA_VERSION
-    fs.schema_version = _TARGET_SCHEMA_VERSION   # guard stamped LAST; never re-zeroed
+    with _side_effect_free_copy():
+        copy_domain_settings(fs, target, field_names)
+        target.schema_version = _TARGET_SCHEMA_VERSION
+        fs.schema_version = _TARGET_SCHEMA_VERSION   # guard stamped LAST; never re-zeroed
     return True
+
+
+def _side_effect_free_copy():
+    """Scope that neutralizes RNA update side effects fired by the field copy.
+
+    ``copy_domain_settings`` writes with ``setattr``, which invokes each field's
+    RNA update callback in real Blender. ``live``/``cache_playback_enabled``
+    would otherwise spawn a Solver Session mid-load and bind the scene to a
+    bogus domain. ``playback.suppress_mode_transitions`` makes migration a pure
+    value copy. Imported lazily and guarded so the pure bpy-stub tests — which
+    call this without a live playback module — remain a plain no-op.
+    """
+    try:
+        from . import playback
+
+        return playback.suppress_mode_transitions()
+    except Exception:  # noqa: BLE001 — pure/stub import context: no live callbacks fire
+        from contextlib import nullcontext
+
+        return nullcontext()
 
 
 def _resolve_or_create_domain(scene):

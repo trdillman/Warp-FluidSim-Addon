@@ -38,6 +38,10 @@ DISTINCTIVE = {
     "particles_per_voxel": 12,
     "directional_force": (0.1, 0.2, 0.3),
     "height_back_mode": "FLAT",
+    # ``live`` carries an RNA update callback that spawns a Solver Session.
+    # It MUST migrate as a plain value: the copy fires the callback in real
+    # Blender, so a non-suppressed copy would auto-start a solver mid-load.
+    "live": True,
 }
 
 
@@ -108,6 +112,17 @@ def run_fixture(label, with_domain, tmpdir):
     fs = scene.fluidsim
     check(f"{label}: source guard stamped 1", fs.schema_version == 1,
           fs.schema_version)
+
+    # Regression (load semantics): migration is state restoration, not a user
+    # action. Copying ``live=True`` fires its RNA update callback in real
+    # Blender; without suppression that callback auto-starts a Solver Session
+    # mid-load, before object transforms are evaluated, binding the scene to a
+    # bogus unit-cube domain. Opening a file must never leave a live solver.
+    from fluidSim_warp_blender51.blender import scene_bridge
+    sess = scene_bridge.session()
+    check(f"{label}: migration left no active session (side-effect-free copy)",
+          not sess.active and not sess.error,
+          f"active={sess.active} error={sess.error!r}")
 
     domains = migrated_domains(scene)
     check(f"{label}: exactly one migrated domain object", len(domains) == 1,
