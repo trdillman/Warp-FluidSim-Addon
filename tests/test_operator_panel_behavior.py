@@ -470,6 +470,11 @@ class _Layout:
             self.alert,
         )
 
+    def grid_flow(self, **_kwargs):
+        # `draw_property_grid` draws into a grid_flow sub-layout; model it as a
+        # child layout so props drawn through it still reach the shared root.
+        return _Layout(self._root, self._box_scope, self.enabled, self.alert)
+
     def separator(self):
         return None
 
@@ -2320,19 +2325,160 @@ def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
     for cls in (
         ui_scene.FLUIDSIM_PT_scene_capacity,
         ui_scene.FLUIDSIM_PT_surface_filters,
+        ui_scene.FLUIDSIM_PT_whitewater_emission,
         ui_scene.FLUIDSIM_PT_whitewater_dynamics,
         ui_scene.FLUIDSIM_PT_output_attributes,
     ):
         assert cls.poll(basic) is False, cls.__name__
         assert cls.poll(adv) is True, cls.__name__
 
-    # Feature front doors and the Basic essentials stay put in both modes so the
-    # surface never reflows out from under the user (anti-reflow invariant).
+    # Feature front doors stay put in both modes so the surface never reflows out
+    # from under the user (anti-reflow invariant). Basic keeps only the toggle and
+    # the single surrogate knob these parents draw; the deep-config children (incl.
+    # the per-stream Emission grid) are Advanced-only.
     for cls in (
         ui_scene.FLUIDSIM_PT_scene_domain,
         ui_scene.FLUIDSIM_PT_scene_surface,
         ui_scene.FLUIDSIM_PT_scene_whitewater,
-        ui_scene.FLUIDSIM_PT_whitewater_emission,
     ):
         assert cls.poll(basic) is True, cls.__name__
         assert cls.poll(adv) is True, cls.__name__
+
+
+def test_basic_front_door_and_surrogates_are_present(monkeypatch):
+    """The Setup front door exposes the two-tier switch, and each gated feature
+    keeps a single Basic surrogate so no capability is unreachable in Basic."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _draw(cls, fs):
+        panel = cls()
+        panel.layout = _Layout()
+        panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+        return panel.layout
+
+    # Setup is the front door: the Interface (ui_mode) and Quality selectors sit
+    # at the top so every user meets the two-tier switch first.
+    setup = _draw(
+        ui_scene.FLUIDSIM_PT_scene_setup,
+        SimpleNamespace(ui_mode="BASIC", quality="PREVIEW", setup_mode=""),
+    )
+    assert "ui_mode" in setup.props and "quality" in setup.props
+
+    # Surface: the full filter chain is Advanced, but Basic keeps one Smoothing knob.
+    surface = _draw(
+        ui_scene.FLUIDSIM_PT_scene_surface,
+        SimpleNamespace(surface_enabled=True, surface_smooth_iterations=1),
+    )
+    assert "surface_smooth_iterations" in surface.props
+
+    # Whitewater: per-stream emission is Advanced, but Basic keeps on/off + Amount.
+    whitewater = _draw(
+        ui_scene.FLUIDSIM_PT_scene_whitewater,
+        SimpleNamespace(whitewater_enabled=True, ww_emission_rate=1.0),
+    )
+    assert "whitewater_enabled" in whitewater.props
+    assert "ww_emission_rate" in whitewater.props
+
+    # Outputs: the 33 per-attribute toggles are Advanced, but Basic keeps the
+    # Export Attributes headline enum.
+    outputs = _draw(
+        ui_scene.FLUIDSIM_PT_scene_outputs,
+        SimpleNamespace(
+            liquid_view_mode="SURFACE",
+            whitewater_enabled=False,
+            show_whitewater=False,
+            export_attributes="STANDARD",
+        ),
+    )
+    assert "export_attributes" in outputs.props
+
+
+def _default_visible_scene_panels(ui_scene, context):
+    """Scene panels shown on first open with nothing expanded — the literal
+    "default visible surface" (spec §11).  A panel qualifies when its own poll
+    and every ancestor's poll pass (Blender hides a child whose parent is hidden)
+    AND neither it nor any ancestor is DEFAULT_CLOSED (a collapsed panel shows
+    none of its properties until the user opens it).  This excludes the operational
+    Cache/Diagnostics clusters and the deep-config panels that sit one expand
+    away, leaving exactly the knobs a fresh Basic scene renders immediately."""
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    visible = []
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        node = cls
+        ok = True
+        for _ in range(20):
+            if node is None:
+                break
+            if not node.poll(context) or "DEFAULT_CLOSED" in getattr(node, "bl_options", set()):
+                ok = False
+                break
+            parent_id = getattr(node, "bl_parent_id", "")
+            node = by_id.get(parent_id) if parent_id else None
+        if ok:
+            visible.append(cls)
+    return visible
+
+
+def test_basic_mode_default_surface_is_within_budget(monkeypatch):
+    """D2 budget gate (spec §8/§11): the default visible surface is ~20-25 distinct
+    properties, down from ~200.  Enumerate every Scene panel a fresh Basic scene
+    renders on first open (ancestor-poll aware, collapsed panels excluded), union
+    the properties each draws against a fully-populated fresh domain, and assert
+    the total stays <= 25."""
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    # A fresh domain populated from every declared default.  properties.py uses
+    # `from __future__ import annotations`, so the class annotations are source
+    # strings; evaluate each in the module namespace (where the bpy-stub prop
+    # constructors return their `default=`) to recover the real out-of-box value.
+    fs = SimpleNamespace()
+    for name, annotation in properties.FLUIDSIM_PG_settings.__annotations__.items():
+        try:
+            setattr(fs, name, eval(annotation, vars(properties)))
+        except Exception:  # noqa: BLE001 - a value we can't resolve isn't a default we drew
+            pass
+    fs.ui_mode = "BASIC"
+
+    # Deterministic operational state so the always-on Transport/Lifecycle/Status
+    # panels draw without touching the GPU runtime or the scene bridge.
+    monkeypatch.setattr(
+        ui_scene, "activity_ui_state",
+        lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"},
+    )
+    monkeypatch.setattr(
+        ui_scene, "_runtime_ui_state",
+        lambda: (SimpleNamespace(), "cuda:0", True, "ready"),
+    )
+    monkeypatch.setattr(ui_scene, "pending_ui_state", lambda scene: {"action": "NONE"})
+    fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    fake_bridge.current_error = lambda scene: ""
+    fake_bridge.capacity_plan_for_scene = lambda scene: None
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
+    )
+
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    visible = _default_visible_scene_panels(ui_scene, context)
+
+    # Sanity: the Advanced physics fan, the per-attribute export inventory, and
+    # the deep-config Surface/Whitewater subtrees are all off the default surface,
+    # so the budget genuinely measures the first-open Basic view.
+    visible_ids = {cls.bl_idname for cls in visible}
+    assert "FLUIDSIM_PT_scene_simulation" not in visible_ids
+    assert "FLUIDSIM_PT_output_attributes" not in visible_ids
+    assert "FLUIDSIM_PT_scene_setup" in visible_ids and "FLUIDSIM_PT_scene_domain" in visible_ids
+
+    root = _Layout()
+    for cls in visible:
+        panel = cls()
+        panel.layout = root
+        panel.draw(context)
+
+    visible_props = set(root.props)
+    assert len(visible_props) <= 25, (
+        f"Basic default surface has {len(visible_props)} properties (budget 25): "
+        f"{sorted(visible_props)}"
+    )

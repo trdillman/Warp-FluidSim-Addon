@@ -348,6 +348,11 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         fs = context.scene.fluidsim
+        # Front door of the two-tier disclosure (design D2): the Interface switch
+        # and the Quality target sit at the top of the first panel so every user
+        # meets them before any deep-config surface.
+        layout.prop(fs, "ui_mode", expand=True)
+        layout.prop(fs, "quality")
         if getattr(fs, "setup_mode", ""):
             layout.label(text=f"Current setup: {fs.setup_mode.replace('_', ' ').title()}", icon="MOD_FLUIDSIM")
         layout.operator("fluidsim.setup_scene", text="Guided Setup…", icon="MOD_FLUIDSIM")
@@ -706,7 +711,12 @@ class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "surface_enabled")
+        fs = context.scene.fluidsim
+        layout.prop(fs, "surface_enabled")
+        # Basic gets a single Smoothing knob (spec §8); the full filter chain
+        # lives in the Advanced-only children below.
+        if fs.surface_enabled:
+            layout.prop(fs, "surface_smooth_iterations", text="Smoothing")
 
 
 class _SurfaceChild:
@@ -792,7 +802,12 @@ class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "whitewater_enabled")
+        fs = context.scene.fluidsim
+        layout.prop(fs, "whitewater_enabled")
+        # Basic gets on/off + a single Amount knob (spec §8); per-stream emission,
+        # classification, lifetime, and dynamics live in the Advanced children.
+        if fs.whitewater_enabled:
+            layout.prop(fs, "ww_emission_rate", text="Amount")
 
 
 class _WhitewaterChild:
@@ -802,18 +817,20 @@ class _WhitewaterChild:
 
 
 class _WhitewaterAdvancedChild(_WhitewaterChild):
-    """Whitewater children beyond Emission/Amount (classification, lifetime,
-    per-stream dynamics) are Advanced-only; Emission stays in the Basic set."""
+    """Every whitewater child (per-stream emission, classification, lifetime,
+    dynamics) is Advanced-only; Basic keeps just the on/off toggle plus the
+    single Amount knob drawn on the parent panel."""
 
     @classmethod
     def poll(cls, context):
         return _WhitewaterChild.poll(context) and _advanced_visible(context)
 
 
-class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_emission(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Emission"
     bl_idname = "FLUIDSIM_PT_whitewater_emission"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -936,6 +953,9 @@ class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
         if fs.whitewater_enabled and fs.show_whitewater:
             active.append("Whitewater")
         layout.label(text="Visible: " + (", ".join(active) if active else "None"), icon="HIDE_OFF")
+        # Basic headline for the export inventory (spec §8); the 33 per-attribute
+        # toggles live in the Advanced-only Persistent Attributes children.
+        layout.prop(fs, "export_attributes")
 
 
 class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):

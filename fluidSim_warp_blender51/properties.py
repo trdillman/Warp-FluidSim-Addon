@@ -114,6 +114,15 @@ QUALITY_ITEMS = (
     ("FINAL", "Final", "Highest fidelity for production renders at the greatest compute cost"),
     ("CUSTOM", "Custom", "Fidelity is governed by the individual solver settings rather than a quality preset"),
 )
+# Basic-tier headline for the 33 per-attribute export toggles (design D2, spec §8).
+# Presentation-only for now: the per-attribute inventory in Advanced remains the
+# source of truth; wiring this preset to those toggles is deferred to the Chunk 3+
+# data-model work (it affects cache identity, so it must land with the migration).
+EXPORT_ATTRIBUTES_ITEMS = (
+    ("MINIMAL", "Minimal", "Export only the attributes required to render the liquid; smallest caches"),
+    ("STANDARD", "Standard", "Export the attributes most shots need (velocity, age, and per-stream basics)"),
+    ("EVERYTHING", "Everything", "Export every available per-point attribute for maximum downstream flexibility"),
+)
 
 
 _LIQUID_VIEW_SYNCING = False
@@ -769,6 +778,9 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     quality: EnumProperty(
         name="Quality", items=QUALITY_ITEMS, default="PREVIEW",
         description="Select a fidelity target; Draft/Preview/Final trade speed against accuracy, and Custom defers entirely to the individual solver settings")
+    export_attributes: EnumProperty(
+        name="Export Attributes", items=EXPORT_ATTRIBUTES_ITEMS, default="STANDARD",
+        description="Basic headline for how many per-point attributes are exported; the per-attribute inventory in Advanced overrides this")
     # Simulation
     live: BoolProperty(
         name="Live Simulation", default=False,
