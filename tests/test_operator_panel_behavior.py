@@ -2129,3 +2129,20 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
     assert "show_overlay" in panel.layout.props
+
+
+def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    calls = []
+    context = SimpleNamespace(
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda op: calls.append(op) or {"RUNNING_MODAL"}
+        )
+    )
+    op = operators.FLUIDSIM_OT_setup_scene()
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert calls == [op]
+    op.layout = _Layout()
+    op.draw(context)
+    assert "mode" in op.layout.props
