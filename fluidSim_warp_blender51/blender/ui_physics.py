@@ -12,6 +12,7 @@ from __future__ import annotations
 import bpy
 
 from . import output_publication, ui_object, ui_scene
+from .scene_bridge import active_domain_settings
 from .ui_common import FluidSimObjectPanel, active_object_role
 
 
@@ -64,7 +65,57 @@ def _physics_id(group: str, source_id: str) -> str:
     return f"FLUIDSIM_PT_physics_{group}_{suffix}"
 
 
-def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str]):
+class _OwnerScene:
+    """A read-through view of ``scene`` whose ``fluidsim`` is the domain owner.
+
+    Post Phase-3 migration the canonical domain settings live on
+    ``obj.fluidsim_domain`` -- ``solver_settings.build_settings`` already reads
+    it through ``active_domain_settings``, so a control still bound to
+    ``scene.fluidsim`` would edit a datablock the solver no longer consults.
+    The domain mirrors reuse the Scene panel draw functions verbatim, and those
+    bind every control to ``context.scene.fluidsim``; handing them this view
+    repoints the *owner* to the domain datablock -- a genuine ``PropertyGroup``
+    struct, so ``layout.prop`` still edits real RNA -- while every other scene
+    attribute reads through unchanged.
+
+    (Runtime ``stat_*`` telemetry is written to ``scene.fluidsim`` by the solver
+    and so renders from this same owner until Chunk 5 relocates those readouts
+    to Diagnostics; that transitional staleness is displayed-only.)
+    """
+
+    __slots__ = ("_scene", "_fluidsim")
+
+    def __init__(self, scene, fluidsim):
+        object.__setattr__(self, "_scene", scene)
+        object.__setattr__(self, "_fluidsim", fluidsim)
+
+    @property
+    def fluidsim(self):
+        return object.__getattribute__(self, "_fluidsim")
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_scene"), name)
+
+
+class _OwnerContext:
+    """A read-through view of ``context`` whose ``scene`` is an `_OwnerScene`."""
+
+    __slots__ = ("_context", "_scene")
+
+    def __init__(self, context, scene):
+        object.__setattr__(self, "_context", context)
+        object.__setattr__(self, "_scene", scene)
+
+    @property
+    def scene(self):
+        return object.__getattribute__(self, "_scene")
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_context"), name)
+
+
+def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str],
+                        owner_redirect: bool = False):
     """Mirror existing panels under the Physics root without copying state."""
     source_panels = tuple(source_panels)
     id_map = {
@@ -74,8 +125,19 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
     classes = []
 
     def draw_for(source_panel):
+        if not owner_redirect:
+            def draw(self, context):
+                return source_panel.draw(self, context)
+            return draw
+
         def draw(self, context):
-            return source_panel.draw(self, context)
+            scene = getattr(context, "scene", None)
+            owner = active_domain_settings(scene) if scene is not None else None
+            # Pre-migration (or before a domain object exists) the scene group is
+            # still canonical, so redirecting would change nothing; delegate as-is.
+            if owner is None or owner is getattr(scene, "fluidsim", None):
+                return source_panel.draw(self, context)
+            return source_panel.draw(self, _OwnerContext(context, _OwnerScene(scene, owner)))
         return draw
 
     def poll_for(source_panel):
@@ -214,6 +276,7 @@ DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     DOMAIN_SOURCE_PANELS,
     group="domain",
     accepted_kinds=frozenset({"DOMAIN"}),
+    owner_redirect=True,
 )
 
 SURFACE_SOURCE_PANELS = (

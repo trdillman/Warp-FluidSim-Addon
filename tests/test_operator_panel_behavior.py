@@ -493,7 +493,11 @@ class _Layout:
     def prop(self, *args, **kwargs):
         if len(args) >= 2:
             self.props.append(args[1])
-            self.prop_calls.append({"name": args[1], **kwargs})
+            # ``data`` records the RNA owner (``args[0]``) the control was bound
+            # to, so tests can assert *which* datablock a panel edits (e.g. the
+            # Physics domain panel editing ``obj.fluidsim_domain`` rather than
+            # ``scene.fluidsim``). Additive: existing callers read ``name``/kwargs.
+            self.prop_calls.append({"name": args[1], "data": args[0], **kwargs})
             self.prop_scopes.append({"name": args[1], "boxes": self._box_scope})
             self._record_state(args[1])
         return None
@@ -1918,6 +1922,76 @@ def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
         ui_physics.PHYSICS_PANEL_CLASSES
     )
     assert all(cls.bl_context == "physics" for cls in ui_physics.PHYSICS_PANEL_CLASSES)
+
+
+def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
+    """The Physics domain tab is the real home: it edits ``obj.fluidsim_domain``.
+
+    Post Phase-3 migration the solver reads ``active_domain_settings`` (i.e.
+    ``obj.fluidsim_domain``); a domain control still bound to ``scene.fluidsim``
+    would write a datablock the solver ignores. The poll-gated domain mirror
+    must therefore bind its props to the object datablock, while a non-domain
+    active object leaves the mirror unpolled.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+
+    domain_settings = SimpleNamespace(
+        domain_object=None,
+        voxel_size=0.037,
+        particles_per_voxel=12,
+        max_particles=1_234_567,
+        auto_grow_particles=True,
+        topology_expand=1,
+        open_boundaries=False,
+    )
+    scene_settings = SimpleNamespace(
+        domain_object=None,
+        schema_version=1,
+        ui_mode="ADVANCED",
+        voxel_size=0.999,
+        particles_per_voxel=1,
+        max_particles=1,
+        auto_grow_particles=False,
+        topology_expand=0,
+        open_boundaries=True,
+    )
+    domain_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim_domain=domain_settings,
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = domain_obj
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene, object=domain_obj)
+
+    assert ui_physics.physics_object_kind(context) == "DOMAIN"
+
+    domain_panel = next(
+        cls for cls in ui_physics.DOMAIN_PANEL_CLASSES
+        if cls.bl_idname.endswith("scene_domain")
+    )
+    assert domain_panel.poll(context) is True
+
+    panel = domain_panel()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    voxel = [call for call in panel.layout.prop_calls if call["name"] == "voxel_size"]
+    assert voxel, "domain panel did not draw voxel_size"
+    assert voxel[0]["data"] is domain_settings, (
+        "Physics domain panel must edit obj.fluidsim_domain (the owner the solver "
+        "reads), not the stale scene.fluidsim copy"
+    )
+
+    # A non-domain active object → the domain mirror must not poll.
+    other_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = other_obj
+    assert ui_physics.physics_object_kind(context) == "NONE"
+    assert domain_panel.poll(context) is False
 
 
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
