@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import bpy
+
+_handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+persistent = getattr(_handlers, "persistent", lambda fn: fn)
+
 _MIGRATION_SKIP = frozenset({"domain_object", "schema_version"})
 _TARGET_SCHEMA_VERSION = 1
 
@@ -38,3 +43,47 @@ def migrate_domain_settings_schema(scene, domain_obj) -> bool:
     target.schema_version = _TARGET_SCHEMA_VERSION
     fs.schema_version = _TARGET_SCHEMA_VERSION   # guard stamped LAST; never re-zeroed
     return True
+
+
+def _resolve_or_create_domain(scene):
+    """Return the scene's domain object, creating/designating one if unset.
+
+    The only bpy-touching helper, keeping the pure layer testable. Returns
+    None only when ``scene.fluidsim`` is absent (the pure orchestrator then
+    no-ops, preserving data). Today's model is exactly one domain per scene,
+    so an unset domain deterministically gets a freshly created object.
+    """
+    fs = getattr(scene, "fluidsim", None)
+    if fs is None:
+        return None
+    existing = getattr(fs, "domain_object", None)
+    if existing is not None:
+        return existing
+    mesh = bpy.data.meshes.new("FluidSim Domain")
+    obj = bpy.data.objects.new("FluidSim Domain", mesh)
+    scene.collection.objects.link(obj)
+    fs.domain_object = obj
+    return obj
+
+
+@persistent
+def _on_load_post(_arg):
+    for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
+        migrate_domain_settings_schema(scene, _resolve_or_create_domain(scene))
+
+
+def register_handlers():
+    unregister_handlers()
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    load_post = getattr(handlers, "load_post", None)
+    if load_post is not None:
+        load_post.append(_on_load_post)
+
+
+def unregister_handlers():
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    load_post = getattr(handlers, "load_post", None)
+    if load_post is None:
+        return
+    while _on_load_post in load_post:
+        load_post.remove(_on_load_post)

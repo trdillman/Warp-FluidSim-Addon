@@ -70,3 +70,46 @@ def test_migration_moves_settings_once_and_never_re_triggers(monkeypatch):
     virgin = SimpleNamespace(fluidsim=SimpleNamespace(schema_version=0, voxel_size=0.1))
     assert migration.migrate_domain_settings_schema(virgin, None) is False
     assert virgin.fluidsim.schema_version == 0       # untouched → data preserved
+
+
+def _install_handler_stub(monkeypatch):
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    fake_bpy.app = SimpleNamespace(
+        handlers=SimpleNamespace(load_post=[], persistent=lambda fn: fn))
+    return fake_bpy
+
+
+def test_load_post_migrates_every_scene_and_registration_is_idempotent(monkeypatch):
+    fake_bpy = _install_handler_stub(monkeypatch)
+    migration = _reload_module("fluidSim_warp_blender51.blender.migration")
+    monkeypatch.setattr(migration, "migrated_field_names",
+                        lambda _cls: ("voxel_size",))
+
+    # Two pre-migration scenes; each resolves to its own prepared domain object.
+    def _scene(vx):
+        obj = SimpleNamespace(fluidsim_domain=SimpleNamespace(schema_version=0))
+        scene = SimpleNamespace(
+            fluidsim=SimpleNamespace(schema_version=0, voxel_size=vx),
+            _domain=obj)
+        return scene
+    scenes = [_scene(0.05), _scene(0.2)]
+    fake_bpy.data = SimpleNamespace(scenes=scenes)
+    monkeypatch.setattr(migration, "_resolve_or_create_domain",
+                        lambda scene: scene._domain)
+
+    # register_handlers() is idempotent: two calls leave exactly one handler.
+    migration.register_handlers()
+    migration.register_handlers()
+    load_post = fake_bpy.app.handlers.load_post
+    assert load_post.count(migration._on_load_post) == 1
+
+    # Firing the handler migrates every scene onto its domain object.
+    migration._on_load_post(None)
+    for scene in scenes:
+        assert scene._domain.fluidsim_domain.voxel_size == scene.fluidsim.voxel_size
+        assert scene._domain.fluidsim_domain.schema_version == 1
+        assert scene.fluidsim.schema_version == 1
+
+    # unregister_handlers() removes it.
+    migration.unregister_handlers()
+    assert migration._on_load_post not in load_post
