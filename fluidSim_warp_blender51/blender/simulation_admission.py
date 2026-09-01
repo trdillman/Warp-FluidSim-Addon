@@ -271,7 +271,11 @@ def capture_snapshot(
         capacity_plan = _plan_capacity(
             settings, tuple(footprints), seeds, collider_footprints, resources,
             additional_transaction_bytes=additional_transaction_bytes)
-        fs = scene.fluidsim
+        # Lazy import: scene_bridge imports this module, so the active-domain
+        # accessor is pulled at call time to avoid a top-level import cycle.
+        from .scene_bridge import active_domain_settings
+
+        fs = active_domain_settings(scene)
         snapshot = AdmissionSnapshot(
             scene_identity=scene_identity,
             scene_key=str(scene_key),

@@ -851,6 +851,46 @@ def test_height_source_translation_preserves_scene_settings(monkeypatch):
     assert desc.emit_rate == 8.0
 
 
+def test_height_source_reads_from_migrated_domain_object(monkeypatch):
+    """After Phase 3 migration the height source must follow the domain object.
+
+    ``gather_height_source`` feeds the solver's emission input, so it has to
+    read through ``active_domain_settings``. On a migrated scene
+    (``schema_version == 1`` with a designated domain object) the object's
+    ``fluidsim_domain`` group is canonical; the stale ``scene.fluidsim`` mirror
+    must not leak into solver output.
+    """
+    _install_scene_bridge_stubs(monkeypatch)
+    sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")
+
+    domain_group = SimpleNamespace(
+        height_enabled=True,
+        height_base=2.5,
+        height_back_mode="FLAT",
+        height_velocity=(4.0, 5.0, 6.0),
+        height_emit_particles=True,
+        particles_per_voxel=16.0,
+    )
+    domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        schema_version=1,
+        domain_object=domain_obj,
+        # Stale mirror values that must be ignored post-migration:
+        height_enabled=True,
+        height_base=1.25,
+        height_back_mode="FLAT",
+        height_velocity=(1.0, 2.0, 3.0),
+        height_emit_particles=True,
+        particles_per_voxel=8.0,
+    ))
+
+    desc = sources.gather_height_source(scene)
+
+    assert desc.base_height == 2.5
+    assert desc.velocity == (4.0, 5.0, 6.0)
+    assert desc.emit_rate == 16.0
+
+
 def test_watertight_check_is_deferred_to_solid_sink_consumers(monkeypatch):
     """Watertight edge analysis must not run on the collider/source hot path.
 
