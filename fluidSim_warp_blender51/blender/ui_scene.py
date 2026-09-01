@@ -178,6 +178,40 @@ class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
         step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
 
 
+class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Lifecycle"
+    bl_idname = "FLUIDSIM_PT_scene_lifecycle"
+    bl_order = 1
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        state = activity_ui_state(scene)
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+        owns = state["owns_scene"]
+
+        # Constructive: bring a solver into existence for this scene.
+        if not owns and state["id"] == "IDLE":
+            init = layout.row(align=True)
+            init.enabled = runtime_ready
+            init.operator("fluidsim.initialize", text="Initialize Solver", icon="MOD_FLUIDSIM")
+
+        # Destructive: physically separated and red-alerted so they cannot be
+        # reached by muscle memory aiming at a safe control. Each carries a
+        # one-line statement of what it throws away.
+        if owns and state["id"] != "PRODUCTION_BAKE":
+            layout.separator()
+            danger = layout.column(align=True)
+            danger.alert = True
+            release = danger.column(align=True)
+            release.label(text="Frees the GPU solver; requires Initialize to resume.", icon="X")
+            release.operator("fluidsim.release", text="Release Solver", icon="X")
+            if state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
+                reset = danger.column(align=True)
+                reset.label(text="Discards every simulated frame back to the start.", icon="FILE_REFRESH")
+                reset.operator("fluidsim.reset", text="Reset Simulation", icon="FILE_REFRESH")
+
+
 class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Session & Status"
     bl_idname = "FLUIDSIM_PT_scene_control"
@@ -1196,6 +1230,7 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
 
 SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_scene_transport,
+    FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
     FLUIDSIM_PT_scene_pending,
     FLUIDSIM_PT_scene_runtime_stats,

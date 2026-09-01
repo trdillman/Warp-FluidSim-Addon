@@ -2209,3 +2209,43 @@ def test_transport_enables_step_buttons_when_runtime_ready(monkeypatch):
 
     step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
     assert len(step_ops) == 2 and all(op["enabled"] is True for op in step_ops)
+
+
+def test_lifecycle_marks_release_and_reset_as_destructive(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_lifecycle()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
+
+    ops = {op["id"]: op for op in panel.layout.operators}
+    assert "fluidsim.release" in ops
+    assert "fluidsim.reset" in ops
+    # Both destructive ops are drawn under a red-alert sub-layout.
+    assert ops["fluidsim.release"]["alert"] is True
+    assert ops["fluidsim.reset"]["alert"] is True
+
+
+def test_lifecycle_offers_initialize_when_not_owning_scene(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": False,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_lifecycle()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
+
+    ops = {op["id"]: op for op in panel.layout.operators}
+    assert "fluidsim.initialize" in ops
+    # Constructive Initialize is not marked destructive.
+    assert ops["fluidsim.initialize"]["alert"] is False
+    # Nothing destructive is offered before the solver owns the scene.
+    assert "fluidsim.release" not in ops and "fluidsim.reset" not in ops
