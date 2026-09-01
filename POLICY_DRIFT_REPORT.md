@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-31T18:41:50.058126+00:00
+generated_at: 2026-09-01T05:31:42.102923+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
-gate_run_at: 2026-08-31T18:41:50.058126+00:00
+git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
+gate_run_at: 2026-09-01T05:31:42.102923+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
-git_dirty: false
+demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
+git_dirty: true
 ---
 
 # Policy Drift Report: root unit
@@ -17,7 +17,8 @@ git_dirty: false
 
 The current executable FluidSim/Warp path is not supported as a narrow
 heuristic implementation. A fresh GUI-inclusive production gate ran against
-HEAD `07963107f422a1d1399c7fd150c6c2314e563cad` and a clean tracked tree,
+HEAD `69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528`; gate metadata was dirty only
+because of an unrelated untracked design document,
 used Blender 5.1 with external Warp 1.16.0 on CUDA 12.9 / RTX 4080 SUPER,
 advanced live playback, emitted visible surface and whitewater output, and
 finished with `FULL-PRODUCTION-GATE-PASS`. The nested package suite and
@@ -32,9 +33,9 @@ encoding, and a retired GUI test operator; the final stable-HEAD gate passed.
 ## Strongest live evidence
 
 - `artifacts/production_gate_manifest.json` records gate time
-  `2026-08-31T18:41:50.058126+00:00`, proof HEAD `07963107f422`,
+  `2026-09-01T05:31:42.102923+00:00`, proof HEAD `69a51c86954b`,
   `FULL-PRODUCTION-GATE-PASS`, GUI inclusion, and generated demo artifact hash
-  `371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
+  `6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495`.
 - The gate recorded `GUI-ACCEPTANCE-PASS (40/40)` and
   `SAVED-DEMO-GUI-PLAYBACK-PASS` at the same proof HEAD.
 - The current root Python suite passed `1177` tests before the final gate.
@@ -52,7 +53,7 @@ checkout, current HEAD, and current gate metadata. The completed local card is
 
 The generated artifact and checked-in `demos/analysis_report.json` now match
 byte-for-byte at SHA-256
-`371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
+`6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495`.
 `demos/ANALYSIS.md` and the nested technical report promote the same four
 metrics. Recurrence tracking remains in
 `backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md`.
@@ -87,15 +88,15 @@ report and backlog, not silently folded into this root unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-08-31T18:41:50.058126+00:00
-generated_at_utc: 2026-08-31T18:41:50.058126Z
+generated_at: 2026-09-01T05:31:42.102923+00:00
+generated_at_utc: 2026-09-01T05:31:42.102923Z
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
-gate_run_at: 2026-08-31T18:41:50.058126+00:00
+git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
+gate_run_at: 2026-09-01T05:31:42.102923+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
+demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
 freshness: fresh
 status: fresh
 blocking_criticality: medium
@@ -104,7 +105,7 @@ strongest_live_verification_commands_artifacts:
   - 'rtk python tools/run_production_gate.py --include-gui -> artifacts/production_gate_manifest.json'
   - 'rtk python -m pytest -q -> 1177 passed during this audit'
   - 'rtk python tools/analyze_demos.py paddle_stir -> DEMO-ANALYSIS-PASS (10/10)'
-  - 'artifacts/production_gate_manifest.json -> FULL-PRODUCTION-GATE-PASS at 07963107f422'
+  - 'artifacts/production_gate_manifest.json -> FULL-PRODUCTION-GATE-PASS at 69a51c86954b'
 files_that_need_correction:
   - 'tools/analyze_demos.py'
 active_backlog_tasks:

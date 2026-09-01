@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-08-31T18:41:50.058126+00:00
+generated_at: 2026-09-01T05:31:42.102923+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
-gate_run_at: 2026-08-31T18:41:50.058126+00:00
+git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
+gate_run_at: 2026-09-01T05:31:42.102923+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
-git_dirty: false
+demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
+git_dirty: true
 ---
 
 # Policy Drift Report: nested package unit
@@ -35,16 +35,16 @@ that those lanes were rerun during this refresh.
   extension `fluidsim_warp`, version `1.0.255`, and external Warp 1.16.0
   runtime metadata.
 - Parent `artifacts/production_gate_manifest.json` records proof HEAD
-  `07963107f422`, real CUDA/Warp execution, GUI `40/40`, saved-demo playback,
+  `69a51c86954b`, real CUDA/Warp execution, GUI `40/40`, saved-demo playback,
   and `FULL-PRODUCTION-GATE-PASS`.
 
 ## Findings
 
 ### PD-PKG-001: technical report proof snapshot repaired (documentation drift)
 
-The promoted section now names parent proof HEAD `07963107f422`, the current
+The promoted section now names parent proof HEAD `69a51c86954b`, the current
 four demo metrics, and generated artifact hash
-`371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c`.
+`6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495`.
 Package-local results remain explicitly historical. Recurrence tracking is in
 `fluidSim_warp_blender51/backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`.
 
@@ -61,15 +61,15 @@ gate-reproducibility findings.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-08-31T18:41:50.058126+00:00
-generated_at_utc: 2026-08-31T18:41:50.058126Z
+generated_at: 2026-09-01T05:31:42.102923+00:00
+generated_at_utc: 2026-09-01T05:31:42.102923Z
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 07963107f422a1d1399c7fd150c6c2314e563cad
-gate_run_at: 2026-08-31T18:41:50.058126+00:00
+git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
+gate_run_at: 2026-09-01T05:31:42.102923+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 371403b4bb55813c195917a3e9357f1d67ed5a8bb9d9d5b6b74b1b64e960864c
+demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
 freshness: fresh
 status: fresh
 blocking_criticality: medium
