@@ -122,6 +122,18 @@ def run_fixture(label, with_domain, tmpdir):
               fs.domain_object is not None
               and fs.domain_object.name in {obj.name for obj in scene.objects},
               getattr(fs.domain_object, "name", None))
+        # Regression: an auto-created domain must span real bounds, or the
+        # solver's "maximum must be greater than minimum on every axis" guard
+        # rejects playback after a reopen. It must reproduce the exact fallback
+        # box an unset domain used to yield, so output stays identical.
+        from fluidSim_warp_blender51.blender.solver_settings import (
+            DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN, domain_bounds)
+        lo, hi = domain_bounds(scene)
+        check(f"{label}: created domain bounds non-degenerate on every axis",
+              all(hi[axis] > lo[axis] for axis in range(3)), (lo, hi))
+        check(f"{label}: created domain bounds match the canonical fallback",
+              norm(lo) == norm(DEFAULT_DOMAIN_MIN)
+              and norm(hi) == norm(DEFAULT_DOMAIN_MAX), (lo, hi))
 
     if fs.domain_object is None:
         check(f"{label}: domain object present for field checks", False)

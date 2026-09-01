@@ -45,6 +45,24 @@ def test_copy_domain_settings_tolerates_a_read_only_field(monkeypatch):
     assert not hasattr(tgt, "derived")                             # bad field skipped, no raise
 
 
+def test_default_domain_geometry_spans_the_fallback_bounds(monkeypatch):
+    # Regression: an auto-created domain must reproduce the bounds an unset
+    # domain_object used to yield, or domain_bounds collapses to a degenerate
+    # AABB and solver initialization fails after a reopen.
+    _install_bpy_stub(monkeypatch)
+    migration = _reload_module("fluidSim_warp_blender51.blender.migration")
+    solver_settings = _reload_module("fluidSim_warp_blender51.blender.solver_settings")
+
+    verts, faces = migration._default_domain_geometry()
+    assert len(verts) == 8 and len(faces) == 6            # a closed box
+    lo = tuple(min(v[axis] for v in verts) for axis in range(3))
+    hi = tuple(max(v[axis] for v in verts) for axis in range(3))
+    assert lo == solver_settings.DEFAULT_DOMAIN_MIN
+    assert hi == solver_settings.DEFAULT_DOMAIN_MAX
+    # Non-degenerate on every axis — the invariant the solver enforces.
+    assert all(hi[axis] > lo[axis] for axis in range(3))
+
+
 def test_migration_moves_settings_once_and_never_re_triggers(monkeypatch):
     _install_bpy_stub(monkeypatch)
     migration = _reload_module("fluidSim_warp_blender51.blender.migration")

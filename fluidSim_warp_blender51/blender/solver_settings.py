@@ -7,6 +7,14 @@ This module owns value conversion only. Lifecycle classification is owned by
 from __future__ import annotations
 
 
+# Canonical fallback domain used when no domain object is designated. The
+# migration create-branch builds an object spanning exactly this box so that
+# a previously-unset scene keeps identical bounds (and thus identical solver
+# output) after a domain object is auto-created.
+DEFAULT_DOMAIN_MIN = (-2.0, -2.0, 0.0)
+DEFAULT_DOMAIN_MAX = (2.0, 2.0, 4.0)
+
+
 DIRECT_SETTING_FIELDS = (
     "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
     "domain_sdf_walls",
@@ -86,7 +94,7 @@ def domain_bounds(scene) -> tuple:
     """Return plain host tuples for the authored domain's world AABB."""
     obj = scene.fluidsim.domain_object
     if obj is None:
-        return (-2.0, -2.0, 0.0), (2.0, 2.0, 4.0)
+        return DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX
     from mathutils import Vector
 
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
