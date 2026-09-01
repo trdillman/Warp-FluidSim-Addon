@@ -1,3 +1,5 @@
+import csv
+
 from tools import profile_user_path
 
 
@@ -17,3 +19,16 @@ def test_warm_rows_drop_lazy_compilation_frames_from_six_frame_profile():
 
     assert profile_user_path._warm_rows(rows) == rows[3:]
     assert profile_user_path._warm_rows(rows[:3]) == rows[:3]
+
+
+def test_frame_csv_accepts_solver_frame(tmp_path):
+    path = tmp_path / "frames.csv"
+    handle, writer = profile_user_path._open_frame_csv(path)
+
+    try:
+        writer.writerow({"frame": 1, "solver_frame": 1})
+    finally:
+        handle.close()
+
+    with path.open(newline="") as stream:
+        assert next(csv.DictReader(stream))["solver_frame"] == "1"

@@ -173,6 +173,7 @@ def parse_args():
 
 FRAME_CSV_FIELDS = [
     "frame",
+    "solver_frame",
     "sync_ms",
     "solve_ms",
     "view_ms",

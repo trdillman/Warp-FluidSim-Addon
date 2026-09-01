@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import lru_cache
 import os
 import sys
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 EXPECTED_WARP_VERSION = "1.16.0"
