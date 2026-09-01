@@ -847,6 +847,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "liquid_view_mode")
+        layout.prop(fs, "show_overlay", text="Viewport HUD")
         if fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and fs.surface_enabled:
             layout.prop(fs, "surface_attribute_mode")
         if fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}:

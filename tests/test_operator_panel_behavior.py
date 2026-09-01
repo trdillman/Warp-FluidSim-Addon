@@ -2111,3 +2111,21 @@ def test_status_message_error_is_heavier_than_warning(monkeypatch):
     assert err_label["text"].startswith("Error:")
     assert err_label["alert"] is True
     assert err_label["icon"] != warn_label["icon"]
+
+
+def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    fs = SimpleNamespace(
+        liquid_view_mode="PARTICLES",
+        surface_enabled=False,
+        whitewater_enabled=False,
+        show_overlay=True,
+        particle_display_fraction=1.0,
+        particle_display_scale=1.0,
+        particle_attribute_mode="NONE",
+    )
+    panel = ui_scene.FLUIDSIM_PT_output_display()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+    assert "show_overlay" in panel.layout.props
