@@ -24,6 +24,26 @@ def _layout(panel):
     return layout
 
 
+def _domain_owner(context):
+    """Return the settings datablock the active domain's controls must edit.
+
+    Post-migration the solver reads ``active_domain_settings`` (i.e. the
+    designated ``fluidsim.domain_object``'s ``fluidsim_domain``), so the Scene
+    Properties domain panels must edit that same owner -- otherwise edits land
+    on the stale ``scene.fluidsim`` copy the solver ignores. Re-designating a
+    different domain object therefore re-targets these panels, which is how
+    "multiple domains" surfaces in this single-scene UI.
+
+    For unmigrated scenes ``active_domain_settings`` returns ``scene.fluidsim``
+    unchanged, so every existing single-domain path stays byte-for-byte
+    identical.
+    """
+    from .scene_bridge import active_domain_settings
+
+    scene = context.scene
+    return active_domain_settings(scene) or getattr(scene, "fluidsim", None)
+
+
 def _runtime_ui_state():
     from ..preferences import configured_device
     from ..runtime.warp_runtime import probe_runtime, runtime_status_for_device
@@ -381,12 +401,15 @@ class FLUIDSIM_PT_scene_domain(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        # The domain_object pointer is the scene-level identity selector (which
+        # object *is* the domain); the settings it introduces live on that
+        # object's datablock, so they follow the active domain owner.
+        draw_property(layout, context.scene.fluidsim, "domain_object")
+        owner = _domain_owner(context)
         draw_property_grid(
             layout,
-            fs,
+            owner,
             (
-                "domain_object",
                 "voxel_size",
                 "particles_per_voxel",
                 "max_particles",
@@ -409,7 +432,7 @@ class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "leaf_capacity")
         layout.prop(fs, "max_whitewater")
         if fs.auto_grow_particles:
@@ -453,7 +476,7 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.label(text=f"{fs.sample_type} transfer · {fs.pressure_solver} pressure", icon="PHYSICS")
         enabled = []
         if fs.viscosity_enabled:
@@ -474,7 +497,7 @@ class FLUIDSIM_PT_sim_time(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         draw_property_grid(layout, fs, ("time_scale", "cfl", "min_substeps", "max_substeps", "sample_type"))
         if fs.sample_type == "FLIP":
             layout.prop(fs, "flip_ratio")
@@ -489,7 +512,7 @@ class FLUIDSIM_PT_sim_gravity(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "use_scene_gravity")
         if not fs.use_scene_gravity:
             layout.prop(fs, "gravity")
@@ -503,7 +526,7 @@ class FLUIDSIM_PT_sim_pressure(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "pressure_solver")
         layout.prop(fs, "pressure_iterations")
         if fs.pressure_solver == "PCG":
@@ -519,7 +542,7 @@ class FLUIDSIM_PT_sim_viscosity(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "viscosity_enabled")
         if not fs.viscosity_enabled:
             return
@@ -540,7 +563,7 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "surface_tension_enabled")
         if not fs.surface_tension_enabled:
             return
@@ -573,7 +596,7 @@ class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "species_enabled")
         if not fs.species_enabled:
             return
@@ -591,7 +614,7 @@ class FLUIDSIM_PT_sim_relax(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "relax_enabled")
         if fs.relax_enabled:
             layout.prop(fs, "relax_strength")
@@ -606,7 +629,7 @@ class FLUIDSIM_PT_sim_limits(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "max_speed")
         if fs.max_speed > 0.0:
             layout.prop(fs, "limit_behavior")
@@ -622,7 +645,7 @@ class FLUIDSIM_PT_sim_forces(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "directional_force")
         layout.prop(fs, "omnidirectional_force_center")
         layout.prop(fs, "omnidirectional_force_strength")
@@ -639,7 +662,7 @@ class FLUIDSIM_PT_sim_dissipation(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "dissipation_enabled")
         if fs.dissipation_enabled:
             layout.prop(fs, "dissipation_attribute")
@@ -655,7 +678,7 @@ class FLUIDSIM_PT_sim_attraction(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "attraction_enabled")
         if fs.attraction_enabled:
             layout.prop(fs, "attraction_strength")
@@ -670,7 +693,7 @@ class FLUIDSIM_PT_sim_spacetime(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "spacetime_enabled")
         if not fs.spacetime_enabled:
             return

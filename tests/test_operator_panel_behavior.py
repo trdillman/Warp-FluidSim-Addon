@@ -2152,6 +2152,61 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     assert active_holder.active is created, "the new domain becomes the active object"
 
 
+def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
+    """Scene-Properties domain settings follow the designated domain object.
+
+    A scene may designate any of several domain objects via
+    ``fluidsim.domain_object``; the Scene-Properties domain panel must edit
+    that object's ``fluidsim_domain`` (the datablock the solver reads), while
+    the ``domain_object`` identity selector itself stays bound to
+    ``scene.fluidsim``. Re-designating a second domain re-targets the panel --
+    that is what "multiple domains" means for this single-scene UI.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _domain_settings(voxel):
+        return SimpleNamespace(
+            domain_object=None,
+            voxel_size=voxel,
+            particles_per_voxel=8,
+            max_particles=1000,
+            auto_grow_particles=False,
+            topology_expand=0,
+            open_boundaries=False,
+        )
+
+    settings_a = _domain_settings(0.010)
+    settings_b = _domain_settings(0.020)
+    domain_a = SimpleNamespace(fluidsim_domain=settings_a)
+    domain_b = SimpleNamespace(fluidsim_domain=settings_b)
+    scene_settings = SimpleNamespace(schema_version=1, domain_object=domain_a)
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene)
+
+    panel = ui_scene.FLUIDSIM_PT_scene_domain()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    assert voxel and voxel[0]["data"] is settings_a, (
+        "domain settings must edit the designated domain object's fluidsim_domain"
+    )
+    identity = [c for c in panel.layout.prop_calls if c["name"] == "domain_object"]
+    assert identity and identity[0]["data"] is scene_settings, (
+        "the domain_object identity selector stays on scene.fluidsim"
+    )
+
+    # Re-designate the second domain object -> the panel re-targets its settings.
+    scene_settings.domain_object = domain_b
+    panel.layout = _Layout()
+    panel.draw(context)
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    assert voxel and voxel[0]["data"] is settings_b, (
+        "switching the designated domain must re-target the Scene domain settings"
+    )
+
+
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
@@ -2700,6 +2755,9 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
     fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
     fake_bridge.current_error = lambda scene: ""
     fake_bridge.capacity_plan_for_scene = lambda scene: None
+    # scene_domain reads its settings owner through the bridge; this unmigrated
+    # scene resolves to scene.fluidsim, matching the real active_domain_settings.
+    fake_bridge.active_domain_settings = lambda scene: getattr(scene, "fluidsim", None)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
     )
