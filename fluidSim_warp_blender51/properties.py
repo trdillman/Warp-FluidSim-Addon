@@ -798,6 +798,10 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Domain", type=bpy.types.Object,
         update=_request_rebuild,
         description="Select the object whose bounding box defines the simulation domain; changing it rebuilds grid bounds and capacity requirements")
+    # Phase 3 migration guard: 0 = domain settings still live on Scene.fluidsim
+    # (pre-migration), 1 = migrated onto obj.fluidsim_domain. Stamped last by the
+    # load_post migration and never re-zeroed, so re-opens are no-ops.
+    schema_version: IntProperty(default=0, options={"HIDDEN"})
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
         update=_request_live,
@@ -1659,9 +1663,13 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_settings)
     bpy.types.Object.fluidsim = PointerProperty(type=FLUIDSIM_PG_object)
+    # Phase 3: per-object home for domain settings (migration target).
+    bpy.types.Object.fluidsim_domain = PointerProperty(type=FLUIDSIM_PG_settings)
 
 
 def unregister():
+    if hasattr(bpy.types.Object, "fluidsim_domain"):
+        del bpy.types.Object.fluidsim_domain
     if hasattr(bpy.types.Object, "fluidsim"):
         del bpy.types.Object.fluidsim
     if hasattr(bpy.types.Scene, "fluidsim"):

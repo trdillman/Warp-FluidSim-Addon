@@ -124,7 +124,19 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     )
     fake_bpy.types.PropertyGroup = object
     fake_bpy.types.Text = object
-    fake_bpy.types.Object = object
+
+    # Object must accept attribute assignment so register() can attach the
+    # per-object pointers (obj.fluidsim, obj.fluidsim_domain); the builtin
+    # ``object`` rejects setattr. Material/Image stay stubbed for the domain
+    # material/image PointerProperty copy path (migration Task 3.2).
+    class _Object:  # throwaway stand-in for bpy.types.Object
+        pass
+
+    class _Scene:  # throwaway stand-in for bpy.types.Scene (register() target)
+        pass
+
+    fake_bpy.types.Object = _Object
+    fake_bpy.types.Scene = _Scene
     fake_bpy.types.Material = object
     fake_bpy.types.Image = object
     fake_bpy.path = SimpleNamespace(abspath=lambda value: value)
