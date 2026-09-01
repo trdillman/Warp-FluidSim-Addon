@@ -95,15 +95,24 @@ def canonical_region_kind(obj) -> str:
     return ""
 
 
+# (severity key) -> (Blender icon, text prefix, use alert row)
+_SEVERITY_PRESENTATION = {
+    "OK": ("CHECKMARK", "", False),
+    "INFO": ("INFO", "", False),
+    "WARNING": ("ERROR", "Warning: ", False),   # ERROR = Blender's warning-triangle glyph
+    "ERROR": ("CANCEL", "Error: ", True),        # circle-slash + red alert row = strictly heavier
+}
+
+
 def draw_status_message(layout, text: str, severity: str = "INFO") -> None:
-    """Draw one concise status row with consistent severity icons."""
-    icon = {
-        "OK": "CHECKMARK",
-        "INFO": "INFO",
-        "WARNING": "ERROR",
-        "ERROR": "CANCEL",
-    }.get(str(severity).upper(), "INFO")
-    layout.label(text=str(text), icon=icon)
+    """Draw one status row; severity is shape + text (+ color), never icon-alone."""
+    icon, prefix, alert = _SEVERITY_PRESENTATION.get(
+        str(severity).upper(), _SEVERITY_PRESENTATION["INFO"]
+    )
+    row = layout.row(align=True)
+    if alert:
+        row.alert = True
+    row.label(text=f"{prefix}{text}", icon=icon)
 
 
 def draw_property(layout, data, name: str, *, text: str | None = None, **kwargs) -> bool:

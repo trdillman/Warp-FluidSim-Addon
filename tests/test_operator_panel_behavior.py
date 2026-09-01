@@ -2074,3 +2074,40 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert op.execute(context) == {"CANCELLED"}
     assert fs.max_particles == 8
     assert "changed" in fs.status.lower()
+
+
+def test_status_message_error_is_heavier_than_warning(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+
+    class _Rec:
+        def __init__(self, alert=False):
+            self.alert = alert
+            self.rows = []
+            self.labels = []
+        def row(self, align=False):
+            child = _Rec(self.alert)
+            self.rows.append(child)
+            return child
+        def label(self, text="", icon="NONE"):
+            self.labels.append({"text": text, "icon": icon, "alert": self.alert})
+
+    def _all_labels(rec):
+        found = list(rec.labels)
+        for child in rec.rows:
+            found.extend(_all_labels(child))
+        return found
+
+    warn = _Rec()
+    ui_common.draw_status_message(warn, "low memory", "WARNING")
+    err = _Rec()
+    ui_common.draw_status_message(err, "disk full", "ERROR")
+
+    warn_label = _all_labels(warn)[0]
+    err_label = _all_labels(err)[0]
+
+    assert warn_label["text"].startswith("Warning:")
+    assert warn_label["alert"] is False
+    assert err_label["text"].startswith("Error:")
+    assert err_label["alert"] is True
+    assert err_label["icon"] != warn_label["icon"]
