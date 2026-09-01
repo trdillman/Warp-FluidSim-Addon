@@ -111,7 +111,9 @@ def _class_block(source: str, class_name: str) -> str:
 def test_scene_properties_root_order_and_context_are_stable():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     roots = (
-        ("FLUIDSIM_PT_scene_control", 0, False),
+        ("FLUIDSIM_PT_scene_transport", 0, False),
+        ("FLUIDSIM_PT_scene_lifecycle", 1, False),
+        ("FLUIDSIM_PT_scene_control", 2, False),
         ("FLUIDSIM_PT_scene_setup", 10, False),
         ("FLUIDSIM_PT_scene_domain", 20, False),
         ("FLUIDSIM_PT_scene_height", 30, True),
@@ -224,8 +226,10 @@ def test_root_registration_includes_scene_and_object_properties_modules():
 
 
 def test_scene_control_exposes_the_matching_stop_action_for_each_activity():
+    # After the D3 hub split the activity-aware Start/Stop primary control
+    # lives in the dedicated Transport panel; the hub is read-only status.
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(source, "FLUIDSIM_PT_scene_control")
+    block = _class_block(source, "FLUIDSIM_PT_scene_transport")
     assert 'state["id"] == "LIVE_PREVIEW"' in block
     assert 'state["id"] == "CACHE_PLAYBACK"' in block
     assert 'state["id"] == "PRODUCTION_BAKE"' in block
@@ -237,8 +241,9 @@ def test_scene_control_exposes_the_matching_stop_action_for_each_activity():
 
 
 def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
+    # Step One / Step Many moved into the Transport panel with the D3 split.
     scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(scene_source, "FLUIDSIM_PT_scene_control")
+    block = _class_block(scene_source, "FLUIDSIM_PT_scene_transport")
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in block
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in block
     operator_source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
