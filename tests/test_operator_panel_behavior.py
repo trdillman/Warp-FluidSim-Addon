@@ -2280,3 +2280,12 @@ def test_status_hub_is_read_only_with_live_strip(monkeypatch):
         "fluidsim.toggle_live", "fluidsim.step", "fluidsim.reset",
         "fluidsim.release", "fluidsim.initialize",
     })
+
+
+def test_settings_group_has_ui_mode_and_quality(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    assert {"BASIC", "ADVANCED"} <= {i[0] for i in properties.UI_MODE_ITEMS}
+    assert {"DRAFT", "PREVIEW", "FINAL", "CUSTOM"} <= {i[0] for i in properties.QUALITY_ITEMS}
+    ann = properties.FLUIDSIM_PG_settings.__annotations__
+    assert "ui_mode" in ann and "quality" in ann

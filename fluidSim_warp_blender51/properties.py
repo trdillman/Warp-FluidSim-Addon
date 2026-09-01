@@ -102,6 +102,20 @@ SURFACE_SMOOTH_ITEMS = (
 )
 
 
+# Two-tier UI disclosure (design D2). These are presentation-only settings:
+# they change which panels and controls the add-on shows, never solver state.
+UI_MODE_ITEMS = (
+    ("BASIC", "Basic", "Show only the everyday controls needed to author and run a liquid; hide expert solver internals"),
+    ("ADVANCED", "Advanced", "Reveal the full set of solver, surfacing, whitewater, and export controls for expert tuning"),
+)
+QUALITY_ITEMS = (
+    ("DRAFT", "Draft", "Fastest, lowest-fidelity preview for iterating on staging and motion"),
+    ("PREVIEW", "Preview", "Balanced fidelity and speed for day-to-day look development"),
+    ("FINAL", "Final", "Highest fidelity for production renders at the greatest compute cost"),
+    ("CUSTOM", "Custom", "Fidelity is governed by the individual solver settings rather than a quality preset"),
+)
+
+
 _LIQUID_VIEW_SYNCING = False
 
 
@@ -748,6 +762,13 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
 
 
 class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
+    # UI disclosure (presentation-only; never touches solver state)
+    ui_mode: EnumProperty(
+        name="Interface", items=UI_MODE_ITEMS, default="BASIC",
+        description="Choose how much of the interface is shown: Basic hides expert solver internals, Advanced reveals the full control set")
+    quality: EnumProperty(
+        name="Quality", items=QUALITY_ITEMS, default="PREVIEW",
+        description="Select a fidelity target; Draft/Preview/Final trade speed against accuracy, and Custom defers entirely to the individual solver settings")
     # Simulation
     live: BoolProperty(
         name="Live Simulation", default=False,
