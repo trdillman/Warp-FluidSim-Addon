@@ -257,6 +257,7 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
 class FLUIDSIM_OT_effect_remove(bpy.types.Operator):
     bl_idname = "fluidsim.effect_remove"
     bl_label = "Remove Effect"
+    bl_description = "Remove the selected effect from the stack"
     bl_options = {"REGISTER", "UNDO"}
 
     index: IntProperty(default=-1)
@@ -292,6 +293,7 @@ class FLUIDSIM_OT_effect_remove(bpy.types.Operator):
 class FLUIDSIM_OT_effect_duplicate(bpy.types.Operator):
     bl_idname = "fluidsim.effect_duplicate"
     bl_label = "Duplicate Effect"
+    bl_description = "Duplicate the active effect as a new entry at the end of the stack"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -313,6 +315,7 @@ class FLUIDSIM_OT_effect_duplicate(bpy.types.Operator):
 class FLUIDSIM_OT_effect_move(bpy.types.Operator):
     bl_idname = "fluidsim.effect_move"
     bl_label = "Move Effect"
+    bl_description = "Move the active effect up or down to change its evaluation order"
     bl_options = {"REGISTER", "UNDO"}
 
     direction: EnumProperty(items=(("UP", "Up", ""), ("DOWN", "Down", "")), default="UP")
@@ -333,6 +336,7 @@ class FLUIDSIM_OT_effect_move(bpy.types.Operator):
 class FLUIDSIM_OT_effect_toggle_mute(bpy.types.Operator):
     bl_idname = "fluidsim.effect_toggle_mute"
     bl_label = "Mute or Unmute Effect"
+    bl_description = "Mute or unmute the active effect without removing it from the stack"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -347,6 +351,7 @@ class FLUIDSIM_OT_effect_toggle_mute(bpy.types.Operator):
 class FLUIDSIM_OT_effect_toggle_solo(bpy.types.Operator):
     bl_idname = "fluidsim.effect_toggle_solo"
     bl_label = "Solo or Unsolo Effect"
+    bl_description = "Solo the active effect so only it evaluates, or clear solo to evaluate the whole stack"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -435,6 +440,7 @@ class FLUIDSIM_OT_effect_preview_one_frame(bpy.types.Operator):
 class FLUIDSIM_OT_effect_create_controller(bpy.types.Operator):
     bl_idname = "fluidsim.effect_create_controller"
     bl_label = "Create Effect Controller"
+    bl_description = "Create an empty object to drive this effect's object parameter"
     bl_options = {"REGISTER", "UNDO"}
 
     parameter_key: StringProperty(default="controller")
@@ -470,6 +476,7 @@ class FLUIDSIM_OT_effect_create_controller(bpy.types.Operator):
 class FLUIDSIM_OT_effect_select_controller(bpy.types.Operator):
     bl_idname = "fluidsim.effect_select_controller"
     bl_label = "Select Effect Controller"
+    bl_description = "Select the empty object that drives this effect's object parameter"
 
     parameter_key: StringProperty(default="controller")
 

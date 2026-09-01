@@ -38,7 +38,7 @@ class FluidSimObjectPanel:
 
 
 class FluidSimView3DPanel:
-    """Base for the compact launcher and its collapsed full workflow."""
+    """Base for the View3D sidebar surfaces: the status HUD launcher and the Live Tuning shelf."""
 
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"

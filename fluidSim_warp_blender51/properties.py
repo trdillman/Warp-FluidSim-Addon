@@ -460,6 +460,7 @@ def _volume_input_poll(_settings, obj):
 class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     role: EnumProperty(
         name="Role",
+        description="Set how this object participates in the simulation: emitting liquid, colliding with it, removing it, applying a force, or sourcing an advanced field",
         items=[
             ("NONE", "None", "Not part of the simulation"),
             ("SOURCE", "Liquid Emitter", "Emit liquid"),
@@ -1309,7 +1310,9 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         default=SourceEmissionMode.INITIAL_FILL.name,
         update=_request_reset,
         description="Choose whether the height region fills once after initialization or is replenished continuously; changing it resets lifecycle state")
-    height_error: StringProperty(name="Height Fill Error", default="")
+    height_error: StringProperty(
+        name="Height Fill Error", default="",
+        description="Most recent error reported while filling the height source, if any")
     height_velocity: FloatVectorProperty(
         name="Velocity", size=3, default=(0.0, 0.0, 0.0),
         update=_request_reset,
@@ -1537,6 +1540,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Cache Format",
         items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
         default="V2",
+        description="Choose the on-disk cache layout used for production bakes",
     )
     bake_start: IntProperty(
         name="Bake Start", default=1, min=-1048574, max=1048574,
@@ -1558,13 +1562,16 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         )),
         default="IDLE",
         options={"SKIP_SAVE"},
+        description="Latest measured production-bake lifecycle state",
     )
     bake_progress: FloatProperty(
         name="Bake Progress", default=0.0, min=0.0, max=1.0,
         subtype="FACTOR", options={"SKIP_SAVE"},
+        description="Latest measured fraction of the production bake completed",
     )
     bake_message: StringProperty(
         name="Bake Message", default="", options={"SKIP_SAVE"},
+        description="Most recent status or error message reported by the production bake",
     )
 
     # Diagnostics
@@ -1621,33 +1628,87 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         description="Set the last frame included in custom cache operations; higher values extend the cache sequence and values below Start produce an invalid range")
 
     # Status mirrors (read-only UI feedback)
-    status: StringProperty(name="Status", default="Solver not initialized")
-    stat_particles: IntProperty(default=0)
-    stat_voxels: IntProperty(default=0)
-    stat_whitewater: IntProperty(default=0)
-    stat_whitewater_foam: IntProperty(default=0)
-    stat_whitewater_bubbles: IntProperty(default=0)
-    stat_whitewater_spray: IntProperty(default=0)
-    stat_whitewater_invalid_types: IntProperty(default=0)
-    stat_whitewater_required: IntProperty(default=0)
-    stat_whitewater_admitted: IntProperty(default=0)
-    stat_whitewater_dropped: IntProperty(default=0)
-    stat_whitewater_policy: StringProperty(default="FIXED_CAPACITY_DETERMINISTIC_DROPS")
-    stat_whitewater_status: StringProperty(default="OK")
-    stat_step_ms: FloatProperty(default=0.0)
-    stat_substeps: IntProperty(default=0)
-    stat_cfl_clamped: BoolProperty(default=False)
-    stat_capillary_dt: FloatProperty(default=0.0)
-    stat_capillary_substeps_required: IntProperty(default=1)
-    stat_capillary_clamped: BoolProperty(default=False)
-    stat_substep_limiter: StringProperty(default="MINIMUM")
-    stat_surface_tension_active_voxels: IntProperty(default=0)
-    stat_surface_tension_max_curvature: FloatProperty(default=0.0)
-    stat_surface_tension_max_acceleration: FloatProperty(default=0.0)
-    stat_surface_tension_temporary_bytes: IntProperty(default=0)
-    stat_surface_tension_submission_ms: FloatProperty(default=0.0)
-    stat_surface_tension_status: StringProperty(default="DISABLED")
-    stat_surface_tension_message: StringProperty(default="")
+    status: StringProperty(
+        name="Status", default="Solver not initialized",
+        description="Latest measured solver lifecycle status reported for this domain")
+    stat_particles: IntProperty(
+        default=0,
+        description="Latest measured count of active liquid particles in the solver")
+    stat_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of active sparse-grid voxels in the solver")
+    stat_whitewater: IntProperty(
+        default=0,
+        description="Latest measured count of active whitewater (foam/bubble/spray) particles")
+    stat_whitewater_foam: IntProperty(
+        default=0,
+        description="Latest measured count of active foam particles")
+    stat_whitewater_bubbles: IntProperty(
+        default=0,
+        description="Latest measured count of active bubble particles")
+    stat_whitewater_spray: IntProperty(
+        default=0,
+        description="Latest measured count of active spray particles")
+    stat_whitewater_invalid_types: IntProperty(
+        default=0,
+        description="Latest measured count of whitewater particles with an unrecognized type classification")
+    stat_whitewater_required: IntProperty(
+        default=0,
+        description="Latest measured count of whitewater particles the solver requested to spawn this step")
+    stat_whitewater_admitted: IntProperty(
+        default=0,
+        description="Latest measured count of requested whitewater particles actually admitted within capacity")
+    stat_whitewater_dropped: IntProperty(
+        default=0,
+        description="Latest measured count of requested whitewater particles dropped because capacity was exceeded")
+    stat_whitewater_policy: StringProperty(
+        default="FIXED_CAPACITY_DETERMINISTIC_DROPS",
+        description="Name of the policy currently governing whitewater admission when capacity is exceeded")
+    stat_whitewater_status: StringProperty(
+        default="OK",
+        description="Latest measured whitewater admission health status")
+    stat_step_ms: FloatProperty(
+        default=0.0,
+        description="Most recent solver step time in milliseconds")
+    stat_substeps: IntProperty(
+        default=0,
+        description="Latest measured number of substeps taken on the most recent frame")
+    stat_cfl_clamped: BoolProperty(
+        default=False,
+        description="Latest measured indicator that the CFL-driven substep count was clamped by Max Substeps")
+    stat_capillary_dt: FloatProperty(
+        default=0.0,
+        description="Latest measured stable timestep required by surface-tension capillary wave stability")
+    stat_capillary_substeps_required: IntProperty(
+        default=1,
+        description="Latest measured number of substeps required to satisfy capillary wave stability")
+    stat_capillary_clamped: BoolProperty(
+        default=False,
+        description="Latest measured indicator that the capillary-required substep count was clamped by Max Substeps")
+    stat_substep_limiter: StringProperty(
+        default="MINIMUM",
+        description="Name of the constraint (CFL, capillary, or minimum) that selected the most recent substep count")
+    stat_surface_tension_active_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of voxels with active surface-tension forces")
+    stat_surface_tension_max_curvature: FloatProperty(
+        default=0.0,
+        description="Latest measured maximum surface curvature used by surface tension")
+    stat_surface_tension_max_acceleration: FloatProperty(
+        default=0.0,
+        description="Latest measured maximum acceleration applied by surface tension")
+    stat_surface_tension_temporary_bytes: IntProperty(
+        default=0,
+        description="Latest measured temporary VRAM, in bytes, allocated for surface-tension computation")
+    stat_surface_tension_submission_ms: FloatProperty(
+        default=0.0,
+        description="Most recent GPU submission time in milliseconds for surface-tension computation")
+    stat_surface_tension_status: StringProperty(
+        default="DISABLED",
+        description="Latest measured surface-tension computation health status")
+    stat_surface_tension_message: StringProperty(
+        default="",
+        description="Most recent status or error message reported by surface-tension computation")
 
 
 CLASSES = (

@@ -2784,3 +2784,48 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
         f"Basic default surface has {len(visible_props)} properties (budget 25): "
         f"{sorted(visible_props)}"
     )
+
+
+def test_settings_and_role_fields_declare_descriptions(monkeypatch):
+    """§7 tooltip gate: every user-facing ``FLUIDSIM_PG_settings`` property and
+    the object ``role`` selector must define a non-empty ``description=`` so
+    Blender renders a hover tooltip.  ``schema_version`` (internal version
+    stamp), ``active_snippet`` (internal index), and ``snippets`` (the
+    CollectionProperty backing store drawn via a template list, not as a
+    tooltip'd scalar) are internal bookkeeping, never surfaced as a field, and
+    are exempt.
+
+    properties.py uses ``from __future__ import annotations``, so each entry in
+    ``__annotations__`` is the prop-call *source string*; parse it and require a
+    non-empty string-literal ``description`` keyword.  A non-literal description
+    (a computed expression) is treated as unverifiable and therefore failing --
+    the gate wants a human-readable constant.
+    """
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    exempt = {"schema_version", "active_snippet", "snippets"}
+
+    def _literal_description(annotation_src):
+        node = ast.parse(annotation_src, mode="eval").body
+        if not isinstance(node, ast.Call):
+            return None
+        for keyword in node.keywords:
+            if keyword.arg != "description":
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+            return None
+        return None
+
+    targets = dict(properties.FLUIDSIM_PG_settings.__annotations__)
+    targets["role"] = properties.FLUIDSIM_PG_object.__annotations__["role"]
+
+    missing = sorted(
+        name
+        for name, annotation in targets.items()
+        if name not in exempt
+        and not (_literal_description(annotation) or "").strip()
+    )
+    assert not missing, f"fields missing a non-empty description=: {missing}"
