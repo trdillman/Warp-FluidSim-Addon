@@ -67,16 +67,33 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
 
     def execute(self, context):
         from ..presets import library
+        from ..blender.scene_bridge import active_domain_settings
 
         identifier = str(context.scene.fluidsim.product_preset or "")
         try:
             preset = library.load_preset(identifier)
-            result = library.apply_preset(context.scene, preset)
+            # Write preset values to the active domain settings so the solver
+            # (which builds from active_domain_settings) actually picks them up;
+            # post-migration scene.fluidsim is a stale ghost copy.
+            result = library.apply_preset(
+                context.scene, preset, target=active_domain_settings(context.scene)
+            )
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Preset could not be applied: {exc}")
             return {"CANCELLED"}
-        context.scene.fluidsim.status = result.message
-        self.report({"INFO"}, result.message)
+        message = result.message
+        # A preset marked requires_reset only takes effect after the solver is
+        # rebuilt. Reset in place when a session owns this scene; otherwise the
+        # values already sit on the domain object and apply at initialize time.
+        if result.requires_reset:
+            bridge = _bridge()
+            sess = bridge.session()
+            owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
+            if owns_scene(context.scene):
+                bridge.reset_simulation(context.scene)
+                message = f"{result.message} — solver reset"
+        context.scene.fluidsim.status = message
+        self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
@@ -108,6 +125,7 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
 
     def execute(self, context):
         from ..presets import library
+        from ..blender.scene_bridge import active_domain_settings
 
         try:
             preset = library.capture_scene_preset(
@@ -117,6 +135,9 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
                 description=self.description,
                 expected_scale=self.expected_scale,
                 performance_cost=self.performance_cost,
+                # Snapshot the live domain settings the solver uses, not the
+                # stale scene.fluidsim ghost copy.
+                source=active_domain_settings(context.scene),
             )
             path = library.save_user_preset(
                 preset, overwrite=bool(self.overwrite)

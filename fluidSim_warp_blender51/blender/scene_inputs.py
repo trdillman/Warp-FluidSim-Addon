@@ -20,7 +20,11 @@ def _effective_source_target(scene, pg) -> int:
     )
 
     schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-    fs = getattr(scene, "fluidsim", None)
+    # Lazy import: scene_bridge imports this module transitively, so pull the
+    # active-domain accessor at call time to avoid a top-level import cycle.
+    from .scene_bridge import active_domain_settings
+
+    fs = active_domain_settings(scene)
     quality = resolve_quality(
         AuthoredQualitySettings(
             voxel_size=float(getattr(fs, "voxel_size", 0.1)),

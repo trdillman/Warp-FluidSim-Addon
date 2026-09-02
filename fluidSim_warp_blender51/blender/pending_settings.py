@@ -33,6 +33,17 @@ def session():
     return solver_session()
 
 
+def _active_settings(scene):
+    """Live settings group the solver builds from.
+
+    Post-migration this is the domain object's ``fluidsim_domain`` group, not the
+    stale ``scene.fluidsim`` ghost copy. Lazy import mirrors ``session()`` to keep
+    the scene_bridge import cycle broken.
+    """
+    from .scene_bridge import active_domain_settings
+    return active_domain_settings(scene)
+
+
 def _scene_get(scene, key: str, default=""):
     try:
         return scene.get(key, default)
@@ -634,7 +645,7 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = scene.fluidsim
+    fs = _active_settings(scene)
     solver = sess.solver
     settings = getattr(solver, "settings", None)
     if settings is None:
@@ -689,7 +700,7 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
     if not sess.owns_scene(scene):
         return False
     _apply_scene_settings(
-        scene.fluidsim, sess.solver.settings,
+        _active_settings(scene), sess.solver.settings,
         _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
     _apply_gravity(scene, sess.solver.settings)
     _normalize_domain_boundary_settings(sess.solver.settings)
@@ -701,7 +712,7 @@ def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = scene.fluidsim
+    fs = _active_settings(scene)
     solver = sess.solver
     _apply_scene_settings(fs, solver.settings, _SURFACE_SETTING_FIELDS)
     solver.rebuild_surface()
@@ -712,7 +723,7 @@ def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    sess.solver.settings.whitewater_enabled = scene.fluidsim.whitewater_enabled
+    sess.solver.settings.whitewater_enabled = _active_settings(scene).whitewater_enabled
     return True
 
 

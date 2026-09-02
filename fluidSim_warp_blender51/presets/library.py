@@ -183,8 +183,14 @@ def capture_scene_preset(
     description: str,
     expected_scale: str,
     performance_cost: str,
+    source=None,
 ) -> PresetV1:
-    settings = scene.fluidsim
+    # ``source`` is the settings group whose current values to snapshot. Callers
+    # in the blender layer pass the active domain settings so "Save Current
+    # Settings as Preset" captures what the solver actually uses; the default
+    # keeps the legacy ``scene.fluidsim`` behaviour for pre-migration scenes and
+    # tests.
+    settings = source if source is not None else scene.fluidsim
     values = {key: getattr(settings, key) for key in SETTING_SPECS}
     return PresetV1.from_dict(
         {
@@ -201,9 +207,14 @@ def capture_scene_preset(
     )
 
 
-def apply_preset(scene, preset: PresetV1) -> ApplyResult:
+def apply_preset(scene, preset: PresetV1, *, target=None) -> ApplyResult:
     preset = PresetV1.from_dict(preset.to_dict())
-    target = getattr(scene, "fluidsim", None)
+    # ``target`` is where the preset's solver values are written. Blender-layer
+    # callers pass the active domain settings (post-migration the solver builds
+    # from there); the default preserves the legacy ``scene.fluidsim`` target for
+    # pre-migration scenes and tests.
+    if target is None:
+        target = getattr(scene, "fluidsim", None)
     if target is None:
         raise ValueError("scene has no FluidSim settings")
     missing = tuple(key for key in preset.settings if not hasattr(target, key))
@@ -216,8 +227,14 @@ def apply_preset(scene, preset: PresetV1) -> ApplyResult:
     try:
         for key, value in preset.settings.items():
             setattr(target, key, value)
-        if hasattr(target, "active_preset_id"):
-            target.active_preset_id = preset.id
+        # ``active_preset_id`` drives the panel's "Applied:" feedback, which reads
+        # the scene-level group. Write it there when present, else fall back to the
+        # value target (covers scenes/tests without a separate ``scene.fluidsim``).
+        feedback = getattr(scene, "fluidsim", None)
+        if feedback is None:
+            feedback = target
+        if hasattr(feedback, "active_preset_id"):
+            feedback.active_preset_id = preset.id
     except Exception:
         for key, value in previous.items():
             try:
