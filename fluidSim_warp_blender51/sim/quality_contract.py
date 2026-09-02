@@ -19,6 +19,57 @@ MIN_VOXEL_SIZE = 1.0e-4
 MIN_SURFACE_FRACTION = 1.0 / 16.0
 MAX_LIQUID_SAMPLING = 64.0
 
+# Scene-level Quality tier -> speed<->fidelity multiplier. FINAL refines,
+# DRAFT coarsens; PREVIEW and CUSTOM defer to the authored values verbatim so
+# existing scenes (default PREVIEW) keep identical output. The multiplier is
+# applied only when projecting authored knobs into owned solver settings; the
+# authored values themselves are never mutated (see ``scale_quality_value``).
+QUALITY_TIER_FIDELITY = {
+    "DRAFT": 0.5,
+    "PREVIEW": 1.0,
+    "FINAL": 2.0,
+    "CUSTOM": 1.0,
+}
+
+# Authored solver knobs the Quality tier rescales. ``voxel_size`` scales
+# inversely (higher fidelity -> smaller voxels); the iteration and sampling
+# knobs scale directly (higher fidelity -> more work).
+_QUALITY_ITERATION_FIELDS = frozenset({
+    "min_substeps", "max_substeps", "pressure_iterations",
+})
+_QUALITY_SAMPLING_FIELDS = frozenset({"particles_per_voxel"})
+QUALITY_SCALED_FIELDS = (
+    frozenset({"voxel_size"}) | _QUALITY_ITERATION_FIELDS | _QUALITY_SAMPLING_FIELDS
+)
+
+
+def quality_tier_fidelity(tier: Any) -> float:
+    """Return the fidelity multiplier for a Quality enum value.
+
+    Unknown or missing values resolve to PREVIEW (1.0), so a scene that predates
+    the tier — or any non-tier caller — sees authored values unchanged.
+    """
+    return QUALITY_TIER_FIDELITY.get(str(tier).strip().upper(), 1.0)
+
+
+def scale_quality_value(field: str, value: Any, fidelity: float) -> Any:
+    """Scale one authored knob for a fidelity multiplier, non-destructively.
+
+    Idempotent by construction: the result depends only on the freshly-read
+    authored ``value`` and the tier, never on a previously-scaled value, so
+    repeated projection can never compound. A fidelity of 1.0 (PREVIEW/CUSTOM),
+    or a non-finite/non-positive factor, returns ``value`` untouched.
+    """
+    if not math.isfinite(fidelity) or fidelity <= 0.0 or fidelity == 1.0:
+        return value
+    if field == "voxel_size":
+        return max(MIN_VOXEL_SIZE, float(value) / fidelity)
+    if field in _QUALITY_ITERATION_FIELDS:
+        return max(1, int(round(float(value) * fidelity)))
+    if field in _QUALITY_SAMPLING_FIELDS:
+        return max(1.0, min(MAX_LIQUID_SAMPLING, float(value) * fidelity))
+    return value
+
 
 class SourceSamplingMode(str, Enum):
     INHERIT = "INHERIT"

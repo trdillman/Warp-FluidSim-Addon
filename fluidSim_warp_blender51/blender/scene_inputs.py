@@ -17,18 +17,26 @@ def _effective_source_target(scene, pg) -> int:
         SourceSamplingSettings,
         resolve_quality,
         resolve_source_sampling,
+        scale_quality_value,
     )
 
     schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
     # Lazy import: scene_bridge imports this module transitively, so pull the
     # active-domain accessor at call time to avoid a top-level import cycle.
     from .scene_bridge import active_domain_settings
+    from .solver_settings import scene_quality_fidelity
 
     fs = active_domain_settings(scene)
+    # Source occupancy inherits the scene-level Quality tier so emitted density
+    # tracks the solver's rescaled particles-per-voxel rather than fighting it.
+    fidelity = scene_quality_fidelity(scene)
     quality = resolve_quality(
         AuthoredQualitySettings(
-            voxel_size=float(getattr(fs, "voxel_size", 0.1)),
-            liquid_sampling=float(getattr(fs, "particles_per_voxel", 8.0))),
+            voxel_size=scale_quality_value(
+                "voxel_size", float(getattr(fs, "voxel_size", 0.1)), fidelity),
+            liquid_sampling=scale_quality_value(
+                "particles_per_voxel",
+                float(getattr(fs, "particles_per_voxel", 8.0)), fidelity)),
         ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
     )
     if schema < 4:
@@ -1035,7 +1043,12 @@ class SceneInputs:
         desc.profile = profile
         desc.velocity = tuple(fs.height_velocity)
         desc.emit_particles = fs.height_emit_particles
-        desc.emit_rate = fs.particles_per_voxel
+        # Match the source-occupancy path: emit density follows the Quality tier.
+        from ..sim.quality_contract import scale_quality_value
+        from .solver_settings import scene_quality_fidelity
+        desc.emit_rate = scale_quality_value(
+            "particles_per_voxel", float(fs.particles_per_voxel),
+            scene_quality_fidelity(scene))
         desc.emission_mode = SourceEmissionMode[getattr(
             fs, "height_emission_mode",
             SourceEmissionMode.CONTINUOUS_INFLOW.name)]

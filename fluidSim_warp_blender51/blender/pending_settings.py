@@ -21,6 +21,7 @@ from .solver_settings import (
     domain_bounds as _domain_bounds,
     enum_setting_fields as _enum_setting_fields,
     normalize_domain_boundary_settings as _normalize_domain_boundary_settings,
+    scene_quality_fidelity as _scene_quality_fidelity,
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -152,6 +153,9 @@ _RESET_REGISTRY_FIELDS = frozenset({
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
+    # The scene-level Quality tier rescales solver knobs (voxel size, substeps,
+    # iterations, particles), so a change re-derives grid allocation: rebuild.
+    "quality",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "snippets", "active_snippet", "snippet_library_selection",
@@ -167,7 +171,7 @@ _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
 })
 _PRESENTATION_FIELDS = frozenset({
-    "ui_mode", "quality", "export_attributes", "schema_version",
+    "ui_mode", "export_attributes", "schema_version",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
@@ -292,6 +296,10 @@ _SURFACE_SETTING_FIELDS = frozenset({
 _REINIT_SETTING_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles",
     "max_whitewater", "profiling_enabled", "profiling_sync",
+    # Scene-level Quality tier; the reinit signature reads scene.fluidsim, which
+    # is exactly where quality is authored, so editing it flags a pending
+    # rebuild on both migrated and pre-migration scenes.
+    "quality",
 })
 _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
     "height_enabled", "height_base", "height_back_mode",
@@ -662,7 +670,8 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
             and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0):
         _remember_st_reference_mass(settings, old_reference)
     try:
-        _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS)
+        _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
+                              quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
         new_ppv = getattr(settings, "particles_per_voxel", None)
         if (old_ppv != new_ppv
@@ -701,7 +710,8 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
         return False
     _apply_scene_settings(
         _active_settings(scene), sess.solver.settings,
-        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
+        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS,
+        quality_fidelity=_scene_quality_fidelity(scene))
     _apply_gravity(scene, sess.solver.settings)
     _normalize_domain_boundary_settings(sess.solver.settings)
     return True
