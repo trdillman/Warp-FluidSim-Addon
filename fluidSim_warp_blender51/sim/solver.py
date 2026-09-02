@@ -724,6 +724,7 @@ class FluidSolver:
         self.surface_tension = SurfaceTensionSolver(self)
         self.color_mixing = self._new_color_mixing()
         self._host_frame_cache = None
+        self._surface_attribute_transfer = None
         self.last_particle_growth = None
         self.features = FrameFeatures(device=self.device)
         # Compatibility alias for diagnostics that read this established name.
@@ -883,6 +884,7 @@ class FluidSolver:
 
     def reset(self):
         self._host_frame_cache = None
+        self._surface_attribute_transfer = None
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing.reset()
@@ -1129,6 +1131,7 @@ class FluidSolver:
         if host_frame is not None:
             host_frame.solver = None
         self._host_frame_cache = None
+        self._surface_attribute_transfer = None
 
         surface = getattr(self, "surface", None)
         if surface is not None:
@@ -1969,7 +1972,6 @@ class FluidSolver:
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
-        ww.update_type_counts(active_whitewater)
         return active_whitewater
 
     # CFL
