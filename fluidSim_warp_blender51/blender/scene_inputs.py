@@ -985,8 +985,11 @@ class SceneInputs:
     def gather_height_source(self, scene, depsgraph=None):
         from ..sim.enums import SourceEmissionMode, SourceHeightBackMode
         from ..sim.solver import HeightSourceDesc
+        # Lazy import: scene_bridge imports this module transitively, so pull the
+        # active-domain accessor at call time to avoid a top-level import cycle.
+        from .scene_bridge import active_domain_settings
 
-        fs = scene.fluidsim
+        fs = active_domain_settings(scene)
         if not fs.height_enabled:
             try:
                 fs.height_error = ""

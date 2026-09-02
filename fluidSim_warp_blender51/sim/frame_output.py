@@ -19,10 +19,26 @@ from .attributes import (
     validate_attribute_values,
 )
 from .fields import sample_mac_velocity, world_to_voxel
+from .surface_attribute_transfer import SurfaceAttributeTransfer
 
 wp.set_module_options({"enable_backward": False})
 
 _HOST_OUTPUT_OPERATIONS = Counter()
+
+
+def _live_numpy(device_array, live_count):
+    """Transfer only the live device prefix to NumPy."""
+    if live_count == 0:
+        dtype = device_array.dtype
+        scalar_dtype = getattr(dtype, "_wp_scalar_type_", dtype)
+        if getattr(scalar_dtype, "__module__", "").startswith("warp."):
+            numpy_dtype = wp.dtype_to_numpy(scalar_dtype)
+        else:
+            numpy_dtype = np.dtype(scalar_dtype)
+        array_shape = tuple(int(axis) for axis in device_array.shape)
+        element_shape = tuple(int(axis) for axis in getattr(dtype, "_shape_", ()))
+        return np.empty((0, *array_shape[1:], *element_shape), dtype=numpy_dtype)
+    return device_array[:live_count].numpy()
 
 
 @wp.kernel
@@ -114,6 +130,11 @@ class HostFrame:
         self.solver = solver
         self.frame = int(getattr(solver, "frame", 0))
         self._values = {}
+        self._surface_transfer = getattr(
+            solver, "_surface_attribute_transfer", None
+        )
+        if self._surface_transfer is not None:
+            self._surface_transfer.invalidate()
 
     def _get(self, key, load):
         if key not in self._values:
@@ -124,8 +145,30 @@ class HostFrame:
         self._values.pop("surface_mesh", None)
         self._values.pop("surface_velocity", None)
         for key in tuple(self._values):
-            if isinstance(key, tuple) and key and key[0] == "surface_attributes":
+            if (
+                isinstance(key, tuple)
+                and key
+                and key[0] in {
+                    "surface_attributes",
+                    "surface_attribute_targets_device",
+                }
+            ):
                 self._values.pop(key, None)
+        if self._surface_transfer is not None:
+            self._surface_transfer.invalidate()
+
+    def surface_attribute_transfer_counts(self):
+        """Expose opt-in GPU transfer launches/readbacks to the profiler."""
+        if self._surface_transfer is None:
+            return {
+                "sample_gathers": 0,
+                "hash_grid_builds": 0,
+                "local_lookups": 0,
+                "fallback_launches": 0,
+                "gathers": 0,
+                "readbacks": 0,
+            }
+        return self._surface_transfer.operation_counts()
 
     def _live_count(self, owner_name):
         key = (owner_name, "count")
@@ -170,7 +213,8 @@ class HostFrame:
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.particles.velocity.numpy()[:n], dtype=np.float32)
+                    _live_numpy(self.solver.particles.velocity, n),
+                    dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
         return self._get("velocities", load)
 
@@ -178,6 +222,17 @@ class HostFrame:
     def particle_vorticity(self):
         def load():
             particles = getattr(self.solver, "particles", None)
+            if particles is not None and isinstance(
+                getattr(particles, "position", None), wp.array
+            ):
+                n = self._live_count("particles")
+                if not n:
+                    return np.zeros((0, 3), dtype=np.float32)
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                return np.ascontiguousarray(
+                    self.particle_vorticity_device[:n].numpy(),
+                    dtype=np.float32,
+                )
             grid = getattr(self.solver, "grid", None)
             vel = getattr(self.solver, "vel", None)
             if particles is None or grid is None or vel is None:
@@ -203,6 +258,37 @@ class HostFrame:
         return self._get("particle_vorticity", load)
 
     @property
+    def particle_vorticity_device(self):
+        """Return the cached live-particle vorticity device buffer."""
+        def load():
+            particles = getattr(self.solver, "particles", None)
+            if particles is None or not isinstance(
+                getattr(particles, "position", None), wp.array
+            ):
+                raise RuntimeError("device particle vorticity is unavailable")
+            n = self._live_count("particles")
+            grid = getattr(self.solver, "grid", None)
+            vel = getattr(self.solver, "vel", None)
+            if not n or grid is None or vel is None:
+                return wp.zeros(n, dtype=wp.vec3, device=self.solver.device)
+            out = wp.empty(n, dtype=wp.vec3, device=self.solver.device)
+            wp.launch(
+                k_sample_particle_vorticity,
+                dim=n,
+                inputs=[
+                    particles.position, n, grid.origin,
+                    float(self.solver.settings.voxel_size),
+                    vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww,
+                    grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
+                ],
+                outputs=[out],
+                device=self.solver.device,
+            )
+            return out
+
+        return self._get("particle_vorticity_device", load)
+
+    @property
     def whitewater(self):
         def load():
             if not hasattr(self.solver, "whitewater"):
@@ -213,7 +299,8 @@ class HostFrame:
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.whitewater.position.numpy()[:n], dtype=np.float32)
+                    _live_numpy(self.solver.whitewater.position, n),
+                    dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
         return self._get("whitewater", load)
 
@@ -273,7 +360,7 @@ class HostFrame:
                 n = self._live_count("particles")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.particles.attr(name).numpy()[:n])
+                    _live_numpy(self.solver.particles.attr(name), n))
             except (AttributeError, KeyError):
                 return np.zeros(0, dtype=np.float32)
         return self._get(("particle", name), load)
@@ -284,7 +371,7 @@ class HostFrame:
                 n = self._live_count("whitewater")
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    getattr(self.solver.whitewater, name).numpy()[:n])
+                    _live_numpy(getattr(self.solver.whitewater, name), n))
             except AttributeError:
                 if name == "type":
                     from .whitewater_types import LEGACY_UNCLASSIFIED
@@ -325,6 +412,64 @@ class HostFrame:
             raise ValueError(f"unsupported particle attribute {key!r}")
         return np.ascontiguousarray(values[::stride])
 
+    def particle_attribute_device(self, key: str):
+        """Return one nearest-transfer particle channel without host readback."""
+        particles = getattr(self.solver, "particles", None)
+        if particles is None or not isinstance(
+            getattr(particles, "position", None), wp.array
+        ):
+            raise RuntimeError("device particle attributes are unavailable")
+        key = str(key)
+        if key == "vorticity":
+            return self.particle_vorticity_device
+        attr_name = "life" if key == "lifetime" else key
+        if key not in {
+            "age", "lifetime", "color", "source_id", "viscosity", "density"
+        }:
+            raise ValueError(f"unsupported device particle attribute {key!r}")
+        try:
+            return particles.attr(attr_name)
+        except KeyError as exc:
+            if key in {"color", "source_id"}:
+                raise RuntimeError(
+                    f"enabled particle attribute {key!r} is not allocated"
+                ) from exc
+            raise
+
+    def _surface_targets_device(self, source, targets):
+        array_interface = targets.__array_interface__
+        key = (
+            "surface_attribute_targets_device",
+            id(source),
+            tuple(targets.shape),
+            int(array_interface["data"][0]),
+        )
+        cached = self._values.get(key)
+        if cached is not None and cached[0] is source:
+            return cached[1]
+        device_targets = wp.array(
+            targets, dtype=wp.vec3, device=self.solver.device
+        )
+        # Retain the source object so Python cannot recycle its identity while
+        # this HostFrame cache entry is live.
+        self._values[key] = (source, device_targets)
+        return device_targets
+
+    def _gpu_surface_transfer(self):
+        particles = getattr(self.solver, "particles", None)
+        if (
+            particles is None
+            or not isinstance(getattr(particles, "position", None), wp.array)
+            or getattr(self.solver, "device", None) is None
+        ):
+            return None
+        if self._surface_transfer is None:
+            self._surface_transfer = SurfaceAttributeTransfer(
+                device=self.solver.device
+            )
+            self.solver._surface_attribute_transfer = self._surface_transfer
+        return self._surface_transfer
+
     def whitewater_attribute(self, key: str):
         key = str(key)
         if key == "velocity":
@@ -354,6 +499,7 @@ class HostFrame:
         keys = enabled_attribute_keys(settings, output_kind)
         if not keys:
             return {}
+        surface_cache_key = None
         if output_kind == "particles":
             count = len(self.positions_strided(stride))
             values = {
@@ -364,15 +510,58 @@ class HostFrame:
             count = len(self.whitewater)
             values = {key: self.whitewater_attribute(key) for key in keys}
         elif output_kind == "surface":
-            targets = (self.surface_mesh[0] if positions is None
-                       else np.asarray(positions, dtype=np.float32).reshape((-1, 3)))
+            target_source = self.surface_mesh[0] if positions is None else positions
+            targets = np.asarray(
+                target_source, dtype=np.float32
+            ).reshape((-1, 3))
             count = len(targets)
             velocity_keys = frozenset({"velocity", "speed", "motion"})
+            nearest_keys = [key for key in keys if key not in velocity_keys]
+            if nearest_keys:
+                target_pointer = int(targets.__array_interface__["data"][0])
+                surface_cache_key = (
+                    "surface_attributes",
+                    tuple(keys),
+                    id(target_source),
+                    tuple(targets.shape),
+                    target_pointer,
+                    float(getattr(self.solver.settings, "frame_rate", 0.0)),
+                    float(getattr(self.solver.settings, "time_scale", 0.0)),
+                )
+                cached = self._values.get(surface_cache_key)
+                if cached is not None and cached[0] is target_source:
+                    return cached[1]
             surface_velocity = (
                 self.surface_velocity(targets)
                 if velocity_keys.intersection(keys) else None)
             nearest = None
             source_positions = None
+            gpu_transfer = None
+            if count and nearest_keys:
+                gpu_transfer = self._gpu_surface_transfer()
+                if gpu_transfer is not None:
+                    if not np.all(np.isfinite(targets)):
+                        raise ValueError(
+                            "nearest-transfer positions must be finite"
+                        )
+                    live_count = self._live_count("particles")
+                    if live_count:
+                        gpu_transfer.prepare(
+                            self.solver.particles,
+                            live_count,
+                            max(
+                                float(self.solver.settings.voxel_size) * 2.0,
+                                1.0e-5,
+                            ),
+                        )
+                        gpu_transfer.nearest_indices(
+                            self._surface_targets_device(
+                                target_source, targets
+                            ),
+                            count,
+                        )
+                    else:
+                        gpu_transfer = None
             values = {}
             for key in keys:
                 if key == "velocity":
@@ -386,7 +575,15 @@ class HostFrame:
                         time_scale=float(self.solver.settings.time_scale),
                     )
                 else:
-                    if source_positions is None:
+                    if gpu_transfer is not None:
+                        gpu_transfer.gather(
+                            key,
+                            self.particle_attribute_device(key),
+                            count,
+                        )
+                        value = gpu_transfer.readback(key, count)
+                        _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                    elif source_positions is None:
                         source_positions = self.positions
                         if len(source_positions):
                             nearest = nearest_sample_indices(
@@ -397,22 +594,26 @@ class HostFrame:
                                     1.0e-5,
                                 ),
                             )
-                    if nearest is None:
-                        spec = ATTRIBUTE_SPECS[key]
-                        value = np.zeros(
-                            (count,) if spec.components == 1
-                            else (count, spec.components),
-                            dtype=spec.numpy_dtype,
-                        )
-                    else:
-                        value = self.particle_attribute(key)[nearest]
+                    if gpu_transfer is None:
+                        if nearest is None:
+                            spec = ATTRIBUTE_SPECS[key]
+                            value = np.zeros(
+                                (count,) if spec.components == 1
+                                else (count, spec.components),
+                                dtype=spec.numpy_dtype,
+                            )
+                        else:
+                            value = self.particle_attribute(key)[nearest]
                 values[key] = np.ascontiguousarray(value)
         else:
             raise ValueError(f"unknown output kind {output_kind!r}")
-        return {
+        result = {
             key: validate_attribute_values(ATTRIBUTE_SPECS[key], value, count)
             for key, value in values.items()
         }
+        if surface_cache_key is not None:
+            self._values[surface_cache_key] = (target_source, result)
+        return result
 
 
 @dataclass(frozen=True)

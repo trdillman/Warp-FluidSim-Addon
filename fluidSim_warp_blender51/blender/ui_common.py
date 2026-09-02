@@ -38,7 +38,7 @@ class FluidSimObjectPanel:
 
 
 class FluidSimView3DPanel:
-    """Base for the compact launcher and its collapsed full workflow."""
+    """Base for the View3D sidebar surfaces: the status HUD launcher and the Live Tuning shelf."""
 
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -95,15 +95,24 @@ def canonical_region_kind(obj) -> str:
     return ""
 
 
+# (severity key) -> (Blender icon, text prefix, use alert row)
+_SEVERITY_PRESENTATION = {
+    "OK": ("CHECKMARK", "", False),
+    "INFO": ("INFO", "", False),
+    "WARNING": ("ERROR", "Warning: ", False),   # ERROR = Blender's warning-triangle glyph
+    "ERROR": ("CANCEL", "Error: ", True),        # circle-slash + red alert row = strictly heavier
+}
+
+
 def draw_status_message(layout, text: str, severity: str = "INFO") -> None:
-    """Draw one concise status row with consistent severity icons."""
-    icon = {
-        "OK": "CHECKMARK",
-        "INFO": "INFO",
-        "WARNING": "ERROR",
-        "ERROR": "CANCEL",
-    }.get(str(severity).upper(), "INFO")
-    layout.label(text=str(text), icon=icon)
+    """Draw one status row; severity is shape + text (+ color), never icon-alone."""
+    icon, prefix, alert = _SEVERITY_PRESENTATION.get(
+        str(severity).upper(), _SEVERITY_PRESENTATION["INFO"]
+    )
+    row = layout.row(align=True)
+    if alert:
+        row.alert = True
+    row.label(text=f"{prefix}{text}", icon=icon)
 
 
 def draw_property(layout, data, name: str, *, text: str | None = None, **kwargs) -> bool:
@@ -129,3 +138,36 @@ def draw_property_grid(layout, data, names: tuple[str, ...], *, columns: int = 2
     for name in names:
         draw_property(grid, data, name)
     return grid
+
+
+def _format_readout(value) -> str:
+    """Human-readable string for a read-only telemetry value."""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
+def draw_readout_grid(layout, data, pairs, *, title: str = "Readouts") -> None:
+    """Draw read-only telemetry as a titled box of right-aligned key/value labels.
+
+    ``pairs`` is a sequence of ``(attr_name, display_label)``.  Each *present*
+    attribute becomes one key label plus one right-aligned value label -- never a
+    ``prop()`` control, because a readback is not editable.  Missing attributes
+    are skipped, mirroring ``draw_property_grid``'s tolerance of compatibility
+    fields.  This is deliberately **not** ``draw_property_grid``: that helper
+    edits RNA properties; this one renders derived text only.
+    """
+    box = layout.box()
+    box.label(text=title, icon="INFO")
+    grid = box.grid_flow(
+        row_major=True, columns=2, even_columns=True, even_rows=False, align=True
+    )
+    for name, display in pairs:
+        if data is None or not hasattr(data, name):
+            continue
+        grid.label(text=str(display))
+        value_row = grid.row(align=True)
+        value_row.alignment = "RIGHT"
+        value_row.label(text=_format_readout(getattr(data, name)))

@@ -88,6 +88,14 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
             return False
         return True
 
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.prop(self, "mode")
+
     def execute(self, context):
         from ..blender.setup_wizard import setup_selected
 

@@ -12,6 +12,7 @@ from .ui_common import (
     activity_ui_state,
     draw_property,
     draw_property_grid,
+    draw_readout_grid,
     draw_status_message,
     pending_ui_state,
 )
@@ -22,6 +23,26 @@ def _layout(panel):
     layout.use_property_split = True
     layout.use_property_decorate = False
     return layout
+
+
+def _domain_owner(context):
+    """Return the settings datablock the active domain's controls must edit.
+
+    Post-migration the solver reads ``active_domain_settings`` (i.e. the
+    designated ``fluidsim.domain_object``'s ``fluidsim_domain``), so the Scene
+    Properties domain panels must edit that same owner -- otherwise edits land
+    on the stale ``scene.fluidsim`` copy the solver ignores. Re-designating a
+    different domain object therefore re-targets these panels, which is how
+    "multiple domains" surfaces in this single-scene UI.
+
+    For unmigrated scenes ``active_domain_settings`` returns ``scene.fluidsim``
+    unchanged, so every existing single-domain path stays byte-for-byte
+    identical.
+    """
+    from .scene_bridge import active_domain_settings
+
+    scene = context.scene
+    return active_domain_settings(scene) or getattr(scene, "fluidsim", None)
 
 
 def _runtime_ui_state():
@@ -127,10 +148,106 @@ def _whitewater_enabled(context):
     return bool(fs is not None and getattr(fs, "whitewater_enabled", False))
 
 
-class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Session & Status"
-    bl_idname = "FLUIDSIM_PT_scene_control"
+def _advanced_visible(context):
+    """True unless the user has chosen the Basic interface (D2 two-tier gate).
+
+    Fail-open: a missing settings group or `ui_mode` never hides a panel, so a
+    partially-initialised scene keeps the full surface rather than silently
+    dropping deep-config panels.
+    """
+    fs = getattr(getattr(context, "scene", None), "fluidsim", None)
+    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+
+
+class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Transport"
+    bl_idname = "FLUIDSIM_PT_scene_transport"
     bl_order = 0
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        state = activity_ui_state(scene)
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+
+        # Primary Start/Stop occupies its own full-width, emphasised row so it
+        # never shares space with the step controls below it.
+        primary = layout.row(align=True)
+        primary.scale_y = 1.3
+        if state["id"] == "LIVE_PREVIEW":
+            primary.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
+        elif state["id"] == "CACHE_PLAYBACK":
+            primary.operator(
+                "fluidsim.cache_playback_stop",
+                text="Stop Cache Playback",
+                icon="PAUSE",
+            )
+        elif state["id"] == "PRODUCTION_BAKE":
+            primary.operator(
+                "fluidsim.bake_cancel",
+                text="Cancel Production Bake",
+                icon="CANCEL",
+            )
+        else:
+            primary.enabled = runtime_ready
+            primary.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
+
+        # Step One / Step Many are ALWAYS emitted (anti-reflow): greyed out when
+        # the solver cannot single-step, never hidden, so buttons never move.
+        can_step = bool(
+            runtime_ready
+            and state["owns_scene"]
+            and state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}
+        )
+        step_once = layout.row(align=True)
+        step_once.enabled = can_step
+        step_once.operator_context = "EXEC_DEFAULT"
+        op = step_once.operator("fluidsim.step", text="Step One Frame", icon="FRAME_NEXT")
+        op.frames = 1
+        step_many = layout.row(align=True)
+        step_many.enabled = can_step
+        step_many.operator_context = "INVOKE_DEFAULT"
+        step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
+
+
+class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Lifecycle"
+    bl_idname = "FLUIDSIM_PT_scene_lifecycle"
+    bl_order = 1
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        state = activity_ui_state(scene)
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+        owns = state["owns_scene"]
+
+        # Constructive: bring a solver into existence for this scene.
+        if not owns and state["id"] == "IDLE":
+            init = layout.row(align=True)
+            init.enabled = runtime_ready
+            init.operator("fluidsim.initialize", text="Initialize Solver", icon="MOD_FLUIDSIM")
+
+        # Destructive: physically separated and red-alerted so they cannot be
+        # reached by muscle memory aiming at a safe control. Each carries a
+        # one-line statement of what it throws away.
+        if owns and state["id"] != "PRODUCTION_BAKE":
+            layout.separator()
+            danger = layout.column(align=True)
+            danger.alert = True
+            release = danger.column(align=True)
+            release.label(text="Frees the GPU solver; requires Initialize to resume.", icon="X")
+            release.operator("fluidsim.release", text="Release Solver", icon="X")
+            if state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
+                reset = danger.column(align=True)
+                reset.label(text="Discards every simulated frame back to the start.", icon="FILE_REFRESH")
+                reset.operator("fluidsim.reset", text="Reset Simulation", icon="FILE_REFRESH")
+
+
+class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Status & Runtime"
+    bl_idname = "FLUIDSIM_PT_scene_control"
+    bl_order = 2
 
     def draw(self, context):
         layout = _layout(self)
@@ -143,7 +260,7 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
         row.label(text=state["label"], icon=state["icon"])
         status = str(getattr(fs, "status", "") or "")
         if status:
-            row.label(text=status[:80])
+            _draw_wrapped(layout, status)
         height_error = str(getattr(fs, "height_error", "") or "")
         if height_error:
             draw_status_message(layout, height_error, "ERROR")
@@ -154,45 +271,19 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
             text=(f"{selected} · {runtime_message}" if selected else runtime_message),
             icon="CHECKMARK" if runtime_ready else "ERROR",
         )
-        runtime.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+        runtime.operator("fluidsim.refresh_runtime_probe", text="Re-detect GPU" if not runtime_ready else "Re-detect", icon="FILE_REFRESH")
 
-        actions = layout.row(align=True)
-        if state["id"] == "LIVE_PREVIEW":
-            actions.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
-        elif state["id"] == "CACHE_PLAYBACK":
-            actions.operator(
-                "fluidsim.cache_playback_stop",
-                text="Stop Cache Playback",
-                icon="PAUSE",
-            )
-        elif state["id"] == "PRODUCTION_BAKE":
-            actions.operator(
-                "fluidsim.bake_cancel",
-                text="Cancel Production Bake",
-                icon="CANCEL",
-            )
-        else:
-            start = actions.row(align=True)
-            start.enabled = runtime_ready
-            start.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
-        if state["owns_scene"] and state["id"] != "PRODUCTION_BAKE":
-            actions.operator("fluidsim.release", text="Release Solver", icon="X")
-        elif not state["owns_scene"] and state["id"] == "IDLE":
-            initialize = actions.row(align=True)
-            initialize.enabled = runtime_ready
-            initialize.operator("fluidsim.initialize", text="Initialize Solver", icon="MOD_FLUIDSIM")
-
-        if state["owns_scene"] and state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
-            step_once = layout.row(align=True)
-            step_once.enabled = runtime_ready
-            step_once.operator_context = "EXEC_DEFAULT"
-            op = step_once.operator("fluidsim.step", text="Step One Frame", icon="FRAME_NEXT")
-            op.frames = 1
-            step_many = layout.row(align=True)
-            step_many.enabled = runtime_ready
-            step_many.operator_context = "INVOKE_DEFAULT"
-            step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
-            step_many.operator("fluidsim.reset", text="Reset Simulation", icon="FILE_REFRESH")
+        # Compact one-line live telemetry: last step cost, substep count, and
+        # whether the CFL condition forced a clamp. Read-only status only —
+        # transport lives in FLUIDSIM_PT_scene_transport, lifecycle in
+        # FLUIDSIM_PT_scene_lifecycle.
+        step_ms = float(getattr(fs, "stat_step_ms", 0.0) or 0.0)
+        substeps = int(getattr(fs, "stat_substeps", 0) or 0)
+        cfl_clamped = bool(getattr(fs, "stat_cfl_clamped", False))
+        layout.label(
+            text=f"{step_ms:.1f} ms · {substeps} substeps · CFL {'clamped' if cfl_clamped else 'ok'}",
+            icon="TIME",
+        )
 
         error = current_error(scene)
         if error:
@@ -229,36 +320,6 @@ class FLUIDSIM_PT_scene_pending(FluidSimScenePanel, bpy.types.Panel):
         row.operator("fluidsim.revert_pending", text="Revert Pending Values", icon="LOOP_BACK")
 
 
-class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Runtime Statistics"
-    bl_idname = "FLUIDSIM_PT_scene_runtime_stats"
-    bl_parent_id = "FLUIDSIM_PT_scene_control"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        if not FluidSimScenePanel.poll(context):
-            return False
-        state = activity_ui_state(context.scene)
-        return bool(state["owns_scene"] or state["id"] == "CACHE_PLAYBACK")
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        draw_property_grid(
-            layout,
-            fs,
-            (
-                "stat_particles",
-                "stat_voxels",
-                "stat_whitewater",
-                "stat_step_ms",
-                "stat_substeps",
-                "stat_cfl_clamped",
-            ),
-        )
-
-
 class FLUIDSIM_PT_scene_live_timeline(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Live Timeline Recovery"
     bl_idname = "FLUIDSIM_PT_scene_live_timeline"
@@ -278,6 +339,11 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         fs = context.scene.fluidsim
+        # Front door of the two-tier disclosure (design D2): the Interface switch
+        # and the Quality target sit at the top of the first panel so every user
+        # meets them before any deep-config surface.
+        layout.prop(fs, "ui_mode", expand=True)
+        layout.prop(fs, "quality")
         if getattr(fs, "setup_mode", ""):
             layout.label(text=f"Current setup: {fs.setup_mode.replace('_', ' ').title()}", icon="MOD_FLUIDSIM")
         layout.operator("fluidsim.setup_scene", text="Guided Setup…", icon="MOD_FLUIDSIM")
@@ -306,12 +372,15 @@ class FLUIDSIM_PT_scene_domain(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        # The domain_object pointer is the scene-level identity selector (which
+        # object *is* the domain); the settings it introduces live on that
+        # object's datablock, so they follow the active domain owner.
+        draw_property(layout, context.scene.fluidsim, "domain_object")
+        owner = _domain_owner(context)
         draw_property_grid(
             layout,
-            fs,
+            owner,
             (
-                "domain_object",
                 "voxel_size",
                 "particles_per_voxel",
                 "max_particles",
@@ -328,9 +397,13 @@ class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):
     bl_parent_id = "FLUIDSIM_PT_scene_domain"
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context):
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "leaf_capacity")
         layout.prop(fs, "max_whitewater")
         if fs.auto_grow_particles:
@@ -366,9 +439,15 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
     bl_order = 40
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context):
+        # "Advanced Physics" gate (spec §5.3): the whole 12-panel sim_* fan
+        # inherits this parent's visibility, so it collapses in Basic mode.
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.label(text=f"{fs.sample_type} transfer · {fs.pressure_solver} pressure", icon="PHYSICS")
         enabled = []
         if fs.viscosity_enabled:
@@ -389,7 +468,7 @@ class FLUIDSIM_PT_sim_time(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         draw_property_grid(layout, fs, ("time_scale", "cfl", "min_substeps", "max_substeps", "sample_type"))
         if fs.sample_type == "FLIP":
             layout.prop(fs, "flip_ratio")
@@ -404,7 +483,7 @@ class FLUIDSIM_PT_sim_gravity(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "use_scene_gravity")
         if not fs.use_scene_gravity:
             layout.prop(fs, "gravity")
@@ -418,7 +497,7 @@ class FLUIDSIM_PT_sim_pressure(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "pressure_solver")
         layout.prop(fs, "pressure_iterations")
         if fs.pressure_solver == "PCG":
@@ -434,7 +513,7 @@ class FLUIDSIM_PT_sim_viscosity(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "viscosity_enabled")
         if not fs.viscosity_enabled:
             return
@@ -455,7 +534,7 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "surface_tension_enabled")
         if not fs.surface_tension_enabled:
             return
@@ -470,14 +549,8 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
                 "surface_tension_smoothing_iterations",
             ),
         )
-        stats = layout.box()
-        stats.label(text="Capillary Stability", icon="TIME")
-        stats.prop(fs, "stat_capillary_dt", text="Stable Timestep")
-        stats.prop(fs, "stat_capillary_substeps_required", text="Required Substeps")
-        stats.prop(fs, "stat_substep_limiter", text="Selected Limiter")
-        stats.prop(fs, "stat_capillary_clamped", text="Clamped by Max Substeps")
-        if fs.stat_surface_tension_message:
-            _draw_wrapped(stats, fs.stat_surface_tension_message, icon="INFO")
+        # Capillary-stability readbacks are consolidated into the Diagnostics
+        # telemetry panel (D4); this control panel stays edit-only.
 
 
 class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
@@ -488,7 +561,7 @@ class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "species_enabled")
         if not fs.species_enabled:
             return
@@ -506,7 +579,7 @@ class FLUIDSIM_PT_sim_relax(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "relax_enabled")
         if fs.relax_enabled:
             layout.prop(fs, "relax_strength")
@@ -521,7 +594,7 @@ class FLUIDSIM_PT_sim_limits(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "max_speed")
         if fs.max_speed > 0.0:
             layout.prop(fs, "limit_behavior")
@@ -537,7 +610,7 @@ class FLUIDSIM_PT_sim_forces(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "directional_force")
         layout.prop(fs, "omnidirectional_force_center")
         layout.prop(fs, "omnidirectional_force_strength")
@@ -554,7 +627,7 @@ class FLUIDSIM_PT_sim_dissipation(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "dissipation_enabled")
         if fs.dissipation_enabled:
             layout.prop(fs, "dissipation_attribute")
@@ -570,7 +643,7 @@ class FLUIDSIM_PT_sim_attraction(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "attraction_enabled")
         if fs.attraction_enabled:
             layout.prop(fs, "attraction_strength")
@@ -585,7 +658,7 @@ class FLUIDSIM_PT_sim_spacetime(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
+        fs = _domain_owner(context)
         layout.prop(fs, "spacetime_enabled")
         if not fs.spacetime_enabled:
             return
@@ -626,13 +699,25 @@ class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "surface_enabled")
+        fs = context.scene.fluidsim
+        layout.prop(fs, "surface_enabled")
+        # Basic gets a single Smoothing knob (spec §8); the full filter chain
+        # lives in the Advanced-only children below.
+        if fs.surface_enabled:
+            layout.prop(fs, "surface_smooth_iterations", text="Smoothing")
 
 
 class _SurfaceChild:
     @classmethod
     def poll(cls, context):
-        return FluidSimScenePanel.poll(context) and _surface_enabled(context)
+        # Every surface child (resolution/cadence, splat, the full filter chain)
+        # is deep-config, so the whole set is Advanced-only.  The parent keeps
+        # the surface_enabled toggle (and Basic Smoothing surrogate) visible.
+        return (
+            FluidSimScenePanel.poll(context)
+            and _surface_enabled(context)
+            and _advanced_visible(context)
+        )
 
 
 class FLUIDSIM_PT_surface_resolution(_SurfaceChild, FluidSimScenePanel, bpy.types.Panel):
@@ -679,22 +764,38 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
+        # D9: the four post-process passes are chunked into their own labeled
+        # boxes so the filter chain reads as four sequential sections rather than
+        # a flat ten-prop wall.  Each strength knob stays gated on its pass having
+        # a non-zero iteration count.
         layout = _layout(self)
         fs = context.scene.fluidsim
-        layout.prop(fs, "surface_filter_type")
-        layout.prop(fs, "surface_filter_iterations")
+
+        flt = layout.box()
+        flt.label(text="Filter", icon="FILTER")
+        flt.prop(fs, "surface_filter_type")
+        flt.prop(fs, "surface_filter_iterations")
         if fs.surface_filter_iterations > 0:
-            layout.prop(fs, "surface_filter_strength")
-        layout.prop(fs, "surface_dilate_iterations")
+            flt.prop(fs, "surface_filter_strength")
+
+        dilate = layout.box()
+        dilate.label(text="Dilate", icon="FULLSCREEN_ENTER")
+        dilate.prop(fs, "surface_dilate_iterations")
         if fs.surface_dilate_iterations > 0:
-            layout.prop(fs, "surface_dilate_strength")
-        layout.prop(fs, "surface_erode_iterations")
+            dilate.prop(fs, "surface_dilate_strength")
+
+        erode = layout.box()
+        erode.label(text="Erode", icon="FULLSCREEN_EXIT")
+        erode.prop(fs, "surface_erode_iterations")
         if fs.surface_erode_iterations > 0:
-            layout.prop(fs, "surface_erode_strength")
-        layout.prop(fs, "surface_smooth_type")
-        layout.prop(fs, "surface_smooth_iterations")
+            erode.prop(fs, "surface_erode_strength")
+
+        smooth = layout.box()
+        smooth.label(text="Smooth", icon="MOD_SMOOTH")
+        smooth.prop(fs, "surface_smooth_type")
+        smooth.prop(fs, "surface_smooth_iterations")
         if fs.surface_smooth_iterations > 0:
-            layout.prop(fs, "surface_smooth_strength")
+            smooth.prop(fs, "surface_smooth_strength")
 
 
 class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
@@ -705,7 +806,12 @@ class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "whitewater_enabled")
+        fs = context.scene.fluidsim
+        layout.prop(fs, "whitewater_enabled")
+        # Basic gets on/off + a single Amount knob (spec §8); per-stream emission,
+        # classification, lifetime, and dynamics live in the Advanced children.
+        if fs.whitewater_enabled:
+            layout.prop(fs, "ww_emission_rate", text="Amount")
 
 
 class _WhitewaterChild:
@@ -714,10 +820,21 @@ class _WhitewaterChild:
         return FluidSimScenePanel.poll(context) and _whitewater_enabled(context)
 
 
-class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class _WhitewaterAdvancedChild(_WhitewaterChild):
+    """Every whitewater child (per-stream emission, classification, lifetime,
+    dynamics) is Advanced-only; Basic keeps just the on/off toggle plus the
+    single Amount knob drawn on the parent panel."""
+
+    @classmethod
+    def poll(cls, context):
+        return _WhitewaterChild.poll(context) and _advanced_visible(context)
+
+
+class FLUIDSIM_PT_whitewater_emission(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Emission"
     bl_idname = "FLUIDSIM_PT_whitewater_emission"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -736,7 +853,7 @@ class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.
         )
 
 
-class FLUIDSIM_PT_whitewater_classification(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_classification(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Classification"
     bl_idname = "FLUIDSIM_PT_whitewater_classification"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -749,7 +866,7 @@ class FLUIDSIM_PT_whitewater_classification(_WhitewaterChild, FluidSimScenePanel
         layout.label(text="Types are persistent: Foam 0 · Bubble 1 · Spray 2", icon="INFO")
 
 
-class FLUIDSIM_PT_whitewater_life(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_life(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Lifetime"
     bl_idname = "FLUIDSIM_PT_whitewater_life"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -760,7 +877,7 @@ class FLUIDSIM_PT_whitewater_life(_WhitewaterChild, FluidSimScenePanel, bpy.type
         draw_property_grid(layout, context.scene.fluidsim, ("ww_life_min", "ww_life_max"))
 
 
-class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterAdvancedChild, FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Dynamics"
     bl_idname = "FLUIDSIM_PT_whitewater_dynamics"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
@@ -784,40 +901,6 @@ class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterChild, FluidSimScenePanel, bpy.
         draw_property_grid(spray, fs, ("ww_spray_drag", "ww_spray_gravity_scale", "ww_spray_life_multiplier"))
 
 
-class FLUIDSIM_PT_whitewater_stats(_WhitewaterChild, FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Admission Status"
-    bl_idname = "FLUIDSIM_PT_whitewater_stats"
-    bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return _WhitewaterChild.poll(context) and (
-            activity_ui_state(context.scene)["owns_scene"]
-            or activity_ui_state(context.scene)["id"] == "CACHE_PLAYBACK"
-        )
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        draw_property_grid(
-            layout,
-            fs,
-            (
-                "stat_whitewater",
-                "stat_whitewater_foam",
-                "stat_whitewater_bubbles",
-                "stat_whitewater_spray",
-                "stat_whitewater_invalid_types",
-                "stat_whitewater_required",
-                "stat_whitewater_admitted",
-                "stat_whitewater_dropped",
-                "stat_whitewater_policy",
-                "stat_whitewater_status",
-            ),
-        )
-
-
 class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Viewport & Outputs"
     bl_idname = "FLUIDSIM_PT_scene_outputs"
@@ -836,6 +919,9 @@ class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
         if fs.whitewater_enabled and fs.show_whitewater:
             active.append("Whitewater")
         layout.label(text="Visible: " + (", ".join(active) if active else "None"), icon="HIDE_OFF")
+        # Basic headline for the export inventory (spec §8); the 33 per-attribute
+        # toggles live in the Advanced-only Persistent Attributes children.
+        layout.prop(fs, "export_attributes")
 
 
 class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
@@ -847,6 +933,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "liquid_view_mode")
+        layout.prop(fs, "show_overlay", text="Viewport HUD")
         if fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and fs.surface_enabled:
             layout.prop(fs, "surface_attribute_mode")
         if fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}:
@@ -893,6 +980,12 @@ class FLUIDSIM_PT_output_attributes(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_output_attributes"
     bl_parent_id = "FLUIDSIM_PT_scene_outputs"
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        # The per-attribute export inventory (surface/particle/whitewater
+        # toggles) is Advanced-only; its children inherit this gate.
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -1077,6 +1170,71 @@ class FLUIDSIM_PT_scene_diagnostics(FluidSimScenePanel, bpy.types.Panel):
         layout.operator("fluidsim.run_validation", text="Run Validation Suite", icon="CHECKMARK")
 
 
+class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
+    # Read-only solver telemetry consolidated here from the former control-panel
+    # readbacks (D4): runtime counts, capillary stability, and whitewater
+    # admission.  The ``bl_idname`` is preserved (the GUI-acceptance gate resolves
+    # this panel by id) but it now parents under Diagnostics, and every value is a
+    # label -- no control panel renders a ``stat_*`` readback (spec §11).
+    bl_label = "Telemetry"
+    bl_idname = "FLUIDSIM_PT_scene_runtime_stats"
+    bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        if not FluidSimScenePanel.poll(context):
+            return False
+        state = activity_ui_state(context.scene)
+        return bool(state["owns_scene"] or state["id"] == "CACHE_PLAYBACK")
+
+    def draw(self, context):
+        layout = _layout(self)
+        fs = context.scene.fluidsim
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_particles", "Particles"),
+                ("stat_voxels", "Voxels"),
+                ("stat_whitewater", "Whitewater"),
+                ("stat_step_ms", "Step (ms)"),
+                ("stat_substeps", "Substeps"),
+                ("stat_cfl_clamped", "CFL Clamped"),
+            ),
+            title="Runtime",
+        )
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_capillary_dt", "Stable Timestep"),
+                ("stat_capillary_substeps_required", "Required Substeps"),
+                ("stat_substep_limiter", "Selected Limiter"),
+                ("stat_capillary_clamped", "Clamped by Max Substeps"),
+            ),
+            title="Capillary Stability",
+        )
+        if getattr(fs, "stat_surface_tension_message", ""):
+            _draw_wrapped(layout, fs.stat_surface_tension_message, icon="INFO")
+        draw_readout_grid(
+            layout,
+            fs,
+            (
+                ("stat_whitewater_foam", "Foam"),
+                ("stat_whitewater_bubbles", "Bubbles"),
+                ("stat_whitewater_spray", "Spray"),
+                ("stat_whitewater_invalid_types", "Invalid Types"),
+                ("stat_whitewater_required", "Required"),
+                ("stat_whitewater_admitted", "Admitted"),
+                ("stat_whitewater_dropped", "Dropped"),
+                ("stat_whitewater_policy", "Policy"),
+                ("stat_whitewater_status", "Status"),
+            ),
+            title="Whitewater Admission",
+        )
+
+
 class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Profiling"
     bl_idname = "FLUIDSIM_PT_diagnostics_profiling"
@@ -1143,9 +1301,10 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
 
 
 SCENE_PANEL_CLASSES = (
+    FLUIDSIM_PT_scene_transport,
+    FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
     FLUIDSIM_PT_scene_pending,
-    FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_scene_live_timeline,
     FLUIDSIM_PT_scene_setup,
     FLUIDSIM_PT_scene_presets,
@@ -1174,7 +1333,6 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_whitewater_classification,
     FLUIDSIM_PT_whitewater_life,
     FLUIDSIM_PT_whitewater_dynamics,
-    FLUIDSIM_PT_whitewater_stats,
     FLUIDSIM_PT_scene_outputs,
     FLUIDSIM_PT_output_display,
     FLUIDSIM_PT_output_materials,
@@ -1189,6 +1347,7 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_cache_bake,
     FLUIDSIM_PT_cache_manage,
     FLUIDSIM_PT_scene_diagnostics,
+    FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_diagnostics_profiling,
     FLUIDSIM_PT_diagnostics_benchmark,
     FLUIDSIM_PT_diagnostics_report,

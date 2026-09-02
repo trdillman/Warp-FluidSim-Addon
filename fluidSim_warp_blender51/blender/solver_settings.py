@@ -7,6 +7,14 @@ This module owns value conversion only. Lifecycle classification is owned by
 from __future__ import annotations
 
 
+# Canonical fallback domain used when no domain object is designated. The
+# migration create-branch builds an object spanning exactly this box so that
+# a previously-unset scene keeps identical bounds (and thus identical solver
+# output) after a domain object is auto-created.
+DEFAULT_DOMAIN_MIN = (-2.0, -2.0, 0.0)
+DEFAULT_DOMAIN_MAX = (2.0, 2.0, 4.0)
+
+
 DIRECT_SETTING_FIELDS = (
     "voxel_size", "leaf_capacity", "topology_expand", "open_boundaries",
     "domain_sdf_walls",
@@ -86,7 +94,7 @@ def domain_bounds(scene) -> tuple:
     """Return plain host tuples for the authored domain's world AABB."""
     obj = scene.fluidsim.domain_object
     if obj is None:
-        return (-2.0, -2.0, 0.0), (2.0, 2.0, 4.0)
+        return DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX
     from mathutils import Vector
 
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
@@ -175,7 +183,11 @@ def apply_scene_settings(fs, settings, fields=None):
 
 
 def apply_gravity(scene, settings):
-    fs = scene.fluidsim
+    # Lazy import: scene_bridge -> simulation_admission -> solver_settings is a
+    # top-level cycle, so the active-domain accessor is pulled at call time.
+    from .scene_bridge import active_domain_settings
+
+    fs = active_domain_settings(scene)
     if not hasattr(fs, "gravity"):
         return settings
     if (getattr(fs, "use_scene_gravity", False)
@@ -197,8 +209,9 @@ def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
     from ..sim.solver import SolverSettings
+    from .scene_bridge import active_domain_settings
 
-    fs = scene.fluidsim
+    fs = active_domain_settings(scene)
     settings = SolverSettings()
     settings.device = str(configured_device())
     settings.domain_min, settings.domain_max = domain_bounds(scene)

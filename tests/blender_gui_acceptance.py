@@ -43,8 +43,7 @@ PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
 
 PANEL_IDS = [
     "FLUIDSIM_PT_viewport_status",
-    "FLUIDSIM_VIEW3D_PT_full_settings",
-    "FLUIDSIM_VIEW3D_PT_scene_control",
+    "FLUIDSIM_VIEW3D_PT_live_tuning",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
@@ -409,8 +408,10 @@ def _run_phase(phase, scene):
             return None
         check("gui mode", not bpy.app.background)
         _draw_all_panels_smoke("addon enabled, solver inactive")
+        # After the D3 hub split the Initialize action lives in the dedicated
+        # Lifecycle panel; the read-only Status hub no longer draws operators.
         _assert_panel_state(
-            "FLUIDSIM_PT_scene_control",
+            "FLUIDSIM_PT_scene_lifecycle",
             "uninitialized status",
             operator_id="fluidsim.initialize",
         )
@@ -517,10 +518,14 @@ def _run_phase(phase, scene):
               and str(sess.solver.device).startswith("cuda"))
         _draw_all_panels_smoke(
             "solver initialized", STATE.get("source_name"))
+        # Post-D4 the runtime stats are consolidated into the Diagnostics
+        # telemetry panel (same stable id) and rendered as read-only labels, so
+        # the particle count surfaces under its "Particles" key label rather than
+        # as an editable property.
         _assert_panel_state(
             "FLUIDSIM_PT_scene_runtime_stats",
             "initialized stats",
-            property_name="stat_particles",
+            label_contains="Particles",
         )
         STATE["phase"] = "play"
         return 0.2

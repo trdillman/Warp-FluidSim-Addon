@@ -53,15 +53,24 @@ class FLUIDSIM_PT_object_role(FluidSimObjectPanel, bpy.types.Panel):
         layout = _layout(self)
         settings = _settings(context)
         role = active_object_role(context)
-        layout.label(text=f"Active object: {role.replace('_', ' ').title()}", icon="OBJECT_DATA")
-        if role != "NONE":
-            layout.prop(settings, "enabled")
 
+        # Primary control: the active object's FluidSim role as a native Type
+        # dropdown (drawn first). Editing it retags exactly the active object.
+        if settings is not None:
+            layout.prop(settings, "role")
+            if role != "NONE":
+                layout.prop(settings, "enabled")
+
+        # Batch helpers below: apply a role to every selected object at once.
         counts = _selected_role_counts(context)
         selected_count = len(tuple(context.selected_objects or ()))
         tagged = sum(value for key, value in counts.items() if key != "NONE")
-        layout.label(text=f"Selected: {selected_count} · Tagged: {tagged}")
-        actions = layout.column(align=True)
+        helpers = layout.column(align=True)
+        helpers.label(
+            text=f"Apply to Selected — {selected_count} selected · {tagged} tagged",
+            icon="OBJECT_DATA",
+        )
+        actions = helpers.column(align=True)
         if counts["SOURCE"] < selected_count:
             actions.operator("fluidsim.tag_liquid_emitter", text="Set Selected as Liquid Sources", icon="ADD")
         if counts["SINK"] < selected_count:

@@ -52,16 +52,23 @@ def test_text_workspace_prefers_an_existing_text_editor(monkeypatch):
     fake_bpy.types = SimpleNamespace(Operator=object, Panel=object)
     fake_props = ModuleType("bpy.props")
     fake_props.IntProperty = lambda **_kwargs: None
+    fake_props.BoolProperty = lambda **_kwargs: None
     fake_bpy.props = fake_props
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setitem(sys.modules, "bpy.props", fake_props)
 
     effects_module = ModuleType("fluidsim_testpkg.blender.effects")
+    enums_module = ModuleType("fluidsim_testpkg.sim.effects.enums")
+    enums_module.TrustState = SimpleNamespace(
+        BUILT_IN_TRUSTED=SimpleNamespace(value="BUILT_IN_TRUSTED"),
+        LOCAL_TRUSTED=SimpleNamespace(value="LOCAL_TRUSTED"),
+    )
     fields_module = ModuleType("fluidsim_testpkg.sim.effects.fields")
     fields_module.FIELD_SPECS = {}
     source_module = ModuleType("fluidsim_testpkg.sim.effects.source")
     source_module.generate_kernel_source = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, effects_module.__name__, effects_module)
+    monkeypatch.setitem(sys.modules, enums_module.__name__, enums_module)
     monkeypatch.setitem(sys.modules, fields_module.__name__, fields_module)
     monkeypatch.setitem(sys.modules, source_module.__name__, source_module)
 

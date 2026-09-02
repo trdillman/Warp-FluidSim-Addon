@@ -18,6 +18,43 @@ from .simulation_admission import capacity_blocking_message
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
+
+# Active-domain accessors (Phase 3)
+#
+# Domain settings are migrating from ``scene.fluidsim`` onto the domain
+# object's ``fluidsim_domain`` group (see ``blender/migration.py``). The read
+# path funnels through these so it follows the settings to their new home
+# without every reader needing to know the migration state.
+
+
+def active_domain_object(scene):
+    """Return the scene's designated domain object, or ``None``."""
+    fs = getattr(scene, "fluidsim", None)
+    if fs is None:
+        return None
+    return getattr(fs, "domain_object", None)
+
+
+def active_domain_settings(scene):
+    """Return the property group that owns this scene's domain settings.
+
+    After the Phase 3 ``load_post`` migration stamps ``schema_version == 1``,
+    the domain object's ``fluidsim_domain`` group is canonical. Pre-migration,
+    or when no domain object has been designated yet (e.g. mid setup-wizard),
+    fall back to ``scene.fluidsim`` so the read path survives the transition.
+    Returns ``None`` only when ``scene.fluidsim`` itself is absent.
+    """
+    fs = getattr(scene, "fluidsim", None)
+    if fs is None:
+        return None
+    if int(getattr(fs, "schema_version", 0)) != 1:
+        return fs
+    obj = getattr(fs, "domain_object", None)
+    if obj is None:
+        return fs
+    return getattr(obj, "fluidsim_domain", None) or fs
+
+
 # Session state
 
 

@@ -53,10 +53,10 @@ def test_user_path_profile_resolves_surface_attribute_modes(monkeypatch):
         settings, "all") == tuple(OUTPUT_TOGGLE_NAMES["surface"])
     assert profile_user_path.expected_surface_attribute_readbacks("off") == 0
     assert profile_user_path.expected_surface_attribute_readbacks("default") == 1
-    assert profile_user_path.expected_surface_attribute_readbacks("all") == 9
+    assert profile_user_path.expected_surface_attribute_readbacks("all") == 8
     assert profile_user_path.expected_surface_attribute_numpy_calls("off") == 0
     assert profile_user_path.expected_surface_attribute_numpy_calls("default") == 1
-    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 10
+    assert profile_user_path.expected_surface_attribute_numpy_calls("all") == 8
 
     monkeypatch.setattr(
         sys, "argv", ["profile_user_path.py", "--", "--surface-attributes", "off"])
@@ -108,6 +108,20 @@ def test_pcg_reuses_scalar_buffers_without_device_copy():
     assert "wp.copy(self.rz, self.rz_new)" not in source
     assert "wp.copy(self.rz, self.rz_new)" not in batch_source
     assert "self.rz, self.rz_new = self.rz_new, self.rz" in batch_source
+
+
+def test_particle_compaction_scatter_publishes_count_without_extra_launch():
+    """The bounded scatter must publish its final count before dead returns."""
+    from fluidSim_warp_blender51.sim import particles
+
+    scatter_source = inspect.getsource(particles.k_compact_alive_scatter)
+    compact_source = inspect.getsource(ParticleSystem.compact)
+
+    count_write = "count_out[0] = offsets[tid] + alive[tid]"
+    assert count_write in scatter_source
+    assert scatter_source.index("if tid == n - 1:") < scatter_source.index(
+        "if alive[tid] == 0:")
+    assert "wp.launch(k_last_offset_count" not in compact_source
 
 
 def test_pcg_centralizes_required_full_grid_work_buffer_clears():
@@ -249,6 +263,7 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
 
         def compact(self, count_hint):
             self.compact_hints.append(count_hint)
+            self.update_type_counts(count_hint)
 
         def update_type_counts(self, count_hint):
             self.type_count_hints.append(count_hint)
@@ -276,8 +291,8 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
         ))
 
     assert results == [
-        (11, [19], [11], [11]),
-        (11, [19], [11], [11]),
+        (11, [19], [19], [11]),
+        (11, [19], [19], [11]),
     ]
 
 

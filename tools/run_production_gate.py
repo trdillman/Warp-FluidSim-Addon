@@ -229,6 +229,8 @@ def main(argv=None):
         "tests/blender_phase4_live_interaction_acceptance.py",
         "tests/blender_gui_acceptance.py",
         "tests/blender_viewport_2frame_gate.py",
+        "tests/blender_domain_migration_acceptance.py",
+        "tests/blender_domain_migration_equivalence.py",
     ])
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
@@ -262,6 +264,8 @@ def main(argv=None):
         ("tests/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
         ("tests/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
         ("tests/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
+        ("tests/blender_domain_migration_acceptance.py", "DOMAIN-MIGRATION-ACCEPTANCE-PASS"),
+        ("tests/blender_domain_migration_equivalence.py", "DOMAIN-MIGRATION-EQUIVALENCE-PASS"),
         ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
         ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
         ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),

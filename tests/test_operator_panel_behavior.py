@@ -124,7 +124,19 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     )
     fake_bpy.types.PropertyGroup = object
     fake_bpy.types.Text = object
-    fake_bpy.types.Object = object
+
+    # Object must accept attribute assignment so register() can attach the
+    # per-object pointers (obj.fluidsim, obj.fluidsim_domain); the builtin
+    # ``object`` rejects setattr. Material/Image stay stubbed for the domain
+    # material/image PointerProperty copy path (migration Task 3.2).
+    class _Object:  # throwaway stand-in for bpy.types.Object
+        pass
+
+    class _Scene:  # throwaway stand-in for bpy.types.Scene (register() target)
+        pass
+
+    fake_bpy.types.Object = _Object
+    fake_bpy.types.Scene = _Scene
     fake_bpy.types.Material = object
     fake_bpy.types.Image = object
     fake_bpy.path = SimpleNamespace(abspath=lambda value: value)
@@ -470,13 +482,22 @@ class _Layout:
             self.alert,
         )
 
+    def grid_flow(self, **_kwargs):
+        # `draw_property_grid` draws into a grid_flow sub-layout; model it as a
+        # child layout so props drawn through it still reach the shared root.
+        return _Layout(self._root, self._box_scope, self.enabled, self.alert)
+
     def separator(self):
         return None
 
     def prop(self, *args, **kwargs):
         if len(args) >= 2:
             self.props.append(args[1])
-            self.prop_calls.append({"name": args[1], **kwargs})
+            # ``data`` records the RNA owner (``args[0]``) the control was bound
+            # to, so tests can assert *which* datablock a panel edits (e.g. the
+            # Physics domain panel editing ``obj.fluidsim_domain`` rather than
+            # ``scene.fluidsim``). Additive: existing callers read ``name``/kwargs.
+            self.prop_calls.append({"name": args[1], "data": args[0], **kwargs})
             self.prop_scopes.append({"name": args[1], "boxes": self._box_scope})
             self._record_state(args[1])
         return None
@@ -492,7 +513,13 @@ class _Layout:
         self.labels.append({"text": text, "icon": icon})
 
     def operator(self, operator_id, **kwargs):
-        self.operators.append({"id": operator_id, **kwargs})
+        # `enabled`/`alert` record the effective greyout/red-alert state of the
+        # sub-layout the operator was drawn into (operators, unlike props, carry
+        # no `prop_states` entry). Additive keys; existing tests read `["id"]`
+        # and specific kwargs only.
+        self.operators.append(
+            {"id": operator_id, "enabled": self.enabled, "alert": self.alert, **kwargs}
+        )
         return SimpleNamespace()
 
     def popover(self, **kwargs):
@@ -1824,34 +1851,95 @@ def test_contextual_domain_actions_revalidate_object_role_and_identity(monkeypat
     )
 
 
-def test_viewport_full_workflow_is_collapsed_below_compact_status(monkeypatch):
+def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
+    """The N-panel is a HUD + lean Live Tuning shelf, not a 50-panel mirror.
+
+    D1/D5: the full Scene workflow is no longer re-hosted in the sidebar. The
+    only sidebar body panel is a shallow Live Tuning shelf exposing the four
+    per-iteration knobs bound to the solver's owner (``active_domain_settings``)
+    plus a jump back to the authoritative Properties workflow.
+    """
     _install_bpy_stub(monkeypatch)
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
     module_path = root / "blender" / "ui_view3d.py"
-    assert module_path.is_file(), "1.0.255 full View3D workflow adapter is missing"
+    assert module_path.is_file(), "View3D sidebar adapter is missing"
 
     ui_view3d = _reload_module("fluidSim_warp_blender51.blender.ui_view3d")
     panels = _reload_module("fluidSim_warp_blender51.panels")
     assert panels.FLUIDSIM_PT_viewport_status in panels.CLASSES
 
-    full_settings = ui_view3d.FLUIDSIM_VIEW3D_PT_full_settings
-    assert full_settings.bl_parent_id == "FLUIDSIM_PT_viewport_status"
-    assert full_settings.bl_options == {"DEFAULT_CLOSED"}
-
     classes = ui_view3d.VIEW3D_PANEL_CLASSES
     assert len({cls.bl_idname for cls in classes}) == len(classes)
-    mirrors = {cls.bl_idname: cls for cls in classes}
-    for source in ui_view3d.VIEW3D_SOURCE_PANELS:
-        mirror = mirrors[ui_view3d._mirror_id(source.bl_idname)]
-        source_parent = str(getattr(source, "bl_parent_id", "") or "")
-        expected_parent = (
-            ui_view3d._mirror_id(source_parent)
-            if source_parent
-            else full_settings.bl_idname
+    ids = {cls.bl_idname for cls in classes}
+
+    # The verbatim full-mirror scaffold is gone.
+    assert "FLUIDSIM_VIEW3D_PT_full_settings" not in ids
+    assert not any(
+        hasattr(ui_view3d, name)
+        for name in ("VIEW3D_SOURCE_PANELS", "_make_panel_mirror", "_mirror_id")
+    ), "the N-panel full-mirror scaffold must be removed"
+
+    # Exactly one lean shelf panel, parented under the compact status launcher.
+    tuning = ui_view3d.FLUIDSIM_VIEW3D_PT_live_tuning
+    assert tuning in classes
+    assert tuning.bl_parent_id == "FLUIDSIM_PT_viewport_status"
+
+    # N-panel nesting depth <= 3 (success-criterion §11).
+    parents = {
+        panels.FLUIDSIM_PT_viewport_status.bl_idname: str(
+            getattr(panels.FLUIDSIM_PT_viewport_status, "bl_parent_id", "") or ""
         )
-        assert mirror.bl_parent_id == expected_parent
+    }
+    for cls in classes:
+        parents[cls.bl_idname] = str(getattr(cls, "bl_parent_id", "") or "")
+
+    def depth(pid, seen=()):
+        parent = parents.get(pid, "")
+        if not parent or parent in seen:
+            return 1
+        return 1 + depth(parent, seen + (pid,))
+
+    assert max(depth(pid) for pid in parents) <= 3
+
+    # The shelf edits the solver's owner and offers the jump-back operator.
+    domain_settings = SimpleNamespace(
+        domain_object=None,
+        voxel_size=0.037,
+        particles_per_voxel=12,
+        flip_ratio=0.97,
+        particle_display_fraction=0.5,
+    )
+    scene_settings = SimpleNamespace(domain_object=None, schema_version=1)
+    domain_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim_domain=domain_settings,
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = domain_obj
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene, object=domain_obj)
+
+    panel = tuning()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    drawn = {call["name"]: call for call in panel.layout.prop_calls}
+    assert set(drawn) == {
+        "voxel_size",
+        "particles_per_voxel",
+        "flip_ratio",
+        "particle_display_fraction",
+    }, "Live Tuning must draw exactly the four per-iteration knobs"
+    for name, call in drawn.items():
+        assert call["data"] is domain_settings, (
+            f"{name} must bind to active_domain_settings (the owner the solver reads)"
+        )
+    assert any(
+        op["id"] == "fluidsim.open_scene_properties"
+        for op in panel.layout.operators
+    ), "Live Tuning must offer a jump back to the full Properties workflow"
 
 
 def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
@@ -1895,6 +1983,228 @@ def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
         ui_physics.PHYSICS_PANEL_CLASSES
     )
     assert all(cls.bl_context == "physics" for cls in ui_physics.PHYSICS_PANEL_CLASSES)
+
+
+def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
+    """The Physics domain tab is the real home: it edits ``obj.fluidsim_domain``.
+
+    Post Phase-3 migration the solver reads ``active_domain_settings`` (i.e.
+    ``obj.fluidsim_domain``); a domain control still bound to ``scene.fluidsim``
+    would write a datablock the solver ignores. The poll-gated domain mirror
+    must therefore bind its props to the object datablock, while a non-domain
+    active object leaves the mirror unpolled.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+
+    domain_settings = SimpleNamespace(
+        domain_object=None,
+        voxel_size=0.037,
+        particles_per_voxel=12,
+        max_particles=1_234_567,
+        auto_grow_particles=True,
+        topology_expand=1,
+        open_boundaries=False,
+    )
+    scene_settings = SimpleNamespace(
+        domain_object=None,
+        schema_version=1,
+        ui_mode="ADVANCED",
+        voxel_size=0.999,
+        particles_per_voxel=1,
+        max_particles=1,
+        auto_grow_particles=False,
+        topology_expand=0,
+        open_boundaries=True,
+    )
+    domain_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim_domain=domain_settings,
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = domain_obj
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene, object=domain_obj)
+
+    assert ui_physics.physics_object_kind(context) == "DOMAIN"
+
+    domain_panel = next(
+        cls for cls in ui_physics.DOMAIN_PANEL_CLASSES
+        if cls.bl_idname.endswith("scene_domain")
+    )
+    assert domain_panel.poll(context) is True
+
+    panel = domain_panel()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    voxel = [call for call in panel.layout.prop_calls if call["name"] == "voxel_size"]
+    assert voxel, "domain panel did not draw voxel_size"
+    assert voxel[0]["data"] is domain_settings, (
+        "Physics domain panel must edit obj.fluidsim_domain (the owner the solver "
+        "reads), not the stale scene.fluidsim copy"
+    )
+
+    # A non-domain active object → the domain mirror must not poll.
+    other_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        get=lambda _key, default=None: default,
+    )
+    scene_settings.domain_object = other_obj
+    assert ui_physics.physics_object_kind(context) == "NONE"
+    assert domain_panel.poll(context) is False
+
+
+def test_object_role_panel_leads_with_native_type_dropdown_then_batch_helpers(monkeypatch):
+    """Role is a native Type dropdown; the tag operators become batch helpers (D6).
+
+    The primary control is ``obj.fluidsim.role`` drawn as a dropdown (drawn
+    first), and the per-selection tag operators are retained below as
+    "Apply to Selected" batch helpers.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_object = _reload_module("fluidSim_warp_blender51.blender.ui_object")
+
+    settings = SimpleNamespace(role="NONE", enabled=False)
+    obj = SimpleNamespace(fluidsim=settings)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace())
+    context = SimpleNamespace(scene=scene, object=obj, selected_objects=(obj,))
+
+    assert ui_object.FLUIDSIM_PT_object_role.poll(context) is True
+
+    panel = ui_object.FLUIDSIM_PT_object_role()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    # Dropdown is the primary control: the first property drawn is ``role``,
+    # bound to the object's own settings.
+    assert panel.layout.props[0] == "role", (
+        "the native Type dropdown (role) must be the first control drawn"
+    )
+    role_calls = [c for c in panel.layout.prop_calls if c["name"] == "role"]
+    assert role_calls and role_calls[0]["data"] is settings
+
+    # The batch tag helpers are retained below.
+    op_ids = {op["id"] for op in panel.layout.operators}
+    assert {
+        "fluidsim.tag_liquid_emitter",
+        "fluidsim.tag_liquid_sink",
+        "fluidsim.tag_collider",
+        "fluidsim.tag_force_region",
+        "fluidsim.tag_field_source",
+    } <= op_ids, "the Apply-to-Selected batch tag operators must remain available"
+
+
+def test_add_menu_exposes_a_fluid_domain_entry(monkeypatch):
+    """The ``VIEW3D_MT_add`` draw contributes a first-class Fluid Domain entry.
+
+    Spec O4/§7 makes a domain an Add-menu citizen. The contributed operator
+    carries a stable idname and a non-empty tooltip, and the drawn menu entry
+    reads "Fluid Domain (FluidSim)".
+    """
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    op_cls = menus.FLUIDSIM_OT_add_domain
+    assert op_cls.bl_idname == "fluidsim.add_domain"
+    assert str(getattr(op_cls, "bl_description", "")).strip(), (
+        "the Add-menu operator must carry a non-empty tooltip"
+    )
+
+    menu_self = SimpleNamespace(layout=_Layout())
+    menus.draw_add_menu(menu_self, SimpleNamespace())
+    add_ops = [op for op in menu_self.layout.operators if op["id"] == "fluidsim.add_domain"]
+    assert add_ops, "VIEW3D_MT_add draw must contribute the fluidsim.add_domain entry"
+    assert add_ops[0].get("text") == "Fluid Domain (FluidSim)"
+
+
+def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypatch):
+    """Executing the operator creates a domain object and makes it the active one.
+
+    Multiple domain objects may coexist; the designated ``fluidsim.domain_object``
+    is the active one. Adding a domain therefore creates a fresh object, migrates
+    the scene settings onto it, and selects/activates it.
+    """
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    created = SimpleNamespace(name="FluidSim Domain", selected=False)
+    created.select_set = lambda value: setattr(created, "selected", value)
+    monkeypatch.setattr(menus.migration, "create_domain_object", lambda scene: created)
+    migrated = []
+    monkeypatch.setattr(
+        menus.migration,
+        "migrate_domain_settings_schema",
+        lambda scene, obj: migrated.append(obj) or True,
+    )
+
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
+    active_holder = SimpleNamespace(active=None)
+    context = SimpleNamespace(
+        scene=scene,
+        view_layer=SimpleNamespace(objects=active_holder),
+    )
+
+    result = menus.FLUIDSIM_OT_add_domain().execute(context)
+    assert result == {"FINISHED"}
+    assert migrated == [created], "the new domain's settings must be migrated onto it"
+    assert created.selected is True
+    assert active_holder.active is created, "the new domain becomes the active object"
+
+
+def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
+    """Scene-Properties domain settings follow the designated domain object.
+
+    A scene may designate any of several domain objects via
+    ``fluidsim.domain_object``; the Scene-Properties domain panel must edit
+    that object's ``fluidsim_domain`` (the datablock the solver reads), while
+    the ``domain_object`` identity selector itself stays bound to
+    ``scene.fluidsim``. Re-designating a second domain re-targets the panel --
+    that is what "multiple domains" means for this single-scene UI.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _domain_settings(voxel):
+        return SimpleNamespace(
+            domain_object=None,
+            voxel_size=voxel,
+            particles_per_voxel=8,
+            max_particles=1000,
+            auto_grow_particles=False,
+            topology_expand=0,
+            open_boundaries=False,
+        )
+
+    settings_a = _domain_settings(0.010)
+    settings_b = _domain_settings(0.020)
+    domain_a = SimpleNamespace(fluidsim_domain=settings_a)
+    domain_b = SimpleNamespace(fluidsim_domain=settings_b)
+    scene_settings = SimpleNamespace(schema_version=1, domain_object=domain_a)
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene)
+
+    panel = ui_scene.FLUIDSIM_PT_scene_domain()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    assert voxel and voxel[0]["data"] is settings_a, (
+        "domain settings must edit the designated domain object's fluidsim_domain"
+    )
+    identity = [c for c in panel.layout.prop_calls if c["name"] == "domain_object"]
+    assert identity and identity[0]["data"] is scene_settings, (
+        "the domain_object identity selector stays on scene.fluidsim"
+    )
+
+    # Re-designate the second domain object -> the panel re-targets its settings.
+    scene_settings.domain_object = domain_b
+    panel.layout = _Layout()
+    panel.draw(context)
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    assert voxel and voxel[0]["data"] is settings_b, (
+        "switching the designated domain must re-target the Scene domain settings"
+    )
 
 
 def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
@@ -2074,3 +2384,771 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     assert op.execute(context) == {"CANCELLED"}
     assert fs.max_particles == 8
     assert "changed" in fs.status.lower()
+
+
+def test_status_message_error_is_heavier_than_warning(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+
+    class _Rec:
+        def __init__(self, alert=False):
+            self.alert = alert
+            self.rows = []
+            self.labels = []
+        def row(self, align=False):
+            child = _Rec(self.alert)
+            self.rows.append(child)
+            return child
+        def label(self, text="", icon="NONE"):
+            self.labels.append({"text": text, "icon": icon, "alert": self.alert})
+
+    def _all_labels(rec):
+        found = list(rec.labels)
+        for child in rec.rows:
+            found.extend(_all_labels(child))
+        return found
+
+    warn = _Rec()
+    ui_common.draw_status_message(warn, "low memory", "WARNING")
+    err = _Rec()
+    ui_common.draw_status_message(err, "disk full", "ERROR")
+
+    warn_label = _all_labels(warn)[0]
+    err_label = _all_labels(err)[0]
+
+    assert warn_label["text"].startswith("Warning:")
+    assert warn_label["alert"] is False
+    assert err_label["text"].startswith("Error:")
+    assert err_label["alert"] is True
+    assert err_label["icon"] != warn_label["icon"]
+
+
+def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    fs = SimpleNamespace(
+        liquid_view_mode="PARTICLES",
+        surface_enabled=False,
+        whitewater_enabled=False,
+        show_overlay=True,
+        particle_display_fraction=1.0,
+        particle_display_scale=1.0,
+        particle_attribute_mode="NONE",
+    )
+    panel = ui_scene.FLUIDSIM_PT_output_display()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+    assert "show_overlay" in panel.layout.props
+
+
+def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    calls = []
+    context = SimpleNamespace(
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda op: calls.append(op) or {"RUNNING_MODAL"}
+        )
+    )
+    op = operators.FLUIDSIM_OT_setup_scene()
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert calls == [op]
+    op.layout = _Layout()
+    op.draw(context)
+    assert "mode" in op.layout.props
+
+
+def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", False, "no CUDA device"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"})
+    long_status = "Solver halted: " + "x" * 200
+    fs = SimpleNamespace(status=long_status, height_error="")
+    ctx = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    panel = ui_scene.FLUIDSIM_PT_scene_control()
+    panel.layout = _Layout()
+    panel.draw(ctx)
+    probe_ops = [op for op in panel.layout.operators
+                 if op["id"] == "fluidsim.refresh_runtime_probe"]
+    assert probe_ops and probe_ops[0].get("text")
+    joined = "".join(l["text"] for l in panel.layout.labels)
+    assert long_status[-20:] in joined
+
+
+def test_transport_keeps_step_buttons_present_but_greyed_when_not_ready(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", False, "not ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_transport()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
+
+    op_ids = [op["id"] for op in panel.layout.operators]
+    assert "fluidsim.toggle_live" in op_ids
+    # Step One + Step Many always present (anti-reflow), never hidden.
+    assert op_ids.count("fluidsim.step") == 2
+    # Both step buttons drawn under a disabled sub-layout (greyed, not hidden).
+    step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
+    assert step_ops and all(op["enabled"] is False for op in step_ops)
+
+
+def test_transport_enables_step_buttons_when_runtime_ready(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_transport()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
+
+    step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
+    assert len(step_ops) == 2 and all(op["enabled"] is True for op in step_ops)
+
+
+def test_lifecycle_marks_release_and_reset_as_destructive(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": True,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_lifecycle()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
+
+    ops = {op["id"]: op for op in panel.layout.operators}
+    assert "fluidsim.release" in ops
+    assert "fluidsim.reset" in ops
+    # Both destructive ops are drawn under a red-alert sub-layout.
+    assert ops["fluidsim.release"]["alert"] is True
+    assert ops["fluidsim.reset"]["alert"] is True
+
+
+def test_lifecycle_offers_initialize_when_not_owning_scene(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": False,
+                                       "label": "Idle", "icon": "PAUSE"})
+    panel = ui_scene.FLUIDSIM_PT_scene_lifecycle()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace())))
+
+    ops = {op["id"]: op for op in panel.layout.operators}
+    assert "fluidsim.initialize" in ops
+    # Constructive Initialize is not marked destructive.
+    assert ops["fluidsim.initialize"]["alert"] is False
+    # Nothing destructive is offered before the solver owns the scene.
+    assert "fluidsim.release" not in ops and "fluidsim.reset" not in ops
+
+
+def test_status_hub_is_read_only_with_live_strip(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "LIVE_PREVIEW", "owns_scene": True,
+                                       "label": "Live Preview", "icon": "PLAY"})
+    fs = SimpleNamespace(status="", height_error="",
+                         stat_step_ms=12.5, stat_substeps=3, stat_cfl_clamped=True)
+    panel = ui_scene.FLUIDSIM_PT_scene_control()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    labels = "".join(l["text"] for l in panel.layout.labels)
+    # State name is shown.
+    assert "Live Preview" in labels
+    # Labeled runtime recovery (from Task 0.4) is retained.
+    probe = [op for op in panel.layout.operators
+             if op["id"] == "fluidsim.refresh_runtime_probe"]
+    assert probe and probe[0].get("text")
+    # Compact one-line step_ms · substeps · CFL strip.
+    assert "·" in labels and "3" in labels and "12.5" in labels
+    # No transport or lifecycle controls leak back into the read-only hub.
+    op_ids = {op["id"] for op in panel.layout.operators}
+    assert op_ids.isdisjoint({
+        "fluidsim.toggle_live", "fluidsim.step", "fluidsim.reset",
+        "fluidsim.release", "fluidsim.initialize",
+    })
+
+
+def test_settings_group_has_ui_mode_and_quality(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    assert {"BASIC", "ADVANCED"} <= {i[0] for i in properties.UI_MODE_ITEMS}
+    assert {"DRAFT", "PREVIEW", "FINAL", "CUSTOM"} <= {i[0] for i in properties.QUALITY_ITEMS}
+    ann = properties.FLUIDSIM_PG_settings.__annotations__
+    assert "ui_mode" in ann and "quality" in ann
+
+
+def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _ctx(ui_mode):
+        return SimpleNamespace(
+            scene=SimpleNamespace(
+                fluidsim=SimpleNamespace(
+                    ui_mode=ui_mode,
+                    surface_enabled=True,
+                    whitewater_enabled=True,
+                )
+            )
+        )
+
+    basic = _ctx("BASIC")
+    adv = _ctx("ADVANCED")
+
+    # The Simulation Physics fan is the "Advanced Physics" gate: its whole
+    # subtree (the 12 sim_* panels) collapses in Basic and returns in Advanced.
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(basic) is False
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(adv) is True
+
+    # The other deep-config clusters that live under Basic-visible parents are
+    # each gated too: capacity/safety, the surface filter chain, per-stream
+    # whitewater dynamics, and the persistent-attribute inventory.
+    for cls in (
+        ui_scene.FLUIDSIM_PT_scene_capacity,
+        ui_scene.FLUIDSIM_PT_surface_filters,
+        ui_scene.FLUIDSIM_PT_whitewater_emission,
+        ui_scene.FLUIDSIM_PT_whitewater_dynamics,
+        ui_scene.FLUIDSIM_PT_output_attributes,
+    ):
+        assert cls.poll(basic) is False, cls.__name__
+        assert cls.poll(adv) is True, cls.__name__
+
+    # Feature front doors stay put in both modes so the surface never reflows out
+    # from under the user (anti-reflow invariant). Basic keeps only the toggle and
+    # the single surrogate knob these parents draw; the deep-config children (incl.
+    # the per-stream Emission grid) are Advanced-only.
+    for cls in (
+        ui_scene.FLUIDSIM_PT_scene_domain,
+        ui_scene.FLUIDSIM_PT_scene_surface,
+        ui_scene.FLUIDSIM_PT_scene_whitewater,
+    ):
+        assert cls.poll(basic) is True, cls.__name__
+        assert cls.poll(adv) is True, cls.__name__
+
+
+def test_basic_front_door_and_surrogates_are_present(monkeypatch):
+    """The Setup front door exposes the two-tier switch, and each gated feature
+    keeps a single Basic surrogate so no capability is unreachable in Basic."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    def _draw(cls, fs):
+        panel = cls()
+        panel.layout = _Layout()
+        panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+        return panel.layout
+
+    # Setup is the front door: the Interface (ui_mode) and Quality selectors sit
+    # at the top so every user meets the two-tier switch first.
+    setup = _draw(
+        ui_scene.FLUIDSIM_PT_scene_setup,
+        SimpleNamespace(ui_mode="BASIC", quality="PREVIEW", setup_mode=""),
+    )
+    assert "ui_mode" in setup.props and "quality" in setup.props
+
+    # Surface: the full filter chain is Advanced, but Basic keeps one Smoothing knob.
+    surface = _draw(
+        ui_scene.FLUIDSIM_PT_scene_surface,
+        SimpleNamespace(surface_enabled=True, surface_smooth_iterations=1),
+    )
+    assert "surface_smooth_iterations" in surface.props
+
+    # Whitewater: per-stream emission is Advanced, but Basic keeps on/off + Amount.
+    whitewater = _draw(
+        ui_scene.FLUIDSIM_PT_scene_whitewater,
+        SimpleNamespace(whitewater_enabled=True, ww_emission_rate=1.0),
+    )
+    assert "whitewater_enabled" in whitewater.props
+    assert "ww_emission_rate" in whitewater.props
+
+    # Outputs: the 33 per-attribute toggles are Advanced, but Basic keeps the
+    # Export Attributes headline enum.
+    outputs = _draw(
+        ui_scene.FLUIDSIM_PT_scene_outputs,
+        SimpleNamespace(
+            liquid_view_mode="SURFACE",
+            whitewater_enabled=False,
+            show_whitewater=False,
+            export_attributes="STANDARD",
+        ),
+    )
+    assert "export_attributes" in outputs.props
+
+
+def _default_visible_scene_panels(ui_scene, context):
+    """Scene panels shown on first open with nothing expanded — the literal
+    "default visible surface" (spec §11).  A panel qualifies when its own poll
+    and every ancestor's poll pass (Blender hides a child whose parent is hidden)
+    AND neither it nor any ancestor is DEFAULT_CLOSED (a collapsed panel shows
+    none of its properties until the user opens it).  This excludes the operational
+    Cache/Diagnostics clusters and the deep-config panels that sit one expand
+    away, leaving exactly the knobs a fresh Basic scene renders immediately."""
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    visible = []
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        node = cls
+        ok = True
+        for _ in range(20):
+            if node is None:
+                break
+            if not node.poll(context) or "DEFAULT_CLOSED" in getattr(node, "bl_options", set()):
+                ok = False
+                break
+            parent_id = getattr(node, "bl_parent_id", "")
+            node = by_id.get(parent_id) if parent_id else None
+        if ok:
+            visible.append(cls)
+    return visible
+
+
+def test_basic_mode_default_surface_is_within_budget(monkeypatch):
+    """D2 budget gate (spec §8/§11): the default visible surface is ~20-25 distinct
+    properties, down from ~200.  Enumerate every Scene panel a fresh Basic scene
+    renders on first open (ancestor-poll aware, collapsed panels excluded), union
+    the properties each draws against a fully-populated fresh domain, and assert
+    the total stays <= 25."""
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    # A fresh domain populated from every declared default.  properties.py uses
+    # `from __future__ import annotations`, so the class annotations are source
+    # strings; evaluate each in the module namespace (where the bpy-stub prop
+    # constructors return their `default=`) to recover the real out-of-box value.
+    fs = SimpleNamespace()
+    for name, annotation in properties.FLUIDSIM_PG_settings.__annotations__.items():
+        try:
+            setattr(fs, name, eval(annotation, vars(properties)))
+        except Exception:  # noqa: BLE001 - a value we can't resolve isn't a default we drew
+            pass
+    fs.ui_mode = "BASIC"
+
+    # Deterministic operational state so the always-on Transport/Lifecycle/Status
+    # panels draw without touching the GPU runtime or the scene bridge.
+    monkeypatch.setattr(
+        ui_scene, "activity_ui_state",
+        lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"},
+    )
+    monkeypatch.setattr(
+        ui_scene, "_runtime_ui_state",
+        lambda: (SimpleNamespace(), "cuda:0", True, "ready"),
+    )
+    monkeypatch.setattr(ui_scene, "pending_ui_state", lambda scene: {"action": "NONE"})
+    fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    fake_bridge.current_error = lambda scene: ""
+    fake_bridge.capacity_plan_for_scene = lambda scene: None
+    # scene_domain reads its settings owner through the bridge; this unmigrated
+    # scene resolves to scene.fluidsim, matching the real active_domain_settings.
+    fake_bridge.active_domain_settings = lambda scene: getattr(scene, "fluidsim", None)
+    monkeypatch.setitem(
+        sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
+    )
+
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    visible = _default_visible_scene_panels(ui_scene, context)
+
+    # Sanity: the Advanced physics fan, the per-attribute export inventory, and
+    # the deep-config Surface/Whitewater subtrees are all off the default surface,
+    # so the budget genuinely measures the first-open Basic view.
+    visible_ids = {cls.bl_idname for cls in visible}
+    assert "FLUIDSIM_PT_scene_simulation" not in visible_ids
+    assert "FLUIDSIM_PT_output_attributes" not in visible_ids
+    assert "FLUIDSIM_PT_scene_setup" in visible_ids and "FLUIDSIM_PT_scene_domain" in visible_ids
+
+    root = _Layout()
+    for cls in visible:
+        panel = cls()
+        panel.layout = root
+        panel.draw(context)
+
+    visible_props = set(root.props)
+    assert len(visible_props) <= 25, (
+        f"Basic default surface has {len(visible_props)} properties (budget 25): "
+        f"{sorted(visible_props)}"
+    )
+
+
+def test_settings_and_role_fields_declare_descriptions(monkeypatch):
+    """§7 tooltip gate: every user-facing ``FLUIDSIM_PG_settings`` property and
+    the object ``role`` selector must define a non-empty ``description=`` so
+    Blender renders a hover tooltip.  ``schema_version`` (internal version
+    stamp), ``active_snippet`` (internal index), and ``snippets`` (the
+    CollectionProperty backing store drawn via a template list, not as a
+    tooltip'd scalar) are internal bookkeeping, never surfaced as a field, and
+    are exempt.
+
+    properties.py uses ``from __future__ import annotations``, so each entry in
+    ``__annotations__`` is the prop-call *source string*; parse it and require a
+    non-empty string-literal ``description`` keyword.  A non-literal description
+    (a computed expression) is treated as unverifiable and therefore failing --
+    the gate wants a human-readable constant.
+    """
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    exempt = {"schema_version", "active_snippet", "snippets"}
+
+    def _literal_description(annotation_src):
+        node = ast.parse(annotation_src, mode="eval").body
+        if not isinstance(node, ast.Call):
+            return None
+        for keyword in node.keywords:
+            if keyword.arg != "description":
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+            return None
+        return None
+
+    targets = dict(properties.FLUIDSIM_PG_settings.__annotations__)
+    targets["role"] = properties.FLUIDSIM_PG_object.__annotations__["role"]
+
+    missing = sorted(
+        name
+        for name, annotation in targets.items()
+        if name not in exempt
+        and not (_literal_description(annotation) or "").strip()
+    )
+    assert not missing, f"fields missing a non-empty description=: {missing}"
+
+
+def test_draw_readout_grid_emits_labels_not_props(monkeypatch):
+    """D4 readout helper: a read-only telemetry grid is drawn as *labels*, never
+    as ``prop()`` controls (readbacks are not editable).  Missing attributes are
+    skipped -- the same compatibility tolerance ``draw_property_grid`` gives -- and
+    the box header defaults to "Readouts" but accepts a per-group title."""
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+
+    layout = _Layout()
+    data = SimpleNamespace(
+        stat_particles=1234,
+        stat_cfl_clamped=True,
+        stat_substep_limiter="CAPILLARY",
+    )
+    ui_common.draw_readout_grid(
+        layout,
+        data,
+        (
+            ("stat_particles", "Particles"),
+            ("stat_cfl_clamped", "CFL Clamped"),
+            ("stat_substep_limiter", "Selected Limiter"),
+            ("stat_absent", "Absent"),  # not on ``data`` -> skipped, no crash
+        ),
+        title="Runtime",
+    )
+
+    # Readbacks are labels, never editable properties.
+    assert layout.props == []
+    assert layout.prop_calls == []
+
+    texts = [item["text"] for item in layout.labels]
+    assert "Runtime" in texts          # box header uses the supplied title
+    assert "Particles" in texts        # key label
+    assert "1234" in texts             # int value label
+    assert "CFL Clamped" in texts
+    assert "Yes" in texts              # bool rendered human-readably
+    assert "CAPILLARY" in texts        # enum/string value passthrough
+    assert "Absent" not in texts       # a missing attribute draws nothing
+
+    # Default header when no title is supplied.
+    default_layout = _Layout()
+    ui_common.draw_readout_grid(
+        default_layout, data, (("stat_particles", "Particles"),)
+    )
+    assert "Readouts" in [item["text"] for item in default_layout.labels]
+
+
+def _diagnostics_subtree_ids(ui_scene):
+    """Ids of every Scene panel whose ancestor chain reaches Diagnostics."""
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    under = set()
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        node = cls
+        for _ in range(20):
+            if node is None:
+                break
+            if node.bl_idname == "FLUIDSIM_PT_scene_diagnostics":
+                under.add(cls.bl_idname)
+                break
+            parent_id = getattr(node, "bl_parent_id", "")
+            node = by_id.get(parent_id) if parent_id else None
+    return under
+
+
+def _stat_property_renders(draw_func):
+    """`stat_*` names a panel draws as a *property* readback -- via
+    ``layout.prop(data, "stat_...")`` or a ``stat_*`` handed to
+    ``draw_property_grid`` / ``draw_readout_grid``.  A ``stat_*`` read into a
+    synthesized *label* (e.g. the Status heartbeat's ``getattr``/f-string) is a
+    summary string, not a readback field, and is intentionally not matched."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(draw_func)))
+    hits = []
+
+    def _literal_stats(node):
+        found = []
+        for elt in getattr(node, "elts", ()):
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                if elt.value.startswith("stat_"):
+                    found.append(elt.value)
+            elif isinstance(elt, ast.Tuple) and elt.elts:  # (name, label) pairs
+                first = elt.elts[0]
+                if (
+                    isinstance(first, ast.Constant)
+                    and isinstance(first.value, str)
+                    and first.value.startswith("stat_")
+                ):
+                    found.append(first.value)
+        return found
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        fname = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if fname == "prop" and len(node.args) >= 2:
+            arg = node.args[1]
+            if (
+                isinstance(arg, ast.Constant)
+                and isinstance(arg.value, str)
+                and arg.value.startswith("stat_")
+            ):
+                hits.append(arg.value)
+        elif fname in {"draw_property_grid", "draw_readout_grid"}:
+            for arg in node.args:
+                if isinstance(arg, ast.Tuple):
+                    hits.extend(_literal_stats(arg))
+    return hits
+
+
+def test_no_control_panel_renders_a_stat_readback(monkeypatch):
+    """Success criterion (spec §11): read-only ``stat_*`` telemetry is
+    consolidated into the Diagnostics cluster.  Every Scene panel *outside* the
+    Diagnostics subtree must not render a ``stat_*`` as a property readback.  The
+    physics-workspace mirrors derive their draw from these scene sources, so a
+    clean scene surface keeps the mirrored surface clean too."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    diagnostics = _diagnostics_subtree_ids(ui_scene)
+    offenders = {}
+    for cls in ui_scene.SCENE_PANEL_CLASSES:
+        if cls.bl_idname in diagnostics:
+            continue
+        stats = _stat_property_renders(cls.draw)
+        if stats:
+            offenders[cls.bl_idname] = stats
+    assert not offenders, f"control panels still rendering stat_* readbacks: {offenders}"
+
+
+def test_diagnostics_telemetry_consolidates_readouts(monkeypatch):
+    """The relocated telemetry lands in the Diagnostics cluster and surfaces the
+    runtime / capillary / whitewater-admission stats as labels (not props).  The
+    stable ``FLUIDSIM_PT_scene_runtime_stats`` id is preserved (the GUI-acceptance
+    gate resolves the panel by that id) but now parents under Diagnostics, and the
+    standalone whitewater ``Admission Status`` control panel is gone."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    assert "FLUIDSIM_PT_whitewater_stats" not in by_id
+    telemetry = by_id["FLUIDSIM_PT_scene_runtime_stats"]
+    assert telemetry.bl_parent_id == "FLUIDSIM_PT_scene_diagnostics"
+
+    fs = SimpleNamespace(
+        stat_particles=4321,
+        stat_voxels=10,
+        stat_whitewater=3,
+        stat_step_ms=4.5,
+        stat_substeps=2,
+        stat_cfl_clamped=False,
+        stat_capillary_dt=0.001,
+        stat_capillary_substeps_required=3,
+        stat_substep_limiter="CAPILLARY",
+        stat_capillary_clamped=True,
+        stat_surface_tension_message="",
+        stat_whitewater_foam=1,
+        stat_whitewater_bubbles=1,
+        stat_whitewater_spray=1,
+        stat_whitewater_invalid_types=0,
+        stat_whitewater_required=5,
+        stat_whitewater_admitted=7,
+        stat_whitewater_dropped=2,
+        stat_whitewater_policy="CLAMP",
+        stat_whitewater_status="DROPPED",
+    )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    root = _Layout()
+    panel = telemetry()
+    panel.layout = root
+    panel.draw(context)
+
+    assert not any(str(name).startswith("stat_") for name in root.props)
+    texts = [item["text"] for item in root.labels]
+    assert "4321" in texts        # runtime particle count
+    assert "CAPILLARY" in texts   # capillary limiter readback
+    assert "7" in texts           # whitewater admitted count
+
+
+def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
+    """D9: the Advanced surface Filters panel presents the four post-process
+    passes (filter / dilate / erode / smooth) as four labeled ``box()`` sections
+    instead of a flat ten-prop list.  Each pass's controls live entirely inside
+    one box, the four boxes are distinct, and every box carries a header naming
+    its pass."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    fs = SimpleNamespace(
+        surface_filter_type="MEDIAN",
+        surface_filter_iterations=1,
+        surface_filter_strength=1.0,
+        surface_dilate_iterations=1,
+        surface_dilate_strength=1.0,
+        surface_erode_iterations=1,
+        surface_erode_strength=1.0,
+        surface_smooth_type="LAPLACIAN",
+        surface_smooth_iterations=1,
+        surface_smooth_strength=1.0,
+    )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    root = _Layout()
+    panel = ui_scene.FLUIDSIM_PT_surface_filters()
+    panel.layout = root
+    panel.draw(context)
+
+    pass_props = {
+        "filter": {
+            "surface_filter_type",
+            "surface_filter_iterations",
+            "surface_filter_strength",
+        },
+        "dilate": {"surface_dilate_iterations", "surface_dilate_strength"},
+        "erode": {"surface_erode_iterations", "surface_erode_strength"},
+        "smooth": {
+            "surface_smooth_type",
+            "surface_smooth_iterations",
+            "surface_smooth_strength",
+        },
+    }
+    scope_of = {}
+    for entry in root.prop_scopes:
+        scope_of.setdefault(entry["name"], entry["boxes"])
+
+    # Each pass lives entirely inside one (non-empty) box scope.
+    pass_scopes = {}
+    for name, members in pass_props.items():
+        scopes = {scope_of[p] for p in members if p in scope_of}
+        assert len(scopes) == 1, f"{name} pass split across boxes: {scopes}"
+        (scope,) = scopes
+        assert scope, f"{name} pass not wrapped in a box()"
+        pass_scopes[name] = scope
+
+    # The four passes occupy four distinct boxes.
+    assert len(set(pass_scopes.values())) == 4, "passes must occupy four distinct boxes"
+
+    # Every box carries a header label naming its pass.
+    texts = [item["text"].lower() for item in root.labels]
+    for header in ("filter", "dilate", "erode", "smooth"):
+        assert any(header in t for t in texts), f"missing '{header}' box header"
+
+
+def _effect_authoring_context(*, authoring: bool, item):
+    """A context whose add-on preference gates custom-effect authoring."""
+    prefs = SimpleNamespace(device="cuda:7", enable_effect_authoring=authoring)
+    stack = SimpleNamespace(items=[item], active_index=0)
+    return SimpleNamespace(
+        scene=SimpleNamespace(fluidsim_effects=stack),
+        preferences=SimpleNamespace(
+            addons={"fluidSim_warp_blender51": SimpleNamespace(preferences=prefs)}
+        ),
+    )
+
+
+def test_warp_code_workspace_gated_by_authoring_pref(monkeypatch):
+    """D9: the Warp-code authoring workspace is developer-only -- its panel polls
+    False unless the ``enable_effect_authoring`` preference is on.  The
+    artist-facing Custom Effects panel (which hosts the effect-stack UIList) stays
+    available regardless of that preference."""
+    _install_bpy_stub(monkeypatch)
+    effect_workspace = _reload_module(
+        "fluidSim_warp_blender51.blender.effect_workspace"
+    )
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    item = SimpleNamespace(
+        kernels=[SimpleNamespace()],
+        instance_id="effect-1",
+        trust_state="UNTRUSTED_IMPORTED",
+    )
+
+    off = _effect_authoring_context(authoring=False, item=item)
+    assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(off) is False
+    # The stack-hosting artist panel is never gated by the developer preference.
+    assert effect_ui.FLUIDSIM_PT_custom_effects.poll(off) is True
+
+    on = _effect_authoring_context(authoring=True, item=item)
+    assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(on) is True
+
+
+def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
+    """D9: an opted-in author can trust their own kernel edits for the session so
+    the Review & Trust dialog does not re-prompt on every edit.  Session trust is
+    scoped to the exact instance (no leak to siblings), never trumps an already
+    trusted state, and -- because the SHA gate stays -- a drifted digest is
+    flagged as re-trust-pending rather than silently executed."""
+    _install_bpy_stub(monkeypatch)
+    effect_workspace = _reload_module(
+        "fluidSim_warp_blender51.blender.effect_workspace"
+    )
+    from fluidSim_warp_blender51.sim.effects.enums import TrustState
+
+    untrusted = SimpleNamespace(
+        instance_id="effect-1", trust_state=TrustState.UNTRUSTED_IMPORTED.value
+    )
+    sibling = SimpleNamespace(
+        instance_id="effect-2", trust_state=TrustState.UNTRUSTED_IMPORTED.value
+    )
+    trusted = SimpleNamespace(
+        instance_id="effect-3", trust_state=TrustState.LOCAL_TRUSTED.value
+    )
+
+    # Default: an untrusted digest still demands the Review & Trust prompt.
+    assert effect_workspace.reprompt_trust_required(untrusted) is True
+    assert effect_workspace.session_retrust_pending(untrusted) is False
+
+    # Opting the instance into session trust suppresses the re-prompt for it...
+    effect_workspace.set_session_trust("effect-1", True)
+    assert effect_workspace.session_trust_enabled("effect-1") is True
+    assert effect_workspace.reprompt_trust_required(untrusted) is False
+    # ...but the SHA gate stays: the drifted digest is flagged, not auto-run.
+    assert effect_workspace.session_retrust_pending(untrusted) is True
+    # Scope is per-instance: the sibling still needs the prompt.
+    assert effect_workspace.reprompt_trust_required(sibling) is True
+
+    # An already-trusted effect never needs a prompt, session trust or not.
+    assert effect_workspace.reprompt_trust_required(trusted) is False
+    assert effect_workspace.session_retrust_pending(trusted) is False
+
+    effect_workspace.set_session_trust("effect-1", False)
+    assert effect_workspace.session_trust_enabled("effect-1") is False
+    assert effect_workspace.reprompt_trust_required(untrusted) is True

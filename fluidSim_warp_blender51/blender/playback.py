@@ -173,6 +173,28 @@ def suppress_frame_handlers():
         _SUPPRESS_FRAME_HANDLERS -= 1
 
 
+@contextmanager
+def suppress_mode_transitions():
+    """Suppress live/cache-playback mode side effects during a bulk field write.
+
+    Migration copies persisted settings with ``setattr``, which fires the RNA
+    update callbacks in real Blender. Copying ``live`` (or
+    ``cache_playback_enabled``) would otherwise route through
+    ``set_live_enabled``/``set_cache_playback_enabled`` and spawn a Solver
+    Session mid-load — before object transforms are evaluated — binding the
+    scene to a bogus unit-cube domain. Migration is state restoration, not a
+    user action, so its writes must not drive live transitions; both mode
+    functions already early-return while ``_IN_MODE_TRANSITION`` is set.
+    """
+    global _IN_MODE_TRANSITION
+    previous = _IN_MODE_TRANSITION
+    _IN_MODE_TRANSITION = True
+    try:
+        yield
+    finally:
+        _IN_MODE_TRANSITION = previous
+
+
 def set_live_enabled(scene, enabled: bool):
     """Apply the characterized live enable/disable transition."""
     global _IN_MODE_TRANSITION

@@ -156,6 +156,7 @@ _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
 })
 _PRESENTATION_FIELDS = frozenset({
+    "ui_mode", "quality", "export_attributes", "schema_version",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
