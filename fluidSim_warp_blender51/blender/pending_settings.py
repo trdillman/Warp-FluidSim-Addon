@@ -311,6 +311,36 @@ _RESET_OBJECT_FIELDS = frozenset({
     "emission_mode", "auto_inject_seed",
 })
 
+# Signature fields the UI authors on the DOMAIN settings block (drawn via
+# ui_scene._domain_owner == active_domain_settings, e.g. FLUIDSIM_PT_scene_domain
+# and the physics panels). Phase-3 migration COPIES these onto
+# obj.fluidsim_domain and freezes the scene.fluidsim copy, so post-migration the
+# UI writes here while scene.fluidsim is stale. Pending detection must therefore
+# resolve them through _active_settings(scene); reading raw scene.fluidsim would
+# compare the frozen ghost against itself and never see the edit (defect #5).
+# Every OTHER signature field is authored on context.scene.fluidsim by its panel
+# (domain_object identity, quality, profiling_*, height_*, *_attribute_*), so it
+# is read from scene.fluidsim below. domain_sdf_walls has no UI control; it is
+# grouped with the domain block for intent and is harmless either way.
+_DOMAIN_AUTHORED_SIGNATURE_FIELDS = frozenset({
+    "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
+    "particles_per_voxel", "topology_expand", "open_boundaries",
+    "domain_sdf_walls", "spacetime_enabled", "spacetime_reference_mass",
+    "spacetime_seed",
+})
+
+
+def _signature_owners(scene):
+    """Return ``(scene_fs, domain_fs)`` — the two datablocks signature fields
+    resolve to. ``domain_fs`` is ``active_domain_settings`` (== ``obj.fluidsim_domain``
+    on migrated scenes, else ``scene.fluidsim``)."""
+    return getattr(scene, "fluidsim", None), _active_settings(scene)
+
+
+def _field_owner(scene_fs, domain_fs, name):
+    """The datablock that AUTHORS ``name`` (matches where the UI writes)."""
+    return domain_fs if name in _DOMAIN_AUTHORED_SIGNATURE_FIELDS else scene_fs
+
 
 @dataclass
 class SceneInteractionState:
@@ -396,8 +426,8 @@ def _configured_device():
 
 
 def _reset_signature(scene):
-    fs = scene.fluidsim
-    values = [(name, _stable_value(getattr(fs, name, None)))
+    scene_fs, domain_fs = _signature_owners(scene)
+    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_RESET_SCENE_FIELDS)]
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
@@ -413,10 +443,12 @@ def _reset_signature(scene):
 
 
 def _reinit_signature(scene):
-    fs = scene.fluidsim
-    values = [(name, _stable_value(getattr(fs, name, None)))
+    scene_fs, domain_fs = _signature_owners(scene)
+    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_REINIT_SETTING_FIELDS)]
-    domain = getattr(fs, "domain_object", None)
+    # domain_object is the scene-level identity pointer (excluded from migration),
+    # so it is always read from scene.fluidsim.
+    domain = getattr(scene_fs, "domain_object", None)
     values.append(("domain_identity", _stable_value(domain)))
     try:
         values.append(("domain_bounds", _stable_value(_domain_bounds(scene))))
@@ -564,20 +596,21 @@ def _snapshot_object_reset_values(scene):
 def capture_applied_state(scene, sess=None, *, reset_only=False):
     state = _interaction_state(scene)
     reset_signature, reinit_signature = current_interaction_signatures(scene)
-    fs = scene.fluidsim
+    scene_fs, domain_fs = _signature_owners(scene)
     state.applied_reset_signature = reset_signature
     state.current_reset_signature = reset_signature
     state.current_reinit_signature = reinit_signature
-    state.reset_snapshot = {name: _snapshot_value(getattr(fs, name, None))
-                            for name in _RESET_SCENE_FIELDS}
+    state.reset_snapshot = {
+        name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
+        for name in _RESET_SCENE_FIELDS}
     state.object_reset_snapshot = _snapshot_object_reset_values(scene)
     if not reset_only:
         state.applied_reinit_signature = reinit_signature
         state.reinit_snapshot = {
-            name: _snapshot_value(getattr(fs, name, None))
+            name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
             for name in _REINIT_SETTING_FIELDS
         }
-        domain = getattr(fs, "domain_object", None)
+        domain = getattr(scene_fs, "domain_object", None)
         matrix = getattr(domain, "matrix_world", None)
         state.domain_matrix_snapshot = (
             matrix.copy() if matrix is not None and hasattr(matrix, "copy") else matrix)
@@ -837,10 +870,15 @@ def revert_pending_values(scene):
         return False
     state.suppress_callbacks = True
     try:
-        fs = scene.fluidsim
+        scene_fs, domain_fs = _signature_owners(scene)
+        # Restore each snapshot value to the datablock that AUTHORS it (matches
+        # where capture_applied_state read it and where the UI writes it), so a
+        # revert of a domain-authored edit targets obj.fluidsim_domain rather
+        # than the frozen scene.fluidsim copy on a migrated scene.
         for name, value in state.reset_snapshot.items():
-            if hasattr(fs, name):
-                setattr(fs, name, value)
+            owner = _field_owner(scene_fs, domain_fs, name)
+            if owner is not None and hasattr(owner, name):
+                setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
             pg = getattr(obj, "fluidsim", None)
             if pg is not None:
@@ -848,9 +886,10 @@ def revert_pending_values(scene):
                     if hasattr(pg, name):
                         setattr(pg, name, value)
         for name, value in state.reinit_snapshot.items():
-            if hasattr(fs, name):
-                setattr(fs, name, value)
-        domain = getattr(fs, "domain_object", None)
+            owner = _field_owner(scene_fs, domain_fs, name)
+            if owner is not None and hasattr(owner, name):
+                setattr(owner, name, value)
+        domain = getattr(scene_fs, "domain_object", None)
         if domain is not None and state.domain_matrix_snapshot is not None:
             domain.matrix_world = state.domain_matrix_snapshot
     finally:
