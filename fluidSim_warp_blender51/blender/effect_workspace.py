@@ -5,11 +5,80 @@ from __future__ import annotations
 import json
 
 import bpy
-from bpy.props import IntProperty
+from bpy.props import BoolProperty, IntProperty
 
 from . import effects
+from ..sim.effects.enums import TrustState
 from ..sim.effects.fields import FIELD_SPECS
 from ..sim.effects.source import generate_kernel_source
+
+
+_TRUSTED_STATES = frozenset(
+    {TrustState.BUILT_IN_TRUSTED.value, TrustState.LOCAL_TRUSTED.value}
+)
+
+# Instance ids the developer has opted to keep trusted across edits *this
+# session only*.  This is process-global and is cleared on ``unregister`` (add-on
+# reload / Blender restart), so it can never outlive the session or be persisted
+# into a shipped .blend.  It never bypasses the exact-SHA trust gate: it only
+# spares an opted-in author the Review & Trust dialog on every edit; the drifted
+# digest is still re-trusted through the real ``trust_effect`` path.
+_SESSION_TRUST: set[str] = set()
+
+
+def set_session_trust(instance_id: str, enabled: bool) -> None:
+    """Opt an effect instance into (or out of) session-scoped edit trust."""
+    if enabled:
+        _SESSION_TRUST.add(str(instance_id))
+    else:
+        _SESSION_TRUST.discard(str(instance_id))
+
+
+def session_trust_enabled(instance_id: str) -> bool:
+    """Whether this instance is currently opted into session edit trust."""
+    return str(instance_id) in _SESSION_TRUST
+
+
+def reprompt_trust_required(item) -> bool:
+    """Whether the Review & Trust dialog must re-prompt for this effect.
+
+    ``False`` for an already-trusted digest, and ``False`` for an instance the
+    author has opted into session trust (they acknowledged once for the session).
+    ``True`` otherwise -- a genuinely untrusted digest with no session opt-in.
+    """
+    if item.trust_state in _TRUSTED_STATES:
+        return False
+    return not session_trust_enabled(item.instance_id)
+
+
+def session_retrust_pending(item) -> bool:
+    """A session-trusted instance whose digest drifted untrusted after an edit.
+
+    The exact-SHA gate still blocks execution here; this flags that the edit
+    needs a one-click re-trust (no dialog), it never means "silently run".
+    """
+    return (
+        session_trust_enabled(item.instance_id)
+        and item.trust_state not in _TRUSTED_STATES
+    )
+
+
+def apply_session_trust(scene) -> int:
+    """Re-establish SHA-bound trust for session-trusted effects that drifted.
+
+    Records genuine local trust for each instance's exact current digest -- the
+    same operation the Review & Trust dialog performs -- for every session-trusted
+    item currently untrusted.  Returns how many were re-trusted.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None:
+        return 0
+    count = 0
+    for index, item in enumerate(stack.items):
+        if session_retrust_pending(item):
+            effects.trust_effect(scene, index)
+            count += 1
+    return count
 
 
 def _active(scene):
@@ -110,6 +179,57 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class FLUIDSIM_OT_effect_session_trust(bpy.types.Operator):
+    """Trust this effect's edits for the rest of this session (developer).
+
+    Opting in spares a kernel author the Review & Trust dialog on every edit;
+    the exact-SHA trust gate is never bypassed -- enabling records genuine local
+    trust for the current digest, and each later edit re-trusts through the same
+    path via ``apply_session_trust``.  The opt-in is process-scoped and never
+    persisted into the .blend.
+    """
+
+    bl_idname = "fluidsim.effect_session_trust"
+    bl_label = "Trust While Editing (Session)"
+    bl_options = {"INTERNAL"}
+
+    enable: BoolProperty(default=True)
+    acknowledged: BoolProperty(
+        name="I author this Warp code and accept running my local edits",
+        default=False,
+    )
+
+    def invoke(self, context, event):
+        if not self.enable:
+            return self.execute(context)
+        self.acknowledged = False
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(
+            text="Session trust runs your local edits without re-prompting.",
+            icon="ERROR",
+        )
+        layout.label(text="Trust is still SHA-bound; it clears when the add-on reloads.")
+        layout.prop(self, "acknowledged")
+
+    def execute(self, context):
+        item, _kernel = _active(context.scene)
+        if item is None:
+            return {"CANCELLED"}
+        if self.enable and not self.acknowledged:
+            self.report({"WARNING"}, "Acknowledge authorship to enable session trust")
+            return {"CANCELLED"}
+        set_session_trust(item.instance_id, self.enable)
+        if self.enable:
+            apply_session_trust(context.scene)
+            self.report({"INFO"}, "Editing this effect is trusted for this session")
+        else:
+            self.report({"INFO"}, "Session trust cleared for this effect")
+        return {"FINISHED"}
+
+
 class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
     bl_label = "Warp Code"
     bl_idname = "FLUIDSIM_PT_effect_warp_code"
@@ -121,6 +241,13 @@ class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
+        from ..preferences import effect_authoring_enabled
+
+        # D9: the Warp-code authoring workspace is a developer surface, gated on
+        # the add-on preference.  The artist-facing Custom Effects stack panel is
+        # never gated (see FLUIDSIM_PT_custom_effects.poll).
+        if not effect_authoring_enabled(context):
+            return False
         stack = getattr(getattr(context, "scene", None), "fluidsim_effects", None)
         if stack is None or not bool(stack.items):
             return False
@@ -141,6 +268,21 @@ class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
         expert = trust.column(align=True)
         expert.enabled = not item.safe_mode
         expert.prop(item, "expert_acknowledged", text="Expert Access Acknowledged")
+
+        # D9: scoped "trust while editing" so kernel authors don't re-click
+        # Review & Trust on every edit.  A pending flag means the digest drifted
+        # after an edit and needs a one-click SHA re-trust (no dialog).
+        session = trust.row(align=True)
+        if session_trust_enabled(item.instance_id):
+            if session_retrust_pending(item):
+                session.label(text="Edit changed the digest — re-trust to run.", icon="FILE_REFRESH")
+            else:
+                session.label(text="Session trust: editing this effect is trusted.", icon="UNLOCKED")
+            op = session.operator("fluidsim.effect_session_trust", text="Stop Trusting Edits")
+            op.enable = False
+        else:
+            op = session.operator("fluidsim.effect_session_trust", text="Trust While Editing", icon="UNLOCKED")
+            op.enable = True
 
         for index, kernel in enumerate(item.kernels):
             box = layout.box()
@@ -210,6 +352,7 @@ CLASSES = (
     FLUIDSIM_OT_effect_open_text_editor,
     FLUIDSIM_OT_effect_go_to_error,
     FLUIDSIM_OT_effect_show_generated_source,
+    FLUIDSIM_OT_effect_session_trust,
     FLUIDSIM_PT_effect_warp_code,
 )
 
@@ -220,6 +363,8 @@ def register():
 
 
 def unregister():
+    # D9: session edit-trust never outlives the add-on; drop it on reload.
+    _SESSION_TRUST.clear()
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)

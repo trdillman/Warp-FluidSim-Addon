@@ -3070,3 +3070,85 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
     texts = [item["text"].lower() for item in root.labels]
     for header in ("filter", "dilate", "erode", "smooth"):
         assert any(header in t for t in texts), f"missing '{header}' box header"
+
+
+def _effect_authoring_context(*, authoring: bool, item):
+    """A context whose add-on preference gates custom-effect authoring."""
+    prefs = SimpleNamespace(device="cuda:7", enable_effect_authoring=authoring)
+    stack = SimpleNamespace(items=[item], active_index=0)
+    return SimpleNamespace(
+        scene=SimpleNamespace(fluidsim_effects=stack),
+        preferences=SimpleNamespace(
+            addons={"fluidSim_warp_blender51": SimpleNamespace(preferences=prefs)}
+        ),
+    )
+
+
+def test_warp_code_workspace_gated_by_authoring_pref(monkeypatch):
+    """D9: the Warp-code authoring workspace is developer-only -- its panel polls
+    False unless the ``enable_effect_authoring`` preference is on.  The
+    artist-facing Custom Effects panel (which hosts the effect-stack UIList) stays
+    available regardless of that preference."""
+    _install_bpy_stub(monkeypatch)
+    effect_workspace = _reload_module(
+        "fluidSim_warp_blender51.blender.effect_workspace"
+    )
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    item = SimpleNamespace(
+        kernels=[SimpleNamespace()],
+        instance_id="effect-1",
+        trust_state="UNTRUSTED_IMPORTED",
+    )
+
+    off = _effect_authoring_context(authoring=False, item=item)
+    assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(off) is False
+    # The stack-hosting artist panel is never gated by the developer preference.
+    assert effect_ui.FLUIDSIM_PT_custom_effects.poll(off) is True
+
+    on = _effect_authoring_context(authoring=True, item=item)
+    assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(on) is True
+
+
+def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
+    """D9: an opted-in author can trust their own kernel edits for the session so
+    the Review & Trust dialog does not re-prompt on every edit.  Session trust is
+    scoped to the exact instance (no leak to siblings), never trumps an already
+    trusted state, and -- because the SHA gate stays -- a drifted digest is
+    flagged as re-trust-pending rather than silently executed."""
+    _install_bpy_stub(monkeypatch)
+    effect_workspace = _reload_module(
+        "fluidSim_warp_blender51.blender.effect_workspace"
+    )
+    from fluidSim_warp_blender51.sim.effects.enums import TrustState
+
+    untrusted = SimpleNamespace(
+        instance_id="effect-1", trust_state=TrustState.UNTRUSTED_IMPORTED.value
+    )
+    sibling = SimpleNamespace(
+        instance_id="effect-2", trust_state=TrustState.UNTRUSTED_IMPORTED.value
+    )
+    trusted = SimpleNamespace(
+        instance_id="effect-3", trust_state=TrustState.LOCAL_TRUSTED.value
+    )
+
+    # Default: an untrusted digest still demands the Review & Trust prompt.
+    assert effect_workspace.reprompt_trust_required(untrusted) is True
+    assert effect_workspace.session_retrust_pending(untrusted) is False
+
+    # Opting the instance into session trust suppresses the re-prompt for it...
+    effect_workspace.set_session_trust("effect-1", True)
+    assert effect_workspace.session_trust_enabled("effect-1") is True
+    assert effect_workspace.reprompt_trust_required(untrusted) is False
+    # ...but the SHA gate stays: the drifted digest is flagged, not auto-run.
+    assert effect_workspace.session_retrust_pending(untrusted) is True
+    # Scope is per-instance: the sibling still needs the prompt.
+    assert effect_workspace.reprompt_trust_required(sibling) is True
+
+    # An already-trusted effect never needs a prompt, session trust or not.
+    assert effect_workspace.reprompt_trust_required(trusted) is False
+    assert effect_workspace.session_retrust_pending(trusted) is False
+
+    effect_workspace.set_session_trust("effect-1", False)
+    assert effect_workspace.session_trust_enabled("effect-1") is False
+    assert effect_workspace.reprompt_trust_required(untrusted) is True

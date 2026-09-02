@@ -51,6 +51,18 @@ def set_configured_device(device: str) -> bool:
     return True
 
 
+def effect_authoring_enabled(context=None) -> bool:
+    """Whether the developer 'custom effect authoring' preference is enabled.
+
+    Gates the Warp-code authoring workspace only; the artist-facing Custom
+    Effects stack stays available regardless.  Defaults to ``False`` when
+    preferences are unavailable (add-on not registered, or a stub context in
+    tests), so the developer surface is opt-in and never leaks on by accident.
+    """
+    prefs = _preferences(context)
+    return bool(getattr(prefs, "enable_effect_authoring", False))
+
+
 def _apply_developer_override(prefs) -> None:
     if os.environ.get("FLUIDSIM_ALLOW_EXTERNAL_WARP") != "1":
         return
@@ -116,6 +128,15 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             "disable for quieter startup output"
         ),
     )
+    enable_effect_authoring: BoolProperty(
+        name="Enable custom effect authoring (developer)",
+        default=False,
+        description=(
+            "Show the developer Warp-code authoring workspace and per-session edit "
+            "trust for Custom Effects. Enable this only to author kernels; artists "
+            "use the effect stack, which stays available whether this is on or off"
+        ),
+    )
     developer_warp_path: StringProperty(
         name="External Warp Module Directory",
         subtype="DIR_PATH",
@@ -141,6 +162,14 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         if probe.module_file:
             box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
         box.label(text="FluidSim uses an external Warp runtime; Blender and Warp are not bundled.")
+
+        authoring = layout.box()
+        authoring.label(text="Custom Effects", icon="MODIFIER")
+        authoring.prop(self, "enable_effect_authoring")
+        authoring.label(
+            text="Off: artists use the effect stack. On: the Warp-code workspace and per-session edit trust appear.",
+            icon="INFO",
+        )
 
         if os.environ.get("FLUIDSIM_ALLOW_EXTERNAL_WARP") == "1":
             developer = layout.box()
