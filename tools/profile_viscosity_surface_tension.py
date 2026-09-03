@@ -420,6 +420,12 @@ def main(argv=None) -> int:
         default="current",
         help="legacy-host reinstates the pre-optimization host readback check "
              "at cadence 10, for a contention-matched before/after pair.")
+    parser.add_argument(
+        "--sdf-splat-mode", choices=("ball", "legacy"), default="ball",
+        help="legacy reinstates the pre-optimization full-cube particle-SDF "
+             "splat, for a contention-matched before/after pair. The two "
+             "modes are output-identical by construction; only their cost "
+             "differs.")
     parser.add_argument("--probes", action="store_true", default=True)
     parser.add_argument("--no-probes", dest="probes", action="store_false")
     parser.add_argument("--out-dir", default="artifacts/visc_st_measurement")
@@ -432,6 +438,10 @@ def main(argv=None) -> int:
     wp.init()
     if args.viscosity_convergence_check == "legacy-host":
         _install_legacy_viscosity_check()
+    # Set before any solver is constructed: SurfacePipeline reads the module
+    # default at build time, so this covers every configuration in the run.
+    from fluidSim_warp_blender51.sim import surface as _surface_mod
+    _surface_mod.set_default_sdf_splat_mode(args.sdf_splat_mode)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

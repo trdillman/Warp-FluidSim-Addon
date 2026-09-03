@@ -879,7 +879,7 @@ def test_surface_sdf(device):
         SURF.k_build_surface_sdf, dim=psys.capacity,
         inputs=[psys.position, psys.count, grid.leaf_table, grid.voxels_dim,
                 grid.leaves_dim, grid.origin, grid.voxel_size,
-                0.5 * grid.voxel_size * 1.2, 2],
+                0.5 * grid.voxel_size * 1.2, 2, 4.0 * grid.voxel_size],
         outputs=[sdf.data], device=device,
     )
     raw = sdf.data.numpy().copy()
