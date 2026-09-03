@@ -1127,6 +1127,10 @@ class FluidSolver:
         if pressure_solver is not None:
             pressure_solver.release()
 
+        viscosity_solver = getattr(self, "viscosity_solver", None)
+        if viscosity_solver is not None:
+            viscosity_solver.release()
+
         host_frame = self._host_frame_cache
         if host_frame is not None:
             host_frame.solver = None

@@ -155,6 +155,21 @@ def test_viscosity_fixed_active_work_uses_active_bounds(cuda_device, monkeypatch
             return out
         return 0.0
 
+    # The device-checked PCG path reduces with the native accumulating dot
+    # product instead of ``array_inner`` (an allocating reduction cannot be
+    # captured into a conditional graph), so the bound has to be asserted on
+    # both reduction APIs.
+    from fluidSim_warp_blender51.sim import cuda_reduction
+
+    real_dot_launch = cuda_reduction.CudaDotProduct.launch
+
+    def fake_dot_launch(self, a, b, output, count):
+        reduction_counts.append(count)
+        return real_dot_launch(self, a, b, output, count)
+
+    monkeypatch.setattr(
+        cuda_reduction.CudaDotProduct, "launch", fake_dot_launch)
+
     def fake_copy(dest, src, dest_offset=0, src_offset=0, count=0, stream=None):
         if id(dest) in tracked_copy_dests:
             copy_counts.append(count)
