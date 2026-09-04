@@ -30,8 +30,11 @@ write-volume increase, measured 12-15x per-call cost) for a particle that is
   requires an explicit user decision that has not been given.
 - **One GPU (`cuda:0`).** Never run two benchmark or profiling processes
   concurrently. Benchmarks are strictly sequential.
-- **Do not change `DEFAULT_VISCOSITY_TOLERANCE` or `DEFAULT_VISCOSITY_ITERATIONS`.**
-  That is plan item 3f, a physics decision reserved for the user.
+- **Do not change `DEFAULT_VISCOSITY_TOLERANCE`.** ~~or
+  `DEFAULT_VISCOSITY_ITERATIONS`~~ — that is plan item 3f, a physics decision
+  reserved for the user. **Partly lifted in iteration 6:** the user directed
+  the accuracy fix, and `DEFAULT_VISCOSITY_ITERATIONS` went 40 -> 64 on
+  measured evidence. The tolerance is still 1e-4 and still reserved.
 - **Evidence standard.** Every headline number must be recomputed from raw JSON
   on disk. No speedup may be claimed without a paired before/after benchmark run
   from one binary with a mode flag. Label conclusions Verified / Likely /

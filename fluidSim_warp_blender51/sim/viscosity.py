@@ -670,10 +670,18 @@ class ViscositySolver:
             dot.release()
 
     def smooth(self, vel, viscosity_field, voxel_type, dt, iterations=1):
+        """Run the Jacobi smoother, and say so.
+
+        Returns the same status shape ``solve`` does. It previously
+        returned nothing and left ``last_status`` holding whatever the
+        previous PCG solve had reported, which made the smoother look
+        like a solver that had converged.
+        """
         g = self.grid
         n = self._active_count()
         if n <= 0:
-            return
+            return self._set_viscosity_status(
+                VISCOSITY_STATUS_SKIPPED, 0.0, 0)
         for _ in range(iterations):
             wp.launch(
                 k_viscosity_smooth, dim=n,
@@ -687,6 +695,10 @@ class ViscositySolver:
             wp.copy(vel.u, self.tmp_u, count=n)
             wp.copy(vel.v, self.tmp_v, count=n)
             wp.copy(vel.w, self.tmp_w, count=n)
+        # The smoother has no residual test; it runs a fixed sweep count.
+        self.last_component_statuses = []
+        return self._set_viscosity_status(
+            VISCOSITY_STATUS_JACOBI, 0.0, int(iterations))
 
     def _solve_component(self, comp, weight, viscosity_field, voxel_type, dt,
                          use_pcg, iterations, tolerance,
@@ -914,12 +926,19 @@ class ViscositySolver:
         self.last_component_statuses = statuses
         if statuses:
             # Report the worst component so a silently non-converged solve is
-            # observable; status codes are ordered by severity.
+            # observable; status codes are ordered by severity. Iterations
+            # break ties, because when all three converge the severity alone
+            # would report whichever component happened to be first (u), and
+            # the interesting one is the slowest -- it is the component that
+            # would be truncated first if the budget were lowered.
             worst = max(
                 statuses,
-                key=lambda s: VISCOSITY_STATUS_CODES.get(
-                    s["reason"], VISCOSITY_STATUS_CODES[
-                        VISCOSITY_STATUS_INVALID]),
+                key=lambda s: (
+                    VISCOSITY_STATUS_CODES.get(
+                        s["reason"],
+                        VISCOSITY_STATUS_CODES[VISCOSITY_STATUS_INVALID]),
+                    s["iterations"],
+                ),
             )
             self.last_status = worst
             self.last_viscosity_status = worst["reason"]

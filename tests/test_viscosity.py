@@ -273,6 +273,59 @@ def test_viscosity_solve_reports_the_worst_component(monkeypatch):
             viscosity.VISCOSITY_STATUS_MAX_ITERATIONS])
 
 
+def test_viscosity_solve_reports_the_slowest_of_equally_healthy_components():
+    """When nothing failed, the useful report is the component that worked hardest.
+
+    Severity alone leaves a three-way tie, and ``max`` resolves a tie by
+    returning the first element -- always u. Measured on dam_break at a budget
+    of 64, that reported 36.4 iterations while w was really taking 41.8, which
+    understates how close the budget is to being exhausted.
+    """
+
+    solver = _fake_viscosity_solver()
+    vel = SimpleNamespace(
+        u=object(), v=object(), w=object(), wu=object(), wv=object(),
+        ww=object(),
+    )
+    scripted = [(viscosity.VISCOSITY_STATUS_CONVERGED, 36),
+                (viscosity.VISCOSITY_STATUS_CONVERGED, 35),
+                (viscosity.VISCOSITY_STATUS_CONVERGED, 42)]
+
+    def fake_component(*_args, **_kwargs):
+        reason, iterations = scripted.pop(0)
+        return solver._set_viscosity_status(reason, 1.0, iterations)
+
+    solver._solve_component = fake_component
+    status = solver.solve(vel, object(), object(), dt=0.01)
+
+    assert status["reason"] == viscosity.VISCOSITY_STATUS_CONVERGED
+    assert status["iterations"] == 42, (
+        "reported the first converged component instead of the slowest")
+
+
+def test_viscosity_severity_still_outranks_iteration_count():
+    """A failure with few iterations must not be hidden by a slow success."""
+
+    solver = _fake_viscosity_solver()
+    vel = SimpleNamespace(
+        u=object(), v=object(), w=object(), wu=object(), wv=object(),
+        ww=object(),
+    )
+    scripted = [(viscosity.VISCOSITY_STATUS_CONVERGED, 60),
+                (viscosity.VISCOSITY_STATUS_SINGULAR, 3),
+                (viscosity.VISCOSITY_STATUS_CONVERGED, 58)]
+
+    def fake_component(*_args, **_kwargs):
+        reason, iterations = scripted.pop(0)
+        return solver._set_viscosity_status(reason, 1.0, iterations)
+
+    solver._solve_component = fake_component
+    status = solver.solve(vel, object(), object(), dt=0.01)
+
+    assert status["reason"] == viscosity.VISCOSITY_STATUS_SINGULAR
+    assert status["iterations"] == 3
+
+
 def test_viscosity_status_codes_are_ordered_by_severity():
     codes = viscosity.VISCOSITY_STATUS_CODES
     assert codes[viscosity.VISCOSITY_STATUS_CONVERGED] < codes[
@@ -291,6 +344,151 @@ def test_viscosity_conditional_path_requires_a_divisible_budget():
     assert solver._conditional_supported(40, 3) is False
     assert solver._conditional_supported(0, 1) is False
 
+
+
+def test_smooth_reports_jacobi_rather_than_inheriting_a_stale_verdict():
+    """The Jacobi smoother used to leave the previous PCG status in place.
+
+    It runs a fixed sweep count with no residual test, so anything it reports
+    about convergence is borrowed from a solve that is no longer relevant. It
+    now names itself instead.
+    """
+
+    solver = _fake_viscosity_solver()
+    solver._set_viscosity_status(viscosity.VISCOSITY_STATUS_CONVERGED, 0.0, 12)
+    vel = SimpleNamespace(
+        u=object(), v=object(), w=object(), wu=object(), wv=object(),
+        ww=object(),
+    )
+    calls = []
+    module = sys.modules[viscosity.__name__]
+    real_launch, real_copy = module.wp.launch, module.wp.copy
+    module.wp.launch = lambda *a, **k: calls.append("launch")
+    module.wp.copy = lambda *a, **k: None
+    try:
+        status = solver.smooth(vel, object(), object(), dt=0.01, iterations=4)
+    finally:
+        module.wp.launch, module.wp.copy = real_launch, real_copy
+
+    assert status["reason"] == viscosity.VISCOSITY_STATUS_JACOBI
+    assert status["iterations"] == 4
+    assert solver.last_component_statuses == []
+    assert len(calls) == 4
+
+
+def test_solver_records_viscosity_convergence_the_way_it_records_pressure():
+    """A solve that exhausts its budget has to be visible in the frame stats.
+
+    ``FluidSolver._pressure`` has always written its iterations and residual
+    into ``stats``; ``FluidSolver._viscosity`` discarded the return value, so a
+    solve that was cut off every single frame reported nothing at all.
+    """
+
+    from fluidSim_warp_blender51.sim.enums import ViscositySolver as VEnum
+    from fluidSim_warp_blender51.sim.frame_runtime import FrameStats
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    class _StubSolver:
+        def solve(self, *_args, **_kwargs):
+            return {
+                "converged": False,
+                "iterations": 64,
+                "reason": viscosity.VISCOSITY_STATUS_MAX_ITERATIONS,
+                "residual": 0.25,
+            }
+
+    stub = SimpleNamespace(
+        settings=SimpleNamespace(
+            viscosity_enabled=True,
+            viscosity_from_particles=True,
+            viscosity_constant=1.0,
+            viscosity_solver=int(VEnum.PCG),
+            viscosity_iterations=64,
+            viscosity_tolerance=1.0e-4,
+        ),
+        viscosity_solver=_StubSolver(),
+        viscosity_field=SimpleNamespace(data=object()),
+        voxel_type=SimpleNamespace(data=object()),
+        vel=object(),
+        stats=FrameStats(),
+        device="cpu",
+    )
+    FluidSolver._viscosity(stub, 0.01)
+
+    assert stub.stats.viscosity_status == (
+        viscosity.VISCOSITY_STATUS_MAX_ITERATIONS)
+    assert stub.stats.viscosity_converged is False
+    assert stub.stats.viscosity_iterations == 64
+    assert stub.stats.viscosity_residual == pytest.approx(0.25)
+
+    emitted = stub.stats.as_dict()
+    assert emitted["viscosityStatus"] == (
+        viscosity.VISCOSITY_STATUS_MAX_ITERATIONS)
+    assert emitted["viscosityConverged"] is False
+    assert emitted["viscosityIterations"] == 64
+    assert emitted["viscosityResidual"] == pytest.approx(0.25)
+
+
+def test_disabled_viscosity_leaves_the_stats_defaults_alone():
+    """No solve ran, so nothing may be reported about one."""
+
+    from fluidSim_warp_blender51.sim.frame_runtime import FrameStats
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    stub = SimpleNamespace(
+        settings=SimpleNamespace(viscosity_enabled=False),
+        stats=FrameStats(),
+    )
+    FluidSolver._viscosity(stub, 0.01)
+
+    assert stub.stats.viscosity_status == "DISABLED"
+    assert stub.stats.viscosity_iterations == 0
+
+
+def test_default_iteration_budget_clears_the_measured_requirement():
+    """The default has to be able to reach the default tolerance.
+
+    Measured on dam_break at 1e-4 with the ceiling lifted to 256 (39 solves
+    per component): u converges in 35-41 iterations, v in 34-39, w in 41-46.
+    The old default of 40 sat below w's *minimum*, so w was truncated on every
+    solve. This guards the relationship, not the specific number: raising the
+    tolerance or changing the preconditioner may lower the requirement, but
+    the budget must never drop back beneath it.
+    """
+
+    import ast
+    import pathlib
+
+    from fluidSim_warp_blender51.sim import constants as C
+
+    measured_worst_case = 46
+    assert C.DEFAULT_VISCOSITY_ITERATIONS >= measured_worst_case
+    # The conditional-graph path refuses a budget the check cadence cannot
+    # divide -- the terminal check has to land exactly on the budget -- so a
+    # budget that breaks that relation silently falls back to the host loop.
+    assert C.DEFAULT_VISCOSITY_ITERATIONS % (
+        viscosity.DEFAULT_VISCOSITY_CHECK_EVERY) == 0
+    # The UI default is derived from the constant rather than duplicating it.
+    # Checked in the source rather than by import, because reaching the
+    # property object needs the bpy stub this module does not install -- and
+    # what is being guarded is the absence of a second hard-coded literal,
+    # which is a source-level property anyway.
+    source = pathlib.Path(
+        C.__file__).resolve().parent.parent / "properties.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    defaults = [
+        kw.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and getattr(node.target, "id", None) == "viscosity_iterations"
+        for kw in getattr(node.annotation, "keywords", [])
+        if kw.arg == "default"
+    ]
+    assert len(defaults) == 1
+    assert isinstance(defaults[0], ast.Attribute), (
+        "the UI default is a literal again; it must reference "
+        "DEFAULT_VISCOSITY_ITERATIONS")
+    assert defaults[0].attr == "DEFAULT_VISCOSITY_ITERATIONS"
 
 if __name__ == "__main__":
     sys.exit(run_subset([10], "VISCOSITY"))

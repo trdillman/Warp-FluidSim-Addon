@@ -427,13 +427,14 @@ def main(argv=None) -> int:
              "modes are output-identical by construction; only their cost "
              "differs.")
     parser.add_argument(
-        "--sdf-band-mode", choices=("splat", "propagate"), default="splat",
+        "--sdf-band-mode", choices=("splat", "propagate"), default=None,
         help="propagate seeds a small splat and carries its closest points "
              "out to the capillary support band instead of splatting the "
              "full radius. Unlike --sdf-splat-mode the two modes are NOT "
              "output-identical: propagate is exact for every voxel with "
              "sdf <= seed*h - particle_radius, and a strict upper bound "
-             "beyond that.")
+             "beyond that. Defaults to whatever the module ships, so the\n"
+             "tool measures the production path unless told otherwise.")
     parser.add_argument(
         "--sdf-band-seed-radius", type=int, default=None,
         help="Override the derived propagation seed radius, in voxels. The "
@@ -456,7 +457,8 @@ def main(argv=None) -> int:
     # default at build time, so this covers every configuration in the run.
     from fluidSim_warp_blender51.sim import surface as _surface_mod
     _surface_mod.set_default_sdf_splat_mode(args.sdf_splat_mode)
-    _surface_mod.set_default_sdf_band_mode(args.sdf_band_mode)
+    if args.sdf_band_mode is not None:
+        _surface_mod.set_default_sdf_band_mode(args.sdf_band_mode)
     _surface_mod.set_default_sdf_band_seed_radius(args.sdf_band_seed_radius)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

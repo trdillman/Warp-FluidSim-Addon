@@ -76,11 +76,21 @@ def test_seed_radius_covers_the_force_band_and_its_stencil():
     assert SURF.band_seed_splat_radius_voxels(0.6, 1.5, 9) == 9
 
 
-def test_propagate_is_not_the_default():
-    """The exact splat stays the shipped behaviour until this mode is chosen."""
+def test_propagate_is_the_default():
+    """Propagation ships on; the splat stays reachable as the reference path.
 
-    assert SURF.default_sdf_band_mode() == SURF.SDF_BAND_MODE_SPLAT
+    This assertion is the reverse of what it was.  Propagation is not
+    bit-identical to the splat, so it was held opt-in until the device tests
+    below had measured what "not identical" actually costs: 3.0e-5 degrees of
+    normal direction and 2e-6 relative curvature, on a field that provably
+    never underestimates.  The seed radius stays *derived* (``None``) rather
+    than pinned to a constant, so the exactness window keeps following the
+    band contract instead of drifting away from it.
+    """
+
+    assert SURF.default_sdf_band_mode() == SURF.SDF_BAND_MODE_PROPAGATE
     assert SURF.default_sdf_band_seed_radius() is None
+    assert SURF.SDF_BAND_MODE_SPLAT in SURF.SDF_BAND_MODES
 
 
 # --------------------------------------------------------------------------

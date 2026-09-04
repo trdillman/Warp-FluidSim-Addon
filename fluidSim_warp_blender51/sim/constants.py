@@ -60,7 +60,14 @@ DEFAULT_FLIP_RATIO = 0.97
 DEFAULT_GRAVITY = (0.0, 0.0, -9.81)
 DEFAULT_PRESSURE_ITERATIONS = 200
 DEFAULT_PRESSURE_TOLERANCE = 1.0e-5
-DEFAULT_VISCOSITY_ITERATIONS = 40
+# Measured on dam_break at DEFAULT_VISCOSITY_TOLERANCE with the ceiling
+# lifted to 256: u converges in 35-41 iterations, v in 34-39, w in
+# 41-46. The previous default of 40 sat below w's *minimum*, so w was
+# truncated on every solve and reported nothing about it. This is a
+# ceiling, not a workload -- the PCG loop is a device-side
+# `wp.capture_while` on the residual test, so a solve that converges at
+# 42 costs 42 iterations regardless of what the ceiling allows.
+DEFAULT_VISCOSITY_ITERATIONS = 64
 DEFAULT_VISCOSITY_TOLERANCE = 1.0e-4
 
 # Timer tracks (profiler contract): compute_0..15 phase assignment

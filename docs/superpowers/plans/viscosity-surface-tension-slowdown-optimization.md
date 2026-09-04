@@ -877,9 +877,12 @@ check) replaced them with a larger and better-founded bound. Recommended order:
   - `4ecc21a` *perf(surface): carry closest points out to the capillary band* —
     seeds only the radius the particle support justifies, records the winning
     particle per voxel, and hands those closest points outward one cell per
-    pass. **Not** output-identical, so it ships **opt-in** behind
-    `--sdf-band-mode` / `set_default_sdf_band_mode`, with a derived bound rather
-    than an assumed one.
+    pass. **Not** output-identical, so it shipped with a derived bound
+    rather than an assumed one. **Corrected in iteration 6: it shipped
+    opt-in and is now the default**, on the user's decision and on the
+    accuracy evidence below; `SDF_BAND_MODE_SPLAT` remains reachable
+    behind `--sdf-band-mode` / `set_default_sdf_band_mode` and is what
+    the accuracy tests compare against.
 - **Measured, paired, order-reversed, one GPU, sequential** (`dam_break`,
   cuda:0, 7 trials x 8 frames; every figure recomputed from the raw per-frame
   records, never from the tool's aggregate):
@@ -968,3 +971,139 @@ check) replaced them with a larger and better-founded bound. Recommended order:
     was not done.
 - Every number in this section and in item 3f was recomputed from the raw JSON
   named alongside it. Nothing is estimated.
+
+## Iteration 6 — the two reserved decisions, taken by the user and executed
+
+Two of the three decisions the previous iteration left open were returned by
+the user: *"If band propagation makes it faster and the results don't output a
+completely different behaviour of simulation then use it. As for the accuracy
+bug — fix that now."* The third (the `fix/settings-apply-domain-object` merge)
+was **not** given and remains untouched.
+
+### Decision 1 — band propagation is now the default
+
+`_default_sdf_band_mode` is `SDF_BAND_MODE_PROPAGATE`. No new measurement was
+taken for this: the condition the user set was already answered by iteration
+5's paired, order-reversed runs — **-34.08 % / -35.81 % / -34.30 %** of
+`build_sdf` with no range overlap between arms, against a capillary stencil
+that moves **3.0e-5 degrees** of normal direction and **2e-6** relative
+curvature. The field is a strict upper bound that provably never
+underestimates, and is exact everywhere the force and its stencil are read.
+
+`SDF_BAND_MODE_SPLAT` stays reachable and is still what the accuracy tests
+compare against. `tests/test_surface_sdf_band_propagate_cuda.py` had a test
+asserting propagation was *not* the default; it now asserts that it is, and
+says in its docstring why the assertion reversed.
+
+`tools/profile_viscosity_surface_tension.py` had `--sdf-band-mode` pinned to
+`default="splat"`. Left alone, every future benchmark would have measured a
+path users no longer run. It now defaults to `None` and only overrides when the
+flag is passed, so the tool measures whatever ships.
+
+### Decision 2 — the accuracy bug, and what it actually was
+
+**A correction first, because it inverts the fix.** Iteration 5's summary said
+a tolerance of 3e-4 "costs ~6 %". It does not cost 6 %, it **saves** 6.34 % —
+loosening the tolerance makes w stop *earlier* (35.68 iterations instead of
+40). Loosening would have made the delivered residual **worse** while making
+the solver's self-report honest. That is not an accuracy fix. It was recorded
+as the recommendation and it was the wrong direction.
+
+The real question was never the tolerance. It was whether w *could* reach 1e-4
+if allowed to. Measured directly, budget lifted to 256, `dam_break`, 39 solves
+per component (`visc_budget_256.json`):
+
+| component | min | max | mean | converged |
+| --- | ---: | ---: | ---: | ---: |
+| u | 35 | 41 | 36.87 | 39 / 39 |
+| v | 34 | 39 | 34.77 | 39 / 39 |
+| w | **41** | **46** | 42.33 | 39 / 39 |
+
+Every component converges when given room. The shipped ceiling of 40 sat
+**below w's minimum**, so w was truncated on every solve, and below u's
+maximum, so u was truncated on some. The solver was not failing to converge —
+it was being stopped before it could. `DEFAULT_VISCOSITY_ITERATIONS` is now
+**64**, which clears the largest count observed by 39 %.
+
+`properties.py` held a second, hard-coded `default=40` for the same setting; a
+constant changed in one place and not the other is how a default silently
+splits in two. It now references `_C.DEFAULT_VISCOSITY_ITERATIONS`, and a test
+asserts by AST that it is not a literal again.
+
+**This is a ceiling, not a workload.** The PCG loop is a device-side
+`wp.capture_while` whose condition is the residual test, so a solve that
+converges at 42 costs 42 iterations regardless of what the ceiling permits.
+Raising it buys back only the iterations that were previously being cut off.
+
+### The silence, which was the other half of the bug
+
+`ViscositySolver.solve` already built a full status dict and already picked the
+worst of the three component solves. `FluidSolver._viscosity` **discarded the
+return value entirely** — while `FluidSolver._pressure`, ten lines away, has
+always written its iterations and residual into `stats`. That asymmetry is why
+a solve that hit its ceiling on every frame of every benchmark in this whole
+plan was never once visible in the output.
+
+`FrameStats` now carries `viscosity_status`, `viscosity_converged`,
+`viscosity_iterations` and `viscosity_residual` beside the pressure pair, and
+they reach the emitted per-frame JSON as `viscosityStatus` and friends.
+
+Two smaller silences in the same family, found while doing it:
+
+- `smooth()` (the Jacobi branch) returned nothing and never touched the status,
+  so it inherited whatever the last PCG solve had said — a fixed-sweep smoother
+  with no residual test could report itself as converged. It now returns the
+  same status shape and names itself `jacobi`.
+- `solve()` picks the worst component by severity code, and `max` resolves a
+  tie by returning the *first* element — so when all three converged it
+  reported u. Measured at budget 64 that reported 36.4 iterations while w was
+  really taking 41.8, understating how close the budget was to exhaustion.
+  Iterations now break the severity tie. Severity still outranks them, so a
+  singular solve at 3 iterations is not hidden behind a healthy one at 60.
+
+### Verified by the solver's own report, on 160 emitted frames
+
+Paired, order-reversed, one GPU, sequential (budgets 40, 64, 64, 40; 5 trials x
+8 frames; `artifacts/visc_budget_price/`). Read back from the per-frame
+`viscosityStatus` field the same change added:
+
+| config | budget 40 | budget 64 |
+| --- | --- | --- |
+| `viscosity_on` | **80 / 80 frames `max_iterations`**, converged 0 | **80 / 80 `converged`**, iterations 35-42 |
+| `both_on` | **80 / 80 frames `max_iterations`**, converged 0 | **80 / 80 `converged`**, iterations 35-42 |
+| `baseline` | 80 / 80 `DISABLED`, 0 iterations | 80 / 80 `DISABLED`, 0 iterations |
+
+That is the bug and its fix stated in the solver's own words, and it is not a
+sampling artefact: it is every measured frame, in both directions.
+
+### The cost, which this experiment could not resolve — reported as such
+
+Iterations actually executed per solve rose from **111.06 to 113.07**
+(+1.81 %), from the probe's per-component means in `viscosity_on`
+(36.23/34.83/40.00 -> 36.41/34.86/41.80). That figure is solid: iteration
+counts are exact.
+
+The *time* cost is not. Both lanes came back **negative** — the probe lane at
+-9.25 % (`viscosity_on`) and -3.02 % (`both_on`), the wall lane at -2.63 % and
+-0.36 % — and more iterations cannot be faster, so the sign alone shows the
+effect is under the noise floor. The within-arm spread confirms it: the two
+budget-40 runs of `viscosity_on` differ by 10.8 % in the probe lane (25.002 vs
+22.567 ms/frame), larger than any between-arm difference. The wall-lane
+controls moved +1.43 %, +0.11 %, -7.59 % and -3.09 % on their own.
+
+**No cost figure is quoted, in either direction.** What can be said is bounded:
+1.81 % more iterations, against a solve whose iteration-sensitive half is
+~50 %, cannot plausibly exceed ~1 % — and the experiment was not able to see
+even that. Anyone who needs the number must run a longer or better-isolated
+experiment than this one.
+
+### Status of the three reserved decisions
+
+1. `fix/settings-apply-domain-object` merge — **still reserved.** Not
+   authorized, not merged, not cherry-picked. Plan item 4 stays blocked.
+2. Item 3f, tolerance and iteration budget — **taken.**
+   `DEFAULT_VISCOSITY_ITERATIONS` 40 -> 64. `DEFAULT_VISCOSITY_TOLERANCE`
+   deliberately **unchanged** at 1e-4: the fix was to reach the tolerance, not
+   to lower the bar to meet the budget.
+3. Band propagation as the default — **taken.** `_default_sdf_band_mode` is
+   `SDF_BAND_MODE_PROPAGATE`.

@@ -253,7 +253,8 @@ plan proposed. The win comes from not visiting cells, not from avoiding atomics;
 the atomic-contention model was refuted by 3a. Measured
 `-35%` of `build_sdf`, `-13%` to `-21%` of the frame in ST configs.
 
-### Task 3b — band propagation. Implemented, bounded, shipped opt-in.
+### Task 3b — band propagation. Implemented, bounded, shipped opt-in;
+### made the default in iteration 6.
 
 The splat-bounding win of 3a/3d took the *waste* out of the splat. What was
 left was not waste: surface tension reads the SDF across a support band the
@@ -300,6 +301,11 @@ bounds, so the test is not vacuous.
 
 **Left opt-in** (`default_sdf_band_mode()` is still `splat`). Flipping it
 changes physics output; that is a user decision.
+
+> **Superseded in iteration 6.** The user took that decision on this
+> evidence, and `_default_sdf_band_mode` is now `SDF_BAND_MODE_PROPAGATE`.
+> The paragraph above is kept because it records what was true when the
+> measurement was made, not because it is still true.
 
 **A refutation worth keeping.** A fused single-pass seed using a packed 64-bit
 `(distance, index)` `atomic_min` was implemented and measured *first*. On sm_89
@@ -361,7 +367,7 @@ session** (its conditional-graph win predates this loop).
 | commit | change | output-identical? |
 |---|---|---|
 | `c6ee7f7` | bound the particle-SDF splat to the ball that can win | **yes**, by construction |
-| `4ecc21a` | carry closest points out to the capillary band | no — **opt-in**, derived bound |
+| `4ecc21a` | carry closest points out to the capillary band | no — derived bound; **opt-in then, default since iteration 6** |
 
 **Measured before/after, `build_sdf` ms/frame** (each stage paired and
 order-reversed against its own baseline; the composed column is the product of
@@ -410,22 +416,27 @@ per-stage figures are **Verified**):
 - **Plan item 4**, quality-tier scaling of `viscosity_iterations`. Blocked on
   `sim/quality_contract.py`, which exists only on an unmerged branch.
 
-### Three decisions reserved for the user — none taken autonomously
+### Three decisions reserved for the user — two since taken, one still open
 
 1. **Does `fix/settings-apply-domain-object` merge to master?** Plan item 4 is
-   blocked behind it. Merging or cherry-picking from it was not authorized and
-   was not done.
-2. **Item 3f: tolerance and iteration budget.** The recommendation is 3e-4 —
-   it costs ~6 % of the viscosity solve and stops w from silently exhausting
-   its budget on every solve — but it changes simulation output, so it is not
-   a call this loop can make. `DEFAULT_VISCOSITY_TOLERANCE` and
-   `DEFAULT_VISCOSITY_ITERATIONS` are untouched. Independent of whichever
-   value is chosen, `ViscositySolver` should report convergence status the way
-   `PressureSolver` does, so under-convergence stops being silent.
-3. **Does band propagation become the default?** It is measured, bounded, and
-   tested, and it is worth roughly a third of `build_sdf` in every
-   surface-tension configuration — but it is not bit-identical to the splat, so
-   flipping `default_sdf_band_mode()` changes physics output.
+   blocked behind it. **Still reserved.** Merging or cherry-picking from it was
+   not authorized and was not done.
+2. **Item 3f: tolerance and iteration budget.** **Taken — and the
+   recommendation recorded here was wrong, so it is corrected rather than
+   quietly dropped.** 3e-4 does not *cost* ~6 % of the viscosity solve, it
+   **saves** 6.34 %: loosening the tolerance makes w stop earlier, which makes
+   the delivered residual worse while making the self-report honest. The
+   accuracy fix was the opposite move. Measured with the ceiling lifted to 256,
+   w converges at 1e-4 in 41-46 iterations and u in 35-41 — the shipped ceiling
+   of 40 sat below w's *minimum*, so w was truncated on every solve.
+   `DEFAULT_VISCOSITY_ITERATIONS` is now **64**; `DEFAULT_VISCOSITY_TOLERANCE`
+   stays at 1e-4, because the fix was to reach the tolerance rather than lower
+   the bar to the budget. The status plumbing this entry asked for was done in
+   the same change: `FluidSolver._viscosity` was discarding `solve()`'s return
+   value entirely, and now records it into `stats` the way `_pressure` does.
+3. **Does band propagation become the default?** **Taken.**
+   `_default_sdf_band_mode` is `SDF_BAND_MODE_PROPAGATE`; the splat stays
+   reachable as the reference path. See the iteration 6 section of the plan.
 
 ### Standing constraints honoured
 

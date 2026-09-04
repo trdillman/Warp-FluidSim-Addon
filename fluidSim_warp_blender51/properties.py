@@ -19,6 +19,7 @@ from bpy.props import (
     StringProperty,
 )
 
+from .sim import constants as _C
 from .sim import custom
 from .sim.enums import (
     BlendMode,
@@ -1063,7 +1064,8 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         update=_request_live,
         description="Enable to derive viscosity from each particle attribute; disable to apply the same constant Viscosity value to all liquid")
     viscosity_iterations: IntProperty(
-        name="Iterations", default=40, min=1, max=1000,
+        name="Iterations", default=_C.DEFAULT_VISCOSITY_ITERATIONS,
+        min=1, max=1000,
         update=_request_live,
         description="Cap viscosity-solver iterations; higher values can converge thick fluids more accurately at greater cost, while lower values finish faster with more residual error")
     viscosity_tolerance: FloatProperty(
