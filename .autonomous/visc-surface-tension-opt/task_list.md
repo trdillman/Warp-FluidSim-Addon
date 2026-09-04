@@ -86,18 +86,18 @@ write-volume increase, measured 12-15x per-call cost) for a particle that is
   if they mix task work with unrelated work, stage the task hunks only
   (`git add -p`) and say so in `progress.md`.
 
-- [ ] 3. **ROI item 1 — shrink the surface-tension SDF splat cost.** The largest
+- [x] 3. **ROI item 1 — shrink the surface-tension SDF splat cost.** The largest
   remaining win. Two independent sub-steps; land the safe one first.
   - [x] 3a. Implement the ball-cull ("splat") mode: keep the enlarged band
     radius but skip cells outside the ball of radius
     `far_distance + particle_radius`. This is provably output-identical, so it
     needs no accuracy budget — assert bit-identical SDF output against the
     legacy path in a test.
-  - [ ] 3b. Implement closest-point band propagation ("propagate"): splat only
+  - [x] 3b. Implement closest-point band propagation ("propagate"): splat only
     the radius the particle support justifies, recording the closest particle
     per seeded voxel, then propagate outward over active voxels so cost scales
     with active voxels (~121-131k) instead of particles x R^3 (~244k x 3375).
-  - [ ] 3c. Accuracy check, mandatory. The band must remain valid out to
+  - [x] 3c. Accuracy check, mandatory. The band must remain valid out to
     `support_voxels` — which `required_sdf_splat_radius_voxels` currently
     guarantees by construction, and propagation does not. Quantify the SDF error
     against the legacy path and assert a bound in a test. A propagation scheme
@@ -118,7 +118,7 @@ write-volume increase, measured 12-15x per-call cost) for a particle that is
   reasoning and close the item — a refuted item is a result, not a gap. Upper
   bound if mergeable: ~28 ms/frame.
 
-- [ ] 5. Re-measure the viscosity budget/tolerance knee (plan item 3f) against
+- [x] 5. Re-measure the viscosity budget/tolerance knee (plan item 3f) against
   the **post-conditional-graph** solver. The old table (-21.9 % at tol 3e-4,
   -32.9 % at tol 1e-3) was computed against the pre-fix 251 ms/frame viscosity
   configuration; viscosity now costs 22.17 ms/frame, so the absolute ceiling has
@@ -127,16 +127,16 @@ write-volume increase, measured 12-15x per-call cost) for a particle that is
   that the remaining value of 3f is accuracy (the w component still exhausts its
   budget above tolerance in 31 of 39 solves, median overshoot 2.19x), not speed.
 
-- [ ] 6. Final verification and reporting.
-  - [ ] 6a. `python -m pytest -q` — full suite green.
-  - [ ] 6b. `python tools/run_production_gate.py` — reaches `HEADLESS-GATE-PASS`.
-  - [ ] 6c. Update the plan doc's ROI table and hypothesis verdicts to match what
+- [x] 6. Final verification and reporting.
+  - [x] 6a. `python -m pytest -q` — full suite green.
+  - [x] 6b. `python tools/run_production_gate.py` — reaches `HEADLESS-GATE-PASS`.
+  - [x] 6c. Update the plan doc's ROI table and hypothesis verdicts to match what
     was actually measured. If a bound turned out wrong, correct it explicitly
     rather than quietly restating it — the plan already does this for
     hypothesis 14 and that convention should continue.
-  - [ ] 6d. Commit the surface-tension work (task-only files, same staging
+  - [x] 6d. Commit the surface-tension work (task-only files, same staging
     discipline as task 2).
-  - [ ] 6e. Write a final summary in `progress.md`: measured before/after per
+  - [x] 6e. Write a final summary in `progress.md`: measured before/after per
     config, what was refuted, what remains open, and the two decisions still
     reserved for the user (the `fix/settings-apply-domain-object` merge, and
     item 3f).

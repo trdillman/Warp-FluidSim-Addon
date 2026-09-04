@@ -608,7 +608,7 @@ device work.
 | 6 | `solver.py:2174-2175` forces a *second* rebuild per substep when whitewater is also on | **CONFIRMED.** 2.09 `build_sdf` calls/substep with ST + whitewater vs 1.09 with ST alone. |
 | 7 | "forces-net-of-ST = `compute_3 - compute_11`" (from the task brief) | **REFUTED.** `compute_11` has three call sites, only one of which nests inside forces. Use paired deltas. |
 | 8 | The capillary substep limiter does not bind at ordinary settings | **CONFIRMED, unchanged.** Every measured frame reports `substepLimiter=CFL` and `capillarySubstepsRequired=1`. |
-| 9 | ST's enlarged splat radius adds materially to `build_sdf` cost (iteration 1 ranked this "lowest priority, likely small") | **CONFIRMED and promoted to the top of the ROI list.** Splat radius 2 -> 7 = 27x per-particle write volume = a measured 12-15x per-call cost increase. Iteration 1's ranking of this item was wrong. |
+| 9 | ST's enlarged splat radius adds materially to `build_sdf` cost (iteration 1 ranked this "lowest priority, likely small") | **CONFIRMED and promoted to the top of the ROI list.** Splat radius 2 -> 7 = 27x per-particle write volume = a measured 12-15x per-call cost increase. Iteration 1's ranking of this item was wrong. **Iteration 5 correction:** the 27x write-volume model is right about where the cost is, but it implied radius-2 cost was recoverable, and it is not. The radius is not free to shrink: surface tension reads the field across a support band the particle does not reach, so the smallest radius that keeps the field exact where the force *and its stencil* are read is 4, not 2. Two changes against that floor won -35.4 % (bounding the splat to the ball that can win) and a further -34.1 % (propagating closest points out to the band); the residual gap to radius 2 is the band itself and is not an artefact. |
 | 10 | The viscosity convergence criterion is mis-scaled and therefore unreachable | **REFUTED** (iteration 3). Identical in form to pressure's, and reached within budget by 69 of 120 recorded component solves. |
 | 11 | The residual stalls — Jacobi is inadequate for this system | **REFUTED** (iteration 3). Monotone geometric decay, ~5.5 iterations per order of magnitude of `r·r`, down to machine zero (~2e-29) by iteration 400. |
 | 12 | The residual is still decreasing at iteration 40, i.e. the shipped result is under-converged (**partly addressed** in iteration 4: still true for w — 31/39 solves, median overshoot 2.19x — but it is now *reported* rather than silent) | **CONFIRMED** (iteration 3). Convergence lands at iterations 34-37; **every steady-state w-component solve (25 of 25) exhausts the budget still above tolerance**, median residual-norm overshoot 9.8 %, max 38 %. Silent: `ViscositySolver` reports no status. |
@@ -629,10 +629,11 @@ check) replaced them with a larger and better-founded bound. Recommended order:
 | rank | item | bound | basis |
 | ---: | --- | ---: | --- |
 | — | **3e** — on-device viscosity convergence check | **DONE (iteration 4). Measured -83.44 % of the viscosity-on frame, -75.98 % of both_on.** The -21.07 ms bound was a 6x underestimate; see Phase 3e. |
-| 1 | **1** — shrink the ST SDF splat radius | up to ~27-52 ms/frame in ST-on configs | measured 12-15x per-call cost from a 2->7 voxel radius |
-| 3 | **2a** — cut the ST rebuild count with whitewater on | up to ~28 ms/frame, *may be physically unmergeable* | measured 2.09 rebuilds/substep |
-| 4 | **3c** — fuse the three per-axis viscosity solves | unquantified; needs numerics review | structural |
-| — | **3f** — viscosity budget/tolerance knee | -22 % to -33 %, **or** +6 % | changes simulation output; user decision, not an optimization |
+| — | **1** — shrink the ST SDF splat cost | **DONE (iteration 5), in two parts. Measured -35.4 % of `build_sdf` from bounding the splat, then -34.1 % more from band propagation.** Composed (the product of the two measured ratios, since each stage has its own baseline), that is **-57.40 %** of `build_sdf` in `surface_tension_on`. The "~90 % of the rebuild cost" target was not reachable; see below. | paired, order-reversed benchmarks; `artifacts/sdf_splat_bounds/`, `artifacts/sdf_band_propagate/` |
+| — | **2a** — cut the ST rebuild count with whitewater on | **CLOSED (iteration 5): genuinely unmergeable.** `_g2p_advect` and `_relax` run between the two builds, so whitewater would be fed pre-advection geometry. A *reverse* candidate fell out of the analysis — reuse substep N's post-advection SDF for substep N+1's forces — which is larger, and is recorded unimplemented because it would require rekeying a fail-closed invalidation. | code analysis; no change made |
+| 1 | **3g** — the tolerance-invariant half of the viscosity solve | **NEW (iteration 5).** ~12.1 ms/frame, 50.5 % of the viscosity solve, flat across a full decade of tolerance | measured; see item 3f |
+| 2 | **3c** — fuse the three per-axis viscosity solves | unquantified; needs numerics review | structural |
+| — | **3f** — viscosity budget/tolerance knee | **RE-MEASURED (iteration 5): -7.0 % of the viscosity solve at tol 1e-3, not the projected -33 %, and invisible in the wall lane.** Now an *accuracy* decision — w hits its 40-iteration cap on every solve at the shipped tolerance | changes simulation output; user decision, not an optimization |
 | — | **3b, 3d, 2b** | closed | refuted or not-a-bug |
 
 1. **Shrink the surface-tension SDF splat radius.** Largest measured win per
@@ -646,6 +647,23 @@ check) replaced them with a larger and better-founded bound. Recommended order:
    redundant per-particle atomic writes over ~244k particles. Target: return
    the per-call cost toward the measured 0.35-0.41 ms of the splat-radius-2
    path, which would address up to ~90 % of the 30-58 ms/frame rebuild cost.
+
+   **Iteration 5: implemented, and that target was wrong — correcting it rather
+   than restating it.** The radius-2 cost is not a floor this item can reach.
+   Radius 2 is what the *particle* needs; surface tension additionally reads
+   the field across the force band and the one further cell its normal/curvature
+   stencil touches, and for `dam_break` the smallest radius that keeps those
+   values exact is 4. The band is a physics requirement, not the implementation
+   artefact the paragraph above assumed; only the *redundancy* around it was.
+   Both available reductions were taken and measured paired and order-reversed:
+   bounding the splat to the ball that can win (-35.4 % of `build_sdf`, and
+   output-identical), then seeding radius 4 and propagating closest points out
+   to radius 7 (-34.1 % more, exact inside the seeded window and a strict
+   upper bound outside it). Composed — the product of the two measured
+   ratios, because each stage was measured against its own baseline in its
+   own session — that is **-57.40 %** of `build_sdf` in
+   `surface_tension_on`, against the ~90 % the target claimed. The accuracy check the paragraph below demands was done and
+   is a derived bound, not an assumption: `tests/test_surface_sdf_band_propagate_cuda.py`.
    **Must be paired with an accuracy check** — the band must remain valid out
    to `support_voxels`, which `required_sdf_splat_radius_voxels` currently
    guarantees by construction.
@@ -701,26 +719,67 @@ check) replaced them with a larger and better-founded bound. Recommended order:
      the pressure solver's stagnation/breakdown/non-finite exits with it, which
      `ViscositySolver` currently lacks entirely.
    - 3f. **NEW — the budget/tolerance knee is a user decision, not an
-     optimization.** Measured over the 75 steady-state D3 solves, replaying the
-     recorded trajectories against alternative settings:
+     optimization. RE-MEASURED in iteration 5; the original projection below is
+     superseded.** The first table was a *replay* of recorded D3 trajectories
+     against alternative settings, taken before the conditional-graph fix. That
+     fix collapsed viscosity's absolute cost, and with it the value of trading
+     accuracy for iterations. Measured directly, on `dam_break`, cuda:0, six
+     sequential order-reversed runs (1e-4, 3e-4, 1e-3, 1e-3, 3e-4, 1e-4),
+     7 trials x 8 frames, two runs pooled per arm, no default changed:
+
+     | tolerance | viscosity solve ms/frame | residual-stall ms | remainder ms | u iters | v iters | w iters |
+     | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+     | 1e-4 (**shipped**) | 23.940 | 11.845 | 12.095 | 36.38 | 35.13 | **40.00** |
+     | 3e-4 | 22.421 | 10.391 | 12.030 | 31.10 | 29.69 | 35.68 |
+     | 1e-3 | 22.253 | 9.090 | 13.163 | 25.71 | 23.57 | 29.37 |
+
+     **The speed case for 3f is dead.** Loosening the tolerance a full decade
+     buys **-7.04 %** of the viscosity solve (23.940 -> 22.253 ms/frame), not
+     the projected -32.9 %. And even that does not reach the wall clock: over
+     the same runs the *controls* drifted +8.84 %/+9.91 % (`baseline`) and
+     +7.48 %/+7.10 % (`baseline_no_whitewater`), while the spread between the
+     two runs of the shipped arm alone was 54.574 vs 60.953 ms/frame (11.7 %).
+     Every between-arm wall difference is smaller than the within-arm spread,
+     so **the wall lane carries no usable signal for this change** and no wall
+     figure should be quoted for it.
+
+     Why the saving is so small: iterations do fall ~27 %, and that shows up
+     where expected — the residual host-sync stall, which is where the
+     on-device PCG loop's GPU time is actually waited on, drops -12.27 % /
+     -23.26 %. But that stall is only 49.5 % of the viscosity solve. The
+     remainder (launch and assembly, plus whatever GPU work trails the residual
+     read) is ~12.1 ms/frame and is **flat across tolerances** — it does not
+     care how many iterations ran. Cutting the iteration count therefore cannot
+     reach more than half the cost, and reaches well under that in practice.
+     *That flat ~12.1 ms/frame is now the larger of the two viscosity terms and
+     is a new optimization target; see ROI item 5 below.*
+
+     **What 3f is still worth deciding — accuracy, not speed.** At the shipped
+     tolerance the w component's mean stop iteration is **exactly 40.00**, the
+     budget: it hits the cap on every solve in the sample and never converges.
+     At 3e-4 the mean falls to 35.68 and at 1e-3 to 29.37, both below the cap.
+     So today's default silently under-converges w, and the cost of fixing that
+     is now under 7 % of the viscosity solve rather than the ~22 % the old table
+     implied. That materially strengthens the case for 3e-4 — but it changes
+     simulation output, so it remains a user decision.
+     **Whatever is chosen, `ViscositySolver` should report convergence status
+     the way `PressureSolver` does, so under-convergence stops being silent.**
+
+     <details><summary>Superseded pre-conditional-graph projection (replay of
+     recorded D3 trajectories, retained for the record)</summary>
 
      | setting | converged | median stop iteration | Δ ms/frame vs today |
      | --- | ---: | ---: | ---: |
-     | tolerance 1e-3 | 75/75 | 25 | **-82.68** (-32.9 %) |
-     | tolerance 3e-4 | 75/75 | 30 | **-55.12** (-21.9 %) |
-     | tolerance 1e-4 (**shipped**) | 50/75 | 35 | 0 |
+     | tolerance 1e-3 | 75/75 | 25 | -82.68 (-32.9 %) |
+     | tolerance 3e-4 | 75/75 | 30 | -55.12 (-21.9 %) |
+     | tolerance 1e-4 (shipped) | 50/75 | 35 | 0 |
      | tolerance 3e-5 | 10/75 | 40 | — |
-     | budget 40 -> 48, tolerance unchanged | 75/75 (expected; w converges at 41 in D2) | 41 | **+14.70** (+5.9 %) |
+     | budget 40 -> 48, tolerance unchanged | 75/75 (expected) | 41 | +14.70 (+5.9 %) |
 
-     These pull in opposite directions and both change simulation output, so
-     neither belongs to this optimization loop. Present them to the user as a
-     choice: today's defaults sit exactly on the knee and buy under-convergence
-     of the w component for free; honouring the stated tolerance costs ~6 %;
-     loosening the tolerance one notch (3e-4, still an RMS residual of
-     0.0003 m/s against ~0.25 m/s RMS velocities) buys ~22 % and converges every
-     solve. **Whatever is chosen, `ViscositySolver` should report convergence
-     status the way `PressureSolver` does, so under-convergence stops being
-     silent.**
+     These percentages were never wrong for the solver they described; they are
+     wrong for the solver that now ships. Raw evidence for the replacement:
+     `artifacts/visc_tolerance_knee/run{1..6}_tol*`.
+     </details>
 4. **Blocked work — quality-tier scaling of `viscosity_iterations`.** Requires
    `sim/quality_contract.py`, which is only on the unmerged
    `fix/settings-apply-domain-object` branch. Needs a user decision on merging
@@ -805,3 +864,107 @@ check) replaced them with a larger and better-founded bound. Recommended order:
   slowdowns" — is therefore NOT complete.**
 - Every number in the Phase 3e section was recomputed from the raw JSON on disk
   named there. Nothing is estimated.
+
+## Evidence and honesty accounting (iteration 5)
+
+- **Scope:** surface tension (ROI items 1 and 2a) and a re-measurement of the
+  viscosity tolerance knee (item 3f). Viscosity's solver was not touched.
+- **What shipped:** two commits.
+  - `c6ee7f7` *perf(surface): bound the particle-SDF splat to the ball that can
+    win* — narrows the splat loop analytically to the cells a particle can
+    actually claim. **Output-identical**, so the claim is exactness by
+    construction plus a paired benchmark, not a tolerance argument.
+  - `4ecc21a` *perf(surface): carry closest points out to the capillary band* —
+    seeds only the radius the particle support justifies, records the winning
+    particle per voxel, and hands those closest points outward one cell per
+    pass. **Not** output-identical, so it ships **opt-in** behind
+    `--sdf-band-mode` / `set_default_sdf_band_mode`, with a derived bound rather
+    than an assumed one.
+- **Measured, paired, order-reversed, one GPU, sequential** (`dam_break`,
+  cuda:0, 7 trials x 8 frames; every figure recomputed from the raw per-frame
+  records, never from the tool's aggregate):
+
+  | config | stage 1: bound the splat | stage 2: propagate the band | composed |
+  | --- | ---: | ---: | ---: |
+  | `surface_tension_on` | 61.551 -> 39.779 (**-35.37 %**) | 42.138 -> 27.776 (**-34.08 %**) | -57.40 % |
+  | `both_on` | 50.641 -> 32.878 (**-35.08 %**) | 31.594 -> 20.280 (**-35.81 %**) | -58.33 % |
+  | `surface_tension_on_no_whitewater` | 32.400 -> 20.743 (**-35.98 %**) | 21.430 -> 14.078 (**-34.30 %**) | -57.94 % |
+
+  The two stages are separate paired experiments
+  (`artifacts/sdf_splat_bounds/`, `artifacts/sdf_band_propagate/`), each with
+  its own baseline, run on different days. **Their absolute columns are not
+  comparable across stages** — stage 2's 42.138 ms/frame baseline is the same
+  code path as stage 1's 39.779 ms/frame result, 6 % apart on machine drift
+  alone. The composed column is therefore the *product of the two measured
+  ratios* (0.6463 x 0.6592 and so on), not an end-to-end measurement: label it
+  **Likely**. Each per-stage figure is **Verified**, with non-overlapping run
+  ranges between its arms. Arms were split by each run's own recorded `args`,
+  not by directory naming.
+- **Accuracy of the non-identical change, in the terms that matter:** over an
+  11.5k-voxel shell around the interface, normal direction moves 3.0e-5 degrees
+  and curvature 2e-6 relative. Inside the exact window the field matches the
+  splat to 3.7e-7 voxels — one float32 ulp — and **no voxel anywhere
+  underestimates**, at any seed radius tested. The guarantee is derived, not
+  hoped for: a voxel is seeded by its *true* nearest particle whenever that
+  particle lies within Chebyshev radius `seed` cells, and Chebyshev never
+  exceeds Euclidean, so every voxel with `sdf <= seed*h - r` is exact; outside
+  it every pass takes a min against another *real* particle distance, never an
+  interpolation, so the field is a strict upper bound that only falls with more
+  passes.
+- **Corrected, not quietly restated:**
+  - ROI item 1's target — "return the per-call cost toward the measured
+    0.35-0.41 ms of the splat-radius-2 path, which would address up to ~90 % of
+    the rebuild cost" — **was not reachable and was wrong in its premise.** The
+    band is a physics requirement, not an implementation artefact; the smallest
+    exact seed radius here is 4, not 2. Delivered -57.40 % of
+    `build_sdf` in `surface_tension_on`, not ~90 % of it.
+  - Hypothesis 9's 27x/12-15x model is right about *where* the cost is and
+    wrong about what could be recovered; annotated in place.
+  - Item 3f's -21.9 %/-32.9 % projections are **superseded**: re-measured
+    against the post-conditional-graph solver they are -6.3 %/-7.0 % of the
+    viscosity solve, and nothing at all in the wall lane.
+- **Refuted, and recorded so it is not retried blind:** fusing the seed pass
+  into the splat with a packed 64-bit `(distance, index)` `atomic_min`. It was
+  implemented and measured, not reasoned about — on sm_89 the contended int64
+  atomic costs **2.9-3.6x more than the 32-bit pass it removes** (seed 4, 200k
+  particles: 1.71 ms two-pass vs 5.05 ms fused). Reverted; the refutation lives
+  in `k_seed_surface_sdf_closest`'s docstring.
+- **A measurement that produced no result, reported as such:** the wall lane in
+  the tolerance sweep. The controls drifted +8.84 %/+9.91 % (`baseline`) and
+  +7.48 %/+7.10 % (`baseline_no_whitewater`) across the six runs, and the two
+  runs of the shipped arm alone differed by 11.7 % (54.574 vs 60.953 ms/frame).
+  Every between-arm difference is smaller than the within-arm spread. **No wall
+  figure is quoted for item 3f**, in either direction.
+- **New item found by measurement, not by reading code:** ~12.1 ms/frame — 50.5 %
+  of the viscosity solve — is invariant across a full decade of tolerance. It
+  is now the larger of the two viscosity terms and the largest remaining
+  viscosity lever (item 3g).
+- **Tests changed:** `tests/test_surface_sdf_band_propagate_cuda.py` (**new**,
+  23 tests). Its device tests assert the three claims above directly — never an
+  underestimate, exact inside the seeded window, monotone in pass count — and
+  the margins are non-vacuous: the curvature assertion passes with 500x room.
+  Tolerances are 1e-5 voxels (~27 float32 ulps), loose enough that differently
+  rounded hardware cannot flake them and still three orders below the ~1e-2
+  voxel error the propagation legitimately carries outside the seeded window.
+- **Tools changed:** `tools/profile_viscosity_surface_tension.py` gained
+  `--sdf-band-mode` and `--sdf-band-seed-radius` (+16 lines), so the
+  before/after pair runs from one binary with a mode flag.
+- **Suite:** `python -m pytest -q` gives **1436 passed** in 167.53 s
+  (1413 + 23 new).
+- **Gate:** `python tools/run_production_gate.py` reaches `HEADLESS-GATE-PASS`
+  (320 checks passing, 0 failing) plus `DEMO-BLEND-CHECK-PASS`.
+- **What was NOT done, and why:**
+  - The propagate path is **not the default**. Flipping it changes physics
+    output; that is the user's call, not this loop's.
+  - No viscosity default changed. `DEFAULT_VISCOSITY_TOLERANCE` and
+    `DEFAULT_VISCOSITY_ITERATIONS` are untouched; item 3f is presented as a
+    decision, not applied as an optimization.
+  - Item 2a is closed as unmergeable; the larger reverse candidate it exposed
+    (reuse substep N's post-advection SDF for substep N+1's forces) is recorded
+    and **not** implemented, because it would require rekeying a fail-closed
+    whitewater invalidation.
+  - Plan item 4 remains blocked on the unmerged
+    `fix/settings-apply-domain-object` branch. Merging it was not authorized and
+    was not done.
+- Every number in this section and in item 3f was recomputed from the raw JSON
+  named alongside it. Nothing is estimated.

@@ -252,3 +252,184 @@ in absolute terms.
 plan proposed. The win comes from not visiting cells, not from avoiding atomics;
 the atomic-contention model was refuted by 3a. Measured
 `-35%` of `build_sdf`, `-13%` to `-21%` of the frame in ST configs.
+
+### Task 3b — band propagation. Implemented, bounded, shipped opt-in.
+
+The splat-bounding win of 3a/3d took the *waste* out of the splat. What was
+left was not waste: surface tension reads the SDF across a support band the
+particle itself does not reach, and at `dam_break` settings that band forces
+radius 7 for a 0.6-voxel particle. Every particle was writing 3375 cells to
+support values it could not itself determine.
+
+So: seed only the radius the particle support justifies, record *which*
+particle won each seeded voxel, and hand those closest points outward one cell
+per pass. Cost then scales with active voxels rather than particles x R^3.
+
+**This is not output-identical, so the bound is derived rather than assumed.**
+A voxel is seeded by its *true* nearest particle whenever that particle lies
+within Chebyshev radius `seed` cells, and Chebyshev distance never exceeds
+Euclidean, so every voxel with `sdf <= seed*h - r` carries the exact value.
+`band_seed_splat_radius_voxels` sizes the seed so that window covers the force
+band *and the one further cell its normal/curvature stencil reads*. Outside the
+window, each pass takes a min against another real particle distance — never an
+interpolation — so the field is a strict upper bound that only falls with more
+passes. Never an underestimate, at any pass count.
+
+Measured (`artifacts/sdf_band_propagate/`, paired, order-reversed, 7 trials x
+8 frames, `build_sdf` ms/frame recomputed from the per-frame records):
+
+| config | splat | propagate | delta |
+|---|---:|---:|---:|
+| `surface_tension_on` | 42.138 | 27.776 | **-34.08 %** |
+| `both_on` | 31.594 | 20.280 | **-35.81 %** |
+| `surface_tension_on_no_whitewater` | 21.430 | 14.078 | **-34.30 %** |
+
+No range overlap on any of the three. The controls drifted +3.0 % to +6.6 %
+*against* the propagate arm, so the wall-lane deltas (-14.22 % / -7.37 % /
+-10.42 %) are conservative rather than flattering.
+
+**Accuracy, measured on a 60k-particle blob-and-sheet scene** (23 tests,
+`tests/test_surface_sdf_band_propagate_cuda.py`): max underestimate 3.725e-07
+voxels at every seed radius tested — one float32 ulp, i.e. zero real
+underestimates. Inside the exact window, error 1.9e-07 to 3.7e-07 voxels.
+Outside it, error falls monotonically with passes (0.0786 / 0.0565 / 0.0178 /
+0.0000 voxels at seeds 2/3/4/5), confirming convergence from above. At the
+derived seed the capillary stencil is untouched: normal direction moves
+3.0e-5 degrees, curvature 2e-6 relative — 33x and 500x inside the assertion
+bounds, so the test is not vacuous.
+
+**Left opt-in** (`default_sdf_band_mode()` is still `splat`). Flipping it
+changes physics output; that is a user decision.
+
+**A refutation worth keeping.** A fused single-pass seed using a packed 64-bit
+`(distance, index)` `atomic_min` was implemented and measured *first*. On sm_89
+the contended int64 atomic costs 2.9-3.6x more than the 32-bit pass it removes
+(seed 4, 200k particles: 1.71 ms two-pass vs 5.05 ms fused). Reverted; the
+refutation is recorded in `k_seed_surface_sdf_closest`'s docstring so it is not
+retried blind.
+
+Commit `4ecc21a`, three files, staged explicitly.
+
+### Task 5 — the viscosity tolerance knee, re-measured. The speed case is dead.
+
+Six sequential order-reversed runs (1e-4, 3e-4, 1e-3, 1e-3, 3e-4, 1e-4),
+7 trials x 8 frames, `dam_break`, cuda:0, two runs pooled per arm.
+**No default was changed** — the tolerance was passed on the command line only.
+Raw: `artifacts/visc_tolerance_knee/run{1..6}_tol*`.
+
+| tolerance | viscosity solve ms/frame | residual-stall ms | remainder ms | u iters | v iters | w iters |
+|---|---:|---:|---:|---:|---:|---:|
+| 1e-4 (**shipped**) | 23.940 | 11.845 | 12.095 | 36.38 | 35.13 | **40.00** |
+| 3e-4 | 22.421 | 10.391 | 12.030 | 31.10 | 29.69 | 35.68 |
+| 1e-3 | 22.253 | 9.090 | 13.163 | 25.71 | 23.57 | 29.37 |
+
+**The old table's -21.9 % / -32.9 % are superseded.** Measured against the
+post-conditional-graph solver, a full decade of tolerance buys **-7.04 %** of
+the viscosity solve. Those projections were never wrong for the solver they
+described; they are wrong for the solver that now ships.
+
+**And the wall lane produced no usable signal, which is reported rather than
+worked around.** The controls drifted +8.84 %/+9.91 % (`baseline`) and
++7.48 %/+7.10 % (`baseline_no_whitewater`) over the six runs, while the two
+runs of the shipped arm alone differed by 11.7 % (54.574 vs 60.953 ms/frame).
+Every between-arm difference is smaller than the within-arm spread. No wall
+figure is quoted for this item, in either direction.
+
+**Why the saving is small, and the new item that falls out of it.** Iterations
+do drop ~27 %, and that lands where expected: the residual host-sync stall —
+where the on-device PCG loop's GPU time is actually waited on — falls
+-12.27 %/-23.26 %. But that stall is only **49.5 %** of the viscosity solve.
+The remainder is ~12.1 ms/frame and is **flat across a full decade of
+tolerance**. It does not care how many iterations ran, so no iteration-count
+change can reach it. That flat half is now the larger of the two viscosity
+terms and the largest remaining viscosity lever (logged as plan item 3g).
+
+**What 3f is still worth deciding: accuracy, not speed.** At the shipped
+tolerance the w component's mean stop iteration is **exactly 40.00** — it
+exhausts its budget on every solve in the sample and never converges. At 3e-4
+the mean is 35.68, at 1e-3 it is 29.37; both converge. Today's default silently
+under-converges w, and the cost of fixing that is now under 7 % of the
+viscosity solve rather than the ~22 % the old table implied. That strengthens
+the case for 3e-4 — but it changes simulation output, so it stays a user
+decision.
+
+## Final summary — what this loop delivered
+
+**Two commits, both surface tension. Viscosity's solver was not touched this
+session** (its conditional-graph win predates this loop).
+
+| commit | change | output-identical? |
+|---|---|---|
+| `c6ee7f7` | bound the particle-SDF splat to the ball that can win | **yes**, by construction |
+| `4ecc21a` | carry closest points out to the capillary band | no — **opt-in**, derived bound |
+
+**Measured before/after, `build_sdf` ms/frame** (each stage paired and
+order-reversed against its own baseline; the composed column is the product of
+the two measured ratios, not an end-to-end run, so it is **Likely** where the
+per-stage figures are **Verified**):
+
+| config | stage 1: bound | stage 2: propagate | composed |
+|---|---:|---:|---:|
+| `surface_tension_on` | 61.551 -> 39.779 (-35.37 %) | 42.138 -> 27.776 (-34.08 %) | -57.40 % |
+| `both_on` | 50.641 -> 32.878 (-35.08 %) | 31.594 -> 20.280 (-35.81 %) | -58.33 % |
+| `surface_tension_on_no_whitewater` | 32.400 -> 20.743 (-35.98 %) | 21.430 -> 14.078 (-34.30 %) | -57.94 % |
+
+**Verification:** `python -m pytest -q` gives **1436 passed** in 167.53 s
+(1413 + 23 new). `python tools/run_production_gate.py` reaches
+**`HEADLESS-GATE-PASS`** (320 checks passing, 0 failing) plus
+`DEMO-BLEND-CHECK-PASS`.
+
+### What was refuted
+
+1. **The atomic-contention model** behind ROI item 1 (3a). Culling per cell by
+   distance was *slower*; the win came from not visiting cells at all.
+2. **A fused 64-bit packed-key seed pass.** Implemented and measured, not
+   argued about: 2.9-3.6x slower than the 32-bit pass it replaces on sm_89.
+3. **ROI item 1's "~90 % of the rebuild cost" target.** Unreachable in
+   principle, not just in practice — the radius-2 cost it aimed at is what the
+   *particle* needs, while surface tension additionally reads a band the
+   particle does not reach. The smallest exact seed radius here is 4. Delivered
+   -57.40 %.
+4. **Item 3f's -21.9 % / -32.9 % projections**, superseded by direct
+   measurement at -6.3 % / -7.0 %.
+5. **ROI item 2a**, closed as genuinely unmergeable: `_g2p_advect` and `_relax`
+   run between the two builds, so merging would feed whitewater pre-advection
+   geometry.
+
+### What remains open
+
+- **Plan item 3g (new, largest remaining viscosity lever):** ~12.1 ms/frame,
+  50.5 % of the viscosity solve, invariant across a full decade of tolerance.
+  Found by measurement, not by reading code. Not investigated.
+- **The reverse SDF-reuse candidate** exposed by task 4: reuse substep N's
+  post-advection SDF for substep N+1's forces (~2.09 -> ~1.09 builds/substep,
+  larger than item 2a ever was). Recorded, deliberately **not** implemented —
+  it requires rekeying a fail-closed whitewater invalidation, which is its own
+  scoped piece of work.
+- **Plan item 3c**, fusing the three per-axis viscosity solves. Unquantified.
+- **Plan item 4**, quality-tier scaling of `viscosity_iterations`. Blocked on
+  `sim/quality_contract.py`, which exists only on an unmerged branch.
+
+### Three decisions reserved for the user — none taken autonomously
+
+1. **Does `fix/settings-apply-domain-object` merge to master?** Plan item 4 is
+   blocked behind it. Merging or cherry-picking from it was not authorized and
+   was not done.
+2. **Item 3f: tolerance and iteration budget.** The recommendation is 3e-4 —
+   it costs ~6 % of the viscosity solve and stops w from silently exhausting
+   its budget on every solve — but it changes simulation output, so it is not
+   a call this loop can make. `DEFAULT_VISCOSITY_TOLERANCE` and
+   `DEFAULT_VISCOSITY_ITERATIONS` are untouched. Independent of whichever
+   value is chosen, `ViscositySolver` should report convergence status the way
+   `PressureSolver` does, so under-convergence stops being silent.
+3. **Does band propagation become the default?** It is measured, bounded, and
+   tested, and it is worth roughly a third of `build_sdf` in every
+   surface-tension configuration — but it is not bit-identical to the splat, so
+   flipping `default_sdf_band_mode()` changes physics output.
+
+### Standing constraints honoured
+
+One GPU throughout — every benchmark ran sequentially, never two at once.
+Every headline number in this file was recomputed from the raw JSON named
+beside it; nothing is estimated. Both commits staged an explicit file list; the
+31 unrelated dirty worktree entries were preserved untouched.
