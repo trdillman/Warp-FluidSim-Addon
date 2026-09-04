@@ -426,6 +426,20 @@ def main(argv=None) -> int:
              "splat, for a contention-matched before/after pair. The two "
              "modes are output-identical by construction; only their cost "
              "differs.")
+    parser.add_argument(
+        "--sdf-band-mode", choices=("splat", "propagate"), default="splat",
+        help="propagate seeds a small splat and carries its closest points "
+             "out to the capillary support band instead of splatting the "
+             "full radius. Unlike --sdf-splat-mode the two modes are NOT "
+             "output-identical: propagate is exact for every voxel with "
+             "sdf <= seed*h - particle_radius, and a strict upper bound "
+             "beyond that.")
+    parser.add_argument(
+        "--sdf-band-seed-radius", type=int, default=None,
+        help="Override the derived propagation seed radius, in voxels. The "
+             "derivation makes the field exact wherever the capillary force "
+             "and its derivative stencil are read; a smaller radius trades "
+             "that for speed.")
     parser.add_argument("--probes", action="store_true", default=True)
     parser.add_argument("--no-probes", dest="probes", action="store_false")
     parser.add_argument("--out-dir", default="artifacts/visc_st_measurement")
@@ -442,6 +456,8 @@ def main(argv=None) -> int:
     # default at build time, so this covers every configuration in the run.
     from fluidSim_warp_blender51.sim import surface as _surface_mod
     _surface_mod.set_default_sdf_splat_mode(args.sdf_splat_mode)
+    _surface_mod.set_default_sdf_band_mode(args.sdf_band_mode)
+    _surface_mod.set_default_sdf_band_seed_radius(args.sdf_band_seed_radius)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
