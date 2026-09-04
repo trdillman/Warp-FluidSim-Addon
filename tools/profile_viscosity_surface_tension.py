@@ -441,6 +441,15 @@ def main(argv=None) -> int:
              "derivation makes the field exact wherever the capillary force "
              "and its derivative stencil are read; a smaller radius trades "
              "that for speed.")
+    parser.add_argument(
+        "--viscosity-graph-scope", choices=("loop", "component"), default=None,
+        help="loop captures the viscosity PCG loop alone and issues its "
+             "setup and write-back call by call from the host; component "
+             "captures the whole solve as one graph. The two are "
+             "output-identical by construction -- same kernels, same order, "
+             "same arguments -- and differ only in how much host time the "
+             "launches cost. Defaults to whatever the module ships, so the "
+             "tool measures the production path unless told otherwise.")
     parser.add_argument("--probes", action="store_true", default=True)
     parser.add_argument("--no-probes", dest="probes", action="store_false")
     parser.add_argument("--out-dir", default="artifacts/visc_st_measurement")
@@ -460,6 +469,10 @@ def main(argv=None) -> int:
     if args.sdf_band_mode is not None:
         _surface_mod.set_default_sdf_band_mode(args.sdf_band_mode)
     _surface_mod.set_default_sdf_band_seed_radius(args.sdf_band_seed_radius)
+    if args.viscosity_graph_scope is not None:
+        from fluidSim_warp_blender51.sim import viscosity as _viscosity_mod
+        _viscosity_mod.set_default_viscosity_graph_scope(
+            args.viscosity_graph_scope)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

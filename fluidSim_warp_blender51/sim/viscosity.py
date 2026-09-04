@@ -70,6 +70,39 @@ VISCOSITY_STAGNATION_WINDOW = 10
 #: synchronous readback.
 DEFAULT_VISCOSITY_CHECK_EVERY = 1
 
+#: How much of a component solve the CUDA conditional graph captures.
+#:
+#: ``loop`` captures the PCG loop alone and issues the surrounding setup and
+#: write-back call by call from the host. ``component`` captures all of it.
+#: The distinction is worth a mode flag because the cost it removes is host
+#: time, not device time: measured on dam_break with viscosity on, the drain
+#: at the end of a component solve was 0.134 ms/frame -- the GPU was already
+#: idle -- while the launches bracketing the loop cost 4.911 ms/frame. Priced
+#: in isolation on the same kernels at 80k voxels, ``wp.launch`` costs ~28 us
+#: per call before any argument marshalling, and the whole bracketing sequence
+#: falls from 348 us to 13 us when it is enqueued as one graph.
+VISCOSITY_GRAPH_SCOPE_LOOP = "loop"
+VISCOSITY_GRAPH_SCOPE_COMPONENT = "component"
+VISCOSITY_GRAPH_SCOPES = (VISCOSITY_GRAPH_SCOPE_LOOP,
+                          VISCOSITY_GRAPH_SCOPE_COMPONENT)
+
+_default_viscosity_graph_scope = VISCOSITY_GRAPH_SCOPE_COMPONENT
+
+
+def set_default_viscosity_graph_scope(scope):
+    """Set the scope new ViscositySolvers use. Benchmark/diagnostic hook."""
+
+    global _default_viscosity_graph_scope
+    if scope not in VISCOSITY_GRAPH_SCOPES:
+        raise ValueError(
+            "unknown viscosity graph scope %r; expected one of %r"
+            % (scope, VISCOSITY_GRAPH_SCOPES))
+    _default_viscosity_graph_scope = scope
+
+
+def default_viscosity_graph_scope():
+    return _default_viscosity_graph_scope
+
 # Explicit smoothing path
 
 
@@ -438,6 +471,9 @@ class ViscositySolver:
     #: the 120 component solves of the dam_break benchmark there are only 24
     #: distinct combinations, because ``dt`` is ``frame_dt / substeps``
     #: (constant within a frame, and only ever a unit fraction of the frame).
+    #: ``component`` scope does not widen that: the key gains ``comp.ptr``,
+    #: which the larger body reads and writes, but ``comp`` and ``weight`` are
+    #: paired 1:1 in ``solve`` and ``weight.ptr`` was already in the key.
     _GRAPH_CAPACITY = 32
 
     def __init__(self, grid, device):
@@ -474,6 +510,7 @@ class ViscositySolver:
         self._pcg_native_available = None
         self._conditional_available = None
         self._graph_captures = 0
+        self.graph_scope = default_viscosity_graph_scope()
         self.last_pcg_native_error = ""
         self.last_pcg_execution_mode = "not_run"
         self.last_iterations = 0
@@ -589,12 +626,13 @@ class ViscositySolver:
                 return False
         return self._ensure_pcg_dot()
 
-    def _graph_key(self, n, weight, viscosity_field, voxel_type, dt,
-                   check_every, iterations, tol_sq):
+    def _graph_key(self, scope, n, weight, viscosity_field, voxel_type, dt,
+                   check_every, iterations, tol_sq, comp=None):
         g = self.grid
         return (
-            int(n), float(dt), float(g.voxel_size),
+            str(scope), int(n), float(dt), float(g.voxel_size),
             int(check_every), int(iterations), float(tol_sq),
+            None if comp is None else comp.ptr,
             weight.ptr, viscosity_field.ptr, voxel_type.ptr,
             g.leaf_table.ptr, g.leaf_coords.ptr, g.num_leaves.ptr,
         )
@@ -639,22 +677,37 @@ class ViscositySolver:
             device=self.device,
         )
 
-    def _get_pcg_conditional_graph(self, key, n, stencil, viscosity_field,
-                                   weight, voxel_type, dt, check_every,
-                                   iterations, tol_sq):
+    def _get_pcg_conditional_graph(self, key, comp, n, stencil,
+                                   viscosity_field, weight, voxel_type, dt,
+                                   check_every, iterations, tol_sq, scope):
+        """Capture, or reuse, the graphs for one solve shape.
+
+        Returns ``(entry_graph, body_graph)``. Under ``loop`` scope the entry
+        graph is the conditional loop alone and the caller issues the setup,
+        preamble and write-back itself; under ``component`` scope the entry
+        graph is the whole solve, so one ``capture_launch`` stands in for the
+        fourteen host calls that used to bracket the loop.
+        """
         graphs = self._pcg_conditional_graphs.get(key)
         if graphs is not None:
             self._pcg_conditional_graphs.move_to_end(key)
             return graphs
         wp.synchronize_device(self.device)
+        # `wp.ScopedCapture` does not nest, so the loop body has to be a
+        # finished graph before anything that embeds it can be captured.
         with wp.ScopedCapture(device=self.device) as body_capture:
             self._record_pcg_batch(
                 n, stencil, viscosity_field, weight, voxel_type, dt,
                 check_every, iterations, tol_sq)
-        with wp.ScopedCapture(device=self.device) as loop_capture:
-            wp.capture_while(condition=self._pcg_condition,
-                             while_body=body_capture.graph)
-        graphs = (loop_capture.graph, body_capture.graph)
+        with wp.ScopedCapture(device=self.device) as entry_capture:
+            if scope == VISCOSITY_GRAPH_SCOPE_COMPONENT:
+                self._record_component_body(
+                    comp, weight, viscosity_field, voxel_type, dt, n, stencil,
+                    body_capture.graph)
+            else:
+                wp.capture_while(condition=self._pcg_condition,
+                                 while_body=body_capture.graph)
+        graphs = (entry_capture.graph, body_capture.graph)
         while len(self._pcg_conditional_graphs) >= self._GRAPH_CAPACITY:
             self._pcg_conditional_graphs.popitem(last=False)
         self._pcg_conditional_graphs[key] = graphs
@@ -700,14 +753,17 @@ class ViscositySolver:
         return self._set_viscosity_status(
             VISCOSITY_STATUS_JACOBI, 0.0, int(iterations))
 
-    def _solve_component(self, comp, weight, viscosity_field, voxel_type, dt,
-                         use_pcg, iterations, tolerance,
-                         check_every=DEFAULT_VISCOSITY_CHECK_EVERY):
+    # -- recordable launch sequences -----------------------------------------
+    #
+    # The pieces of a component solve, factored out so the host-issued path and
+    # the captured `component` graph emit exactly the same calls in the same
+    # order and cannot drift apart. None of them reads back from the device,
+    # which is what makes them capturable.
+
+    def _record_setup(self, comp, weight, viscosity_field, voxel_type, dt, n,
+                      stencil):
+        """Build the right-hand side, the initial guess and the preconditioner."""
         g = self.grid
-        n = self._active_count()
-        if n <= 0:
-            return self._set_viscosity_status(VISCOSITY_STATUS_SKIPPED, 0.0, 0)
-        stencil = [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim, g.num_leaves]
         wp.launch(k_viscosity_counter_increment, dim=1, inputs=[self.counter],
                   device=self.device)
         wp.launch(
@@ -721,6 +777,105 @@ class ViscositySolver:
                     g.voxel_size, dt, self.inv_diag],
             device=self.device,
         )
+
+    def _record_pcg_initialization(self, weight, viscosity_field, voxel_type,
+                                   dt, n, stencil):
+        """r0 from the initial residual, z0 = Minv r0, p0 = z0."""
+        g = self.grid
+        wp.launch(
+            k_viscosity_apply_matrix, dim=n,
+            inputs=[self.x, viscosity_field, weight, voxel_type,
+                    *stencil, g.voxel_size, dt, self.ap],
+            device=self.device,
+        )
+        wp.launch(
+            k_viscosity_initialize_pcg, dim=n,
+            inputs=[self.rhs, self.ap, self.inv_diag, g.num_leaves, self.r],
+            device=self.device,
+        )
+        wp.launch(
+            k_viscosity_finalize_initial_residual, dim=n,
+            inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
+            device=self.device,
+        )
+        wp.launch(
+            k_viscosity_initialize_direction, dim=n,
+            inputs=[self.z, g.num_leaves, self.p_dir],
+            device=self.device,
+        )
+
+    def _record_conditional_preamble(self, n):
+        """Seed rz and arm the device-side loop guard."""
+        # The captured dot products accumulate with atomicAdd, so every target
+        # has to start at zero.
+        self._pcg_p_ap_accum.zero_()
+        self.rz_new.zero_()
+        self.rz.zero_()
+        self.residual.zero_()
+        self._pcg_dot.launch(self.r, self.z, self.rz, n)
+        wp.launch(
+            k_viscosity_prepare_pcg_conditional_loop, dim=1,
+            inputs=[self._pcg_condition, self._pcg_iterations,
+                    self._pcg_history, self._pcg_history_pos, self.residual,
+                    VISCOSITY_STAGNATION_WINDOW, self.pcg_stats],
+            device=self.device,
+        )
+
+    def _record_writeback(self, comp, weight, voxel_type, n):
+        """Write the solution back into the velocity component."""
+        g = self.grid
+        # write back with collision guard
+        wp.launch(
+            k_viscosity_apply_collision, dim=n,
+            inputs=[self.x, comp, weight, voxel_type, g.num_leaves,
+                    self.tmp_u],
+            device=self.device,
+        )
+        wp.copy(comp, self.tmp_u, count=n)
+
+    def _record_component_body(self, comp, weight, viscosity_field, voxel_type,
+                               dt, n, stencil, loop_body):
+        """The entire component solve, minus the closing status readback."""
+        self._record_setup(comp, weight, viscosity_field, voxel_type, dt, n,
+                           stencil)
+        self._record_pcg_initialization(weight, viscosity_field, voxel_type,
+                                        dt, n, stencil)
+        self._record_conditional_preamble(n)
+        wp.capture_while(condition=self._pcg_condition, while_body=loop_body)
+        self._record_writeback(comp, weight, voxel_type, n)
+
+    def _solve_component(self, comp, weight, viscosity_field, voxel_type, dt,
+                         use_pcg, iterations, tolerance,
+                         check_every=DEFAULT_VISCOSITY_CHECK_EVERY):
+        g = self.grid
+        n = self._active_count()
+        if n <= 0:
+            return self._set_viscosity_status(VISCOSITY_STATUS_SKIPPED, 0.0, 0)
+        stencil = [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim, g.num_leaves]
+        tol_sq = 0.0
+        if use_pcg:
+            check_every = max(1, int(check_every))
+            tol_sq = tolerance * tolerance * max(1, n)
+            if (self.graph_scope == VISCOSITY_GRAPH_SCOPE_COMPONENT
+                    and self._conditional_supported(iterations, check_every)):
+                try:
+                    if self._solve_pcg_conditional(
+                            comp, n, stencil, viscosity_field, weight,
+                            voxel_type, dt, check_every, iterations, tol_sq,
+                            VISCOSITY_GRAPH_SCOPE_COMPONENT):
+                        # Setup and write-back were enqueued with the loop, so
+                        # the solve is already complete.
+                        return self.last_status
+                except Exception as exc:
+                    # A capture failure must never take the simulation down.
+                    # `comp` is only written at the very end of the captured
+                    # body, so an aborted capture leaves it untouched and the
+                    # host-issued path below can redo the solve from scratch.
+                    self._conditional_available = False
+                    self.last_pcg_native_error = f"{type(exc).__name__}: {exc}"
+                    self._pcg_conditional_graphs.clear()
+        self._record_setup(comp, weight, viscosity_field, voxel_type, dt, n,
+                           stencil)
         if not use_pcg:
             # Jacobi: x_{k+1} = Minv * (b + (Minv^-1 - A) x_k) implemented via
             # residual form x += Minv*(b - A x)
@@ -751,35 +906,15 @@ class ViscositySolver:
             self._set_viscosity_status(
                 VISCOSITY_STATUS_JACOBI, 0.0, iterations)
         else:
-            wp.launch(
-                k_viscosity_apply_matrix, dim=n,
-                inputs=[self.x, viscosity_field, weight, voxel_type,
-                        *stencil, g.voxel_size, dt, self.ap],
-                device=self.device,
-            )
-            wp.launch(
-                k_viscosity_initialize_pcg, dim=n,
-                inputs=[self.rhs, self.ap, self.inv_diag, g.num_leaves, self.r],
-                device=self.device,
-            )
-            wp.launch(
-                k_viscosity_finalize_initial_residual, dim=n,
-                inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
-                device=self.device,
-            )
-            wp.launch(
-                k_viscosity_initialize_direction, dim=n,
-                inputs=[self.z, g.num_leaves, self.p_dir],
-                device=self.device,
-            )
-            check_every = max(1, int(check_every))
-            tol_sq = tolerance * tolerance * max(1, n)
+            self._record_pcg_initialization(
+                weight, viscosity_field, voxel_type, dt, n, stencil)
             solved = False
             if self._conditional_supported(iterations, check_every):
                 try:
                     solved = self._solve_pcg_conditional(
-                        n, stencil, viscosity_field, weight, voxel_type, dt,
-                        check_every, iterations, tol_sq)
+                        comp, n, stencil, viscosity_field, weight, voxel_type,
+                        dt, check_every, iterations, tol_sq,
+                        VISCOSITY_GRAPH_SCOPE_LOOP)
                 except Exception as exc:
                     # A capture failure must never take the simulation down;
                     # drop to the host-checked loop for the rest of the run.
@@ -791,43 +926,27 @@ class ViscositySolver:
                 self._solve_pcg_host(
                     n, stencil, viscosity_field, weight, voxel_type, dt,
                     check_every, iterations, tol_sq)
-        # write back with collision guard
-        wp.launch(
-            k_viscosity_apply_collision, dim=n,
-            inputs=[self.x, comp, weight, voxel_type, g.num_leaves, self.tmp_u],
-            device=self.device,
-        )
-        wp.copy(comp, self.tmp_u, count=n)
+        self._record_writeback(comp, weight, voxel_type, n)
         return self.last_status
 
-    def _solve_pcg_conditional(self, n, stencil, viscosity_field, weight,
-                               voxel_type, dt, check_every, iterations,
-                               tol_sq):
-        """Run the whole PCG loop as one CUDA conditional graph.
+    def _solve_pcg_conditional(self, comp, n, stencil, viscosity_field,
+                               weight, voxel_type, dt, check_every,
+                               iterations, tol_sq, scope):
+        """Run the PCG loop as one CUDA conditional graph.
 
         The stopping test runs on device, so no iteration costs a host stall:
         exactly one readback (``pcg_stats``) happens per component solve,
-        instead of one per convergence check.
+        instead of one per convergence check. Under ``component`` scope the
+        setup, preamble and write-back ride along inside the same graph, and
+        the caller must not issue them itself.
         """
-        key = self._graph_key(n, weight, viscosity_field, voxel_type, dt,
-                              check_every, iterations, tol_sq)
+        key = self._graph_key(scope, n, weight, viscosity_field, voxel_type,
+                              dt, check_every, iterations, tol_sq, comp=comp)
         graphs = self._get_pcg_conditional_graph(
-            key, n, stencil, viscosity_field, weight, voxel_type, dt,
-            check_every, iterations, tol_sq)
-        # The captured dot products accumulate with atomicAdd, so every target
-        # has to start at zero.
-        self._pcg_p_ap_accum.zero_()
-        self.rz_new.zero_()
-        self.rz.zero_()
-        self.residual.zero_()
-        self._pcg_dot.launch(self.r, self.z, self.rz, n)
-        wp.launch(
-            k_viscosity_prepare_pcg_conditional_loop, dim=1,
-            inputs=[self._pcg_condition, self._pcg_iterations,
-                    self._pcg_history, self._pcg_history_pos, self.residual,
-                    VISCOSITY_STAGNATION_WINDOW, self.pcg_stats],
-            device=self.device,
-        )
+            key, comp, n, stencil, viscosity_field, weight, voxel_type, dt,
+            check_every, iterations, tol_sq, scope)
+        if scope != VISCOSITY_GRAPH_SCOPE_COMPONENT:
+            self._record_conditional_preamble(n)
         wp.capture_launch(graphs[0])
         stats = self.pcg_stats.numpy()
         res_sq = float(stats[0])

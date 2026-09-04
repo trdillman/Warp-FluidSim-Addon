@@ -404,9 +404,158 @@ per-stage figures are **Verified**):
 
 ### What remains open
 
-- **Plan item 3g (new, largest remaining viscosity lever):** ~12.1 ms/frame,
-  50.5 % of the viscosity solve, invariant across a full decade of tolerance.
-  Found by measurement, not by reading code. Not investigated.
+- **Plan item 3g: implemented and measured.** See the section below; this
+  entry is kept for the investigation that sized it. The flat half is
+  host-side `wp.launch` marshalling, not GPU work. Measured three ways on `dam_break`, viscosity on,
+  8 frames after 3 warmup, 31 substeps, 93 component solves (11.62 per frame):
+
+  | bucket | ms/frame | % of `_solve_component` |
+  |---|---:|---:|
+  | wait on the device PCG loop (`pcg_stats.numpy()`) | 10.505 | 55.2 % |
+  | **the 9 `wp.launch` calls outside the loop** | **4.911** | **25.8 %** |
+  | graph-cache misses (24 of 93 lookups) | 1.233 | 6.5 % |
+  | `wp.capture_launch` | 0.730 | 3.8 % |
+  | `array.zero_()` x4 | 0.528 | 2.8 % |
+  | `wp.copy` write-back | 0.259 | 1.4 % |
+  | closing device drain | 0.134 | 0.7 % |
+  | unattributed (incl. `_pcg_dot.launch`) | 0.706 | 3.7 % |
+  | **total** | **19.030** | 100 % |
+
+  Two nested double-counts were stripped before this table: `array.numpy()`
+  calls `wp.copy` internally, and the seven `[capture]` launches run inside
+  `graph lookup MISS`. What remains closes to 3.7 %.
+
+  The graph-cache-thrash hypothesis was **refuted**. `_graph_key` does carry
+  `int(n)` and `float(dt)`, and the key set does churn -- 24 distinct keys and
+  a 25.8 % miss rate over 8 frames, against an LRU that reached its 32-entry
+  capacity -- but a miss costs only 0.470 ms and the whole line is 6.5 %.
+
+  The cause is that the closing device drain is **0.134 ms/frame**. The GPU
+  is not busy; the host is. Priced out of the simulation on the real kernels
+  at N = 80 000 (400 reps x 7 trials):
+
+  | case | median host us/call |
+  |---|---:|
+  | `wp.launch`, 1 arg, `dim=1` | 27.86 |
+  | `wp.launch`, 10 args, `dim=N` | 52.74 |
+  | the 9-call setup + write-back sequence | 347.97 |
+  | **the same sequence as one captured graph** | **12.92** |
+
+  So the fixed floor is ~28 us per `wp.launch` regardless of the work, and
+  argument marshalling roughly doubles it for the wide stencil kernels. This
+  is the same disease the conditional graph already cured for the inner loop,
+  left untreated on either side of it.
+
+  **The sized fix:** extend the captured region from the PCG loop alone to the
+  whole component solve, so setup and write-back are enqueued with the loop
+  instead of issued call by call. Isolated, that is 347.97 -> 12.92 us, i.e.
+  4.043 -> 0.150 ms/frame at 11.62 solves/frame. The two methods do not cover
+  an identical call set -- in situ the nine launches are the seven pre-loop
+  ones plus `k_viscosity_prepare_pcg_conditional_loop` and
+  `k_viscosity_apply_collision`, totalling 4.911 ms/frame, while the isolated
+  sequence swaps the first of those two for the `wp.copy` -- so the two
+  corroborate to about 18 % rather than repeat each other. Expect
+  roughly 4 to 5 ms/frame, ~25 % of the viscosity solve. `array.zero_()` and
+  the `wp.copy` are capturable too, worth another ~0.8 ms/frame.
+
+  **What has to be checked before claiming it:** the capture already keys on
+  `n` and `dt`, so setup carries no new key material, but a larger captured
+  body makes each of the 24 misses/8 frames more expensive, and that has to be
+  paid out of the 4-5 ms before any net figure is honest. `_active_count()`
+  and the status readback stay outside the capture. No speedup may be quoted
+  without a paired, order-reversed before/after from one binary with a mode
+  flag.
+
+## Plan item 3g — implemented, and what it actually bought
+
+The captured region now extends from the PCG loop alone to the whole component
+solve. Setup, the conditional preamble, the loop and the write-back are
+enqueued as one graph, so a component solve costs one `wp.capture_launch`
+where it used to cost sixteen host calls.
+
+`sim/viscosity.py` gains a mode flag, `VISCOSITY_GRAPH_SCOPE_LOOP` and
+`VISCOSITY_GRAPH_SCOPE_COMPONENT`, defaulting to `component`, reachable from
+the profiler as `--viscosity-graph-scope`. The flag exists so before and after
+can be measured from **one binary**, which is what the evidence rule above
+demands; it is not a user-facing setting.
+
+### The measurement
+
+Eight runs of `tools/profile_viscosity_surface_tension.py` at its defaults
+(dam_break, 8 frames after 3 warmup, 3 trials, all six configurations),
+arranged as four order-reversed pairs — loop/comp, comp/loop, comp/loop,
+loop/comp — run strictly sequentially on the one GPU.
+
+**Whole-frame step time produced no usable magnitude, and is not quoted as
+one.** The same failure as item 3f: across these eight runs the untouched
+`baseline` configuration moves by more than the effect, and the three
+configurations with viscosity *switched off* — which this flag cannot reach —
+moved by up to 25 % within a single pair. Whole-frame time agrees on
+**direction** (component faster in 4 of 4 pairs on `both_on`, 3 of 4 on
+`viscosity_on`) and nothing more.
+
+**The profiler already records the thing itself**, so that is what is quoted.
+`probes[cfg].viscosity.component_ms` is host wall time inside
+`_solve_component`, and `component_calls` is exactly `3 x substepsMeasured`
+in all eight runs (one solve per velocity axis per substep). Host launch cost
+is precisely what item 3g removes and precisely what this probe brackets.
+
+| config | loop | component | change |
+|---|---:|---:|---:|
+| `viscosity_on`, host ms per component solve | 0.6159 | 0.4212 | **-31.62 %** |
+| `both_on`, host ms per component solve | 0.5657 | 0.4246 | **-24.95 %** |
+
+Component is faster in **4 of 4** order-reversed pairs for both configs, per
+pair by -29.07/-39.81/-25.09/-30.67 % and -28.67/-25.47/-17.20/-23.94 %. The
+twelve loop trials and the twelve component trials **do not overlap at all**:
+`viscosity_on` loop spans 0.5575-0.6724 ms and component 0.3736-0.4876 ms.
+The four control configurations report `component_calls = 0`, which is the
+check that this metric is attributing to the right code.
+
+At 14.25 component solves per frame:
+
+| config | saved/frame | as % of frame | as % of the viscosity increment |
+|---|---:|---:|---:|
+| `viscosity_on` | 2.775 ms | 4.50 % | 12.34 % |
+| `both_on` | 2.011 ms | 2.59 % | 5.22 % |
+
+**Verified** for the per-solve figures — paired, order-reversed, one binary,
+non-overlapping distributions. **Likely** for the per-frame translation: it is
+the per-solve saving multiplied by the measured solve count, not an end-to-end
+frame measurement, which this machine's variance cannot deliver.
+
+Against the sizing that motivated the work: the isolated pricing predicted
+4-5 ms/frame. Measured, it is 2.775. The prediction was **optimistic by ~1.6x**
+— priced-in-isolation launch costs overstate what the same calls cost inside a
+running solver.
+
+### Correctness
+
+Same kernels, same order, same arguments — only where they are enqueued from
+differs. Three checks, because a graph capture is easy to get silently wrong:
+
+1. **It really captures.** `array.zero_()` (a memset) and `wp.copy` (a memcpy)
+   had never been issued inside a capture in this solver; either being
+   rejected would have been swallowed by the fallback and the "speedup" would
+   have been the fallback path. On a real GPU run the component arm reports
+   `executionMode = "cuda_conditional"` with an empty `nativeError`.
+2. **It computes the same thing.** A whole-run digest is *not* a valid oracle
+   here — the solver accumulates with `atomicAdd` in the particle scatter and
+   in the PCG dot products, so two identical runs already differ in the last
+   bits. Instead one mid-simulation state was frozen and the same solve
+   replayed four times, loop/loop/component/component. All four arms returned
+   `max_iterations`, 40 iterations, residual 2.914e-02, and cross-scope
+   disagreement (7.15e-07) is **1.50x** same-scope disagreement (4.77e-07) —
+   i.e. within the solver's own nondeterminism.
+3. **The two paths cannot drift.** The launch sequences are factored into
+   `_record_*` helpers used by both, and a unit test asserts the two scopes'
+   *expanded* op sequences are equal — same kernels, same dims, same order.
+   `tests/test_viscosity.py` is 25 passed (18 pre-existing + 7 new).
+
+The `component` graph writes `comp` only in its last two ops, so an aborted
+capture leaves the velocity component untouched and the host-issued path can
+redo the solve from scratch. `_active_count()` and the status readback stay
+outside the capture, as required.
 - **The reverse SDF-reuse candidate** exposed by task 4: reuse substep N's
   post-advection SDF for substep N+1's forces (~2.09 -> ~1.09 builds/substep,
   larger than item 2a ever was). Recorded, deliberately **not** implemented —

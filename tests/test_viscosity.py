@@ -39,6 +39,7 @@ def _fake_viscosity_solver(active_voxels=LEAF_VOLUME, capacity=LEAF_VOLUME * 8):
     solver._pcg_native_available = None
     solver._conditional_available = None
     solver._graph_captures = 0
+    solver.graph_scope = viscosity.default_viscosity_graph_scope()
     solver.last_pcg_native_error = ""
     solver.last_pcg_execution_mode = "not_run"
     solver.last_iterations = 0
@@ -492,3 +493,208 @@ def test_default_iteration_budget_clears_the_measured_requirement():
 
 if __name__ == "__main__":
     sys.exit(run_subset([10], "VISCOSITY"))
+
+
+# -- graph scope -------------------------------------------------------------
+
+
+class _PtrArray:
+    """Array stand-in carrying the identity ``_graph_key`` keys on."""
+
+    _counter = 0
+
+    def __init__(self):
+        _PtrArray._counter += 1
+        self.ptr = _PtrArray._counter
+
+
+class _FakeGraph:
+    """Stand-in for a captured ``wp.Graph``."""
+
+
+class _CaptureRecorder:
+    """Replay the device ops a component solve enqueues, in execution order.
+
+    Under ``loop`` scope most of a solve is issued from the host and only the
+    PCG loop is captured; under ``component`` scope nearly all of it is
+    recorded into a graph that one ``capture_launch`` replays. Expanding the
+    launch of a graph back into the ops recorded inside it puts both scopes
+    into the same units, which is what makes them comparable: the paired
+    benchmark is only meaningful if the two modes differ in host cost and in
+    nothing else.
+    """
+
+    def __init__(self):
+        self.stack = []
+        self.graphs = {}
+        self.trace = []
+
+    def op(self, *entry):
+        sink = self.graphs[self.stack[-1]] if self.stack else self.trace
+        sink.append(entry)
+
+    def scoped_capture(self, device=None):
+        return _FakeScopedCapture(self)
+
+    def expand(self, ops=None):
+        out = []
+        for entry in (self.trace if ops is None else ops):
+            if entry[0] == "capture_launch":
+                out.extend(self.expand(self.graphs[entry[1]]))
+            elif entry[0] == "capture_while":
+                out.append(("while", tuple(self.expand(self.graphs[entry[1]]))))
+            else:
+                out.append(entry)
+        return out
+
+
+class _FakeScopedCapture:
+    def __init__(self, recorder):
+        self._recorder = recorder
+        self.graph = _FakeGraph()
+
+    def __enter__(self):
+        self._recorder.graphs[self.graph] = []
+        self._recorder.stack.append(self.graph)
+        return self
+
+    def __exit__(self, *_exc):
+        self._recorder.stack.pop()
+        return False
+
+
+class _RecordingScalarArray(_FakeScalarArray):
+    def __init__(self, recorder, name, size=1):
+        super().__init__(size)
+        self._recorder = recorder
+        self._name = name
+
+    def zero_(self):
+        super().zero_()
+        self._recorder.op("zero", self._name)
+
+
+def _scope_solver(recorder, scope):
+    solver = _fake_viscosity_solver()
+    solver.graph_scope = scope
+    # the conditional path is available and its reduction is already built,
+    # so `_conditional_supported` short-circuits without touching a device
+    solver._conditional_available = True
+    solver._pcg_native_available = True
+    solver._pcg_dot = SimpleNamespace(
+        launch=lambda _a, _b, _out, n: recorder.op("dot", n))
+    for name in ("rz", "rz_new", "residual", "_pcg_p_ap_accum"):
+        setattr(solver, name, _RecordingScalarArray(recorder, name))
+    solver.pcg_stats = _FakeScalarArray(5)
+    for name in ("leaf_table", "leaf_coords", "num_leaves"):
+        setattr(solver.grid, name, _PtrArray())
+    return solver
+
+
+def _install_trace_stubs(monkeypatch, recorder):
+    monkeypatch.setattr(
+        viscosity.wp, "launch",
+        lambda kernel, dim, inputs, device=None: recorder.op(
+            "launch", getattr(kernel, "key", kernel), dim))
+    monkeypatch.setattr(
+        viscosity.wp, "copy",
+        lambda _dst, _src, count=None: recorder.op("copy", count))
+    monkeypatch.setattr(viscosity.wp, "synchronize_device",
+                        lambda _device=None: None)
+    monkeypatch.setattr(viscosity.wp, "ScopedCapture", recorder.scoped_capture)
+    monkeypatch.setattr(
+        viscosity.wp, "capture_while",
+        lambda condition, while_body: recorder.op("capture_while", while_body))
+    monkeypatch.setattr(
+        viscosity.wp, "capture_launch",
+        lambda graph: recorder.op("capture_launch", graph))
+
+
+def _scope_trace(monkeypatch, scope, *, iterations=2, check_every=1):
+    """Record the ops one component solve enqueues under ``scope``."""
+    recorder = _CaptureRecorder()
+    solver = _scope_solver(recorder, scope)
+    _install_trace_stubs(monkeypatch, recorder)
+    fields = tuple(_PtrArray() for _ in range(4))
+    solver._solve_component(*fields, 0.01, True, iterations, 1.0e-4,
+                            check_every)
+    return solver, recorder, fields
+
+
+def test_viscosity_graph_scope_default_is_the_whole_component():
+    assert (viscosity.default_viscosity_graph_scope()
+            == viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+
+
+def test_viscosity_graph_scope_rejects_unknown_modes():
+    original = viscosity.default_viscosity_graph_scope()
+    try:
+        with pytest.raises(ValueError):
+            viscosity.set_default_viscosity_graph_scope("whole-frame")
+        viscosity.set_default_viscosity_graph_scope(
+            viscosity.VISCOSITY_GRAPH_SCOPE_LOOP)
+        assert (viscosity.default_viscosity_graph_scope()
+                == viscosity.VISCOSITY_GRAPH_SCOPE_LOOP)
+    finally:
+        viscosity.set_default_viscosity_graph_scope(original)
+
+
+def test_viscosity_graph_scopes_enqueue_the_same_device_work(monkeypatch):
+    """The two scopes must differ in host cost and in nothing else.
+
+    Every claim the paired benchmark can make rests on this: same kernels,
+    same launch dimensions, same order, same reductions, same write-back.
+    """
+    _, loop, _ = _scope_trace(monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_LOOP)
+    _, component, _ = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    assert component.expand() == loop.expand()
+
+
+def test_viscosity_component_scope_issues_one_host_call(monkeypatch):
+    """The point of the change: one enqueue per solve instead of sixteen."""
+    _, loop, _ = _scope_trace(monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_LOOP)
+    _, component, _ = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    assert [op[0] for op in component.trace] == ["capture_launch"]
+    assert len(loop.trace) == 16
+    # the work itself did not shrink; it moved into the graph
+    assert len(component.expand()) == len(loop.expand()) == 16
+
+
+def test_viscosity_component_scope_writes_back_inside_the_graph(monkeypatch):
+    """``comp`` is written last, so an aborted capture cannot corrupt it."""
+    _, component, _ = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    ops = component.expand()
+    assert ops[-1] == ("copy", LEAF_VOLUME)
+    assert ops[-2][:2] == ("launch", "k_viscosity_apply_collision")
+
+
+def test_viscosity_component_scope_graph_key_separates_components(monkeypatch):
+    """The captured body now reads and writes ``comp``, so it must be keyed."""
+    solver, _, _ = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    args = (12, _PtrArray(), _PtrArray(), _PtrArray(), 0.01, 1, 40, 1.0e-8)
+    comp_u, comp_v = _PtrArray(), _PtrArray()
+    key_u = solver._graph_key(
+        viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT, *args, comp=comp_u)
+    key_v = solver._graph_key(
+        viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT, *args, comp=comp_v)
+    key_loop = solver._graph_key(
+        viscosity.VISCOSITY_GRAPH_SCOPE_LOOP, *args, comp=comp_u)
+    assert key_u != key_v, "two components would share one captured graph"
+    assert key_u != key_loop, "the two scopes would share one captured graph"
+
+
+def test_viscosity_component_scope_caches_its_graph(monkeypatch):
+    """A repeat solve of the same shape must not recapture."""
+    solver, _, fields = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    assert solver._graph_captures == 1
+    for _ in range(3):
+        solver._solve_component(*fields, 0.01, True, 2, 1.0e-4, 1)
+    assert solver._graph_captures == 1
+    # a different component is a different shape, and must not reuse it
+    solver._solve_component(_PtrArray(), *fields[1:], 0.01, True, 2, 1.0e-4, 1)
+    assert solver._graph_captures == 2
