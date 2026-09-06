@@ -109,6 +109,68 @@ def test_user_preset_dir_uses_extension_namespace_when_available(
     ]
 
 
+def test_apply_preset_writes_values_to_explicit_target():
+    """Post-migration the operator passes the domain-object settings as target;
+    preset values must land there, never on the stale scene.fluidsim ghost."""
+    class Group:
+        def __init__(self):
+            self.voxel_size = 0.05
+            self.flip_ratio = 0.97
+            self.active_preset_id = ""
+
+    stale = Group()
+    domain = Group()
+    scene = SimpleNamespace(fluidsim=stale)
+
+    result = library.apply_preset(scene, _user_preset(), target=domain)
+
+    # Solver values go to the explicit target (the live domain settings)...
+    assert domain.voxel_size == 0.08
+    assert domain.flip_ratio == 0.9
+    # ...and never touch the stale scene-level group.
+    assert stale.voxel_size == 0.05
+    assert stale.flip_ratio == 0.97
+    # "Applied:" feedback is read from the scene-level group by the panel, so
+    # active_preset_id is written there, not on the value target.
+    assert stale.active_preset_id == "my_water"
+    assert domain.active_preset_id == ""
+    assert result.requires_reset is True
+    assert set(result.changed) == {"voxel_size", "flip_ratio"}
+
+
+def _spec_valid_value(spec):
+    """A value inside ``spec``'s allowed domain, for building complete groups."""
+    if spec.value_type is bool:
+        return False
+    if spec.choices:
+        return spec.choices[0]
+    if spec.value_type is str:
+        return ""
+    base = spec.minimum if spec.minimum is not None else 1
+    return spec.value_type(base)
+
+
+def test_capture_scene_preset_snapshots_explicit_source():
+    """Save-as-preset must snapshot the live domain settings, not the ghost."""
+    valid = {key: _spec_valid_value(spec) for key, spec in library.SETTING_SPECS.items()}
+    stale = SimpleNamespace(**{**valid, "voxel_size": 0.05, "flip_ratio": 0.97})
+    domain = SimpleNamespace(**{**valid, "voxel_size": 0.08, "flip_ratio": 0.9})
+    scene = SimpleNamespace(fluidsim=stale)
+
+    preset = library.capture_scene_preset(
+        scene,
+        identifier="from_domain",
+        name="From Domain",
+        description="Captured from the live domain settings",
+        expected_scale="metres",
+        performance_cost="Medium",
+        source=domain,
+    )
+
+    assert preset.settings["voxel_size"] == 0.08
+    assert preset.settings["flip_ratio"] == 0.9
+
+
 def test_apply_preset_rolls_back_on_assignment_failure():
     class Target:
         voxel_size = 0.05

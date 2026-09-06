@@ -11,10 +11,15 @@ from fluidSim_warp_blender51.sim.fields import SparseGrid
 from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
 from fluidSim_warp_blender51.sim.quality_contract import (
     AuthoredQualitySettings,
+    MAX_LIQUID_SAMPLING,
+    MIN_VOXEL_SIZE,
+    QUALITY_SCALED_FIELDS,
     SourceSamplingMode,
     SourceSamplingSettings,
+    quality_tier_fidelity,
     resolve_quality,
     resolve_source_sampling,
+    scale_quality_value,
 )
 from fluidSim_warp_blender51.sim.surface import SurfacePipeline
 
@@ -108,6 +113,70 @@ def test_source_sampling_modes_share_one_zero_to_64_contract():
     assert multiplied.target_per_voxel == 24
     assert legacy_zero.target_per_voxel == 0
     assert capped.target_per_voxel == 64
+
+
+def test_quality_tier_fidelity_maps_tiers_and_defaults_to_preview():
+    assert quality_tier_fidelity("DRAFT") == 0.5
+    assert quality_tier_fidelity("PREVIEW") == 1.0
+    assert quality_tier_fidelity("FINAL") == 2.0
+    assert quality_tier_fidelity("CUSTOM") == 1.0
+    # Case/whitespace tolerant, and unknown/missing values fall back to PREVIEW.
+    assert quality_tier_fidelity(" final ") == 2.0
+    assert quality_tier_fidelity("nonsense") == 1.0
+    assert quality_tier_fidelity(None) == 1.0
+
+
+def test_quality_scaled_fields_are_exactly_the_authored_knobs():
+    assert QUALITY_SCALED_FIELDS == frozenset({
+        "voxel_size", "min_substeps", "max_substeps",
+        "pressure_iterations", "particles_per_voxel",
+    })
+
+
+def test_preview_and_custom_tiers_are_identity_on_every_knob():
+    for field in QUALITY_SCALED_FIELDS:
+        for tier in ("PREVIEW", "CUSTOM"):
+            fidelity = quality_tier_fidelity(tier)
+            assert scale_quality_value(field, 12, fidelity) == 12
+            assert scale_quality_value(field, 0.1, fidelity) == 0.1
+
+
+def test_final_refines_and_draft_coarsens_each_knob():
+    final = quality_tier_fidelity("FINAL")   # 2.0
+    draft = quality_tier_fidelity("DRAFT")   # 0.5
+    # Voxel size scales inversely: finer grid at FINAL, coarser at DRAFT.
+    assert scale_quality_value("voxel_size", 0.1, final) == pytest.approx(0.05)
+    assert scale_quality_value("voxel_size", 0.1, draft) == pytest.approx(0.2)
+    # Iteration knobs scale directly and round to a floored-at-1 integer.
+    assert scale_quality_value("pressure_iterations", 40, final) == 80
+    assert scale_quality_value("pressure_iterations", 40, draft) == 20
+    assert scale_quality_value("min_substeps", 1, final) == 2
+    assert scale_quality_value("min_substeps", 1, draft) == 1  # floored at 1
+    assert scale_quality_value("max_substeps", 3, draft) == 2  # round(1.5) == 2
+    # Sampling scales directly, bounded to the backend's 1..64 contract.
+    assert scale_quality_value("particles_per_voxel", 8, final) == pytest.approx(16.0)
+    assert scale_quality_value("particles_per_voxel", 8, draft) == pytest.approx(4.0)
+
+
+def test_scale_is_non_destructive_and_repeatable_from_authored_value():
+    # The projection always reads the freshly-authored value, so re-applying the
+    # tier from that same authored value can never compound (defect #2 guard).
+    authored_voxel = 0.1
+    final = quality_tier_fidelity("FINAL")
+    first = scale_quality_value("voxel_size", authored_voxel, final)
+    second = scale_quality_value("voxel_size", authored_voxel, final)
+    assert first == second == pytest.approx(0.05)
+    assert authored_voxel == 0.1  # authored value is untouched
+
+
+def test_scale_clamps_sampling_and_voxel_to_backend_bounds():
+    # Sampling never exceeds the 0..64 backend contract nor drops below 1.
+    assert scale_quality_value(
+        "particles_per_voxel", 40, quality_tier_fidelity("FINAL")) == MAX_LIQUID_SAMPLING
+    assert scale_quality_value(
+        "particles_per_voxel", 1, quality_tier_fidelity("DRAFT")) == 1.0
+    # Voxel size stays finite and positive under an extreme refine.
+    assert scale_quality_value("voxel_size", 1e-9, 2.0) == MIN_VOXEL_SIZE
 
 
 def test_capacity_leaf_count_and_cache_signature_include_resolved_quality():
