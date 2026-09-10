@@ -138,6 +138,74 @@ def test_apply_preset_writes_values_to_explicit_target():
     assert set(result.changed) == {"voxel_size", "flip_ratio"}
 
 
+def test_apply_preset_routes_fields_through_field_target():
+    """Scene-owned fields (e.g. whitewater_output_mode) must land on the scene
+    group even when solver fields are routed to the migrated domain object —
+    the split-brain bug where a single ``target`` silently no-ops the
+    scene-owned side of a preset."""
+    class Group:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    scene_fs = Group(voxel_size=0.05, whitewater_output_mode="COMBINED", active_preset_id="")
+    domain_fs = Group(voxel_size=0.05, whitewater_output_mode="COMBINED", active_preset_id="")
+    scene = SimpleNamespace(fluidsim=scene_fs)
+
+    preset = PresetV1.from_dict({
+        "schema_version": 1,
+        "id": "splash_whitewater",
+        "name": "Splash + Whitewater",
+        "description": "Splash and whitewater preset",
+        "expected_scale": "metres",
+        "performance_cost": "Medium",
+        "requires_reset": True,
+        "settings": {"voxel_size": 0.08, "whitewater_output_mode": "SEPARATE"},
+        "source_version": "1.0.249",
+    })
+
+    def field_target(key):
+        return scene_fs if key == "whitewater_output_mode" else domain_fs
+
+    result = library.apply_preset(
+        scene, preset, target=domain_fs, field_target=field_target
+    )
+
+    assert domain_fs.voxel_size == 0.08
+    assert scene_fs.whitewater_output_mode == "SEPARATE"
+    # The solver-only field must never leak onto the scene-owned group, and
+    # vice versa.
+    assert scene_fs.voxel_size == 0.05
+    assert domain_fs.whitewater_output_mode == "COMBINED"
+    assert set(result.changed) == {"voxel_size", "whitewater_output_mode"}
+
+
+def test_capture_scene_preset_routes_fields_through_field_source():
+    """Save-as-preset must read each field from its actual owner, not just the
+    domain settings passed as ``source`` — otherwise a scene-owned field like
+    ``cache_compress`` is captured from the stale/default domain copy."""
+    valid = {key: _spec_valid_value(spec) for key, spec in library.SETTING_SPECS.items()}
+    scene_fs = SimpleNamespace(**{**valid, "voxel_size": 0.05, "cache_compress": True})
+    domain_fs = SimpleNamespace(**{**valid, "voxel_size": 0.08, "cache_compress": False})
+    scene = SimpleNamespace(fluidsim=scene_fs)
+
+    def field_source(key):
+        return scene_fs if key == "cache_compress" else domain_fs
+
+    preset = library.capture_scene_preset(
+        scene,
+        identifier="mixed",
+        name="Mixed",
+        description="Captured through per-field ownership",
+        expected_scale="metres",
+        performance_cost="Medium",
+        source=domain_fs,
+        field_source=field_source,
+    )
+
+    assert preset.settings["voxel_size"] == 0.08
+    assert preset.settings["cache_compress"] is True
+
+
 def _spec_valid_value(spec):
     """A value inside ``spec``'s allowed domain, for building complete groups."""
     if spec.value_type is bool:
