@@ -128,6 +128,17 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "checkpoint_interval": SettingSpec(int, 1, 100),
 }
 
+# Preset settings owned by the scene rather than the domain. Output
+# Publication and Production Cache Bake read these three straight off
+# ``scene.fluidsim`` regardless of migration state (see
+# blender/output_publication.py and blender/cache_bake.py), so a preset must
+# dispatch them there even when the rest of its payload targets the active
+# domain settings post-migration. See AGENTS.md's architecture-ownership
+# contract.
+SCENE_OWNED_SETTINGS = frozenset({
+    "whitewater_output_mode", "cache_compress", "checkpoint_interval",
+})
+
 _TOP_LEVEL_KEYS = {
     "schema_version",
     "id",

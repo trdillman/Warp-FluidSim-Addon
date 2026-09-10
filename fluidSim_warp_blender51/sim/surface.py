@@ -359,6 +359,13 @@ class SurfacePipeline:
                     radius / h, band_voxels, smoothing,
                     sdf_filter_iterations),
             )
+        else:
+            # Mirrors SurfaceTensionSolver.apply()'s own check-and-release: once
+            # the capillary band is inactive (tension disabled or coefficient
+            # <= 0), the propagation scratch it fed is unused for the rest of
+            # the solver session unless tension comes back on, so drop it here
+            # rather than holding it for the session's lifetime.
+            self.release_band_buffers()
         # Equal to far_distance in "ball" mode: the reset below writes
         # far_distance into every cell, so a candidate at or beyond it can never
         # win an atomic_min. "legacy" passes an unreachable distance so a
