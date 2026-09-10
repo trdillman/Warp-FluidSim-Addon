@@ -207,6 +207,29 @@ SETTING_TRANSITION_REGISTRY = {
     name: tier for tier, names in _TIER_FIELDS.items() for name in names
 }
 
+# Tiers whose fields stay authored on scene.fluidsim even on a migrated scene:
+# display/output, cache/bake authoring, UI-only adapter/presentation state, and
+# SYNC (no direct field). Every other tier is solver-relevant and authored on
+# the active domain settings post-migration.
+_SCENE_OWNED_TIERS = frozenset({
+    SettingTier.OUTPUT, SettingTier.AUTHORED_NEXT_RUN,
+    SettingTier.ADAPTER, SettingTier.PRESENTATION, SettingTier.SYNC,
+})
+
+
+def setting_owner(scene, name):
+    """The settings group that authors registry field ``name``.
+
+    Callers outside this module (e.g. the preset operators) must resolve
+    per-field ownership through this function rather than reconstructing the
+    tier partition themselves — this is the one place the scene-owned vs.
+    domain-owned split is declared (see AGENTS.md:L21).
+    """
+    scene_fs = getattr(scene, "fluidsim", None)
+    domain_fs = _active_settings(scene) or scene_fs
+    tier = SETTING_TRANSITION_REGISTRY.get(name)
+    return scene_fs if tier in _SCENE_OWNED_TIERS else domain_fs
+
 
 def validate_transition_registry(declared_fields=None):
     """Fail closed on overlap, omission, or undeclared lifecycle policy."""
