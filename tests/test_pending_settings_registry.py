@@ -134,6 +134,46 @@ def test_quality_tier_is_reinitialize_and_detected_by_reinit_signature(monkeypat
     assert "quality" in pending._REINIT_SETTING_FIELDS
 
 
+def test_quality_property_wires_the_rebuild_update_callback(monkeypatch):
+    """A REINITIALIZE tier classification is inert without an RNA callback.
+
+    The stub in ``_modules`` discards every ``bpy.props.*`` keyword (it only
+    ever returns ``default``), so a change to the ``update=`` argument cannot
+    be observed by calling the property -- it has to be read out of source.
+    Without this, a UI edit to Quality would only refresh cached presentation
+    on the depsgraph handler and never reach ``request_scene_update()``,
+    leaving an active solver running the previous voxel size/substeps/sampling
+    until the user manually applies the pending action or rewinds.
+    """
+
+    properties, _pending, _bridge = _modules(monkeypatch)
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_settings))
+    )
+    (quality_node,) = (
+        node
+        for node in tree.body[0].body
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "quality"
+        )
+    )
+    update_kwargs = {
+        kw.arg: kw.value
+        for kw in quality_node.annotation.keywords
+        if kw.arg == "update"
+    }
+    assert "update" in update_kwargs, (
+        "quality's EnumProperty has no update= callback; UI edits to Quality "
+        "will not trigger a REINITIALIZE rebuild"
+    )
+    assert (
+        isinstance(update_kwargs["update"], ast.Name)
+        and update_kwargs["update"].id == "_request_rebuild"
+    )
+
+
 def test_species_toggle_rebuilds_storage_but_rate_updates_live(monkeypatch):
     _properties, pending, _bridge = _modules(monkeypatch)
 

@@ -138,20 +138,34 @@ def default_sdf_band_seed_radius() -> int | None:
 
 
 def band_seed_splat_radius_voxels(r_vox: float, band_voxels: float,
-                                  base_splat: int) -> int:
+                                  base_splat: int, smoothing_iterations: int = 0,
+                                  sdf_filter_iterations: int = 0) -> int:
     """Seed radius that makes the propagated band exact where it is read.
 
     A voxel is seeded by its *true* nearest particle whenever that particle
     lies within Chebyshev radius ``seed`` cells of it, and Chebyshev distance
     never exceeds Euclidean, so every voxel with ``sdf <= seed * h - r`` is
-    seeded by the true minimiser and carries the exact value.  The capillary
-    force is applied over ``band_voxels`` and its normal/curvature stencil
-    reads one cell further, so seeding to ``band_voxels + 1 + r_vox`` makes
-    the field exact everywhere the force and its derivatives are evaluated.
-    Beyond that the propagated value is a strict upper bound that converges
-    from above with each pass.
+    seeded by the true minimiser and carries the exact value. ``apply()``
+    reads normals over ``normal_support_voxels(band_voxels,
+    smoothing_iterations)`` -- one cell beyond the force band plus one per
+    smoothing pass -- and configured SDF filters (dilate/erode/smooth/filter)
+    expand that support further, so the seed has to reach the same support
+    ``splat`` is computed from, not just ``band_voxels + 1``. Beyond that
+    window the propagated value is a strict upper bound that converges from
+    above with each pass.
     """
-    return max(int(base_splat), int(math.ceil(band_voxels + 1.0 + r_vox)))
+    # normal_support_voxels() requires a positive band; an inactive band (0.0,
+    # used when surface tension is off) has no capillary stencil to protect,
+    # so fall back to the one-voxel margin its own max(band_voxels, 0.5)
+    # clamp would otherwise apply.
+    if band_voxels > 0.0:
+        support = (
+            normal_support_voxels(band_voxels, smoothing_iterations)
+            + sdf_filter_iterations
+        )
+    else:
+        support = 1.0
+    return max(int(base_splat), int(math.ceil(r_vox + support)))
 
 
 def band_propagation_passes(band_splat: int, seed_splat: int) -> int:
@@ -336,6 +350,8 @@ class SurfacePipeline:
         splat = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
         far_distance = 4.0 * h
         band_voxels = 0.0
+        smoothing = 0
+        sdf_filter_iterations = 0
         if (grid is solver.grid
                 and bool(getattr(s, "surface_tension_enabled", False))
                 and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0):
@@ -388,7 +404,8 @@ class SurfacePipeline:
             band_seed_splat_radius_voxels(
                 radius / h, band_voxels,
                 max(1, int(s.surface_splat_radius),
-                    int(math.ceil(radius / h + 1.0)))))
+                    int(math.ceil(radius / h + 1.0))),
+                smoothing, sdf_filter_iterations))
         passes = (band_propagation_passes(splat, seed_splat)
                   if self.band_mode() == SDF_BAND_MODE_PROPAGATE else 0)
         self.last_sdf_splat["bandMode"] = self.band_mode()

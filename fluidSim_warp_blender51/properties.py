@@ -779,6 +779,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         description="Choose how much of the interface is shown: Basic hides expert solver internals, Advanced reveals the full control set")
     quality: EnumProperty(
         name="Quality", items=QUALITY_ITEMS, default="PREVIEW",
+        update=_request_rebuild,
         description="Select a fidelity target; Draft/Preview/Final trade speed against accuracy, and Custom defers entirely to the individual solver settings")
     export_attributes: EnumProperty(
         name="Export Attributes", items=EXPORT_ATTRIBUTES_ITEMS, default="STANDARD",
