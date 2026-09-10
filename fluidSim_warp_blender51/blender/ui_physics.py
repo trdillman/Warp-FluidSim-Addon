@@ -380,9 +380,12 @@ class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_output_mode")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "foam_material")
+        # Output mode, display scale and the material picker are scene-scoped;
+        # the ww_* dynamics below are solver settings read from the domain
+        # group, so that grid has to edit the domain owner instead.
         ui_scene.draw_property_grid(
             layout,
-            fs,
+            ui_scene._domain_owner(context),
             (
                 "ww_foam_advection",
                 "ww_foam_preservation",
@@ -404,9 +407,12 @@ class FLUIDSIM_PT_physics_bubbles_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_output_mode")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "bubble_material")
+        # Output mode, display scale and the material picker are scene-scoped;
+        # the ww_* dynamics below are solver settings read from the domain
+        # group, so that grid has to edit the domain owner instead.
         ui_scene.draw_property_grid(
             layout,
-            fs,
+            ui_scene._domain_owner(context),
             (
                 "ww_bubble_drag",
                 "ww_bubble_buoyancy",
@@ -427,9 +433,12 @@ class FLUIDSIM_PT_physics_spray_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_output_mode")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "spray_material")
+        # Output mode, display scale and the material picker are scene-scoped;
+        # the ww_* dynamics below are solver settings read from the domain
+        # group, so that grid has to edit the domain owner instead.
         ui_scene.draw_property_grid(
             layout,
-            fs,
+            ui_scene._domain_owner(context),
             (
                 "ww_spray_drag",
                 "ww_spray_gravity_scale",

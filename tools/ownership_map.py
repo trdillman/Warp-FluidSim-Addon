@@ -895,11 +895,16 @@ def render(rows, redirected, mirrored):
              "READ_ONLY", "INTERNAL", "UNOBSERVED")
     unknown = set(verdicts) - set(order)
     assert not unknown, f"unrendered verdicts: {sorted(unknown)}"
+    # Every verdict is listed even at zero. The fault verdicts reaching zero is
+    # the headline result of Phase 1, and a legend that simply omitted them
+    # would make "no field is BROKEN" indistinguishable from "the analyzer no
+    # longer looks for BROKEN".
     for verdict in order:
-        if verdicts.get(verdict):
-            lines.append(
-                f"| {verdict} | {len(verdicts[verdict])} | {meanings[verdict]} |"
-            )
+        count = len(verdicts.get(verdict, ()))
+        emphasis = "**" if count and verdict in FAULT_VERDICTS else ""
+        lines.append(
+            f"| {verdict} | {emphasis}{count}{emphasis} | {meanings[verdict]} |"
+        )
     lines.append(f"| **total** | **{len(rows)}** | |")
     lines.append("")
 

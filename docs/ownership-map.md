@@ -22,12 +22,13 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 94 | UI writes exactly where the consumer reads |
-| OK_MULTI | 11 | write and read meet, but more than one path exists |
-| BROKEN | 49 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 27 | the runtime publishes it where its reader looks |
+| OK | 147 | UI writes exactly where the consumer reads |
+| OK_MULTI | 7 | write and read meet, but more than one path exists |
+| MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
+| BROKEN | 0 | **UI writes a datablock no consumer reads** |
+| PUBLISHED | 28 | the runtime publishes it where its reader looks |
 | PUBLISHED_MULTI | 1 | published and observed, but by more than one path |
-| PUBLISHED_BROKEN | 1 | **the runtime writes one datablock and the panel displays the other** |
+| PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 29 | something reads it; nothing resolved writes it |
@@ -125,60 +126,60 @@ Panels in the second list draw `scene.fluidsim`-bound controls in the Physics ta
 | `surface_tension_smoothing_iterations` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
 | `species_enabled` | RESET | domain | domain | - | domain | domain/scene | 0 | OK |
 | `species_mixing_rate` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
-| `surface_enabled` | SURFACE | scene | domain, scene | - | domain, scene | domain/scene | 0 | OK_MULTI |
-| `particle_radius_scale` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_splat_radius` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_resolution_mode` | SURFACE | scene | domain | - | scene | domain/scene | 0 | **BROKEN** |
-| `surface_resolution_multiplier` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_voxel_size` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_leaf_capacity_scale` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_max_dense_dim` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_update_cadence` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `live_surface_publish_cadence` | SURFACE | scene | domain, scene | - | - | domain/scene | 1 | OK_MULTI |
-| `surface_build_lowres_sdf` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
+| `surface_enabled` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `particle_radius_scale` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_splat_radius` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_resolution_mode` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `surface_resolution_multiplier` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_voxel_size` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_leaf_capacity_scale` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_max_dense_dim` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_update_cadence` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `live_surface_publish_cadence` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_build_lowres_sdf` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
 | `surface_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `surface_filter_type` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_filter_iterations` | SURFACE | scene | domain | - | scene | domain/scene | 0 | **BROKEN** |
-| `surface_filter_strength` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_dilate_iterations` | SURFACE | scene | domain | - | scene | domain/scene | 0 | **BROKEN** |
-| `surface_dilate_strength` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_erode_iterations` | SURFACE | scene | domain | - | scene | domain/scene | 0 | **BROKEN** |
-| `surface_erode_strength` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_smooth_type` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `surface_smooth_iterations` | SURFACE | scene | domain | - | scene | domain/scene | 0 | **BROKEN** |
-| `surface_smooth_strength` | SURFACE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `whitewater_enabled` | WHITEWATER | scene | domain, scene | - | scene | domain/scene | 0 | OK_MULTI |
+| `surface_filter_type` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_filter_iterations` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `surface_filter_strength` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_dilate_iterations` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `surface_dilate_strength` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_erode_iterations` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `surface_erode_strength` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_smooth_type` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `surface_smooth_iterations` | SURFACE | domain | domain | - | domain | domain/scene | 0 | OK |
+| `surface_smooth_strength` | SURFACE | domain | domain | - | - | domain/scene | 0 | OK |
+| `whitewater_enabled` | WHITEWATER | domain | domain | - | domain | domain/scene | 0 | OK |
 | `max_whitewater` | REINITIALIZE | domain | domain | - | - | domain/domain | 0 | OK |
-| `ww_churn_decay` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_churn_gain` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_churn_threshold` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_emission_rate` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_surface_band` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_min_speed` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_life_min` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_life_max` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_foam_band` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_spray_min_speed` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_type_hysteresis` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_foam_advection` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_foam_preservation` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_foam_density_influence` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_foam_life_multiplier` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_bubble_drag` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_bubble_buoyancy` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_bubble_life_multiplier` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_spray_drag` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_spray_gravity_scale` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `ww_spray_life_multiplier` | LIVE | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `height_enabled` | RESET | scene | domain, scene | scene | scene | domain/scene | 1 | OK_MULTI |
-| `height_base` | RESET | scene | domain | scene | - | domain/scene | 0 | **BROKEN** |
-| `height_back_mode` | RESET | scene | domain | - | scene | domain/scene | 1 | **BROKEN** |
-| `height_profile_image` | RESET | scene | domain | - | - | domain/scene | 1 | **BROKEN** |
-| `height_profile_scale` | RESET | scene | domain | - | - | domain/scene | 1 | **BROKEN** |
-| `height_emission_mode` | RESET | scene | domain | scene | - | domain/scene | 1 | **BROKEN** |
-| `height_error` | PRESENTATION | - | - | domain | scene | scene/scene | 0 | **PUBLISHED_BROKEN** |
-| `height_velocity` | RESET | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
-| `height_emit_particles` | RESET | scene | domain | - | - | domain/scene | 0 | **BROKEN** |
+| `ww_churn_decay` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_churn_gain` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_churn_threshold` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_emission_rate` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_surface_band` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_min_speed` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_life_min` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_life_max` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_foam_band` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_spray_min_speed` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_type_hysteresis` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_foam_advection` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_foam_preservation` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_foam_density_influence` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_foam_life_multiplier` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_bubble_drag` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_bubble_buoyancy` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_bubble_life_multiplier` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_spray_drag` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_spray_gravity_scale` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `ww_spray_life_multiplier` | LIVE | domain | domain | - | - | domain/scene | 0 | OK |
+| `height_enabled` | RESET | domain | domain | domain | domain | domain/scene | 1 | OK |
+| `height_base` | RESET | domain | domain | domain | - | domain/scene | 0 | OK |
+| `height_back_mode` | RESET | domain | domain | - | domain | domain/scene | 1 | OK |
+| `height_profile_image` | RESET | domain | domain | - | - | domain/scene | 1 | OK |
+| `height_profile_scale` | RESET | domain | domain | - | - | domain/scene | 1 | OK |
+| `height_emission_mode` | RESET | domain | domain | domain | - | domain/scene | 1 | OK |
+| `height_error` | PRESENTATION | - | - | domain | domain | scene/scene | 0 | PUBLISHED |
+| `height_velocity` | RESET | domain | domain | - | - | domain/scene | 0 | OK |
+| `height_emit_particles` | RESET | domain | domain | - | - | domain/scene | 0 | OK |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene/scene | 0 | UI_STATE |
 | `show_surface` | OUTPUT | - | scene | - | - | scene/scene | 0 | READ_ONLY |
 | `show_particles` | OUTPUT | - | scene | - | - | scene/scene | 0 | READ_ONLY |
@@ -239,8 +240,8 @@ Panels in the second list draw `scene.fluidsim`-bound controls in the Physics ta
 | `bake_status` | PRESENTATION | - | scene | scene | scene | scene/scene | 1 | PUBLISHED |
 | `bake_progress` | PRESENTATION | scene | scene | scene | - | scene/scene | 2 | OK |
 | `bake_message` | PRESENTATION | - | scene | scene | scene | scene/scene | 2 | PUBLISHED |
-| `profiling_enabled` | REINITIALIZE | scene | domain | - | scene | domain/scene | 1 | **BROKEN** |
-| `profiling_sync` | REINITIALIZE | scene | domain | - | - | domain/scene | 1 | **BROKEN** |
+| `profiling_enabled` | REINITIALIZE | domain | domain | - | domain | domain/scene | 1 | OK |
+| `profiling_sync` | REINITIALIZE | domain | domain | - | - | domain/scene | 1 | OK |
 | `show_overlay` | OUTPUT | scene | scene | - | - | scene/scene | 0 | OK |
 | `report_path` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `benchmark_frames` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
@@ -280,455 +281,6 @@ Panels in the second list draw `scene.fluidsim`-bound controls in the Physics ta
 | `stat_surface_tension_status` | PRESENTATION | - | - | scene | - | scene/scene | 0 | INTERNAL |
 | `stat_surface_tension_message` | PRESENTATION | - | - | scene | scene | scene/scene | 0 | PUBLISHED |
 
-## BROKEN in detail
-
-### `particle_radius_scale`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:757
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_splat_radius`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:757
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_resolution_mode`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:731
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:732
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:734
-
-### `surface_resolution_multiplier`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:733
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_voxel_size`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:735
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_leaf_capacity_scale`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:736
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_max_dense_dim`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:736
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_update_cadence`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:736
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_build_lowres_sdf`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:757
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_filter_type`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:776
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_filter_iterations`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:777
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:778
-
-### `surface_filter_strength`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:779
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_dilate_iterations`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:783
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:784
-
-### `surface_dilate_strength`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:785
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_erode_iterations`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:789
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:790
-
-### `surface_erode_strength`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:791
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_smooth_type`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:795
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `surface_smooth_iterations`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:707
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:796
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:797
-
-### `surface_smooth_strength`  (SURFACE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:798
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_churn_decay`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_churn_gain`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_churn_threshold`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_emission_rate`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:814
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_surface_band`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_min_speed`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:842
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_life_min`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:877
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_life_max`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:877
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_foam_band`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:865
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_spray_min_speed`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:865
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_type_hysteresis`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:865
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_foam_advection`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:383
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:891
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_foam_preservation`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:383
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:891
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_foam_density_influence`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:383
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:891
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_foam_life_multiplier`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:383
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:891
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_bubble_drag`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:407
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:898
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_bubble_buoyancy`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:407
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:898
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_bubble_life_multiplier`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:407
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:898
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_spray_drag`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:430
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:901
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_spray_gravity_scale`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:430
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:901
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `ww_spray_life_multiplier`  (LIVE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_physics.py:430
-- UI writes **scene** via `draw_property_grid` -- fluidSim_warp_blender51/blender/ui_scene.py:901
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:196
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:197
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:205
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/solver_settings.py:206
-
-### `height_base`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:426
-- runtime writes **scene** via `assign` -- fluidSim_warp_blender51/blender/setup_wizard.py:428
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1041
-
-### `height_back_mode`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:427
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1011 (defaulted getattr)
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:428
-
-### `height_profile_image`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:429
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1018 (defaulted getattr)
-
-### `height_profile_scale`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:430
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1036 (defaulted getattr)
-
-### `height_emission_mode`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:431
-- runtime writes **scene** via `assign` -- fluidSim_warp_blender51/blender/setup_wizard.py:427
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1052 (defaulted getattr)
-
-### `height_velocity`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:432
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1044
-
-### `height_emit_particles`  (RESET)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:433
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/scene_inputs.py:1045
-
-### `profiling_enabled`  (REINITIALIZE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:1247
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/simulation_admission.py:290 (defaulted getattr)
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:1248
-
-### `profiling_sync`  (REINITIALIZE)
-
-- UI writes ['scene'] but the consumer reads ['domain']
-- UI writes **scene** via `prop` -- fluidSim_warp_blender51/blender/ui_scene.py:1249
-- consumer reads **domain** -- fluidSim_warp_blender51/blender/simulation_admission.py:291 (defaulted getattr)
-
-## PUBLISHED_BROKEN in detail
-
-### `height_error`  (PRESENTATION)
-
-- the runtime writes ['domain'] but its reader looks at ['scene']
-- runtime writes **domain** via `assign` -- fluidSim_warp_blender51/blender/scene_inputs.py:1007
-- runtime writes **domain** via `assign` -- fluidSim_warp_blender51/blender/scene_inputs.py:1013
-- runtime writes **domain** via `assign` -- fluidSim_warp_blender51/blender/scene_inputs.py:1020
-- runtime writes **domain** via `assign` -- fluidSim_warp_blender51/blender/scene_inputs.py:1024
-- UI reads **scene** -- fluidSim_warp_blender51/blender/ui_scene.py:264
-
 ## Fields with no resolved reader
 
 These have a declared scope, but nothing in the shipped add-on observes them -- so the declaration is unfalsifiable and the split may assign them either way without changing behavior. They are candidates for deletion rather than migration.
@@ -744,7 +296,7 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `shortcut_constant_name` | UNOBSERVED | (never written either) |
 | `shortcut_constant_value` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
-| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:449` |
+| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:455` |
 | `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:381`, `fluidSim_warp_blender51/blender/scene_bridge.py:391` |
 | `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:382`, `fluidSim_warp_blender51/blender/scene_bridge.py:393` |
 | `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:383`, `fluidSim_warp_blender51/blender/scene_bridge.py:395` |

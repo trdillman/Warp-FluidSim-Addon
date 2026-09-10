@@ -423,9 +423,15 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
             created.append(domain.name)
         if mode == "QUICK_CONTAINER":
             minimum, maximum = bounds
-            scene.fluidsim.height_enabled = True
-            scene.fluidsim.height_emission_mode = "INITIAL_FILL"
-            scene.fluidsim.height_base = minimum[2] + (maximum[2] - minimum[2]) * 0.25
+            # The wizard seeds the same height fields the Height panel edits, so
+            # it has to write the owner the solver reads -- otherwise Quick
+            # Container produces a scene whose height fill never runs.
+            from .scene_bridge import active_domain_settings
+
+            height_owner = active_domain_settings(scene) or scene.fluidsim
+            height_owner.height_enabled = True
+            height_owner.height_emission_mode = "INITIAL_FILL"
+            height_owner.height_base = minimum[2] + (maximum[2] - minimum[2]) * 0.25
 
     existing_output_names = {obj.name for obj in outputs.objects}
     output_objects = output_publication.ensure_output_shells(scene)

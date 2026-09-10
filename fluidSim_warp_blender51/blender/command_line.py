@@ -153,7 +153,13 @@ def _scene_validation(scene) -> tuple[bool, str]:
         if getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
         and bool(getattr(getattr(obj, "fluidsim", None), "enabled", True))
     ]
-    if not sources and not bool(getattr(fs, "height_enabled", False)):
+    # height_enabled is a solver setting: gather_height_source reads it from
+    # the domain owner, so validating the scene group would pass a scene whose
+    # height fill the solver will not run (and vice versa).
+    from .scene_bridge import active_domain_settings
+
+    height_owner = active_domain_settings(scene) or fs
+    if not sources and not bool(getattr(height_owner, "height_enabled", False)):
         return False, "No enabled liquid source or height fill is configured"
     return True, "Scene setup is valid"
 

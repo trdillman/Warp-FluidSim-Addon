@@ -33,36 +33,34 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # The full annotated surface of the shared PropertyGroup.
 EXPECTED_FIELD_COUNT = 232
 
-# UI writes a datablock no consumer reads: on a migrated scene these edits
-# never reach the solver. This is the standing live bug that Phase 1 fixes;
-# shrinking this set is the point of the exercise, so the pin must be updated
-# deliberately when it does.
-EXPECTED_BROKEN = frozenset({
-    "height_back_mode", "height_base", "height_emission_mode",
-    "height_emit_particles", "height_profile_image", "height_profile_scale",
-    "height_velocity", "particle_radius_scale", "profiling_enabled",
-    "profiling_sync", "surface_build_lowres_sdf", "surface_dilate_iterations",
-    "surface_dilate_strength", "surface_erode_iterations",
-    "surface_erode_strength", "surface_filter_iterations",
-    "surface_filter_strength", "surface_filter_type",
-    "surface_leaf_capacity_scale", "surface_max_dense_dim",
-    "surface_resolution_mode", "surface_resolution_multiplier",
-    "surface_smooth_iterations", "surface_smooth_strength",
-    "surface_smooth_type", "surface_splat_radius", "surface_update_cadence",
-    "surface_voxel_size", "ww_bubble_buoyancy", "ww_bubble_drag",
-    "ww_bubble_life_multiplier", "ww_churn_decay", "ww_churn_gain",
-    "ww_churn_threshold", "ww_emission_rate", "ww_foam_advection",
-    "ww_foam_band", "ww_foam_density_influence", "ww_foam_life_multiplier",
-    "ww_foam_preservation", "ww_life_max", "ww_life_min", "ww_min_speed",
-    "ww_spray_drag", "ww_spray_gravity_scale", "ww_spray_life_multiplier",
-    "ww_spray_min_speed", "ww_surface_band", "ww_type_hysteresis",
-})
+# UI writes a datablock no consumer reads: on a migrated scene those edits
+# never reach the solver. Phase 1 emptied this set by repointing the contested
+# panels at the domain owner. It stays pinned in the *empty* direction: any
+# field that reappears here is a newly introduced live bug, and un-emptying it
+# must be a reviewed edit to this file rather than a quiet change in a
+# generated document.
+EXPECTED_BROKEN = frozenset()
 
 # The telemetry-direction counterpart: the runtime publishes the value to one
 # datablock and the panel displays the other, so the message never appears on
-# a migrated scene.
-EXPECTED_PUBLISHED_BROKEN = frozenset({"height_error"})
+# a migrated scene. Emptied by the Phase 1 `height_error` fix.
+EXPECTED_PUBLISHED_BROKEN = frozenset()
 
+
+# Fields whose write and read do meet, but where a second path exists. This is
+# the residual hazard class and the one a regression actually lands in: when a
+# panel drifts back to `scene.fluidsim` while a *sibling* panel still writes the
+# domain group, the field goes OK -> OK_MULTI rather than OK -> BROKEN, so the
+# empty BROKEN pin above would not notice.
+#
+# All seven below are the pre-Phase-1 shape -- the UI writes the domain group
+# and a consumer still reads the scene group -- which Phase 2 resolves by making
+# the wrong-group read impossible. `domain_object` is inherent: it designates the
+# domain, so it is scene-owned by definition and mirrored for editing.
+EXPECTED_OK_MULTI = frozenset({
+    "auto_grow_particles", "domain_object", "gravity", "max_particles",
+    "particle_growth_failure_policy", "use_scene_gravity", "voxel_size",
+})
 
 def _parse_map_rows():
     """Rows of the ``## The map`` table only, as field -> {column: value}.
@@ -165,6 +163,21 @@ def test_published_broken_field_set_is_pinned():
     }
 
 
+def test_ok_multi_field_set_is_pinned():
+    """Pin the residual two-path set, which is where a regression lands.
+
+    A panel drifting back to the scene group while a sibling panel still writes
+    the domain group produces OK_MULTI, not BROKEN, so this is the pin that
+    catches it. Regenerating the map alone must not be able to grow this set.
+    """
+    rows = _parse_map_rows()
+    ok_multi = _fields_with(rows, "OK_MULTI")
+    assert ok_multi == set(EXPECTED_OK_MULTI), {
+        "newly two-path": sorted(ok_multi - EXPECTED_OK_MULTI),
+        "no longer two-path": sorted(EXPECTED_OK_MULTI - ok_multi),
+    }
+
+
 def test_verdict_summary_agrees_with_the_table():
     """The summary table at the top must count the same rows as the body."""
     text = MAP_PATH.read_text(encoding="utf-8")
@@ -180,8 +193,36 @@ def test_verdict_summary_agrees_with_the_table():
     counted = {}
     for row in rows.values():
         counted[_verdict(row)] = counted.get(_verdict(row), 0) + 1
-    assert summary == counted
+    # The legend lists every verdict the analyzer can emit, including the ones
+    # now at zero, so compare only the rows the table actually contains -- and
+    # assert the zeros really are absent from it.
+    assert {k: v for k, v in summary.items() if v} == counted
+    assert not {k for k, v in summary.items() if not v} & set(counted)
     assert sum(summary.values()) == EXPECTED_FIELD_COUNT
+
+
+def test_fault_verdicts_are_still_reachable():
+    """Guard the empty pins above against a classifier that stopped emitting.
+
+    ``EXPECTED_BROKEN`` and ``EXPECTED_PUBLISHED_BROKEN`` are both empty after
+    Phase 1, so they would also pass if ``classify`` lost the ability to report
+    those verdicts at all. Assert the generator still documents both, so the
+    empty pins keep meaning "no field is in this state" rather than "the state
+    no longer exists".
+    """
+    lines = MAP_PATH.read_text(encoding="utf-8").splitlines()
+    start = lines.index("## Verdicts")
+    legend = []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        legend.append(line)
+    legend = " ".join(legend)
+    for verdict in ("BROKEN", "PUBLISHED_BROKEN"):
+        assert verdict in legend, (
+            f"{verdict} is no longer described in the map's verdict legend; "
+            "the empty pin above has stopped meaning anything."
+        )
 
 
 def test_mirror_redirect_inventory_is_recorded():
