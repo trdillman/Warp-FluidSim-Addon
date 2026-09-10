@@ -257,7 +257,7 @@ def _config(filters):
     splat = required_sdf_splat_radius_voxels(r_vox, band, smoothing, filters)
     far = (support + 1.0) * VOXEL
     seed = SURF.band_seed_splat_radius_voxels(
-        r_vox, band, max(1, int(np.ceil(r_vox + 1.0))))
+        r_vox, band, max(1, int(np.ceil(r_vox + 1.0))), smoothing, filters)
     return splat, far, seed
 
 

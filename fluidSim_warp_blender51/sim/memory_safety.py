@@ -16,6 +16,11 @@ LEAF_VOLUME = 512
 BASE_BYTES = 256 * 1024**2
 SIM_BYTES_PER_VOXEL = 356
 SURFACE_TENSION_BYTES_PER_VOXEL = 24
+# SurfacePipeline._ensure_band_buffers() lazily allocates one int32
+# (_band_closest) plus two vec3 arrays (_band_points, _band_points_tmp)
+# per voxel once surface tension is active, alongside the solver's own
+# normal buffers accounted for above.
+SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL = 28
 RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
@@ -241,7 +246,8 @@ def estimate_solver_bytes(settings) -> int:
     if (bool(_value(settings, "surface_tension_enabled", False))
             and float(_value(settings, "surface_tension_coefficient", 0.0)) > 0.0):
         estimate += (
-            leaves * LEAF_VOLUME * SURFACE_TENSION_BYTES_PER_VOXEL
+            leaves * LEAF_VOLUME
+            * (SURFACE_TENSION_BYTES_PER_VOXEL + SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL)
         )
     if surface_enabled:
         estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL

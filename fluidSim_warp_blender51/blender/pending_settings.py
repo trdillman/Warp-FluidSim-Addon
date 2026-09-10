@@ -207,26 +207,55 @@ SETTING_TRANSITION_REGISTRY = {
     name: tier for tier, names in _TIER_FIELDS.items() for name in names
 }
 
-# Tiers whose fields stay authored on scene.fluidsim even on a migrated scene:
-# display/output, cache/bake authoring, UI-only adapter/presentation state, and
-# SYNC (no direct field). Every other tier is solver-relevant and authored on
-# the active domain settings post-migration.
+# Tiers whose fields must LAND on scene.fluidsim to take effect, even on a
+# migrated scene: display/output, cache/bake authoring, UI-only adapter and
+# presentation state, and SYNC (no direct field). Their consumers -- the output
+# publication and cache-bake paths, the UI itself -- read scene.fluidsim
+# unconditionally. Every other tier is solver-relevant: build_settings() and
+# friends read the active domain settings, so a value only takes effect there
+# post-migration.
 _SCENE_OWNED_TIERS = frozenset({
     SettingTier.OUTPUT, SettingTier.AUTHORED_NEXT_RUN,
     SettingTier.ADAPTER, SettingTier.PRESENTATION, SettingTier.SYNC,
 })
 
+# Individual fields whose consumer reads scene.fluidsim despite sitting in a
+# domain-owned tier. The tier partition is a good default but not a law, and
+# these two would be silently dropped without the override:
+#   quality        -- REINITIALIZE, but solver_settings.scene_quality_fidelity()
+#                     deliberately reads scene.fluidsim.quality (see its
+#                     docstring) so the read owner matches the UI write owner on
+#                     migrated and pre-migration scenes alike.
+#   domain_object  -- REINITIALIZE, but migration._MIGRATION_SKIP never copies it
+#                     onto the domain group, so obj.fluidsim_domain.domain_object
+#                     is permanently unset. scene_bridge.active_domain_settings()
+#                     itself, solver_settings.domain_bounds/domain_transform, and
+#                     the rendering and session operators all read it from
+#                     scene.fluidsim.
+_SCENE_OWNED_FIELDS = frozenset({"quality", "domain_object"})
+
 
 def setting_owner(scene, name):
-    """The settings group that authors registry field ``name``.
+    """The settings group a value for ``name`` must LAND on to take effect.
 
-    Callers outside this module (e.g. the preset operators) must resolve
-    per-field ownership through this function rather than reconstructing the
-    tier partition themselves — this is the one place the scene-owned vs.
-    domain-owned split is declared (see AGENTS.md:L21).
+    This answers the *effective owner* question: given a value produced outside
+    the UI (a preset, an operator), which datablock does the field's consumer
+    actually read it from? Callers outside this module -- notably the preset
+    operators in ``operator_domains/presets.py`` -- must resolve per-field
+    ownership through this function rather than reconstructing the tier
+    partition themselves, or a preset write lands on the frozen ghost and
+    silently no-ops (see AGENTS.md:L21).
+
+    This is NOT the same question as "where does the UI write this field?".
+    See ``_authoring_owner`` below for that one, and for the list of fields
+    where the two answers legitimately differ. ``presets/schema.py`` restates
+    the scene-owned subset for the bpy-free preset layer; a test in
+    ``tests/test_pending_settings_registry.py`` pins the two in agreement.
     """
     scene_fs = getattr(scene, "fluidsim", None)
     domain_fs = _active_settings(scene) or scene_fs
+    if name in _SCENE_OWNED_FIELDS:
+        return scene_fs
     tier = SETTING_TRANSITION_REGISTRY.get(name)
     return scene_fs if tier in _SCENE_OWNED_TIERS else domain_fs
 
@@ -334,17 +363,27 @@ _RESET_OBJECT_FIELDS = frozenset({
     "emission_mode", "auto_inject_seed",
 })
 
-# Signature fields the UI authors on the DOMAIN settings block (drawn via
+# Signature fields the UI WRITES to the DOMAIN settings block (drawn via
 # ui_scene._domain_owner == active_domain_settings, e.g. FLUIDSIM_PT_scene_domain
-# and the physics panels). Phase-3 migration COPIES these onto
-# obj.fluidsim_domain and freezes the scene.fluidsim copy, so post-migration the
-# UI writes here while scene.fluidsim is stale. Pending detection must therefore
-# resolve them through _active_settings(scene); reading raw scene.fluidsim would
-# compare the frozen ghost against itself and never see the edit (defect #5).
-# Every OTHER signature field is authored on context.scene.fluidsim by its panel
+# and the physics-tab mirrors built with owner_redirect=True). Phase-3 migration
+# COPIES these onto obj.fluidsim_domain and freezes the scene.fluidsim copy, so
+# post-migration the UI writes here while scene.fluidsim is stale. Pending
+# detection must therefore resolve them through _active_settings(scene); reading
+# raw scene.fluidsim would compare the frozen ghost against itself and never see
+# the edit (defect #5).
+# Every OTHER signature field is written to context.scene.fluidsim by its panel
 # (domain_object identity, quality, profiling_*, height_*, *_attribute_*), so it
 # is read from scene.fluidsim below. domain_sdf_walls has no UI control; it is
 # grouped with the domain block for intent and is harmless either way.
+#
+# NOTE: this is the WRITE owner, which is not always the same datablock as the
+# effective owner returned by setting_owner() above. height_*, *_attribute_* and
+# profiling_* are drawn on scene.fluidsim but consumed from the domain group
+# (scene_inputs.gather_height_source, solver_settings.build_settings,
+# simulation_admission), so the two answers diverge there by design: detection
+# must watch where the user types, application must write where the solver
+# reads. The exact divergence set is pinned by
+# tests/test_pending_settings_registry.py so it cannot grow unreviewed.
 _DOMAIN_AUTHORED_SIGNATURE_FIELDS = frozenset({
     "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
     "particles_per_voxel", "topology_expand", "open_boundaries",
@@ -360,8 +399,16 @@ def _signature_owners(scene):
     return getattr(scene, "fluidsim", None), _active_settings(scene)
 
 
-def _field_owner(scene_fs, domain_fs, name):
-    """The datablock that AUTHORS ``name`` (matches where the UI writes)."""
+def _authoring_owner(scene_fs, domain_fs, name):
+    """The datablock the UI WRITES ``name`` to -- the *authoring* owner.
+
+    Pending detection reads through this, not through ``setting_owner``:
+    a signature must sample the datablock the user's edit actually landed on,
+    or the comparison is the frozen ghost against itself and no pending change
+    is ever reported (defect #5). ``setting_owner`` answers the other question
+    -- where a value must land to take effect -- and the two deliberately
+    disagree for the fields listed above ``_DOMAIN_AUTHORED_SIGNATURE_FIELDS``.
+    """
     return domain_fs if name in _DOMAIN_AUTHORED_SIGNATURE_FIELDS else scene_fs
 
 
@@ -450,7 +497,7 @@ def _configured_device():
 
 def _reset_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_RESET_SCENE_FIELDS)]
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
@@ -467,7 +514,7 @@ def _reset_signature(scene):
 
 def _reinit_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_REINIT_SETTING_FIELDS)]
     # domain_object is the scene-level identity pointer (excluded from migration),
     # so it is always read from scene.fluidsim.
@@ -624,13 +671,13 @@ def capture_applied_state(scene, sess=None, *, reset_only=False):
     state.current_reset_signature = reset_signature
     state.current_reinit_signature = reinit_signature
     state.reset_snapshot = {
-        name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
+        name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
         for name in _RESET_SCENE_FIELDS}
     state.object_reset_snapshot = _snapshot_object_reset_values(scene)
     if not reset_only:
         state.applied_reinit_signature = reinit_signature
         state.reinit_snapshot = {
-            name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
+            name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
             for name in _REINIT_SETTING_FIELDS
         }
         domain = getattr(scene_fs, "domain_object", None)
@@ -899,7 +946,7 @@ def revert_pending_values(scene):
         # revert of a domain-authored edit targets obj.fluidsim_domain rather
         # than the frozen scene.fluidsim copy on a migrated scene.
         for name, value in state.reset_snapshot.items():
-            owner = _field_owner(scene_fs, domain_fs, name)
+            owner = _authoring_owner(scene_fs, domain_fs, name)
             if owner is not None and hasattr(owner, name):
                 setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
@@ -909,7 +956,7 @@ def revert_pending_values(scene):
                     if hasattr(pg, name):
                         setattr(pg, name, value)
         for name, value in state.reinit_snapshot.items():
-            owner = _field_owner(scene_fs, domain_fs, name)
+            owner = _authoring_owner(scene_fs, domain_fs, name)
             if owner is not None and hasattr(owner, name):
                 setattr(owner, name, value)
         domain = getattr(scene_fs, "domain_object", None)

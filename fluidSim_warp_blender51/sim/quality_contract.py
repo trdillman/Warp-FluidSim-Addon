@@ -67,7 +67,13 @@ def scale_quality_value(field: str, value: Any, fidelity: float) -> Any:
     if field in _QUALITY_ITERATION_FIELDS:
         return max(1, int(round(float(value) * fidelity)))
     if field in _QUALITY_SAMPLING_FIELDS:
-        return max(1.0, min(MAX_LIQUID_SAMPLING, float(value) * fidelity))
+        # 0 is the documented sentinel for "disable inherited liquid emission"
+        # (solver admission, schema-v4 inherited sources, and height sources all
+        # honor it); scaling must never turn an authored 0 into a nonzero value.
+        authored = float(value)
+        if authored <= 0.0:
+            return authored
+        return max(1.0, min(MAX_LIQUID_SAMPLING, authored * fidelity))
     return value
 
 

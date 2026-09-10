@@ -4,6 +4,7 @@ from fluidsim_testpkg.sim import capacity_planner
 from fluidsim_testpkg.sim.memory_safety import (
     LEAF_VOLUME,
     SURFACE_TENSION_BYTES_PER_VOXEL,
+    SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL,
     estimate_solver_bytes,
     recommend_safe_settings,
 )
@@ -39,7 +40,13 @@ def test_memory_estimate_includes_optional_capillary_scratch():
     disabled = _settings()
     enabled = _settings(surface_tension_enabled=True)
     difference = estimate_solver_bytes(enabled) - estimate_solver_bytes(disabled)
-    expected = enabled["leaf_capacity"] * LEAF_VOLUME * SURFACE_TENSION_BYTES_PER_VOXEL
+    # Enabling surface tension allocates both the capillary scratch and the
+    # SDF band-propagation buffers (_band_closest + _band_points{,_tmp}), so
+    # the delta is the sum of the two per-voxel terms, not just the first.
+    expected = (
+        enabled["leaf_capacity"] * LEAF_VOLUME
+        * (SURFACE_TENSION_BYTES_PER_VOXEL + SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL)
+    )
     assert difference == expected
 
 

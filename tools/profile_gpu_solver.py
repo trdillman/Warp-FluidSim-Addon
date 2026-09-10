@@ -38,9 +38,12 @@ def _fmt_ms(seconds):
     return seconds * 1000.0
 
 
-# Flag defaults this tool applies when the caller does not override them.  The
-# dam_break scene preset only substitutes demo-scene values for flags still at
-# these defaults, so an explicit CLI value always wins.
+# Flag defaults this tool applies when the caller does not explicitly supply
+# the flag (the parser defaults these flags to None so "explicit" can be
+# tracked independently of value -- otherwise an explicit override equal to
+# the ordinary default would be indistinguishable from an omitted flag). The
+# dam_break scene preset only substitutes demo-scene values for flags the
+# caller left unset, so an explicit CLI value always wins.
 _DEFAULTS = {
     "voxel_size": 0.08,
     "max_particles": 400000,
@@ -140,18 +143,23 @@ def _build_settings(args):
 
     settings = default_benchmark_settings()
     settings.device = args.device
-    settings.voxel_size = args.voxel_size
-    settings.max_particles = args.max_particles
+    # None means the flag was left unset -- fall back to the ordinary default
+    # -- while an explicit value (even one equal to that default) is tracked
+    # as explicit so the dam_break preset below never overrides it.
+    explicit = {
+        flag: getattr(args, flag) is not None
+        for flag in ("voxel_size", "max_particles", "min_substeps", "max_substeps")
+    }
+    for flag in explicit:
+        setattr(settings, flag, getattr(args, flag) if explicit[flag] else _DEFAULTS[flag])
     settings.max_whitewater = args.max_whitewater
-    settings.min_substeps = args.min_substeps
-    settings.max_substeps = args.max_substeps
     settings.surface_enabled = not args.no_surface
     settings.whitewater_enabled = args.whitewater
     if getattr(args, "scene_preset", "benchmark") == "dam_break":
         settings.domain_min = DAM_BREAK_SCENE["domain_min"]
         settings.domain_max = DAM_BREAK_SCENE["domain_max"]
-        for flag in ("voxel_size", "max_particles", "min_substeps", "max_substeps"):
-            if getattr(args, flag) == _DEFAULTS[flag]:
+        for flag, is_explicit in explicit.items():
+            if not is_explicit:
                 setattr(settings, flag, DAM_BREAK_SCENE[flag])
         if not args.whitewater:
             settings.whitewater_enabled = DAM_BREAK_SCENE["whitewater_enabled"]
@@ -283,11 +291,11 @@ def main(argv=None):
     parser.add_argument("--frames", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--emit-frames", type=int, default=4)
-    parser.add_argument("--voxel-size", type=float, default=_DEFAULTS["voxel_size"])
-    parser.add_argument("--max-particles", type=int, default=_DEFAULTS["max_particles"])
+    parser.add_argument("--voxel-size", type=float, default=None)
+    parser.add_argument("--max-particles", type=int, default=None)
     parser.add_argument("--max-whitewater", type=int, default=200000)
-    parser.add_argument("--min-substeps", type=int, default=_DEFAULTS["min_substeps"])
-    parser.add_argument("--max-substeps", type=int, default=_DEFAULTS["max_substeps"])
+    parser.add_argument("--min-substeps", type=int, default=None)
+    parser.add_argument("--max-substeps", type=int, default=None)
     parser.add_argument("--whitewater", action="store_true")
     parser.add_argument("--no-surface", action="store_true")
     parser.add_argument("--sync", action="store_true", help="CUDA-sync every profiled phase for accurate phase timings.")

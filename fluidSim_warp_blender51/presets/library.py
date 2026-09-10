@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..version import VERSION_STRING
-from .schema import SETTING_SPECS, PresetV1
+from .schema import SCENE_OWNED_SETTINGS, SETTING_SPECS, PresetV1
 
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources" / "presets"
 _MIGRATION_MARKER = ".fluidsim_presets_migrated_v1"
@@ -225,10 +225,20 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
         raise ValueError("scene has no FluidSim settings")
     # Not every preset field is authored on ``target``: scene-owned fields such
     # as ``whitewater_output_mode`` and ``cache_compress`` stay on
-    # ``scene.fluidsim`` even when ``target`` is the migrated domain object.
-    # ``field_target`` lets callers resolve each key to its actual owner instead
-    # of writing every key to one group.
-    resolve = field_target or (lambda _key: target)
+    # ``scene.fluidsim`` even when ``target`` is the migrated domain object --
+    # Output Publication and Production Cache Bake read them from there
+    # regardless of migration state. ``field_target`` lets callers resolve each
+    # key to its actual owner instead of writing every key to one group; when
+    # omitted, SCENE_OWNED_SETTINGS keys route to ``scene.fluidsim`` and
+    # everything else routes to ``target``.
+    scene_settings = getattr(scene, "fluidsim", None)
+
+    def _default_owner(key):
+        if key in SCENE_OWNED_SETTINGS and scene_settings is not None:
+            return scene_settings
+        return target
+
+    resolve = field_target or _default_owner
     missing = tuple(key for key in preset.settings if not hasattr(resolve(key), key))
     if missing:
         raise ValueError(f"scene does not support preset settings: {', '.join(missing)}")
@@ -242,9 +252,7 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
         # ``active_preset_id`` drives the panel's "Applied:" feedback, which reads
         # the scene-level group. Write it there when present, else fall back to the
         # value target (covers scenes/tests without a separate ``scene.fluidsim``).
-        feedback = getattr(scene, "fluidsim", None)
-        if feedback is None:
-            feedback = target
+        feedback = scene_settings if scene_settings is not None else target
         if hasattr(feedback, "active_preset_id"):
             feedback.active_preset_id = preset.id
     except Exception:
