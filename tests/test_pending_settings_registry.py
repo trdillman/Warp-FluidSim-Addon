@@ -223,3 +223,192 @@ def test_adapters_delegate_pending_policy_to_deep_owner(monkeypatch):
     assert "pending_ui_state" in sources[3]
     assert "pending_settings import pending_presentation" in sources[4]
     assert "pending_settings.apply_pending_on_rewind" in sources[5]
+
+
+def _migrated_scene():
+    """A post-migration scene, the only state in which the split is observable.
+
+    ``active_domain_settings`` returns ``obj.fluidsim_domain`` only when
+    ``schema_version == 1`` and a domain object is designated; before that both
+    owners are the same datablock and every ownership question is trivially
+    satisfied.
+    """
+    domain_group = SimpleNamespace(_label="domain")
+    domain_object = SimpleNamespace(fluidsim_domain=domain_group)
+    scene_group = SimpleNamespace(
+        _label="scene", schema_version=1, domain_object=domain_object
+    )
+    return SimpleNamespace(fluidsim=scene_group), scene_group, domain_group
+
+
+def test_setting_owner_classifies_every_setting_tier(monkeypatch):
+    """Ownership must be total over the tier enum, not just over today's fields.
+
+    ``setting_owner`` partitions by ``SettingTier``; a tier added later and left
+    out of ``_SCENE_OWNED_TIERS`` would silently default to the domain group.
+    On a migrated scene that means writing the live group while the UI and the
+    consumers still read the frozen ghost, which is the defect-#5 failure mode.
+    So the partition is asserted exhaustively over the enum itself rather than
+    over the fields that happen to be registered today.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene, scene_group, domain_group = _migrated_scene()
+
+    # Total over the enum: every member is on exactly one side of the split.
+    assert set(pending._TIER_FIELDS) == set(pending.SettingTier)
+    assert pending._SCENE_OWNED_TIERS <= set(pending.SettingTier)
+
+    # Total over the registry: every field resolves to a real datablock.
+    for name in pending.SETTING_TRANSITION_REGISTRY:
+        owner = pending.setting_owner(scene, name)
+        assert owner is scene_group or owner is domain_group, name
+
+    # And the classification is not vacuous: each tier's fields actually route
+    # to the side its tier declares, modulo the documented field overrides.
+    for tier, names in pending._TIER_FIELDS.items():
+        for name in names:
+            if name in pending._SCENE_OWNED_FIELDS:
+                continue  # field-level override, pinned separately below
+            expected = (
+                scene_group if tier in pending._SCENE_OWNED_TIERS else domain_group
+            )
+            assert pending.setting_owner(scene, name) is expected, (tier, name)
+
+
+def test_setting_owner_pins_the_scene_owned_partition(monkeypatch):
+    """Pin both halves of the declaration: the tier set and the field overrides."""
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene, scene_group, domain_group = _migrated_scene()
+
+    assert pending._SCENE_OWNED_TIERS == frozenset({
+        pending.SettingTier.OUTPUT,
+        pending.SettingTier.AUTHORED_NEXT_RUN,
+        pending.SettingTier.ADAPTER,
+        pending.SettingTier.PRESENTATION,
+        pending.SettingTier.SYNC,
+    })
+    assert pending._SCENE_OWNED_FIELDS == frozenset({"quality", "domain_object"})
+
+    # One representative key per scene-owned tier, through the public API.
+    for name in ("liquid_view_mode", "cache_compress", "live", "ui_mode"):
+        assert pending.setting_owner(scene, name) is scene_group, name
+    # ... and one per domain-owned tier.
+    for name in ("viscosity_enabled", "surface_enabled", "whitewater_enabled",
+                 "height_enabled", "voxel_size"):
+        assert pending.setting_owner(scene, name) is domain_group, name
+
+    # An unregistered name has no tier. It must fall to the domain group, not
+    # silently claim the scene, so a typo cannot quietly write the ghost.
+    assert pending.setting_owner(scene, "not_a_registered_field") is domain_group
+
+
+def test_setting_owner_routes_scene_read_fields_to_the_scene_group(monkeypatch):
+    """``quality`` and ``domain_object`` are read off ``scene.fluidsim``, so the
+    tier partition alone gives the wrong answer for them.
+
+    Both are REINITIALIZE, which is not a scene-owned tier, yet:
+
+    * ``solver_settings.scene_quality_fidelity()`` reads ``scene.fluidsim.quality``
+      deliberately (see its docstring) to keep the read owner and the UI write
+      owner identical on migrated and pre-migration scenes alike.
+    * ``migration._MIGRATION_SKIP`` never copies ``domain_object`` onto the
+      domain group at all, so that copy is permanently unset; ``domain_bounds``
+      / ``domain_transform`` and the rendering and session operators all read it
+      from ``scene.fluidsim``.
+
+    Routing either through the domain group would write a value nothing reads.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene, scene_group, _domain_group = _migrated_scene()
+
+    for name in ("quality", "domain_object"):
+        assert pending.SETTING_TRANSITION_REGISTRY[name] is (
+            pending.SettingTier.REINITIALIZE
+        ), name
+        assert pending.setting_owner(scene, name) is scene_group, name
+
+
+def test_authoring_owner_answers_a_different_question_than_setting_owner(monkeypatch):
+    """The two owner functions are not redundant, and their divergence is pinned.
+
+    ``_authoring_owner`` resolves where the *UI writes* a signature field, so a
+    user edit is detectable as pending. ``setting_owner`` resolves where a value
+    must *land to take effect*, so a preset write is not swallowed. They agree
+    for most fields and legitimately diverge wherever the panel writes
+    ``scene.fluidsim`` while the solver builds from the active domain settings.
+    Pinning that divergence keeps it a reviewed list rather than an accident.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene, scene_group, domain_group = _migrated_scene()
+
+    signature_fields = set(pending._RESET_SCENE_FIELDS) | set(
+        pending._REINIT_SETTING_FIELDS
+    )
+    diverging = {
+        name
+        for name in signature_fields
+        if (pending.setting_owner(scene, name) is scene_group)
+        != (pending._authoring_owner(scene_group, domain_group, name) is scene_group)
+    }
+
+    # Every diverging field is authored by its panel on scene.fluidsim but read
+    # by its consumer from the domain group: height_* via
+    # scene_inputs.gather_height_source, *_attribute_* via
+    # solver_settings.build_settings, profiling_* via simulation_admission.
+    expected = (
+        {
+            "height_enabled", "height_base", "height_back_mode",
+            "height_profile_image", "height_profile_scale",
+            "height_emission_mode", "height_velocity", "height_emit_particles",
+        }
+        | {"profiling_enabled", "profiling_sync"}
+        | {
+            f"surface_attribute_{suffix}"
+            for suffix in (
+                "velocity", "speed", "vorticity", "age", "lifetime", "color",
+                "source_id", "viscosity", "density", "motion",
+            )
+        }
+        | {
+            f"particles_attribute_{suffix}"
+            for suffix in (
+                "velocity", "speed", "vorticity", "age", "lifetime", "color",
+                "source_id", "uid", "viscosity", "density",
+            )
+        }
+        | {
+            f"whitewater_attribute_{suffix}"
+            for suffix in ("velocity", "speed", "age", "lifetime", "type")
+        }
+    )
+    assert diverging == expected
+
+    # quality and domain_object are NOT in that list: their consumer reads the
+    # scene too, so the field-level override makes both functions agree.
+    for name in ("quality", "domain_object"):
+        assert pending.setting_owner(scene, name) is scene_group
+        assert pending._authoring_owner(scene_group, domain_group, name) is scene_group
+
+
+def test_preset_scene_owned_settings_agree_with_setting_owner(monkeypatch):
+    """``presets.schema`` restates the split for the pure (bpy-free) preset layer.
+
+    ``presets/library.py`` must import without ``bpy``, so it cannot call
+    ``setting_owner`` and falls back to ``SCENE_OWNED_SETTINGS`` when no
+    ``field_target`` is supplied. That fallback is only safe while it agrees
+    exactly with the owner function over the preset-eligible keys, which is what
+    this pins — the third declaration is a layering artifact, not a third
+    opinion.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+    from fluidSim_warp_blender51.presets import schema
+
+    scene, scene_group, _domain_group = _migrated_scene()
+
+    assert set(schema.SETTING_SPECS) <= set(pending.SETTING_TRANSITION_REGISTRY)
+    derived = {
+        key
+        for key in schema.SETTING_SPECS
+        if pending.setting_owner(scene, key) is scene_group
+    }
+    assert derived == set(schema.SCENE_OWNED_SETTINGS)

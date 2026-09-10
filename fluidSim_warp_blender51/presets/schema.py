@@ -135,6 +135,17 @@ SETTING_SPECS: dict[str, SettingSpec] = {
 # dispatch them there even when the rest of its payload targets the active
 # domain settings post-migration. See AGENTS.md's architecture-ownership
 # contract.
+#
+# This restates, for the preset layer only, the split declared by
+# ``blender/pending_settings.setting_owner()``. It is duplicated rather than
+# imported because ``presets/library.py`` must stay bpy-free -- importing
+# pending_settings would drag ``import bpy`` into the pure preset core -- and
+# library.apply_preset() falls back to this set only when no ``field_target``
+# resolver is supplied. The blender-side caller
+# (operator_domains/presets.py) always supplies one backed by
+# ``setting_owner``, and
+# tests/test_pending_settings_registry.py pins the two in exact agreement over
+# ``SETTING_SPECS``, so this cannot drift into a second opinion.
 SCENE_OWNED_SETTINGS = frozenset({
     "whitewater_output_mode", "cache_compress", "checkpoint_interval",
 })
