@@ -164,6 +164,13 @@ class FrameStats:
     custom_effects: list[dict[str, object]] = field(default_factory=list)
     pressure_iterations: int = 0
     pressure_residual: float = 0.0
+    #: Worst of the three per-axis viscosity solves, by severity. These
+    #: mirror the pressure fields above; without them a solve that
+    #: exhausts its iteration budget every frame reports nothing at all.
+    viscosity_status: str = "DISABLED"
+    viscosity_converged: bool = True
+    viscosity_iterations: int = 0
+    viscosity_residual: float = 0.0
     timers: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
@@ -208,6 +215,10 @@ class FrameStats:
             "customEffects": [dict(item) for item in self.custom_effects],
             "pressureIterations": self.pressure_iterations,
             "pressureResidual": self.pressure_residual,
+            "viscosityStatus": self.viscosity_status,
+            "viscosityConverged": self.viscosity_converged,
+            "viscosityIterations": self.viscosity_iterations,
+            "viscosityResidual": self.viscosity_residual,
             "voxelsPerSecond": vps,
             "voxelsPerFrame": self.active_voxels,
             "particlesPerSecond": pps,

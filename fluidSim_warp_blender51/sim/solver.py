@@ -1127,6 +1127,10 @@ class FluidSolver:
         if pressure_solver is not None:
             pressure_solver.release()
 
+        viscosity_solver = getattr(self, "viscosity_solver", None)
+        if viscosity_solver is not None:
+            viscosity_solver.release()
+
         host_frame = self._host_frame_cache
         if host_frame is not None:
             host_frame.solver = None
@@ -1656,16 +1660,20 @@ class FluidSolver:
                 device=self.device,
             )
         if int(s.viscosity_solver) == int(ViscositySolverEnum.JACOBI):
-            self.viscosity_solver.smooth(
+            status = self.viscosity_solver.smooth(
                 self.vel, self.viscosity_field.data, self.voxel_type.data, dt,
                 iterations=max(1, s.viscosity_iterations // 10),
             )
         else:
-            self.viscosity_solver.solve(
+            status = self.viscosity_solver.solve(
                 self.vel, self.viscosity_field.data, self.voxel_type.data, dt,
                 use_pcg=True, iterations=s.viscosity_iterations,
                 tolerance=s.viscosity_tolerance,
             )
+        self.stats.viscosity_status = status["reason"]
+        self.stats.viscosity_converged = bool(status["converged"])
+        self.stats.viscosity_iterations = int(status["iterations"])
+        self.stats.viscosity_residual = float(status["residual"])
 
     def _collision_faces(self):
         g = self.grid

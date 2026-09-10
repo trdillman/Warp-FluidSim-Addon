@@ -25,12 +25,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 #                            legitimately runs with no live session
 #   write_report           - reports available diagnostics even when no solver
 #                            session is active
+#   apply_product_preset   - only touches the session to reset in place when one
+#                            already owns the scene; with no session the preset
+#                            values sit on the domain object and apply at
+#                            initialize time, so it must stay clickable
 _NO_POLL_REQUIRED = {
     "FLUIDSIM_OT_initialize",
     "FLUIDSIM_OT_clear_error",
     "FLUIDSIM_OT_toggle_live",
     "FLUIDSIM_OT_export_cache_sequence",
     "FLUIDSIM_OT_write_report",
+    "FLUIDSIM_OT_apply_product_preset",
     # Explicit reinitialize is also a no-session recovery path when a scene
     # retains a per-scene pending snapshot after its solver was released.
     "FLUIDSIM_OT_apply_pending_reinitialize",

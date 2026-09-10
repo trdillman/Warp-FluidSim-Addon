@@ -21,6 +21,7 @@ from .solver_settings import (
     domain_bounds as _domain_bounds,
     enum_setting_fields as _enum_setting_fields,
     normalize_domain_boundary_settings as _normalize_domain_boundary_settings,
+    scene_quality_fidelity as _scene_quality_fidelity,
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -31,6 +32,17 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 def session():
     from .scene_bridge import session as solver_session
     return solver_session()
+
+
+def _active_settings(scene):
+    """Live settings group the solver builds from.
+
+    Post-migration this is the domain object's ``fluidsim_domain`` group, not the
+    stale ``scene.fluidsim`` ghost copy. Lazy import mirrors ``session()`` to keep
+    the scene_bridge import cycle broken.
+    """
+    from .scene_bridge import active_domain_settings
+    return active_domain_settings(scene)
 
 
 def _scene_get(scene, key: str, default=""):
@@ -141,6 +153,9 @@ _RESET_REGISTRY_FIELDS = frozenset({
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
+    # The scene-level Quality tier rescales solver knobs (voxel size, substeps,
+    # iterations, particles), so a change re-derives grid allocation: rebuild.
+    "quality",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "snippets", "active_snippet", "snippet_library_selection",
@@ -156,7 +171,7 @@ _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
 })
 _PRESENTATION_FIELDS = frozenset({
-    "ui_mode", "quality", "export_attributes", "schema_version",
+    "ui_mode", "export_attributes", "schema_version",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
@@ -191,6 +206,29 @@ _TIER_FIELDS = {
 SETTING_TRANSITION_REGISTRY = {
     name: tier for tier, names in _TIER_FIELDS.items() for name in names
 }
+
+# Tiers whose fields stay authored on scene.fluidsim even on a migrated scene:
+# display/output, cache/bake authoring, UI-only adapter/presentation state, and
+# SYNC (no direct field). Every other tier is solver-relevant and authored on
+# the active domain settings post-migration.
+_SCENE_OWNED_TIERS = frozenset({
+    SettingTier.OUTPUT, SettingTier.AUTHORED_NEXT_RUN,
+    SettingTier.ADAPTER, SettingTier.PRESENTATION, SettingTier.SYNC,
+})
+
+
+def setting_owner(scene, name):
+    """The settings group that authors registry field ``name``.
+
+    Callers outside this module (e.g. the preset operators) must resolve
+    per-field ownership through this function rather than reconstructing the
+    tier partition themselves — this is the one place the scene-owned vs.
+    domain-owned split is declared (see AGENTS.md:L21).
+    """
+    scene_fs = getattr(scene, "fluidsim", None)
+    domain_fs = _active_settings(scene) or scene_fs
+    tier = SETTING_TRANSITION_REGISTRY.get(name)
+    return scene_fs if tier in _SCENE_OWNED_TIERS else domain_fs
 
 
 def validate_transition_registry(declared_fields=None):
@@ -281,6 +319,10 @@ _SURFACE_SETTING_FIELDS = frozenset({
 _REINIT_SETTING_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles",
     "max_whitewater", "profiling_enabled", "profiling_sync",
+    # Scene-level Quality tier; the reinit signature reads scene.fluidsim, which
+    # is exactly where quality is authored, so editing it flags a pending
+    # rebuild on both migrated and pre-migration scenes.
+    "quality",
 })
 _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
     "height_enabled", "height_base", "height_back_mode",
@@ -291,6 +333,36 @@ _RESET_OBJECT_FIELDS = frozenset({
     "role", "point_source_representation", "mesh_evaluation_mode",
     "emission_mode", "auto_inject_seed",
 })
+
+# Signature fields the UI authors on the DOMAIN settings block (drawn via
+# ui_scene._domain_owner == active_domain_settings, e.g. FLUIDSIM_PT_scene_domain
+# and the physics panels). Phase-3 migration COPIES these onto
+# obj.fluidsim_domain and freezes the scene.fluidsim copy, so post-migration the
+# UI writes here while scene.fluidsim is stale. Pending detection must therefore
+# resolve them through _active_settings(scene); reading raw scene.fluidsim would
+# compare the frozen ghost against itself and never see the edit (defect #5).
+# Every OTHER signature field is authored on context.scene.fluidsim by its panel
+# (domain_object identity, quality, profiling_*, height_*, *_attribute_*), so it
+# is read from scene.fluidsim below. domain_sdf_walls has no UI control; it is
+# grouped with the domain block for intent and is harmless either way.
+_DOMAIN_AUTHORED_SIGNATURE_FIELDS = frozenset({
+    "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
+    "particles_per_voxel", "topology_expand", "open_boundaries",
+    "domain_sdf_walls", "spacetime_enabled", "spacetime_reference_mass",
+    "spacetime_seed",
+})
+
+
+def _signature_owners(scene):
+    """Return ``(scene_fs, domain_fs)`` — the two datablocks signature fields
+    resolve to. ``domain_fs`` is ``active_domain_settings`` (== ``obj.fluidsim_domain``
+    on migrated scenes, else ``scene.fluidsim``)."""
+    return getattr(scene, "fluidsim", None), _active_settings(scene)
+
+
+def _field_owner(scene_fs, domain_fs, name):
+    """The datablock that AUTHORS ``name`` (matches where the UI writes)."""
+    return domain_fs if name in _DOMAIN_AUTHORED_SIGNATURE_FIELDS else scene_fs
 
 
 @dataclass
@@ -377,8 +449,8 @@ def _configured_device():
 
 
 def _reset_signature(scene):
-    fs = scene.fluidsim
-    values = [(name, _stable_value(getattr(fs, name, None)))
+    scene_fs, domain_fs = _signature_owners(scene)
+    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_RESET_SCENE_FIELDS)]
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
@@ -394,10 +466,12 @@ def _reset_signature(scene):
 
 
 def _reinit_signature(scene):
-    fs = scene.fluidsim
-    values = [(name, _stable_value(getattr(fs, name, None)))
+    scene_fs, domain_fs = _signature_owners(scene)
+    values = [(name, _stable_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None)))
               for name in sorted(_REINIT_SETTING_FIELDS)]
-    domain = getattr(fs, "domain_object", None)
+    # domain_object is the scene-level identity pointer (excluded from migration),
+    # so it is always read from scene.fluidsim.
+    domain = getattr(scene_fs, "domain_object", None)
     values.append(("domain_identity", _stable_value(domain)))
     try:
         values.append(("domain_bounds", _stable_value(_domain_bounds(scene))))
@@ -545,20 +619,21 @@ def _snapshot_object_reset_values(scene):
 def capture_applied_state(scene, sess=None, *, reset_only=False):
     state = _interaction_state(scene)
     reset_signature, reinit_signature = current_interaction_signatures(scene)
-    fs = scene.fluidsim
+    scene_fs, domain_fs = _signature_owners(scene)
     state.applied_reset_signature = reset_signature
     state.current_reset_signature = reset_signature
     state.current_reinit_signature = reinit_signature
-    state.reset_snapshot = {name: _snapshot_value(getattr(fs, name, None))
-                            for name in _RESET_SCENE_FIELDS}
+    state.reset_snapshot = {
+        name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
+        for name in _RESET_SCENE_FIELDS}
     state.object_reset_snapshot = _snapshot_object_reset_values(scene)
     if not reset_only:
         state.applied_reinit_signature = reinit_signature
         state.reinit_snapshot = {
-            name: _snapshot_value(getattr(fs, name, None))
+            name: _snapshot_value(getattr(_field_owner(scene_fs, domain_fs, name), name, None))
             for name in _REINIT_SETTING_FIELDS
         }
-        domain = getattr(fs, "domain_object", None)
+        domain = getattr(scene_fs, "domain_object", None)
         matrix = getattr(domain, "matrix_world", None)
         state.domain_matrix_snapshot = (
             matrix.copy() if matrix is not None and hasattr(matrix, "copy") else matrix)
@@ -634,7 +709,7 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = scene.fluidsim
+    fs = _active_settings(scene)
     solver = sess.solver
     settings = getattr(solver, "settings", None)
     if settings is None:
@@ -651,7 +726,8 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
             and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0):
         _remember_st_reference_mass(settings, old_reference)
     try:
-        _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS)
+        _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
+                              quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
         new_ppv = getattr(settings, "particles_per_voxel", None)
         if (old_ppv != new_ppv
@@ -689,8 +765,9 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
     if not sess.owns_scene(scene):
         return False
     _apply_scene_settings(
-        scene.fluidsim, sess.solver.settings,
-        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS)
+        _active_settings(scene), sess.solver.settings,
+        _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS,
+        quality_fidelity=_scene_quality_fidelity(scene))
     _apply_gravity(scene, sess.solver.settings)
     _normalize_domain_boundary_settings(sess.solver.settings)
     return True
@@ -701,7 +778,7 @@ def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = scene.fluidsim
+    fs = _active_settings(scene)
     solver = sess.solver
     _apply_scene_settings(fs, solver.settings, _SURFACE_SETTING_FIELDS)
     solver.rebuild_surface()
@@ -712,7 +789,7 @@ def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    sess.solver.settings.whitewater_enabled = scene.fluidsim.whitewater_enabled
+    sess.solver.settings.whitewater_enabled = _active_settings(scene).whitewater_enabled
     return True
 
 
@@ -816,10 +893,15 @@ def revert_pending_values(scene):
         return False
     state.suppress_callbacks = True
     try:
-        fs = scene.fluidsim
+        scene_fs, domain_fs = _signature_owners(scene)
+        # Restore each snapshot value to the datablock that AUTHORS it (matches
+        # where capture_applied_state read it and where the UI writes it), so a
+        # revert of a domain-authored edit targets obj.fluidsim_domain rather
+        # than the frozen scene.fluidsim copy on a migrated scene.
         for name, value in state.reset_snapshot.items():
-            if hasattr(fs, name):
-                setattr(fs, name, value)
+            owner = _field_owner(scene_fs, domain_fs, name)
+            if owner is not None and hasattr(owner, name):
+                setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
             pg = getattr(obj, "fluidsim", None)
             if pg is not None:
@@ -827,9 +909,10 @@ def revert_pending_values(scene):
                     if hasattr(pg, name):
                         setattr(pg, name, value)
         for name, value in state.reinit_snapshot.items():
-            if hasattr(fs, name):
-                setattr(fs, name, value)
-        domain = getattr(fs, "domain_object", None)
+            owner = _field_owner(scene_fs, domain_fs, name)
+            if owner is not None and hasattr(owner, name):
+                setattr(owner, name, value)
+        domain = getattr(scene_fs, "domain_object", None)
         if domain is not None and state.domain_matrix_snapshot is not None:
             domain.matrix_world = state.domain_matrix_snapshot
     finally:

@@ -416,7 +416,39 @@ class SurfaceTensionSolver:
             self._last_message = "No active liquid particles"
             self._active_count.zero_()
             return False
-        if not self.solver.surface.ensure_solver_sdf_current():
+        # The solver-grid SDF rebuild (SurfacePipeline.build_sdf: a reset
+        # kernel, a particle-splat kernel launched over the full particle
+        # count, then filter/dilate/erode/smooth passes) is by a wide margin
+        # the most expensive part of this method, and the SDF cache never
+        # hits during substeps because solver_sdf_build_key() includes
+        # sim_time, which advances every substep (see surface.py). Time it
+        # under the same "surface" phase slot SurfacePipeline.after_substep/
+        # after_frame already use for the identical SDF-build operation, so
+        # per-phase profiler output attributes this cost correctly instead of
+        # silently folding it into the "forces" phase bucket.
+        #
+        # This call site is nested inside the outer "forces" phase span
+        # (step_frame wraps _forces() in `with self._phase("forces")`, and
+        # this method is invoked from _forces()). Profiler.track() is
+        # nesting-aware: both slots accumulate, so compute_3 ("forces")
+        # remains a superset that includes this compute_11 ("surface") cost,
+        # while only the outermost span feeds the aggregate
+        # "compute"/"solver"/"total" tracks so the overlap is not
+        # double-counted.
+        #
+        # Do NOT read compute_3 - compute_11 as "forces net of surface
+        # tension". Three call sites accumulate into compute_11 and only this
+        # one nests inside forces; SurfacePipeline.after_substep() (once per
+        # substep whenever whitewater is on) and after_frame() do not. The
+        # subtraction was measured and refuted -- a smoke run reported
+        # compute_3 = 17.5 ms against compute_11 = 35.9 ms, impossible if
+        # compute_11 were a subset. Isolate surface tension with paired
+        # deltas between ST-on and ST-off runs instead:
+        # compute_11(on) - compute_11(off) is what this rebuild adds, and
+        # compute_3(on) - compute_3(off) is the rest of the ST force cost.
+        with self.solver._phase("surface"):
+            sdf_current = self.solver.surface.ensure_solver_sdf_current()
+        if not sdf_current:
             self._last_status = "SDF_UNAVAILABLE"
             self._last_message = self.solver.surface.solver_sdf_error
             raise RuntimeError(self._last_message)

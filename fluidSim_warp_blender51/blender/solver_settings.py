@@ -164,9 +164,32 @@ def validate_setting_registry():
     _SETTING_REGISTRY_VALIDATED = True
 
 
-def apply_scene_settings(fs, settings, fields=None):
-    """Apply selected authored fields using only owned Python values."""
+def scene_quality_fidelity(scene) -> float:
+    """Fidelity multiplier authored by the scene-level Quality tier.
+
+    ``quality`` is a scene-level presentation dial (drawn on ``scene.fluidsim``
+    beside ``ui_mode``), so it is read here rather than from the per-domain
+    settings the solver otherwise builds from. This keeps the read owner and the
+    UI write owner identical on both migrated and pre-migration scenes.
+    """
+    from ..sim.quality_contract import quality_tier_fidelity
+
+    fs_scene = getattr(scene, "fluidsim", None)
+    return quality_tier_fidelity(getattr(fs_scene, "quality", "PREVIEW"))
+
+
+def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
+    """Apply selected authored fields using only owned Python values.
+
+    ``quality_fidelity`` rescales the Quality-tier knobs (voxel size, substeps,
+    pressure iterations, particles per voxel) as they are projected. Scaling
+    always reads the freshly-copied authored value from ``fs``, never a prior
+    solver value, so repeated application is idempotent and cannot compound.
+    """
     validate_setting_registry()
+    from ..sim.quality_contract import QUALITY_SCALED_FIELDS, scale_quality_value
+
+    scale = float(quality_fidelity)
     selected = None if fields is None else set(fields)
     for source in DIRECT_SETTING_FIELDS:
         target = SETTING_ALIASES.get(source, source)
@@ -174,6 +197,8 @@ def apply_scene_settings(fs, settings, fields=None):
             value = getattr(fs, source)
             if source in VECTOR_SETTING_FIELDS:
                 value = tuple(float(component) for component in value)
+            elif scale != 1.0 and source in QUALITY_SCALED_FIELDS:
+                value = scale_quality_value(source, value, scale)
             setattr(settings, target, value)
     for target, (source, enum_type) in enum_setting_fields().items():
         declared_target = SETTING_ALIASES.get(target, target)
@@ -217,7 +242,7 @@ def build_settings(scene):
     settings.domain_min, settings.domain_max = domain_bounds(scene)
     settings.frame_rate = float(scene.render.fps) / float(scene.render.fps_base)
     apply_gravity(scene, settings)
-    apply_scene_settings(fs, settings)
+    apply_scene_settings(fs, settings, quality_fidelity=scene_quality_fidelity(scene))
     # Closed particle bounds require matching pressure/collision walls. Old
     # files may store the internal switch as false, so normalize the solver
     # projection without mutating Blender data during read-only preflight.

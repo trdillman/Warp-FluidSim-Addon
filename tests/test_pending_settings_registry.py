@@ -119,6 +119,21 @@ def test_special_particle_capacity_policy_is_explicit(monkeypatch):
     )
 
 
+def test_quality_tier_is_reinitialize_and_detected_by_reinit_signature(monkeypatch):
+    _properties, pending, _bridge = _modules(monkeypatch)
+
+    # The scene-level Quality dial rescales solver knobs, so a change must
+    # re-derive grid allocation (rebuild), not read as a pure presentation edit.
+    assert (
+        pending.SETTING_TRANSITION_REGISTRY["quality"]
+        is pending.SettingTier.REINITIALIZE
+    )
+    assert "quality" not in pending._PRESENTATION_FIELDS
+    # The reinit signature (which drives auto-detection) reads scene.fluidsim,
+    # exactly where quality is authored, so quality must be in its field set.
+    assert "quality" in pending._REINIT_SETTING_FIELDS
+
+
 def test_species_toggle_rebuilds_storage_but_rate_updates_live(monkeypatch):
     _properties, pending, _bridge = _modules(monkeypatch)
 

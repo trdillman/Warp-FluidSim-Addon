@@ -38,6 +38,17 @@ def _fmt_ms(seconds):
     return seconds * 1000.0
 
 
+# Flag defaults this tool applies when the caller does not override them.  The
+# dam_break scene preset only substitutes demo-scene values for flags still at
+# these defaults, so an explicit CLI value always wins.
+_DEFAULTS = {
+    "voxel_size": 0.08,
+    "max_particles": 400000,
+    "min_substeps": 1,
+    "max_substeps": 4,
+}
+
+
 def _phase_labels():
     from fluidSim_warp_blender51.sim.constants import TIMER_PHASE_SLOTS
 
@@ -45,6 +56,83 @@ def _phase_labels():
         f"compute_{slot}": phase
         for phase, slot in TIMER_PHASE_SLOTS.items()
     }
+
+
+# Solver-visible configuration of demos/dam_break.blend, mirrored from
+# tools/build_demo_scenes.py:build_dam_break() so a bpy-free profile can run the
+# same domain, resolution, and liquid column as the shipped demo scene.
+DAM_BREAK_SCENE = {
+    "domain_min": (0.0, -1.00146496, 0.0),
+    "domain_max": (5.6, 1.00146496, 1.6),
+    "voxel_size": 0.03,
+    "max_particles": 600_000,
+    "min_substeps": 1,
+    "max_substeps": 16,
+    "whitewater_enabled": True,
+    # build_dam_break() creates the source column with lo=(0,0,0) and
+    # hi=(0.6,0.6,1.2) -> centre (0.3,0.3,0.6), half extents (0.3,0.3,0.6).
+    "source_position": (0.3, 0.3, 0.6),
+    "source_half_extents": (0.3, 0.3, 0.6),
+    "source_emit_rate": 8.0,
+    "source_velocity": (0.7, 0.0, 0.0),
+}
+
+
+def dam_break_sources():
+    """Source column matching demos/dam_break.blend's analytic box source."""
+    from fluidSim_warp_blender51.sim.enums import (
+        SourceShapeShape,
+        SourceShapeSourceMode,
+        SourceShapeType,
+    )
+    from fluidSim_warp_blender51.sim.solver import SourceShapeDesc
+
+    box = SourceShapeDesc()
+    box.shape = SourceShapeShape.BOX
+    box.stype = SourceShapeType.SOURCE
+    box.mode = SourceShapeSourceMode.PARTICLES
+    box.position = DAM_BREAK_SCENE["source_position"]
+    box.half_extents = DAM_BREAK_SCENE["source_half_extents"]
+    box.emit_rate = DAM_BREAK_SCENE["source_emit_rate"]
+    box.velocity = DAM_BREAK_SCENE["source_velocity"]
+    return [box]
+
+
+def build_sources(args):
+    from fluidSim_warp_blender51.diagnostics.benchmark import default_benchmark_sources
+
+    if getattr(args, "scene_preset", "benchmark") == "dam_break":
+        return dam_break_sources()
+    return default_benchmark_sources()
+
+
+def _sdf_splat_radius(settings):
+    """Particle-splat radius (voxels) SurfacePipeline.build_sdf uses on the
+    solver grid, including the enlargement surface tension forces."""
+    import math
+
+    from fluidSim_warp_blender51.sim.surface_tension_math import (
+        required_sdf_splat_radius_voxels,
+    )
+
+    h = float(settings.voxel_size)
+    radius = 0.5 * h * float(settings.particle_radius_scale)
+    splat = max(1, int(settings.surface_splat_radius),
+                int(math.ceil(radius / h + 1.0)))
+    if (bool(getattr(settings, "surface_tension_enabled", False))
+            and float(getattr(settings, "surface_tension_coefficient", 0.0)) > 0.0):
+        filters = sum(max(0, int(value)) for value in (
+            settings.surface_filter_iterations,
+            settings.surface_dilate_iterations,
+            settings.surface_erode_iterations,
+            settings.surface_smooth_iterations,
+        ))
+        splat = max(splat, required_sdf_splat_radius_voxels(
+            radius / h,
+            float(getattr(settings, "surface_tension_band_voxels", 1.5)),
+            int(getattr(settings, "surface_tension_smoothing_iterations", 1)),
+            filters))
+    return int(splat)
 
 
 def _build_settings(args):
@@ -59,13 +147,39 @@ def _build_settings(args):
     settings.max_substeps = args.max_substeps
     settings.surface_enabled = not args.no_surface
     settings.whitewater_enabled = args.whitewater
+    if getattr(args, "scene_preset", "benchmark") == "dam_break":
+        settings.domain_min = DAM_BREAK_SCENE["domain_min"]
+        settings.domain_max = DAM_BREAK_SCENE["domain_max"]
+        for flag in ("voxel_size", "max_particles", "min_substeps", "max_substeps"):
+            if getattr(args, flag) == _DEFAULTS[flag]:
+                setattr(settings, flag, DAM_BREAK_SCENE[flag])
+        if not args.whitewater:
+            settings.whitewater_enabled = DAM_BREAK_SCENE["whitewater_enabled"]
+    if getattr(args, "no_whitewater", False):
+        settings.whitewater_enabled = False
+    settings.viscosity_enabled = bool(getattr(args, "viscosity", False))
+    if settings.viscosity_enabled:
+        settings.viscosity_constant = float(args.viscosity_constant)
+        if args.viscosity_iterations is not None:
+            settings.viscosity_iterations = int(args.viscosity_iterations)
+        if args.viscosity_tolerance is not None:
+            settings.viscosity_tolerance = float(args.viscosity_tolerance)
+    settings.surface_tension_enabled = bool(getattr(args, "surface_tension", False))
+    if settings.surface_tension_enabled:
+        settings.surface_tension_coefficient = float(
+            args.surface_tension_coefficient)
     return settings
 
 
-def run_profile(args):
+def run_profile(args, on_frame=None):
+    """Run one profile.
+
+    ``on_frame(index, stats)`` is called after every stepped frame,
+    warmup frames included, so callers running external probes can
+    reset their counters at the warmup boundary.
+    """
     import warp as wp
 
-    from fluidSim_warp_blender51.diagnostics.benchmark import default_benchmark_sources
     from fluidSim_warp_blender51.diagnostics.profiler import Profiler
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 
@@ -76,24 +190,33 @@ def run_profile(args):
     settings = _build_settings(args)
     profiler = Profiler(device=args.device, sync=args.sync, enabled=not args.no_phase_timers)
     solver = FluidSolver(settings, profiler=profiler)
-    solver.set_sources(default_benchmark_sources())
+    solver.set_sources(build_sources(args))
 
     raw_frames = []
     total_frames = args.warmup + args.frames
     t_begin = time.perf_counter()
-    for frame in range(total_frames):
-        if frame == args.emit_frames:
-            solver.set_sources([])
-        stats = solver.step_frame()
-        if frame == args.warmup - 1:
-            profiler.history.clear()
-        if frame >= args.warmup:
-            record = stats.as_dict()
-            record["pressureIterations"] = stats.pressure_iterations
-            record["pressureResidual"] = stats.pressure_residual
-            record["substeps"] = stats.substeps
-            raw_frames.append(record)
-    wall_total = time.perf_counter() - t_begin
+    try:
+        for frame in range(total_frames):
+            if frame == args.emit_frames:
+                solver.set_sources([])
+            stats = solver.step_frame()
+            if on_frame is not None:
+                on_frame(frame, stats)
+            if frame == args.warmup - 1:
+                profiler.history.clear()
+            if frame >= args.warmup:
+                record = stats.as_dict()
+                record["pressureIterations"] = stats.pressure_iterations
+                record["pressureResidual"] = stats.pressure_residual
+                record["substeps"] = stats.substeps
+                record["surfaceTensionStatus"] = stats.surface_tension_status
+                record["substepLimiter"] = stats.substep_limiter
+                raw_frames.append(record)
+        wall_total = time.perf_counter() - t_begin
+    finally:
+        # Repeated profile runs in one process (paired A/B sweeps) must not
+        # accumulate device allocations from earlier solvers.
+        solver.release()
 
     step_times = [record["stepTime"] for record in raw_frames]
     active_voxels = [record["activeVoxels"] for record in raw_frames]
@@ -130,6 +253,20 @@ def run_profile(args):
         "pressureIterationsMean": _mean(pressure_iters),
         "pressureResidualLast": raw_frames[-1]["pressureResidual"] if raw_frames else 0.0,
         "pressurePhaseMsMean": phase_means.get("compute_5", 0.0),
+        "forcesPhaseMsMean": phase_means.get("compute_3", 0.0),
+        "viscosityPhaseMsMean": phase_means.get("compute_4", 0.0),
+        "surfacePhaseMsMean": phase_means.get("compute_11", 0.0),
+        "whitewaterPhaseMsMean": phase_means.get("compute_12", 0.0),
+        "viscosityEnabled": bool(settings.viscosity_enabled),
+        "viscosityConstant": float(settings.viscosity_constant),
+        "viscosityIterations": int(settings.viscosity_iterations),
+        "viscosityTolerance": float(settings.viscosity_tolerance),
+        "sdfSplatRadiusVoxels": _sdf_splat_radius(settings),
+        "surfaceTensionEnabled": bool(settings.surface_tension_enabled),
+        "whitewaterEnabled": bool(settings.whitewater_enabled),
+        "voxelSize": float(settings.voxel_size),
+        "maxSubsteps": int(settings.max_substeps),
+        "scenePreset": str(getattr(args, "scene_preset", "benchmark")),
         "msPer100kActiveVoxels": _fmt_ms(_mean(step_times)) / max(avg_voxels / 100000.0, 1.0e-9),
         "msPer100kParticles": _fmt_ms(_mean(step_times)) / max(avg_particles / 100000.0, 1.0e-9),
         "topPhases": [
@@ -146,15 +283,28 @@ def main(argv=None):
     parser.add_argument("--frames", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--emit-frames", type=int, default=4)
-    parser.add_argument("--voxel-size", type=float, default=0.08)
-    parser.add_argument("--max-particles", type=int, default=400000)
+    parser.add_argument("--voxel-size", type=float, default=_DEFAULTS["voxel_size"])
+    parser.add_argument("--max-particles", type=int, default=_DEFAULTS["max_particles"])
     parser.add_argument("--max-whitewater", type=int, default=200000)
-    parser.add_argument("--min-substeps", type=int, default=1)
-    parser.add_argument("--max-substeps", type=int, default=4)
+    parser.add_argument("--min-substeps", type=int, default=_DEFAULTS["min_substeps"])
+    parser.add_argument("--max-substeps", type=int, default=_DEFAULTS["max_substeps"])
     parser.add_argument("--whitewater", action="store_true")
     parser.add_argument("--no-surface", action="store_true")
     parser.add_argument("--sync", action="store_true", help="CUDA-sync every profiled phase for accurate phase timings.")
     parser.add_argument("--no-phase-timers", action="store_true")
+    parser.add_argument(
+        "--scene-preset", choices=("benchmark", "dam_break"), default="benchmark",
+        help="'dam_break' mirrors demos/dam_break.blend domain, resolution, "
+             "substep range, whitewater state, and source column.")
+    parser.add_argument("--no-whitewater", action="store_true")
+    parser.add_argument("--viscosity", action="store_true")
+    parser.add_argument("--viscosity-constant", type=float, default=1.0)
+    parser.add_argument("--viscosity-iterations", type=int, default=None)
+    parser.add_argument(
+        "--viscosity-tolerance", type=float, default=None,
+        help="Override the solver default (C.DEFAULT_VISCOSITY_TOLERANCE).")
+    parser.add_argument("--surface-tension", action="store_true")
+    parser.add_argument("--surface-tension-coefficient", type=float, default=0.072)
     parser.add_argument("--json-out")
     args = parser.parse_args(argv)
     if args.frames <= 0:

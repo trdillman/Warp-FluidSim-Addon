@@ -132,6 +132,10 @@ class Profiler:
         self._wp = None
         self._buffer_tally = 0
         self._host_tally = 0
+        # Nesting depth of open ``track()`` spans.  Only the outermost span
+        # contributes to the aggregate "compute"/"solver" tracks so overlapping
+        # inner spans cannot double-count into the frame totals.
+        self._track_depth = 0
 
     def _warp(self):
         if self._wp is None:
@@ -150,6 +154,25 @@ class Profiler:
     # -- timing ------------------------------------------------------------
     @contextmanager
     def track(self, phase: str):
+        """Time one solver phase; nesting-aware.
+
+        Phase spans may nest (for example the surface-tension SDF rebuild runs
+        inside the enclosing "forces" span).  Every span always accumulates
+        into its own ``compute_<slot>`` track, so an outer slot stays a
+        superset of the inner slots it encloses and ``outer - inner`` gives the
+        outer cost net of the inner phase.  The aggregate "compute" and
+        "solver" tracks, by contrast, are frame totals: only the OUTERMOST span
+        contributes to them, otherwise the overlapping interval would be
+        counted once per nesting level and inflate the frame total.
+
+        Synchronization: when ``sync`` is on and the device is CUDA, every
+        span - inner spans included - still brackets itself with
+        ``wp.synchronize_device``.  That is required for an inner span's own
+        measurement to describe real GPU work rather than queue-submission
+        time.  The cost is two extra device syncs per nested span; the inner
+        entry sync lands inside (and is charged to) the enclosing span, and the
+        inner exit sync is charged to the inner span.
+        """
         if not self.enabled:
             yield
             return
@@ -158,19 +181,24 @@ class Profiler:
         except KeyError:
             raise KeyError(f"unknown profiler phase: {phase}") from None
         wp = self._warp()
-        if self.sync and str(self.device).startswith("cuda"):
+        sync = bool(self.sync) and str(self.device).startswith("cuda")
+        if sync:
             wp.synchronize_device(self.device)
+        outermost = self._track_depth == 0
+        self._track_depth += 1
         t0 = time.perf_counter()
         try:
             yield
         finally:
-            if self.sync and str(self.device).startswith("cuda"):
+            if sync:
                 wp.synchronize_device(self.device)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            self._track_depth -= 1
             timers = self.frame.timers
             timers[slot] = timers.get(slot, 0.0) + elapsed_ms
-            timers["compute"] = timers.get("compute", 0.0) + elapsed_ms
-            timers["solver"] = timers.get("solver", 0.0) + elapsed_ms
+            if outermost:
+                timers["compute"] = timers.get("compute", 0.0) + elapsed_ms
+                timers["solver"] = timers.get("solver", 0.0) + elapsed_ms
 
     @contextmanager
     def track_track(self, track_name: str):
@@ -192,6 +220,9 @@ class Profiler:
     # -- frame lifecycle ----------------------------------------------------
     def begin_frame(self) -> None:
         self.frame = FrameProfile()
+        # Frames always start at the top level.  Resetting here keeps a span
+        # abandoned by a hard failure from permanently biasing later frames.
+        self._track_depth = 0
 
     def collect(self) -> dict:
         """Finalize and return this frame's ordered timer dict."""
