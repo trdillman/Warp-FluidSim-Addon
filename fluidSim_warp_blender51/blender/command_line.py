@@ -158,7 +158,7 @@ def _scene_validation(scene) -> tuple[bool, str]:
     # height fill the solver will not run (and vice versa).
     from .scene_bridge import active_domain_settings
 
-    height_owner = active_domain_settings(scene) or fs
+    height_owner = active_domain_settings(scene)
     if not sources and not bool(getattr(height_owner, "height_enabled", False)):
         return False, "No enabled liquid source or height fill is configured"
     return True, "Scene setup is valid"

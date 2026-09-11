@@ -6,6 +6,8 @@ This module owns value conversion only. Lifecycle classification is owned by
 
 from __future__ import annotations
 
+import sys
+
 
 # Canonical fallback domain used when no domain object is designated. The
 # migration create-branch builds an object spanning exactly this box so that
@@ -178,6 +180,29 @@ def scene_quality_fidelity(scene) -> float:
     return quality_tier_fidelity(getattr(fs_scene, "quality", "PREVIEW"))
 
 
+def _require_domain_group(fs):
+    """Refuse to project anything but a domain settings group.
+
+    ``apply_scene_settings`` skips every field ``fs`` does not declare, so the
+    scene group -- which declares none of them -- would otherwise yield a fully
+    defaulted ``SolverSettings`` without a word. Class identity is the exact
+    test; no field-presence rule can tell the scene group apart from a minimal
+    settings double.
+    """
+    if fs is None:
+        raise ValueError(
+            "FluidSim has no domain object designated for this scene; "
+            "designate one before simulating")
+    # Looked up, not imported: an instance of the scene group implies its module
+    # is loaded, and importing it here would drag bpy into bpy-free callers.
+    properties = sys.modules.get(__package__.rpartition(".")[0] + ".properties")
+    scene_cls = getattr(properties, "FLUIDSIM_PG_scene", None)
+    if scene_cls is not None and isinstance(fs, scene_cls):
+        raise TypeError(
+            "solver settings must be read from the domain object's "
+            "fluidsim_domain group, not scene.fluidsim")
+
+
 def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
     """Apply selected authored fields using only owned Python values.
 
@@ -186,6 +211,7 @@ def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
     always reads the freshly-copied authored value from ``fs``, never a prior
     solver value, so repeated application is idempotent and cannot compound.
     """
+    _require_domain_group(fs)
     validate_setting_registry()
     from ..sim.quality_contract import QUALITY_SCALED_FIELDS, scale_quality_value
 
@@ -213,6 +239,7 @@ def apply_gravity(scene, settings):
     from .scene_bridge import active_domain_settings
 
     fs = active_domain_settings(scene)
+    _require_domain_group(fs)
     if not hasattr(fs, "gravity"):
         return settings
     if (getattr(fs, "use_scene_gravity", False)

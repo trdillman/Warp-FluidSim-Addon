@@ -69,10 +69,8 @@ def _modules(monkeypatch):
     return properties, pending, bridge
 
 
-def _declared_scene_fields(properties):
-    tree = ast.parse(
-        textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_settings))
-    )
+def _declared_fields(settings_cls):
+    tree = ast.parse(textwrap.dedent(inspect.getsource(settings_cls)))
     return {
         node.target.id
         for node in tree.body[0].body
@@ -84,9 +82,14 @@ def _declared_scene_fields(properties):
     }
 
 
+def _declared_settings_fields(properties):
+    return (_declared_fields(properties.FLUIDSIM_PG_scene)
+            | _declared_fields(properties.FLUIDSIM_PG_domain))
+
+
 def test_transition_registry_is_exhaustive_and_disjoint(monkeypatch):
     properties, pending, _bridge = _modules(monkeypatch)
-    declared = _declared_scene_fields(properties)
+    declared = _declared_settings_fields(properties)
 
     pending.validate_transition_registry(declared)
 
@@ -148,7 +151,7 @@ def test_quality_property_wires_the_rebuild_update_callback(monkeypatch):
 
     properties, _pending, _bridge = _modules(monkeypatch)
     tree = ast.parse(
-        textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_settings))
+        textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_scene))
     )
     (quality_node,) = (
         node
@@ -267,7 +270,8 @@ def test_setting_owner_classifies_every_setting_tier(monkeypatch):
     # to the side its tier declares, modulo the documented field overrides.
     for tier, names in pending._TIER_FIELDS.items():
         for name in names:
-            if name in pending._SCENE_OWNED_FIELDS:
+            if (name in pending._SCENE_OWNED_FIELDS
+                    or name in pending._DOMAIN_OWNED_FIELDS):
                 continue  # field-level override, pinned separately below
             expected = (
                 scene_group if tier in pending._SCENE_OWNED_TIERS else domain_group
@@ -288,6 +292,10 @@ def test_setting_owner_pins_the_scene_owned_partition(monkeypatch):
         pending.SettingTier.SYNC,
     })
     assert pending._SCENE_OWNED_FIELDS == frozenset({"quality", "domain_object"})
+    assert pending._DOMAIN_OWNED_FIELDS == frozenset({
+        "height_error", "spacetime_resync_surface"})
+    # The two overrides must never claim the same field.
+    assert not (pending._SCENE_OWNED_FIELDS & pending._DOMAIN_OWNED_FIELDS)
 
     # One representative key per scene-owned tier, through the public API.
     for name in ("liquid_view_mode", "cache_compress", "live", "ui_mode"):
@@ -326,6 +334,36 @@ def test_setting_owner_routes_scene_read_fields_to_the_scene_group(monkeypatch):
             pending.SettingTier.REINITIALIZE
         ), name
         assert pending.setting_owner(scene, name) is scene_group, name
+
+
+def test_setting_owner_routes_domain_read_fields_to_the_domain_group(monkeypatch):
+    """The mirror of the ``quality``/``domain_object`` override.
+
+    ``height_error`` and ``spacetime_resync_surface`` sit in scene-owned tiers,
+    and their tiers are correct as *lifecycle* statements: a status string
+    triggers no solver action (PRESENTATION), and the resync flag is not pushed
+    into a live solver (AUTHORED_NEXT_RUN). But every consumer of both reads the
+    domain group -- scene_inputs writes ``height_error`` there and ui_scene
+    draws it from ``_domain_owner``; ui_scene draws ``spacetime_resync_surface``
+    there and ``apply_scene_settings`` consumes it from the group its caller
+    passes, always ``active_domain_settings``. Routing either to the scene group
+    would write the frozen ghost that nothing reads.
+
+    This also gates the Phase 2 split: the class partition is derived from this
+    declaration, so a scene-owned answer here would put both fields on
+    ``FLUIDSIM_PG_scene`` and strand all 11 of their call sites.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene, _scene_group, domain_group = _migrated_scene()
+
+    assert pending.SETTING_TRANSITION_REGISTRY["height_error"] is (
+        pending.SettingTier.PRESENTATION
+    )
+    assert pending.SETTING_TRANSITION_REGISTRY["spacetime_resync_surface"] is (
+        pending.SettingTier.AUTHORED_NEXT_RUN
+    )
+    for name in ("height_error", "spacetime_resync_surface"):
+        assert pending.setting_owner(scene, name) is domain_group, name
 
 
 def test_authoring_owner_answers_a_different_question_than_setting_owner(monkeypatch):
@@ -412,3 +450,21 @@ def test_preset_scene_owned_settings_agree_with_setting_owner(monkeypatch):
         if pending.setting_owner(scene, key) is scene_group
     }
     assert derived == set(schema.SCENE_OWNED_SETTINGS)
+
+
+def test_settings_groups_are_setting_owner_made_structural(monkeypatch):
+    """Every registered field is declared on the group setting_owner names.
+
+    The split turned the ownership declaration into two disjoint classes, so a
+    field declared on the wrong class would raise on every read the declaration
+    routes to it. Pinning the two against each other keeps them from drifting.
+    """
+    properties, pending, _bridge = _modules(monkeypatch)
+    scene, scene_group, _domain_group = _migrated_scene()
+    scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
+    domain_fields = _declared_fields(properties.FLUIDSIM_PG_domain)
+
+    assert not scene_fields & domain_fields
+    for name in pending.SETTING_TRANSITION_REGISTRY:
+        on_scene = pending.setting_owner(scene, name) is scene_group
+        assert name in (scene_fields if on_scene else domain_fields), (name, on_scene)

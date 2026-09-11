@@ -18,6 +18,7 @@ import types
 from types import SimpleNamespace
 
 import pytest
+from settings_doubles import split_settings
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -781,7 +782,7 @@ def test_live_solver_settings_apply_without_resetting_particle_state(monkeypatch
     reset_calls = []
     monkeypatch.setattr(sess, "reset", lambda _scene: reset_calls.append("reset"))
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(flip_ratio=0.25, cfl=2.0, status=""),
+        fluidsim=split_settings(SimpleNamespace(flip_ratio=0.25, cfl=2.0, status="")),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
@@ -804,9 +805,9 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             sample_type="NOT_A_REAL_ENUM", flip_ratio=0.2, status="Frame 8"
-        ),
+        )),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
@@ -861,9 +862,9 @@ def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
     sess = scene_bridge.session()
     sess.solver = SimpleNamespace(settings=settings, particles=object())
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             gravity=(1.0, 2.0, 3.0), use_scene_gravity=True, status="stats"
-        ),
+        )),
         use_gravity=True,
         gravity=(0.0, 0.0, -4.0),
     )
@@ -872,7 +873,7 @@ def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
     assert settings.gravity == (0.0, 0.0, -4.0)
 
-    scene.fluidsim.use_scene_gravity = False
+    scene.fluidsim.domain_object.fluidsim_domain.use_scene_gravity = False
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
     assert settings.gravity == (1.0, 2.0, 3.0)
     assert scene.fluidsim.status == "stats"
@@ -1047,7 +1048,7 @@ def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
     sess = bridge.session()
     sess.solver = SimpleNamespace(settings=settings)
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(flip_ratio=0.2, cfl=2.0),
+        fluidsim=split_settings(SimpleNamespace(flip_ratio=0.2, cfl=2.0)),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
@@ -1361,7 +1362,7 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         surface_smooth_strength=0.6,
         status="",
     )
-    scene = SimpleNamespace(fluidsim=fs)
+    scene = SimpleNamespace(fluidsim=split_settings(fs))
     sess.scene_identity = id(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.SURFACE)
@@ -1400,7 +1401,7 @@ def test_whitewater_refresh_updates_active_solver_and_output(monkeypatch):
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(whitewater_enabled=False, status="")
+        fluidsim=split_settings(SimpleNamespace(whitewater_enabled=False, status=""))
     )
     sess.scene_identity = id(scene)
 
@@ -2018,12 +2019,12 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
         open_boundaries=True,
     )
     domain_obj = SimpleNamespace(
-        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim=split_settings(SimpleNamespace(role="NONE")),
         fluidsim_domain=domain_settings,
         get=lambda _key, default=None: default,
     )
     scene_settings.domain_object = domain_obj
-    scene = SimpleNamespace(fluidsim=scene_settings)
+    scene = SimpleNamespace(fluidsim=split_settings(scene_settings))
     context = SimpleNamespace(scene=scene, object=domain_obj)
 
     assert ui_physics.physics_object_kind(context) == "DOMAIN"
@@ -2047,7 +2048,7 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
 
     # A non-domain active object → the domain mirror must not poll.
     other_obj = SimpleNamespace(
-        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim=split_settings(SimpleNamespace(role="NONE")),
         get=lambda _key, default=None: default,
     )
     scene_settings.domain_object = other_obj
@@ -2591,7 +2592,7 @@ def test_settings_group_has_ui_mode_and_quality(monkeypatch):
     properties = _reload_module("fluidSim_warp_blender51.properties")
     assert {"BASIC", "ADVANCED"} <= {i[0] for i in properties.UI_MODE_ITEMS}
     assert {"DRAFT", "PREVIEW", "FINAL", "CUSTOM"} <= {i[0] for i in properties.QUALITY_ITEMS}
-    ann = properties.FLUIDSIM_PG_settings.__annotations__
+    ann = properties.FLUIDSIM_PG_scene.__annotations__
     assert "ui_mode" in ann and "quality" in ann
 
 
@@ -2602,11 +2603,11 @@ def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
     def _ctx(ui_mode):
         return SimpleNamespace(
             scene=SimpleNamespace(
-                fluidsim=SimpleNamespace(
+                fluidsim=split_settings(SimpleNamespace(
                     ui_mode=ui_mode,
                     surface_enabled=True,
                     whitewater_enabled=True,
-                )
+                ))
             )
         )
 
@@ -2653,7 +2654,7 @@ def test_basic_front_door_and_surrogates_are_present(monkeypatch):
     def _draw(cls, fs):
         panel = cls()
         panel.layout = _Layout()
-        panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+        panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=split_settings(fs))))
         return panel.layout
 
     # Setup is the front door: the Interface (ui_mode) and Quality selectors sit
@@ -2729,16 +2730,23 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
     properties = _reload_module("fluidSim_warp_blender51.properties")
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
 
-    # A fresh domain populated from every declared default.  properties.py uses
-    # `from __future__ import annotations`, so the class annotations are source
-    # strings; evaluate each in the module namespace (where the bpy-stub prop
-    # constructors return their `default=`) to recover the real out-of-box value.
-    fs = SimpleNamespace()
-    for name, annotation in properties.FLUIDSIM_PG_settings.__annotations__.items():
-        try:
-            setattr(fs, name, eval(annotation, vars(properties)))
-        except Exception:  # noqa: BLE001 - a value we can't resolve isn't a default we drew
-            pass
+    # A fresh scene and domain populated from every declared default.
+    # properties.py uses `from __future__ import annotations`, so the class
+    # annotations are source strings; evaluate each in the module namespace
+    # (where the bpy-stub prop constructors return their `default=`) to recover
+    # the real out-of-box value.
+    def _defaults(settings_cls):
+        group = SimpleNamespace()
+        for name, annotation in settings_cls.__annotations__.items():
+            try:
+                setattr(group, name, eval(annotation, vars(properties)))
+            except Exception:  # noqa: BLE001 - a value we can't resolve isn't a default we drew
+                pass
+        return group
+
+    fs = _defaults(properties.FLUIDSIM_PG_scene)
+    fs.domain_object = SimpleNamespace(
+        fluidsim_domain=_defaults(properties.FLUIDSIM_PG_domain))
     fs.ui_mode = "BASIC"
 
     # Deterministic operational state so the always-on Transport/Lifecycle/Status
@@ -2755,9 +2763,10 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
     fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
     fake_bridge.current_error = lambda scene: ""
     fake_bridge.capacity_plan_for_scene = lambda scene: None
-    # scene_domain reads its settings owner through the bridge; this unmigrated
-    # scene resolves to scene.fluidsim, matching the real active_domain_settings.
-    fake_bridge.active_domain_settings = lambda scene: getattr(scene, "fluidsim", None)
+    # Domain panels read their settings owner through the bridge, which resolves
+    # the designated domain object's group like the real active_domain_settings.
+    fake_bridge.active_domain_settings = (
+        lambda scene: scene.fluidsim.domain_object.fluidsim_domain)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
     )
@@ -2787,7 +2796,7 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
 
 
 def test_settings_and_role_fields_declare_descriptions(monkeypatch):
-    """§7 tooltip gate: every user-facing ``FLUIDSIM_PG_settings`` property and
+    """§7 tooltip gate: every user-facing scene/domain settings property and
     the object ``role`` selector must define a non-empty ``description=`` so
     Blender renders a hover tooltip.  ``schema_version`` (internal version
     stamp), ``active_snippet`` (internal index), and ``snippets`` (the
@@ -2819,7 +2828,10 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
             return None
         return None
 
-    targets = dict(properties.FLUIDSIM_PG_settings.__annotations__)
+    targets = {
+        **properties.FLUIDSIM_PG_scene.__annotations__,
+        **properties.FLUIDSIM_PG_domain.__annotations__,
+    }
     targets["role"] = properties.FLUIDSIM_PG_object.__annotations__["role"]
 
     missing = sorted(
@@ -3030,7 +3042,7 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
         surface_smooth_iterations=1,
         surface_smooth_strength=1.0,
     )
-    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=split_settings(fs)))
     root = _Layout()
     panel = ui_scene.FLUIDSIM_PT_surface_filters()
     panel.layout = root

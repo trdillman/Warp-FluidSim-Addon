@@ -3,8 +3,8 @@
 This module is a presentation adapter.  It reuses the authoritative Scene and
 Object panel draw functions, while selecting only the groups relevant to the
 active FluidSim domain, output, or input object.  No settings are copied onto
-output objects; every control edits the existing ``Scene.fluidsim`` or
-``Object.fluidsim`` RNA owner.
+output objects; every control edits the existing ``Scene.fluidsim``,
+``Object.fluidsim`` or domain ``Object.fluidsim_domain`` RNA owner.
 """
 
 from __future__ import annotations
@@ -65,58 +65,14 @@ def _physics_id(group: str, source_id: str) -> str:
     return f"FLUIDSIM_PT_physics_{group}_{suffix}"
 
 
-class _OwnerScene:
-    """A read-through view of ``scene`` whose ``fluidsim`` is the domain owner.
-
-    Post Phase-3 migration the canonical domain settings live on
-    ``obj.fluidsim_domain`` -- ``solver_settings.build_settings`` already reads
-    it through ``active_domain_settings``, so a control still bound to
-    ``scene.fluidsim`` would edit a datablock the solver no longer consults.
-    The domain mirrors reuse the Scene panel draw functions verbatim, and those
-    bind every control to ``context.scene.fluidsim``; handing them this view
-    repoints the *owner* to the domain datablock -- a genuine ``PropertyGroup``
-    struct, so ``layout.prop`` still edits real RNA -- while every other scene
-    attribute reads through unchanged.
-
-    (Runtime ``stat_*`` telemetry is written to ``scene.fluidsim`` by the solver
-    and so renders from this same owner until Chunk 5 relocates those readouts
-    to Diagnostics; that transitional staleness is displayed-only.)
-    """
-
-    __slots__ = ("_scene", "_fluidsim")
-
-    def __init__(self, scene, fluidsim):
-        object.__setattr__(self, "_scene", scene)
-        object.__setattr__(self, "_fluidsim", fluidsim)
-
-    @property
-    def fluidsim(self):
-        return object.__getattribute__(self, "_fluidsim")
-
-    def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, "_scene"), name)
-
-
-class _OwnerContext:
-    """A read-through view of ``context`` whose ``scene`` is an `_OwnerScene`."""
-
-    __slots__ = ("_context", "_scene")
-
-    def __init__(self, context, scene):
-        object.__setattr__(self, "_context", context)
-        object.__setattr__(self, "_scene", scene)
-
-    @property
-    def scene(self):
-        return object.__getattribute__(self, "_scene")
-
-    def __getattr__(self, name):
-        return getattr(object.__getattribute__(self, "_context"), name)
-
-
 def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str],
                         owner_redirect: bool = False):
-    """Mirror existing panels under the Physics root without copying state."""
+    """Mirror existing panels under the Physics root without copying state.
+
+    ``owner_redirect`` marks mirrors of panels that edit the domain group. The
+    source panels resolve that group themselves (``ui_scene._domain_owner``), so
+    the mirror only hides them while no domain object is designated.
+    """
     source_panels = tuple(source_panels)
     id_map = {
         str(source_panel.bl_idname): _physics_id(group, str(source_panel.bl_idname))
@@ -131,13 +87,11 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
             return draw
 
         def draw(self, context):
-            scene = getattr(context, "scene", None)
-            owner = active_domain_settings(scene) if scene is not None else None
-            # Pre-migration (or before a domain object exists) the scene group is
-            # still canonical, so redirecting would change nothing; delegate as-is.
-            if owner is None or owner is getattr(scene, "fluidsim", None):
-                return source_panel.draw(self, context)
-            return source_panel.draw(self, _OwnerContext(context, _OwnerScene(scene, owner)))
+            # poll() already hides a redirected mirror without a domain; a
+            # direct draw() has no domain group to draw either.
+            if active_domain_settings(getattr(context, "scene", None)) is None:
+                return None
+            return source_panel.draw(self, context)
         return draw
 
     def poll_for(source_panel):
@@ -146,6 +100,9 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
             if not FluidSimPhysicsPanel.poll(context):
                 return False
             if physics_object_kind(context) not in accepted_kinds:
+                return False
+            if owner_redirect and active_domain_settings(
+                    getattr(context, "scene", None)) is None:
                 return False
             source_poll = getattr(source_panel, "poll", None)
             return bool(source_panel.poll(context)) if callable(source_poll) else True

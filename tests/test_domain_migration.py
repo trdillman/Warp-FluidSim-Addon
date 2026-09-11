@@ -1,14 +1,23 @@
-"""Phase 3 domain-settings migration: schema field, pointer, pure functions, handler."""
+"""Domain-settings migration: the split groups, pure functions, and the load handler."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
+
+import pytest
 
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 
 
-def test_settings_group_has_schema_version_and_domain_pointer(monkeypatch):
+def test_split_groups_are_disjoint_and_register_the_domain_pointer(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
-    assert "schema_version" in properties.FLUIDSIM_PG_settings.__annotations__
+    scene_fields = set(properties.FLUIDSIM_PG_scene.__annotations__)
+    domain_fields = set(properties.FLUIDSIM_PG_domain.__annotations__)
+    assert not scene_fields & domain_fields                 # no field on both groups
+    assert {"schema_version", "domain_object"} <= scene_fields
+    # The legacy union is exactly the pre-split field set, used only by migration.
+    legacy_fields = set(properties.FLUIDSIM_PG_legacy_settings.__annotations__)
+    assert legacy_fields == scene_fields | domain_fields
     # register() must attach the per-object domain pointer.
     properties.register()
     assert hasattr(properties.bpy.types.Object, "fluidsim_domain")
@@ -27,6 +36,17 @@ def test_migrated_field_names_skips_identity_and_guard_but_keeps_materials(monke
     assert "voxel_size" in names and "surface_material" in names   # real settings migrate
     assert "domain_object" not in names                            # identity pointer skipped
     assert "schema_version" not in names                           # guard skipped
+
+
+def test_migration_moves_the_domain_group_fields(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    migration = _reload_module("fluidSim_warp_blender51.blender.migration")
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+
+    names = set(migration.migrated_field_names(migration._domain_settings_cls()))
+    assert names == set(properties.FLUIDSIM_PG_domain.__annotations__)
+    # Scene-owned settings stay where they are.
+    assert "quality" not in names and "ui_mode" not in names
 
 
 def test_copy_domain_settings_tolerates_a_read_only_field(monkeypatch):
@@ -69,14 +89,15 @@ def test_migration_moves_settings_once_and_never_re_triggers(monkeypatch):
     monkeypatch.setattr(migration, "migrated_field_names",
                         lambda _cls: ("voxel_size", "max_particles"))
 
-    target = SimpleNamespace(fluidsim_domain=SimpleNamespace(schema_version=0))
+    target = SimpleNamespace(fluidsim_domain=SimpleNamespace())
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
         schema_version=0, voxel_size=0.05, max_particles=2_000_000))
 
     assert migration.migrate_domain_settings_schema(scene, target) is True
     assert (target.fluidsim_domain.voxel_size,
             target.fluidsim_domain.max_particles) == (0.05, 2_000_000)
-    assert target.fluidsim_domain.schema_version == 1
+    # The guard lives only on the scene group; the domain group has no such field.
+    assert not hasattr(target.fluidsim_domain, "schema_version")
     assert scene.fluidsim.schema_version == 1        # guard stamped LAST
 
     # second run on the same scene is a no-op
@@ -88,6 +109,53 @@ def test_migration_moves_settings_once_and_never_re_triggers(monkeypatch):
     virgin = SimpleNamespace(fluidsim=SimpleNamespace(schema_version=0, voxel_size=0.1))
     assert migration.migrate_domain_settings_schema(virgin, None) is False
     assert virgin.fluidsim.schema_version == 0       # untouched → data preserved
+
+
+def test_migration_refuses_a_scene_group_that_hides_the_legacy_fields(monkeypatch):
+    # Outside legacy_scene_settings() the narrow scene group declares none of the
+    # domain fields. Copying from it would stamp the guard having moved nothing,
+    # and the file's settings would be stranded for good.
+    _install_bpy_stub(monkeypatch)
+    migration = _reload_module("fluidSim_warp_blender51.blender.migration")
+    monkeypatch.setattr(migration, "migrated_field_names",
+                        lambda _cls: ("voxel_size", "max_particles"))
+
+    target = SimpleNamespace(fluidsim_domain=SimpleNamespace(voxel_size=0.02))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(schema_version=0, voxel_size=0.05))
+    with pytest.raises(RuntimeError, match="max_particles"):
+        migration.migrate_domain_settings_schema(scene, target)
+    assert scene.fluidsim.schema_version == 0          # still pending for the next load
+    assert target.fluidsim_domain.voxel_size == 0.02   # nothing half-copied
+
+
+class _RnaGroup(SimpleNamespace):
+    """Group double that, like an RNA group, knows which fields hold a stored value."""
+
+    def __init__(self, authored, **values):
+        super().__init__(**values)
+        self._authored = frozenset(authored)
+
+    def is_property_set(self, name):
+        return name in self._authored
+
+
+def test_migration_copies_only_authored_legacy_fields(monkeypatch):
+    # A scene created at runtime starts at schema_version 0 with every domain
+    # field unset. Its RNA defaults must not overwrite what the domain object
+    # already holds the next time the file is opened.
+    _install_bpy_stub(monkeypatch)
+    migration = _reload_module("fluidSim_warp_blender51.blender.migration")
+    monkeypatch.setattr(migration, "migrated_field_names",
+                        lambda _cls: ("voxel_size", "max_particles"))
+
+    target = SimpleNamespace(fluidsim_domain=SimpleNamespace(voxel_size=0.02, max_particles=9))
+    scene = SimpleNamespace(fluidsim=_RnaGroup(
+        {"max_particles"}, schema_version=0, voxel_size=0.1, max_particles=500))
+
+    assert migration.migrate_domain_settings_schema(scene, target) is True
+    assert target.fluidsim_domain.voxel_size == 0.02     # unset default left alone
+    assert target.fluidsim_domain.max_particles == 500   # authored value moved
+    assert scene.fluidsim.schema_version == 1
 
 
 def _install_handler_stub(monkeypatch):
@@ -103,17 +171,29 @@ def test_load_post_migrates_every_scene_and_registration_is_idempotent(monkeypat
     monkeypatch.setattr(migration, "migrated_field_names",
                         lambda _cls: ("voxel_size",))
 
+    events = []
+
+    @contextmanager
+    def _legacy_scope():
+        events.append("enter")
+        yield
+        events.append("exit")
+
+    monkeypatch.setattr(migration, "_legacy_scene_settings", _legacy_scope)
+
     # Two pre-migration scenes; each resolves to its own prepared domain object.
     def _scene(vx):
-        obj = SimpleNamespace(fluidsim_domain=SimpleNamespace(schema_version=0))
-        scene = SimpleNamespace(
+        obj = SimpleNamespace(fluidsim_domain=SimpleNamespace())
+        return SimpleNamespace(
             fluidsim=SimpleNamespace(schema_version=0, voxel_size=vx),
             _domain=obj)
-        return scene
     scenes = [_scene(0.05), _scene(0.2)]
     fake_bpy.data = SimpleNamespace(scenes=scenes)
-    monkeypatch.setattr(migration, "_resolve_or_create_domain",
-                        lambda scene: scene._domain)
+
+    def _resolve(scene):
+        events.append(scene)
+        return scene._domain
+    monkeypatch.setattr(migration, "_resolve_or_create_domain", _resolve)
 
     # register_handlers() is idempotent: two calls leave exactly one handler.
     migration.register_handlers()
@@ -121,12 +201,19 @@ def test_load_post_migrates_every_scene_and_registration_is_idempotent(monkeypat
     load_post = fake_bpy.app.handlers.load_post
     assert load_post.count(migration._on_load_post) == 1
 
-    # Firing the handler migrates every scene onto its domain object.
+    # Firing the handler migrates every scene onto its domain object, all
+    # inside one legacy rebind of the scene pointer.
     migration._on_load_post(None)
+    assert events[0] == "enter" and events[-1] == "exit"
+    assert events[1:-1] == scenes
     for scene in scenes:
         assert scene._domain.fluidsim_domain.voxel_size == scene.fluidsim.voxel_size
-        assert scene._domain.fluidsim_domain.schema_version == 1
         assert scene.fluidsim.schema_version == 1
+
+    # With nothing left to migrate the pointer is never rebound.
+    events.clear()
+    migration._on_load_post(None)
+    assert events == []
 
     # unregister_handlers() removes it.
     migration.unregister_handlers()

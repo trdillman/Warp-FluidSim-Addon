@@ -180,6 +180,9 @@ def _literal_panel_fields() -> set[str]:
     return fields
 
 
+SETTINGS_GROUPS = ("FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain")
+
+
 def test_every_panel_property_has_an_actionable_tooltip():
     visible_fields = _literal_panel_fields()
     declarations = list(_property_declarations(PROPERTIES))
@@ -198,13 +201,13 @@ def test_high_cost_surface_tooltips_name_directional_tradeoffs():
     declarations = {
         field: call
         for owner, field, call, _line in _property_declarations(PROPERTIES)
-        if owner == "FLUIDSIM_PG_settings"
+        if owner in SETTINGS_GROUPS
     }
     for field, concept_groups in SEMANTIC_CONTRACTS.items():
         description = _literal_keyword(declarations[field], "description").casefold()
         for alternatives in concept_groups:
             assert any(term in description for term in alternatives), (
-                f"FLUIDSIM_PG_settings.{field} tooltip must include one of "
+                f"settings field {field} tooltip must include one of "
                 f"{sorted(alternatives)}; current tooltip: {description!r}"
             )
 
@@ -213,13 +216,13 @@ def test_directional_tooltips_do_not_reverse_solver_behavior():
     declarations = {
         field: call
         for owner, field, call, _line in _property_declarations(PROPERTIES)
-        if owner == "FLUIDSIM_PG_settings"
+        if owner in SETTINGS_GROUPS
     }
     for field, required_phrases in REQUIRED_DIRECTIONAL_PHRASES.items():
         description = _literal_keyword(declarations[field], "description").casefold()
         for phrase in required_phrases:
             assert phrase in description, (
-                f"FLUIDSIM_PG_settings.{field} must state {phrase!r}; "
+                f"settings field {field} must state {phrase!r}; "
                 f"current tooltip: {description!r}"
             )
 

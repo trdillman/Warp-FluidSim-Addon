@@ -2,7 +2,8 @@
 
 ``docs/ownership-map.md`` is the gate deliverable of
 ``docs/PROPOSAL-split-settings-propertygroup.md``: one row per annotated field
-on ``FLUIDSIM_PG_settings``, with the datablock each end of the field's data
+on ``FLUIDSIM_PG_scene`` and ``FLUIDSIM_PG_domain``, with the datablock each
+end of the field's data
 flow actually touches, resolved from the AST rather than from the ownership
 declarations -- so the declarations can be audited against it.
 
@@ -53,14 +54,16 @@ EXPECTED_PUBLISHED_BROKEN = frozenset()
 # domain group, the field goes OK -> OK_MULTI rather than OK -> BROKEN, so the
 # empty BROKEN pin above would not notice.
 #
-# All seven below are the pre-Phase-1 shape -- the UI writes the domain group
-# and a consumer still reads the scene group -- which Phase 2 resolves by making
-# the wrong-group read impossible. `domain_object` is inherent: it designates the
-# domain, so it is scene-owned by definition and mirrored for editing.
-EXPECTED_OK_MULTI = frozenset({
-    "auto_grow_particles", "domain_object", "gravity", "max_particles",
-    "particle_growth_failure_policy", "use_scene_gravity", "voxel_size",
-})
+# Phase 2 step 1 repointed the six two-path fields that were the pre-Phase-1
+# shape -- the UI wrote the domain group while a consumer still read the scene
+# group. The split emptied the set: `domain_object`'s second path was the
+# Physics mirror rewriting `scene.fluidsim` to the domain group, and the domain
+# group no longer declares the field, so the mirror now draws the scene group's.
+#
+# The pin now works in the *shrunk* direction: any field reappearing here is a
+# consumer drifting back to `scene.fluidsim`, which the empty BROKEN pin above
+# cannot catch.
+EXPECTED_OK_MULTI = frozenset()
 
 def _parse_map_rows():
     """Rows of the ``## The map`` table only, as field -> {column: value}.

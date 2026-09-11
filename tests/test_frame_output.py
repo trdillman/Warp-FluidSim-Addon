@@ -9,6 +9,7 @@ from fluidSim_warp_blender51.sim.frame_output import (
     HostFrame,
     _live_numpy,
 )
+from settings_doubles import split_settings
 
 
 class _Array:
@@ -570,7 +571,7 @@ def test_live_payload_gathers_enabled_attributes_for_visible_outputs():
 
     host = _LiveAttributeHost()
     payload = output_publication.prepare_live_payload(
-        SimpleNamespace(fluidsim=_live_settings()), host)
+        SimpleNamespace(fluidsim=split_settings(_live_settings())), host)
 
     assert host.attribute_calls[:2] == [
         ("particles", {"stride": 2}),
@@ -594,11 +595,11 @@ def test_live_payload_canonicalizes_selected_visualization_channel(monkeypatch):
     )
     host = _LiveAttributeHost(attributes={})
     payload = output_publication.prepare_live_payload(
-        SimpleNamespace(fluidsim=_live_settings(
+        SimpleNamespace(fluidsim=split_settings(_live_settings(
             show_particles=False,
             show_whitewater=False,
             surface_attribute_mode="SPEED",
-        )),
+        ))),
         host,
     )
 
@@ -617,11 +618,11 @@ def test_live_payload_preserves_non_schema_visualization_without_publishing_it(
     )
     host = _LiveAttributeHost(attributes={})
     payload = output_publication.prepare_live_payload(
-        SimpleNamespace(fluidsim=_live_settings(
+        SimpleNamespace(fluidsim=split_settings(_live_settings(
             show_particles=False,
             show_whitewater=False,
             surface_attribute_mode="HEIGHT",
-        )),
+        ))),
         host,
     )
 
@@ -644,11 +645,11 @@ def test_live_payload_reuses_enabled_selected_channel(monkeypatch):
     expected = np.array([7.0, 8.0], dtype=np.float32)
     host = _LiveAttributeHost(attributes={"surface": {"speed": expected}})
     payload = output_publication.prepare_live_payload(
-        SimpleNamespace(fluidsim=_live_settings(
+        SimpleNamespace(fluidsim=split_settings(_live_settings(
             show_particles=False,
             show_whitewater=False,
             surface_attribute_mode="SPEED",
-        )),
+        ))),
         host,
     )
 
@@ -761,8 +762,8 @@ def test_live_update_acquires_one_host_frame_then_publishes_owned_payload(monkey
             ("cadence", cadence)) or True)
     solver = SimpleNamespace(
         host_frame=lambda: calls.append("host_frame") or host)
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
-        live_surface_publish_cadence=3))
+    scene = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
+        live_surface_publish_cadence=3)))
     session = SimpleNamespace(active=True, solver=solver)
     payload = object()
 

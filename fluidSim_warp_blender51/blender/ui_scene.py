@@ -28,21 +28,23 @@ def _layout(panel):
 def _domain_owner(context):
     """Return the settings datablock the active domain's controls must edit.
 
-    Post-migration the solver reads ``active_domain_settings`` (i.e. the
-    designated ``fluidsim.domain_object``'s ``fluidsim_domain``), so the Scene
-    Properties domain panels must edit that same owner -- otherwise edits land
-    on the stale ``scene.fluidsim`` copy the solver ignores. Re-designating a
-    different domain object therefore re-targets these panels, which is how
-    "multiple domains" surfaces in this single-scene UI.
+    The solver reads ``active_domain_settings`` (the designated
+    ``fluidsim.domain_object``'s ``fluidsim_domain``), so the Scene Properties
+    domain panels must edit that same owner. Re-designating a different domain
+    object therefore re-targets these panels, which is how "multiple domains"
+    surfaces in this single-scene UI.
 
-    For unmigrated scenes ``active_domain_settings`` returns ``scene.fluidsim``
-    unchanged, so every existing single-domain path stays byte-for-byte
-    identical.
+    ``None`` when no domain object is designated; panels that draw domain
+    settings poll on :func:`_domain_visible`.
     """
     from .scene_bridge import active_domain_settings
 
-    scene = getattr(context, "scene", None)
-    return active_domain_settings(scene) or getattr(scene, "fluidsim", None)
+    return active_domain_settings(getattr(context, "scene", None))
+
+
+def _domain_visible(context):
+    """Poll for panels that draw domain settings: hidden without a domain."""
+    return FluidSimScenePanel.poll(context) and _domain_owner(context) is not None
 
 
 def _runtime_ui_state():
@@ -400,7 +402,7 @@ class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+        return _domain_visible(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -417,6 +419,10 @@ class FLUIDSIM_PT_scene_height(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_scene_height"
     bl_order = 30
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return _domain_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -444,7 +450,7 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
     def poll(cls, context):
         # "Advanced Physics" gate (spec §5.3): the whole 12-panel sim_* fan
         # inherits this parent's visibility, so it collapses in Basic mode.
-        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+        return _domain_visible(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -698,6 +704,10 @@ class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
     bl_order = 60
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context):
+        return _domain_visible(context)
+
     def draw(self, context):
         layout = _layout(self)
         fs = _domain_owner(context)
@@ -804,6 +814,10 @@ class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_scene_whitewater"
     bl_order = 70
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return _domain_visible(context)
 
     def draw(self, context):
         layout = _layout(self)
@@ -917,7 +931,7 @@ class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
             active.append("Surface")
         if particles:
             active.append("Particles")
-        if _domain_owner(context).whitewater_enabled and fs.show_whitewater:
+        if _whitewater_enabled(context) and fs.show_whitewater:
             active.append("Whitewater")
         layout.label(text="Visible: " + (", ".join(active) if active else "None"), icon="HIDE_OFF")
         # Basic headline for the export inventory (spec §8); the 33 per-attribute
@@ -935,16 +949,15 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         # Display choices are scene-scoped; the two *_enabled gates are
         # domain-owned, so read them from the owner the solver uses.
-        owner = _domain_owner(context)
         layout.prop(fs, "liquid_view_mode")
         layout.prop(fs, "show_overlay", text="Viewport HUD")
-        if fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and owner.surface_enabled:
+        if fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and _surface_enabled(context):
             layout.prop(fs, "surface_attribute_mode")
         if fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}:
             layout.prop(fs, "particle_display_fraction")
             layout.prop(fs, "particle_display_scale")
             layout.prop(fs, "particle_attribute_mode")
-        if owner.whitewater_enabled:
+        if _whitewater_enabled(context):
             layout.prop(fs, "show_whitewater")
             if fs.show_whitewater:
                 layout.prop(fs, "whitewater_output_mode")
@@ -962,13 +975,12 @@ class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         # Material pickers are scene-scoped; whitewater_enabled is not.
-        owner = _domain_owner(context)
         layout.prop(fs, "output_collection_name")
         if fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"}:
             layout.prop(fs, "surface_material")
         if fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}:
             layout.prop(fs, "particle_material")
-        if owner.whitewater_enabled:
+        if _whitewater_enabled(context):
             layout.prop(fs, "whitewater_material")
             if fs.whitewater_output_mode in {"SEPARATE", "BOTH"}:
                 layout.prop(fs, "foam_material")
@@ -1246,6 +1258,10 @@ class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_diagnostics_profiling"
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return _domain_visible(context)
 
     def draw(self, context):
         layout = _layout(self)

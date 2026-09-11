@@ -288,12 +288,15 @@ def _domain_settings(scene):
     read here beside genuinely scene-scoped display flags (``show_surface``,
     ``whitewater_output_mode``, the material pickers), which stay on
     ``scene.fluidsim`` -- hence two owners rather than one rebind.
+
+    ``None`` without a designated domain; readers then take the disabled
+    defaults, so nothing solver-backed is published.
     """
     # Lazy import: scene_bridge reaches into this module, so the accessor is
     # pulled at call time rather than closing the cycle at import.
     from .scene_bridge import active_domain_settings
 
-    return active_domain_settings(scene) or getattr(scene, "fluidsim", None)
+    return active_domain_settings(scene)
 
 
 def _output_collection(scene):
@@ -972,9 +975,9 @@ def prepare_live_payload(scene, host, publish_surface=True):
         particle_attributes, fs.particle_attribute_mode, particle_values)
 
     whitewater = (host.whitewater
-                  if fs.show_whitewater and ds.whitewater_enabled else
+                  if fs.show_whitewater and getattr(ds, "whitewater_enabled", False) else
                   np.zeros((0, 3), dtype=np.float32))
-    whitewater_visible = bool(fs.show_whitewater and ds.whitewater_enabled)
+    whitewater_visible = bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     whitewater_attributes = (
         host.output_attributes(fs, "whitewater")
         if whitewater_visible else {})
@@ -995,7 +998,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
             and "type" not in whitewater_attributes):
         whitewater_attributes["type"] = host.whitewater_attribute("type")
 
-    if publish_surface and fs.show_surface and ds.surface_enabled:
+    if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
         surface_attributes = host.output_attributes(
             fs, "surface", positions=verts)
@@ -1014,7 +1017,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
     return PublicationPayload(
         voxel_size=voxel_size,
         publish_surface=publish_surface,
-        surface_visible=bool(fs.show_surface and ds.surface_enabled),
+        surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
@@ -1053,7 +1056,7 @@ def prepare_cache_payload(scene, frame_data):
     tris = np.asarray(
         _cache_array(frame_data, "surface_tris", (0, 3)), dtype=np.int32)
     voxel_size = float(np.asarray(
-        frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
+        frame_data.get("voxel_size", getattr(ds, "voxel_size", 0.05))).item())
     inventory = validate_optional_attributes(frame_data)
 
     surface_values = _cached_values(fs.surface_attribute_mode, verts)
@@ -1114,7 +1117,7 @@ def prepare_cache_payload(scene, frame_data):
         }
     return PublicationPayload(
         voxel_size=voxel_size, publish_surface=True,
-        surface_visible=bool(fs.show_surface and ds.surface_enabled),
+        surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=verts, surface_tris=tris,
         surface_attributes=surface_attributes,
@@ -1123,7 +1126,7 @@ def prepare_cache_payload(scene, frame_data):
         particle_radius=(voxel_size * 0.25
                          * getattr(fs, "particle_display_scale", 1.0)),
         particles=positions, particle_attributes=particle_attributes,
-        whitewater_visible=bool(fs.show_whitewater and ds.whitewater_enabled),
+        whitewater_visible=bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False)),
         whitewater_output_mode=str(
             getattr(fs, "whitewater_output_mode", "COMBINED")),
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
@@ -1179,10 +1182,10 @@ def prepare_outputs(scene):
     fs = scene.fluidsim
     ds = _domain_settings(scene)
     materials = None
-    if (fs.show_surface and ds.surface_enabled) or fs.show_particles or (
-            fs.show_whitewater and ds.whitewater_enabled):
+    if (fs.show_surface and getattr(ds, "surface_enabled", False)) or fs.show_particles or (
+            fs.show_whitewater and getattr(ds, "whitewater_enabled", False)):
         from . import materials
-    if fs.show_surface and ds.surface_enabled:
+    if fs.show_surface and getattr(ds, "surface_enabled", False):
         _ensure_material(materials.ensure_surface_material, scene, _ensure_object(
             scene, SURFACE_NAME,
             lambda: _new_blender_id(
@@ -1192,7 +1195,7 @@ def prepare_outputs(scene):
             materials.ensure_particle_material,
             scene, _ensure_point_object(
                 scene, PARTICLES_NAME, enabled_attribute_keys(fs, "particles")))
-    if fs.show_whitewater and ds.whitewater_enabled:
+    if fs.show_whitewater and getattr(ds, "whitewater_enabled", False):
         combined_enabled, separate_enabled = _whitewater_mode_flags(
             getattr(fs, "whitewater_output_mode", "COMBINED"))
         targets = []
@@ -1383,7 +1386,7 @@ def refresh_existing_output_settings(scene):
     ds = _domain_settings(scene)
     surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
-        visible = fs.show_surface and ds.surface_enabled
+        visible = fs.show_surface and getattr(ds, "surface_enabled", False)
         surface.hide_viewport = not visible
         surface.hide_render = not visible
         if visible:
@@ -1395,7 +1398,7 @@ def refresh_existing_output_settings(scene):
         particles.hide_viewport = not fs.show_particles
         particles.hide_render = not fs.show_particles
         if fs.show_particles:
-            radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
+            radius = (getattr(ds, "voxel_size", 0.05) * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
             _set_point_radius(particles, radius)
             _ensure_material(
@@ -1403,7 +1406,7 @@ def refresh_existing_output_settings(scene):
 
     combined_enabled, separate_enabled = _whitewater_mode_flags(
         getattr(fs, "whitewater_output_mode", "COMBINED"))
-    visible = fs.show_whitewater and ds.whitewater_enabled
+    visible = fs.show_whitewater and getattr(ds, "whitewater_enabled", False)
     typed_materials = {
         WHITEWATER_NAME: materials.ensure_whitewater_material,
         FOAM_NAME: materials.ensure_foam_material,
@@ -1423,7 +1426,7 @@ def refresh_existing_output_settings(scene):
         obj.hide_viewport = not obj_visible
         obj.hide_render = not obj_visible
         if obj_visible:
-            radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
+            radius = (getattr(ds, "voxel_size", 0.05) * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(obj, radius)
             _ensure_material(ensure_material, scene, obj)

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from settings_doubles import split_settings
 
 
 @dataclass
@@ -62,13 +63,13 @@ def _active_reset(
     bridge = _bridge(monkeypatch)
     scene = SimpleNamespace(
         frame_start=1,
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             max_particles=authored,
             auto_grow_particles=auto_grow,
             particle_growth_failure_policy="DEFER",
             snippets=[],
             status="before",
-        ),
+        )),
     )
     released = []
     old_solver = SimpleNamespace(
@@ -200,7 +201,7 @@ def test_reset_autogrow_off_lowered_reserve_uses_grown_runtime_without_shrink(
     assert planned == [12, 12]  # initial admission + pre-allocation VRAM recheck
     assert prepared and sess.solver is prepared[0]
     assert sess.solver.particles.capacity == 12
-    assert scene.fluidsim.max_particles == 4
+    assert scene.fluidsim.domain_object.fluidsim_domain.max_particles == 4
     assert released == ["old"]
     assert old.particles.capacity == 12
 
@@ -376,8 +377,8 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
         monkeypatch):
     bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
         monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
-    scene.fluidsim.profiling_enabled = False
-    scene.fluidsim.profiling_sync = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
     scene.fluidsim.snippets = []
     blocker = SimpleNamespace(
         code="MEMORY_ESTIMATE", required=2048, available=1024,
@@ -469,12 +470,12 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
 def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             profiling_enabled=False,
             profiling_sync=False,
             snippets=[],
             status="before",
-        ),
+        )),
     )
     sess = bridge.Session()
     from fluidSim_warp_blender51.blender import simulation_admission
@@ -524,14 +525,14 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
 
 def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
     bridge = _bridge(monkeypatch)
-    scene_a = SimpleNamespace(fluidsim=SimpleNamespace())
+    scene_a = SimpleNamespace(fluidsim=split_settings(SimpleNamespace()))
     scene_b = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             profiling_enabled=False,
             profiling_sync=False,
             snippets=[],
             status="before",
-        ),
+        )),
     )
     old_settings = _Settings(max_particles=4_000_000)
     sess = bridge.Session()
@@ -661,8 +662,8 @@ def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypat
         memory_blocked_at=9,
         prepare_error=RuntimeError("candidate allocation attempted"),
     )
-    scene.fluidsim.profiling_enabled = False
-    scene.fluidsim.profiling_sync = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
     scene.fluidsim.snippets = []
     from fluidSim_warp_blender51.sim import memory_safety
 
@@ -690,7 +691,7 @@ def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypat
 
 def test_capacity_notice_uses_live_pool_after_growth_and_replacement(monkeypatch):
     bridge = _bridge(monkeypatch)
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=4))
+    scene = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(max_particles=4)))
     sess = bridge.Session()
     sess.scene_identity = bridge._scene_identity(scene)
     sess.solver = SimpleNamespace(particles=SimpleNamespace(capacity=8))
@@ -713,12 +714,12 @@ def test_capacity_notice_uses_live_pool_after_growth_and_replacement(monkeypatch
 def test_capacity_policy_edit_does_not_discard_another_scenes_plan(monkeypatch):
     bridge = _bridge(monkeypatch)
     owner = SimpleNamespace()
-    edited = SimpleNamespace(fluidsim=SimpleNamespace(
+    edited = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
         max_particles=4,
         auto_grow_particles=True,
         particle_growth_failure_policy="DEFER",
         status="",
-    ))
+    )))
     plan = SimpleNamespace(scene_signature="owner", suggestions=())
     sess = bridge.session()
     sess._set_capacity_plan(owner, plan)
@@ -734,8 +735,8 @@ def test_capacity_policy_edit_does_not_discard_another_scenes_plan(monkeypatch):
 def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypatch):
     bridge, scene, sess, old, released, _planned, _prepared = _active_reset(
         monkeypatch, authored=8, runtime=12, demand=7, auto_grow=False)
-    scene.fluidsim.profiling_enabled = False
-    scene.fluidsim.profiling_sync = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
     blocker = SimpleNamespace(
         code="PARTICLE_CAPACITY", required=9, available=8,
         message="particle capacity")

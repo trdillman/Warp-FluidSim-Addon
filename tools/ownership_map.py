@@ -1,4 +1,4 @@
-"""Phase 0 of the FLUIDSIM_PG_settings split: derive the ownership map.
+"""Phase 0 of the settings PropertyGroup split: derive the ownership map.
 
 `docs/PROPOSAL-split-settings-propertygroup.md` names Phase 0 as the gate for
 every later phase: one row per annotated field, saying where the UI *writes*
@@ -10,12 +10,11 @@ Why this is not a grep
 ----------------------
 Three things defeat a textual search:
 
-1.  ``_make_panel_mirrors(..., owner_redirect=True)`` in ``blender/ui_physics.py``
-    re-draws Scene panels through ``_OwnerContext``, which rewrites
-    ``context.scene.fluidsim`` to the *domain* group.  The same ``layout.prop``
-    call therefore writes a different datablock depending on which tab it is
-    drawn in.  Only the DOMAIN group redirects; the surface and whitewater
-    mirrors do not.
+1.  ``_make_panel_mirrors`` in ``blender/ui_physics.py`` re-draws Scene panels
+    under Physics Properties.  A control's datablock is whatever its draw
+    binds -- ``context.scene.fluidsim`` or ``ui_scene._domain_owner`` -- in
+    either tab; ``owner_redirect=True`` only hides the domain mirrors while no
+    domain object is designated.  The map records which panels are mirrored.
 2.  Consumers rarely name the datablock.  ``solver_settings.build_settings``
     resolves ``active_domain_settings(scene)`` and passes it as ``fs`` into
     ``apply_scene_settings``, so the read sites that matter are a parameter
@@ -117,9 +116,7 @@ def declared_scopes(fields):
 
     domain_group = SimpleNamespace(_label=DOMAIN)
     domain_object = SimpleNamespace(fluidsim_domain=domain_group)
-    scene_group = SimpleNamespace(
-        _label=SCENE, schema_version=1, domain_object=domain_object
-    )
+    scene_group = SimpleNamespace(_label=SCENE, domain_object=domain_object)
     scene = SimpleNamespace(fluidsim=scene_group)
 
     effective, authoring = {}, {}
@@ -136,17 +133,22 @@ def declared_scopes(fields):
 # Field inventory
 # --------------------------------------------------------------------------
 
+SETTINGS_CLASSES = ("FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain")
+
+
 def annotated_fields():
-    """Every annotated property on the shared PropertyGroup, in source order."""
+    """Every annotated property on the two settings groups, in source order."""
     path = os.path.join(PKG_ROOT, "properties.py")
     with open(path, encoding="utf-8") as handle:
         tree = ast.parse(handle.read(), filename=path)
-    group = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef) and node.name == "FLUIDSIM_PG_settings"
-    )
+    groups = {
+        node.name: node for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name in SETTINGS_CLASSES
+    }
     return [
-        node.target.id for node in group.body
+        node.target.id
+        for name in SETTINGS_CLASSES
+        for node in groups[name].body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     ]
 
@@ -645,22 +647,6 @@ def redirected_source_panels():
     return redirected, mirrored
 
 
-def reachable_from(entry_keys, functions, by_name):
-    """Transitive closure of the call graph from a set of entry functions."""
-    seen = set(entry_keys)
-    queue = list(entry_keys)
-    while queue:
-        current = functions.get(queue.pop())
-        if current is None:
-            continue
-        for callee_name, _bound in current.calls:
-            for callee in by_name.get(callee_name, ()):
-                if callee.key not in seen:
-                    seen.add(callee.key)
-                    queue.append(callee.key)
-    return seen
-
-
 # --------------------------------------------------------------------------
 # Aggregation
 # --------------------------------------------------------------------------
@@ -672,24 +658,13 @@ def build_map():
     effective, authoring, tiers, preset_scene_owned = declared_scopes(fields)
     redirected, mirrored = redirected_source_panels()
 
-    # A panel's draw is `<module>:<Class>.draw`; match on the class component.
-    entry_keys = []
-    for key, function in functions.items():
-        qual = key.split(":", 1)[1]
-        if function.name != "draw" or "." not in qual:
-            continue
-        owner_class = qual.rsplit(".", 1)[0]
-        if owner_class in redirected:
-            entry_keys.append(key)
-    redirect_reachable = reachable_from(entry_keys, functions, by_name)
-
     writes = defaultdict(set)      # field -> {(kind, module, line, via)}
     reads = defaultdict(set)
     for function in functions.values():
         location = module_files.get(function.module, function.module)
         for field, kind, line, via in function.writes:
             writes[field].add((kind, function.module, location, line, via,
-                               function.is_ui, function.key in redirect_reachable))
+                               function.is_ui))
         for field, kind, line, defaulted in function.reads:
             reads[field].add((kind, function.module, location, line, defaulted,
                               function.is_ui))
@@ -698,15 +673,11 @@ def build_map():
     for field in fields:
         ui_write_kinds, ui_sites = set(), []
         other_write_kinds, other_write_sites = set(), []
-        for kind, module, location, line, via, is_ui, redirects in writes.get(field, ()):
+        for kind, module, location, line, via, is_ui in writes.get(field, ()):
             if is_ui and via in ("prop", "draw_property", "draw_property_grid"):
                 if kind:
                     ui_write_kinds.add(kind)
                     ui_sites.append((location, line, kind, via))
-                # A scene-bound control inside a redirected mirror also writes
-                # the domain group when drawn under Physics Properties.
-                if kind == SCENE and redirects:
-                    ui_write_kinds.add("domain(mirror)")
             elif kind:
                 other_write_kinds.add(kind)
                 other_write_sites.append((location, line, kind, via))
@@ -832,7 +803,8 @@ def render(rows, redirected, mirrored):
     lines.append(
         "This is the Phase 0 deliverable of "
         "[PROPOSAL-split-settings-propertygroup.md](PROPOSAL-split-settings-propertygroup.md): "
-        "one row per annotated field on `FLUIDSIM_PG_settings`, derived from the "
+        "one row per annotated field on `FLUIDSIM_PG_scene` and "
+        "`FLUIDSIM_PG_domain`, derived from the "
         "AST rather than from the declarations, so the declarations themselves "
         "can be audited against it."
     )
@@ -851,10 +823,7 @@ def render(rows, redirected, mirrored):
                  "panel displays it read-only. The `stat_*` block flows this "
                  "way.")
     lines.append("")
-    lines.append("- **UI writes** -- datablock the panel control edits. "
-                 "`domain(mirror)` means a `scene`-bound control that *also* "
-                 "reaches the domain group when drawn through a "
-                 "`owner_redirect=True` Physics mirror.")
+    lines.append("- **UI writes** -- datablock the panel control edits.")
     lines.append("- **Consumer reads** -- datablock the non-UI code reads. "
                  "This is the one that decides whether an edit takes effect.")
     lines.append("- **Runtime writes** -- datablock non-UI code *assigns*; the "
@@ -922,10 +891,9 @@ def render(rows, redirected, mirrored):
     )
     lines.append("")
     lines.append(
-        "Panels in the second list draw `scene.fluidsim`-bound controls in the "
-        "Physics tab as well, and no redirect rewrites them -- so on a migrated "
-        "scene both of their write paths miss a consumer that reads the domain "
-        "group."
+        "A mirror re-runs its source panel's draw unchanged, so every control "
+        "writes the same datablock in both tabs. `owner_redirect=True` only "
+        "hides a mirror while no domain object is designated."
     )
     lines.append("")
 

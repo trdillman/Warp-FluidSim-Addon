@@ -36,23 +36,19 @@ def active_domain_object(scene):
 
 
 def active_domain_settings(scene):
-    """Return the property group that owns this scene's domain settings.
+    """Return the designated domain object's ``fluidsim_domain`` group.
 
-    After the Phase 3 ``load_post`` migration stamps ``schema_version == 1``,
-    the domain object's ``fluidsim_domain`` group is canonical. Pre-migration,
-    or when no domain object has been designated yet (e.g. mid setup-wizard),
-    fall back to ``scene.fluidsim`` so the read path survives the transition.
-    Returns ``None`` only when ``scene.fluidsim`` itself is absent.
+    Domain settings exist only on the domain object: ``scene.fluidsim`` is a
+    ``FLUIDSIM_PG_scene`` and declares none of them, so there is no fallback.
+    ``None`` means the scene has no FluidSim settings or no designated domain
+    object; callers treat that as "no domain", never as a cue to read
+    ``scene.fluidsim``.
     """
     fs = getattr(scene, "fluidsim", None)
-    if fs is None:
-        return None
-    if int(getattr(fs, "schema_version", 0)) != 1:
-        return fs
     obj = getattr(fs, "domain_object", None)
     if obj is None:
-        return fs
-    return getattr(obj, "fluidsim_domain", None) or fs
+        return None
+    return getattr(obj, "fluidsim_domain", None)
 
 
 # Session state
@@ -108,7 +104,11 @@ class Session:
     def _capacity_plan_binding_signature(scene, plan, operation):
         plan_signature = str(getattr(plan, "scene_signature", ""))
         binding = f"{plan_signature}|operation={operation}"
-        fs = getattr(scene, "fluidsim", None)
+        # ``max_particles`` is domain-owned: on a migrated scene the scene
+        # group's copy is the frozen pre-migration ghost, so a re-authored
+        # reserve would never change the signature and the plan would never
+        # rebind.
+        fs = active_domain_settings(scene)
         authored_reserve = getattr(fs, "max_particles", None)
         if authored_reserve is None:
             return binding
@@ -151,7 +151,9 @@ class Session:
         if (scene is None or self.particle_capacity_notice_scene_identity
                 != _scene_identity(scene)):
             return ""
-        fs = getattr(scene, "fluidsim", None)
+        # Domain-owned: the notice must compare the runtime capacity against
+        # the reserve the user actually authored, not the migrated ghost.
+        fs = active_domain_settings(scene)
         authored = getattr(fs, "max_particles", None)
         if authored is None:
             return ""

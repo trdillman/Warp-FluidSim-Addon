@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from fluidSim_warp_blender51.sim.solver import SolverSettings
+from settings_doubles import split_settings
 
 
 def test_selected_projection_owns_vectors_and_maps_alias_and_enum():
@@ -63,21 +64,24 @@ def test_build_settings_returns_only_owned_domain_gravity_and_device(monkeypatch
     preferences.configured_device = lambda: "cuda:7"
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.preferences", preferences)
+    mathutils = types.ModuleType("mathutils")
+    mathutils.Vector = tuple
+    monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             domain_object=None,
             use_scene_gravity=False,
             gravity=[1, 2, 3],
             directional_force=[4, 5, 6],
-        ),
+        )),
         render=SimpleNamespace(fps=30, fps_base=1.25),
         use_gravity=True,
         gravity=[0, 0, -9.81],
     )
 
     settings = solver_settings.build_settings(scene)
-    scene.fluidsim.gravity[0] = 99
-    scene.fluidsim.directional_force[0] = 99
+    scene.fluidsim.domain_object.fluidsim_domain.gravity[0] = 99
+    scene.fluidsim.domain_object.fluidsim_domain.directional_force[0] = 99
 
     assert settings.device == "cuda:7"
     assert settings.domain_min == (-2.0, -2.0, 0.0)

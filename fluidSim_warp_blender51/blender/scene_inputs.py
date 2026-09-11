@@ -1002,6 +1002,8 @@ class SceneInputs:
         from .scene_bridge import active_domain_settings
 
         fs = active_domain_settings(scene)
+        if fs is None:
+            return None
         if not fs.height_enabled:
             try:
                 fs.height_error = ""
