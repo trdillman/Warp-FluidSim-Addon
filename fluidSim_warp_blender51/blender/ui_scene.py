@@ -961,6 +961,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "show_whitewater")
             if fs.show_whitewater:
                 layout.prop(fs, "whitewater_output_mode")
+                layout.prop(fs, "whitewater_display_fraction")
                 layout.prop(fs, "whitewater_display_scale")
                 layout.prop(fs, "whitewater_attribute_mode")
 

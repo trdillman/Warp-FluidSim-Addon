@@ -561,6 +561,9 @@ class _LiveAttributeHost:
     def positions_strided(self, _step):
         return np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 
+    def whitewater_strided(self, _step):
+        return self.whitewater
+
     def output_attributes(self, _settings, output_kind, **kwargs):
         self.attribute_calls.append((output_kind, kwargs))
         return self.attributes.get(output_kind, {})
@@ -575,7 +578,7 @@ def test_live_payload_gathers_enabled_attributes_for_visible_outputs():
 
     assert host.attribute_calls[:2] == [
         ("particles", {"stride": 2}),
-        ("whitewater", {}),
+        ("whitewater", {"stride": 1}),
     ]
     assert host.attribute_calls[2][0] == "surface"
     np.testing.assert_array_equal(

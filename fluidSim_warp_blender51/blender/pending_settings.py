@@ -123,6 +123,7 @@ _OUTPUT_REGISTRY_FIELDS = frozenset({
     "particle_display_fraction", "particle_display_scale",
     "surface_attribute_mode", "particle_attribute_mode",
     "whitewater_attribute_mode", "whitewater_display_scale",
+    "whitewater_display_fraction",
     "whitewater_output_mode",
     "surface_material", "particle_material", "whitewater_material",
     "foam_material", "bubble_material", "spray_material",

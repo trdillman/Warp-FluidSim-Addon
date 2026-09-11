@@ -319,6 +319,7 @@ class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         layout.prop(fs, "show_whitewater")
         layout.prop(fs, "whitewater_output_mode")
+        layout.prop(fs, "whitewater_display_fraction")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "whitewater_attribute_mode")
         layout.prop(fs, "whitewater_material")
@@ -335,6 +336,7 @@ class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "whitewater_output_mode")
+        layout.prop(fs, "whitewater_display_fraction")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "foam_material")
         # Output mode, display scale and the material picker are scene-scoped;
@@ -362,6 +364,7 @@ class FLUIDSIM_PT_physics_bubbles_output(_OutputPanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "whitewater_output_mode")
+        layout.prop(fs, "whitewater_display_fraction")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "bubble_material")
         # Output mode, display scale and the material picker are scene-scoped;
@@ -388,6 +391,7 @@ class FLUIDSIM_PT_physics_spray_output(_OutputPanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "whitewater_output_mode")
+        layout.prop(fs, "whitewater_display_fraction")
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "spray_material")
         # Output mode, display scale and the material picker are scene-scoped;

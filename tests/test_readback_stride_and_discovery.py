@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+from settings_doubles import split_settings
 
 REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if REPO_ROOT not in sys.path:
@@ -29,7 +30,7 @@ class _Array:
         return self.value
 
 
-def _solver(log, count):
+def _solver(log, count, ww_count=0):
     positions = np.column_stack(
         [np.arange(count, dtype=np.float32)] * 3)
     velocities = positions * 0.5
@@ -43,13 +44,17 @@ def _solver(log, count):
         velocity=_Array(velocities, log, "velocities"),
         attr=lambda name: attrs[name],
     )
+    ww_positions = np.column_stack(
+        [np.arange(ww_count, dtype=np.float32)] * 3)
+    ww_velocities = ww_positions * 0.5
     whitewater = SimpleNamespace(
-        host_count=0,
-        refresh_host_count=lambda: 0,
-        position=_Array(np.zeros((0, 3), np.float32), log, "whitewater"),
-        velocity=_Array(np.zeros((0, 3), np.float32), log, "whitewater_velocity"),
-        age=_Array(np.zeros(0, np.float32), log, "whitewater_age"),
-        life=_Array(np.zeros(0, np.float32), log, "whitewater_life"),
+        host_count=ww_count,
+        refresh_host_count=lambda: ww_count,
+        position=_Array(ww_positions, log, "whitewater"),
+        velocity=_Array(ww_velocities, log, "whitewater_velocity"),
+        age=_Array(np.arange(ww_count, dtype=np.float32), log, "whitewater_age"),
+        life=_Array(np.arange(ww_count, dtype=np.float32), log, "whitewater_life"),
+        type=_Array(np.zeros(ww_count, dtype=np.int32), log, "whitewater_type"),
     )
     solver = SimpleNamespace(frame=4, particles=particles, whitewater=whitewater)
     solver.settings = SimpleNamespace(
@@ -99,6 +104,50 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     # every particle; a shared cache key would have handed it the 16.
     assert len(payload["positions"]) == count
     assert reads() == [16, count]
+
+
+def test_whitewater_display_fraction_strides_the_readback_but_not_the_cache_frame():
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.io import cache
+    from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload, HostFrame
+
+    count = 8
+    ww_count = 40
+    log = []
+    solver = _solver(log, count, ww_count=ww_count)
+    frames = {}
+    solver.host_frame = lambda: frames.setdefault(solver.frame, HostFrame(solver))
+    fs = SimpleNamespace(
+        show_particles=False, particle_attribute_mode="NONE",
+        particle_display_fraction=1.0,
+        show_whitewater=True, whitewater_enabled=True,
+        whitewater_display_fraction=0.25,
+        whitewater_attribute_mode="SPEED",
+        whitewater_output_mode="COMBINED",
+        show_surface=False, surface_enabled=False,
+        surface_attribute_mode="NONE")
+
+    def ww_position_reads():
+        return [n for name, n in log if name == "whitewater"]
+
+    frame = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=split_settings(fs)), solver.host_frame())
+
+    # Half one: the viewport read decimated before crossing the bus.
+    assert len(frame.whitewater) == 10
+    assert ww_position_reads() == [10]
+    assert set(frame.whitewater_attributes) == {"type", "speed"}
+    assert len(frame.whitewater_attributes["speed"]) == 10
+    assert len(frame.whitewater_attributes["type"]) == 10
+    assert np.array_equal(frame.whitewater[:, 0], np.arange(0, 40, 4))
+
+    payload = cache._frame_payload(CacheFramePayload.capture(
+        solver, settings_signature="test-settings"))
+
+    # Half two: the full-fidelity consumer in the same frame still gets
+    # every whitewater point; a shared cache key would have handed it the 10.
+    assert len(payload["whitewater"]) == ww_count
+    assert ww_position_reads() == [10, ww_count]
 
 
 def test_warp_discovery_never_mutates_path_without_explicit_opt_in(

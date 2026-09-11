@@ -886,6 +886,10 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
         update=_request_output_refresh,
         description="Scale whitewater viewport point radius; higher values make bubbles and spray look larger, while lower values reveal separation without changing simulation")
+    whitewater_display_fraction: FloatProperty(
+        name="Display Fraction", default=1.0, min=0.01, max=1.0,
+        update=_request_output_refresh,
+        description="Set the fraction of whitewater points shown in the viewport; higher values show a denser, more representative cloud at greater display cost, while lower values improve responsiveness")
     surface_material: PointerProperty(
         name="Surface Material", type=bpy.types.Material,
         update=_request_output_refresh,

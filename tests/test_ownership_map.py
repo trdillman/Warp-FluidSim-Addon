@@ -32,7 +32,7 @@ MAP_PATH = REPO_ROOT / "docs" / "ownership-map.md"
 GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 
 # The full annotated surface of the shared PropertyGroup.
-EXPECTED_FIELD_COUNT = 232
+EXPECTED_FIELD_COUNT = 233
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

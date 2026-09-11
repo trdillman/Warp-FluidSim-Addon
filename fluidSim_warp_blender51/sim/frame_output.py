@@ -26,8 +26,8 @@ wp.set_module_options({"enable_backward": False})
 _HOST_OUTPUT_OPERATIONS = Counter()
 
 
-def _live_numpy(device_array, live_count):
-    """Transfer only the live device prefix to NumPy."""
+def _live_numpy(device_array, live_count, stride=1):
+    """Transfer only the live device prefix to NumPy, decimated on device."""
     if live_count == 0:
         dtype = device_array.dtype
         scalar_dtype = getattr(dtype, "_wp_scalar_type_", dtype)
@@ -38,7 +38,7 @@ def _live_numpy(device_array, live_count):
         array_shape = tuple(int(axis) for axis in device_array.shape)
         element_shape = tuple(int(axis) for axis in getattr(dtype, "_shape_", ()))
         return np.empty((0, *array_shape[1:], *element_shape), dtype=numpy_dtype)
-    return device_array[:live_count].numpy()
+    return device_array[:live_count:max(1, int(stride))].numpy()
 
 
 @wp.kernel
@@ -290,19 +290,25 @@ class HostFrame:
 
     @property
     def whitewater(self):
+        return self.whitewater_strided(1)
+
+    def whitewater_strided(self, stride=1):
+        """Read back every `stride`-th live whitewater point, decimating on device."""
+        stride = max(1, int(stride))
+
         def load():
             if not hasattr(self.solver, "whitewater"):
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.whitewater_positions(), dtype=np.float32)
+                    self.solver.whitewater_positions()[::stride], dtype=np.float32)
             n = self._live_count("whitewater")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    _live_numpy(self.solver.whitewater.position, n),
+                    _live_numpy(self.solver.whitewater.position, n, stride=stride),
                     dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
-        return self._get("whitewater", load)
+        return self._get(("whitewater", stride), load)
 
     @property
     def surface_mesh(self):
@@ -470,7 +476,8 @@ class HostFrame:
             self.solver._surface_attribute_transfer = self._surface_transfer
         return self._surface_transfer
 
-    def whitewater_attribute(self, key: str):
+    def whitewater_attribute(self, key: str, *, stride: int = 1):
+        stride = max(1, int(stride))
         key = str(key)
         if key == "velocity":
             values = self.whitewater_attr("velocity")
@@ -484,7 +491,7 @@ class HostFrame:
             values = self.whitewater_attr("type")
         else:
             raise ValueError(f"unsupported whitewater attribute {key!r}")
-        return np.ascontiguousarray(values)
+        return np.ascontiguousarray(values[::stride])
 
     def output_attributes(
         self,
@@ -507,8 +514,11 @@ class HostFrame:
                 for key in keys
             }
         elif output_kind == "whitewater":
-            count = len(self.whitewater)
-            values = {key: self.whitewater_attribute(key) for key in keys}
+            count = len(self.whitewater_strided(stride))
+            values = {
+                key: self.whitewater_attribute(key, stride=stride)
+                for key in keys
+            }
         elif output_kind == "surface":
             target_source = self.surface_mesh[0] if positions is None else positions
             targets = np.asarray(

@@ -840,24 +840,25 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None,
     return None
 
 
-def _whitewater_values(solver, mode, positions, host=None):
+def _whitewater_values(solver, mode, positions, host=None, stride=1):
     if mode == "NONE":
         return None
     n = len(positions)
+    stride = max(1, int(stride))
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
-        vel = (host.whitewater_attr("velocity") if host is not None else
+        vel = (host.whitewater_attr("velocity")[::stride] if host is not None else
                solver.whitewater.velocity.numpy()[:n])
         return np.linalg.norm(vel, axis=1)
     if mode == "AGE":
-        return (host.whitewater_attr("age") if host is not None else
+        return (host.whitewater_attr("age")[::stride] if host is not None else
                 solver.whitewater.age.numpy()[:n])
     if mode == "LIFE":
-        return (host.whitewater_attr("life") if host is not None else
+        return (host.whitewater_attr("life")[::stride] if host is not None else
                 solver.whitewater.life.numpy()[:n])
     if mode == "TYPE":
-        return (host.whitewater_attr("type") if host is not None else
+        return (host.whitewater_attr("type")[::stride] if host is not None else
                 solver.whitewater.type.numpy()[:n])
     return None
 
@@ -950,6 +951,13 @@ def _display_stride(fs):
     return max(1, int(round(1.0 / fraction)))
 
 
+def _whitewater_display_stride(fs):
+    fraction = float(getattr(fs, "whitewater_display_fraction", 1.0))
+    if not 0.0 < fraction < 1.0:
+        return 1
+    return max(1, int(round(1.0 / fraction)))
+
+
 @_cost_phase("live_adaptation")
 def prepare_live_payload(scene, host, publish_surface=True):
     """Perform one live readback/adaptation stage from an acquired frame."""
@@ -974,12 +982,13 @@ def prepare_live_payload(scene, host, publish_surface=True):
     particle_attributes = _merge_selected_attribute(
         particle_attributes, fs.particle_attribute_mode, particle_values)
 
-    whitewater = (host.whitewater
+    ww_step = _whitewater_display_stride(fs)
+    whitewater = (host.whitewater_strided(ww_step)
                   if fs.show_whitewater and getattr(ds, "whitewater_enabled", False) else
                   np.zeros((0, 3), dtype=np.float32))
     whitewater_visible = bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     whitewater_attributes = (
-        host.output_attributes(fs, "whitewater")
+        host.output_attributes(fs, "whitewater", stride=ww_step)
         if whitewater_visible else {})
     whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
     whitewater_values = None
@@ -987,7 +996,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
             and (whitewater_key is None
                  or whitewater_key not in whitewater_attributes)):
         whitewater_values = _whitewater_values(
-            solver, fs.whitewater_attribute_mode, whitewater, host=host)
+            solver, fs.whitewater_attribute_mode, whitewater, host=host,
+            stride=ww_step)
     whitewater_attributes = _merge_selected_attribute(
         whitewater_attributes, fs.whitewater_attribute_mode,
         whitewater_values)
@@ -996,7 +1006,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
     if (whitewater_visible
             and whitewater_output_mode.upper() in {"SEPARATE", "BOTH"}
             and "type" not in whitewater_attributes):
-        whitewater_attributes["type"] = host.whitewater_attribute("type")
+        whitewater_attributes["type"] = host.whitewater_attribute(
+            "type", stride=ww_step)
 
     if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
@@ -1114,6 +1125,13 @@ def prepare_cache_payload(scene, frame_data):
         particle_attributes = {
             key: np.asarray(value)[::step]
             for key, value in particle_attributes.items()
+        }
+    ww_step = _whitewater_display_stride(fs)
+    if ww_step > 1 and len(whitewater):
+        whitewater = whitewater[::ww_step]
+        whitewater_attributes = {
+            key: np.asarray(value)[::ww_step]
+            for key, value in whitewater_attributes.items()
         }
     return PublicationPayload(
         voxel_size=voxel_size, publish_surface=True,

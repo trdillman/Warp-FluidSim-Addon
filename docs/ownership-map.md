@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 154 | UI writes exactly where the consumer reads |
+| OK | 155 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 29 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 9 | no access of any kind resolved -- a dead property |
-| **total** | **232** | |
+| **total** | **233** | |
 
 ## Mirror redirection
 
@@ -69,6 +69,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `whitewater_attribute_mode` | OUTPUT | scene | scene | - | - | scene/scene | 0 | OK |
 | `whitewater_output_mode` | OUTPUT | scene | scene | - | scene | scene/scene | 5 | OK |
 | `whitewater_display_scale` | OUTPUT | scene | scene | - | - | scene/scene | 11 | OK |
+| `whitewater_display_fraction` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `surface_material` | OUTPUT | scene | scene | - | - | scene/scene | 0 | OK |
 | `particle_material` | OUTPUT | scene | scene | - | - | scene/scene | 0 | OK |
 | `whitewater_material` | OUTPUT | scene | scene | - | - | scene/scene | 0 | OK |
