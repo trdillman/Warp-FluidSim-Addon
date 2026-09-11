@@ -50,6 +50,8 @@ CALENDER_LOW_VISCOSITY = 0.002
 CALENDER_HIGH_VISCOSITY = 0.5
 DAM_BREAK_RELEASE_VELOCITY = (0.7, 0.0, 0.0)
 DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
+CROWN_SPLASH_WW_CHURN_THRESHOLD = 0.05
+CROWN_SPLASH_WW_EMISSION_RATE = 200.0
 
 
 def log(msg):
@@ -433,6 +435,14 @@ def build_crown_splash():
     fs.flip_ratio = 0.97
     fs.whitewater_enabled = True
     fs.ww_churn_gain = 2.0
+    # Measured on the saved scene: peak churn is 0.25-0.35 (run-to-run GPU
+    # variation), p99.9 ~0.19, so the 0.5 default never emitted. 0.05 keeps a
+    # ~5x margin under the lowest observed peak and emits from frame 4-5 in
+    # every run; ww_min_speed still keeps the resting pool foam-free. Rate 200
+    # gives ~5k live whitewater without saturating the per-substep emission
+    # probability (peak ~0.18 of the clamp).
+    fs.ww_churn_threshold = CROWN_SPLASH_WW_CHURN_THRESHOLD
+    fs.ww_emission_rate = CROWN_SPLASH_WW_EMISSION_RATE
     fs.profiling_enabled = False
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
@@ -455,7 +465,12 @@ def build_crown_splash():
     )
     log(f"crown_splash: pool {n_pool:,} + droplet {n_all - n_pool:,} particles")
     add_camera_light(scene, (0.4, -1.05, 0.42), (1.35, 0.0, 0.0))
-    run_scene("crown_splash", 48)
+    series = run_scene("crown_splash", 48)
+    peak_whitewater = max(series["whitewater_count"])
+    if peak_whitewater == 0:
+        raise RuntimeError(
+            "crown_splash: whitewater is enabled but emitted nothing in 48 "
+            "frames; the churn threshold is above the scene's reachable churn")
     save_scene("crown_splash")
     meta = {
         "scene": "crown_splash",
@@ -469,6 +484,15 @@ def build_crown_splash():
         "fps": FPS,
         "pool_particles": int(n_pool),
         "total_particles": int(n_all),
+        "whitewater": {
+            "churn_gain": 2.0,
+            "churn_threshold": CROWN_SPLASH_WW_CHURN_THRESHOLD,
+            "emission_rate": CROWN_SPLASH_WW_EMISSION_RATE,
+            "build_peak_count": int(peak_whitewater),
+            "build_first_frame": next(
+                f for f, n in zip(series["frames"], series["whitewater_count"])
+                if n > 0),
+        },
     }
     with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
               encoding="utf-8", newline="\n") as fh:

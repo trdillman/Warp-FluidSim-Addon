@@ -34,6 +34,110 @@ EXPECTED_AUTO_SEEDS = {
     "paddle_stir": {"Paddle Stir Pool Seed"},
 }
 
+# An enabled effect whose own coefficients zero it out is a UI-only claim
+# (DEMO_SCENE_CONTRACT.md, "Enabled effects are reachable"). Each entry is a
+# necessary condition for the effect to change the solve at all.
+EFFECT_PRECONDITIONS = {
+    "whitewater_enabled": (
+        ("ww_churn_gain > 0", lambda s: s.ww_churn_gain > 0.0),
+        ("ww_emission_rate > 0", lambda s: s.ww_emission_rate > 0.0),
+    ),
+    "viscosity_enabled": (
+        ("viscosity_from_particles or viscosity_constant > 0",
+         lambda s: s.viscosity_from_particles or s.viscosity_constant > 0.0),
+    ),
+    "surface_tension_enabled": (
+        ("surface_tension_coefficient > 0",
+         lambda s: s.surface_tension_coefficient > 0.0),
+    ),
+    "species_enabled": (
+        ("species_mixing_rate > 0", lambda s: s.species_mixing_rate > 0.0),
+    ),
+}
+# Whitewater also has a runtime-only gate: a candidate emits only where churn
+# reaches ww_churn_threshold, and churn depends on the flow. No static bound
+# exists, so every whitewater demo declares the timeline window (frames after
+# frame_start) within which live whitewater must appear on a fresh reopen.
+# Each value is the measured first-emission frame plus margin.
+WHITEWATER_ACTIVATION_FRAMES = {
+    "dam_break": 32,          # first live whitewater at frame 16
+    "paddle_stir": 32,        # frame 15 (needs the keyframed paddle moving)
+    "crown_splash": 12,       # frame 3 on reopen (4-5 in the build run)
+    "adhesive_calender": 250,  # its whole simulated timeline
+}
+
+
+def effect_precondition_failures(settings):
+    """Map each enabled effect to the preconditions its own settings violate."""
+    failures = {}
+    for flag, preconditions in EFFECT_PRECONDITIONS.items():
+        if getattr(settings, flag, False):
+            failed = [label for label, holds in preconditions if not holds(settings)]
+            if failed:
+                failures[flag] = failed
+    return failures
+
+
+def check_whitewater_reachable(name):
+    """Reopen ``name`` and prove its enabled whitewater emits during playback.
+
+    Drives the saved live timeline through ``scene.frame_set`` -- the
+    production frame handler, with keyframed colliders evaluated -- and reads
+    the live count from ``frame_stats``. The ``FluidSim Whitewater`` point
+    cloud keeps a spare-capacity floor, so its point count proves nothing.
+    """
+    bpy.ops.wm.open_mainfile(filepath=os.path.join(DEMOS, name + ".blend"))
+    enable_repo_addon(REPO, default_set=False, persistent=False)
+    # Import only after enable_repo_addon: it re-imports the add-on, so an
+    # earlier module reference would hold a dead session the handler never uses.
+    from fluidSim_warp_blender51.blender import scene_bridge
+
+    scene = bpy.context.scene
+    settings = scene_bridge.active_domain_settings(scene)
+    window = WHITEWATER_ACTIVATION_FRAMES.get(name)
+    report = {
+        "window_frames": window,
+        "churn_threshold": float(settings.ww_churn_threshold),
+        "emission_rate": float(settings.ww_emission_rate),
+        "peak_churn": 0.0,
+        "first_live_frame": None,
+    }
+    if window is None:
+        report["error"] = ("whitewater_enabled but no WHITEWATER_ACTIVATION_FRAMES "
+                           "entry declares when it must emit")
+        return False, report
+    if not scene.fluidsim.live:
+        report["error"] = "saved scene is not in Live mode"
+        return False, report
+    applied_ok = False
+    try:
+        for frame in range(scene.frame_start + 1, scene.frame_start + window + 1):
+            scene.frame_set(frame)
+            sess = scene_bridge.session()
+            if not (sess.active and sess.frame_stats):
+                report["error"] = f"solver inactive at frame {frame}"
+                break
+            report["peak_churn"] = max(
+                report["peak_churn"], float(sess.solver.churn.data.numpy().max()))
+            if int(sess.frame_stats[-1].get("whitewaterParticles") or 0) > 0:
+                report["first_live_frame"] = frame
+                break
+        sess = scene_bridge.session()
+        if sess.active:
+            applied = sess.solver.settings
+            applied_ok = bool(
+                applied.whitewater_enabled
+                and abs(applied.ww_churn_threshold - settings.ww_churn_threshold) < 1.0e-6
+                and abs(applied.ww_emission_rate - settings.ww_emission_rate) < 1.0e-6
+                and abs(applied.churn_gain - settings.ww_churn_gain) < 1.0e-6)
+            report["applied_matches_authored"] = applied_ok
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        scene.fluidsim.live = False
+        bpy.ops.fluidsim.release()
+    return applied_ok and report["first_live_frame"] is not None, report
+
 
 def point_count(obj):
     # Output clouds carry spare capacity, so len(data.points) is not the count.
@@ -410,6 +514,18 @@ def check_scene(name):
     result["surface_vertices"] = len(surface.data.vertices) if surface and surface.type == "MESH" else 0
     result["particle_points"] = point_count(particles)
     result["whitewater_points"] = point_count(whitewater)
+
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    settings = active_domain_settings(scene)
+    unmet = effect_precondition_failures(settings) if settings is not None else {}
+    checks["enabled_effects_have_driving_settings"] = not unmet
+    if unmet:
+        result["unreachable_effects"] = unmet
+    if settings is not None and settings.whitewater_enabled:
+        reachable, report = check_whitewater_reachable(name)
+        checks["whitewater_emits_in_declared_window"] = reachable
+        result["whitewater_reachability"] = report
     return result
 
 

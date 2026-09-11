@@ -25,6 +25,13 @@
   "fps": 24,
   "pool_particles": 256000,
   "total_particles": 259112,
+  "whitewater": {
+    "churn_gain": 2.0,
+    "churn_threshold": 0.05,
+    "emission_rate": 200.0,
+    "build_peak_count": 5304,
+    "build_first_frame": 5
+  },
   "playable_live_setup": true,
   "seed_objects": [
     "Crown Pool Seed",
