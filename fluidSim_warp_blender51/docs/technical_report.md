@@ -482,9 +482,9 @@ source at proof HEAD `bb6d3fc5a5be9b944d4316c46aeb9ed47f011409`.
 | Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
 | Installed package lifecycle | **Passed** twice from the final 1.0.255 Windows archive in clean profiles on Blender 5.1.0 with external Warp 1.16.0; registration cycled twice per run, Custom Effects applied, CUDA was detected, and the builder reported `release_ready=true` |
 | Installed headless no-CUDA exit | Prior packaging proof exited `12`, wrote an atomic report, committed **0 frames**, and removed the package cleanly; final 1.0.255 artifact rerun remains required |
-| Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and demo contracts passed |
+| Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and static validation-example contracts passed |
 | Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
-| Custom Effects supplied-Blender proof | Three demos, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed |
+| Custom Effects supplied-Blender proof | Three static validation/review scenes, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed; this is not live demo-playback proof |
 | Release workflow coverage | Linux package job now runs and uploads the native Properties UI report in addition to P4/P5 Warp, Custom Effects Warp/Blender, package build, and installed smoke evidence |
 | NVIDIA CUDA solver gate | **Passed 21/21**, including pressure, viscosity, collision/sink masks, ST-FLIP, surface tension, and bounded diagnostics |
 | Interactive user path | **Passed**: 7.785 ms mean viewport publication, 23.353 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |

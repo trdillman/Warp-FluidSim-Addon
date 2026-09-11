@@ -5,15 +5,22 @@ These files are generated entirely from Blender primitives by
 third-party assets. They are distributed under the project GPL-3.0-or-later
 license.
 
+These are distributed workflow and validation **examples**, not the canonical
+playable demos under the repository's `demos/` directory. In particular,
+`05`-`07` are static Custom Effects validation/review scenes built from
+precomputed numerical fixtures. They do not contain a live FluidSim Domain and
+must not be presented as simulation demos. See `docs/DEMO_SCENE_CONTRACT.md` in
+the repository root for the reserved demo definition.
+
 | File | Workflow | Expected cost |
 |---|---|---|
 | `01_live_pour.blend` | Continuous inflow, Preview Water, basin collider | Low; intended for live blocking |
 | `02_moving_collider_splash.blend` | Initial fill and animated velocity-transferring collider | Medium; Production Water settings |
 | `03_viscous_honey.blend` | Honey preset and implicit viscosity | High; viscosity increases solve cost |
 | `04_whitewater_bake_resume.blend` | Typed foam/bubble/spray with combined + separate outputs and cache-v2 bake range | High; intended for production bake/resume |
-| `05_custom_effects_vortex.blend` | Artist-facing Vortex Force with controller and supplied-Warp numerical evidence | Low; Custom Effects workflow demonstration |
-| `06_custom_effects_stack.blend` | Ordered Radial Pulse and Velocity Damping stack with analytic energy comparison | Low; demonstrates order sensitivity and deterministic execution |
-| `07_warp_code_authoring.blend` | Developer-authored Lateral Wave Text datablock, trust state, and package workflow | Low; Warp Code authoring and trust-boundary demonstration |
+| `05_custom_effects_vortex.blend` | Static Vortex Force before/after validation fixture with controller and supplied-Warp numerical evidence | Low; review only, no live domain or solver playback |
+| `06_custom_effects_stack.blend` | Static ordered-effect fixture with analytic energy comparison | Low; review only, no live domain or solver playback |
+| `07_warp_code_authoring.blend` | Static Warp Code package/trust review scene | Low; authoring evidence only, no live domain or solver playback |
 
 ## Runtime requirements
 

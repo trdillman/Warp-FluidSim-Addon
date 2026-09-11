@@ -58,7 +58,10 @@ Keep source assets in Git:
 - tests under `tests/`
 - reusable tools under `tools/`
 - documentation and contribution policy files
-- curated `.blend` demo scenes and preview images
+- canonical playable `.blend` demos under `demos/`, their builders, inventory
+  entries, runtime acceptance, and preview images
+- clearly labelled distributed examples and validation/review assets under
+  `fluidSim_warp_blender51/resources/examples/`
 - curated historical scan reports under `backlog/reports/`
 - review records under `reviews/` when active tasks depend on them or they are
   deliberately retained as archived provenance
@@ -70,6 +73,20 @@ Keep generated output out of Git:
 - local snippet-library experiments
 - scratch Blender helper scripts
 - unpromoted review/swarm working output
+
+## Demo scene policy
+
+Follow `docs/DEMO_SCENE_CONTRACT.md`. A new or changed `demos/*.blend` must
+reopen at `frame_start`, resolve an authoritative Domain object, initialize a
+non-empty solver from owned sources or seeds, advance through the production
+frame handlers, and publish changing owned output. Add it to
+`tools/check_demo_blends.py` and add focused runtime acceptance for the feature
+it advertises.
+
+Do not call a static `.blend`, rendered comparison, CPU fixture, benchmark,
+package-authoring example, or review scene a demo. Store and label those assets
+according to their narrower purpose. A preview image or validation report is
+supporting evidence, not a substitute for live playback proof.
 
 Keep generated review and scan output under `artifacts/` while it is being
 produced. Promote only the small, curated record needed by an active task or
