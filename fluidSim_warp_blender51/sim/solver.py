@@ -804,6 +804,10 @@ class FluidSolver:
         """Atomically install a fully compiled and sandboxed effect stack."""
         return self.features.swap_candidate(candidate)
 
+    def update_custom_effect_runtime_bindings(self, instances):
+        """Update launch-time Custom Effect values without replacing solver state."""
+        return self.features.update_runtime_bindings(instances)
+
     def ensure_particle_capacity(self, required: int):
         """Atomically grow particle/binner storage while preserving solver state."""
         from .memory_safety import release_cuda_memory, vram_snapshot

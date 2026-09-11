@@ -232,13 +232,15 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
     bl_label = "Add Custom Effect"
     bl_description = "Add an artist-ready effect from the built-in or installed library"
     bl_options = {"REGISTER", "UNDO"}
+    bl_property = "effect_id"
 
     effect_id: EnumProperty(name="Effect", items=_effect_items)
 
     def invoke(self, context, _event):
         if not self.effect_id:
             self.effect_id = context.scene.fluidsim_effects.selected_library_effect
-        return context.window_manager.invoke_search_popup(self)
+        context.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
 
     def execute(self, context):
         definition = effect_library.combined_library().get(self.effect_id)

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from settings_doubles import split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -832,14 +833,14 @@ def test_mesh_source_cache_drops_deleted_objects_and_degenerate_meshes(monkeypat
 def test_height_source_translation_preserves_scene_settings(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+    scene = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
         height_enabled=True,
         height_base=1.25,
         height_back_mode="FLAT",
         height_velocity=(1.0, 2.0, 3.0),
         height_emit_particles=True,
         particles_per_voxel=8.0,
-    ))
+    )))
 
     desc = sources.gather_height_source(scene)
 

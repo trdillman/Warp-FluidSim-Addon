@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from settings_doubles import split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -81,7 +82,7 @@ def _scene(frame=7, *, playback=True):
         frame_start=1,
         frame_end=10,
         objects=(),
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             live=True,
             cache_playback_enabled=playback,
             cache_use_custom_range=False,
@@ -99,7 +100,7 @@ def _scene(frame=7, *, playback=True):
             stat_whitewater_status="",
             stat_step_ms=0.0,
             stat_substeps=0,
-        ),
+        )),
     )
 
 
@@ -635,7 +636,7 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
     )
 
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             show_surface=True,
             surface_enabled=False,
             show_particles=True,
@@ -648,7 +649,7 @@ def test_cache_frame_output_matches_live_display_toggles_and_scales(monkeypatch)
             whitewater_display_scale=3.0,
             whitewater_attribute_mode="NONE",
             voxel_size=0.2,
-        ),
+        )),
         collection=_fake_scene_collection(),
     )
     frame_data = {
@@ -750,7 +751,7 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
         whitewater_attribute_mode="NONE",
         voxel_size=0.2,
     )
-    scene = SimpleNamespace(fluidsim=fs, collection=_fake_scene_collection())
+    scene = SimpleNamespace(fluidsim=split_settings(fs), collection=_fake_scene_collection())
     positions = np.ones((2, 3), dtype=np.float32)
     velocities = np.zeros((2, 3), dtype=np.float32)
     verts = np.ones((3, 3), dtype=np.float32)
@@ -783,12 +784,12 @@ def test_live_and_cached_outputs_share_rendering_policy(monkeypatch):
     assert live_calls == calls
 
     calls.clear()
-    fs.surface_enabled = True
+    fs.domain_object.fluidsim_domain.surface_enabled = True
     fs.surface_attribute_mode = "HEIGHT"
     fs.particle_display_fraction = 0.5
     fs.particle_attribute_mode = "HEIGHT"
     fs.show_whitewater = True
-    fs.whitewater_enabled = True
+    fs.domain_object.fluidsim_domain.whitewater_enabled = True
     fs.whitewater_attribute_mode = "HEIGHT"
     solver.settings.surface_enabled = True
     solver.settings.whitewater_enabled = True
@@ -862,7 +863,7 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
         show_particles=True,
         show_whitewater=True, whitewater_enabled=True,
     )
-    scene = SimpleNamespace(fluidsim=fs, collection=_fake_scene_collection())
+    scene = SimpleNamespace(fluidsim=split_settings(fs), collection=_fake_scene_collection())
 
     output_publication.prepare_outputs(scene)
 
@@ -875,7 +876,7 @@ def test_ensure_outputs_allocates_ids_without_writing_geometry(monkeypatch):
     # Disabled outputs stay unallocated -- toggling one on later goes through
     # request_scene_update, which runs outside the handler.
     calls.clear()
-    fs.surface_enabled = False
+    fs.domain_object.fluidsim_domain.surface_enabled = False
     fs.show_whitewater = False
     output_publication.prepare_outputs(scene)
 
@@ -1040,7 +1041,7 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     scene.frame_start = 1
-    scene.fluidsim.profiling_enabled = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
     scene.fluidsim.snippets = []
     fake_solver_module = types.ModuleType("fluidSim_warp_blender51.sim.solver")
     fake_solver_module.FluidSolver = lambda *_args, **_kwargs: object()
@@ -1087,7 +1088,7 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     scene.frame_start = 1
-    scene.fluidsim.profiling_enabled = False
+    scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
     scene.fluidsim.snippets = []
     refs = []
 
@@ -1244,10 +1245,10 @@ def test_frame_change_catchup_publishes_only_final_timeline_frame(monkeypatch):
 def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2, playback=False)
-    scene.fluidsim.flip_ratio = 0.3
-    scene.fluidsim.cfl = 2.5
-    scene.fluidsim.gravity = (0.0, 0.0, -2.0)
-    scene.fluidsim.use_scene_gravity = False
+    scene.fluidsim.domain_object.fluidsim_domain.flip_ratio = 0.3
+    scene.fluidsim.domain_object.fluidsim_domain.cfl = 2.5
+    scene.fluidsim.domain_object.fluidsim_domain.gravity = (0.0, 0.0, -2.0)
+    scene.fluidsim.domain_object.fluidsim_domain.use_scene_gravity = False
     scene.use_gravity = False
     scene.gravity = (0.0, 0.0, -9.81)
     sess = scene_bridge.session()
@@ -1271,7 +1272,7 @@ def test_frame_change_reconciles_animated_hot_settings_before_step(monkeypatch):
 def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2, playback=False)
-    scene.fluidsim.sample_type = "BAD_ENUM"
+    scene.fluidsim.domain_object.fluidsim_domain.sample_type = "BAD_ENUM"
     sess = scene_bridge.session()
     solver = SimpleNamespace(
         frame=1,
@@ -1298,10 +1299,10 @@ def test_frame_change_contains_bad_live_enum_and_keeps_playback_solver(monkeypat
 def test_playback_manual_and_production_share_post_evaluation_reconcile_seam(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)
-    scene.fluidsim.flip_ratio = 0.9
-    scene.fluidsim.cfl = 1.0
-    scene.fluidsim.gravity = (0.0, 0.0, -9.81)
-    scene.fluidsim.use_scene_gravity = False
+    scene.fluidsim.domain_object.fluidsim_domain.flip_ratio = 0.9
+    scene.fluidsim.domain_object.fluidsim_domain.cfl = 1.0
+    scene.fluidsim.domain_object.fluidsim_domain.gravity = (0.0, 0.0, -9.81)
+    scene.fluidsim.domain_object.fluidsim_domain.use_scene_gravity = False
     scene.use_gravity = False
     scene.gravity = (0.0, 0.0, -9.81)
     scene.fluidsim.cache_enabled = False
@@ -1314,8 +1315,8 @@ def test_playback_manual_and_production_share_post_evaluation_reconcile_seam(mon
     def frame_set(frame):
         scene.frame_current = frame
         if frame in values:
-            (scene.fluidsim.flip_ratio, scene.fluidsim.cfl,
-             scene.fluidsim.gravity) = values[frame]
+            (scene.fluidsim.domain_object.fluidsim_domain.flip_ratio, scene.fluidsim.domain_object.fluidsim_domain.cfl,
+             scene.fluidsim.domain_object.fluidsim_domain.gravity) = values[frame]
 
     scene.frame_set = frame_set
     sess = scene_bridge.session()

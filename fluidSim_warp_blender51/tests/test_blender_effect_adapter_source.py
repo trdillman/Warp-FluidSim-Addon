@@ -106,11 +106,15 @@ def test_scene_status_updates_match_instances_by_stable_id_not_collection_order(
     refresh_block = source.split("def refresh_stack_state", 1)[1].split(
         "def build_effect_candidate", 1
     )[0]
+    publish_block = source.split("def _publish_applied_state", 1)[1].split(
+        "def _try_live_parameter_update", 1
+    )[0]
     apply_block = source.split("def apply_stack", 1)[1].split("def revert_draft", 1)[0]
     assert "instances_by_id" in refresh_block
-    assert "instances_by_id" in apply_block
+    assert "instances_by_id" in publish_block
+    assert "_publish_applied_state(scene, instances)" in apply_block
     assert "zip(stack.items, instances)" not in refresh_block
-    assert "zip(stack.items, instances)" not in apply_block
+    assert "zip(stack.items, instances)" not in publish_block
 
 
 def test_disabled_or_muted_effects_have_explicit_nonexecuting_status():
@@ -146,3 +150,30 @@ def test_support_report_survives_malformed_embedded_effect_definitions():
     )[0]
     assert '"definition_error"' in report
     assert "except (TypeError, ValueError, json.JSONDecodeError)" in report
+
+
+def test_parameter_updates_use_runtime_binding_seam_without_compile_apply():
+    effects_source = (ROOT / "blender" / "effects.py").read_text(encoding="utf-8")
+    solver_source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
+    callback = effects_source.split("def _mark_dirty", 1)[1].split(
+        "class FLUIDSIM_PG_effect_parameter", 1
+    )[0]
+    hot_update = effects_source.split("def _try_live_parameter_update", 1)[1].split(
+        "def refresh_stack_state", 1
+    )[0]
+    assert "_try_live_parameter_update" in callback
+    assert "update_custom_effect_runtime_bindings" in hot_update
+    assert "test_draft" not in hot_update
+    assert "apply_stack" not in hot_update
+    assert "def update_custom_effect_runtime_bindings" in solver_source
+
+
+def test_add_effect_search_popup_returns_blender_operator_result_set():
+    source = (ROOT / "blender" / "effect_ui.py").read_text(encoding="utf-8")
+    invoke = source.split("class FLUIDSIM_OT_effect_add", 1)[1].split(
+        "def execute", 1
+    )[0]
+    assert 'bl_property = "effect_id"' in invoke
+    assert "context.window_manager.invoke_search_popup(self)" in invoke
+    assert 'return {"RUNNING_MODAL"}' in invoke
+    assert "return context.window_manager.invoke_search_popup(self)" not in invoke

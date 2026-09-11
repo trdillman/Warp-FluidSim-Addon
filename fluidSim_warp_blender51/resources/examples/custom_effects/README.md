@@ -1,7 +1,14 @@
-# FluidSim Custom Effects demos
+# FluidSim Custom Effects validation examples
 
 These scenes are generated from real Custom Effects v2 kernel executions using the
 supplied Warp 1.16.0 package on the CPU validation backend.
+
+They are static validation/review artifacts, not playable FluidSim demos. They
+contain precomputed before/after geometry and evidence from the generator, but
+no live Domain-backed simulation that advances through Blender's frame
+handlers. Do not use them to satisfy a request for a Custom Effects demo; a real
+demo must meet the repository's `docs/DEMO_SCENE_CONTRACT.md`, including live
+effect execution in a non-empty solver.
 
 - **05 — Vortex Force:** compares the initial particle fixture with the validated
   Vortex Force result and trajectory lines.
@@ -13,5 +20,6 @@ supplied Warp 1.16.0 package on the CPU validation backend.
   untrusted in the distributed `.blend` until the user reviews its exact SHA-256.
 
 CPU validation proves compilation, bounded execution, deterministic fixture results,
-and Blender publication. It does not certify full FluidSolver CUDA numerics or GPU
-performance; the NVIDIA CUDA release gate remains required on compatible hardware.
+and Blender publication. It does not prove live solver playback, full FluidSolver CUDA
+numerics, or GPU performance; the NVIDIA CUDA release gate remains required on
+compatible hardware.

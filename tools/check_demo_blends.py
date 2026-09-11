@@ -21,6 +21,7 @@ from tools.repo_addon_loader import enable_repo_addon
 DEMOS = os.path.join(REPO, "demos")
 SCENES = (
     "dam_break", "crown_splash", "chromatic_vortex", "force_fields",
+    "custom_effects_vortex",
     "adhesive_calender",
     "cache_export_playback_review", "paddle_stir",
     "mesh_solid_source", "mesh_shell_source", "point_source",
@@ -33,6 +34,126 @@ EXPECTED_AUTO_SEEDS = {
         "Low Viscosity Adhesive Seed", "High Viscosity Adhesive Seed"},
     "paddle_stir": {"Paddle Stir Pool Seed"},
 }
+
+# An enabled effect whose own coefficients zero it out is a UI-only claim
+# (DEMO_SCENE_CONTRACT.md, "Enabled effects are reachable"). Each entry is a
+# necessary condition for the effect to change the solve at all.
+EFFECT_PRECONDITIONS = {
+    "whitewater_enabled": (
+        ("ww_churn_gain > 0", lambda s: s.ww_churn_gain > 0.0),
+        ("ww_emission_rate > 0", lambda s: s.ww_emission_rate > 0.0),
+    ),
+    "viscosity_enabled": (
+        ("viscosity_from_particles or viscosity_constant > 0",
+         lambda s: s.viscosity_from_particles or s.viscosity_constant > 0.0),
+    ),
+    "surface_tension_enabled": (
+        ("surface_tension_coefficient > 0",
+         lambda s: s.surface_tension_coefficient > 0.0),
+    ),
+    "species_enabled": (
+        ("species_mixing_rate > 0", lambda s: s.species_mixing_rate > 0.0),
+    ),
+}
+# Whitewater also has a runtime-only gate: a candidate emits only where churn
+# reaches ww_churn_threshold, and churn depends on the flow. No static bound
+# exists, so every whitewater demo declares the timeline window (frames after
+# frame_start) within which live whitewater must appear on a fresh reopen.
+# Each value is the measured first-emission frame plus margin.
+WHITEWATER_ACTIVATION_FRAMES = {
+    "dam_break": 32,          # first live whitewater at frame 16
+    "paddle_stir": 32,        # frame 15 (needs the keyframed paddle moving)
+    "crown_splash": 12,       # frame 3 on reopen (4-5 in the build run)
+    "adhesive_calender": 250,  # its whole simulated timeline
+}
+
+
+def open_demo_blend(path):
+    """Open ``path`` as an add-on session loads it, load migration included.
+
+    The add-on is enabled only after the file is open, so its ``load_post``
+    domain migration never fires here. A pre-split .blend (``schema_version``
+    0) keeps its authored domain settings on the legacy scene group until that
+    migration moves them onto the domain object, so run it explicitly. The
+    checker never saves, so the demo on disk is untouched.
+    """
+    bpy.ops.wm.open_mainfile(filepath=path)
+    enable_repo_addon(REPO, default_set=False, persistent=False)
+    # Import only after enable_repo_addon, which re-imports the add-on.
+    from fluidSim_warp_blender51.blender import migration
+
+    migration._on_load_post(None)
+
+
+def effect_precondition_failures(settings):
+    """Map each enabled effect to the preconditions its own settings violate."""
+    failures = {}
+    for flag, preconditions in EFFECT_PRECONDITIONS.items():
+        if getattr(settings, flag, False):
+            failed = [label for label, holds in preconditions if not holds(settings)]
+            if failed:
+                failures[flag] = failed
+    return failures
+
+
+def check_whitewater_reachable(name):
+    """Reopen ``name`` and prove its enabled whitewater emits during playback.
+
+    Drives the saved live timeline through ``scene.frame_set`` -- the
+    production frame handler, with keyframed colliders evaluated -- and reads
+    the live count from ``frame_stats``. The ``FluidSim Whitewater`` point
+    cloud keeps a spare-capacity floor, so its point count proves nothing.
+    """
+    open_demo_blend(os.path.join(DEMOS, name + ".blend"))
+    # Import only after enable_repo_addon: it re-imports the add-on, so an
+    # earlier module reference would hold a dead session the handler never uses.
+    from fluidSim_warp_blender51.blender import scene_bridge
+
+    scene = bpy.context.scene
+    settings = scene_bridge.active_domain_settings(scene)
+    window = WHITEWATER_ACTIVATION_FRAMES.get(name)
+    report = {
+        "window_frames": window,
+        "churn_threshold": float(settings.ww_churn_threshold),
+        "emission_rate": float(settings.ww_emission_rate),
+        "peak_churn": 0.0,
+        "first_live_frame": None,
+    }
+    if window is None:
+        report["error"] = ("whitewater_enabled but no WHITEWATER_ACTIVATION_FRAMES "
+                           "entry declares when it must emit")
+        return False, report
+    if not scene.fluidsim.live:
+        report["error"] = "saved scene is not in Live mode"
+        return False, report
+    applied_ok = False
+    try:
+        for frame in range(scene.frame_start + 1, scene.frame_start + window + 1):
+            scene.frame_set(frame)
+            sess = scene_bridge.session()
+            if not (sess.active and sess.frame_stats):
+                report["error"] = f"solver inactive at frame {frame}"
+                break
+            report["peak_churn"] = max(
+                report["peak_churn"], float(sess.solver.churn.data.numpy().max()))
+            if int(sess.frame_stats[-1].get("whitewaterParticles") or 0) > 0:
+                report["first_live_frame"] = frame
+                break
+        sess = scene_bridge.session()
+        if sess.active:
+            applied = sess.solver.settings
+            applied_ok = bool(
+                applied.whitewater_enabled
+                and abs(applied.ww_churn_threshold - settings.ww_churn_threshold) < 1.0e-6
+                and abs(applied.ww_emission_rate - settings.ww_emission_rate) < 1.0e-6
+                and abs(applied.churn_gain - settings.ww_churn_gain) < 1.0e-6)
+            report["applied_matches_authored"] = applied_ok
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        scene.fluidsim.live = False
+        bpy.ops.fluidsim.release()
+    return applied_ok and report["first_live_frame"] is not None, report
 
 
 def point_count(obj):
@@ -121,13 +242,17 @@ def check_scene(name):
     if not result["exists"]:
         return result
 
-    bpy.ops.wm.open_mainfile(filepath=path)
-    enable_repo_addon(REPO, default_set=False, persistent=False)
+    open_demo_blend(path)
     scene = bpy.context.scene
     saved_frame = scene.frame_current
     result["opened"] = True
 
     fs = getattr(scene, "fluidsim", None)
+    # Domain settings live on the designated domain object, never on
+    # scene.fluidsim (FLUIDSIM_PG_scene declares none of them).
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    ds = active_domain_settings(scene)
     surface = bpy.data.objects.get("FluidSim Surface")
     particles = bpy.data.objects.get("FluidSim Particles")
     whitewater = bpy.data.objects.get("FluidSim Whitewater")
@@ -137,7 +262,7 @@ def check_scene(name):
         "domain_object": bool(fs and fs.domain_object),
         "camera": bool(scene.camera),
         "valid_domain_boundary_policy": bool(
-            fs and (fs.open_boundaries or fs.domain_sdf_walls)),
+            ds and (ds.open_boundaries or ds.domain_sdf_walls)),
     }
     actual_auto_seeds = {
         obj.name for obj in scene.objects
@@ -234,7 +359,7 @@ def check_scene(name):
         ) if color_attr and len(color_attr.data) else np.empty((0, 3))
         checks.update({
             "color_mixing_enabled": bool(
-                fs and fs.species_enabled and fs.species_mixing_rate > 0.0),
+                ds and ds.species_enabled and ds.species_mixing_rate > 0.0),
             "two_colored_initial_fills": bool(
                 red_source and blue_source
                 and red_source.fluidsim.role == "SOURCE"
@@ -254,6 +379,88 @@ def check_scene(name):
                 and np.any(live_colors[:, 0] > live_colors[:, 2] + 0.15)
                 and np.any(live_colors[:, 2] > live_colors[:, 0] + 0.15)),
         })
+    elif name == "custom_effects_vortex":
+        domain = bpy.data.objects.get("Custom Effects Vortex Domain")
+        source = bpy.data.objects.get("Custom Effects Vortex Initial Fill")
+        controller = bpy.data.objects.get("Custom Effects Vortex Controller")
+        stack = getattr(scene, "fluidsim_effects", None)
+        stack_items = list(stack.items) if stack is not None else []
+        checks.update({
+            "custom_effect_demo_identity": (
+                scene.get("fluidsim_custom_effect_demo") == "vortex_force"),
+            "custom_effect_domain": bool(
+                domain and fs and fs.domain_object == domain),
+            "custom_effect_source": bool(
+                source
+                and source.fluidsim.role == "SOURCE"
+                and source.fluidsim.enabled
+                and source.fluidsim.emission_mode == "INITIAL_FILL"),
+            "custom_effect_controller": bool(
+                controller
+                and controller.get("fluidsim_effect_controller") is True),
+            "custom_effect_stack": bool(
+                len(stack_items) == 1
+                and stack_items[0].effect_id == "fluidsim.vortex_force"),
+            "custom_effect_applied": bool(
+                stack and stack.status == "APPLIED"
+                and stack_items and stack_items[0].status == "APPLIED"),
+        })
+        try:
+            from fluidSim_warp_blender51.blender.scene_bridge import session
+
+            sess = session()
+            effect_stats = list(sess.solver.effects.stats.values())
+            checks["custom_effect_executed"] = any(
+                item.effect_id == "fluidsim.vortex_force" and item.calls > 0
+                for item in effect_stats
+            )
+            result["custom_effect_calls"] = {
+                item.effect_id: int(item.calls) for item in effect_stats
+            }
+            runtime_entries = [
+                entry
+                for entries in sess.solver.effects.by_stage.values()
+                for entry in entries
+                if entry.instance.definition.effect_id == "fluidsim.vortex_force"
+            ]
+            entry_before = runtime_entries[0]
+            compiled_kernel = entry_before.compiled_kernel
+            solver_identity = id(sess.solver)
+            calls_before = sum(item.calls for item in effect_stats)
+            suction = next(
+                parameter for parameter in stack_items[0].parameters
+                if parameter.key == "suction"
+            )
+            suction.float_value = 48.54
+            runtime_entries = [
+                entry
+                for entries in sess.solver.effects.by_stage.values()
+                for entry in entries
+                if entry.instance.definition.effect_id == "fluidsim.vortex_force"
+            ]
+            entry_after = runtime_entries[0]
+            runtime_suction = float(
+                entry_after.instance.effective_parameter_values()["suction"]
+            )
+            checks["custom_effect_parameter_hot_update"] = bool(
+                abs(runtime_suction - 48.54) < 1.0e-4
+                and stack.status == "APPLIED"
+                and stack_items[0].status == "APPLIED"
+                and not stack.blocking_reason
+                and id(sess.solver) == solver_identity
+                and entry_after.compiled_kernel is compiled_kernel
+            )
+            scene.frame_set(scene.frame_current + 1)
+            calls_after = sum(
+                item.calls for item in sess.solver.effects.stats.values()
+            )
+            checks["custom_effect_hot_update_executes"] = calls_after > calls_before
+            result["custom_effect_runtime_suction"] = runtime_suction
+        except Exception as exc:  # noqa: BLE001
+            checks["custom_effect_executed"] = False
+            checks["custom_effect_parameter_hot_update"] = False
+            checks["custom_effect_hot_update_executes"] = False
+            result["custom_effect_error"] = repr(exc)
     elif name == "force_fields":
         force_fields = [
             obj for obj in scene.objects
@@ -320,9 +527,9 @@ def check_scene(name):
                 and obj.fluidsim.sink_region_kind == "MESH_SOLID")
         elif name == "height_fill":
             checks["real_profile_height_fill"] = bool(
-                fs and fs.height_enabled and fs.height_back_mode == "PROFILE"
-                and fs.height_profile_image is not None
-                and fs.height_emission_mode == "INITIAL_FILL")
+                ds and ds.height_enabled and ds.height_back_mode == "PROFILE"
+                and ds.height_profile_image is not None
+                and ds.height_emission_mode == "INITIAL_FILL")
     elif name == "adhesive_calender":
         low_seed = bpy.data.objects.get("Low Viscosity Adhesive Seed")
         high_seed = bpy.data.objects.get("High Viscosity Adhesive Seed")
@@ -334,15 +541,15 @@ def check_scene(name):
         field_types = [obj.field.type for obj in force_fields]
         checks.update({
             "million_particle_contract": bool(
-                fs and fs.max_particles == 1_000_000
+                ds and ds.max_particles == 1_000_000
                 and scene.get("fluidsim_initial_particle_count") == 1_000_000),
             "250_frame_timeline": bool(
                 scene.frame_end == 250 and saved_frame == 1
                 and scene.get("fluidsim_simulated_frames") == 250),
             "four_max_substeps": bool(
-                fs and fs.max_substeps == 4
+                ds and ds.max_substeps == 4
                 and 1 <= scene.get("fluidsim_max_observed_substeps", 0) <= 4),
-            "whitewater_enabled": bool(fs and fs.whitewater_enabled),
+            "whitewater_enabled": bool(ds and ds.whitewater_enabled),
             "mirrored_viscosity_seeds": bool(
                 low_seed and high_seed
                 and low_seed.type == high_seed.type == "MESH"
@@ -362,7 +569,7 @@ def check_scene(name):
                 and not any(kind in field_types for kind in (
                     "VORTEX", "HARMONIC", "TURBULENCE"))),
             "per_particle_viscosity": bool(
-                fs and fs.viscosity_enabled and fs.viscosity_from_particles
+                ds and ds.viscosity_enabled and ds.viscosity_from_particles
                 and scene.get("fluidsim_low_viscosity") == 0.002
                 and scene.get("fluidsim_high_viscosity") == 0.5),
             "separated_lanes": bool(
@@ -410,6 +617,16 @@ def check_scene(name):
     result["surface_vertices"] = len(surface.data.vertices) if surface and surface.type == "MESH" else 0
     result["particle_points"] = point_count(particles)
     result["whitewater_points"] = point_count(whitewater)
+
+    settings = ds
+    unmet = effect_precondition_failures(settings) if settings is not None else {}
+    checks["enabled_effects_have_driving_settings"] = not unmet
+    if unmet:
+        result["unreachable_effects"] = unmet
+    if settings is not None and settings.whitewater_enabled:
+        reachable, report = check_whitewater_reachable(name)
+        checks["whitewater_emits_in_declared_window"] = reachable
+        result["whitewater_reachability"] = report
     return result
 
 
@@ -426,7 +643,11 @@ def main():
             "missing_demo_blends": sorted(declared_scenes - disk_scenes),
         }, indent=2))
         raise SystemExit("DEMO-BLEND-CHECK-FAIL (scene inventory mismatch)")
-    results = [check_scene(name) for name in SCENES]
+    requested = tuple(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else ()
+    unknown = sorted(set(requested) - declared_scenes)
+    if unknown:
+        raise SystemExit(f"DEMO-BLEND-CHECK-FAIL (unknown scenes: {', '.join(unknown)})")
+    results = [check_scene(name) for name in (requested or SCENES)]
     passed = all(
         item["exists"] and item["opened"] and all(item["checks"].values())
         for item in results

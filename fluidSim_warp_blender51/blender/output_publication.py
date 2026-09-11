@@ -279,6 +279,26 @@ def _collection_in_tree(root, target):
     return any(_collection_in_tree(child, target) for child in root.children)
 
 
+def _domain_settings(scene):
+    """The group owning the solver-scoped settings read in this module.
+
+    ``surface_enabled``, ``whitewater_enabled`` and
+    ``live_surface_publish_cadence`` are solver settings: post-migration the
+    solver reads them from the domain object's ``fluidsim_domain``. They are
+    read here beside genuinely scene-scoped display flags (``show_surface``,
+    ``whitewater_output_mode``, the material pickers), which stay on
+    ``scene.fluidsim`` -- hence two owners rather than one rebind.
+
+    ``None`` without a designated domain; readers then take the disabled
+    defaults, so nothing solver-backed is published.
+    """
+    # Lazy import: scene_bridge reaches into this module, so the accessor is
+    # pulled at call time rather than closing the cycle at import.
+    from .scene_bridge import active_domain_settings
+
+    return active_domain_settings(scene)
+
+
 def _output_collection(scene):
     name = (getattr(scene.fluidsim, "output_collection_name", "")
             or "FluidSim Output")
@@ -820,24 +840,25 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None,
     return None
 
 
-def _whitewater_values(solver, mode, positions, host=None):
+def _whitewater_values(solver, mode, positions, host=None, stride=1):
     if mode == "NONE":
         return None
     n = len(positions)
+    stride = max(1, int(stride))
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
-        vel = (host.whitewater_attr("velocity") if host is not None else
+        vel = (host.whitewater_attr("velocity")[::stride] if host is not None else
                solver.whitewater.velocity.numpy()[:n])
         return np.linalg.norm(vel, axis=1)
     if mode == "AGE":
-        return (host.whitewater_attr("age") if host is not None else
+        return (host.whitewater_attr("age")[::stride] if host is not None else
                 solver.whitewater.age.numpy()[:n])
     if mode == "LIFE":
-        return (host.whitewater_attr("life") if host is not None else
+        return (host.whitewater_attr("life")[::stride] if host is not None else
                 solver.whitewater.life.numpy()[:n])
     if mode == "TYPE":
-        return (host.whitewater_attr("type") if host is not None else
+        return (host.whitewater_attr("type")[::stride] if host is not None else
                 solver.whitewater.type.numpy()[:n])
     return None
 
@@ -930,10 +951,18 @@ def _display_stride(fs):
     return max(1, int(round(1.0 / fraction)))
 
 
+def _whitewater_display_stride(fs):
+    fraction = float(getattr(fs, "whitewater_display_fraction", 1.0))
+    if not 0.0 < fraction < 1.0:
+        return 1
+    return max(1, int(round(1.0 / fraction)))
+
+
 @_cost_phase("live_adaptation")
 def prepare_live_payload(scene, host, publish_surface=True):
     """Perform one live readback/adaptation stage from an acquired frame."""
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     solver = host.solver
     step = _display_stride(fs)
     indices = slice(None, None, step) if step > 1 else None
@@ -953,12 +982,13 @@ def prepare_live_payload(scene, host, publish_surface=True):
     particle_attributes = _merge_selected_attribute(
         particle_attributes, fs.particle_attribute_mode, particle_values)
 
-    whitewater = (host.whitewater
-                  if fs.show_whitewater and fs.whitewater_enabled else
+    ww_step = _whitewater_display_stride(fs)
+    whitewater = (host.whitewater_strided(ww_step)
+                  if fs.show_whitewater and getattr(ds, "whitewater_enabled", False) else
                   np.zeros((0, 3), dtype=np.float32))
-    whitewater_visible = bool(fs.show_whitewater and fs.whitewater_enabled)
+    whitewater_visible = bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     whitewater_attributes = (
-        host.output_attributes(fs, "whitewater")
+        host.output_attributes(fs, "whitewater", stride=ww_step)
         if whitewater_visible else {})
     whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
     whitewater_values = None
@@ -966,7 +996,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
             and (whitewater_key is None
                  or whitewater_key not in whitewater_attributes)):
         whitewater_values = _whitewater_values(
-            solver, fs.whitewater_attribute_mode, whitewater, host=host)
+            solver, fs.whitewater_attribute_mode, whitewater, host=host,
+            stride=ww_step)
     whitewater_attributes = _merge_selected_attribute(
         whitewater_attributes, fs.whitewater_attribute_mode,
         whitewater_values)
@@ -975,9 +1006,10 @@ def prepare_live_payload(scene, host, publish_surface=True):
     if (whitewater_visible
             and whitewater_output_mode.upper() in {"SEPARATE", "BOTH"}
             and "type" not in whitewater_attributes):
-        whitewater_attributes["type"] = host.whitewater_attribute("type")
+        whitewater_attributes["type"] = host.whitewater_attribute(
+            "type", stride=ww_step)
 
-    if publish_surface and fs.show_surface and fs.surface_enabled:
+    if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
         surface_attributes = host.output_attributes(
             fs, "surface", positions=verts)
@@ -996,7 +1028,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
     return PublicationPayload(
         voxel_size=voxel_size,
         publish_surface=publish_surface,
-        surface_visible=bool(fs.show_surface and fs.surface_enabled),
+        surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
@@ -1023,6 +1055,7 @@ def prepare_cache_payload(scene, frame_data):
     from ..io.cache import validate_optional_attributes
 
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     positions = np.asarray(
         _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
     velocities = np.asarray(
@@ -1034,7 +1067,7 @@ def prepare_cache_payload(scene, frame_data):
     tris = np.asarray(
         _cache_array(frame_data, "surface_tris", (0, 3)), dtype=np.int32)
     voxel_size = float(np.asarray(
-        frame_data.get("voxel_size", getattr(fs, "voxel_size", 0.05))).item())
+        frame_data.get("voxel_size", getattr(ds, "voxel_size", 0.05))).item())
     inventory = validate_optional_attributes(frame_data)
 
     surface_values = _cached_values(fs.surface_attribute_mode, verts)
@@ -1093,9 +1126,16 @@ def prepare_cache_payload(scene, frame_data):
             key: np.asarray(value)[::step]
             for key, value in particle_attributes.items()
         }
+    ww_step = _whitewater_display_stride(fs)
+    if ww_step > 1 and len(whitewater):
+        whitewater = whitewater[::ww_step]
+        whitewater_attributes = {
+            key: np.asarray(value)[::ww_step]
+            for key, value in whitewater_attributes.items()
+        }
     return PublicationPayload(
         voxel_size=voxel_size, publish_surface=True,
-        surface_visible=bool(fs.show_surface and fs.surface_enabled),
+        surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=verts, surface_tris=tris,
         surface_attributes=surface_attributes,
@@ -1104,7 +1144,7 @@ def prepare_cache_payload(scene, frame_data):
         particle_radius=(voxel_size * 0.25
                          * getattr(fs, "particle_display_scale", 1.0)),
         particles=positions, particle_attributes=particle_attributes,
-        whitewater_visible=bool(fs.show_whitewater and fs.whitewater_enabled),
+        whitewater_visible=bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False)),
         whitewater_output_mode=str(
             getattr(fs, "whitewater_output_mode", "COMBINED")),
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
@@ -1158,11 +1198,12 @@ def prepare_outputs(scene):
     """Output Preparation: create enabled IDs/schema without geometry writes."""
     _require_bpy()
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     materials = None
-    if (fs.show_surface and fs.surface_enabled) or fs.show_particles or (
-            fs.show_whitewater and fs.whitewater_enabled):
+    if (fs.show_surface and getattr(ds, "surface_enabled", False)) or fs.show_particles or (
+            fs.show_whitewater and getattr(ds, "whitewater_enabled", False)):
         from . import materials
-    if fs.show_surface and fs.surface_enabled:
+    if fs.show_surface and getattr(ds, "surface_enabled", False):
         _ensure_material(materials.ensure_surface_material, scene, _ensure_object(
             scene, SURFACE_NAME,
             lambda: _new_blender_id(
@@ -1172,7 +1213,7 @@ def prepare_outputs(scene):
             materials.ensure_particle_material,
             scene, _ensure_point_object(
                 scene, PARTICLES_NAME, enabled_attribute_keys(fs, "particles")))
-    if fs.show_whitewater and fs.whitewater_enabled:
+    if fs.show_whitewater and getattr(ds, "whitewater_enabled", False):
         combined_enabled, separate_enabled = _whitewater_mode_flags(
             getattr(fs, "whitewater_output_mode", "COMBINED"))
         targets = []
@@ -1360,9 +1401,10 @@ def refresh_existing_output_settings(scene):
     # recompute attributes or surfaces, but cache/current-output objects should
     # still respond to visibility and material picker changes.
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
-        visible = fs.show_surface and fs.surface_enabled
+        visible = fs.show_surface and getattr(ds, "surface_enabled", False)
         surface.hide_viewport = not visible
         surface.hide_render = not visible
         if visible:
@@ -1374,7 +1416,7 @@ def refresh_existing_output_settings(scene):
         particles.hide_viewport = not fs.show_particles
         particles.hide_render = not fs.show_particles
         if fs.show_particles:
-            radius = (getattr(fs, "voxel_size", 0.05) * 0.25 *
+            radius = (getattr(ds, "voxel_size", 0.05) * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
             _set_point_radius(particles, radius)
             _ensure_material(
@@ -1382,7 +1424,7 @@ def refresh_existing_output_settings(scene):
 
     combined_enabled, separate_enabled = _whitewater_mode_flags(
         getattr(fs, "whitewater_output_mode", "COMBINED"))
-    visible = fs.show_whitewater and fs.whitewater_enabled
+    visible = fs.show_whitewater and getattr(ds, "whitewater_enabled", False)
     typed_materials = {
         WHITEWATER_NAME: materials.ensure_whitewater_material,
         FOAM_NAME: materials.ensure_foam_material,
@@ -1402,7 +1444,7 @@ def refresh_existing_output_settings(scene):
         obj.hide_viewport = not obj_visible
         obj.hide_render = not obj_visible
         if obj_visible:
-            radius = (getattr(fs, "voxel_size", 0.05) * 0.15 *
+            radius = (getattr(ds, "voxel_size", 0.05) * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(obj, radius)
             _ensure_material(ensure_material, scene, obj)
@@ -1445,6 +1487,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     if not sess.active:
         return
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     surface = output_object(scene, SURFACE_NAME)
     has_surface = (surface is not None and surface.type == "MESH" and
                    len(surface.data.vertices) > 0)
@@ -1458,7 +1501,7 @@ def update_outputs(scene, sess, *, force_surface=False):
     publish_surface = (
         force_surface or not has_surface or
         host.should_publish_surface(
-            getattr(fs, "live_surface_publish_cadence", 1))
+            getattr(ds, "live_surface_publish_cadence", 1))
     )
     payload = prepare_live_payload(
         scene, host, publish_surface=publish_surface)

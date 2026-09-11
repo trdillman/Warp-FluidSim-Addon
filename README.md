@@ -10,13 +10,20 @@ This repository implements an interactive, GPU-resident liquid simulation add-on
 | `fluidSim_synth/` | Distilled FluidSim 1.0.226 contracts used as validation input. |
 | `tests/` | Python, Blender, CUDA/Warp, and acceptance checks. |
 | `tools/` | Production gates, validators, profilers, and demo tooling. |
-| `demos/` | Curated source scenes and previews; regenerated caches stay local. |
+| `demos/` | Canonical playable simulations governed by `docs/DEMO_SCENE_CONTRACT.md`; regenerated caches stay local. |
+| `fluidSim_warp_blender51/resources/examples/` | Distributed workflow examples and validation/review assets; not canonical demos unless separately promoted and runtime-gated. |
 | `docs/` | Design documents and maintained external-reference evidence. |
 | `backlog/tasks/` | Canonical task queue; `backlog/reports/` holds historical scans. |
 | `reviews/` | Current review surfaces, archived review records, and still-linked evidence. |
 | `artifacts/`, `bench/` | Ignored local reports, caches, profiles, and benchmark output. |
 
 Live code, runtime output, and current tests outrank historical contracts, review records, screenshots, and generated reports.
+
+**Demo** is a runtime claim in this repository. A demo must reopen with an
+authoritative Domain, initialize a non-empty solver from owned sources or
+seeds, advance through the real frame handlers, and publish changing owned
+output. Static geometry, renders, CPU fixtures, and package/UI review scenes
+must be described as examples or evidence. See `docs/DEMO_SCENE_CONTRACT.md`.
 
 ## Authoritative guidance
 

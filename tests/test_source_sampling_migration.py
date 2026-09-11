@@ -5,11 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fluidSim_warp_blender51.blender.scene_inputs import _effective_source_target
+from settings_doubles import split_settings
 
 
 def _scene(global_sampling=12):
-    return SimpleNamespace(fluidsim=SimpleNamespace(
-        voxel_size=0.1, particles_per_voxel=global_sampling))
+    return SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
+        voxel_size=0.1, particles_per_voxel=global_sampling)))
 
 
 def _source(**updates):

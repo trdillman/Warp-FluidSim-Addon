@@ -1,4 +1,12 @@
-"""One-way migration of domain settings from Scene.fluidsim to obj.fluidsim_domain."""
+"""One-way migration of domain settings from Scene.fluidsim to obj.fluidsim_domain.
+
+A .blend saved before the Phase 2 split keeps its domain settings on the scene
+group. ``Scene.fluidsim`` is now bound to ``FLUIDSIM_PG_scene``, which declares
+none of them, so they survive only as hidden IDProperties. ``_on_load_post``
+rebinds the scene pointer to the pre-split union class
+(``properties.legacy_scene_settings``) around the copy so it can read them, and
+moves them onto the domain object.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +49,24 @@ def migrated_field_names(settings_cls) -> tuple[str, ...]:
     )
 
 
+def _domain_settings_cls():
+    from ..properties import FLUIDSIM_PG_domain
+
+    return FLUIDSIM_PG_domain
+
+
+def _is_authored(group, name) -> bool:
+    """True when ``group`` stores its own value for ``name``.
+
+    Blender groups answer through ``is_property_set``: an unset field only
+    reads as its RNA default, and copying that default would overwrite
+    whatever the domain object already holds. Plain value objects have no RNA
+    default to fall back to, so every attribute they carry counts as authored.
+    """
+    is_set = getattr(group, "is_property_set", None)
+    return True if is_set is None else bool(is_set(name))
+
+
 def copy_domain_settings(source, target, field_names) -> None:
     for name in field_names:
         try:
@@ -53,18 +79,27 @@ def migrate_domain_settings_schema(scene, domain_obj) -> bool:
     """Move domain settings onto ``domain_obj.fluidsim_domain``. Idempotent, safe.
 
     Returns True iff it acted. Never stamps/clears when ``domain_obj`` is None
-    (that would drop data); the caller owns resolving/creating the object.
+    (that would drop data); the caller owns resolving/creating the object. On a
+    real scene the caller must hold ``properties.legacy_scene_settings()``: the
+    narrow scene group cannot see the legacy values, and copying from it would
+    stamp the guard having moved nothing.
     """
     fs = getattr(scene, "fluidsim", None)
     if fs is None or int(getattr(fs, "schema_version", 0)) != 0:
         return False
     if domain_obj is None:
         return False
+    field_names = migrated_field_names(_domain_settings_cls())
+    hidden = [name for name in field_names if not hasattr(fs, name)]
+    if hidden:
+        raise RuntimeError(
+            "FluidSim migration: scene.fluidsim does not expose the legacy "
+            f"domain settings ({', '.join(hidden[:3])}, ...); migrate inside "
+            "properties.legacy_scene_settings()")
+    authored = tuple(name for name in field_names if _is_authored(fs, name))
     target = domain_obj.fluidsim_domain
-    field_names = migrated_field_names(type(fs))
     with _side_effect_free_copy():
-        copy_domain_settings(fs, target, field_names)
-        target.schema_version = _TARGET_SCHEMA_VERSION
+        copy_domain_settings(fs, target, authored)
         fs.schema_version = _TARGET_SCHEMA_VERSION   # guard stamped LAST; never re-zeroed
     return True
 
@@ -132,10 +167,31 @@ def _resolve_or_create_domain(scene):
     return create_domain_object(scene)
 
 
+def _needs_migration(scene) -> bool:
+    fs = getattr(scene, "fluidsim", None)
+    return fs is not None and int(getattr(fs, "schema_version", 0)) == 0
+
+
+def _legacy_scene_settings():
+    """Scope exposing a pre-split file's domain settings on scene.fluidsim."""
+    from .. import properties
+
+    return properties.legacy_scene_settings()
+
+
 @persistent
 def _on_load_post(_arg):
-    for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
-        migrate_domain_settings_schema(scene, _resolve_or_create_domain(scene))
+    pending = [
+        scene for scene in getattr(getattr(bpy, "data", None), "scenes", ())
+        if _needs_migration(scene)
+    ]
+    if not pending:
+        return
+    # One rebind around the whole loop: the pointer type is per class, so a
+    # per-scene rebind would only repeat the same re-registration.
+    with _legacy_scene_settings():
+        for scene in pending:
+            migrate_domain_settings_schema(scene, _resolve_or_create_domain(scene))
 
 
 def register_handlers():

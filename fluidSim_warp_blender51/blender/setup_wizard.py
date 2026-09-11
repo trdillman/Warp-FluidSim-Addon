@@ -260,10 +260,10 @@ def _cube_mesh(name: str):
     return mesh
 
 
-def _ensure_domain(scene, helpers, owner_id: str, bounds):
+def _ensure_domain(helpers, owner_id: str):
+    """Find or create the wizard-owned domain object (not yet designated)."""
     import bpy
 
-    fs = scene.fluidsim
     domain = None
     for obj in helpers.objects:
         if _owned(obj, owner_id, "DOMAIN"):
@@ -275,6 +275,11 @@ def _ensure_domain(scene, helpers, owner_id: str, bounds):
         _mark_owned(domain, owner_id, "DOMAIN")
         helpers.objects.link(domain)
         created = True
+    return domain, created
+
+
+def _fit_domain(scene, domain, bounds) -> None:
+    """Size the domain box to ``bounds``, then designate it for the scene."""
     minimum, maximum = bounds
     center = tuple((lo + hi) * 0.5 for lo, hi in zip(minimum, maximum))
     dimensions = tuple(max(hi - lo, 1.0e-6) for lo, hi in zip(minimum, maximum))
@@ -284,8 +289,7 @@ def _ensure_domain(scene, helpers, owner_id: str, bounds):
     domain.display_type = "WIRE"
     domain.hide_render = True
     domain.show_in_front = True
-    fs.domain_object = domain
-    return domain, created
+    scene.fluidsim.domain_object = domain
 
 
 def _tag_source_mesh(obj, *, continuous: bool) -> None:
@@ -373,7 +377,7 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
     default_preset = "thick_liquid" if mode == "QUICK_VISCOUS" else "preview_water"
     preset_id = preset_id or default_preset
     apply_preset = mode in {"QUICK_LIQUID", "QUICK_CONTAINER", "QUICK_VISCOUS"}
-    applied = library.apply_preset(scene, library.load_preset(preset_id)) if apply_preset else None
+    preset = library.load_preset(preset_id) if apply_preset else None
 
     owner_id, _root, inputs, outputs, helpers, collection_names = (
         ensure_collection_tree(scene)
@@ -384,6 +388,19 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
 
     warnings: list[str] = []
     created = list(collection_names)
+    # Quick setups (and any setup on a scene without a domain) size the domain
+    # from the preset's gravity and voxel size. Those are domain-owned, so the
+    # domain object has to exist before the preset can be written to it.
+    fit_domain = apply_preset or getattr(scene.fluidsim, "domain_object", None) is None
+    domain = None
+    if fit_domain:
+        domain, domain_created = _ensure_domain(helpers, owner_id)
+        if domain_created:
+            created.append(domain.name)
+    applied = (
+        library.apply_preset(scene, preset, target=domain.fluidsim_domain)
+        if apply_preset else None
+    )
     if mode in {"QUICK_LIQUID", "QUICK_VISCOUS", "ADD_INFLOW"}:
         continuous = mode == "ADD_INFLOW"
         for obj in selected:
@@ -405,27 +422,29 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
         for obj in selected:
             _tag_sink_mesh(obj)
 
-    domain = getattr(scene.fluidsim, "domain_object", None)
-    if mode in {"QUICK_LIQUID", "QUICK_CONTAINER", "QUICK_VISCOUS"} or domain is None:
+    if fit_domain:
+        domain_fs = domain.fluidsim_domain
         gravity = (
             tuple(scene.gravity)
-            if bool(getattr(scene.fluidsim, "use_scene_gravity", True))
-            else tuple(scene.fluidsim.gravity)
+            if bool(getattr(domain_fs, "use_scene_gravity", True))
+            else tuple(domain_fs.gravity)
         )
         bounds = compute_domain_bounds(
             selected,
-            float(scene.fluidsim.voxel_size),
+            float(domain_fs.voxel_size),
             gravity=gravity,
             depsgraph=context.evaluated_depsgraph_get(),
         )
-        domain, domain_created = _ensure_domain(scene, helpers, owner_id, bounds)
-        if domain_created:
-            created.append(domain.name)
+        _fit_domain(scene, domain, bounds)
         if mode == "QUICK_CONTAINER":
             minimum, maximum = bounds
-            scene.fluidsim.height_enabled = True
-            scene.fluidsim.height_emission_mode = "INITIAL_FILL"
-            scene.fluidsim.height_base = minimum[2] + (maximum[2] - minimum[2]) * 0.25
+            # The wizard seeds the same height fields the Height panel edits, so
+            # it has to write the owner the solver reads -- otherwise Quick
+            # Container produces a scene whose height fill never runs.
+            height_owner = domain_fs
+            height_owner.height_enabled = True
+            height_owner.height_emission_mode = "INITIAL_FILL"
+            height_owner.height_base = minimum[2] + (maximum[2] - minimum[2]) * 0.25
 
     existing_output_names = {obj.name for obj in outputs.objects}
     output_objects = output_publication.ensure_output_shells(scene)

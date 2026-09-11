@@ -1,11 +1,14 @@
 """Blender property groups for the FluidSim Warp add-on.
 
-Scene-level settings drive the solver; object-level settings tag scene
-objects as sources / colliders / sinks. Property definitions import only
+Domain-level settings (on the domain object) drive the solver; scene-level
+settings hold interface, playback, cache and output state; object-level
+settings tag scene objects as sources / colliders / sinks. Property definitions import only
 pure enum and snippet metadata so registration never touches Warp/CUDA.
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
 
 import bpy
 from bpy.props import (
@@ -772,7 +775,18 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
 # Scene-level settings
 
 
-class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
+class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
+    """Scene-scoped FluidSim state, bound to ``Scene.fluidsim``.
+
+    Interface mode, the Quality tier, the domain designation, playback and
+    cache plumbing, viewport/output presentation, and the read-only status
+    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. The two
+    classes are disjoint, so reading a domain setting off ``scene.fluidsim``
+    raises instead of returning a stale value. The partition follows
+    ``pending_settings.setting_owner`` and is pinned by
+    tests/test_pending_settings_registry.py.
+    """
+
     # UI disclosure (presentation-only; never touches solver state)
     ui_mode: EnumProperty(
         name="Interface", items=UI_MODE_ITEMS, default="BASIC",
@@ -784,6 +798,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     export_attributes: EnumProperty(
         name="Export Attributes", items=EXPORT_ATTRIBUTES_ITEMS, default="STANDARD",
         description="Basic headline for how many per-point attributes are exported; the per-attribute inventory in Advanced overrides this")
+
     # Simulation
     live: BoolProperty(
         name="Live Simulation", default=False,
@@ -801,10 +816,336 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Domain", type=bpy.types.Object,
         update=_request_rebuild,
         description="Select the object whose bounding box defines the simulation domain; changing it rebuilds grid bounds and capacity requirements")
+
     # Phase 3 migration guard: 0 = domain settings still live on Scene.fluidsim
     # (pre-migration), 1 = migrated onto obj.fluidsim_domain. Stamped last by the
     # load_post migration and never re-zeroed, so re-opens are no-ops.
     schema_version: IntProperty(default=0, options={"HIDDEN"})
+    capacity_show_alternatives: BoolProperty(
+        name="Show Capacity Alternatives", default=False,
+        options={"SKIP_SAVE"},
+        description="Expand lower-priority resolution and domain alternatives")
+    surface_advanced_expanded: BoolProperty(
+        name="Advanced Surface", default=False, options={"SKIP_SAVE"},
+        description="Show or hide sparse-capacity and simulation-field retention controls")
+
+    # Viewport display / output
+    liquid_view_mode: EnumProperty(
+        name="Liquid View",
+        items=LIQUID_VIEW_ITEMS,
+        default="SURFACE",
+        update=_apply_liquid_view_mode,
+        description="Choose whether the viewport hides liquid output or shows the liquid surface, particles, or both; changing it updates the two visibility toggles below",
+    )
+    show_surface: BoolProperty(
+        name="Surface Mesh", default=True, update=_sync_liquid_view_mode,
+        description="Enable to display and publish the generated liquid mesh; disable to hide the mesh while simulation continues")
+    show_particles: BoolProperty(
+        name="Particles", default=False, update=_sync_liquid_view_mode,
+        description="Enable to display liquid particles in the viewport; disable to hide them while simulation continues")
+    show_whitewater: BoolProperty(
+        name="Whitewater", default=True, update=_request_output_refresh,
+        description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")
+    particle_display_fraction: FloatProperty(
+        name="Display Fraction", default=1.0, min=0.01, max=1.0,
+        update=_request_output_refresh,
+        description="Set the fraction of liquid particles shown in the viewport; higher values show a denser, more representative cloud at greater display cost, while lower values improve responsiveness")
+    particle_display_scale: FloatProperty(
+        name="Display Scale", default=1.0, min=0.05, soft_max=4.0,
+        update=_request_output_refresh,
+        description="Scale liquid-particle viewport point radius; higher values look larger and denser, while lower values reveal separation without changing simulation particles")
+    surface_attribute_mode: EnumProperty(
+        name="Surface Attribute",
+        items=LIQUID_ATTR_ITEMS,
+        default="NONE",
+        update=_request_output_refresh,
+        description="Color the liquid surface by a simulation attribute",
+    )
+    particle_attribute_mode: EnumProperty(
+        name="Particle Attribute",
+        items=PARTICLE_ATTR_ITEMS,
+        default="NONE",
+        update=_request_output_refresh,
+        description="Color liquid particles by a simulation attribute",
+    )
+    whitewater_attribute_mode: EnumProperty(
+        name="Whitewater Attribute",
+        items=WHITEWATER_ATTR_ITEMS,
+        default="NONE",
+        update=_request_output_refresh,
+        description="Color whitewater particles by a simulation attribute",
+    )
+    whitewater_output_mode: EnumProperty(
+        name="Whitewater Outputs",
+        items=WHITEWATER_OUTPUT_ITEMS,
+        default="COMBINED",
+        update=_request_output_refresh,
+        description="Choose the fast combined pool, separate typed outputs, or both",
+    )
+    whitewater_display_scale: FloatProperty(
+        name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
+        update=_request_output_refresh,
+        description="Scale whitewater viewport point radius; higher values make bubbles and spray look larger, while lower values reveal separation without changing simulation")
+    whitewater_display_fraction: FloatProperty(
+        name="Display Fraction", default=1.0, min=0.01, max=1.0,
+        update=_request_output_refresh,
+        description="Set the fraction of whitewater points shown in the viewport; higher values show a denser, more representative cloud at greater display cost, while lower values improve responsiveness")
+    surface_material: PointerProperty(
+        name="Surface Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to generated liquid surfaces; changing it updates current and future output meshes")
+    particle_material: PointerProperty(
+        name="Particle Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material used for liquid-particle display; changing it updates the viewport particle output")
+    whitewater_material: PointerProperty(
+        name="Whitewater Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material used for whitewater display; changing it updates bubble and spray output")
+    foam_material: PointerProperty(
+        name="Foam Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate foam output")
+    bubble_material: PointerProperty(
+        name="Bubble Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate bubble output")
+    spray_material: PointerProperty(
+        name="Spray Material", type=bpy.types.Material,
+        update=_request_output_refresh,
+        description="Select the material assigned to the separate spray output")
+    output_collection_name: StringProperty(
+        name="Output Collection", default="FluidSim Output",
+        update=_request_output_refresh,
+        description="Set the Blender collection name that owns generated outputs; changing it moves or creates outputs under the new collection")
+
+    # Custom snippets
+    snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
+    active_snippet: IntProperty(default=0)
+    snippet_library_selection: EnumProperty(
+        name="Library",
+        description="Select an example or saved snippet to load into the stack; changing the selection changes which preset the load action will insert",
+        items=_snippet_library_items,
+    )
+    snippet_editor_lines: IntProperty(
+        name="Editor Lines", default=24, min=4, max=200,
+        description="Set the maximum source lines shown in the inline snippet editor; higher values show more code but make the panel taller, while lower values keep it compact")
+
+    # Shortcut inputs (Houdini-wrangle-style quick insertion).
+    shortcut_field: EnumProperty(
+        name="Field", items=_SHORTCUT_FIELD_ITEMS, default="temperature",
+        description="Choose the solver field that the shortcut action binds and references in code; changing it redirects the inserted snippet line")
+    shortcut_constant_name: StringProperty(
+        name="Name", default="strength",
+        description="Set the identifier for the constant inserted into the snippet; changing it changes the generated argument and code reference")
+    shortcut_constant_value: FloatProperty(
+        name="Value", default=1.0,
+        description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
+
+    # Guided setup / product presets
+    setup_mode: EnumProperty(
+        name="Setup Mode",
+        items=(
+            ("QUICK_LIQUID", "Quick Liquid", "Selected mesh becomes an initial-fill liquid emitter"),
+            ("QUICK_CONTAINER", "Quick Container", "Selected mesh becomes a collider/container with a height fill"),
+            ("QUICK_VISCOUS", "Quick Viscous Liquid", "Selected mesh becomes a thick-liquid emitter"),
+            ("ADD_COLLIDER", "Add Collider", "Tag selected meshes as colliders"),
+            ("ADD_INFLOW", "Add Inflow", "Tag selected meshes as continuous liquid inflows"),
+            ("ADD_OUTFLOW", "Add Outflow", "Tag selected meshes as liquid sinks"),
+        ),
+        default="QUICK_LIQUID",
+        description="Choose the selected-object setup transaction",
+    )
+    product_preset: EnumProperty(
+        name="Preset",
+        items=_product_preset_items,
+        description="Apply a validated built-in or user FluidSim preset",
+    )
+    active_preset_id: StringProperty(
+        name="Active Preset",
+        default="",
+        description="Identifier of the last successfully applied product preset",
+    )
+
+    # Production bake
+    cache_format: EnumProperty(
+        name="Cache Format",
+        items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
+        default="V2",
+        description="Choose the on-disk cache layout used for production bakes",
+    )
+    bake_start: IntProperty(
+        name="Bake Start", default=1, min=-1048574, max=1048574,
+        description="First production-bake frame",
+    )
+    bake_end: IntProperty(
+        name="Bake End", default=250, min=-1048574, max=1048574,
+        description="Last production-bake frame",
+    )
+    checkpoint_interval: IntProperty(
+        name="Checkpoint Interval", default=1, min=1, max=100,
+        description="Checkpoint cadence; current cache-v2 production guarantees commit one restart checkpoint per frame",
+    )
+    bake_status: EnumProperty(
+        name="Bake Status",
+        items=tuple((value, value.title(), "") for value in (
+            "IDLE", "PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING",
+            "CANCELLED", "COMPLETE", "FAILED",
+        )),
+        default="IDLE",
+        options={"SKIP_SAVE"},
+        description="Latest measured production-bake lifecycle state",
+    )
+    bake_progress: FloatProperty(
+        name="Bake Progress", default=0.0, min=0.0, max=1.0,
+        subtype="FACTOR", options={"SKIP_SAVE"},
+        description="Latest measured fraction of the production bake completed",
+    )
+    bake_message: StringProperty(
+        name="Bake Message", default="", options={"SKIP_SAVE"},
+        description="Most recent status or error message reported by the production bake",
+    )
+    show_overlay: BoolProperty(
+        name="Viewport Overlay", default=True,
+        update=_request_output_refresh,
+        description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
+    report_path: StringProperty(
+        name="Report Path", subtype="FILE_PATH", default="//fluidsim_report.json",
+        description="Set where validation and profiling JSON is written; changing it sends the next report to a different file")
+    benchmark_frames: IntProperty(
+        name="Benchmark Frames", default=24, min=4, max=500,
+        description="Set the number of simulation frames measured by a benchmark; higher values improve averaging but take longer, while lower values finish faster with noisier results")
+    benchmark_baseline: StringProperty(
+        name="Baseline", subtype="FILE_PATH", default="//fluidsim_benchmark.json",
+        description="Select the JSON baseline used for performance comparison; changing it changes which recorded timings determine regressions")
+
+    # Cache (optional, supplemental only)
+    cache_enabled: BoolProperty(
+        name="Enable Cache", default=False,
+        description="Enable to record simulated frames to Cache Path during playback; disable to run without writing cache files")
+    cache_path: StringProperty(
+        name="Cache Path", subtype="DIR_PATH", default="//fluidsim_cache/",
+        description="Set the directory used to write and read frame caches; changing it switches the cache sequence available for recording and playback")
+    cache_compress: BoolProperty(
+        name="Compress Cache", default=False,
+        description="zlib-compress cache frames (smaller files, much slower "
+                    "writes during playback)")
+    cache_playback_enabled: BoolProperty(
+        name="Cache Playback",
+        default=False,
+        update=_on_cache_playback_changed,
+        description="Enable to read cached frames instead of stepping live simulation during playback; disable to return the timeline to the live solver")
+    cache_use_custom_range: BoolProperty(
+        name="Custom Cache Range",
+        default=False,
+        description="Enable to use the custom Start and End frames for cache operations; disable to use the scene frame range")
+    cache_frame_start: IntProperty(
+        name="Start",
+        default=1,
+        min=0,
+        description="Set the first frame included in custom cache operations; higher values skip more early frames and values above End produce an invalid range")
+    cache_frame_end: IntProperty(
+        name="End",
+        default=250,
+        min=0,
+        description="Set the last frame included in custom cache operations; higher values extend the cache sequence and values below Start produce an invalid range")
+
+    # Status mirrors (read-only UI feedback)
+    status: StringProperty(
+        name="Status", default="Solver not initialized",
+        description="Latest measured solver lifecycle status reported for this domain")
+    stat_particles: IntProperty(
+        default=0,
+        description="Latest measured count of active liquid particles in the solver")
+    stat_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of active sparse-grid voxels in the solver")
+    stat_whitewater: IntProperty(
+        default=0,
+        description="Latest measured count of active whitewater (foam/bubble/spray) particles")
+    stat_whitewater_foam: IntProperty(
+        default=0,
+        description="Latest measured count of active foam particles")
+    stat_whitewater_bubbles: IntProperty(
+        default=0,
+        description="Latest measured count of active bubble particles")
+    stat_whitewater_spray: IntProperty(
+        default=0,
+        description="Latest measured count of active spray particles")
+    stat_whitewater_invalid_types: IntProperty(
+        default=0,
+        description="Latest measured count of whitewater particles with an unrecognized type classification")
+    stat_whitewater_required: IntProperty(
+        default=0,
+        description="Latest measured count of whitewater particles the solver requested to spawn this step")
+    stat_whitewater_admitted: IntProperty(
+        default=0,
+        description="Latest measured count of requested whitewater particles actually admitted within capacity")
+    stat_whitewater_dropped: IntProperty(
+        default=0,
+        description="Latest measured count of requested whitewater particles dropped because capacity was exceeded")
+    stat_whitewater_policy: StringProperty(
+        default="FIXED_CAPACITY_DETERMINISTIC_DROPS",
+        description="Name of the policy currently governing whitewater admission when capacity is exceeded")
+    stat_whitewater_status: StringProperty(
+        default="OK",
+        description="Latest measured whitewater admission health status")
+    stat_step_ms: FloatProperty(
+        default=0.0,
+        description="Most recent solver step time in milliseconds")
+    stat_substeps: IntProperty(
+        default=0,
+        description="Latest measured number of substeps taken on the most recent frame")
+    stat_cfl_clamped: BoolProperty(
+        default=False,
+        description="Latest measured indicator that the CFL-driven substep count was clamped by Max Substeps")
+    stat_capillary_dt: FloatProperty(
+        default=0.0,
+        description="Latest measured stable timestep required by surface-tension capillary wave stability")
+    stat_capillary_substeps_required: IntProperty(
+        default=1,
+        description="Latest measured number of substeps required to satisfy capillary wave stability")
+    stat_capillary_clamped: BoolProperty(
+        default=False,
+        description="Latest measured indicator that the capillary-required substep count was clamped by Max Substeps")
+    stat_substep_limiter: StringProperty(
+        default="MINIMUM",
+        description="Name of the constraint (CFL, capillary, or minimum) that selected the most recent substep count")
+    stat_surface_tension_active_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of voxels with active surface-tension forces")
+    stat_surface_tension_max_curvature: FloatProperty(
+        default=0.0,
+        description="Latest measured maximum surface curvature used by surface tension")
+    stat_surface_tension_max_acceleration: FloatProperty(
+        default=0.0,
+        description="Latest measured maximum acceleration applied by surface tension")
+    stat_surface_tension_temporary_bytes: IntProperty(
+        default=0,
+        description="Latest measured temporary VRAM, in bytes, allocated for surface-tension computation")
+    stat_surface_tension_submission_ms: FloatProperty(
+        default=0.0,
+        description="Most recent GPU submission time in milliseconds for surface-tension computation")
+    stat_surface_tension_status: StringProperty(
+        default="DISABLED",
+        description="Latest measured surface-tension computation health status")
+    stat_surface_tension_message: StringProperty(
+        default="",
+        description="Most recent status or error message reported by surface-tension computation")
+
+
+# Domain-level settings
+
+
+class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
+    """Per-domain solver settings, bound to ``Object.fluidsim_domain``.
+
+    Everything the solver consumes: resolution, particles, forces, pressure,
+    viscosity, surface tension, surface/whitewater generation, height fill and
+    the production attribute inventory. Read these through
+    ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
+    """
+
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
         update=_request_live,
@@ -880,10 +1221,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         ),
         default="DEFER", update=_request_particle_capacity,
         description="Choose how a source behaves when guarded particle growth cannot allocate safely")
-    capacity_show_alternatives: BoolProperty(
-        name="Show Capacity Alternatives", default=False,
-        options={"SKIP_SAVE"},
-        description="Expand lower-priority resolution and domain alternatives")
     particles_per_voxel: IntProperty(
         name="Liquid Sampling", default=8, min=0, max=64,
         update=_request_reset,
@@ -923,6 +1260,7 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Limit Percent", default=0.5, min=0.0, max=1.0,
         update=_request_live,
         description="Set the fraction of speed above Max Speed removed each step; higher values damp excess speed more strongly, while lower values retain more of it")
+
     # Global forces
     directional_force: FloatVectorProperty(
         name="Directional Acceleration", size=3, default=(0.0, 0.0, 0.0),
@@ -1162,9 +1500,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Keep Sim Surface Field", default=False,
         update=_request_surface_refresh,
         description="Enable to retain the simulation-resolution SDF alongside a separate render surface; whitewater always rebuilds this solver dependency even when this render-only preference is disabled")
-    surface_advanced_expanded: BoolProperty(
-        name="Advanced Surface", default=False, options={"SKIP_SAVE"},
-        description="Show or hide sparse-capacity and simulation-field retention controls")
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
         update=_request_surface_refresh,
@@ -1324,59 +1659,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Emit Particles", default=True, update=_request_reset,
         description="Enable to seed liquid particles in the height region; disable to keep the height configuration without creating particles")
 
-    # Viewport display / output
-    liquid_view_mode: EnumProperty(
-        name="Liquid View",
-        items=LIQUID_VIEW_ITEMS,
-        default="SURFACE",
-        update=_apply_liquid_view_mode,
-        description="Choose whether the viewport hides liquid output or shows the liquid surface, particles, or both; changing it updates the two visibility toggles below",
-    )
-    show_surface: BoolProperty(
-        name="Surface Mesh", default=True, update=_sync_liquid_view_mode,
-        description="Enable to display and publish the generated liquid mesh; disable to hide the mesh while simulation continues")
-    show_particles: BoolProperty(
-        name="Particles", default=False, update=_sync_liquid_view_mode,
-        description="Enable to display liquid particles in the viewport; disable to hide them while simulation continues")
-    show_whitewater: BoolProperty(
-        name="Whitewater", default=True, update=_request_output_refresh,
-        description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")
-    particle_display_fraction: FloatProperty(
-        name="Display Fraction", default=1.0, min=0.01, max=1.0,
-        update=_request_output_refresh,
-        description="Set the fraction of liquid particles shown in the viewport; higher values show a denser, more representative cloud at greater display cost, while lower values improve responsiveness")
-    particle_display_scale: FloatProperty(
-        name="Display Scale", default=1.0, min=0.05, soft_max=4.0,
-        update=_request_output_refresh,
-        description="Scale liquid-particle viewport point radius; higher values look larger and denser, while lower values reveal separation without changing simulation particles")
-    surface_attribute_mode: EnumProperty(
-        name="Surface Attribute",
-        items=LIQUID_ATTR_ITEMS,
-        default="NONE",
-        update=_request_output_refresh,
-        description="Color the liquid surface by a simulation attribute",
-    )
-    particle_attribute_mode: EnumProperty(
-        name="Particle Attribute",
-        items=PARTICLE_ATTR_ITEMS,
-        default="NONE",
-        update=_request_output_refresh,
-        description="Color liquid particles by a simulation attribute",
-    )
-    whitewater_attribute_mode: EnumProperty(
-        name="Whitewater Attribute",
-        items=WHITEWATER_ATTR_ITEMS,
-        default="NONE",
-        update=_request_output_refresh,
-        description="Color whitewater particles by a simulation attribute",
-    )
-    whitewater_output_mode: EnumProperty(
-        name="Whitewater Outputs",
-        items=WHITEWATER_OUTPUT_ITEMS,
-        default="COMBINED",
-        update=_request_output_refresh,
-        description="Choose the fast combined pool, separate typed outputs, or both",
-    )
     # Production render attributes
     # Inventory changes are reset-tier because color/source/UID channels are
     # allocated only when selected and cache signatures include every toggle.
@@ -1410,7 +1692,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     surface_attribute_motion: BoolProperty(
         name="Motion Blur", default=True, update=_request_reset,
         description="Publish Blender's conventional per-frame velocity attribute")
-
     particles_attribute_velocity: BoolProperty(
         name="Velocity", default=False, update=_request_reset,
         description="Publish liquid-particle velocity")
@@ -1441,7 +1722,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
     particles_attribute_density: BoolProperty(
         name="Density", default=False, update=_request_reset,
         description="Publish liquid-particle density")
-
     whitewater_attribute_velocity: BoolProperty(
         name="Velocity", default=False, update=_request_reset,
         description="Publish whitewater velocity")
@@ -1458,125 +1738,6 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Type", default=True, options={"HIDDEN"},
         description="Persistent foam, bubble, and spray type; always published")
 
-    whitewater_display_scale: FloatProperty(
-        name="Whitewater Scale", default=1.0, min=0.05, soft_max=4.0,
-        update=_request_output_refresh,
-        description="Scale whitewater viewport point radius; higher values make bubbles and spray look larger, while lower values reveal separation without changing simulation")
-    surface_material: PointerProperty(
-        name="Surface Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material assigned to generated liquid surfaces; changing it updates current and future output meshes")
-    particle_material: PointerProperty(
-        name="Particle Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material used for liquid-particle display; changing it updates the viewport particle output")
-    whitewater_material: PointerProperty(
-        name="Whitewater Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material used for whitewater display; changing it updates bubble and spray output")
-    foam_material: PointerProperty(
-        name="Foam Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material assigned to the separate foam output")
-    bubble_material: PointerProperty(
-        name="Bubble Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material assigned to the separate bubble output")
-    spray_material: PointerProperty(
-        name="Spray Material", type=bpy.types.Material,
-        update=_request_output_refresh,
-        description="Select the material assigned to the separate spray output")
-    output_collection_name: StringProperty(
-        name="Output Collection", default="FluidSim Output",
-        update=_request_output_refresh,
-        description="Set the Blender collection name that owns generated outputs; changing it moves or creates outputs under the new collection")
-
-    # Custom snippets
-    snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
-    active_snippet: IntProperty(default=0)
-    snippet_library_selection: EnumProperty(
-        name="Library",
-        description="Select an example or saved snippet to load into the stack; changing the selection changes which preset the load action will insert",
-        items=_snippet_library_items,
-    )
-    snippet_editor_lines: IntProperty(
-        name="Editor Lines", default=24, min=4, max=200,
-        description="Set the maximum source lines shown in the inline snippet editor; higher values show more code but make the panel taller, while lower values keep it compact")
-    # Shortcut inputs (Houdini-wrangle-style quick insertion).
-    shortcut_field: EnumProperty(
-        name="Field", items=_SHORTCUT_FIELD_ITEMS, default="temperature",
-        description="Choose the solver field that the shortcut action binds and references in code; changing it redirects the inserted snippet line")
-    shortcut_constant_name: StringProperty(
-        name="Name", default="strength",
-        description="Set the identifier for the constant inserted into the snippet; changing it changes the generated argument and code reference")
-    shortcut_constant_value: FloatProperty(
-        name="Value", default=1.0,
-        description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
-
-    # Guided setup / product presets
-    setup_mode: EnumProperty(
-        name="Setup Mode",
-        items=(
-            ("QUICK_LIQUID", "Quick Liquid", "Selected mesh becomes an initial-fill liquid emitter"),
-            ("QUICK_CONTAINER", "Quick Container", "Selected mesh becomes a collider/container with a height fill"),
-            ("QUICK_VISCOUS", "Quick Viscous Liquid", "Selected mesh becomes a thick-liquid emitter"),
-            ("ADD_COLLIDER", "Add Collider", "Tag selected meshes as colliders"),
-            ("ADD_INFLOW", "Add Inflow", "Tag selected meshes as continuous liquid inflows"),
-            ("ADD_OUTFLOW", "Add Outflow", "Tag selected meshes as liquid sinks"),
-        ),
-        default="QUICK_LIQUID",
-        description="Choose the selected-object setup transaction",
-    )
-    product_preset: EnumProperty(
-        name="Preset",
-        items=_product_preset_items,
-        description="Apply a validated built-in or user FluidSim preset",
-    )
-    active_preset_id: StringProperty(
-        name="Active Preset",
-        default="",
-        description="Identifier of the last successfully applied product preset",
-    )
-
-    # Production bake
-    cache_format: EnumProperty(
-        name="Cache Format",
-        items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
-        default="V2",
-        description="Choose the on-disk cache layout used for production bakes",
-    )
-    bake_start: IntProperty(
-        name="Bake Start", default=1, min=-1048574, max=1048574,
-        description="First production-bake frame",
-    )
-    bake_end: IntProperty(
-        name="Bake End", default=250, min=-1048574, max=1048574,
-        description="Last production-bake frame",
-    )
-    checkpoint_interval: IntProperty(
-        name="Checkpoint Interval", default=1, min=1, max=100,
-        description="Checkpoint cadence; current cache-v2 production guarantees commit one restart checkpoint per frame",
-    )
-    bake_status: EnumProperty(
-        name="Bake Status",
-        items=tuple((value, value.title(), "") for value in (
-            "IDLE", "PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING",
-            "CANCELLED", "COMPLETE", "FAILED",
-        )),
-        default="IDLE",
-        options={"SKIP_SAVE"},
-        description="Latest measured production-bake lifecycle state",
-    )
-    bake_progress: FloatProperty(
-        name="Bake Progress", default=0.0, min=0.0, max=1.0,
-        subtype="FACTOR", options={"SKIP_SAVE"},
-        description="Latest measured fraction of the production bake completed",
-    )
-    bake_message: StringProperty(
-        name="Bake Message", default="", options={"SKIP_SAVE"},
-        description="Most recent status or error message reported by the production bake",
-    )
-
     # Diagnostics
     profiling_enabled: BoolProperty(
         name="Enable Profiling", default=False, update=_request_rebuild,
@@ -1585,150 +1746,58 @@ class FLUIDSIM_PG_settings(bpy.types.PropertyGroup):
         name="Accurate GPU Timing", default=True,
         update=_request_rebuild,
         description="Enable CUDA synchronization around each phase for accurate timings at higher profiling cost; disable for lower overhead but less precise asynchronous measurements")
-    show_overlay: BoolProperty(
-        name="Viewport Overlay", default=True,
-        update=_request_output_refresh,
-        description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
-    report_path: StringProperty(
-        name="Report Path", subtype="FILE_PATH", default="//fluidsim_report.json",
-        description="Set where validation and profiling JSON is written; changing it sends the next report to a different file")
-    benchmark_frames: IntProperty(
-        name="Benchmark Frames", default=24, min=4, max=500,
-        description="Set the number of simulation frames measured by a benchmark; higher values improve averaging but take longer, while lower values finish faster with noisier results")
-    benchmark_baseline: StringProperty(
-        name="Baseline", subtype="FILE_PATH", default="//fluidsim_benchmark.json",
-        description="Select the JSON baseline used for performance comparison; changing it changes which recorded timings determine regressions")
 
-    # Cache (optional, supplemental only)
-    cache_enabled: BoolProperty(
-        name="Enable Cache", default=False,
-        description="Enable to record simulated frames to Cache Path during playback; disable to run without writing cache files")
-    cache_path: StringProperty(
-        name="Cache Path", subtype="DIR_PATH", default="//fluidsim_cache/",
-        description="Set the directory used to write and read frame caches; changing it switches the cache sequence available for recording and playback")
-    cache_compress: BoolProperty(
-        name="Compress Cache", default=False,
-        description="zlib-compress cache frames (smaller files, much slower "
-                    "writes during playback)")
-    cache_playback_enabled: BoolProperty(
-        name="Cache Playback",
-        default=False,
-        update=_on_cache_playback_changed,
-        description="Enable to read cached frames instead of stepping live simulation during playback; disable to return the timeline to the live solver")
-    cache_use_custom_range: BoolProperty(
-        name="Custom Cache Range",
-        default=False,
-        description="Enable to use the custom Start and End frames for cache operations; disable to use the scene frame range")
-    cache_frame_start: IntProperty(
-        name="Start",
-        default=1,
-        min=0,
-        description="Set the first frame included in custom cache operations; higher values skip more early frames and values above End produce an invalid range")
-    cache_frame_end: IntProperty(
-        name="End",
-        default=250,
-        min=0,
-        description="Set the last frame included in custom cache operations; higher values extend the cache sequence and values below Start produce an invalid range")
 
-    # Status mirrors (read-only UI feedback)
-    status: StringProperty(
-        name="Status", default="Solver not initialized",
-        description="Latest measured solver lifecycle status reported for this domain")
-    stat_particles: IntProperty(
-        default=0,
-        description="Latest measured count of active liquid particles in the solver")
-    stat_voxels: IntProperty(
-        default=0,
-        description="Latest measured count of active sparse-grid voxels in the solver")
-    stat_whitewater: IntProperty(
-        default=0,
-        description="Latest measured count of active whitewater (foam/bubble/spray) particles")
-    stat_whitewater_foam: IntProperty(
-        default=0,
-        description="Latest measured count of active foam particles")
-    stat_whitewater_bubbles: IntProperty(
-        default=0,
-        description="Latest measured count of active bubble particles")
-    stat_whitewater_spray: IntProperty(
-        default=0,
-        description="Latest measured count of active spray particles")
-    stat_whitewater_invalid_types: IntProperty(
-        default=0,
-        description="Latest measured count of whitewater particles with an unrecognized type classification")
-    stat_whitewater_required: IntProperty(
-        default=0,
-        description="Latest measured count of whitewater particles the solver requested to spawn this step")
-    stat_whitewater_admitted: IntProperty(
-        default=0,
-        description="Latest measured count of requested whitewater particles actually admitted within capacity")
-    stat_whitewater_dropped: IntProperty(
-        default=0,
-        description="Latest measured count of requested whitewater particles dropped because capacity was exceeded")
-    stat_whitewater_policy: StringProperty(
-        default="FIXED_CAPACITY_DETERMINISTIC_DROPS",
-        description="Name of the policy currently governing whitewater admission when capacity is exceeded")
-    stat_whitewater_status: StringProperty(
-        default="OK",
-        description="Latest measured whitewater admission health status")
-    stat_step_ms: FloatProperty(
-        default=0.0,
-        description="Most recent solver step time in milliseconds")
-    stat_substeps: IntProperty(
-        default=0,
-        description="Latest measured number of substeps taken on the most recent frame")
-    stat_cfl_clamped: BoolProperty(
-        default=False,
-        description="Latest measured indicator that the CFL-driven substep count was clamped by Max Substeps")
-    stat_capillary_dt: FloatProperty(
-        default=0.0,
-        description="Latest measured stable timestep required by surface-tension capillary wave stability")
-    stat_capillary_substeps_required: IntProperty(
-        default=1,
-        description="Latest measured number of substeps required to satisfy capillary wave stability")
-    stat_capillary_clamped: BoolProperty(
-        default=False,
-        description="Latest measured indicator that the capillary-required substep count was clamped by Max Substeps")
-    stat_substep_limiter: StringProperty(
-        default="MINIMUM",
-        description="Name of the constraint (CFL, capillary, or minimum) that selected the most recent substep count")
-    stat_surface_tension_active_voxels: IntProperty(
-        default=0,
-        description="Latest measured count of voxels with active surface-tension forces")
-    stat_surface_tension_max_curvature: FloatProperty(
-        default=0.0,
-        description="Latest measured maximum surface curvature used by surface tension")
-    stat_surface_tension_max_acceleration: FloatProperty(
-        default=0.0,
-        description="Latest measured maximum acceleration applied by surface tension")
-    stat_surface_tension_temporary_bytes: IntProperty(
-        default=0,
-        description="Latest measured temporary VRAM, in bytes, allocated for surface-tension computation")
-    stat_surface_tension_submission_ms: FloatProperty(
-        default=0.0,
-        description="Most recent GPU submission time in milliseconds for surface-tension computation")
-    stat_surface_tension_status: StringProperty(
-        default="DISABLED",
-        description="Latest measured surface-tension computation health status")
-    stat_surface_tension_message: StringProperty(
-        default="",
-        description="Most recent status or error message reported by surface-tension computation")
+# Pre-split union of both groups, bound onto ``Scene.fluidsim`` only by
+# ``blender.migration`` for the length of one copy. A .blend saved before the
+# split stores its domain settings on the scene group; narrowing the pointer to
+# FLUIDSIM_PG_scene hides those IDProperties without deleting them, and binding
+# this union back exposes them so migration can move them to the domain object.
+FLUIDSIM_PG_legacy_settings = type(
+    "FLUIDSIM_PG_legacy_settings",
+    (bpy.types.PropertyGroup,),
+    {
+        "__module__": __name__,
+        "__annotations__": {
+            **FLUIDSIM_PG_scene.__annotations__,
+            **FLUIDSIM_PG_domain.__annotations__,
+        },
+    },
+)
 
 
 CLASSES = (
     FLUIDSIM_PG_snippet_argument,
     FLUIDSIM_PG_snippet,
     FLUIDSIM_PG_object,
-    FLUIDSIM_PG_settings,
+    FLUIDSIM_PG_scene,
+    FLUIDSIM_PG_domain,
+    FLUIDSIM_PG_legacy_settings,
 )
+
+
+@contextmanager
+def legacy_scene_settings():
+    """Expose a pre-split file's domain settings on ``scene.fluidsim``.
+
+    Rebinds ``Scene.fluidsim`` to the union class for the duration of the block
+    and always restores the narrow binding, so a failed migration cannot leave
+    the scene group wide.
+    """
+    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_legacy_settings)
+    try:
+        yield
+    finally:
+        bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_scene)
 
 
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_settings)
+    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_scene)
     bpy.types.Object.fluidsim = PointerProperty(type=FLUIDSIM_PG_object)
-    # Phase 3: per-object home for domain settings (migration target).
-    bpy.types.Object.fluidsim_domain = PointerProperty(type=FLUIDSIM_PG_settings)
+    # Per-object home for domain settings; the solver reads only this group.
+    bpy.types.Object.fluidsim_domain = PointerProperty(type=FLUIDSIM_PG_domain)
 
 
 def unregister():

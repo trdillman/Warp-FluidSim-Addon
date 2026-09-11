@@ -123,6 +123,7 @@ _OUTPUT_REGISTRY_FIELDS = frozenset({
     "particle_display_fraction", "particle_display_scale",
     "surface_attribute_mode", "particle_attribute_mode",
     "whitewater_attribute_mode", "whitewater_display_scale",
+    "whitewater_display_fraction",
     "whitewater_output_mode",
     "surface_material", "particle_material", "whitewater_material",
     "foam_material", "bubble_material", "spray_material",
@@ -234,6 +235,27 @@ _SCENE_OWNED_TIERS = frozenset({
 #                     scene.fluidsim.
 _SCENE_OWNED_FIELDS = frozenset({"quality", "domain_object"})
 
+# The mirror image: fields sitting in a scene-owned TIER whose every consumer
+# reads the DOMAIN group. Tier answers "what does changing this require?" and
+# ownership answers "which datablock holds it?"; the two are orthogonal, and
+# for these the tier default gives the wrong datablock:
+#   height_error              -- PRESENTATION (a status string; changing it
+#                                triggers no solver action, so the tier is
+#                                right). But scene_inputs.validate_height_source
+#                                writes it on the domain group (5 sites) and
+#                                ui_scene draws it from _domain_owner(context),
+#                                so nothing ever reads the scene copy.
+#   spacetime_resync_surface  -- AUTHORED_NEXT_RUN (correctly: the surface
+#                                refresh callback does not push it into a live
+#                                solver). But it is a domain solver setting:
+#                                ui_scene draws it on the domain group and
+#                                solver_settings.apply_scene_settings consumes
+#                                it from the group the caller passes, which is
+#                                always active_domain_settings.
+# Phase 1 repointed both sets of call sites without moving the declaration, so
+# until now setting_owner() disagreed with all 11 of them.
+_DOMAIN_OWNED_FIELDS = frozenset({"height_error", "spacetime_resync_surface"})
+
 
 def setting_owner(scene, name):
     """The settings group a value for ``name`` must LAND on to take effect.
@@ -253,9 +275,11 @@ def setting_owner(scene, name):
     ``tests/test_pending_settings_registry.py`` pins the two in agreement.
     """
     scene_fs = getattr(scene, "fluidsim", None)
-    domain_fs = _active_settings(scene) or scene_fs
+    domain_fs = _active_settings(scene)
     if name in _SCENE_OWNED_FIELDS:
         return scene_fs
+    if name in _DOMAIN_OWNED_FIELDS:
+        return domain_fs
     tier = SETTING_TRANSITION_REGISTRY.get(name)
     return scene_fs if tier in _SCENE_OWNED_TIERS else domain_fs
 
@@ -270,6 +294,10 @@ def validate_transition_registry(declared_fields=None):
     if overlap:
         raise ValueError("Conflicting Pending Settings tiers: "
                          + ", ".join(sorted(overlap)))
+    contested = _SCENE_OWNED_FIELDS & _DOMAIN_OWNED_FIELDS
+    if contested:
+        raise ValueError("Field claimed by both ownership overrides: "
+                         + ", ".join(sorted(contested)))
     if declared_fields is not None:
         declared = set(declared_fields)
         missing = declared - seen
@@ -365,11 +393,10 @@ _RESET_OBJECT_FIELDS = frozenset({
 
 # Signature fields the UI WRITES to the DOMAIN settings block (drawn via
 # ui_scene._domain_owner == active_domain_settings, e.g. FLUIDSIM_PT_scene_domain
-# and the physics-tab mirrors built with owner_redirect=True). Phase-3 migration
-# COPIES these onto obj.fluidsim_domain and freezes the scene.fluidsim copy, so
-# post-migration the UI writes here while scene.fluidsim is stale. Pending
-# detection must therefore resolve them through _active_settings(scene); reading
-# raw scene.fluidsim would compare the frozen ghost against itself and never see
+# and its Physics-tab mirror). They exist only on obj.fluidsim_domain --
+# scene.fluidsim (FLUIDSIM_PG_scene) does not declare them -- so pending
+# detection must resolve them through _active_settings(scene). Before the split,
+# reading raw scene.fluidsim compared a stale copy against itself and never saw
 # the edit (defect #5).
 # Every OTHER signature field is written to context.scene.fluidsim by its panel
 # (domain_object identity, quality, profiling_*, height_*, *_attribute_*), so it
@@ -394,8 +421,8 @@ _DOMAIN_AUTHORED_SIGNATURE_FIELDS = frozenset({
 
 def _signature_owners(scene):
     """Return ``(scene_fs, domain_fs)`` — the two datablocks signature fields
-    resolve to. ``domain_fs`` is ``active_domain_settings`` (== ``obj.fluidsim_domain``
-    on migrated scenes, else ``scene.fluidsim``)."""
+    resolve to. ``domain_fs`` is ``active_domain_settings``: the designated
+    domain object's ``fluidsim_domain``, or ``None`` without one."""
     return getattr(scene, "fluidsim", None), _active_settings(scene)
 
 
@@ -943,8 +970,7 @@ def revert_pending_values(scene):
         scene_fs, domain_fs = _signature_owners(scene)
         # Restore each snapshot value to the datablock that AUTHORS it (matches
         # where capture_applied_state read it and where the UI writes it), so a
-        # revert of a domain-authored edit targets obj.fluidsim_domain rather
-        # than the frozen scene.fluidsim copy on a migrated scene.
+        # revert of a domain-authored edit targets obj.fluidsim_domain.
         for name, value in state.reset_snapshot.items():
             owner = _authoring_owner(scene_fs, domain_fs, name)
             if owner is not None and hasattr(owner, name):
@@ -1029,10 +1055,14 @@ def update_particle_capacity_policy(scene):
     """Apply growth policy live and keep capacity plan/pending truth scene-owned."""
     sess = session()
     fs = scene.fluidsim
+    # Two owners: the growth policy itself is domain-owned (LIVE tier), while
+    # ``status`` and the capacity plan below stay scene-owned.
+    domain_fs = _active_settings(scene)
     if sess.owns_scene(scene):
-        sess.solver.settings.auto_grow_particles = bool(fs.auto_grow_particles)
+        sess.solver.settings.auto_grow_particles = bool(
+            domain_fs.auto_grow_particles)
         sess.solver.settings.particle_growth_failure_policy = str(
-            fs.particle_growth_failure_policy)
+            domain_fs.particle_growth_failure_policy)
         sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
         fs.status = sess.particle_capacity_notice_for_scene(scene)
         had_scene_plan = (

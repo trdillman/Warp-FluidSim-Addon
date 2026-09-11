@@ -28,6 +28,7 @@ Desktop.ini
 /.agents/
 /.pi-subagents/
 /.claude/worktrees/
+/.tmp-work/
 /pi-session-*.html
 
 # Generated simulation/demo outputs

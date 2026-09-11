@@ -30,9 +30,12 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 
 ## Demo playback contract
 
-- Every tracked `demos/*.blend` is a playable demo, including source-workflow, cache-review, and opt-in scenes. It must reopen at `frame_start` with live playback ready, restart from that frame, initialize a non-empty solver through its intended owned sources or seed objects, and publish visibly changing viewport output when advanced by the real frame handlers.
-- A saved preview mesh, a build-time-only solver state, an external temporary cache, or a single preloaded frame does not satisfy the demo contract. Demo builders must leave no hidden seed objects or Scene settings from another demo.
-- `tools/check_demo_blends.py` is the executable all-demo gate. Keep its tracked scene inventory and owned-seed expectations synchronized with `demos/*.blend`; verify both nonzero solver state and changing owned particle, whitewater, or surface output after reopen.
+- `docs/DEMO_SCENE_CONTRACT.md` is the canonical definition of a demo. Reserve **demo** for a real, reopenable FluidSim simulation; static examples, renders, fixtures, benchmarks, and review scenes are not demos.
+- Every tracked `demos/*.blend` is a playable demo, including source-workflow, cache-review, and opt-in scenes. It must contain a designated Domain object with authoritative object-owned settings, reopen at `frame_start` with live playback ready, restart from that frame, initialize a non-empty solver through its intended owned sources or seed objects, and publish visibly changing owned particle, whitewater, or surface output when advanced by the real frame handlers.
+- The feature named by a demo must execute in the production runtime, not merely appear in UI state, labels, metadata, or precomputed geometry. A Custom Effects demo must have an enabled, applied scene effect, a real domain and non-empty solver, runtime effect execution during frame advancement, and dispatch/call evidence or a deterministic output difference from a disabled-effect control.
+- A saved preview mesh, static before/after comparison, build-time-only solver state, external temporary cache, single preloaded frame, or generated CPU fixture does not satisfy the demo contract. Demo builders must leave no hidden foreign seed objects, stale Scene mirrors, or settings from another demo.
+- Files under `fluidSim_warp_blender51/resources/examples/` are examples or validation artifacts unless separately promoted through the complete demo contract. Never open or present one as fulfillment of a demo request solely because it is a `.blend` file or contains effect-generated geometry.
+- `tools/check_demo_blends.py` is the executable all-demo gate. Keep its tracked scene inventory and owned-source/seed expectations synchronized with `demos/*.blend`; verify authoritative domain ownership, reset/reopen initialization, nonzero solver state, and changing owned output through the real frame path. Add focused runtime acceptance for the capability each new demo claims.
 
 ## Verified workflows
 

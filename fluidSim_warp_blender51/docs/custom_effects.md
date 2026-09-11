@@ -19,6 +19,19 @@ implementation beneath its collapsed **Full Settings** group.
 
 The default library contains Vortex Force, Curl Turbulence, Radial Pulse, Planar Split, Velocity Damping, Temperature Lift, Particle Speed Limit, and Voxel Cooling. Spatial effects use owned Empty controller objects rather than raw world-coordinate constants.
 
+## Demo truth boundary
+
+The packaged Custom Effects `.blend` files under `resources/examples/` are
+static validation/review examples. They visualize precomputed numerical
+fixtures and package/trust workflows; they are not live simulation demos. Do
+not use their geometry, renders, or stored stack metadata as proof that an
+effect executes in FluidSolver.
+
+A Custom Effects demo must meet `docs/DEMO_SCENE_CONTRACT.md`: it needs an
+authoritative Domain object, owned liquid initialization, a non-empty solver,
+an enabled and applied effect, frame-handler playback, changing owned output,
+and runtime dispatch/call evidence or a deterministic disabled-effect control.
+
 **Open in Text Editor** prefers an existing Blender Text Editor. When none is
 open, it repurposes the current area. Generated source and Go to Error use the
 same area policy, preserving the Scene Properties workflow whenever possible.
@@ -96,7 +109,7 @@ Conflict options are:
 
 Malformed packages remain visible as library diagnostics. **Compare Update** inspects a candidate package without installing it and reports whether it is not installed, identical, modified at the same semantic version, newer, older, ambiguous, or in conflict with a built-in identity. **Rename Package** creates a new validated package identity and display name in the local library while leaving existing embedded scene instances unchanged. The panel can also reveal the extension-managed library folder and remove an installed user package while retaining any embedded scene instance.
 
-## Real demos
+## Static validation examples
 
 The release contains:
 
@@ -104,7 +117,7 @@ The release contains:
 - `06_custom_effects_stack.blend`
 - `07_warp_code_authoring.blend`
 
-Each scene includes applied identity metadata, real supplied-Warp numerical evidence, and an Eevee F12 visualization. The authoring demo intentionally keeps custom Lateral Wave code disabled and untrusted in the distributed scene even though a separate validation fixture proves that exact source compiles and executes.
+Each scene includes applied identity metadata, real supplied-Warp numerical evidence, and an Eevee F12 visualization. They remain static validation/review assets rather than live Domain-backed demos. The authoring example intentionally keeps custom Lateral Wave code disabled and untrusted in the distributed scene even though a separate validation fixture proves that exact source compiles and executes.
 
 ## Known limits
 

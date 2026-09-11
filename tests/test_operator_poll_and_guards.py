@@ -11,6 +11,7 @@ import types
 from types import SimpleNamespace
 
 import pytest
+from settings_doubles import split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -196,7 +197,7 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
     # A domain object that no longer exposes geometry (deleted / wrong type):
     # _domain_bounds raises, and a draw callback must not propagate that.
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
+        fluidsim=split_settings(SimpleNamespace(
             domain_object=SimpleNamespace(),
             voxel_size=0.05,
             particles_per_voxel=8,
@@ -204,7 +205,7 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
             auto_grow_particles=True,
             topology_expand=1,
             open_boundaries=False,
-        )
+        ))
     )
     layout = _Layout()
     panel = ui_scene.FLUIDSIM_PT_scene_domain()

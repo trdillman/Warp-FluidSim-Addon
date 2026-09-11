@@ -98,6 +98,8 @@ def _mark_dirty(_self=None, context=None):
     scene = getattr(context, "scene", None) if context is not None else None
     if scene is not None and hasattr(scene, "fluidsim_effects"):
         try:
+            if getattr(_self, "key", "") and _try_live_parameter_update(scene):
+                return
             refresh_stack_state(scene)
         except Exception as exc:  # authoring feedback, not an execution path
             scene.fluidsim_effects.blocking_reason = f"Effect snapshot error: {exc}"
@@ -431,6 +433,46 @@ def clear_effects(scene, *, remove_owned_texts: bool = False):
     refresh_stack_state(scene)
 
 
+def _publish_applied_state(scene, instances) -> None:
+    """Persist one already-validated applied stack snapshot into Blender state."""
+
+    stack = scene.fluidsim_effects
+    effective_ids = {item.instance_id for item in effective_stack_instances(instances)}
+    signature, inventory = execution_stack_fingerprint(instances)
+    stack.applied_signature = signature
+    stack.applied_inventory_json = json.dumps(inventory, sort_keys=True, allow_nan=False)
+    stack.applied_snapshot_json = json.dumps(
+        [instance.to_dict() for instance in instances], sort_keys=True, allow_nan=False
+    )
+    stack.tested_signature = signature
+    instances_by_id = {instance.instance_id: instance for instance in instances}
+    for pg in stack.items:
+        fingerprint = effect_fingerprint(instances_by_id[str(pg.instance_id)])
+        pg.applied_fingerprint = fingerprint
+        pg.tested_fingerprint = fingerprint
+        pg.status = "APPLIED" if pg.instance_id in effective_ids else "DISABLED"
+    stack.status = "APPLIED"
+    stack.blocking_reason = ""
+
+
+def _try_live_parameter_update(scene) -> bool:
+    """Publish runtime-bindable parameter edits into the active solver in place."""
+
+    stack = scene.fluidsim_effects
+    if not stack.applied_signature:
+        return False
+    from . import scene_bridge
+
+    session = scene_bridge.session()
+    if not session.active or not session.owns_scene(scene):
+        return False
+    instances = scene_effect_instances(scene)
+    if not session.solver.update_custom_effect_runtime_bindings(instances):
+        return False
+    _publish_applied_state(scene, instances)
+    return True
+
+
 def refresh_stack_state(scene):
     stack = scene.fluidsim_effects
     try:
@@ -608,23 +650,7 @@ def apply_stack(scene, *, device: str) -> CandidateBuildResult:
     except AttributeError:
         pass
     instances = scene_effect_instances(scene)
-    effective_ids = {item.instance_id for item in effective_stack_instances(instances)}
-    signature, inventory = execution_stack_fingerprint(instances)
-    stack.applied_signature = signature
-    stack.applied_inventory_json = json.dumps(inventory, sort_keys=True, allow_nan=False)
-    stack.applied_snapshot_json = json.dumps(
-        [instance.to_dict() for instance in instances], sort_keys=True, allow_nan=False
-    )
-    stack.tested_signature = signature
-    instances_by_id = {instance.instance_id: instance for instance in instances}
-    for pg in stack.items:
-        instance = instances_by_id[str(pg.instance_id)]
-        fingerprint = effect_fingerprint(instance)
-        pg.applied_fingerprint = fingerprint
-        pg.tested_fingerprint = fingerprint
-        pg.status = "APPLIED" if pg.instance_id in effective_ids else "DISABLED"
-    stack.status = "APPLIED"
-    stack.blocking_reason = ""
+    _publish_applied_state(scene, instances)
     return candidate
 
 

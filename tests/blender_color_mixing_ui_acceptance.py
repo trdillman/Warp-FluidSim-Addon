@@ -19,13 +19,17 @@ def require(condition, message):
 
 
 def main():
+    bpy.ops.wm.open_mainfile(filepath=str(ROOT / "demos" / "chromatic_vortex.blend"))
     enable_repo_addon(str(ROOT), default_set=True, persistent=True)
     scene = bpy.context.scene
+    domain = scene.fluidsim.domain_object
+    require(domain is not None, "saved demo has no designated domain")
+    domain_settings = domain.fluidsim_domain
 
-    require(hasattr(scene.fluidsim, "species_enabled"),
-            "scene mixing toggle is not registered")
-    require(hasattr(scene.fluidsim, "species_mixing_rate"),
-            "scene mixing strength is not registered")
+    require(hasattr(domain_settings, "species_enabled"),
+            "domain mixing toggle is not registered")
+    require(hasattr(domain_settings, "species_mixing_rate"),
+            "domain mixing strength is not registered")
     require(hasattr(bpy.types, "FLUIDSIM_PT_sim_color_mixing"),
             "current Scene Properties color-mixing panel is not registered")
     require(hasattr(bpy.types, "FLUIDSIM_PT_physics_domain_sim_color_mixing"),

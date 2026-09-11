@@ -17,6 +17,8 @@ not become source-control assets.
 5. paddle_stir      - keyframed rotating paddle in a cylindrical tank; the only
                       scene exercising the moving-collider velocity-coupling path
                       (build explicitly with `-- paddle_stir`).
+6. custom_effects_vortex - live source-driven liquid using the built-in Vortex
+                           Force Custom Effect in the production solver path.
 
 The exported data is analyzed offline by tools/analyze_demos.py.
 """
@@ -42,6 +44,7 @@ FPS = 24
 STANDARD_CACHE_SCENES = ("dam_break", "crown_splash")
 DEFAULT_SCENES = (
     "dam_break", "crown_splash", "force_fields",
+    "custom_effects_vortex",
     "cache_export_playback_review",
     "mesh_solid_source", "mesh_shell_source", "point_source",
     "volume_source", "liquid_sink", "height_fill",
@@ -50,6 +53,8 @@ CALENDER_LOW_VISCOSITY = 0.002
 CALENDER_HIGH_VISCOSITY = 0.5
 DAM_BREAK_RELEASE_VELOCITY = (0.7, 0.0, 0.0)
 DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
+CROWN_SPLASH_WW_CHURN_THRESHOLD = 0.05
+CROWN_SPLASH_WW_EMISSION_RATE = 200.0
 
 
 def log(msg):
@@ -139,6 +144,18 @@ def make_domain(scene, lo, hi, name):
     bpy.context.view_layer.update()
     scene.fluidsim.domain_object = dom
     return dom
+
+
+def domain_settings(scene):
+    """Return the designated domain object's settings group.
+
+    Domain settings live only on ``Object.fluidsim_domain`` (FLUIDSIM_PG_domain);
+    ``scene.fluidsim`` holds the scene-level group and has none of them.
+    """
+    dom = scene.fluidsim.domain_object
+    if dom is None:
+        raise RuntimeError("demo builder: scene has no designated domain object")
+    return dom.fluidsim_domain
 
 
 def make_particle_seed(scene, points, name):
@@ -314,13 +331,14 @@ def build_dam_break():
     fs = scene.fluidsim
     lo, hi = (0.0, -1.00146496, 0.0), (5.6, 1.00146496, 1.6)
     make_domain(scene, lo, hi, "DamBreak Domain")
-    fs.voxel_size = 0.03
-    fs.max_particles = 600_000
-    fs.min_substeps = 1
-    fs.max_substeps = 16
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = DAM_BREAK_WHITEWATER_CHURN_GAIN
-    fs.profiling_enabled = False
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.03
+    ds.max_particles = 600_000
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.whitewater_enabled = True
+    ds.ww_churn_gain = DAM_BREAK_WHITEWATER_CHURN_GAIN
+    ds.profiling_enabled = False
     fs.show_particles = True
     fs.show_surface = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
@@ -426,14 +444,23 @@ def build_crown_splash():
     fs = scene.fluidsim
     lo, hi = (0.0, 0.0, 0.0), (0.8, 0.8, 0.5)
     make_domain(scene, lo, hi, "CrownSplash Domain")
-    fs.voxel_size = 0.01
-    fs.max_particles = 600_000
-    fs.min_substeps = 1
-    fs.max_substeps = 24
-    fs.flip_ratio = 0.97
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = 2.0
-    fs.profiling_enabled = False
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.01
+    ds.max_particles = 600_000
+    ds.min_substeps = 1
+    ds.max_substeps = 24
+    ds.flip_ratio = 0.97
+    ds.whitewater_enabled = True
+    ds.ww_churn_gain = 2.0
+    # Measured on the saved scene: peak churn is 0.25-0.35 (run-to-run GPU
+    # variation), p99.9 ~0.19, so the 0.5 default never emitted. 0.05 keeps a
+    # ~5x margin under the lowest observed peak and emits from frame 4-5 in
+    # every run; ww_min_speed still keeps the resting pool foam-free. Rate 200
+    # gives ~5k live whitewater without saturating the per-substep emission
+    # probability (peak ~0.18 of the clamp).
+    ds.ww_churn_threshold = CROWN_SPLASH_WW_CHURN_THRESHOLD
+    ds.ww_emission_rate = CROWN_SPLASH_WW_EMISSION_RATE
+    ds.profiling_enabled = False
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
     scene.frame_start = 1
@@ -455,7 +482,12 @@ def build_crown_splash():
     )
     log(f"crown_splash: pool {n_pool:,} + droplet {n_all - n_pool:,} particles")
     add_camera_light(scene, (0.4, -1.05, 0.42), (1.35, 0.0, 0.0))
-    run_scene("crown_splash", 48)
+    series = run_scene("crown_splash", 48)
+    peak_whitewater = max(series["whitewater_count"])
+    if peak_whitewater == 0:
+        raise RuntimeError(
+            "crown_splash: whitewater is enabled but emitted nothing in 48 "
+            "frames; the churn threshold is above the scene's reachable churn")
     save_scene("crown_splash")
     meta = {
         "scene": "crown_splash",
@@ -469,6 +501,15 @@ def build_crown_splash():
         "fps": FPS,
         "pool_particles": int(n_pool),
         "total_particles": int(n_all),
+        "whitewater": {
+            "churn_gain": 2.0,
+            "churn_threshold": CROWN_SPLASH_WW_CHURN_THRESHOLD,
+            "emission_rate": CROWN_SPLASH_WW_EMISSION_RATE,
+            "build_peak_count": int(peak_whitewater),
+            "build_first_frame": next(
+                f for f, n in zip(series["frames"], series["whitewater_count"])
+                if n > 0),
+        },
     }
     with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
               encoding="utf-8", newline="\n") as fh:
@@ -516,12 +557,13 @@ def build_force_fields():
     fs = scene.fluidsim
     lo, hi = (-5.2, -3.2, 0.0), (5.2, 3.2, 3.0)
     make_domain(scene, lo, hi, "Force Fields Domain")
-    fs.voxel_size = 0.12
-    fs.max_particles = 300_000
-    fs.min_substeps = 1
-    fs.max_substeps = 8
-    fs.gravity = (0.0, 0.0, -1.0)
-    fs.whitewater_enabled = False
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.12
+    ds.max_particles = 300_000
+    ds.min_substeps = 1
+    ds.max_substeps = 8
+    ds.gravity = (0.0, 0.0, -1.0)
+    ds.whitewater_enabled = False
     fs.show_surface = True
     fs.show_particles = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
@@ -971,22 +1013,23 @@ def build_adhesive_calender():
     fs = scene.fluidsim
     make_domain(scene, (-3.5, -2.0, -1.55), (3.5, 2.0, 1.55),
                 "Adhesive Calender Domain")
-    fs.domain_sdf_walls = True
+    ds = domain_settings(scene)
+    ds.domain_sdf_walls = True
     # Preserve the calibrated particles-per-voxel density when the lightweight
     # calibration override is used; the production 1M build resolves at ~0.037.
-    fs.voxel_size = 0.08 * (100_000.0 / particle_count) ** (1.0 / 3.0)
-    fs.max_particles = particle_count
-    fs.min_substeps = 1
-    fs.max_substeps = 4
-    fs.use_scene_gravity = False
-    fs.gravity = (0.0, 0.0, 0.0)
-    fs.max_speed = 4.0
-    fs.flip_ratio = 0.95
-    fs.whitewater_enabled = True
-    fs.max_whitewater = 500_000
-    fs.ww_churn_gain = 1.0
-    fs.ww_churn_threshold = 1.0
-    fs.ww_emission_rate = 1.0
+    ds.voxel_size = 0.08 * (100_000.0 / particle_count) ** (1.0 / 3.0)
+    ds.max_particles = particle_count
+    ds.min_substeps = 1
+    ds.max_substeps = 4
+    ds.use_scene_gravity = False
+    ds.gravity = (0.0, 0.0, 0.0)
+    ds.max_speed = 4.0
+    ds.flip_ratio = 0.95
+    ds.whitewater_enabled = True
+    ds.max_whitewater = 500_000
+    ds.ww_churn_gain = 1.0
+    ds.ww_churn_threshold = 1.0
+    ds.ww_emission_rate = 1.0
     fs.show_surface = True
     fs.show_particles = True
     fs.show_whitewater = True
@@ -996,11 +1039,11 @@ def build_adhesive_calender():
     fs.surface_attribute_mode = "VISCOSITY"
     fs.cache_enabled = False
     fs.live = False
-    fs.viscosity_enabled = True
-    fs.viscosity_from_particles = True
-    fs.viscosity_constant = 0.0
-    fs.viscosity_iterations = 80
-    fs.viscosity_tolerance = 1.0e-4
+    ds.viscosity_enabled = True
+    ds.viscosity_from_particles = True
+    ds.viscosity_constant = 0.0
+    ds.viscosity_iterations = 80
+    ds.viscosity_tolerance = 1.0e-4
     scene.frame_start = 1
     scene.frame_end = frames
     scene.render.engine = "BLENDER_EEVEE"
@@ -1207,7 +1250,7 @@ def build_adhesive_calender():
         "config": {
             "initial_particles": particle_count,
             "frames": frames,
-            "voxel_size": float(fs.voxel_size),
+            "voxel_size": float(ds.voxel_size),
             "max_substeps": 4,
             "whitewater_enabled": True,
             "force_fields": ["FLUID_FLOW_UPPER", "FLUID_FLOW_LOWER", "DRAG"],
@@ -1262,9 +1305,10 @@ def build_adhesive_calender():
 def _workflow_scene(name, title):
     scene = fresh_scene()
     make_domain(scene, (-2.0, -2.0, 0.0), (2.0, 2.0, 2.5), f"{title} Domain")
-    scene.fluidsim.voxel_size = 0.1
-    scene.fluidsim.max_particles = 100_000
-    scene.fluidsim.whitewater_enabled = False
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.1
+    ds.max_particles = 100_000
+    ds.whitewater_enabled = False
     scene.fluidsim.live = False
     scene.frame_start = 1
     scene.frame_end = 120
@@ -1354,9 +1398,10 @@ def build_height_fill():
         for x in range(4):
             value = (x+y)/6.0; values.extend((value,value,value,1.0))
     image.pixels[:] = values
-    scene.fluidsim.height_enabled = True; scene.fluidsim.height_back_mode = "PROFILE"
-    scene.fluidsim.height_profile_image = image; scene.fluidsim.height_profile_scale = 0.6
-    scene.fluidsim.height_emission_mode = "INITIAL_FILL"
+    ds = domain_settings(scene)
+    ds.height_enabled = True; ds.height_back_mode = "PROFILE"
+    ds.height_profile_image = image; ds.height_profile_scale = 0.6
+    ds.height_emission_mode = "INITIAL_FILL"
     add_text_block("README_Height_Fill", "Profile Image height Initial Fill. Infinite mode is unsupported and absent.")
     save_live_playback_ready("height_fill", preview=False)
 
@@ -1412,14 +1457,15 @@ def build_paddle_stir():
     fs = scene.fluidsim
     lo, hi = (-0.60, -0.60, 0.0), (0.60, 0.60, 0.90)
     make_domain(scene, lo, hi, "PaddleStir Domain")
-    fs.voxel_size = 0.012
-    fs.max_particles = 900_000
-    fs.min_substeps = 1
-    fs.max_substeps = 24
-    fs.flip_ratio = 0.97
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = 2.5
-    fs.profiling_enabled = False
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.012
+    ds.max_particles = 900_000
+    ds.min_substeps = 1
+    ds.max_substeps = 24
+    ds.flip_ratio = 0.97
+    ds.whitewater_enabled = True
+    ds.ww_churn_gain = 2.5
+    ds.profiling_enabled = False
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
     fs.show_whitewater = True
@@ -1521,7 +1567,7 @@ def build_paddle_stir():
     pool = lattice((-tank_inner_radius, -tank_inner_radius, 0.05),
                    (tank_inner_radius, tank_inner_radius, pool_depth), 0.010)
     radial = np.hypot(pool[:, 0], pool[:, 1])
-    pool = pool[radial < (tank_inner_radius - 1.5 * fs.voxel_size)]
+    pool = pool[radial < (tank_inner_radius - 1.5 * ds.voxel_size)]
     n_pool = admitted_total(
         sess.solver.inject_particles(pool), label="paddle_stir pool")
     log(f"paddle_stir: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
@@ -1593,6 +1639,85 @@ def build_paddle_stir():
 
 # ---------------------------------------------------------------------------
 
+def build_custom_effects_vortex():
+    """Build a restartable live liquid demo driven by Custom Effects v2."""
+    scene = fresh_scene()
+    from fluidSim_warp_blender51.blender.effects import add_builtin_effect
+
+    fs = scene.fluidsim
+    make_domain(
+        scene,
+        (-1.5, -1.5, 0.0),
+        (1.5, 1.5, 2.0),
+        "Custom Effects Vortex Domain",
+    )
+    ds = domain_settings(scene)
+    ds.voxel_size = 0.06
+    ds.max_particles = 180_000
+    ds.min_substeps = 1
+    ds.max_substeps = 8
+    ds.use_scene_gravity = False
+    ds.gravity = (0.0, 0.0, 0.0)
+    fs.show_particles = True
+    fs.show_surface = True
+    ds.whitewater_enabled = False
+    ds.profiling_enabled = False
+
+    source = make_source_box(
+        scene,
+        (0.42, -0.38, 0.42),
+        (1.08, 0.38, 1.18),
+        "Custom Effects Vortex Initial Fill",
+        emit_rate=1.0,
+        emission_mode="INITIAL_FILL",
+    )
+    source.fluidsim.enabled = True
+    source.display_type = "WIRE"
+    source.hide_render = True
+
+    controller = bpy.data.objects.new("Custom Effects Vortex Controller", None)
+    scene.collection.objects.link(controller)
+    controller.location = (0.0, 0.0, 0.8)
+    controller.empty_display_type = "CIRCLE"
+    controller.empty_display_size = 0.65
+    controller.show_name = True
+    controller["fluidsim_owned"] = True
+    controller["fluidsim_effect_controller"] = True
+
+    effect = add_builtin_effect(scene, "fluidsim.vortex_force",
+                                instance_id="demo-live-vortex")
+    parameters = {parameter.key: parameter for parameter in effect.parameters}
+    parameters["controller"].object_value = controller
+    parameters["axis"].vector_value = (0.0, 0.0, 1.0)
+    parameters["strength"].float_value = 18.0
+    parameters["radius"].float_value = 1.45
+    parameters["suction"].float_value = 0.75
+    parameters["lift"].float_value = 0.15
+    result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+    if result != {"FINISHED"}:
+        raise RuntimeError(
+            "custom_effects_vortex: Vortex Force failed to compile and apply: "
+            f"{scene.fluidsim_effects.blocking_reason}"
+        )
+
+    scene.frame_start = 1
+    scene.frame_end = 96
+    scene["fluidsim_custom_effect_demo"] = "vortex_force"
+    add_camera_light(scene, (4.8, -5.5, 4.0), (1.05, 0.0, 0.72))
+    add_text_block(
+        "README_Custom_Effects_Vortex",
+        "Playable Custom Effects Vortex\n"
+        "==============================\n\n"
+        "This is a live FluidSim scene, not a static visualization. The domain "
+        "initializes liquid from 'Custom Effects Vortex Initial Fill'. The applied "
+        "built-in Vortex Force executes after particle transfer on every substep. "
+        "Press Play from frame 1 to see the liquid orbit the controller.\n",
+    )
+    save_live_playback_ready("custom_effects_vortex", preview=False)
+
+
+# ---------------------------------------------------------------------------
+
 def main():
     os.makedirs(DEMOS, exist_ok=True)
     enable_repo_addon(REPO, default_set=False, persistent=False)
@@ -1600,6 +1725,7 @@ def main():
         "dam_break": build_dam_break,
         "crown_splash": build_crown_splash,
         "force_fields": build_force_fields,
+        "custom_effects_vortex": build_custom_effects_vortex,
         "cache_export_playback_review": build_cache_export_playback_review,
         "adhesive_calender": build_adhesive_calender,
         "mesh_solid_source": build_mesh_solid_source,

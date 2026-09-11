@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .enums import EffectCadence, EffectDomain, EffectStage
 from .fields import FIELD_SPECS, requirements_for_bindings
-from .fingerprint import execution_stack_fingerprint
+from .fingerprint import effective_stack_instances, execution_stack_fingerprint
 from .source import parameter_runtime_inputs
 
 
@@ -202,6 +202,24 @@ def _prepare_candidate(candidate: Any) -> _PreparedRuntime:
     )
 
 
+def _runtime_structure_matches(applied: Any, updated: Any) -> bool:
+    """Return whether two instances differ only in launch-time bindings."""
+
+    return (
+        applied.instance_id == updated.instance_id
+        and applied.definition == updated.definition
+        and applied.enabled == updated.enabled
+        and applied.muted == updated.muted
+        and applied.solo == updated.solo
+        and applied.order == updated.order
+        and applied.frame_start == updated.frame_start
+        and applied.frame_end == updated.frame_end
+        and applied.frame_step == updated.frame_step
+        and applied.safe_mode == updated.safe_mode
+        and applied.expert_acknowledged == updated.expert_acknowledged
+    )
+
+
 class EffectRuntimeManager:
     """Own the last fully tested/applied stack and execute it deterministically."""
 
@@ -259,6 +277,51 @@ class EffectRuntimeManager:
         self._once_per_frame = {}
         self._initialized = set()
         self._frame_baseline = {}
+        return True
+
+    def update_runtime_bindings(self, instances: Any) -> bool:
+        """Update launch-time values without replacing compiled kernels or solver state.
+
+        The update is accepted only when the effective stack and every
+        compile/scheduling field are unchanged, and every changed parameter is
+        explicitly runtime-bindable.  Rejection leaves the applied runtime
+        untouched so structural edits still require the guarded apply path.
+        """
+
+        effective = effective_stack_instances(tuple(instances))
+        current: dict[str, Any] = {}
+        for entries in self.by_stage.values():
+            for entry in entries:
+                current.setdefault(entry.instance.instance_id, entry.instance)
+        if len(effective) != len(current) or {
+            item.instance_id for item in effective
+        } != set(current):
+            return False
+        replacements: dict[str, Any] = {}
+        for updated in effective:
+            applied = current[updated.instance_id]
+            if not _runtime_structure_matches(applied, updated):
+                return False
+            definitions = applied.definition.parameter_map()
+            applied_values = applied.effective_parameter_values()
+            updated_values = updated.effective_parameter_values()
+            changed = {
+                key for key in definitions
+                if applied_values[key] != updated_values[key]
+                or applied.controller_bindings.get(key) != updated.controller_bindings.get(key)
+            }
+            if any(not definitions[key].runtime_bindable for key in changed):
+                return False
+            replacements[updated.instance_id] = updated
+        new_by_stage = {
+            stage: tuple(
+                replace(entry, instance=replacements[entry.instance.instance_id])
+                for entry in entries
+            )
+            for stage, entries in self.by_stage.items()
+        }
+        self.by_stage = new_by_stage
+        self.applied_signature = execution_stack_fingerprint(effective)[0]
         return True
 
     def clear(self) -> None:

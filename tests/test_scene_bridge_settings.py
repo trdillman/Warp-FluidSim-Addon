@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fluidSim_warp_blender51.sim.solver import SolverSettings
+from settings_doubles import setting, split_settings
 
 
 def _build_settings(scene):
@@ -144,7 +145,7 @@ def _scene():
         ww_spray_drag=0.0,
     )
     return SimpleNamespace(
-        fluidsim=fs,
+        fluidsim=split_settings(fs),
         render=SimpleNamespace(fps=24, fps_base=1),
         use_gravity=True,
         gravity=(0.0, 0.0, -9.81),
@@ -183,14 +184,14 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "ww_spray_drag",
     )
     for name in direct_fields:
-        assert getattr(settings, name) == getattr(scene.fluidsim, name), name
+        assert getattr(settings, name) == setting(scene.fluidsim, name), name
 
     for target, source in {
         "speed_limit_percent": "limit_percent",
         "churn_decay": "ww_churn_decay",
         "churn_gain": "ww_churn_gain",
     }.items():
-        assert getattr(settings, target) == getattr(scene.fluidsim, source)
+        assert getattr(settings, target) == setting(scene.fluidsim, source)
 
     enum_fields = {
         "sample_type": "sample_type",
@@ -203,7 +204,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
         "surface_smooth_type": "surface_smooth_type",
     }
     for target, source in enum_fields.items():
-        assert getattr(settings, target).name == getattr(scene.fluidsim, source)
+        assert getattr(settings, target).name == setting(scene.fluidsim, source)
 
 
 def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
@@ -222,8 +223,8 @@ def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
 
     directional = InvalidatableVector((1.0, 2.0, 3.0))
     center = InvalidatableVector((4.0, 5.0, 6.0))
-    scene.fluidsim.directional_force = directional
-    scene.fluidsim.omnidirectional_force_center = center
+    scene.fluidsim.domain_object.fluidsim_domain.directional_force = directional
+    scene.fluidsim.domain_object.fluidsim_domain.omnidirectional_force_center = center
 
     settings = _build_settings(scene)
     directional.valid = False
@@ -238,23 +239,23 @@ def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
 def test_closed_domain_projects_required_collision_walls(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
-    scene.fluidsim.domain_sdf_walls = False
+    scene.fluidsim.domain_object.fluidsim_domain.domain_sdf_walls = False
 
     settings = _build_settings(scene)
 
     assert settings.open_boundaries is False
     assert settings.domain_sdf_walls is True
     # Projection must not mutate legacy scene data during read-only preflight.
-    assert scene.fluidsim.domain_sdf_walls is False
+    assert scene.fluidsim.domain_object.fluidsim_domain.domain_sdf_walls is False
 
 
 def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
-    scene.fluidsim.limit_percent = 0.37
-    scene.fluidsim.limit_behavior = "ACCELERATION"
-    scene.fluidsim.ww_churn_decay = 2.75
-    scene.fluidsim.ww_churn_gain = 3.25
+    scene.fluidsim.domain_object.fluidsim_domain.limit_percent = 0.37
+    scene.fluidsim.domain_object.fluidsim_domain.limit_behavior = "ACCELERATION"
+    scene.fluidsim.domain_object.fluidsim_domain.ww_churn_decay = 2.75
+    scene.fluidsim.domain_object.fluidsim_domain.ww_churn_gain = 3.25
 
     settings = _build_settings(scene)
 
@@ -305,28 +306,23 @@ def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
     assert source.count("force_surface=True") == 2
 
 
-def test_active_domain_settings_prefers_migrated_object_group(monkeypatch):
+def test_active_domain_settings_reads_only_the_domain_object(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
 
     domain_group = SimpleNamespace(voxel_size=0.02, max_particles=9_000_000)
     domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
 
-    # Migrated (schema_version == 1) with a domain object: the object's group
-    # is canonical, NOT the stale mirror still sitting on scene.fluidsim.
-    migrated = SimpleNamespace(
-        schema_version=1, domain_object=domain_obj, voxel_size=0.5, max_particles=1)
-    scene = SimpleNamespace(fluidsim=migrated)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(schema_version=1, domain_object=domain_obj))
     assert scene_bridge.active_domain_object(scene) is domain_obj
     assert scene_bridge.active_domain_settings(scene) is domain_group
 
-    # Pre-migration (schema_version == 0): fall back to scene.fluidsim so the
-    # read path survives the transition before the load_post handler runs.
-    pre = SimpleNamespace(schema_version=0, domain_object=domain_obj, voxel_size=0.5)
-    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=pre)) is pre
+    # schema_version plays no part in the lookup.
+    pre = SimpleNamespace(schema_version=0, domain_object=domain_obj)
+    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=pre)) is domain_group
 
-    # Migrated but no domain object yet (setup-wizard ordering): fall back.
+    # No designated domain: None, never the scene group, whatever it carries.
     orphan = SimpleNamespace(schema_version=1, domain_object=None, voxel_size=0.5)
-    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=orphan)) is orphan
+    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=orphan)) is None
 
     # No fluidsim at all: None, never a raise.
     assert scene_bridge.active_domain_settings(SimpleNamespace()) is None

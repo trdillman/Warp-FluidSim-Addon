@@ -6,6 +6,7 @@ import importlib
 import sys
 import types
 from types import SimpleNamespace
+from settings_doubles import split_settings
 
 
 def _bridge(monkeypatch):
@@ -53,28 +54,28 @@ def _scene(*, voxel_size=0.1):
         flip_ratio=0.95, cfl=3.0,
     )
     return SimpleNamespace(
-        fluidsim=fs, objects=[], frame_start=1, frame_current=1,
+        fluidsim=split_settings(fs), objects=[], frame_start=1, frame_current=1,
         use_gravity=True, gravity=(0.0, 0.0, -9.81),
     )
 
 
 def _activate(bridge, scene, *, frame=5):
     settings = SimpleNamespace(
-        voxel_size=scene.fluidsim.voxel_size,
-        leaf_capacity=scene.fluidsim.leaf_capacity,
-        max_particles=scene.fluidsim.max_particles,
-        auto_grow_particles=scene.fluidsim.auto_grow_particles,
-        particle_growth_failure_policy=scene.fluidsim.particle_growth_failure_policy,
-        max_whitewater=scene.fluidsim.max_whitewater,
-        topology_expand=scene.fluidsim.topology_expand,
-        open_boundaries=scene.fluidsim.open_boundaries,
-        domain_sdf_walls=scene.fluidsim.domain_sdf_walls,
-        spacetime_enabled=scene.fluidsim.spacetime_enabled,
-        spacetime_reference_mass=scene.fluidsim.spacetime_reference_mass,
-        spacetime_seed=scene.fluidsim.spacetime_seed,
-        flip_ratio=scene.fluidsim.flip_ratio,
-        cfl=scene.fluidsim.cfl,
-        gravity=scene.fluidsim.gravity,
+        voxel_size=scene.fluidsim.domain_object.fluidsim_domain.voxel_size,
+        leaf_capacity=scene.fluidsim.domain_object.fluidsim_domain.leaf_capacity,
+        max_particles=scene.fluidsim.domain_object.fluidsim_domain.max_particles,
+        auto_grow_particles=scene.fluidsim.domain_object.fluidsim_domain.auto_grow_particles,
+        particle_growth_failure_policy=scene.fluidsim.domain_object.fluidsim_domain.particle_growth_failure_policy,
+        max_whitewater=scene.fluidsim.domain_object.fluidsim_domain.max_whitewater,
+        topology_expand=scene.fluidsim.domain_object.fluidsim_domain.topology_expand,
+        open_boundaries=scene.fluidsim.domain_object.fluidsim_domain.open_boundaries,
+        domain_sdf_walls=scene.fluidsim.domain_object.fluidsim_domain.domain_sdf_walls,
+        spacetime_enabled=scene.fluidsim.domain_object.fluidsim_domain.spacetime_enabled,
+        spacetime_reference_mass=scene.fluidsim.domain_object.fluidsim_domain.spacetime_reference_mass,
+        spacetime_seed=scene.fluidsim.domain_object.fluidsim_domain.spacetime_seed,
+        flip_ratio=scene.fluidsim.domain_object.fluidsim_domain.flip_ratio,
+        cfl=scene.fluidsim.domain_object.fluidsim_domain.cfl,
+        gravity=scene.fluidsim.domain_object.fluidsim_domain.gravity,
     )
     solver = SimpleNamespace(frame=frame, settings=settings, particles=object())
     sess = bridge.session()
@@ -92,9 +93,9 @@ def test_particle_capacity_policy_updates_live_without_restarting_or_rewriting_r
     sess, solver = _activate(bridge, scene)
     solver.particles = SimpleNamespace(capacity=4096)
 
-    scene.fluidsim.max_particles = 2048
-    scene.fluidsim.auto_grow_particles = False
-    scene.fluidsim.particle_growth_failure_policy = "PAUSE"
+    scene.fluidsim.domain_object.fluidsim_domain.max_particles = 2048
+    scene.fluidsim.domain_object.fluidsim_domain.auto_grow_particles = False
+    scene.fluidsim.domain_object.fluidsim_domain.particle_growth_failure_policy = "PAUSE"
     bridge.pending.update_particle_capacity_policy(scene)
 
     assert sess.solver is solver
@@ -114,7 +115,7 @@ def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
     sess, solver = _activate(bridge, scene)
     particles = solver.particles
 
-    scene.fluidsim.voxel_size = 0.05
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.05
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.REBUILD)
 
     pending = bridge.pending.pending_presentation(scene)
@@ -128,7 +129,7 @@ def test_midrun_reinit_edit_is_pending_and_preserves_solver_state(monkeypatch):
 def test_reset_projection_preserves_closed_domain_wall_invariant(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
-    scene.fluidsim.domain_sdf_walls = False
+    scene.fluidsim.domain_object.fluidsim_domain.domain_sdf_walls = False
     _sess, solver = _activate(bridge, scene)
 
     bridge.pending.apply_reset_solver_settings(scene)
@@ -142,13 +143,13 @@ def test_pending_state_is_isolated_between_scenes(monkeypatch):
     first = _scene()
     second = _scene()
     _activate(bridge, first)
-    first.fluidsim.leaf_capacity = 128
+    first.fluidsim.domain_object.fluidsim_domain.leaf_capacity = 128
     bridge.pending.request_scene_update(first, bridge.pending.SceneUpdate.REBUILD)
 
     # Switching the single live solver to another scene must not erase the
     # first scene's applied snapshot or pending reasons.
     _activate(bridge, second)
-    second.fluidsim.voxel_size = 0.2
+    second.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.2
     bridge.pending.request_scene_update(second, bridge.pending.SceneUpdate.REBUILD)
 
     first_pending = bridge.pending.pending_presentation(first)
@@ -163,15 +164,15 @@ def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=7)
-    scene.fluidsim.voxel_size = 0.04
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.04
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.REBUILD)
     calls = []
 
     def initialize(actual_scene, **_kwargs):
-        calls.append(actual_scene.fluidsim.voxel_size)
+        calls.append(actual_scene.fluidsim.domain_object.fluidsim_domain.voxel_size)
         sess.solver = SimpleNamespace(
             frame=0,
-            settings=SimpleNamespace(voxel_size=actual_scene.fluidsim.voxel_size),
+            settings=SimpleNamespace(voxel_size=actual_scene.fluidsim.domain_object.fluidsim_domain.voxel_size),
         )
         sess.scene_identity = bridge._scene_identity(actual_scene)
         bridge.pending.capture_applied_state(actual_scene, sess)
@@ -195,7 +196,7 @@ def test_reset_lifecycle_pending_applies_exactly_once(monkeypatch):
         mesh_evaluation_mode="FIRST_SIM_FRAME", emission_mode="INITIAL_FILL",
         auto_inject_seed=False,
     )
-    scene.objects = [SimpleNamespace(name="Source", fluidsim=source_pg)]
+    scene.objects = [SimpleNamespace(name="Source", fluidsim=split_settings(source_pg))]
     sess, _solver = _activate(bridge, scene, frame=4)
     source_pg.emission_mode = "CONTINUOUS_INFLOW"
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.RESET)
@@ -217,7 +218,7 @@ def test_scripted_signature_change_is_detected_without_rna_callback(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=3)
 
-    scene.fluidsim.voxel_size = 0.025
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
     bridge.pending.refresh_pending_state(scene, sess)
 
     assert bridge.pending.pending_presentation(scene)["action"] == "REINIT_PENDING"
@@ -228,11 +229,11 @@ def test_revert_pending_values_restores_applied_snapshot(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     _activate(bridge, scene, frame=3)
-    scene.fluidsim.voxel_size = 0.025
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.REBUILD)
 
     assert bridge.pending.revert_pending_values(scene) is True
-    assert scene.fluidsim.voxel_size == 0.1
+    assert scene.fluidsim.domain_object.fluidsim_domain.voxel_size == 0.1
     assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
 
 
@@ -240,7 +241,7 @@ def test_failed_pending_apply_retains_action_and_reason(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=3)
-    scene.fluidsim.voxel_size = 0.025
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.REBUILD)
     monkeypatch.setattr(
         sess, "initialize", lambda _scene, **_kwargs: (_ for _ in ()).throw(
@@ -293,7 +294,7 @@ def test_midrun_reset_edit_is_pending_without_resetting(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, solver = _activate(bridge, scene, frame=6)
-    scene.fluidsim.topology_expand = 3
+    scene.fluidsim.domain_object.fluidsim_domain.topology_expand = 3
 
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.RESET)
 
@@ -322,7 +323,7 @@ def test_rewind_apply_failure_stops_playback_and_retains_solver(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, solver = _activate(bridge, scene, frame=6)
-    scene.fluidsim.voxel_size = 0.04
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.04
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.REBUILD)
     monkeypatch.setattr(sess, "initialize", lambda _scene: (_ for _ in ()).throw(
         RuntimeError("allocation failed")))
@@ -362,7 +363,7 @@ def test_direct_step_refreshes_immediate_scripted_edit_without_depsgraph(monkeyp
     bridge = _bridge(monkeypatch)
     scene = _scene()
     sess, _solver = _activate(bridge, scene, frame=3)
-    scene.fluidsim.voxel_size = 0.025
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
     monkeypatch.setattr(sess, "step", lambda *_args, **_kwargs: "stepped")
 
     assert bridge.step_frame(scene, sess, write_cache=False) == "stepped"
@@ -373,7 +374,7 @@ def test_scripted_edit_handler_refreshes_cached_pending_presentation(monkeypatch
     bridge = _bridge(monkeypatch)
     scene = _scene()
     _activate(bridge, scene, frame=3)
-    scene.fluidsim.voxel_size = 0.025
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
 
     bridge.pending._on_interaction_state_update(scene, object())
 
@@ -386,7 +387,7 @@ def test_apply_operators_do_not_destroy_another_scenes_solver(monkeypatch):
     second = _scene()
     sess, first_solver = _activate(bridge, first, frame=4)
     _activate(bridge, second, frame=4)
-    second.fluidsim.voxel_size = 0.05
+    second.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.05
     bridge.pending.refresh_pending_state(second, sess)
     # Restore ownership to the first scene while keeping the second snapshot.
     sess.solver = first_solver
@@ -490,10 +491,10 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
         return sess._set_capacity_plan(actual, new_plan)
 
     monkeypatch.setattr(sess, "refresh_capacity_plan", refresh)
-    scene.fluidsim.max_particles = 2048
+    scene.fluidsim.domain_object.fluidsim_domain.max_particles = 2048
     bridge.pending.update_particle_capacity_policy(scene)
     # Another slider tick invalidates state but must reuse the same timer.
-    scene.fluidsim.max_particles = 3072
+    scene.fluidsim.domain_object.fluidsim_domain.max_particles = 3072
     bridge.pending.update_particle_capacity_policy(scene)
 
     assert refreshed == []

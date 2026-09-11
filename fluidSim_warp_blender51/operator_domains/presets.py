@@ -91,14 +91,17 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
         from ..blender.scene_bridge import active_domain_settings
 
         identifier = str(context.scene.fluidsim.product_preset or "")
+        target = active_domain_settings(context.scene)
+        if target is None:
+            self.report({"ERROR"}, "Designate a FluidSim domain object before applying a preset")
+            return {"CANCELLED"}
         try:
             preset = library.load_preset(identifier)
             # Write preset values to the active domain settings so the solver
-            # (which builds from active_domain_settings) actually picks them up;
-            # post-migration scene.fluidsim is a stale ghost copy.
+            # (which builds from active_domain_settings) actually picks them up.
             result = library.apply_preset(
                 context.scene, preset,
-                target=active_domain_settings(context.scene),
+                target=target,
                 field_target=_preset_field_owner(context.scene),
             )
         except Exception as exc:  # noqa: BLE001
@@ -169,6 +172,10 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
         from ..presets import library
         from ..blender.scene_bridge import active_domain_settings
 
+        source = active_domain_settings(context.scene)
+        if source is None:
+            self.report({"ERROR"}, "Designate a FluidSim domain object before saving a preset")
+            return {"CANCELLED"}
         try:
             preset = library.capture_scene_preset(
                 context.scene,
@@ -177,9 +184,8 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
                 description=self.description,
                 expected_scale=self.expected_scale,
                 performance_cost=self.performance_cost,
-                # Snapshot the live domain settings the solver uses, not the
-                # stale scene.fluidsim ghost copy.
-                source=active_domain_settings(context.scene),
+                # Snapshot the domain settings the solver uses.
+                source=source,
                 field_source=_preset_field_owner(context.scene),
             )
             path = library.save_user_preset(

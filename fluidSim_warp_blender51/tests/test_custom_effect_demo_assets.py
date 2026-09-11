@@ -8,6 +8,9 @@ GENERATOR = TOOLS_RELEASE / "generate_custom_effect_demos.py"
 VALIDATOR = TOOLS_RELEASE / "validate_custom_effects_blender.py"
 RUNTIME = TOOLS_RELEASE / "custom_effect_demo_runtime.py"
 EXAMPLES = ROOT / "resources" / "examples"
+ACCEPTANCE = ROOT.parent / "tests" / "blender_custom_effects_acceptance.py"
+DEMO_BUILDER = ROOT.parent / "tools" / "build_demo_scenes.py"
+DEMO_CHECKER = ROOT.parent / "tools" / "check_demo_blends.py"
 
 DEMO_NAMES = (
     "05_custom_effects_vortex.blend",
@@ -38,6 +41,12 @@ def test_demo_generator_validator_and_runtime_are_present():
         assert token in runtime
     assert "expected-warp-root" in validator
     assert "F12" in validator or "render" in validator.lower()
+
+
+def test_blender_validator_bootstraps_sibling_tools_when_executed_directly():
+    source = VALIDATOR.read_text(encoding="utf-8")
+    assert "SCRIPT_DIR = Path(__file__).resolve().parent" in source
+    assert "sys.path.insert(0, str(SCRIPT_DIR))" in source
 
 
 def test_generated_demo_assets_and_documentation_are_packaged():
@@ -117,6 +126,9 @@ def test_installed_smoke_proves_custom_effects_workflow_and_package_assets():
         'extension_root / "resources" / "effects" / "vortex_force.json"',
         "bpy.ops.fluidsim.effect_test_draft(device=\"cpu\")",
         "bpy.ops.fluidsim.effect_apply_stack(device=\"cpu\")",
+        "bpy.ops.fluidsim.effect_import_package",
+        'conflict="replace"',
+        '"imported_package": True',
     ):
         assert token in smoke
 
@@ -128,5 +140,43 @@ def test_blender_validator_exercises_package_update_comparison_and_safe_rename()
     assert "compare_package_update" in source
     assert "rename_installed_package" in source
     assert "bpy.ops.fluidsim.effect_rename_installed" in source
+    assert "bpy.ops.fluidsim.effect_import_package" in source
+    assert "effect_library.install_package(incoming)" not in source
     assert '"update_comparison": "NEWER"' in source
     assert '"package_rename": True' in source
+
+
+def test_custom_effects_acceptance_covers_visible_library_and_import_operator():
+    assert ACCEPTANCE.is_file()
+    source = ACCEPTANCE.read_text(encoding="utf-8")
+    for token in (
+        "FLUIDSIM_PT_custom_effects",
+        "_effect_items",
+        "builtin_count = len(builtin_effect_definitions())",
+        "bpy.ops.fluidsim.effect_add",
+        "bpy.ops.fluidsim.effect_import_package",
+        "CUSTOM-EFFECTS-ACCEPTANCE-PASS",
+    ):
+        assert token in source
+
+
+def test_playable_custom_effect_demo_is_built_and_checked_through_live_solver():
+    builder = DEMO_BUILDER.read_text(encoding="utf-8")
+    checker = DEMO_CHECKER.read_text(encoding="utf-8")
+    for token in (
+        '"custom_effects_vortex"',
+        "def build_custom_effects_vortex",
+        'add_builtin_effect(scene, "fluidsim.vortex_force"',
+        'bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")',
+        'scene["fluidsim_custom_effect_demo"] = "vortex_force"',
+        'save_live_playback_ready("custom_effects_vortex"',
+    ):
+        assert token in builder
+    for token in (
+        '"custom_effects_vortex"',
+        '"custom_effect_stack"',
+        '"custom_effect_applied"',
+        '"custom_effect_executed"',
+        'item.effect_id == "fluidsim.vortex_force" and item.calls > 0',
+    ):
+        assert token in checker

@@ -42,6 +42,9 @@ class FrameFeatures:
     def swap_candidate(self, candidate: Any) -> Any:
         return self.effects.swap_candidate(candidate)
 
+    def update_runtime_bindings(self, instances: Any) -> bool:
+        return self.effects.update_runtime_bindings(instances)
+
     def run(
             self,
             phase: FrameFeaturePhase,

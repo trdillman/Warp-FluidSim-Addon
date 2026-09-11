@@ -225,6 +225,7 @@ def main(argv=None):
         "tests/blender_capacity_planner_acceptance.py",
         "tests/blender_simulation_admission_acceptance.py",
         "tests/blender_closed_domain_stability_acceptance.py",
+        "tests/blender_custom_effects_acceptance.py",
         "tests/blender_phase3_profile_safe_review.py",
         "tests/blender_phase4_live_interaction_acceptance.py",
         "tests/blender_gui_acceptance.py",
@@ -272,6 +273,7 @@ def main(argv=None):
         ("tests/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
         ("tests/blender_simulation_admission_acceptance.py", "SIMULATION-ADMISSION-ACCEPTANCE-PASS"),
         ("tests/blender_closed_domain_stability_acceptance.py", "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"),
+        ("tests/blender_custom_effects_acceptance.py", "CUSTOM-EFFECTS-ACCEPTANCE-PASS"),
     ):
         _run(
             script,

@@ -5,7 +5,7 @@ Status: **RESOLVED.** Cause was quaternion double-cover in
 (`blender/scene_inputs.py:311`). `paddle_stir` now passes **10/10**.
 
 Scope: moving-collider path. **Pre-existing** - not introduced by any fix in this session.
-Does not affect the shipped static demos (`dam_break`, `crown_splash` remain 18/18).
+Does not affect the shipped demos with static colliders (`dam_break`, `crown_splash` remain 18/18).
 
 Date: 2026-08-09 (opened and resolved)
 
@@ -241,7 +241,7 @@ Colliders were rasterized only on substep 0. Fixed this session. Section 3.6 sho
 spike is present with that fix both enabled and disabled.
 
 4.4, 4.5 and 4.6 are real robustness improvements, verified to cause no regression on the
-static demos. None is the mechanism here.
+demos with static colliders. None is the mechanism here.
 
 ## 5. Remaining candidates (all three DISPROVEN - see section 10)
 
