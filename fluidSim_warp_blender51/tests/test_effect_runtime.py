@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 from fluidsim_testpkg.sim.effects.enums import (
@@ -8,6 +8,7 @@ from fluidsim_testpkg.sim.effects.enums import (
     EffectDomain,
     EffectStage,
     FieldAccess,
+    ParameterKind,
 )
 from fluidsim_testpkg.sim.effects.runtime import (
     EffectCandidateInstallError,
@@ -20,6 +21,7 @@ from fluidsim_testpkg.sim.effects.schema import (
     EffectInstanceV2,
     FieldBindingV2,
     KernelDefinitionV2,
+    ParameterDefinitionV2,
 )
 
 
@@ -60,6 +62,8 @@ def _instance(
     frame_start=0,
     frame_end=0,
     frame_step=1,
+    parameters=(),
+    parameter_values=None,
 ):
     kernel = KernelDefinitionV2(
         kernel_id=f"kernel_{instance_id.replace('-', '_')}",
@@ -69,6 +73,7 @@ def _instance(
         cadence=cadence,
         source="pass",
         fields=tuple(fields),
+        parameter_keys=tuple(item.key for item in parameters),
     )
     definition = EffectDefinitionV2(
         effect_id=f"test.runtime-{instance_id}",
@@ -80,6 +85,7 @@ def _instance(
         author="Tests",
         license="GPL-3.0-or-later",
         built_in=True,
+        parameters=tuple(parameters),
         kernels=(kernel,),
     )
     instance = EffectInstanceV2(
@@ -89,6 +95,7 @@ def _instance(
         frame_start=frame_start,
         frame_end=frame_end,
         frame_step=frame_step,
+        parameter_values=parameter_values or {},
     )
     return instance, FakeCompiledEffect(instance, (FakeCompiledKernel(kernel),))
 
@@ -318,3 +325,76 @@ def test_applied_signature_is_sha256_string_and_inventory_is_separate():
     assert isinstance(manager.applied_signature, str)
     assert len(manager.applied_signature) == 64
     assert manager.inventory[0]["instance_id"] == "signature"
+
+
+def test_runtime_bindable_parameter_update_preserves_compiled_runtime_state(monkeypatch):
+    strength = ParameterDefinitionV2(
+        key="strength",
+        label="Strength",
+        kind=ParameterKind.FLOAT,
+        default=1.0,
+        minimum=0.0,
+        maximum=100.0,
+        runtime_bindable=True,
+    )
+    instance, compiled = _instance(
+        "hot-update",
+        parameters=(strength,),
+        parameter_values={"strength": 1.0},
+    )
+    seen = []
+
+    def fake_launch(entry, _solver, _time_ctx, _device):
+        seen.append(entry.instance.effective_parameter_values()["strength"])
+        return 1, 0.0
+
+    monkeypatch.setattr(
+        "fluidsim_testpkg.sim.effects.runtime.launch_compiled_kernel",
+        fake_launch,
+    )
+    manager = EffectRuntimeManager(device="cpu")
+    manager.swap_candidate(FakeCandidate(True, (compiled,)))
+    entry_before = manager.by_stage[EffectStage.AFTER_PARTICLE_TRANSFER][0]
+    compiled_kernel_before = entry_before.compiled_kernel
+    stats_before = manager.stats[entry_before.key]
+    manager._once_per_frame[entry_before.key] = 12
+    updated = replace(instance, parameter_values={"strength": 48.54})
+
+    assert manager.update_runtime_bindings((updated,)) is True
+    entry_after = manager.by_stage[EffectStage.AFTER_PARTICLE_TRANSFER][0]
+    assert entry_after.compiled_kernel is compiled_kernel_before
+    assert manager.stats[entry_after.key] is stats_before
+    assert manager._once_per_frame[entry_after.key] == 12
+
+    manager.run(
+        EffectStage.AFTER_PARTICLE_TRANSFER,
+        object(),
+        {"frame": 13, "substep_index": 0},
+    )
+    assert seen == [48.54]
+
+
+def test_runtime_binding_update_rejects_non_bindable_and_structural_changes():
+    locked = ParameterDefinitionV2(
+        key="locked",
+        label="Locked",
+        kind=ParameterKind.FLOAT,
+        default=1.0,
+        runtime_bindable=False,
+    )
+    instance, compiled = _instance(
+        "locked",
+        parameters=(locked,),
+        parameter_values={"locked": 1.0},
+    )
+    manager = EffectRuntimeManager(device="cpu")
+    manager.swap_candidate(FakeCandidate(True, (compiled,)))
+    signature_before = manager.applied_signature
+    entry_before = manager.by_stage[EffectStage.AFTER_PARTICLE_TRANSFER][0]
+
+    assert manager.update_runtime_bindings((
+        replace(instance, parameter_values={"locked": 2.0}),
+    )) is False
+    assert manager.update_runtime_bindings((replace(instance, order=1),)) is False
+    assert manager.applied_signature == signature_before
+    assert manager.by_stage[EffectStage.AFTER_PARTICLE_TRANSFER][0] is entry_before

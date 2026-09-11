@@ -11,6 +11,10 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 try:
     from .tool_loading import load_addon_relative_tool
 except ImportError:  # Blender executes this file directly via --python.
@@ -161,7 +165,6 @@ def _validate_scene(path: Path, module_name: str, rerun_record: dict, examples: 
 
 def _package_library_validation(module_name: str, runtime_module, work_dir: Path) -> dict[str, object]:
     effect_library = importlib.import_module(f"{module_name}.blender.effect_library")
-    effects_module = importlib.import_module(f"{module_name}.blender.effects")
     package_module = importlib.import_module(f"{module_name}.sim.effects.package")
     library_root = work_dir / "effect-library"
     if library_root.exists():
@@ -178,7 +181,16 @@ def _package_library_validation(module_name: str, runtime_module, work_dir: Path
         )
         incoming = work_dir / "library-wave-1.0.0.fseffect"
         package_module.write_effect_package(incoming, definition)
-        effect_library.install_package(incoming)
+        import_result = bpy.ops.fluidsim.effect_import_package(
+            filepath=str(incoming.resolve()), conflict="cancel"
+        )
+        if "FINISHED" not in import_result:
+            raise AssertionError(f"Import Package operator failed: {import_result}")
+        imported_item = bpy.context.scene.fluidsim_effects.items[
+            bpy.context.scene.fluidsim_effects.active_index
+        ]
+        if imported_item.effect_id != definition.effect_id or imported_item.enabled:
+            raise AssertionError("Import Package did not add the expected disabled scene effect")
 
         candidate = replace(definition, version="1.1.0")
         candidate_path = work_dir / "library-wave-1.1.0.fseffect"
@@ -192,14 +204,6 @@ def _package_library_validation(module_name: str, runtime_module, work_dir: Path
         if "FINISHED" not in operator_result:
             raise AssertionError(f"Compare Update operator failed: {operator_result}")
 
-        instance = runtime_module.EffectInstanceV2(
-            instance_id="library-rename-validation",
-            definition=definition,
-            enabled=False,
-            order=len(bpy.context.scene.fluidsim_effects.items),
-            display_name=definition.name,
-        )
-        effects_module.add_instance_to_scene(bpy.context.scene, instance)
         installed = effect_library.installed_package_for_effect(definition.effect_id)
         if not callable(effect_library.rename_installed_package):
             raise TypeError("Rename Package service is unavailable")
@@ -223,6 +227,7 @@ def _package_library_validation(module_name: str, runtime_module, work_dir: Path
         if active.effect_id != definition.effect_id:
             raise AssertionError("Rename Package mutated the embedded scene instance")
         return {
+            "package_import": True,
             "update_comparison": "NEWER",
             "package_rename": True,
             "renamed_effect_id": restored.effect_id,

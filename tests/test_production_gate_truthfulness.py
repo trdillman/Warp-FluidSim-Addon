@@ -65,6 +65,14 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     assert len(stability_calls) == 1
     assert "tests/blender_closed_domain_stability_acceptance.py" in stability_calls[0][0]
     assert stability_calls[0][1] == "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"
+    custom_effect_calls = [
+        (command, marker)
+        for label, command, _env, _reject_output, marker in calls
+        if label == "tests/blender_custom_effects_acceptance.py"
+    ]
+    assert len(custom_effect_calls) == 1
+    assert "tests/blender_custom_effects_acceptance.py" in custom_effect_calls[0][0]
+    assert custom_effect_calls[0][1] == "CUSTOM-EFFECTS-ACCEPTANCE-PASS"
 
 
 def test_production_gate_include_gui_requires_foreground_gui_acceptance(
