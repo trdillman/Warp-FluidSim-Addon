@@ -1,0 +1,442 @@
+diff --git a/fluidSim_warp_blender51/sim/surface.py b/fluidSim_warp_blender51/sim/surface.py
+index 471c4d9..270be95 100644
+--- a/fluidSim_warp_blender51/sim/surface.py
++++ b/fluidSim_warp_blender51/sim/surface.py
+@@ -34,6 +34,45 @@ from .fields import (
+ from .registry import register_fn
+ 
+ 
++# --- Surface-tension SDF narrow-band construction modes -------------------
++#
++# With surface tension enabled the solver-grid SDF must carry valid
++# union-of-spheres distances out to ``support_voxels`` so the capillary
++# normal/curvature stencil never reads truncated values.  Three ways of
++# paying for that band are implemented; they differ only in cost, and the
++# non-default ones exist so a before/after benchmark can run from one binary.
++#
++#   "legacy"    - the original behaviour: every particle atomically writes the
++#                 full (2R+1)^3 cube for the band radius R.
++#   "splat"     - identical output, but the cube is culled to the ball of
++#                 radius (far_distance + particle_radius).  Cells outside that
++#                 ball can only produce distances >= far_distance, which can
++#                 never win the atomic_min against a field initialised to
++#                 exactly far_distance, so the result is bit-identical.
++#   "propagate" - default.  Splat only the small radius that the particle
++#                 support actually justifies, recording the closest particle
++#                 per seeded voxel, then reconstruct the band by propagating
++#                 those closest points outward over the active voxels.  Work
++#                 scales with active voxels instead of particles x R^3.
++SDF_BAND_MODE_PROPAGATE = "propagate"
++SDF_BAND_MODE_SPLAT = "splat"
++SDF_BAND_MODE_LEGACY = "legacy"
++SDF_BAND_MODES = (
++    SDF_BAND_MODE_PROPAGATE, SDF_BAND_MODE_SPLAT, SDF_BAND_MODE_LEGACY)
++DEFAULT_SDF_BAND_MODE = SDF_BAND_MODE_PROPAGATE
++
++# Sentinel used as the "no closest particle yet" distance while propagating.
++SDF_PROPAGATION_FAR = 1.0e30
++# Half the sentinel: any distance at or above this means "unseeded".
++SDF_PROPAGATION_FAR_TEST = 0.5 * SDF_PROPAGATION_FAR
++# Slack (in voxels) added to the analytic ball-cull radius so float rounding
++# can never discard a cell that would have lowered the field.  The float32
++# error on these coordinates is ~1e-5 voxels; 0.01 voxels is three orders of
++# magnitude of headroom and costs <1 % extra cells.
++SDF_CULL_SLACK_VOXELS = 0.01
++_INT32_MAX = 2147483647
++
++
+ class SurfacePipeline:
+     """Owns liquid-surface fields, cadence, extraction and mesh caching."""
+ 
+@@ -57,6 +96,34 @@ class SurfacePipeline:
+         self.built_key = None
+         self.solver_sdf_key = None
+         self.solver_sdf_error = ""
++        # Narrow-band construction. ``None`` defers to DEFAULT_SDF_BAND_MODE so
++        # a benchmark can flip the module default without rebuilding solvers.
++        self.sdf_band_mode = None
++        self._band_closest = None
++        self._band_cp_a = None
++        self._band_cp_b = None
++        self.last_sdf_band = {}
++
++    def band_mode(self):
++        """Return the effective narrow-band construction mode."""
++
++        mode = self.sdf_band_mode or DEFAULT_SDF_BAND_MODE
++        return mode if mode in SDF_BAND_MODES else SDF_BAND_MODE_PROPAGATE
++
++    def _ensure_band_buffers(self, capacity):
++        """Lazily allocate the closest-point propagation scratch buffers."""
++
++        capacity = max(1, int(capacity))
++        if self._band_closest is not None and len(self._band_closest) == capacity:
++            return
++        device = self.solver.device
++        closest = wp.zeros(capacity, dtype=wp.int32, device=device)
++        cp_a = wp.zeros(capacity, dtype=wp.vec3, device=device)
++        cp_b = wp.zeros(capacity, dtype=wp.vec3, device=device)
++        self._band_closest, self._band_cp_a, self._band_cp_b = closest, cp_a, cp_b
++
++    def release_band_buffers(self):
++        self._band_closest = self._band_cp_a = self._band_cp_b = None
+ 
+     def mode(self):
+         from .enums import SurfaceResolutionMode
+@@ -160,6 +227,9 @@ class SurfacePipeline:
+         h, nvox = float(voxel_size), max(1, int(nvox))
+         radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+         splat = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
++        # Seed radius: what the particle's own support justifies. The capillary
++        # band is an extension of this field, not a property of the particle.
++        seed_splat = splat
+         far_distance = 4.0 * h
+         if (grid is solver.grid
+                 and bool(getattr(s, "surface_tension_enabled", False))
+@@ -184,12 +254,9 @@ class SurfacePipeline:
+                     radius / h, band_voxels, smoothing,
+                     sdf_filter_iterations),
+             )
+-        wp.launch(
+-            k_surface_sdf_reset, dim=nvox,
+-            inputs=[sdf.data, grid.num_leaves, far_distance],
+-            device=solver.device)
+-        wp.launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
+-                  grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat], outputs=[sdf.data], device=solver.device)
++        self._launch_sdf_field(
++            grid, sdf, tmp, nvox, positions, h, radius, seed_splat, splat,
++            far_distance)
+         def apply(kernel, iterations, strength):
+             for _ in range(max(0, int(iterations))):
+                 wp.launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+@@ -201,6 +268,107 @@ class SurfacePipeline:
+         apply(self.filter_kernel(int(s.surface_smooth_type)), s.surface_smooth_iterations, s.surface_smooth_strength)
+         return sdf
+ 
++    @staticmethod
++    def band_propagation_passes(cull_voxels, seed_splat):
++        """Passes needed to carry closest points out to ``cull_voxels``.
++
++        The seed splat writes the full cube of half-width ``seed_splat``
++        centred on the particle's own cell, so every voxel whose nearest
++        particle is within ``seed_splat - 1`` voxels is seeded exactly (a
++        particle sits at most one cell away from its own cell centre on each
++        axis).  Each propagation pass carries a closest point one voxel
++        further in the Chebyshev metric, which covers at least one voxel of
++        Euclidean reach, so this many passes reach the cull radius.
++        """
++
++        reach = float(cull_voxels) - (max(1, int(seed_splat)) - 1)
++        return max(0, int(math.ceil(reach - 1.0e-9)))
++
++    def _launch_sdf_field(self, grid, sdf, tmp, nvox, positions, h, radius,
++                          seed_splat, band_splat, far_distance):
++        """Fill ``sdf`` with the union-of-spheres field clamped at far_distance.
++
++        ``band_splat`` is the radius the capillary support band requires;
++        ``seed_splat`` is the radius the particle support itself justifies.
++        When they differ the band is reconstructed by closest-point
++        propagation instead of by redundant per-particle atomic writes.
++        """
++
++        solver = self.solver
++        device = solver.device
++        mode = self.band_mode()
++        # No cell farther than this from a particle can lower the field below
++        # far_distance, so culling to it leaves the result bit-identical.
++        cull_world = far_distance + radius + SDF_CULL_SLACK_VOXELS * h
++        cull_voxels = cull_world / h
++        use_propagation = (
++            mode == SDF_BAND_MODE_PROPAGATE and int(band_splat) > int(seed_splat))
++        cull = -1.0 if mode == SDF_BAND_MODE_LEGACY else cull_world
++        if not use_propagation:
++            wp.launch(
++                k_surface_sdf_reset, dim=nvox,
++                inputs=[sdf.data, grid.num_leaves, far_distance], device=device)
++            wp.launch(
++                k_build_surface_sdf, dim=solver._np_dim(),
++                inputs=[positions, solver.particles.count, grid.leaf_table,
++                        grid.voxels_dim, grid.leaves_dim, grid.origin, h,
++                        radius, int(band_splat), cull],
++                outputs=[sdf.data], device=device)
++            self.last_sdf_band = {
++                "mode": mode, "seed_splat": int(band_splat),
++                "band_splat": int(band_splat), "passes": 0,
++                "cull_voxels": (-1.0 if cull <= 0.0 else cull_voxels)}
++            return sdf
++
++        passes = self.band_propagation_passes(cull_voxels, seed_splat)
++        self._ensure_band_buffers(len(sdf.data))
++        closest, cp_a, cp_b = (
++            self._band_closest, self._band_cp_a, self._band_cp_b)
++        # Seed: exact union-of-spheres distance plus the argmin particle, over
++        # the small cube only. Unclamped, because propagation needs true
++        # distances to compare candidates; the clamp is applied at the end.
++        wp.launch(
++            k_surface_sdf_reset, dim=nvox,
++            inputs=[sdf.data, grid.num_leaves, SDF_PROPAGATION_FAR],
++            device=device)
++        wp.launch(
++            k_surface_band_index_reset, dim=nvox,
++            inputs=[closest, grid.num_leaves], device=device)
++        wp.launch(
++            k_build_surface_sdf, dim=solver._np_dim(),
++            inputs=[positions, solver.particles.count, grid.leaf_table,
++                    grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius,
++                    int(seed_splat), -1.0],
++            outputs=[sdf.data], device=device)
++        wp.launch(
++            k_seed_surface_sdf_closest, dim=solver._np_dim(),
++            inputs=[positions, solver.particles.count, grid.leaf_table,
++                    grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius,
++                    int(seed_splat), sdf.data],
++            outputs=[closest], device=device)
++        wp.launch(
++            k_gather_surface_band_points, dim=nvox,
++            inputs=[closest, positions, grid.num_leaves], outputs=[cp_a],
++            device=device)
++        for _ in range(passes):
++            wp.launch(
++                k_propagate_surface_sdf_band, dim=nvox,
++                inputs=[sdf.data, cp_a, grid.leaf_table, grid.leaf_coords,
++                        grid.voxels_dim, grid.leaves_dim, grid.num_leaves,
++                        grid.origin, h, radius],
++                outputs=[tmp.data, cp_b], device=device)
++            sdf.data, tmp.data = tmp.data, sdf.data
++            cp_a, cp_b = cp_b, cp_a
++        self._band_cp_a, self._band_cp_b = cp_a, cp_b
++        wp.launch(
++            k_clamp_surface_sdf, dim=nvox,
++            inputs=[sdf.data, grid.num_leaves, far_distance], device=device)
++        self.last_sdf_band = {
++            "mode": mode, "seed_splat": int(seed_splat),
++            "band_splat": int(band_splat), "passes": int(passes),
++            "cull_voxels": cull_voxels}
++        return sdf
++
+     def rebuild_topology(self, positions):
+         solver, grid = self.solver, self.grid
+         if grid is solver.grid:
+@@ -322,6 +490,7 @@ class SurfacePipeline:
+         self.built_key = None
+         self.solver_sdf_key = None
+         self.solver_sdf_error = ""
++        self.release_band_buffers()
+         self.invalidate()
+         self.extractor.reset_buffers()
+         self.grid_key = None
+@@ -371,6 +540,7 @@ def k_build_surface_sdf(
+     voxel_size: float,
+     particle_radius: float,
+     splat_radius_voxels: int,
++    cull_radius: float,
+     sdf: wp.array(dtype=float),
+ ):
+     """Union-of-spheres distance splat. sdf holds distance-to-surface
+@@ -378,6 +548,13 @@ def k_build_surface_sdf(
+ 
+     We store float distances directly using atomic_min emulation:
+     warp supports wp.atomic_min on float arrays, so use it directly.
++
++    ``cull_radius`` (world units, <= 0 to disable) restricts the cube of
++    half-width ``splat_radius_voxels`` to the ball of cells whose centres lie
++    within that distance of the particle.  Cells outside it can only produce
++    distances at or above the field's reset value, so the atomic_min result is
++    unchanged; the loop bounds are solved analytically so no culled cell is
++    ever visited.
+     """
+     tid = wp.tid()
+     if tid >= count[0]:
+@@ -388,9 +565,36 @@ def k_build_surface_sdf(
+     cj = int(wp.floor(vp[1]))
+     ck = int(wp.floor(vp[2]))
+     r = splat_radius_voxels
+-    for dk in range(-r, r + 1):
+-        for dj in range(-r, r + 1):
+-            for di in range(-r, r + 1):
++    # Cell (i,j,k) has its centre at voxel coordinate (i+0.5, j+0.5, k+0.5),
++    # so in "cell index" coordinates the particle sits at vp - 0.5.
++    fx = vp[0] - 0.5
++    fy = vp[1] - 0.5
++    fz = vp[2] - 0.5
++    # 2r bounds the cube's own corner reach (r*sqrt(3) < 2r), so this value
++    # disables culling without a branch inside the loops.
++    cull_v = 2.0 * float(r)
++    if cull_radius > 0.0:
++        cull_v = wp.min(cull_v, cull_radius / voxel_size)
++    cull_sq = cull_v * cull_v
++    lo_k = wp.max(-r, int(wp.ceil(fz - cull_v)) - ck)
++    hi_k = wp.min(r, int(wp.floor(fz + cull_v)) - ck)
++    for dk in range(lo_k, hi_k + 1):
++        az = float(ck + dk) - fz
++        rem_k = cull_sq - az * az
++        if rem_k < 0.0:
++            continue
++        span_k = wp.sqrt(rem_k)
++        lo_j = wp.max(-r, int(wp.ceil(fy - span_k)) - cj)
++        hi_j = wp.min(r, int(wp.floor(fy + span_k)) - cj)
++        for dj in range(lo_j, hi_j + 1):
++            ay = float(cj + dj) - fy
++            rem_j = rem_k - ay * ay
++            if rem_j < 0.0:
++                continue
++            span_j = wp.sqrt(rem_j)
++            lo_i = wp.max(-r, int(wp.ceil(fx - span_j)) - ci)
++            hi_i = wp.min(r, int(wp.floor(fx + span_j)) - ci)
++            for di in range(lo_i, hi_i + 1):
+                 ijk = wp.vec3i(ci + di, cj + dj, ck + dk)
+                 flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                 if flat < 0:
+@@ -404,6 +608,152 @@ register_fn(k_build_surface_sdf, "fluidSimBuildSurfaceSdf",
+             notes="Union-of-spheres particle splat with atomic min distance.")
+ 
+ 
++# Surface-tension narrow band: closest-point seeding and propagation.
++#
++# The capillary stencil needs valid distances several voxels beyond the liquid,
++# but those values are a distance field, not particle data. Splatting each
++# particle across the whole band costs O(particles * band^3) atomic writes; the
++# band is instead reconstructed by carrying the closest particle outward across
++# the active voxels, which costs O(active voxels * passes).
++
++
++@wp.kernel
++def k_surface_band_index_reset(
++    closest: wp.array(dtype=wp.int32),
++    num_leaves: wp.array(dtype=wp.int32),
++):
++    tid = wp.tid()
++    if tid >= num_leaves[0] * C.LEAF_VOLUME:
++        return
++    closest[tid] = wp.int32(2147483647)
++
++
++@wp.kernel
++def k_seed_surface_sdf_closest(
++    positions: wp.array(dtype=wp.vec3),
++    count: wp.array(dtype=wp.int32),
++    leaf_table: wp.array(dtype=wp.int32),
++    voxels_dim: wp.vec3i,
++    leaves_dim: wp.vec3i,
++    origin: wp.vec3,
++    voxel_size: float,
++    particle_radius: float,
++    splat_radius_voxels: int,
++    sdf: wp.array(dtype=float),
++    closest: wp.array(dtype=wp.int32),
++):
++    """Record which particle produced each seeded voxel's distance.
++
++    Runs the same cube loop and the same distance expression as
++    ``k_build_surface_sdf``, so the winning particle reproduces the stored
++    minimum bit-for-bit. Ties resolve to the lowest particle index, which makes
++    the seeding deterministic regardless of atomic ordering.
++    """
++    tid = wp.tid()
++    if tid >= count[0]:
++        return
++    p = positions[tid]
++    vp = world_to_voxel(p, origin, voxel_size)
++    ci = int(wp.floor(vp[0]))
++    cj = int(wp.floor(vp[1]))
++    ck = int(wp.floor(vp[2]))
++    r = splat_radius_voxels
++    for dk in range(-r, r + 1):
++        for dj in range(-r, r + 1):
++            for di in range(-r, r + 1):
++                ijk = wp.vec3i(ci + di, cj + dj, ck + dk)
++                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
++                if flat < 0:
++                    continue
++                cw = voxel_center_world(ijk, origin, voxel_size)
++                d = wp.length(cw - p) - particle_radius
++                if d <= sdf[flat]:
++                    wp.atomic_min(closest, flat, tid)
++
++
++@wp.kernel
++def k_gather_surface_band_points(
++    closest: wp.array(dtype=wp.int32),
++    positions: wp.array(dtype=wp.vec3),
++    num_leaves: wp.array(dtype=wp.int32),
++    points: wp.array(dtype=wp.vec3),
++):
++    tid = wp.tid()
++    if tid >= num_leaves[0] * C.LEAF_VOLUME:
++        return
++    idx = closest[tid]
++    if idx >= 0 and idx < wp.int32(2147483647):
++        points[tid] = positions[idx]
++    else:
++        points[tid] = wp.vec3(0.0, 0.0, 0.0)
++
++
++@wp.kernel
++def k_propagate_surface_sdf_band(
++    src_sdf: wp.array(dtype=float),
++    src_points: wp.array(dtype=wp.vec3),
++    leaf_table: wp.array(dtype=wp.int32),
++    leaf_coords: wp.array(dtype=wp.vec3i),
++    voxels_dim: wp.vec3i,
++    leaves_dim: wp.vec3i,
++    num_leaves: wp.array(dtype=wp.int32),
++    origin: wp.vec3,
++    voxel_size: float,
++    particle_radius: float,
++    dst_sdf: wp.array(dtype=float),
++    dst_points: wp.array(dtype=wp.vec3),
++):
++    """One outward pass of closest-point propagation over the active voxels.
++
++    Every candidate distance is recomputed from this voxel's own centre to the
++    neighbour's closest particle, so the field stays an exact Euclidean
++    union-of-spheres distance to whichever particle it has found so far. The
++    value can therefore only ever be an upper bound of the true field, never
++    an underestimate.
++    """
++    tid = wp.tid()
++    if tid >= num_leaves[0] * C.LEAF_VOLUME:
++        return
++    ijk = voxel_coord_of_flat(leaf_coords, tid)
++    cw = voxel_center_world(ijk, origin, voxel_size)
++    best = src_sdf[tid]
++    best_point = src_points[tid]
++    for dk in range(-1, 2):
++        for dj in range(-1, 2):
++            for di in range(-1, 2):
++                if di == 0 and dj == 0 and dk == 0:
++                    continue
++                n = wp.vec3i(ijk[0] + di, ijk[1] + dj, ijk[2] + dk)
++                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, n)
++                if flat < 0:
++                    continue
++                if src_sdf[flat] >= 5.0e29:
++                    continue
++                cand = src_points[flat]
++                d = wp.length(cw - cand) - particle_radius
++                if d < best:
++                    best = d
++                    best_point = cand
++    dst_sdf[tid] = best
++    dst_points[tid] = best_point
++
++
++@wp.kernel
++def k_clamp_surface_sdf(
++    sdf: wp.array(dtype=float),
++    num_leaves: wp.array(dtype=wp.int32),
++    limit: float,
++):
++    tid = wp.tid()
++    if tid >= num_leaves[0] * C.LEAF_VOLUME:
++        return
++    sdf[tid] = wp.min(sdf[tid], limit)
++
++
++register_fn(k_propagate_surface_sdf_band, "fluidSimPropagateSurfaceSdfBand",
++            notes="Closest-point band extension for the capillary SDF support.")
++
++
+ # Surface smoothing filters
+ 
+ 
