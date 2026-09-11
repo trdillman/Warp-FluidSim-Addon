@@ -19,8 +19,10 @@ def require(condition, message):
 
 
 def main():
+    bpy.ops.wm.open_mainfile(filepath=str(ROOT / "demos" / "chromatic_vortex.blend"))
     enable_repo_addon(str(ROOT), default_set=True, persistent=True)
     from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
 
     scene = bpy.context.scene
     fs = scene.fluidsim
@@ -36,7 +38,8 @@ def main():
     require(any(hasattr(obj, "fluidsim") and obj.fluidsim.role == "FORCE"
                 for obj in scene.objects),
             "saved demo has no force-driven mixer")
-    require(fs.species_enabled, "saved demo mixing is disabled")
+    require(active_domain_settings(scene).species_enabled,
+            "saved demo mixing is disabled")
     require(fs.surface_attribute_mode == "COLOR",
             "saved demo surface does not display mixed color")
 
