@@ -364,7 +364,8 @@ class HostFrame:
         def load():
             try:
                 n = self._live_count("particles")
-                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                if n:
+                    _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     _live_numpy(self.solver.particles.attr(name), n))
             except (AttributeError, KeyError):
@@ -375,7 +376,8 @@ class HostFrame:
         def load():
             try:
                 n = self._live_count("whitewater")
-                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                if n:
+                    _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
                     _live_numpy(getattr(self.solver.whitewater, name), n))
             except AttributeError:

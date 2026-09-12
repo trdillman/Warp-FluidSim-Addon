@@ -152,6 +152,32 @@ def test_host_frame_transfers_only_each_live_device_prefix(
     assert transfers == ([] if live_count == 0 else [live_count])
 
 
+@pytest.mark.parametrize("accessor", ["particle_attr", "whitewater_attr"])
+@pytest.mark.parametrize("live_count, expected_readbacks", [(0, 0), (2, 1)])
+def test_attribute_readback_accounting_counts_only_nonempty_device_transfers(
+        accessor, live_count, expected_readbacks):
+    from fluidSim_warp_blender51.sim.frame_output import (
+        host_output_operation_counts,
+    )
+
+    source = _TransferSpyArray(np.arange(4, dtype=np.float32), [])
+    particles = SimpleNamespace(
+        refresh_host_count=lambda: live_count,
+        attr=lambda _name: source,
+    )
+    whitewater = SimpleNamespace(
+        refresh_host_count=lambda: live_count,
+        value=source,
+    )
+    frame = HostFrame(SimpleNamespace(
+        frame=1, particles=particles, whitewater=whitewater))
+
+    host_output_operation_counts(reset=True)
+    getattr(frame, accessor)("value")
+
+    assert host_output_operation_counts()["device_readbacks"] == expected_readbacks
+
+
 @pytest.mark.parametrize(
     ("warp_dtype", "expected_shape", "expected_dtype"),
     [
@@ -567,6 +593,94 @@ class _LiveAttributeHost:
     def output_attributes(self, _settings, output_kind, **kwargs):
         self.attribute_calls.append((output_kind, kwargs))
         return self.attributes.get(output_kind, {})
+
+
+def test_live_payload_schema_comes_from_domain_when_scene_mirror_is_poisoned():
+    from fluidSim_warp_blender51.blender import output_publication
+
+    calls = {}
+    domain_settings = _live_settings(
+        particles_attribute_age=True,
+        whitewater_attribute_velocity=True,
+        surface_enabled=False,
+    )
+    scene_settings = _live_settings(
+        particles_attribute_age=False,
+        particles_attribute_speed=True,
+        whitewater_attribute_velocity=False,
+        whitewater_attribute_age=True,
+        show_surface=False,
+    )
+    scene_settings.domain_object = SimpleNamespace(
+        fluidsim_domain=domain_settings)
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    solver = _solver(calls)
+    solver.settings = SimpleNamespace(voxel_size=0.1)
+    host = HostFrame(solver)
+
+    payload = output_publication.prepare_live_payload(scene, host)
+
+    assert tuple(payload.particle_attributes) == ("age",)
+    np.testing.assert_array_equal(
+        payload.particle_attributes["age"], np.array([1]))
+    assert tuple(payload.whitewater_attributes) == ("velocity", "type")
+    np.testing.assert_array_equal(
+        payload.whitewater_attributes["velocity"],
+        np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        payload.whitewater_attributes["type"], np.array([0, 1]))
+    assert payload.surface_attributes == {}
+
+
+def test_output_preparation_uses_domain_owned_point_attribute_inventory(
+        monkeypatch):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    domain_settings = _live_settings(
+        particles_attribute_age=True,
+        whitewater_attribute_velocity=True,
+    )
+    scene_settings = _live_settings(
+        particles_attribute_age=False,
+        particles_attribute_speed=True,
+        whitewater_attribute_velocity=False,
+        whitewater_attribute_age=True,
+    )
+    scene_settings.domain_object = SimpleNamespace(
+        fluidsim_domain=domain_settings)
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    calls = []
+
+    monkeypatch.setattr(output_publication, "_require_bpy", lambda: None)
+    monkeypatch.setattr(
+        output_publication, "_ensure_object",
+        lambda *_args, **_kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        output_publication, "_ensure_point_object",
+        lambda _scene, name, keys=(): calls.append((name, tuple(keys)))
+        or SimpleNamespace())
+    monkeypatch.setattr(
+        output_publication, "_ensure_material", lambda *_args, **_kwargs: None)
+
+    output_publication.ensure_output_shells(scene)
+    shell_calls = list(calls)
+    calls.clear()
+    output_publication.prepare_outputs(scene)
+
+    expected_particles = ("age",)
+    expected_whitewater = ("velocity", "type")
+    assert shell_calls == [
+        (output_publication.PARTICLES_NAME, expected_particles),
+        (output_publication.WHITEWATER_NAME, expected_whitewater),
+        (output_publication.FOAM_NAME, expected_whitewater),
+        (output_publication.BUBBLES_NAME, expected_whitewater),
+        (output_publication.SPRAY_NAME, expected_whitewater),
+    ]
+    assert calls == [
+        (output_publication.PARTICLES_NAME, expected_particles),
+        (output_publication.WHITEWATER_NAME, expected_whitewater),
+    ]
 
 
 def test_live_payload_gathers_enabled_attributes_for_visible_outputs():

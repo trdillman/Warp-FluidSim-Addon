@@ -1,4 +1,6 @@
 import csv
+import json
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -325,6 +327,116 @@ def test_all_surface_attributes_account_for_gpu_gathers_and_one_count_readback()
     )
 
 
+def _profile_contract_case(*, whitewater_counts, whitewater_keys,
+                           device_readbacks, numpy_entrypoints):
+    frames = [
+        {"solver_frame": index + 1, "whitewater": count}
+        for index, count in enumerate(whitewater_counts)
+    ]
+    args = SimpleNamespace(
+        cache=False,
+        frames=len(frames),
+        max_mean_total_ms=250.0,
+        max_mean_view_ms=80.0,
+        min_particles=10_000,
+        min_voxels=1_000,
+        particles=False,
+        surface_attribution=False,
+        surface_attributes="default",
+    )
+    zero_costs = {
+        name: 0 for name in (
+            "synchronizations",
+            "blender_id_creations",
+            "blender_id_removals",
+            "depsgraph_updates",
+            "relation_changes",
+            "structural_replacements",
+            "datablock_replacements",
+        )
+    }
+    summary = {
+        "contract": profile_user_path.USER_PATH_CONTRACT,
+        "frames": frames,
+        "means": {"view_ms": 1.0, "total_ms": 2.0, "cache_ms": 0.0},
+        "particles_mean": 20_000.0,
+        "voxels_mean": 2_000.0,
+        "scene_stats_probe": {
+            "solver_frame": len(frames) + 1,
+            "particles": 20_000,
+            "voxels": 2_000,
+            "step_particles": 20_000,
+            "step_voxels": 2_000,
+            "frame_stats_len": 1,
+            "status": "Frame complete",
+        },
+        "config": {
+            "live_surface_publish_cadence": 2,
+            "enabled_whitewater_attributes": list(whitewater_keys),
+            "whitewater_output_active": True,
+        },
+        "output_entrypoint_counts": {
+            "warp_array_numpy": numpy_entrypoints,
+            "warp_synchronizations": 0,
+        },
+        "phase2_costs": {
+            "live_adaptation": {
+                **zero_costs,
+                "host_frame_acquisitions": len(frames),
+                "invocations": len(frames),
+                "surface_extractions": 4,
+                "device_readbacks": device_readbacks,
+            },
+            "output_publication": {
+                **zero_costs,
+                "invocations": len(frames),
+            },
+        },
+        "host_output_operations": {
+            "device_readbacks": device_readbacks,
+            "surface_extractions": 4,
+        },
+    }
+    output_counts = [
+        {"primary_count": 100 + index, "particle_points": 0}
+        for index in range(len(frames))
+    ]
+    checks = profile_user_path._validate_contract(
+        args,
+        summary,
+        SimpleNamespace(active=True),
+        "cuda:0",
+        output_counts,
+    )
+    return {check["name"]: check for check in checks}
+
+
+def test_profile_contract_accounts_for_empty_whitewater_count_readbacks():
+    checks = _profile_contract_case(
+        whitewater_counts=[0, 0, 0, 0, 0, 0],
+        whitewater_keys=["type"],
+        device_readbacks=4,
+        numpy_entrypoints=30,
+    )
+
+    assert checks["surface readback entrypoints cadence-bounded"]["ok"] is True
+    assert checks["surface attribute device readbacks exactly bounded"]["ok"] is True
+    assert checks["HostFrame reports the same bounded device readbacks"]["ok"] is True
+
+
+def test_profile_contract_derives_nonempty_whitewater_reads_from_enabled_keys():
+    checks = _profile_contract_case(
+        whitewater_counts=[0, 2, 2, 0, 3, 3],
+        whitewater_keys=["velocity", "speed", "age", "type"],
+        device_readbacks=20,
+        numpy_entrypoints=46,
+    )
+
+    assert checks["surface readback entrypoints cadence-bounded"]["ok"] is True
+    assert checks["surface attribute device readbacks exactly bounded"]["ok"] is True
+    assert checks["HostFrame reports the same bounded device readbacks"]["ok"] is True
+
+
 class _FakeForeachCollection:
     def __init__(self, count, values_by_property):
         self._count = count
@@ -495,6 +607,339 @@ def test_surface_instrumentation_wraps_only_observed_boundaries_and_restores():
         output.publish_payload,
         output._surface_values,
     ) == originals
+
+
+def test_profile_instrumentation_restores_exact_callables_and_resources():
+    events = []
+
+    def original_numpy(*_args, **_kwargs):
+        return None
+
+    def original_synchronize(*_args, **_kwargs):
+        return None
+
+    def original_synchronize_device(*_args, **_kwargs):
+        return None
+
+    wp = SimpleNamespace(
+        array=SimpleNamespace(numpy=lambda *_args, **_kwargs: None),
+        synchronize=lambda *_args, **_kwargs: None,
+        synchronize_device=lambda *_args, **_kwargs: None,
+    )
+    frame_csv_fh = SimpleNamespace(close=lambda: events.append("csv"))
+
+    profile_user_path._restore_profile_instrumentation(
+        wp,
+        original_numpy,
+        original_synchronize,
+        original_synchronize_device,
+        lambda: events.append("surface"),
+        frame_csv_fh,
+    )
+
+    assert wp.array.numpy is original_numpy
+    assert wp.synchronize is original_synchronize
+    assert wp.synchronize_device is original_synchronize_device
+    assert events == ["surface", "csv"]
+
+
+def test_main_runs_profile_workflow_and_restores_instrumentation(
+        monkeypatch, tmp_path, capsys):
+    from fluidSim_warp_blender51.blender import output_publication, scene_bridge
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+    import warp as wp
+
+    class Vector:
+        def __init__(self, x, y, z):
+            self.x = x
+            self.y = y
+            self.z = z
+
+        def __iter__(self):
+            return iter((self.x, self.y, self.z))
+
+    domain_settings = SimpleNamespace()
+    scene_settings = SimpleNamespace(
+        voxel_size=-1.0,
+        max_particles=-1,
+        cfl=-1.0,
+        max_whitewater=-1,
+        whitewater_enabled="scene-poison",
+        surface_enabled="scene-poison",
+        profiling_enabled="scene-poison",
+        profiling_sync="scene-poison",
+        liquid_view_mode="SCENE-POISON",
+        particle_display_fraction=-1.0,
+        cache_enabled=True,
+        cache_path="//scene-poison/",
+        domain_object=None,
+        status="Ready",
+    )
+    for property_name in OUTPUT_TOGGLE_NAMES["surface"].values():
+        setattr(scene_settings, property_name, "scene-poison")
+
+    frame_events = []
+    scene = SimpleNamespace(
+        fluidsim=scene_settings,
+        frame_set=lambda frame: frame_events.append(("frame", frame)),
+    )
+
+    def setup_scene():
+        scene_settings.domain_object = SimpleNamespace(
+            fluidsim_domain=domain_settings,
+            location=Vector(0.0, 0.0, 0.0),
+            scale=Vector(2.0, 2.0, 2.0),
+        )
+        return {"FINISHED"}
+
+    solver = SimpleNamespace(device="cuda:0", frame=0)
+
+    def step_frame():
+        solver.frame += 1
+        return SimpleNamespace(
+            active_particles=20_000,
+            active_voxels=2_000,
+            whitewater_particles=0,
+            substeps=1,
+            pressure_iterations=2,
+            pressure_residual=0.0,
+            timers={},
+        )
+
+    solver.step_frame = step_frame
+    session = SimpleNamespace(active=True, solver=solver)
+    bpy = SimpleNamespace(
+        context=SimpleNamespace(
+            scene=scene,
+            evaluated_depsgraph_get=lambda: SimpleNamespace(),
+        ),
+        ops=SimpleNamespace(fluidsim=SimpleNamespace(
+            setup_scene=setup_scene,
+            initialize=lambda: {"FINISHED"},
+        )),
+    )
+    args = SimpleNamespace(
+        frames=2,
+        voxel_size=0.08,
+        max_particles=200_000,
+        cfl=1.25,
+        disable_whitewater=False,
+        profile_phases=True,
+        profile_sync=False,
+        particles=False,
+        surface_attributes="default",
+        domain_scale_x=0.0,
+        domain_location_x=0.0,
+        collider_subdiv=0,
+        cache=False,
+        surface_attribution=False,
+        no_validate=False,
+        frame_csv_out="",
+        stop_after_total_ms=0.0,
+        json_out=str(tmp_path / "profile.json"),
+    )
+
+    original_numpy = wp.array.numpy
+    original_synchronize = wp.synchronize
+    original_synchronize_device = wp.synchronize_device
+    published_frames = []
+
+    monkeypatch.setattr(
+        profile_user_path, "_source_identity", lambda *_args: {})
+    monkeypatch.setattr(
+        profile_user_path, "_runtime_identity", lambda *_args: {})
+    monkeypatch.setattr(
+        profile_user_path, "_nvidia_smi_snapshot", lambda: {})
+    monkeypatch.setattr(
+        profile_user_path, "_open_frame_csv", lambda _path: (None, None))
+    monkeypatch.setattr(
+        profile_user_path, "_viewport_counts",
+        lambda *_args: {"surface_verts": 4, "particle_points": 0},
+    )
+    monkeypatch.setattr(
+        profile_user_path, "_surface_dense_dim", lambda _sess: [2, 2, 2])
+    monkeypatch.setattr(scene_bridge, "session", lambda: session)
+    monkeypatch.setattr(
+        scene_bridge, "sync_scene_to_solver",
+        lambda _scene, _session, _depsgraph: frame_events.append(
+            ("sync", solver.frame + 1)),
+    )
+
+    def update_outputs(_scene, _session):
+        assert wp.array.numpy is not original_numpy
+        assert wp.synchronize is not original_synchronize
+        assert wp.synchronize_device is not original_synchronize_device
+        published_frames.append(solver.frame)
+
+    monkeypatch.setattr(output_publication, "update_outputs", update_outputs)
+
+    def build_report(_args, _bpy, run):
+        assert [row["solver_frame"] for row in run["rows"]] == [1, 2]
+        assert wp.array.numpy is original_numpy
+        assert wp.synchronize is original_synchronize
+        assert wp.synchronize_device is original_synchronize_device
+        settings = scene_bridge.active_domain_settings(run["scene"])
+        return ({
+            "result": "USER-PATH-PROFILE-PASS",
+            "means": {"view_ms": 1.0},
+            "particles_mean": 20_000.0,
+            "voxels_mean": 2_000.0,
+            "whitewater_mean": 0.0,
+            "configured_domain": {
+                "voxel_size": settings.voxel_size,
+                "max_particles": settings.max_particles,
+                "live_surface_publish_cadence": getattr(
+                    settings, "live_surface_publish_cadence", None),
+            },
+            "published_frames": list(published_frames),
+        }, 4)
+
+    monkeypatch.setattr(profile_user_path, "_build_profile_report", build_report)
+    monkeypatch.setattr(profile_user_path, "parse_args", lambda: args)
+    monkeypatch.setitem(
+        sys.modules, "addon_utils",
+        SimpleNamespace(enable=lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setitem(sys.modules, "bmesh", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+
+    with pytest.raises(SystemExit) as exit_info:
+        profile_user_path.main()
+
+    assert exit_info.value.code == 0
+    report = json.loads((tmp_path / "profile.json").read_text())
+    assert report["configured_domain"] == {
+        "voxel_size": 0.08,
+        "max_particles": 200_000,
+        "live_surface_publish_cadence": None,
+    }
+    assert report["published_frames"] == [1, 2]
+    assert frame_events == [
+        ("frame", 1), ("sync", 1),
+        ("frame", 2), ("sync", 2),
+    ]
+    assert domain_settings.surface_attribute_velocity is True
+    assert domain_settings.surface_attribute_motion is True
+    assert scene_settings.voxel_size == -1.0
+    assert scene_settings.max_particles == -1
+    assert scene_settings.liquid_view_mode == "SURFACE"
+    assert wp.array.numpy is original_numpy
+    assert wp.synchronize is original_synchronize
+    assert wp.synchronize_device is original_synchronize_device
+    assert "USER-PATH-PROFILE-PASS" in capsys.readouterr().out
+
+
+def test_profile_report_uses_authoritative_domain_settings(monkeypatch):
+    args = SimpleNamespace(
+        cache=False,
+        collider_subdiv=0,
+        frames=1,
+        no_validate=False,
+        surface_attribution=False,
+        surface_attributes="default",
+        voxel_size=0.08,
+        max_particles=200_000,
+    )
+    scene_settings = SimpleNamespace(
+        live_surface_publish_cadence=99,
+        show_surface=True,
+        surface_attribute_mode="NONE",
+        show_whitewater=False,
+        stat_particles=1,
+        stat_voxels=2,
+        stat_whitewater=3,
+        stat_step_ms=4.0,
+        stat_substeps=5,
+        status="Ready",
+    )
+    domain_settings = SimpleNamespace(
+        live_surface_publish_cadence=3,
+        surface_enabled=True,
+    )
+    scene = SimpleNamespace(name="Scene", objects=[])
+    solver = SimpleNamespace(device="cuda:0", frame=1)
+    sess = SimpleNamespace(solver=solver, frame_stats=[])
+    reset_sess = SimpleNamespace(solver=SimpleNamespace(frame=0))
+    scene_bridge = SimpleNamespace(
+        active_domain_settings=lambda _scene: domain_settings,
+        step_frame=lambda _scene, _sess: SimpleNamespace(
+            active_particles=1,
+            active_voxels=2,
+            whitewater_particles=3,
+        ),
+        reset_simulation=lambda _scene: None,
+        session=lambda: reset_sess,
+    )
+    bpy = SimpleNamespace(data=SimpleNamespace(
+        objects=SimpleNamespace(get=lambda _name: None)
+    ))
+    row = {
+        "sync_ms": 1.0,
+        "solve_ms": 2.0,
+        "view_ms": 3.0,
+        "cache_ms": 0.0,
+        "total_ms": 6.0,
+        "particles": 1,
+        "voxels": 2,
+        "whitewater": 3,
+        "substeps": 5,
+        "pressure_iterations": 6,
+        "pressure_residual": 0.0,
+        "surface_dense_dim": [0, 0, 0],
+    }
+    run = {
+        "scene": scene,
+        "fs": scene_settings,
+        "enabled_surface_attributes": (),
+        "output_publication": SimpleNamespace(
+            output_cost_counts=lambda: {},
+        ),
+        "scene_bridge": scene_bridge,
+        "host_output_operation_counts": lambda: {},
+        "surface_attribute_transfer_operation_counts": lambda: {},
+        "sess": sess,
+        "source_identity": {},
+        "runtime_identity": {},
+        "process_identity": {"pid": 1},
+        "domain_bounds": None,
+        "contention_before": {},
+        "surface_probe": None,
+        "rows": [row],
+        "output_counts": [],
+        "output_entrypoint_counts": {
+            "warp_array_numpy": 0,
+            "warp_synchronizations": 0,
+            "surface_attribution_synchronizations": 0,
+        },
+        "solve_profiler": None,
+    }
+    monkeypatch.setattr(
+        profile_user_path, "_nvidia_smi_snapshot", lambda: {})
+    monkeypatch.setattr(
+        profile_user_path, "_surface_dense_dim", lambda _sess: [0, 0, 0])
+    monkeypatch.setattr(
+        profile_user_path, "_output_correctness_evidence",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        profile_user_path, "_surface_attribution_summary",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        profile_user_path, "_contention_evidence",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        profile_user_path, "_validate_contract",
+        lambda *_args, **_kwargs: [],
+    )
+
+    summary, _surface_verts = profile_user_path._build_profile_report(
+        args, bpy, run)
+
+    assert summary["evidence"]["workload"]["surface_enabled"] is True
+    assert summary["evidence"]["workload"]["live_surface_publish_cadence"] == 3
+    assert summary["config"]["live_surface_publish_cadence"] == 3
 
 
 def test_addon_source_digest_ignores_bytecode_but_binds_source_bytes(tmp_path):
