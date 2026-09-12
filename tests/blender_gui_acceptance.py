@@ -418,21 +418,33 @@ def _run_phase(phase, scene):
         STATE["phase"] = "setup"
         return 0.1
 
-    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.scene_bridge import (
+        active_domain_settings,
+        session,
+    )
 
     if phase == "setup":
         fs = scene.fluidsim
-        fs.voxel_size = 0.08
-        fs.max_particles = 500_000
-        fs.whitewater_enabled = True
-        fs.profiling_enabled = True
         fs.show_overlay = True
-        fs.height_enabled = True
-        fs.viscosity_enabled = True
-        fs.max_speed = 2.5
-        fs.limit_behavior = "PERCENT"
         bpy.ops.fluidsim.setup_scene()
         check("setup_scene", fs.domain_object is not None)
+        domain_settings = active_domain_settings(scene)
+        check(
+            "authoritative domain settings",
+            domain_settings is not None,
+            getattr(fs.domain_object, "name", "no designated domain"),
+        )
+        if domain_settings is None:
+            raise RuntimeError(
+                "setup_scene did not designate an authoritative domain settings owner")
+        domain_settings.voxel_size = 0.08
+        domain_settings.max_particles = 500_000
+        domain_settings.whitewater_enabled = True
+        domain_settings.profiling_enabled = True
+        domain_settings.height_enabled = True
+        domain_settings.viscosity_enabled = True
+        domain_settings.max_speed = 2.5
+        domain_settings.limit_behavior = "PERCENT"
         src = next(
             (
                 obj for obj in scene.objects
@@ -627,17 +639,21 @@ def _run_phase(phase, scene):
 
         # Property edits through the UI data path (as the panels would).
         scene = bpy.context.scene
-        scene.fluidsim.flip_ratio = 0.9
-        scene.fluidsim.pressure_iterations = 150
+        domain_settings = active_domain_settings(scene)
+        if domain_settings is None:
+            raise RuntimeError(
+                "GUI property edits require an authoritative domain settings owner")
+        domain_settings.flip_ratio = 0.9
+        domain_settings.pressure_iterations = 150
         check("property edits applied",
-              abs(scene.fluidsim.flip_ratio - 0.9) < 1e-6
-              and scene.fluidsim.pressure_iterations == 150)
+              abs(domain_settings.flip_ratio - 0.9) < 1e-6
+              and domain_settings.pressure_iterations == 150)
 
         # Pending state is owned by the simplified Scene Properties panel.
         from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
         sess = scene_bridge.session()
         solver_before_pending = sess.solver
-        scene.fluidsim.voxel_size *= 0.9
+        domain_settings.voxel_size *= 0.9
         pending = pending_settings.pending_presentation(scene)
         check("mid-run GUI edit is pending", pending["action"] == "REINIT_PENDING"
               and sess.solver is solver_before_pending, pending)

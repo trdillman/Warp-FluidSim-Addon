@@ -75,11 +75,17 @@ def main():
     enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.12
-    fs.max_particles = 100_000
-    fs.whitewater_enabled = False
     fs.liquid_view_mode = "PARTICLES"
     bpy.ops.fluidsim.setup_scene()
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    ds = active_domain_settings(scene)
+    check("active domain settings", ds is not None)
+    assert ds is not None, (
+        "mesh source acceptance requires a designated domain")
+    ds.voxel_size = 0.12
+    ds.max_particles = 100_000
+    ds.whitewater_enabled = False
 
     default_source = next(
         (

@@ -39,6 +39,14 @@ def main():
     blend = ROOT / "demos" / "crown_splash.blend"
     bpy.ops.wm.open_mainfile(filepath=str(blend))
     enable_repo_addon(str(ROOT), default_set=True, persistent=False)
+    from fluidSim_warp_blender51.blender.scene_bridge import (
+        active_domain_settings,
+        session,
+    )
+
+    scene = bpy.context.scene
+    domain = active_domain_settings(scene)
+    fs = scene.fluidsim
 
     module = sys.modules.get("fluidSim_warp_blender51")
     loaded_path = Path(getattr(module, "__file__", "")).resolve()
@@ -50,18 +58,15 @@ def main():
     )
     check("intended module root", expected_root in loaded_path.parents, loaded_path)
 
-    scene = bpy.context.scene
-    fs = scene.fluidsim
     fs.live = False
     scene.frame_set(scene.frame_start)
-    from fluidSim_warp_blender51.blender.scene_bridge import session
 
     sess = session()
     if sess.active:
         sess.release(scene)
     check("initialize", bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
-    check("closed scene", not fs.open_boundaries)
-    check("saved wall policy", fs.domain_sdf_walls)
+    check("closed scene", not domain.open_boundaries)
+    check("saved wall policy", domain.domain_sdf_walls)
     check("runtime wall policy", sess.solver.settings.domain_sdf_walls)
 
     initial = particle_metrics(sess.solver)

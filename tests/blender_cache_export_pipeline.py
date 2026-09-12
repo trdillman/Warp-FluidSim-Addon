@@ -101,16 +101,6 @@ def main():
 
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.12
-    fs.max_particles = 100_000
-    fs.auto_grow_particles = False
-    fs.max_whitewater = 5_000
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = 1_000.0
-    fs.ww_churn_threshold = 0.0
-    fs.ww_emission_rate = 2_000.0
-    fs.ww_min_speed = 0.0
-    fs.surface_enabled = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
     fs.cache_enabled = False
@@ -130,6 +120,18 @@ def main():
 
         ds = scene_bridge.active_domain_settings(scene)
         check("active domain settings", ds is not None)
+        assert ds is not None, (
+            "cache export acceptance requires a designated domain")
+        ds.voxel_size = 0.12
+        ds.max_particles = 100_000
+        ds.auto_grow_particles = False
+        ds.max_whitewater = 5_000
+        ds.whitewater_enabled = True
+        ds.ww_churn_gain = 1_000.0
+        ds.ww_churn_threshold = 0.0
+        ds.ww_emission_rate = 2_000.0
+        ds.ww_min_speed = 0.0
+        ds.surface_enabled = True
         # Give the short three-frame fixture an explicit energetic continuous
         # inflow so authoritative whitewater coverage cannot pass vacuously.
         source = next(

@@ -32,9 +32,16 @@ else:
     blend_path = bpy.data.filepath
     report_path = profile_safe_result_path
 
-from fluidSim_warp_blender51.blender.scene_bridge import session
+from fluidSim_warp_blender51.blender.scene_bridge import (
+    active_domain_settings,
+    session,
+)
 
 scene = bpy.context.scene
+domain_settings = active_domain_settings(scene)
+if domain_settings is None:
+    raise RuntimeError(
+        "saved-demo playback requires a designated authoritative domain settings owner")
 start_frame = scene.frame_current
 started_at = time.monotonic()
 canonical_wall_expectation = {
@@ -42,7 +49,7 @@ canonical_wall_expectation = {
     "crown_splash.blend": True,
 }
 expected_domain_sdf_walls = canonical_wall_expectation.get(
-    os.path.basename(blend_path), bool(scene.fluidsim.domain_sdf_walls)
+    os.path.basename(blend_path), bool(domain_settings.domain_sdf_walls)
 )
 
 
@@ -65,7 +72,7 @@ report = {
     "blend": bpy.data.filepath,
     "start_frame": start_frame,
     "live": bool(scene.fluidsim.live),
-    "saved_domain_sdf_walls": bool(scene.fluidsim.domain_sdf_walls),
+    "saved_domain_sdf_walls": bool(domain_settings.domain_sdf_walls),
     "expected_domain_sdf_walls": expected_domain_sdf_walls,
     "handler_count": len([
         fn for fn in bpy.app.handlers.frame_change_post
