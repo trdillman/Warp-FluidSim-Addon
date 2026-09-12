@@ -422,6 +422,140 @@ def _is_forbidden_runtime_payload(relative: str) -> bool:
     return filename == "blender" and (not lower_parts or lower_parts[0] != "blender")
 
 
+def _validate_archive_members(names: Mapping[str, str]) -> None:
+    for relative in names:
+        path = PurePosixPath(relative)
+        if _is_forbidden_runtime_payload(relative):
+            raise RuntimeError(f"forbidden bundled runtime payload: {relative}")
+        if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
+            raise RuntimeError(f"compiled Python artifact leaked into package: {relative}")
+        if path.parts and path.parts[0] in RELEASE_ONLY_PATHS:
+            raise RuntimeError(f"release-only path leaked into package: {relative}")
+        if relative in RELEASE_ONLY_FILES or relative in RELEASE_ONLY_RELATIVE_PATHS:
+            raise RuntimeError(f"release-only file leaked into package: {relative}")
+
+
+def _validate_required_package_content(
+    package: Path,
+    archive: zipfile.ZipFile,
+    names: Mapping[str, str],
+    collision_guard: Mapping[str, str],
+) -> None:
+    required = {
+        "blender_manifest.toml",
+        "__init__.py",
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+        "release/__init__.py",
+        "release/run_headless_bake.py",
+        "blender/setup_wizard.py",
+        "blender/geometry_nodes.py",
+        "sim/attributes.py",
+        "sim/surface_tension.py",
+        "sim/surface_tension_math.py",
+        "presets/schema.py",
+        "resources/presets/preview_water.json",
+        "resources/presets/water_surface_tension.json",
+        "resources/presets/stylized_high_tension.json",
+        "resources/geometry_nodes/fluidsim_render_nodes.blend",
+        "sim/effects/schema.py",
+        "sim/effects/runtime.py",
+        "sim/effects/package.py",
+        "blender/effects.py",
+        "blender/effect_ui.py",
+        "blender/effect_workspace.py",
+        "resources/effects/vortex_force.json",
+        "resources/effects/sources/vortex_force.py",
+        "resources/examples/05_custom_effects_vortex.blend",
+        "resources/examples/06_custom_effects_stack.blend",
+        "resources/examples/07_warp_code_authoring.blend",
+        "resources/examples/custom_effects/renders/05_custom_effects_vortex.png",
+        "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
+        "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
+    }
+    missing = sorted(required - set(names))
+    if missing:
+        raise RuntimeError(f"package {package.name} is missing files: {missing}")
+    for relative, stale_sha256 in collision_guard.items():
+        archive_name = names.get(relative)
+        if archive_name is None:
+            raise RuntimeError(
+                f"package {package.name} is missing protected integration owner: {relative}"
+            )
+        if _sha256_bytes(archive.read(archive_name)) == stale_sha256:
+            raise RuntimeError(
+                "stale candidate implementation replaced adjudicated owner in "
+                f"{package.name}: {relative}"
+            )
+    if any(PurePosixPath(name).suffix == ".blend1" for name in names):
+        raise RuntimeError(f"Blender backup asset leaked into {package.name}")
+    effect_json = [
+        name for name in names
+        if name.startswith("resources/effects/")
+        and "/sources/" not in name and name.endswith(".json")
+    ]
+    effect_sources = [
+        name for name in names
+        if name.startswith("resources/effects/sources/") and name.endswith(".py")
+    ]
+    if len(effect_json) != 8 or len(effect_sources) != 8:
+        raise RuntimeError(
+            f"package {package.name} must contain eight built-in effect definitions "
+            "and eight source files"
+        )
+    asset_payload = archive.read(
+        names["resources/geometry_nodes/fluidsim_render_nodes.blend"]
+    )
+    if len(asset_payload) <= 50_000 or not _looks_like_blender_file(
+            asset_payload[:7]):
+        raise RuntimeError(f"invalid Geometry Nodes asset in {package.name}")
+
+
+def _validate_embedded_manifest_and_payload(
+    package: Path,
+    platform: str,
+    archive: zipfile.ZipFile,
+    names: Mapping[str, str],
+    source: SourceVerification,
+    reference_payloads: dict[str, str] | None,
+    reference_manifest: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    embedded = tomllib.loads(archive.read(names["blender_manifest.toml"]).decode("utf-8"))
+    if embedded.get("id") != source.extension_id or embedded.get("version") != source.version:
+        raise RuntimeError(f"embedded manifest identity mismatch: {package.name}")
+    if embedded.get("license") != REQUIRED_LICENSE:
+        raise RuntimeError(f"embedded manifest license mismatch: {package.name}")
+    if tuple(embedded.get("platforms", ())) != source.platforms:
+        raise RuntimeError(
+            f"embedded source platform mismatch: expected {list(source.platforms)}, "
+            f"got {embedded.get('platforms')}"
+        )
+    if embedded.get("wheels") not in (None, []):
+        raise RuntimeError(f"embedded manifest declares bundled wheels: {package.name}")
+    generated = embedded.get("build", {}).get("generated", {})
+    if generated.get("platforms") != [platform]:
+        raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
+    if generated.get("wheels", []) != []:
+        raise RuntimeError(f"generated package declares bundled wheels: {package.name}")
+
+    normalized_manifest = dict(embedded)
+    normalized_build = dict(normalized_manifest.get("build", {}))
+    normalized_build.pop("generated", None)
+    normalized_manifest["build"] = normalized_build
+    payloads = {
+        relative: _sha256_bytes(archive.read(archive_name))
+        for relative, archive_name in names.items()
+        if relative != "blender_manifest.toml"
+    }
+    if reference_payloads is None:
+        return payloads, normalized_manifest
+    if payloads != reference_payloads or normalized_manifest != reference_manifest:
+        raise RuntimeError(
+            "split-platform payloads differ outside generated platform metadata"
+        )
+    return payloads, normalized_manifest
+
+
 def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecord]:
     """Inspect split archives and reject Blender/Warp binary payloads."""
     root = Path(root).resolve()
@@ -449,119 +583,17 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
         platform = _platform_from_package_name(package, source.extension_id, source.version)
         with zipfile.ZipFile(package) as archive:
             names = _archive_relative_names(archive)
-            for relative in names:
-                path = PurePosixPath(relative)
-                if _is_forbidden_runtime_payload(relative):
-                    raise RuntimeError(f"forbidden bundled runtime payload: {relative}")
-                if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
-                    raise RuntimeError(f"compiled Python artifact leaked into package: {relative}")
-                if path.parts and path.parts[0] in RELEASE_ONLY_PATHS:
-                    raise RuntimeError(f"release-only path leaked into package: {relative}")
-                if relative in RELEASE_ONLY_FILES or relative in RELEASE_ONLY_RELATIVE_PATHS:
-                    raise RuntimeError(f"release-only file leaked into package: {relative}")
-            required = {
-                "blender_manifest.toml",
-                "__init__.py",
-                "LICENSE",
-                "THIRD_PARTY_NOTICES.md",
-                "release/__init__.py",
-                "release/run_headless_bake.py",
-                "blender/setup_wizard.py",
-                "blender/geometry_nodes.py",
-                "sim/attributes.py",
-                "sim/surface_tension.py",
-                "sim/surface_tension_math.py",
-                "presets/schema.py",
-                "resources/presets/preview_water.json",
-                "resources/presets/water_surface_tension.json",
-                "resources/presets/stylized_high_tension.json",
-                "resources/geometry_nodes/fluidsim_render_nodes.blend",
-                "sim/effects/schema.py",
-                "sim/effects/runtime.py",
-                "sim/effects/package.py",
-                "blender/effects.py",
-                "blender/effect_ui.py",
-                "blender/effect_workspace.py",
-                "resources/effects/vortex_force.json",
-                "resources/effects/sources/vortex_force.py",
-                "resources/examples/05_custom_effects_vortex.blend",
-                "resources/examples/06_custom_effects_stack.blend",
-                "resources/examples/07_warp_code_authoring.blend",
-                "resources/examples/custom_effects/renders/05_custom_effects_vortex.png",
-                "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
-                "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
-            }
-            missing = sorted(required - set(names))
-            if missing:
-                raise RuntimeError(f"package {package.name} is missing files: {missing}")
-            for relative, stale_sha256 in collision_guard.items():
-                archive_name = names.get(relative)
-                if archive_name is None:
-                    raise RuntimeError(
-                        f"package {package.name} is missing protected integration owner: {relative}"
-                    )
-                if _sha256_bytes(archive.read(archive_name)) == stale_sha256:
-                    raise RuntimeError(
-                        "stale candidate implementation replaced adjudicated owner in "
-                        f"{package.name}: {relative}"
-                    )
-            if any(PurePosixPath(name).suffix == ".blend1" for name in names):
-                raise RuntimeError(f"Blender backup asset leaked into {package.name}")
-            effect_json = [
-                name for name in names
-                if name.startswith("resources/effects/")
-                and "/sources/" not in name and name.endswith(".json")
-            ]
-            effect_sources = [
-                name for name in names
-                if name.startswith("resources/effects/sources/") and name.endswith(".py")
-            ]
-            if len(effect_json) != 8 or len(effect_sources) != 8:
-                raise RuntimeError(
-                    f"package {package.name} must contain eight built-in effect definitions "
-                    "and eight source files"
-                )
-            asset_payload = archive.read(
-                names["resources/geometry_nodes/fluidsim_render_nodes.blend"]
+            _validate_archive_members(names)
+            _validate_required_package_content(package, archive, names, collision_guard)
+            reference_payloads, reference_manifest = _validate_embedded_manifest_and_payload(
+                package,
+                platform,
+                archive,
+                names,
+                source,
+                reference_payloads,
+                reference_manifest,
             )
-            if len(asset_payload) <= 50_000 or not _looks_like_blender_file(
-                    asset_payload[:7]):
-                raise RuntimeError(f"invalid Geometry Nodes asset in {package.name}")
-
-            embedded = tomllib.loads(archive.read(names["blender_manifest.toml"]).decode("utf-8"))
-            if embedded.get("id") != source.extension_id or embedded.get("version") != source.version:
-                raise RuntimeError(f"embedded manifest identity mismatch: {package.name}")
-            if embedded.get("license") != REQUIRED_LICENSE:
-                raise RuntimeError(f"embedded manifest license mismatch: {package.name}")
-            if tuple(embedded.get("platforms", ())) != source.platforms:
-                raise RuntimeError(
-                    f"embedded source platform mismatch: expected {list(source.platforms)}, "
-                    f"got {embedded.get('platforms')}"
-                )
-            if embedded.get("wheels") not in (None, []):
-                raise RuntimeError(f"embedded manifest declares bundled wheels: {package.name}")
-            generated = embedded.get("build", {}).get("generated", {})
-            if generated.get("platforms") != [platform]:
-                raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
-            if generated.get("wheels", []) != []:
-                raise RuntimeError(f"generated package declares bundled wheels: {package.name}")
-
-            normalized_manifest = dict(embedded)
-            normalized_build = dict(normalized_manifest.get("build", {}))
-            normalized_build.pop("generated", None)
-            normalized_manifest["build"] = normalized_build
-            payloads = {
-                relative: _sha256_bytes(archive.read(archive_name))
-                for relative, archive_name in names.items()
-                if relative != "blender_manifest.toml"
-            }
-            if reference_payloads is None:
-                reference_payloads = payloads
-                reference_manifest = normalized_manifest
-            elif payloads != reference_payloads or normalized_manifest != reference_manifest:
-                raise RuntimeError(
-                    "split-platform payloads differ outside generated platform metadata"
-                )
 
         records.append(
             ArtifactRecord(

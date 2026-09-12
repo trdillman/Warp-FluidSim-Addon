@@ -259,6 +259,30 @@ def test_inspect_packages_accepts_binary_free_platform_archive(
     assert records[0].sha256
 
 
+def test_inspect_packages_keeps_sorted_artifact_records_for_valid_archives(
+    tmp_path: Path,
+):
+    _write_project(tmp_path)
+    windows = tmp_path / f"fluidsim_warp-{VERSION}-windows_x64.zip"
+    linux = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(windows, platform="windows-x64")
+    _write_package(linux, platform="linux-x64")
+
+    records = build_extension.inspect_packages(tmp_path, [windows, linux])
+
+    assert [record.path for record in records] == [linux.resolve(), windows.resolve()]
+    assert [record.platform for record in records] == ["linux-x64", "windows-x64"]
+    assert [record.runtime_dependency for record in records] == ["external", "external"]
+    assert [record.size for record in records] == [
+        linux.stat().st_size,
+        windows.stat().st_size,
+    ]
+    assert [record.sha256 for record in records] == [
+        hashlib.sha256(linux.read_bytes()).hexdigest(),
+        hashlib.sha256(windows.read_bytes()).hexdigest(),
+    ]
+
+
 def test_inspect_packages_rejects_platform_payload_drift(tmp_path: Path):
     _write_project(tmp_path)
     windows = tmp_path / f"fluidsim_warp-{VERSION}-windows_x64.zip"
@@ -319,6 +343,18 @@ def test_inspect_packages_rejects_release_only_content(tmp_path: Path):
     package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
     _write_package(package, extra={"tests/test_leak.py": b"pass\n"})
     with pytest.raises(RuntimeError, match="release-only path"):
+        build_extension.inspect_packages(tmp_path, [package])
+
+
+def test_inspect_packages_rejects_compiled_python_artifacts(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(package, extra={"sim/kernel.pyc": b"compiled bytecode"})
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"compiled Python artifact leaked into package: sim/kernel\.pyc",
+    ):
         build_extension.inspect_packages(tmp_path, [package])
 
 
