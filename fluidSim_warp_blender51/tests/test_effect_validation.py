@@ -109,3 +109,19 @@ def test_validation_issues_identify_the_exact_effect_instance():
     assert result.valid is False
     assert result.issues
     assert all(issue.instance_id == instance.instance_id for issue in result.issues)
+
+
+def test_validation_keeps_mixed_ast_issue_order_and_locations():
+    instance = _instance(
+        "while strength > 0.0:\n"
+        "    strength = strength - 1.0\n"
+        "print(strength)"
+    )
+
+    result = validate_effect(instance)
+
+    assert [(issue.code, issue.line, issue.column) for issue in result.issues] == [
+        ("UNBOUNDED_LOOP", 1, 1),
+        ("PRINT_FORBIDDEN", 3, 1),
+        ("UNKNOWN_NAME", 3, 1),
+    ]

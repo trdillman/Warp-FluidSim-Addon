@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from .enums import EffectDomain, FieldAccess
 from .fields import FIELD_SPECS, validate_field_binding
-from .schema import EffectInstanceV2, EffectIssue, KernelDefinitionV2
+from .schema import EffectInstanceV2, EffectIssue, FieldBindingV2, KernelDefinitionV2
 
 
 @dataclass(frozen=True)
@@ -91,6 +91,144 @@ def _same_index(node: ast.AST, expected: str) -> bool:
     return isinstance(node, ast.Name) and node.id == expected
 
 
+def _append_forbidden_node_issue(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+) -> None:
+    for node_type, (code, message) in _FORBIDDEN_NODES.items():
+        if isinstance(node, node_type):
+            issues.append(_line_issue(code, message, node, kernel))
+            break
+
+
+def _append_loop_issue(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+) -> None:
+    if not isinstance(node, ast.For):
+        return
+    call = node.iter
+    bounded = (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "range"
+        and 1 <= len(call.args) <= 3
+        and all(isinstance(arg, ast.Constant) and isinstance(arg.value, int) for arg in call.args)
+    )
+    if not bounded:
+        issues.append(_line_issue(
+            "UNBOUNDED_LOOP",
+            "Effect loops must use range() with constant integer bounds.",
+            node,
+            kernel,
+        ))
+        return
+
+    values = [int(arg.value) for arg in call.args]
+    if len(values) == 1:
+        start, stop, step = 0, values[0], 1
+    elif len(values) == 2:
+        start, stop, step = values[0], values[1], 1
+    else:
+        start, stop, step = values
+    iterations = len(range(start, stop, step)) if step else 10_000
+    if iterations > 64:
+        issues.append(_line_issue(
+            "LOOP_LIMIT_EXCEEDED",
+            f"Effect loops are limited to 64 iterations; this loop has {iterations}.",
+            node,
+            kernel,
+        ))
+
+
+def _append_attribute_issues(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+) -> None:
+    if not isinstance(node, ast.Attribute):
+        return
+    allowed_module = isinstance(node.value, ast.Name) and node.value.id in {"wp", "C"}
+    if not allowed_module:
+        issues.append(_line_issue(
+            "ATTRIBUTE_ACCESS_FORBIDDEN",
+            "Attribute access is allowed only on wp.* and C.*.",
+            node,
+            kernel,
+        ))
+    elif isinstance(node.value, ast.Name) and node.value.id == "wp":
+        try:
+            import warp as _wp
+        except ModuleNotFoundError:
+            _wp = None
+        if _wp is not None and not hasattr(_wp, node.attr):
+            issues.append(_line_issue(
+                "UNKNOWN_WARP_SYMBOL",
+                f"Warp has no public symbol wp.{node.attr}.",
+                node,
+                kernel,
+                hint="Choose a function listed in the Warp Code API browser.",
+            ))
+
+
+def _append_name_issues(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+    *,
+    allowed: set[str],
+    assigned: set[str],
+    known: list[str],
+) -> None:
+    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+        return
+    if node.id not in allowed and node.id not in assigned:
+        close = difflib.get_close_matches(node.id, known, n=1, cutoff=0.6)
+        hint = f"Did you mean {close[0]!r}?" if close else ""
+        issues.append(_line_issue(
+            "UNKNOWN_NAME",
+            f"Unknown name {node.id!r}.",
+            node,
+            kernel,
+            hint=hint,
+        ))
+
+
+def _append_field_access_issues(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+    *,
+    safe_mode: bool,
+    binding_map: dict[str, FieldBindingV2],
+) -> None:
+    if not isinstance(node, ast.Subscript) or not isinstance(node.value, ast.Name):
+        return
+    binding = binding_map.get(node.value.id)
+    if binding is None:
+        return
+    spec = FIELD_SPECS[binding.field]
+    if safe_mode and binding.access not in {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}:
+        if not _same_index(node.slice, spec.current_index):
+            issues.append(_line_issue(
+                "NON_CURRENT_ELEMENT_ACCESS",
+                f"Safe mode requires {binding.field}[{spec.current_index}].",
+                node,
+                kernel,
+                hint="Use the current element index or switch to reviewed Expert access.",
+            ))
+    is_write = isinstance(node.ctx, ast.Store)
+    if is_write and binding.access is FieldAccess.READ:
+        issues.append(_line_issue(
+            "WRITE_REQUIRES_PERMISSION",
+            f"Field {binding.field!r} is declared READ-only.",
+            node,
+            kernel,
+        ))
+
+
 def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> list[EffectIssue]:
     issues: list[EffectIssue] = []
     safe_mode = bool(instance.safe_mode and kernel.safe_mode)
@@ -137,43 +275,8 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
     binding_map = {binding.field: binding for binding in kernel.fields}
 
     for node in ast.walk(tree):
-        for node_type, (code, message) in _FORBIDDEN_NODES.items():
-            if isinstance(node, node_type):
-                issues.append(_line_issue(code, message, node, kernel))
-                break
-
-        if isinstance(node, ast.For):
-            call = node.iter
-            bounded = (
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Name)
-                and call.func.id == "range"
-                and 1 <= len(call.args) <= 3
-                and all(isinstance(arg, ast.Constant) and isinstance(arg.value, int) for arg in call.args)
-            )
-            if not bounded:
-                issues.append(_line_issue(
-                    "UNBOUNDED_LOOP",
-                    "Effect loops must use range() with constant integer bounds.",
-                    node,
-                    kernel,
-                ))
-            else:
-                values = [int(arg.value) for arg in call.args]
-                if len(values) == 1:
-                    start, stop, step = 0, values[0], 1
-                elif len(values) == 2:
-                    start, stop, step = values[0], values[1], 1
-                else:
-                    start, stop, step = values
-                iterations = len(range(start, stop, step)) if step else 10_000
-                if iterations > 64:
-                    issues.append(_line_issue(
-                        "LOOP_LIMIT_EXCEEDED",
-                        f"Effect loops are limited to 64 iterations; this loop has {iterations}.",
-                        node,
-                        kernel,
-                    ))
+        _append_forbidden_node_issue(node, kernel, issues)
+        _append_loop_issue(node, kernel, issues)
 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
             if safe_mode:
@@ -185,63 +288,22 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
                     hint="Use diagnostics or explicitly enable Expert mode for local debugging.",
                 ))
 
-        if isinstance(node, ast.Attribute):
-            allowed_module = isinstance(node.value, ast.Name) and node.value.id in {"wp", "C"}
-            if not allowed_module:
-                issues.append(_line_issue(
-                    "ATTRIBUTE_ACCESS_FORBIDDEN",
-                    "Attribute access is allowed only on wp.* and C.*.",
-                    node,
-                    kernel,
-                ))
-            elif isinstance(node.value, ast.Name) and node.value.id == "wp":
-                try:
-                    import warp as _wp
-                except ModuleNotFoundError:
-                    _wp = None
-                if _wp is not None and not hasattr(_wp, node.attr):
-                    issues.append(_line_issue(
-                        "UNKNOWN_WARP_SYMBOL",
-                        f"Warp has no public symbol wp.{node.attr}.",
-                        node,
-                        kernel,
-                        hint="Choose a function listed in the Warp Code API browser.",
-                    ))
-
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id not in allowed and node.id not in assigned:
-                close = difflib.get_close_matches(node.id, known, n=1, cutoff=0.6)
-                hint = f"Did you mean {close[0]!r}?" if close else ""
-                issues.append(_line_issue(
-                    "UNKNOWN_NAME",
-                    f"Unknown name {node.id!r}.",
-                    node,
-                    kernel,
-                    hint=hint,
-                ))
-
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            binding = binding_map.get(node.value.id)
-            if binding is None:
-                continue
-            spec = FIELD_SPECS[binding.field]
-            if safe_mode and binding.access not in {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}:
-                if not _same_index(node.slice, spec.current_index):
-                    issues.append(_line_issue(
-                        "NON_CURRENT_ELEMENT_ACCESS",
-                        f"Safe mode requires {binding.field}[{spec.current_index}].",
-                        node,
-                        kernel,
-                        hint="Use the current element index or switch to reviewed Expert access.",
-                    ))
-            is_write = isinstance(node.ctx, ast.Store)
-            if is_write and binding.access is FieldAccess.READ:
-                issues.append(_line_issue(
-                    "WRITE_REQUIRES_PERMISSION",
-                    f"Field {binding.field!r} is declared READ-only.",
-                    node,
-                    kernel,
-                ))
+        _append_attribute_issues(node, kernel, issues)
+        _append_name_issues(
+            node,
+            kernel,
+            issues,
+            allowed=allowed,
+            assigned=assigned,
+            known=known,
+        )
+        _append_field_access_issues(
+            node,
+            kernel,
+            issues,
+            safe_mode=safe_mode,
+            binding_map=binding_map,
+        )
 
     return issues
 
