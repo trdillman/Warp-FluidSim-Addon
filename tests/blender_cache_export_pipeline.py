@@ -229,8 +229,10 @@ def main():
                 "solver_whitewater": solver_whitewater,
                 "cache_counts": cache.authoritative_payload_counts(payload),
                 "whitewater_required": int(payload["whitewater_required"]),
+                "whitewater_available": int(payload["whitewater_available"]),
                 "whitewater_admitted": int(payload["whitewater_admitted"]),
                 "whitewater_dropped": int(payload["whitewater_dropped"]),
+                "whitewater_policy": str(payload["whitewater_policy"]),
                 "whitewater_status": str(payload["whitewater_status"]),
             })
             return result
@@ -427,14 +429,27 @@ def main():
                      for item in first_write + second_write)),
             json.dumps(count_evidence, sort_keys=True),
         )
+
+        def whitewater_admission_is_coherent(observation):
+            required = observation["whitewater_required"]
+            available = observation["whitewater_available"]
+            admitted = observation["whitewater_admitted"]
+            dropped = observation["whitewater_dropped"]
+            status = observation["whitewater_status"]
+            return bool(
+                observation["whitewater_policy"]
+                == "FIXED_CAPACITY_DETERMINISTIC_DROPS"
+                and min(required, available, admitted, dropped) >= 0
+                and required == admitted + dropped
+                and admitted <= available
+                and ((dropped == 0 and status == "OK")
+                     or (dropped > 0 and status == "CAPACITY_EXHAUSTED"))
+            )
+
         check(
             "every production write records coherent whitewater admission state",
-            all(
-                item["whitewater_status"] == "OK"
-                and item["whitewater_required"]
-                == item["whitewater_admitted"] + item["whitewater_dropped"]
-                for item in first_write + second_write
-            ),
+            all(whitewater_admission_is_coherent(item)
+                for item in first_write + second_write),
             json.dumps(count_evidence, sort_keys=True),
         )
         sequential_control_flow = bool(
