@@ -17,6 +17,11 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from tools.repo_addon_loader import enable_repo_addon
+from tools.adhesive_whitewater_calibration import (
+    CALENDER_WW_ACTIVATION_DEADLINE,
+    calender_whitewater_calibration,
+    calender_whitewater_population_is_valid,
+)
 
 DEMOS = os.path.join(REPO, "demos")
 SCENES = (
@@ -64,7 +69,10 @@ WHITEWATER_ACTIVATION_FRAMES = {
     "dam_break": 32,          # first live whitewater at frame 16
     "paddle_stir": 32,        # frame 15 (needs the keyframed paddle moving)
     "crown_splash": 12,       # frame 3 on reopen (4-5 in the build run)
-    "adhesive_calender": 250,  # its whole simulated timeline
+    # Three fresh production-density reopens first emitted at frame 30; 64
+    # keeps slightly more than 2x margin without masking a broken setup behind
+    # the full 250-frame timeline.
+    "adhesive_calender": CALENDER_WW_ACTIVATION_DEADLINE,
 }
 
 
@@ -118,6 +126,10 @@ def check_whitewater_reachable(name):
         "emission_rate": float(settings.ww_emission_rate),
         "peak_churn": 0.0,
         "first_live_frame": None,
+        "peak_live_count": 0,
+        "liquid_count_at_peak": 0,
+        "peak_population_fraction": 0.0,
+        "max_dropped": 0,
     }
     if window is None:
         report["error"] = ("whitewater_enabled but no WHITEWATER_ACTIVATION_FRAMES "
@@ -127,6 +139,8 @@ def check_whitewater_reachable(name):
         report["error"] = "saved scene is not in Live mode"
         return False, report
     applied_ok = False
+    calibration_ok = name != "adhesive_calender"
+    population_ok = name != "adhesive_calender"
     try:
         for frame in range(scene.frame_start + 1, scene.frame_start + window + 1):
             scene.frame_set(frame)
@@ -136,9 +150,19 @@ def check_whitewater_reachable(name):
                 break
             report["peak_churn"] = max(
                 report["peak_churn"], float(sess.solver.churn.data.numpy().max()))
-            if int(sess.frame_stats[-1].get("whitewaterParticles") or 0) > 0:
+            stats = sess.frame_stats[-1]
+            whitewater_count = int(stats.get("whitewaterParticles") or 0)
+            liquid_count = int(stats.get("activeParticles") or 0)
+            report["max_dropped"] = max(
+                report["max_dropped"],
+                int(stats.get("whitewaterDropped") or 0),
+            )
+            if whitewater_count > report["peak_live_count"]:
+                report["peak_live_count"] = whitewater_count
+                report["liquid_count_at_peak"] = liquid_count
+            if (report["first_live_frame"] is None
+                    and whitewater_count > 0):
                 report["first_live_frame"] = frame
-                break
         sess = scene_bridge.session()
         if sess.active:
             applied = sess.solver.settings
@@ -146,14 +170,62 @@ def check_whitewater_reachable(name):
                 applied.whitewater_enabled
                 and abs(applied.ww_churn_threshold - settings.ww_churn_threshold) < 1.0e-6
                 and abs(applied.ww_emission_rate - settings.ww_emission_rate) < 1.0e-6
+                and abs(applied.ww_min_speed - settings.ww_min_speed) < 1.0e-6
                 and abs(applied.churn_gain - settings.ww_churn_gain) < 1.0e-6)
             report["applied_matches_authored"] = applied_ok
+            if name == "adhesive_calender":
+                roll_fields = [
+                    obj.field for obj in scene.objects
+                    if obj.name in {
+                        "Upper Roll Surface Velocity",
+                        "Lower Roll Surface Velocity",
+                    }
+                    and getattr(getattr(obj, "field", None), "type", "NONE")
+                    == "FLUID_FLOW"
+                ]
+                expected = [
+                    calender_whitewater_calibration(
+                        settings.voxel_size,
+                        roll_strength=field.strength,
+                        roll_flow=field.flow,
+                    )
+                    for field in roll_fields
+                ]
+                calibration_ok = bool(
+                    len(expected) == 2
+                    and all(
+                        abs(item.churn_threshold
+                            - settings.ww_churn_threshold) < 1.0e-6
+                        and abs(item.emission_rate
+                                - settings.ww_emission_rate) < 1.0e-6
+                        and abs(item.min_speed
+                                - settings.ww_min_speed) < 1.0e-6
+                        for item in expected
+                    )
+                )
+                population_ok = calender_whitewater_population_is_valid(
+                    report["peak_live_count"],
+                    report["liquid_count_at_peak"],
+                )
+                if report["liquid_count_at_peak"] > 0:
+                    report["peak_population_fraction"] = (
+                        report["peak_live_count"]
+                        / report["liquid_count_at_peak"])
+                report["calibration_matches_scene"] = calibration_ok
+                report["population_in_envelope"] = population_ok
+                report["zero_capacity_drops"] = report["max_dropped"] == 0
     except Exception as exc:  # noqa: BLE001
         report["error"] = repr(exc)
     finally:
         scene.fluidsim.live = False
         bpy.ops.fluidsim.release()
-    return applied_ok and report["first_live_frame"] is not None, report
+    return bool(
+        applied_ok
+        and report["first_live_frame"] is not None
+        and calibration_ok
+        and population_ok
+        and report["max_dropped"] == 0
+    ), report
 
 
 def point_count(obj):

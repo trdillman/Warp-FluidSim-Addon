@@ -137,7 +137,12 @@ SETTINGS_CLASSES = ("FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain")
 
 
 def annotated_fields():
-    """Every annotated property on the two settings groups, in source order."""
+    """Unique annotated properties on both settings groups, in source order.
+
+    Migration metadata such as ``schema_version`` is intentionally declared on
+    both groups. The ownership map is keyed by setting name, so shared
+    declarations contribute one row whose access evidence is aggregated.
+    """
     path = os.path.join(PKG_ROOT, "properties.py")
     with open(path, encoding="utf-8") as handle:
         tree = ast.parse(handle.read(), filename=path)
@@ -145,12 +150,13 @@ def annotated_fields():
         node.name: node for node in ast.walk(tree)
         if isinstance(node, ast.ClassDef) and node.name in SETTINGS_CLASSES
     }
-    return [
+    fields = [
         node.target.id
         for name in SETTINGS_CLASSES
         for node in groups[name].body
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     ]
+    return list(dict.fromkeys(fields))
 
 
 # --------------------------------------------------------------------------
