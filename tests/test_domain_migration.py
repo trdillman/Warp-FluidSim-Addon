@@ -8,13 +8,14 @@ import pytest
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 
 
-def test_split_groups_are_disjoint_and_register_the_domain_pointer(monkeypatch):
+def test_split_groups_overlap_only_on_schema_and_register_domain_pointer(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
     scene_fields = set(properties.FLUIDSIM_PG_scene.__annotations__)
     domain_fields = set(properties.FLUIDSIM_PG_domain.__annotations__)
-    assert not scene_fields & domain_fields                 # no field on both groups
+    assert scene_fields & domain_fields == {"schema_version"}
     assert {"schema_version", "domain_object"} <= scene_fields
+    assert "domain_object" not in domain_fields
     # The legacy union is exactly the pre-split field set, used only by migration.
     legacy_fields = set(properties.FLUIDSIM_PG_legacy_settings.__annotations__)
     assert legacy_fields == scene_fields | domain_fields
@@ -44,7 +45,7 @@ def test_migration_moves_the_domain_group_fields(monkeypatch):
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
     names = set(migration.migrated_field_names(migration._domain_settings_cls()))
-    assert names == set(properties.FLUIDSIM_PG_domain.__annotations__)
+    assert names == set(properties.FLUIDSIM_PG_domain.__annotations__) - {"schema_version"}
     # Scene-owned settings stay where they are.
     assert "quality" not in names and "ui_mode" not in names
 
@@ -89,16 +90,31 @@ def test_migration_moves_settings_once_and_never_re_triggers(monkeypatch):
     monkeypatch.setattr(migration, "migrated_field_names",
                         lambda _cls: ("voxel_size", "max_particles"))
 
-    target = SimpleNamespace(fluidsim_domain=SimpleNamespace())
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+    stamp_order = []
+
+    class _StampedGroup(SimpleNamespace):
+        def __init__(self, label, **values):
+            object.__setattr__(self, "_label", label)
+            super().__init__(**values)
+
+        def __setattr__(self, name, value):
+            if name == "schema_version":
+                stamp_order.append(self._label)
+            super().__setattr__(name, value)
+
+    target = SimpleNamespace(
+        fluidsim_domain=_StampedGroup("target", schema_version=0))
+    scene = SimpleNamespace(fluidsim=_StampedGroup(
+        "source",
         schema_version=0, voxel_size=0.05, max_particles=2_000_000))
+    stamp_order.clear()
 
     assert migration.migrate_domain_settings_schema(scene, target) is True
     assert (target.fluidsim_domain.voxel_size,
             target.fluidsim_domain.max_particles) == (0.05, 2_000_000)
-    # The guard lives only on the scene group; the domain group has no such field.
-    assert not hasattr(target.fluidsim_domain, "schema_version")
-    assert scene.fluidsim.schema_version == 1        # guard stamped LAST
+    assert target.fluidsim_domain.schema_version == 1
+    assert scene.fluidsim.schema_version == 1
+    assert stamp_order == ["target", "source"]       # source guard stamped LAST
 
     # second run on the same scene is a no-op
     assert migration.migrate_domain_settings_schema(scene, target) is False
@@ -208,6 +224,7 @@ def test_load_post_migrates_every_scene_and_registration_is_idempotent(monkeypat
     assert events[1:-1] == scenes
     for scene in scenes:
         assert scene._domain.fluidsim_domain.voxel_size == scene.fluidsim.voxel_size
+        assert scene._domain.fluidsim_domain.schema_version == 1
         assert scene.fluidsim.schema_version == 1
 
     # With nothing left to migrate the pointer is never rebound.

@@ -6,10 +6,10 @@ Scripts two pre-migration (``schema_version == 0``) scenes from a v0 template �
 one with ``fluidsim.domain_object`` already set (the resolve branch of
 ``_resolve_or_create_domain``) and one unset (the create/designate branch that
 spec §9 requires) — each carrying distinctive scalar/enum/vector values plus a
-material and an image pointer (so the pointer path from Issue 3 is exercised).
-Each fixture is saved, reopened so the ``load_post`` migration handler runs, and
-asserted: every migrated field (scalars AND the two datablock pointers) landed
-on ``obj.fluidsim_domain`` with identical values and ``schema_version == 1``.
+material and an image pointer. Each fixture is saved, reopened so the
+``load_post`` migration handler runs, and asserted: every domain-owned field
+(scalars and the image pointer) landed on ``obj.fluidsim_domain`` with identical
+values and ``schema_version == 1`` while scene-owned state stayed in place.
 The migrated state is then saved and reopened to prove the guard makes a second
 load a no-op (no duplicate domain, values and schema unchanged).
 """
@@ -28,8 +28,8 @@ from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
 
 FAILURES = []
 
-# Distinctive, non-default values spanning float / int / bool / vector / enum,
-# so a migration that silently keeps target defaults is caught.
+# Distinctive, non-default domain values spanning float / int / bool / vector /
+# enum, so a migration that silently keeps target defaults is caught.
 DISTINCTIVE = {
     "voxel_size": 0.037,
     "max_particles": 1_234_567,
@@ -38,11 +38,12 @@ DISTINCTIVE = {
     "particles_per_voxel": 12,
     "directional_force": (0.1, 0.2, 0.3),
     "height_back_mode": "FLAT",
-    # ``live`` carries an RNA update callback that spawns a Solver Session.
-    # It MUST migrate as a plain value: the copy fires the callback in real
-    # Blender, so a non-suppressed copy would auto-start a solver mid-load.
-    "live": True,
 }
+
+# ``live`` is scene-owned and must survive migration in place.  Author its
+# backing value without firing the user-action callback while constructing the
+# pre-migration fixture.
+SCENE_LIVE = True
 
 
 def check(name, cond, detail=""):
@@ -69,23 +70,37 @@ def norm(value):
 
 def author_v0_scene(with_domain):
     """Rebuild the current scene as a pre-migration (schema 0) template."""
+    from fluidSim_warp_blender51 import properties
+
     scene = bpy.context.scene
+    scene.fluidsim.domain_object = None
     for obj in list(scene.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    fs = scene.fluidsim
-    fs.domain_object = None
-    fs.schema_version = 0
-    for name, value in DISTINCTIVE.items():
-        setattr(fs, name, value)
     material = bpy.data.materials.new("Migration Surface Mat")
     image = bpy.data.images.new("Migration Height Profile", width=2, height=2)
-    fs.surface_material = material
-    fs.height_profile_image = image
+    domain = None
     if with_domain:
         mesh = bpy.data.meshes.new("Preset Domain")
         domain = bpy.data.objects.new("Preset Domain", mesh)
         scene.collection.objects.link(domain)
+
+    # A real v0 file was saved while Scene.fluidsim used the pre-split union
+    # class. Rebind to that class while authoring, then restore the current
+    # narrow scene binding before the save/reopen round trip.
+    with properties.legacy_scene_settings():
+        fs = scene.fluidsim
         fs.domain_object = domain
+        fs.schema_version = 0
+        for name, value in DISTINCTIVE.items():
+            setattr(fs, name, value)
+        fs.surface_material = material
+        fs.height_profile_image = image
+        fs["live"] = SCENE_LIVE
+
+    # Reacquire after the pointer type is restored; retaining the legacy group
+    # instance here would make the fixture unlike the add-on's normal runtime.
+    fs = scene.fluidsim
+    assert fs.live is SCENE_LIVE
     return scene, material.name, image.name
 
 
@@ -104,6 +119,8 @@ def run_fixture(label, with_domain, tmpdir):
     _scene, material_name, image_name = author_v0_scene(with_domain)
     check(f"{label}: authored schema_version == 0",
           bpy.context.scene.fluidsim.schema_version == 0)
+    check(f"{label}: narrow scene binding restored before save",
+          not hasattr(bpy.context.scene.fluidsim, "voxel_size"))
     bpy.ops.wm.save_as_mainfile(filepath=v0_path)
 
     # -- reopen: the persistent load_post migration handler runs -------------
@@ -112,12 +129,16 @@ def run_fixture(label, with_domain, tmpdir):
     fs = scene.fluidsim
     check(f"{label}: source guard stamped 1", fs.schema_version == 1,
           fs.schema_version)
+    check(f"{label}: scene-owned live preserved in place",
+          fs.live is SCENE_LIVE, fs.live)
+    check(f"{label}: scene-owned surface material preserved in place",
+          fs.surface_material is not None
+          and fs.surface_material.name == material_name,
+          getattr(fs.surface_material, "name", None))
 
     # Regression (load semantics): migration is state restoration, not a user
-    # action. Copying ``live=True`` fires its RNA update callback in real
-    # Blender; without suppression that callback auto-starts a Solver Session
-    # mid-load, before object transforms are evaluated, binding the scene to a
-    # bogus unit-cube domain. Opening a file must never leave a live solver.
+    # action. ``live`` stays on the scene and loading its true value must not
+    # invoke the user-action callback or auto-start a Solver Session mid-load.
     from fluidSim_warp_blender51.blender import scene_bridge
     sess = scene_bridge.session()
     check(f"{label}: migration left no active session (side-effect-free copy)",
@@ -156,22 +177,25 @@ def run_fixture(label, with_domain, tmpdir):
     target = fs.domain_object.fluidsim_domain
     check(f"{label}: target schema_version == 1", target.schema_version == 1,
           target.schema_version)
+    check(f"{label}: scene-owned live was not added to the domain",
+          not hasattr(target, "live"))
 
     for name, value in DISTINCTIVE.items():
         check(f"{label}: scalar field {name!r} migrated",
               norm(getattr(target, name)) == norm(value),
               f"{norm(getattr(target, name))} != {norm(value)}")
-    check(f"{label}: material pointer migrated (Issue 3)",
-          target.surface_material is not None
-          and target.surface_material.name == material_name,
-          getattr(target.surface_material, "name", None))
-    check(f"{label}: image pointer migrated (Issue 3)",
+    check(f"{label}: domain-owned image pointer migrated (Issue 3)",
           target.height_profile_image is not None
           and target.height_profile_image.name == image_name,
           getattr(target.height_profile_image, "name", None))
 
-    mismatches = [name for name in migrated_field_names(type(fs))
-                  if norm(getattr(fs, name)) != norm(getattr(target, name))]
+    from fluidSim_warp_blender51 import properties
+    with properties.legacy_scene_settings():
+        source = scene.fluidsim
+        mismatches = [
+            name for name in migrated_field_names(type(target))
+            if norm(getattr(source, name)) != norm(getattr(target, name))
+        ]
     check(f"{label}: every migrated field identical to source mirror",
           not mismatches, mismatches)
 

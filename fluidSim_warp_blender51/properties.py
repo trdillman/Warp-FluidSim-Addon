@@ -780,9 +780,10 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 
     Interface mode, the Quality tier, the domain designation, playback and
     cache plumbing, viewport/output presentation, and the read-only status
-    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. The two
-    classes are disjoint, so reading a domain setting off ``scene.fluidsim``
-    raises instead of returning a stale value. The partition follows
+    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. Apart from
+    their migration stamps, the two classes are disjoint, so reading a domain
+    setting off ``scene.fluidsim`` raises instead of returning a stale value.
+    The partition follows
     ``pending_settings.setting_owner`` and is pinned by
     tests/test_pending_settings_registry.py.
     """
@@ -1145,6 +1146,10 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     the production attribute inventory. Read these through
     ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
     """
+
+    # Completion stamp for the object-owned domain schema. Version zero is the
+    # safe default for ordinary objects and for domains awaiting migration.
+    schema_version: IntProperty(default=0, options={"HIDDEN"})
 
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
