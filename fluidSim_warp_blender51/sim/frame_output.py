@@ -495,6 +495,117 @@ class HostFrame:
             raise ValueError(f"unsupported whitewater attribute {key!r}")
         return np.ascontiguousarray(values[::stride])
 
+    def _surface_output_attributes(
+        self,
+        keys,
+        *,
+        positions=None,
+    ) -> dict[str, np.ndarray]:
+        """Return enabled surface channels with nearest-transfer caching."""
+        target_source = self.surface_mesh[0] if positions is None else positions
+        targets = np.asarray(
+            target_source, dtype=np.float32
+        ).reshape((-1, 3))
+        count = len(targets)
+        velocity_keys = frozenset({"velocity", "speed", "motion"})
+        nearest_keys = [key for key in keys if key not in velocity_keys]
+        surface_cache_key = None
+        if nearest_keys:
+            target_pointer = int(targets.__array_interface__["data"][0])
+            surface_cache_key = (
+                "surface_attributes",
+                tuple(keys),
+                id(target_source),
+                tuple(targets.shape),
+                target_pointer,
+                float(getattr(self.solver.settings, "frame_rate", 0.0)),
+                float(getattr(self.solver.settings, "time_scale", 0.0)),
+            )
+            cached = self._values.get(surface_cache_key)
+            if cached is not None and cached[0] is target_source:
+                return cached[1]
+        surface_velocity = (
+            self.surface_velocity(targets)
+            if velocity_keys.intersection(keys) else None)
+        nearest = None
+        source_positions = None
+        gpu_transfer = None
+        if count and nearest_keys:
+            gpu_transfer = self._gpu_surface_transfer()
+            if gpu_transfer is not None:
+                if not np.all(np.isfinite(targets)):
+                    raise ValueError(
+                        "nearest-transfer positions must be finite"
+                    )
+                live_count = self._live_count("particles")
+                if live_count:
+                    gpu_transfer.prepare(
+                        self.solver.particles,
+                        live_count,
+                        max(
+                            float(self.solver.settings.voxel_size) * 2.0,
+                            1.0e-5,
+                        ),
+                    )
+                    gpu_transfer.nearest_indices(
+                        self._surface_targets_device(
+                            target_source, targets
+                        ),
+                        count,
+                    )
+                else:
+                    gpu_transfer = None
+        values = {}
+        for key in keys:
+            if key == "velocity":
+                value = surface_velocity
+            elif key == "speed":
+                value = speed_from_velocity(surface_velocity)
+            elif key == "motion":
+                value = motion_from_velocity(
+                    surface_velocity,
+                    frame_rate=float(self.solver.settings.frame_rate),
+                    time_scale=float(self.solver.settings.time_scale),
+                )
+            else:
+                if gpu_transfer is not None:
+                    gpu_transfer.gather(
+                        key,
+                        self.particle_attribute_device(key),
+                        count,
+                    )
+                    value = gpu_transfer.readback(key, count)
+                    _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                elif source_positions is None:
+                    source_positions = self.positions
+                    if len(source_positions):
+                        nearest = nearest_sample_indices(
+                            targets,
+                            source_positions,
+                            cell_size=max(
+                                float(self.solver.settings.voxel_size) * 2.0,
+                                1.0e-5,
+                            ),
+                        )
+                if gpu_transfer is None:
+                    if nearest is None:
+                        spec = ATTRIBUTE_SPECS[key]
+                        value = np.zeros(
+                            (count,) if spec.components == 1
+                            else (count, spec.components),
+                            dtype=spec.numpy_dtype,
+                        )
+                    else:
+                        value = self.particle_attribute(key)[nearest]
+            values[key] = np.ascontiguousarray(value)
+        result = {
+            key: validate_attribute_values(ATTRIBUTE_SPECS[key], value, count)
+            for key, value in values.items()
+        }
+        if surface_cache_key is not None:
+            self._values[surface_cache_key] = (target_source, result)
+        return result
+
     def output_attributes(
         self,
         settings,
@@ -508,7 +619,6 @@ class HostFrame:
         keys = enabled_attribute_keys(settings, output_kind)
         if not keys:
             return {}
-        surface_cache_key = None
         if output_kind == "particles":
             count = len(self.positions_strided(stride))
             values = {
@@ -522,109 +632,13 @@ class HostFrame:
                 for key in keys
             }
         elif output_kind == "surface":
-            target_source = self.surface_mesh[0] if positions is None else positions
-            targets = np.asarray(
-                target_source, dtype=np.float32
-            ).reshape((-1, 3))
-            count = len(targets)
-            velocity_keys = frozenset({"velocity", "speed", "motion"})
-            nearest_keys = [key for key in keys if key not in velocity_keys]
-            if nearest_keys:
-                target_pointer = int(targets.__array_interface__["data"][0])
-                surface_cache_key = (
-                    "surface_attributes",
-                    tuple(keys),
-                    id(target_source),
-                    tuple(targets.shape),
-                    target_pointer,
-                    float(getattr(self.solver.settings, "frame_rate", 0.0)),
-                    float(getattr(self.solver.settings, "time_scale", 0.0)),
-                )
-                cached = self._values.get(surface_cache_key)
-                if cached is not None and cached[0] is target_source:
-                    return cached[1]
-            surface_velocity = (
-                self.surface_velocity(targets)
-                if velocity_keys.intersection(keys) else None)
-            nearest = None
-            source_positions = None
-            gpu_transfer = None
-            if count and nearest_keys:
-                gpu_transfer = self._gpu_surface_transfer()
-                if gpu_transfer is not None:
-                    if not np.all(np.isfinite(targets)):
-                        raise ValueError(
-                            "nearest-transfer positions must be finite"
-                        )
-                    live_count = self._live_count("particles")
-                    if live_count:
-                        gpu_transfer.prepare(
-                            self.solver.particles,
-                            live_count,
-                            max(
-                                float(self.solver.settings.voxel_size) * 2.0,
-                                1.0e-5,
-                            ),
-                        )
-                        gpu_transfer.nearest_indices(
-                            self._surface_targets_device(
-                                target_source, targets
-                            ),
-                            count,
-                        )
-                    else:
-                        gpu_transfer = None
-            values = {}
-            for key in keys:
-                if key == "velocity":
-                    value = surface_velocity
-                elif key == "speed":
-                    value = speed_from_velocity(surface_velocity)
-                elif key == "motion":
-                    value = motion_from_velocity(
-                        surface_velocity,
-                        frame_rate=float(self.solver.settings.frame_rate),
-                        time_scale=float(self.solver.settings.time_scale),
-                    )
-                else:
-                    if gpu_transfer is not None:
-                        gpu_transfer.gather(
-                            key,
-                            self.particle_attribute_device(key),
-                            count,
-                        )
-                        value = gpu_transfer.readback(key, count)
-                        _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
-                    elif source_positions is None:
-                        source_positions = self.positions
-                        if len(source_positions):
-                            nearest = nearest_sample_indices(
-                                targets,
-                                source_positions,
-                                cell_size=max(
-                                    float(self.solver.settings.voxel_size) * 2.0,
-                                    1.0e-5,
-                                ),
-                            )
-                    if gpu_transfer is None:
-                        if nearest is None:
-                            spec = ATTRIBUTE_SPECS[key]
-                            value = np.zeros(
-                                (count,) if spec.components == 1
-                                else (count, spec.components),
-                                dtype=spec.numpy_dtype,
-                            )
-                        else:
-                            value = self.particle_attribute(key)[nearest]
-                values[key] = np.ascontiguousarray(value)
+            return self._surface_output_attributes(keys, positions=positions)
         else:
             raise ValueError(f"unknown output kind {output_kind!r}")
         result = {
             key: validate_attribute_values(ATTRIBUTE_SPECS[key], value, count)
             for key, value in values.items()
         }
-        if surface_cache_key is not None:
-            self._values[surface_cache_key] = (target_source, result)
         return result
 
 

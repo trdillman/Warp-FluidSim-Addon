@@ -384,6 +384,7 @@ def test_opt_in_surface_particle_channels_share_one_gpu_nearest_map():
         attributes[key].tobytes() == repeated[key].tobytes()
         for key in attributes
     )
+    assert repeated is attributes
     assert frame.surface_attribute_transfer_counts() == {
         "sample_gathers": 1,
         "hash_grid_builds": 1,
