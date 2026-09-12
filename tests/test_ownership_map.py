@@ -107,6 +107,7 @@ def _fields_with(rows, verdict):
 
 def test_map_is_current():
     """The checked-in map matches what the generator produces right now."""
+    before = MAP_PATH.read_bytes()
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--check"],
         cwd=str(REPO_ROOT), capture_output=True, text=True,
@@ -115,6 +116,7 @@ def test_map_is_current():
         "docs/ownership-map.md is stale; regenerate with "
         f"`python tools/ownership_map.py`.\n{result.stdout}{result.stderr}"
     )
+    assert MAP_PATH.read_bytes() == before
 
 
 def test_map_covers_every_annotated_field_exactly_once():

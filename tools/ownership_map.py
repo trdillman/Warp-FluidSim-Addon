@@ -372,6 +372,104 @@ def _string_items(node):
     return ()
 
 
+def _classify_accesses(node, env, fields, table_names, func):
+    """Record field accesses represented by one call expression."""
+    name = _call_name(node)
+
+    # UI write: layout.prop(data, "field")
+    if name == "prop" and len(node.args) >= 2:
+        field = node.args[1]
+        if isinstance(field, ast.Constant) and field.value in fields:
+            kind = resolve_kind(node.args[0], env)
+            func.writes.append((field.value, kind, node.lineno, "prop"))
+
+    # UI write through the shared helpers
+    elif name in DRAW_HELPERS:
+        data_index, field_index, is_sequence = DRAW_HELPERS[name]
+        if len(node.args) > max(data_index, field_index):
+            kind = resolve_kind(node.args[data_index], env)
+            target = node.args[field_index]
+            names = (
+                _string_items(target) if is_sequence
+                else ((target.value,) if isinstance(target, ast.Constant)
+                      and isinstance(target.value, str) else ())
+            )
+            for field_name in names:
+                if field_name in fields:
+                    func.writes.append((field_name, kind, node.lineno, name))
+
+    # Read-only telemetry rendering
+    elif name in READOUT_HELPERS:
+        data_index, pairs_index = READOUT_HELPERS[name]
+        if len(node.args) > max(data_index, pairs_index):
+            kind = resolve_kind(node.args[data_index], env)
+            pairs = node.args[pairs_index]
+            if isinstance(pairs, (ast.Tuple, ast.List)):
+                for item in pairs.elts:
+                    head = (
+                        item.elts[0]
+                        if isinstance(item, (ast.Tuple, ast.List)) and item.elts
+                        else None
+                    )
+                    if isinstance(head, ast.Constant) and head.value in fields:
+                        func.reads.append((head.value, kind, item.lineno, True))
+
+    # Read: getattr(fs, "field", default) / hasattr(fs, name) and the
+    # table-driven forms getattr(fs, name) where `name` iterates a
+    # declared field table.
+    elif name in ("getattr", "hasattr") and len(node.args) >= 2:
+        key = node.args[1]
+        kind = resolve_kind(node.args[0], env)
+        if kind is not None:
+            defaulted = name == "getattr" and len(node.args) >= 3
+            if isinstance(key, ast.Constant) and key.value in fields:
+                func.reads.append((key.value, kind, node.lineno, defaulted))
+            else:
+                for field_name in table_names(key):
+                    func.reads.append(
+                        (field_name, kind, node.lineno, defaulted)
+                    )
+
+    # Write: setattr(fs, "field", value), including the table form.
+    elif name == "setattr" and len(node.args) >= 3:
+        key = node.args[1]
+        kind = resolve_kind(node.args[0], env)
+        if isinstance(key, ast.Constant) and key.value in fields:
+            func.writes.append((key.value, kind, node.lineno, "setattr"))
+        else:
+            for field_name in table_names(key):
+                func.writes.append(
+                    (field_name, kind, node.lineno, "setattr")
+                )
+
+
+def _record_outbound_call(node, env, fields, func):
+    """Record a call and the settings kinds or field names bound to it."""
+    name = _call_name(node)
+    if not name:
+        return
+
+    bound = {}
+    bound_names = {}
+    for index, arg in enumerate(node.args):
+        kind = resolve_kind(arg, env)
+        if kind is not None:
+            bound[index] = kind
+        if isinstance(arg, ast.Constant) and arg.value in fields:
+            bound_names[index] = arg.value
+    for keyword in node.keywords:
+        kind = resolve_kind(keyword.value, env)
+        if kind is not None and keyword.arg:
+            bound[keyword.arg] = kind
+        if (keyword.arg
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value in fields):
+            bound_names[keyword.arg] = keyword.value.value
+    func.calls.append((name, bound))
+    if bound_names:
+        func.call_names.append((name, bound_names))
+
+
 def analyze_function(func, fields, module=None):
     """Recompute a function's env, writes, reads and outbound call bindings."""
     env = dict(func.bindings)
@@ -402,102 +500,10 @@ def analyze_function(func, fields, module=None):
 
     for node in ast.walk(func.node):
         if isinstance(node, ast.Call):
-            name = _call_name(node)
-
-            # UI write: layout.prop(data, "field")
-            if name == "prop" and len(node.args) >= 2:
-                field = node.args[1]
-                if isinstance(field, ast.Constant) and field.value in fields:
-                    kind = resolve_kind(node.args[0], env)
-                    func.writes.append((field.value, kind, node.lineno, "prop"))
-
-            # UI write through the shared helpers
-            elif name in DRAW_HELPERS:
-                data_index, field_index, is_sequence = DRAW_HELPERS[name]
-                if len(node.args) > max(data_index, field_index):
-                    kind = resolve_kind(node.args[data_index], env)
-                    target = node.args[field_index]
-                    names = (
-                        _string_items(target) if is_sequence
-                        else ((target.value,) if isinstance(target, ast.Constant)
-                              and isinstance(target.value, str) else ())
-                    )
-                    for field_name in names:
-                        if field_name in fields:
-                            func.writes.append(
-                                (field_name, kind, node.lineno, name)
-                            )
-
-            # Read-only telemetry rendering
-            elif name in READOUT_HELPERS:
-                data_index, pairs_index = READOUT_HELPERS[name]
-                if len(node.args) > max(data_index, pairs_index):
-                    kind = resolve_kind(node.args[data_index], env)
-                    pairs = node.args[pairs_index]
-                    if isinstance(pairs, (ast.Tuple, ast.List)):
-                        for item in pairs.elts:
-                            head = (
-                                item.elts[0]
-                                if isinstance(item, (ast.Tuple, ast.List)) and item.elts
-                                else None
-                            )
-                            if (isinstance(head, ast.Constant)
-                                    and head.value in fields):
-                                func.reads.append(
-                                    (head.value, kind, item.lineno, True)
-                                )
-
-            # Read: getattr(fs, "field", default) / hasattr(fs, name) and the
-            # table-driven forms getattr(fs, name) where `name` iterates a
-            # declared field table.
-            elif name in ("getattr", "hasattr") and len(node.args) >= 2:
-                key = node.args[1]
-                kind = resolve_kind(node.args[0], env)
-                if kind is not None:
-                    defaulted = name == "getattr" and len(node.args) >= 3
-                    if isinstance(key, ast.Constant) and key.value in fields:
-                        func.reads.append(
-                            (key.value, kind, node.lineno, defaulted)
-                        )
-                    else:
-                        for field_name in table_names(key):
-                            func.reads.append(
-                                (field_name, kind, node.lineno, defaulted)
-                            )
-
-            # Write: setattr(fs, "field", value), including the table form.
-            elif name == "setattr" and len(node.args) >= 3:
-                key = node.args[1]
-                kind = resolve_kind(node.args[0], env)
-                if isinstance(key, ast.Constant) and key.value in fields:
-                    func.writes.append((key.value, kind, node.lineno, "setattr"))
-                else:
-                    for field_name in table_names(key):
-                        func.writes.append(
-                            (field_name, kind, node.lineno, "setattr")
-                        )
-
-            # Outbound call: propagate resolved kinds into the callee's params.
-            if name:
-                bound = {}
-                bound_names = {}
-                for index, arg in enumerate(node.args):
-                    kind = resolve_kind(arg, env)
-                    if kind is not None:
-                        bound[index] = kind
-                    if isinstance(arg, ast.Constant) and arg.value in fields:
-                        bound_names[index] = arg.value
-                for keyword in node.keywords:
-                    kind = resolve_kind(keyword.value, env)
-                    if kind is not None and keyword.arg:
-                        bound[keyword.arg] = kind
-                    if (keyword.arg
-                            and isinstance(keyword.value, ast.Constant)
-                            and keyword.value.value in fields):
-                        bound_names[keyword.arg] = keyword.value.value
-                func.calls.append((name, bound))
-                if bound_names:
-                    func.call_names.append((name, bound_names))
+            _classify_accesses(node, env, fields, table_names, func)
+            # Outbound recording is intentionally unconditional with respect
+            # to which access-classification branch matched above.
+            _record_outbound_call(node, env, fields, func)
 
         # Read: fs.field  (attribute load)
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
