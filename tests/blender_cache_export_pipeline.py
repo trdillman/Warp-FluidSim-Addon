@@ -126,6 +126,10 @@ def main():
     original_update_outputs = None
     try:
         check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+        from fluidSim_warp_blender51.blender import scene_bridge
+
+        ds = scene_bridge.active_domain_settings(scene)
+        check("active domain settings", ds is not None)
         # Give the short three-frame fixture an explicit energetic continuous
         # inflow so authoritative whitewater coverage cannot pass vacuously.
         source = next(
@@ -217,7 +221,7 @@ def main():
                     "surface_attribute": str(
                         fs.surface_attribute_mode),
                     "surface_cadence": int(
-                        fs.live_surface_publish_cadence),
+                        ds.live_surface_publish_cadence),
                 },
                 "solver_particles": solver_particles,
                 "solver_whitewater": solver_whitewater,
@@ -314,8 +318,10 @@ def main():
             check("cache frames differ over time", changed)
 
         first_metadata = cache.read_sequence_metadata(cache_dir)
-        # These are Output Publication policy only. A deterministic Production
-        # Cache Bake must neither consume them nor acquire published outputs.
+        # These are Output Publication policy only. Presentation remains on the
+        # scene while live surface cadence is owned by the designated domain.
+        # A deterministic Production Cache Bake must neither consume them nor
+        # acquire published outputs.
         fs.particle_display_fraction = 0.25
         fs.particle_display_scale = 2.5
         fs.show_particles = False
@@ -323,7 +329,7 @@ def main():
         fs.show_whitewater = True
         fs.particle_attribute_mode = "HEIGHT"
         fs.surface_attribute_mode = "SPEED"
-        fs.live_surface_publish_cadence = 7
+        ds.live_surface_publish_cadence = 7
         # Production Bake restores the pre-bake session state. Since this
         # fixture starts inactive, it must remain inactive between exports.
         from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -508,7 +514,7 @@ def main():
         fs.show_whitewater = False
         fs.particle_attribute_mode = "NONE"
         fs.surface_attribute_mode = "NONE"
-        fs.live_surface_publish_cadence = 1
+        ds.live_surface_publish_cadence = 1
 
         from fluidSim_warp_blender51.blender.scene_bridge import session
 
