@@ -2761,6 +2761,62 @@ def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
         assert cls.poll(adv) is True, cls.__name__
 
 
+def test_advanced_sim_panels_require_an_authoritative_domain(monkeypatch):
+    """Every simulation child owns its domain/Advanced visibility contract.
+
+    Blender normally combines a child panel with its parent's visibility, but
+    direct panel calls and the Physics-context mirror invoke each source
+    panel's own poll.  No child may therefore report itself visible when the
+    authoritative domain settings owner is absent.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    inactive = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(ui_mode="ADVANCED", domain_object=None)
+        )
+    )
+    domain_settings = _PermissiveSettings({})
+    active = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(
+                ui_mode="ADVANCED",
+                domain_object=SimpleNamespace(fluidsim_domain=domain_settings),
+            )
+        )
+    )
+    basic = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(
+                ui_mode="BASIC",
+                domain_object=active.scene.fluidsim.domain_object,
+            )
+        )
+    )
+    children = tuple(
+        cls for cls in ui_scene.SCENE_PANEL_CLASSES
+        if getattr(cls, "bl_parent_id", "") == "FLUIDSIM_PT_scene_simulation"
+    )
+
+    assert len(children) == 12
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(inactive) is False
+    assert all(cls.poll(inactive) is False for cls in children)
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(basic) is False
+    assert all(cls.poll(basic) is False for cls in children)
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(active) is True
+    assert all(cls.poll(active) is True for cls in children)
+    for cls in children:
+        panel = cls()
+        panel.layout = _Layout()
+        panel.draw(active)
+        assert panel.layout.prop_calls, f"{cls.__name__} drew no domain controls"
+        assert all(
+            call["data"] is domain_settings
+            for call in panel.layout.prop_calls
+        ), f"{cls.__name__} did not bind every control to the domain owner"
+
+
 def test_basic_front_door_and_surrogates_are_present(monkeypatch):
     """The Setup front door exposes the two-tier switch, and each gated feature
     keeps a single Basic surrogate so no capability is unreachable in Basic."""

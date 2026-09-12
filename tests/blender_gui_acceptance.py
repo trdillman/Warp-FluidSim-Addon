@@ -48,8 +48,13 @@ PANEL_IDS = [
     "FLUIDSIM_PT_physics_surface_output",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
     "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
-    "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_pressure",
-    "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_scene_surface",
+    "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_time",
+    "FLUIDSIM_PT_sim_gravity", "FLUIDSIM_PT_sim_pressure",
+    "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_sim_surface_tension",
+    "FLUIDSIM_PT_sim_color_mixing", "FLUIDSIM_PT_sim_relax",
+    "FLUIDSIM_PT_sim_limits", "FLUIDSIM_PT_sim_forces",
+    "FLUIDSIM_PT_sim_dissipation", "FLUIDSIM_PT_sim_attraction",
+    "FLUIDSIM_PT_sim_spacetime", "FLUIDSIM_PT_scene_surface",
     "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
     "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
     "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
@@ -437,6 +442,7 @@ def _run_phase(phase, scene):
         if domain_settings is None:
             raise RuntimeError(
                 "setup_scene did not designate an authoritative domain settings owner")
+        fs.ui_mode = "ADVANCED"
         domain_settings.voxel_size = 0.08
         domain_settings.max_particles = 500_000
         domain_settings.whitewater_enabled = True
