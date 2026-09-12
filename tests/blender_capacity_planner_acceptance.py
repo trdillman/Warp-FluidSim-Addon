@@ -186,27 +186,29 @@ def main():
     # Add-on UX: failed initialize warns without mutation; explicit approval
     # applies the preserve-simulation recommendation and retries successfully.
     scene = fresh_scene()
-    fs = scene.fluidsim
-    fs.voxel_size = 0.1
-    fs.leaf_capacity = 64
-    fs.max_particles = 1
-    fs.auto_grow_particles = False
-    fs.max_whitewater = 1
-    fs.particles_per_voxel = 8
-    fs.surface_enabled = False
-    fs.whitewater_enabled = False
     make_domain(scene, (-0.4, -0.4, 0.0), (0.4, 0.4, 0.8),
                 "Capacity Approval Domain")
+    from fluidSim_warp_blender51.blender import scene_bridge
+    domain_settings = scene_bridge.active_domain_settings(scene)
+    assert domain_settings is not None, (
+        "capacity acceptance requires a designated domain")
+    domain_settings.voxel_size = 0.1
+    domain_settings.leaf_capacity = 64
+    domain_settings.max_particles = 1
+    domain_settings.auto_grow_particles = False
+    domain_settings.max_whitewater = 1
+    domain_settings.particles_per_voxel = 8
+    domain_settings.surface_enabled = False
+    domain_settings.whitewater_enabled = False
     make_source_box(
         scene, (-0.3, -0.3, 0.1), (0.3, 0.3, 0.7),
         "Capacity Approval Source", emit_rate=8.0,
         emission_mode="INITIAL_FILL")
-    max_before = int(fs.max_particles)
+    max_before = int(domain_settings.max_particles)
     init_result = set(bpy.ops.fluidsim.initialize())
-    from fluidSim_warp_blender51.blender import scene_bridge
     addon_plan = scene_bridge.session().capacity_plan
     assert init_result == {"CANCELLED"}
-    assert int(fs.max_particles) == max_before
+    assert int(domain_settings.max_particles) == max_before
     assert not scene_bridge.session().active
     assert addon_plan.suggestions
     recommended = addon_plan.suggestions[0]
@@ -220,14 +222,14 @@ def main():
             scene_bridge.session().capacity_plan_signature_for_scene(scene)),
     ))
     assert approved_result == {"FINISHED"}
-    assert int(fs.max_particles) == required_particles
+    assert int(domain_settings.max_particles) == required_particles
     assert scene_bridge.session().active
     cases.append({
         "name": "approval_gated_preserve_simulation_retry",
         "initial_result": sorted(init_result),
         "approved_result": sorted(approved_result),
         "before": max_before,
-        "after": int(fs.max_particles),
+        "after": int(domain_settings.max_particles),
         "required": required_particles,
         "recommended_key": recommended.key,
     })
@@ -236,20 +238,20 @@ def main():
     # A Reinitialize warning must recheck its authored-reserve model even when
     # the owned runtime pool has grown far beyond it. Reset is the operation
     # that uses runtime capacity; suggestion approval here recreates the pool.
-    fs.max_particles = 1024
-    fs.auto_grow_particles = True
-    authored_reserve = int(fs.max_particles)
+    domain_settings.max_particles = 1024
+    domain_settings.auto_grow_particles = True
+    authored_reserve = int(domain_settings.max_particles)
     auto_result = set(bpy.ops.fluidsim.initialize())
     auto_session = scene_bridge.session()
     assert auto_result == {"FINISHED"}
     assert auto_session.active
-    assert int(fs.max_particles) == authored_reserve
+    assert int(domain_settings.max_particles) == authored_reserve
     growth = auto_session.solver.ensure_particle_capacity(65_536)
     assert growth.status in {"GROWN", "SUFFICIENT"}
     assert auto_session.solver.particles.capacity == 65_536
-    assert int(fs.max_particles) == authored_reserve
+    assert int(domain_settings.max_particles) == authored_reserve
 
-    fs.auto_grow_particles = False
+    domain_settings.auto_grow_particles = False
     blocked_result = set(bpy.ops.fluidsim.initialize())
     blocked_plan = auto_session.capacity_plan_for_scene(scene)
     assert blocked_result == {"CANCELLED"}
@@ -275,7 +277,8 @@ def main():
         expected_scene_signature=blocked_signature,
     ))
     assert approved_result == {"FINISHED"}
-    assert int(fs.max_particles) == int(refreshed_plan.particle_demand.value)
+    assert int(domain_settings.max_particles) == int(
+        refreshed_plan.particle_demand.value)
     cases.append({
         "name": "grown_pool_reinitialize_recheck_uses_authored_reserve",
         "initial_operator": sorted(auto_result),

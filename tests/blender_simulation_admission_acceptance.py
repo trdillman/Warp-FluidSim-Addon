@@ -26,19 +26,32 @@ def main():
     bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.8))
     bpy.context.object.name = "Admission Setup Source"
     check("setup", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    domain = fs.domain_object
+    check("authoritative domain present", domain is not None)
+    check(
+        "authoritative domain settings registered",
+        hasattr(domain, "fluidsim_domain"),
+    )
+    settings = active_domain_settings(scene)
+    check(
+        "authoritative domain settings active",
+        settings is not None,
+    )
     # Guided Setup applies its product preset; admission-specific authored
     # values belong after that transaction and before snapshot capture.
-    fs.voxel_size = 0.15
-    fs.max_particles = 20_000
-    fs.max_whitewater = 1
-    fs.whitewater_enabled = False
-    fs.surface_enabled = False
+    settings.voxel_size = 0.15
+    settings.max_particles = 20_000
+    settings.max_whitewater = 1
+    settings.whitewater_enabled = False
+    settings.surface_enabled = False
     fs.show_particles = True
     # Reproduce a legacy scene authored with the unsafe independent wall
     # switch disabled. Admission must normalize the runtime without mutating
     # the saved scene during preflight.
-    fs.open_boundaries = False
-    fs.domain_sdf_walls = False
+    settings.open_boundaries = False
+    settings.domain_sdf_walls = False
     bpy.ops.mesh.primitive_cube_add(
         size=0.5, location=(0.0, 0.0, -0.25))
     bpy.context.object.name = "Admission Collider"
@@ -59,8 +72,8 @@ def main():
     force.fluidsim.role = "FORCE"
     force.fluidsim.force_type = "DIRECTIONAL"
     force.fluidsim.force_strength = 0.1
-    fs.height_enabled = True
-    fs.height_base = 0.2
+    settings.height_enabled = True
+    settings.height_base = 0.2
     check("add custom effect",
           bpy.ops.fluidsim.effect_add(
               effect_id="fluidsim.vortex_force") == {"FINISHED"})
@@ -158,8 +171,8 @@ def main():
     check("active CUDA solver", sess.active and str(sess.solver.device).startswith("cuda"))
     check(
         "closed-domain wall invariant",
-        not fs.open_boundaries
-        and not fs.domain_sdf_walls
+        not settings.open_boundaries
+        and not settings.domain_sdf_walls
         and sess.solver.settings.domain_sdf_walls,
     )
     check("sources installed", installed.get("sources", 0) >= 1)
