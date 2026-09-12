@@ -79,28 +79,37 @@ def main():
           fs.liquid_view_mode == "SURFACE",
           fs.liquid_view_mode)
     fs.liquid_view_mode = "SURFACE"
-    fs.voxel_size = 0.08
-    fs.max_particles = 500_000
-    fs.whitewater_enabled = True
-    fs.profiling_enabled = True
     fs.show_particles = True
-    fs.directional_force = (0.0, 0.0, 0.1)
-    fs.omnidirectional_force_center = (0.0, 0.0, 1.0)
-    fs.omnidirectional_force_strength = 0.05
-    fs.omnidirectional_force_radius = 1.0
-    fs.force_diffusion = 0.05
-    fs.dissipation_enabled = True
-    fs.dissipation_attribute = "density"
-    fs.dissipation_rate = 0.1
-    fs.dissipation_target = 1.0
-    fs.attraction_enabled = True
-    fs.attraction_strength = 0.05
-    fs.attraction_max_distance = 0.5
 
     # -- quick setup ----------------------------------------------------------
     result = bpy.ops.fluidsim.setup_scene()
     check("setup_scene operator", result == {"FINISHED"})
     check("domain object assigned", fs.domain_object is not None)
+
+    from fluidSim_warp_blender51.blender import scene_bridge
+
+    domain_fs = scene_bridge.active_domain_settings(scene)
+    check(
+        "authoritative domain settings resolved",
+        domain_fs is not None and domain_fs.id_data == fs.domain_object,
+    )
+    domain_fs.voxel_size = 0.08
+    domain_fs.max_particles = 500_000
+    domain_fs.whitewater_enabled = True
+    domain_fs.profiling_enabled = True
+    domain_fs.directional_force = (0.0, 0.0, 0.1)
+    domain_fs.omnidirectional_force_center = (0.0, 0.0, 1.0)
+    domain_fs.omnidirectional_force_strength = 0.05
+    domain_fs.omnidirectional_force_radius = 1.0
+    domain_fs.force_diffusion = 0.05
+    domain_fs.dissipation_enabled = True
+    domain_fs.dissipation_attribute = "density"
+    domain_fs.dissipation_rate = 0.1
+    domain_fs.dissipation_target = 1.0
+    domain_fs.attraction_enabled = True
+    domain_fs.attraction_strength = 0.05
+    domain_fs.attraction_max_distance = 0.5
+
     src = next(
         (
             obj for obj in scene.objects
@@ -145,9 +154,7 @@ def main():
     result = bpy.ops.fluidsim.initialize()
     check("initialize operator", result == {"FINISHED"}, fs.status)
 
-    from fluidSim_warp_blender51.blender.scene_bridge import session
-
-    sess = session()
+    sess = scene_bridge.session()
     check("session active", sess.active)
     check("CUDA device", str(sess.solver.device).startswith("cuda"),
           str(sess.solver.device))
@@ -183,14 +190,14 @@ def main():
     surface_mat.diffuse_color = (0.9, 0.2, 0.05, 1.0)
     fs.surface_material = surface_mat
     fs.surface_attribute_mode = "NONE"
-    fs.particle_radius_scale = 1.6
-    fs.surface_dilate_iterations = 1
-    fs.surface_dilate_strength = 0.2
-    fs.surface_erode_iterations = 2
-    fs.surface_erode_strength = 0.35
-    fs.surface_smooth_type = "MEAN_CURVATURE_FLOW"
-    fs.surface_smooth_iterations = 2
-    fs.surface_smooth_strength = 0.45
+    domain_fs.particle_radius_scale = 1.6
+    domain_fs.surface_dilate_iterations = 1
+    domain_fs.surface_dilate_strength = 0.2
+    domain_fs.surface_erode_iterations = 2
+    domain_fs.surface_erode_strength = 0.35
+    domain_fs.surface_smooth_type = "MEAN_CURVATURE_FLOW"
+    domain_fs.surface_smooth_iterations = 2
+    domain_fs.surface_smooth_strength = 0.45
     check("realtime surface refresh keeps frame",
           sess.solver.frame == paused_frame,
           f"{paused_frame} -> {sess.solver.frame}")
@@ -221,14 +228,14 @@ def main():
               if surf and getattr(surf.data.color_attributes, "active_color", None) else ""))
 
     paused_frame = sess.solver.frame
-    fs.whitewater_enabled = False
+    domain_fs.whitewater_enabled = False
     check("realtime whitewater toggle keeps frame",
           sess.solver.frame == paused_frame,
           f"{paused_frame} -> {sess.solver.frame}")
     check("realtime whitewater setting applied",
           sess.solver.settings.whitewater_enabled is False,
           str(sess.solver.settings.whitewater_enabled))
-    fs.whitewater_enabled = True
+    domain_fs.whitewater_enabled = True
 
     parts = bpy.data.objects.get("FluidSim Particles")
     check("particles object exists", parts is not None,
