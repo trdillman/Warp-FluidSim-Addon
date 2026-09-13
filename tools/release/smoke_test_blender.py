@@ -244,9 +244,18 @@ def _owned_collection(parent, kind: str):
     return matches[0]
 
 
+def _domain_settings(module: str, scene):
+    scene_bridge = importlib.import_module(f"{module}.blender.scene_bridge")
+    domain_fs = scene_bridge.active_domain_settings(scene)
+    if domain_fs is None:
+        raise AssertionError("installed smoke scene has no designated domain settings")
+    return domain_fs
+
+
 def _assert_phase2_scene_state(module: str) -> dict[str, object]:
     scene = bpy.context.scene
     fs = scene.fluidsim
+    domain_fs = _domain_settings(module, scene)
     domain = fs.domain_object
     if domain is None or not domain.get("fluidsim_owned"):
         raise AssertionError("guided setup did not assign an owned domain")
@@ -292,11 +301,17 @@ def _assert_phase2_scene_state(module: str) -> dict[str, object]:
         raise AssertionError(f"guided setup did not attach current render nodes: {node_state}")
     if any(len(obj.modifiers) != 1 for obj in output_objects):
         raise AssertionError("guided setup did not attach exactly one render modifier per output")
-    if not fs.surface_attribute_velocity or not fs.surface_attribute_motion:
+    if (
+        not domain_fs.surface_attribute_velocity
+        or not domain_fs.surface_attribute_motion
+    ):
         raise AssertionError("default surface attributes were not registered")
-    if not fs.particles_attribute_age or not fs.particles_attribute_lifetime:
+    if (
+        not domain_fs.particles_attribute_age
+        or not domain_fs.particles_attribute_lifetime
+    ):
         raise AssertionError("default particle attributes were not registered")
-    if not fs.whitewater_attribute_type:
+    if not domain_fs.whitewater_attribute_type:
         raise AssertionError("mandatory whitewater type attribute was not registered")
     if fs.whitewater_output_mode != "COMBINED":
         raise AssertionError("guided setup did not preserve combined-preview compatibility")
@@ -380,10 +395,13 @@ def _assert_phase5_surface_tension(module: str) -> dict[str, object]:
     scene = bpy.context.scene
     physical = library.load_preset("BUILTIN:water_surface_tension")
     result = library.apply_preset(scene, physical)
-    fs = scene.fluidsim
+    domain_fs = _domain_settings(module, scene)
     if result.preset_id != "water_surface_tension" or not result.requires_reset:
         raise AssertionError(f"installed Phase-5 preset result is invalid: {result}")
-    if not fs.surface_tension_enabled or abs(fs.surface_tension_coefficient - 0.072) > 1.0e-8:
+    if (
+        not domain_fs.surface_tension_enabled
+        or abs(domain_fs.surface_tension_coefficient - 0.072) > 1.0e-8
+    ):
         raise AssertionError("installed Phase-5 physical preset did not apply")
     settings = solver_settings.build_settings(scene)
     if not settings.surface_tension_enabled:
@@ -404,7 +422,7 @@ def _assert_phase5_surface_tension(module: str) -> dict[str, object]:
     # Restore the default smoke preset so established Phase-2 persistence
     # assertions continue to verify the same authored scene.
     library.apply_preset(scene, library.load_preset("BUILTIN:preview_water"))
-    if fs.surface_tension_enabled:
+    if domain_fs.surface_tension_enabled:
         raise AssertionError(
             "legacy preview preset retained surface tension from the Phase-5 preset")
     return {
