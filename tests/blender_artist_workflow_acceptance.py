@@ -89,7 +89,8 @@ def _tick():
             if phase == 'start':
                 _check('draft Preview succeeds', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
                 _check('Blender playback started', window.screen.is_animation_playing)
-                _check('effect evidence applied automatically', bool(scene.fluidsim_effects.applied_signature))
+                if STATE['with_effect']:
+                    _check('effect evidence applied automatically', bool(scene.fluidsim_effects.applied_signature))
                 STATE.update(phase='advance', frame=scene.frame_current, solver=sess.solver)
             elif phase == 'advance' and scene.frame_current >= STATE['frame'] + 3:
                 STATE['report']['frames'].append(scene.frame_current)
