@@ -1,7 +1,7 @@
 """Open generated demo .blend files in Blender and verify saved scene contents.
 
 Run with Blender:
-    blender --background --python tools/check_demo_blends.py
+    blender --background --factory-startup --python tools/check_demo_blends.py
 """
 
 import json

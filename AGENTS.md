@@ -39,6 +39,8 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 
 ## Verified workflows
 
+- For background demo builds/checks, always add `--factory-startup`, including older abbreviated commands below. This prevents installed startup add-ons and stale handlers from contaminating source-owned acceptance. It does not save or reset the regular profile. GUI work still uses the canonical isolated Blender MCP launcher.
+
 - From the repo root, run `python tools/run_production_gate.py` for the default headless gate; add `--include-gui` (or set `FLUIDSIM_FULL_GUI_ACCEPTANCE=1`) for the full production gate, including interactive GUI acceptance and saved-demo timeline playback/report validation.
 - After a GUI-inclusive pass and report refresh, run `python tools/validate_policy_drift_reports.py`; it fails closed when report HEAD, gate verdict, artifact hash, checked-in demo JSON, or active cards are stale.
 - To isolate the GUI lane, run `blender --factory-startup --python tests/blender_gui_acceptance.py`; validate a generated saved-demo playback report with `python tools/validate_gui_playback_report.py artifacts/gui_playback_probe.json`. These are non-background checks; the full gate wires the playback probe to `demos/dam_break.blend`.

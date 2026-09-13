@@ -1,10 +1,10 @@
 """Build the canonical FluidSim Warp demo scenes and export particle data.
 
 Run:
-  blender --background --python tools/build_demo_scenes.py
-  blender --background --python tools/build_demo_scenes.py -- --list-scenes
-  blender --background --python tools/build_demo_scenes.py -- --standard-cache-scenes
-  blender --background --python tools/build_demo_scenes.py -- dam_break crown_splash
+  blender --background --factory-startup --python tools/build_demo_scenes.py
+  blender --background --factory-startup --python tools/build_demo_scenes.py -- --list-scenes
+  blender --background --factory-startup --python tools/build_demo_scenes.py -- --standard-cache-scenes
+  blender --background --factory-startup --python tools/build_demo_scenes.py -- dam_break crown_splash
 
 Scenes are saved as demos/<name>.blend. Large per-frame particle exports and
 aggregate metrics are generated under artifacts/demo_cache/<name>/ so they do
