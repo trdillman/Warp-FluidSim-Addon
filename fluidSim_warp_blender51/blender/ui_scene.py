@@ -161,6 +161,14 @@ def _advanced_visible(context):
     return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
 
 
+class _FluidSimSimulationPanel(FluidSimScenePanel):
+    """Shared visibility contract for the Advanced domain-physics fan."""
+
+    @classmethod
+    def poll(cls, context):
+        return _domain_visible(context) and _advanced_visible(context)
+
+
 class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Transport"
     bl_idname = "FLUIDSIM_PT_scene_transport"
@@ -448,8 +456,6 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        # "Advanced Physics" gate (spec §5.3): the whole 12-panel sim_* fan
-        # inherits this parent's visibility, so it collapses in Basic mode.
         return _domain_visible(context) and _advanced_visible(context)
 
     def draw(self, context):
@@ -468,7 +474,7 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
         layout.label(text="Active: " + (", ".join(enabled) if enabled else "Base liquid solver"))
 
 
-class FLUIDSIM_PT_sim_time(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_time(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Time & Transfer"
     bl_idname = "FLUIDSIM_PT_sim_time"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -483,7 +489,7 @@ class FLUIDSIM_PT_sim_time(FluidSimScenePanel, bpy.types.Panel):
         layout.prop(fs, "count_stiffness")
 
 
-class FLUIDSIM_PT_sim_gravity(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_gravity(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Gravity"
     bl_idname = "FLUIDSIM_PT_sim_gravity"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -496,7 +502,7 @@ class FLUIDSIM_PT_sim_gravity(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "gravity")
 
 
-class FLUIDSIM_PT_sim_pressure(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_pressure(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Pressure"
     bl_idname = "FLUIDSIM_PT_sim_pressure"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -512,7 +518,7 @@ class FLUIDSIM_PT_sim_pressure(FluidSimScenePanel, bpy.types.Panel):
         layout.prop(fs, "pressure_threshold")
 
 
-class FLUIDSIM_PT_sim_viscosity(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_viscosity(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Viscosity"
     bl_idname = "FLUIDSIM_PT_sim_viscosity"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -533,7 +539,7 @@ class FLUIDSIM_PT_sim_viscosity(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "viscosity_tolerance")
 
 
-class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_surface_tension(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Surface Tension"
     bl_idname = "FLUIDSIM_PT_sim_surface_tension"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -560,7 +566,7 @@ class FLUIDSIM_PT_sim_surface_tension(FluidSimScenePanel, bpy.types.Panel):
         # telemetry panel (D4); this control panel stays edit-only.
 
 
-class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_color_mixing(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Color Mixing"
     bl_idname = "FLUIDSIM_PT_sim_color_mixing"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -578,7 +584,7 @@ class FLUIDSIM_PT_sim_color_mixing(FluidSimScenePanel, bpy.types.Panel):
         box.label(text="Any number of source colors can mix.")
 
 
-class FLUIDSIM_PT_sim_relax(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_relax(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Particle Relaxation"
     bl_idname = "FLUIDSIM_PT_sim_relax"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -593,7 +599,7 @@ class FLUIDSIM_PT_sim_relax(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "relax_mode")
 
 
-class FLUIDSIM_PT_sim_limits(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_limits(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Velocity Limits"
     bl_idname = "FLUIDSIM_PT_sim_limits"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -609,7 +615,7 @@ class FLUIDSIM_PT_sim_limits(FluidSimScenePanel, bpy.types.Panel):
                 layout.prop(fs, "limit_percent")
 
 
-class FLUIDSIM_PT_sim_forces(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_forces(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Global Forces"
     bl_idname = "FLUIDSIM_PT_sim_forces"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -626,7 +632,7 @@ class FLUIDSIM_PT_sim_forces(FluidSimScenePanel, bpy.types.Panel):
         layout.prop(fs, "force_diffusion")
 
 
-class FLUIDSIM_PT_sim_dissipation(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_dissipation(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Dissipation"
     bl_idname = "FLUIDSIM_PT_sim_dissipation"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -642,7 +648,7 @@ class FLUIDSIM_PT_sim_dissipation(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "dissipation_target")
 
 
-class FLUIDSIM_PT_sim_attraction(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_attraction(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Attraction"
     bl_idname = "FLUIDSIM_PT_sim_attraction"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
@@ -657,7 +663,7 @@ class FLUIDSIM_PT_sim_attraction(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "attraction_max_distance")
 
 
-class FLUIDSIM_PT_sim_spacetime(FluidSimScenePanel, bpy.types.Panel):
+class FLUIDSIM_PT_sim_spacetime(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Spatiotemporal Processing"
     bl_idname = "FLUIDSIM_PT_sim_spacetime"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"

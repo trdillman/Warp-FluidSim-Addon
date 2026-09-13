@@ -13,6 +13,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from tools.repo_addon_loader import enable_repo_addon
+from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
 
 
 CHECKS = []
@@ -92,16 +93,17 @@ def main():
     enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.08
-    fs.max_particles = 500_000
     bpy.ops.fluidsim.setup_scene()
-    fs.whitewater_enabled = True
-    fs.surface_attribute_velocity = True
-    fs.surface_attribute_speed = True
-    fs.surface_attribute_motion = True
-    fs.ww_churn_gain = 10.0
-    fs.ww_churn_threshold = 0.05
-    fs.ww_emission_rate = 4.0
+    domain = active_domain_settings(scene)
+    domain.voxel_size = 0.08
+    domain.max_particles = 500_000
+    domain.whitewater_enabled = True
+    domain.surface_attribute_velocity = True
+    domain.surface_attribute_speed = True
+    domain.surface_attribute_motion = True
+    domain.ww_churn_gain = 10.0
+    domain.ww_churn_threshold = 0.05
+    domain.ww_emission_rate = 4.0
     # This gate validates whitewater color attributes, so configure an explicit
     # energetic Continuous Inflow instead of depending on the new P3 emitter
     # default (Initial Fill) to happen to generate whitewater.

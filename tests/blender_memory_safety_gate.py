@@ -22,14 +22,23 @@ def main():
     addon.register()
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.leaf_capacity = 4096
-    fs.max_particles = 250_000
-    fs.max_whitewater = 100_000
-    fs.voxel_size = 0.02
-    fs.surface_resolution_mode = "MULTIPLIER"
-    fs.surface_resolution_multiplier = 4.0
-    fs.surface_leaf_capacity_scale = 64.0
-    fs.surface_max_dense_dim = 2048
+    domain = scene.objects.get("Cube")
+    assert domain is not None, "factory-startup Cube is missing"
+    assert hasattr(domain, "fluidsim_domain"), "domain settings are not registered"
+    domain.scale = (2.0, 2.0, 2.0)
+    domain.location = (0.0, 0.0, 2.0)
+    bpy.context.view_layer.update()
+    fs.domain_object = domain
+    settings = scene_bridge.active_domain_settings(scene)
+    assert settings is not None, "authoritative domain is not active"
+    settings.leaf_capacity = 4096
+    settings.max_particles = 250_000
+    settings.max_whitewater = 100_000
+    settings.voxel_size = 0.02
+    settings.surface_resolution_mode = "MULTIPLIER"
+    settings.surface_resolution_multiplier = 4.0
+    settings.surface_leaf_capacity_scale = 64.0
+    settings.surface_max_dense_dim = 2048
     device = wp.get_device("cuda:0")
     wp.synchronize_device(device)
     baseline_free = int(device.free_memory)
@@ -45,17 +54,17 @@ def main():
     assert "memory safeguard stopped initialization" in error.lower(), error
 
     authored_before = {
-        "voxel_size": float(fs.voxel_size),
-        "max_particles": int(fs.max_particles),
-        "leaf_capacity": int(fs.leaf_capacity),
+        "voxel_size": float(settings.voxel_size),
+        "max_particles": int(settings.max_particles),
+        "leaf_capacity": int(settings.leaf_capacity),
     }
     result = bpy.ops.fluidsim.apply_safe_settings()
     assert result == {"CANCELLED"}, result
     assert not scene_bridge.session().active
     assert authored_before == {
-        "voxel_size": float(fs.voxel_size),
-        "max_particles": int(fs.max_particles),
-        "leaf_capacity": int(fs.leaf_capacity),
+        "voxel_size": float(settings.voxel_size),
+        "max_particles": int(settings.max_particles),
+        "leaf_capacity": int(settings.leaf_capacity),
     }
     plan = scene_bridge.session().capacity_plan_for_scene(scene)
     assert plan is not None and plan.suggestions, "verified recommendation missing"

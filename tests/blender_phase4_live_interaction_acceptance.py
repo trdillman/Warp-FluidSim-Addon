@@ -40,19 +40,30 @@ def main():
     from fluidSim_warp_blender51.io import cache
 
     scene = bpy.context.scene
-    fs = scene.fluidsim
     bpy.ops.fluidsim.setup_scene()
-    fs.voxel_size = 0.12
-    fs.leaf_capacity = 256
-    fs.max_particles = 80_000
-    fs.max_whitewater = 10_000
-    fs.whitewater_enabled = False
-    fs.surface_enabled = False
+    fs = scene.fluidsim
+    domain_settings = scene_bridge.active_domain_settings(scene)
+    check(
+        "authoritative domain settings resolved",
+        domain_settings is not None
+        and domain_settings is not fs
+        and domain_settings.id_data == fs.domain_object,
+        getattr(domain_settings, "id_data", None),
+    )
+    if domain_settings is None:
+        return
+
+    domain_settings.voxel_size = 0.12
+    domain_settings.leaf_capacity = 256
+    domain_settings.max_particles = 80_000
+    domain_settings.max_whitewater = 10_000
+    domain_settings.whitewater_enabled = False
+    domain_settings.surface_enabled = False
     fs.show_surface = False
     fs.show_particles = False
-    fs.spacetime_enabled = True
-    fs.spacetime_reference_mass = 0.0
-    fs.particles_per_voxel = 8
+    domain_settings.spacetime_enabled = True
+    domain_settings.spacetime_reference_mass = 0.0
+    domain_settings.particles_per_voxel = 8
 
     result = bpy.ops.fluidsim.initialize()
     sess = scene_bridge.session()
@@ -65,13 +76,13 @@ def main():
     particle_state = solver.particles
     initial_reference = solver._st_reference_mass_cached
     t0 = time.perf_counter()
-    fs.flip_ratio = 0.35
-    fs.gravity = (0.0, 0.0, -3.0)
-    fs.use_scene_gravity = False
-    fs.pressure_iterations = 18
-    fs.viscosity_enabled = True
-    fs.viscosity_constant = 0.02
-    fs.particles_per_voxel = 12
+    domain_settings.flip_ratio = 0.35
+    domain_settings.gravity = (0.0, 0.0, -3.0)
+    domain_settings.use_scene_gravity = False
+    domain_settings.pressure_iterations = 18
+    domain_settings.viscosity_enabled = True
+    domain_settings.viscosity_constant = 0.02
+    domain_settings.particles_per_voxel = 12
     live_apply_ms = (time.perf_counter() - t0) * 1000.0
     hot_values = (solver.settings.flip_ratio, tuple(solver.settings.gravity),
                   solver.settings.pressure_iterations,
@@ -95,18 +106,18 @@ def main():
           f"{initial_reference} -> {solver._st_reference_mass_cached}; {sampling_pending}")
     check("sampling Reset change can be discarded",
           bpy.ops.fluidsim.revert_pending() == {"FINISHED"}
-          and fs.particles_per_voxel == 8)
+          and domain_settings.particles_per_voxel == 8)
     check("live refresh is bounded", live_apply_ms < 250.0, f"{live_apply_ms:.2f} ms")
 
     # Keyframed RNA is evaluated before each authoritative step seam.
-    fs.cfl = 2.0
-    fs.flip_ratio = 0.8
-    fs.keyframe_insert("cfl", frame=1)
-    fs.keyframe_insert("flip_ratio", frame=1)
-    fs.cfl = 1.25
-    fs.flip_ratio = 0.4
-    fs.keyframe_insert("cfl", frame=2)
-    fs.keyframe_insert("flip_ratio", frame=2)
+    domain_settings.cfl = 2.0
+    domain_settings.flip_ratio = 0.8
+    domain_settings.keyframe_insert("cfl", frame=1)
+    domain_settings.keyframe_insert("flip_ratio", frame=1)
+    domain_settings.cfl = 1.25
+    domain_settings.flip_ratio = 0.4
+    domain_settings.keyframe_insert("cfl", frame=2)
+    domain_settings.keyframe_insert("flip_ratio", frame=2)
     manual_values = []
     for frame in (1, 2):
         scene.frame_set(frame)
@@ -158,7 +169,7 @@ def main():
     advanced_particles = advanced_solver.particles
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
-    fs.voxel_size = 0.1
+    domain_settings.voxel_size = 0.1
     pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
@@ -172,12 +183,16 @@ def main():
 
     # Real Blender RNA/Scene instances keep independent cached pending state.
     first = scene
-    first.fluidsim.leaf_capacity += 64
+    first_domain_settings = scene_bridge.active_domain_settings(first)
+    assert first_domain_settings is not None, "first scene lost its designated domain"
+    first_domain_settings.leaf_capacity += 64
     pending_settings.request_scene_update(first, pending_settings.SceneUpdate.REBUILD)
     second = first.copy()
     second.name = "Phase4 Pending Isolation"
+    second_domain_settings = scene_bridge.active_domain_settings(second)
+    assert second_domain_settings is not None, "copied scene lost its designated domain"
     pending_settings.capture_applied_state(second, sess)
-    second.fluidsim.voxel_size = 0.09
+    second_domain_settings.voxel_size = 0.09
     pending_settings.request_scene_update(second, pending_settings.SceneUpdate.REBUILD)
     first_pending = pending_settings.pending_presentation(first)
     second_pending = pending_settings.pending_presentation(second)

@@ -9,10 +9,11 @@ The gate builds two scenes that share an identically-shaped domain cube and
 identical distinctive solver values on ``obj.fluidsim_domain``:
 
   * Scene A is produced by the real ``load_post`` handler (author a
-    ``schema_version == 0`` scene, save, reopen), then its ``scene.fluidsim``
-    mirror is poisoned with one set of wrong values.
-  * Scene B authors the values directly on the object and poisons its
-    ``scene.fluidsim`` mirror with a *different* set of wrong values.
+    ``schema_version == 0`` scene through the pre-split union class, save,
+    reopen), then its hidden legacy scene mirror is poisoned with one set of
+    wrong values.
+  * Scene B authors the values directly on the object and poisons its hidden
+    legacy scene mirror with a *different* set of wrong values.
 
 Because the two mirrors disagree, any solver-determining read that still hits
 ``scene.fluidsim`` makes ``build_settings`` diverge between A and B — the gate
@@ -120,15 +121,38 @@ def clear_scene_objects():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
+def author_legacy_scene_group(scene, *, schema_version, domain_object, values):
+    """Author values exactly as a pre-split Scene.fluidsim group stored them."""
+    from fluidSim_warp_blender51 import properties
+
+    with properties.legacy_scene_settings():
+        fs = scene.fluidsim
+        fs.schema_version = schema_version
+        fs.domain_object = domain_object
+        author_group(fs, values)
+
+
+def poison_legacy_scene_mirror(scene, values):
+    """Write differing stale domain values without widening normal runtime RNA."""
+    from fluidSim_warp_blender51 import properties
+
+    with properties.legacy_scene_settings():
+        author_group(scene.fluidsim, values)
+
+
 def build_migrated_scene_a(tmpdir):
     """Scene A: real load_post migration, then poison the scene mirror."""
     clear_scene_objects()
     scene = bpy.context.scene
     cube = make_domain_cube("Domain A")
-    fs = scene.fluidsim
-    fs.schema_version = 0
-    fs.domain_object = cube
-    author_group(fs, SOLVER_DISTINCTIVE)
+    author_legacy_scene_group(
+        scene,
+        schema_version=0,
+        domain_object=cube,
+        values=SOLVER_DISTINCTIVE,
+    )
+    check("A: narrow scene binding restored before save",
+          not hasattr(scene.fluidsim, "voxel_size"))
 
     path = os.path.join(tmpdir, "equivalence_a_v0.blend")
     bpy.ops.wm.save_as_mainfile(filepath=path)
@@ -140,8 +164,9 @@ def build_migrated_scene_a(tmpdir):
           fs.schema_version)
     check("A: domain object designated", fs.domain_object is not None,
           getattr(fs.domain_object, "name", None))
-    # The mirror must be irrelevant: poison it with A's wrong values.
-    author_group(fs, POISON_A)
+    # The hidden legacy mirror must be irrelevant: poison it with A's wrong
+    # values while leaving the normal narrow scene binding in place afterward.
+    poison_legacy_scene_mirror(scene, POISON_A)
     bpy.context.view_layer.update()
 
 
@@ -154,7 +179,7 @@ def build_fresh_scene_b():
     fs = scene.fluidsim
     fs.schema_version = 1
     fs.domain_object = cube
-    author_group(fs, POISON_B)
+    poison_legacy_scene_mirror(scene, POISON_B)
     bpy.context.view_layer.update()
 
 

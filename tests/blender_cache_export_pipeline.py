@@ -101,16 +101,6 @@ def main():
 
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.12
-    fs.max_particles = 100_000
-    fs.auto_grow_particles = False
-    fs.max_whitewater = 5_000
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = 1_000.0
-    fs.ww_churn_threshold = 0.0
-    fs.ww_emission_rate = 2_000.0
-    fs.ww_min_speed = 0.0
-    fs.surface_enabled = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
     fs.cache_enabled = False
@@ -126,6 +116,22 @@ def main():
     original_update_outputs = None
     try:
         check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+        from fluidSim_warp_blender51.blender import scene_bridge
+
+        ds = scene_bridge.active_domain_settings(scene)
+        check("active domain settings", ds is not None)
+        assert ds is not None, (
+            "cache export acceptance requires a designated domain")
+        ds.voxel_size = 0.12
+        ds.max_particles = 100_000
+        ds.auto_grow_particles = False
+        ds.max_whitewater = 5_000
+        ds.whitewater_enabled = True
+        ds.ww_churn_gain = 1_000.0
+        ds.ww_churn_threshold = 0.0
+        ds.ww_emission_rate = 2_000.0
+        ds.ww_min_speed = 0.0
+        ds.surface_enabled = True
         # Give the short three-frame fixture an explicit energetic continuous
         # inflow so authoritative whitewater coverage cannot pass vacuously.
         source = next(
@@ -217,14 +223,16 @@ def main():
                     "surface_attribute": str(
                         fs.surface_attribute_mode),
                     "surface_cadence": int(
-                        fs.live_surface_publish_cadence),
+                        ds.live_surface_publish_cadence),
                 },
                 "solver_particles": solver_particles,
                 "solver_whitewater": solver_whitewater,
                 "cache_counts": cache.authoritative_payload_counts(payload),
                 "whitewater_required": int(payload["whitewater_required"]),
+                "whitewater_available": int(payload["whitewater_available"]),
                 "whitewater_admitted": int(payload["whitewater_admitted"]),
                 "whitewater_dropped": int(payload["whitewater_dropped"]),
+                "whitewater_policy": str(payload["whitewater_policy"]),
                 "whitewater_status": str(payload["whitewater_status"]),
             })
             return result
@@ -314,8 +322,10 @@ def main():
             check("cache frames differ over time", changed)
 
         first_metadata = cache.read_sequence_metadata(cache_dir)
-        # These are Output Publication policy only. A deterministic Production
-        # Cache Bake must neither consume them nor acquire published outputs.
+        # These are Output Publication policy only. Presentation remains on the
+        # scene while live surface cadence is owned by the designated domain.
+        # A deterministic Production Cache Bake must neither consume them nor
+        # acquire published outputs.
         fs.particle_display_fraction = 0.25
         fs.particle_display_scale = 2.5
         fs.show_particles = False
@@ -323,7 +333,7 @@ def main():
         fs.show_whitewater = True
         fs.particle_attribute_mode = "HEIGHT"
         fs.surface_attribute_mode = "SPEED"
-        fs.live_surface_publish_cadence = 7
+        ds.live_surface_publish_cadence = 7
         # Production Bake restores the pre-bake session state. Since this
         # fixture starts inactive, it must remain inactive between exports.
         from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -419,14 +429,27 @@ def main():
                      for item in first_write + second_write)),
             json.dumps(count_evidence, sort_keys=True),
         )
+
+        def whitewater_admission_is_coherent(observation):
+            required = observation["whitewater_required"]
+            available = observation["whitewater_available"]
+            admitted = observation["whitewater_admitted"]
+            dropped = observation["whitewater_dropped"]
+            status = observation["whitewater_status"]
+            return bool(
+                observation["whitewater_policy"]
+                == "FIXED_CAPACITY_DETERMINISTIC_DROPS"
+                and min(required, available, admitted, dropped) >= 0
+                and required == admitted + dropped
+                and admitted <= available
+                and ((dropped == 0 and status == "OK")
+                     or (dropped > 0 and status == "CAPACITY_EXHAUSTED"))
+            )
+
         check(
             "every production write records coherent whitewater admission state",
-            all(
-                item["whitewater_status"] == "OK"
-                and item["whitewater_required"]
-                == item["whitewater_admitted"] + item["whitewater_dropped"]
-                for item in first_write + second_write
-            ),
+            all(whitewater_admission_is_coherent(item)
+                for item in first_write + second_write),
             json.dumps(count_evidence, sort_keys=True),
         )
         sequential_control_flow = bool(
@@ -508,7 +531,7 @@ def main():
         fs.show_whitewater = False
         fs.particle_attribute_mode = "NONE"
         fs.surface_attribute_mode = "NONE"
-        fs.live_surface_publish_cadence = 1
+        ds.live_surface_publish_cadence = 1
 
         from fluidSim_warp_blender51.blender.scene_bridge import session
 

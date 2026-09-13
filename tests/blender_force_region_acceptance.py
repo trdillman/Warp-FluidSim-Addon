@@ -44,11 +44,17 @@ try:
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.liquid_view_mode = "PARTICLES"
-    fs.voxel_size = 0.1
-    fs.max_particles = 120_000
-    fs.gravity = (0.0, 0.0, 0.0)
     if bpy.ops.fluidsim.setup_scene() != {"FINISHED"}:
         raise RuntimeError("quick setup failed")
+    from fluidSim_warp_blender51.blender.scene_bridge import (
+        active_domain_settings,
+    )
+
+    domain_settings = active_domain_settings(scene)
+    assert domain_settings is not None, "quick setup did not designate a domain"
+    domain_settings.voxel_size = 0.1
+    domain_settings.max_particles = 120_000
+    domain_settings.gravity = (0.0, 0.0, 0.0)
 
     source = next(
         (

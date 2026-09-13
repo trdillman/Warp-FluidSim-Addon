@@ -79,6 +79,16 @@ def run():
     second_setup_result = bpy.ops.fluidsim.setup_scene()
     check("Quick Setup is idempotent", second_setup_result == {"FINISHED"}
           and tuple(sorted(obj.name for obj in scene.objects)) == first_setup)
+    domain_settings = scene_bridge.active_domain_settings(scene)
+    check(
+        "authoritative domain settings resolved",
+        domain_settings is not None
+        and scene.fluidsim.domain_object is not None
+        and domain_settings.id_data == scene.fluidsim.domain_object,
+        getattr(scene.fluidsim.domain_object, "name", None),
+    )
+    if domain_settings is None:
+        raise RuntimeError("Phase 3 profile-safe review requires a designated domain")
     specs = [
         ("Emitter", (0.0, 0.0, 1.5), "fluidsim.tag_liquid_emitter", "SOURCE"),
         ("Sink", (0.6, 0.0, 1.5), "fluidsim.tag_liquid_sink", "SINK"),
@@ -108,9 +118,9 @@ def run():
 
     image = bpy.data.images.new("P3 Review Height Profile", width=2, height=2)
     image.pixels[:] = [0,0,0,1, 1,1,1,1, 0.5,0.5,0.5,1, 0.25,0.25,0.25,1]
-    scene.fluidsim.height_enabled = True
-    scene.fluidsim.height_back_mode = "PROFILE"
-    scene.fluidsim.height_profile_image = image
+    domain_settings.height_enabled = True
+    domain_settings.height_back_mode = "PROFILE"
+    domain_settings.height_profile_image = image
     height = SceneInputs().gather_height_source(scene)
     check("Height Profile uses real Image input", height is not None and height.profile.shape == (2, 2))
     # Role creation proof must not replace the saved dam-break source as the
@@ -118,7 +128,7 @@ def run():
     # temporary source/field/force and the temporary height fill.
     for label in ("Emitter", "Sink", "Force", "Field"):
         created[label].fluidsim.enabled = False
-    scene.fluidsim.height_enabled = False
+    domain_settings.height_enabled = False
 
     if scene_bridge.session().active:
         scene_bridge.release_session(scene)
@@ -138,7 +148,7 @@ def run():
     check("Blender remains responsive after playback", session.active)
 
     committed_sampling = session.solver.settings.particles_per_voxel
-    scene.fluidsim.particles_per_voxel = min(64, int(committed_sampling) + 1)
+    domain_settings.particles_per_voxel = min(64, int(committed_sampling) + 1)
     sampling_pending = scene_bridge.pending_presentation(scene)
     check("Liquid Sampling presents a pending Reset",
           sampling_pending["action"] == "RESET_PENDING"
@@ -148,7 +158,7 @@ def run():
           bpy.ops.fluidsim.revert_pending() == {"FINISHED"})
 
     committed_voxel = session.solver.settings.voxel_size
-    scene.fluidsim.voxel_size = committed_voxel * 1.1
+    domain_settings.voxel_size = committed_voxel * 1.1
     voxel_pending = scene_bridge.pending_presentation(scene)
     check("Simulation Resolution presents pending Reinitialize",
           voxel_pending["action"] == "REINIT_PENDING"

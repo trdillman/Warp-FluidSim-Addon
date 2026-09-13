@@ -26,8 +26,8 @@ Two directions of flow exist, and a field uses one or the other:
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 29 | the runtime publishes it where its reader looks |
-| PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
+| PUBLISHED | 28 | the runtime publishes it where its reader looks |
+| PUBLISHED_MULTI | 1 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
@@ -55,7 +55,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene/scene | 1 | OK |
 | `domain_object` | REINITIALIZE | scene | scene | scene | scene | scene/scene | 11 | OK |
-| `schema_version` | PRESENTATION | - | scene | scene | - | scene/scene | 2 | PUBLISHED |
+| `schema_version` | PRESENTATION | - | scene | domain, scene | - | scene/scene | 2 | PUBLISHED_MULTI |
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene/scene | 0 | UI_STATE |
 | `surface_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene/scene | 0 | UI_STATE |

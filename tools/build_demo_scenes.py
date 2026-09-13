@@ -37,6 +37,18 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from tools.repo_addon_loader import enable_repo_addon
+from tools.adhesive_whitewater_calibration import (
+    CALENDER_ROLL_FLOW_COUPLING,
+    CALENDER_ROLL_FLOW_STRENGTH,
+    CALENDER_WW_ACTIVATION_DEADLINE,
+    CALENDER_WW_CHURN_THRESHOLD_VOXELS,
+    CALENDER_WW_EMISSION_PER_EXCESS_VOXEL_SECOND,
+    CALENDER_WW_MAX_PEAK_FRACTION,
+    CALENDER_WW_MIN_PEAK_FRACTION,
+    CALENDER_WW_MIN_SPEED_FRACTION_OF_ROLL_TARGET,
+    calender_whitewater_calibration,
+    calender_whitewater_population_is_valid,
+)
 
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
@@ -870,6 +882,7 @@ def _calender_metrics(solver, frame):
     positions = solver.particle_positions().astype(np.float64, copy=False)
     velocities = solver.particle_velocities().astype(np.float64, copy=False)
     viscosity = solver.particles.attr("viscosity").numpy()[:len(positions)]
+    churn = solver.churn.data.numpy()
     split = 0.5 * (CALENDER_LOW_VISCOSITY + CALENDER_HIGH_VISCOSITY)
     low_mask = viscosity < split
     high_mask = viscosity >= split
@@ -877,6 +890,7 @@ def _calender_metrics(solver, frame):
         "frame": int(frame),
         "particle_count": int(len(positions)),
         "whitewater_count": int(solver.whitewater.refresh_host_count()),
+        "peak_churn": float(np.max(churn)) if len(churn) else 0.0,
         "low_viscosity": _lane_velocity_metrics(
             positions[low_mask], velocities[low_mask]),
         "high_viscosity": _lane_velocity_metrics(
@@ -890,6 +904,7 @@ def _write_calender_report(metrics):
         metrics["samples"][-1])
     low = evaluation["low_viscosity"]
     high = evaluation["high_viscosity"]
+    whitewater = metrics["runtime"]["whitewater"]
 
     def percent_change(control, changed):
         return (100.0 * (changed - control) / control
@@ -951,6 +966,12 @@ def _write_calender_report(metrics):
             f"`{high['profile_gradient_rms']:.6f}`\n"
             f"- Measured viscosity effect: "
             f"`{report['measured_viscosity_effect']}`\n\n"
+            "Whitewater calibration is tied to voxel-normalized turbulent "
+            "displacement and the authored roll target speed. The production "
+            f"build first emitted at frame `{whitewater['first_frame']}`, "
+            f"peaked at `{whitewater['peak_count']:,}` particles "
+            f"(`{100.0 * whitewater['peak_fraction']:.3f}%` of liquid), and "
+            f"dropped `{whitewater['max_dropped']:,}` candidates.\n\n"
             "The viscosity values are solver coefficients in scene units; this "
             "demo is a comparative shear-transfer test, not a calibrated material "
             "certificate.\n")
@@ -969,11 +990,22 @@ def _simulate_calender(name, frames):
     samples = []
     step_ms = []
     substeps = []
+    first_whitewater_frame = None
+    peak_whitewater = 0
+    max_whitewater_dropped = 0
     started = time.perf_counter()
     for frame in range(1, frames + 1):
         bpy.ops.fluidsim.step(frames=1)
         step_ms.append(float(scene.fluidsim.stat_step_ms))
         substeps.append(int(scene.fluidsim.stat_substeps))
+        whitewater_count = int(scene.fluidsim.stat_whitewater)
+        peak_whitewater = max(peak_whitewater, whitewater_count)
+        max_whitewater_dropped = max(
+            max_whitewater_dropped,
+            int(scene.fluidsim.stat_whitewater_dropped),
+        )
+        if first_whitewater_frame is None and whitewater_count > 0:
+            first_whitewater_frame = frame
         if frame in milestones:
             sample = _calender_metrics(solver, frame)
             samples.append(sample)
@@ -989,6 +1021,12 @@ def _simulate_calender(name, frames):
         "mean_step_ms": float(np.mean(step_ms)),
         "max_step_ms": float(np.max(step_ms)),
         "max_observed_substeps": int(max(substeps)),
+        "whitewater": {
+            "first_frame": first_whitewater_frame,
+            "peak_count": peak_whitewater,
+            "max_dropped": max_whitewater_dropped,
+            "peak_churn": max(sample["peak_churn"] for sample in samples),
+        },
     }
     return samples, runtime
 
@@ -1028,8 +1066,10 @@ def build_adhesive_calender():
     ds.whitewater_enabled = True
     ds.max_whitewater = 500_000
     ds.ww_churn_gain = 1.0
-    ds.ww_churn_threshold = 1.0
-    ds.ww_emission_rate = 1.0
+    whitewater_calibration = calender_whitewater_calibration(ds.voxel_size)
+    ds.ww_churn_threshold = whitewater_calibration.churn_threshold
+    ds.ww_emission_rate = whitewater_calibration.emission_rate
+    ds.ww_min_speed = whitewater_calibration.min_speed
     fs.show_surface = True
     fs.show_particles = True
     fs.show_whitewater = True
@@ -1055,6 +1095,16 @@ def build_adhesive_calender():
     scene["fluidsim_simulated_frames"] = frames
     scene["fluidsim_force_field_count"] = 3
     scene["fluidsim_review_clips"] = "Camera Main, Camera Top, Camera Profile"
+    scene["fluidsim_whitewater_calibration_basis"] = (
+        "voxel-normalized accumulated turbulent displacement")
+    scene["fluidsim_whitewater_churn_threshold_voxels"] = (
+        CALENDER_WW_CHURN_THRESHOLD_VOXELS)
+    scene["fluidsim_whitewater_emission_per_excess_voxel_second"] = (
+        CALENDER_WW_EMISSION_PER_EXCESS_VOXEL_SECOND)
+    scene["fluidsim_whitewater_roll_target_speed"] = (
+        whitewater_calibration.roll_target_speed)
+    scene["fluidsim_whitewater_min_speed_fraction_of_roll_target"] = (
+        CALENDER_WW_MIN_SPEED_FRACTION_OF_ROLL_TARGET)
 
     water = bpy.data.materials.new("Calender Adhesive Surface")
     water.diffuse_color = (0.92, 0.28, 0.035, 1.0)
@@ -1122,8 +1172,8 @@ def build_adhesive_calender():
         effector.empty_display_size = 0.7
         effector.field.falloff_power = 0.0
         if kind == "FLUID":
-            effector.field.strength = 0.08
-            effector.field.flow = 0.8
+            effector.field.strength = CALENDER_ROLL_FLOW_STRENGTH
+            effector.field.flow = CALENDER_ROLL_FLOW_COUPLING
             effector.field.shape = "PLANE"
             effector.field.source_object = source_object
             effector.field.use_max_distance = True
@@ -1171,7 +1221,9 @@ def build_adhesive_calender():
         "whitewater. The two lanes run simultaneously with mirrored particle "
         "layouts and identical forces. Native Blender FLUID_FLOW fields impose "
         "opposing roll-surface target velocities; native DRAG models weak "
-        "chamber resistance.\n\n"
+        "chamber resistance. Whitewater uses a voxel-normalized churn trigger "
+        "and emission rate so its response remains comparable when build "
+        "density changes.\n\n"
         f"The left lane uses per-particle viscosity "
         f"{CALENDER_LOW_VISCOSITY:g}; the right lane uses "
         f"{CALENDER_HIGH_VISCOSITY:g}. The central collider is wider than two "
@@ -1235,6 +1287,32 @@ def build_adhesive_calender():
     del lane_points, low_points, high_points
     log(f"{name}: injected exactly {injected:,} particles")
     samples, runtime = _simulate_calender(name, frames)
+    whitewater_runtime = runtime["whitewater"]
+    whitewater_runtime["peak_fraction"] = (
+        whitewater_runtime["peak_count"] / particle_count)
+    if whitewater_runtime["first_frame"] is None:
+        raise RuntimeError(
+            "calender whitewater calibration produced no live particles over "
+            f"{frames} production frames; measured peak churn "
+            f"{whitewater_runtime['peak_churn']:.6g}, authored threshold "
+            f"{ds.ww_churn_threshold:.6g}")
+    if whitewater_runtime["first_frame"] > CALENDER_WW_ACTIVATION_DEADLINE:
+        raise RuntimeError(
+            "calender whitewater activated too late: first frame "
+            f"{whitewater_runtime['first_frame']}, deadline "
+            f"{CALENDER_WW_ACTIVATION_DEADLINE}")
+    if whitewater_runtime["max_dropped"] != 0:
+        raise RuntimeError(
+            "calender whitewater calibration exceeded its fixed capacity: "
+            f"dropped {whitewater_runtime['max_dropped']:,} candidates")
+    if not calender_whitewater_population_is_valid(
+            whitewater_runtime["peak_count"], particle_count):
+        raise RuntimeError(
+            "calender whitewater population is outside its visible-but-"
+            "subordinate envelope: peak fraction "
+            f"{whitewater_runtime['peak_fraction']:.6f}, expected "
+            f"{CALENDER_WW_MIN_PEAK_FRACTION:.6f}.."
+            f"{CALENDER_WW_MAX_PEAK_FRACTION:.6f}")
     scene.frame_set(frames)
     final = samples[-1]
     scene["fluidsim_final_particle_count"] = final["particle_count"]
@@ -1253,6 +1331,26 @@ def build_adhesive_calender():
             "voxel_size": float(ds.voxel_size),
             "max_substeps": 4,
             "whitewater_enabled": True,
+            "whitewater": {
+                "calibration_basis": (
+                    "voxel-normalized accumulated turbulent displacement"),
+                "churn_gain": float(ds.ww_churn_gain),
+                "churn_threshold_voxels": (
+                    CALENDER_WW_CHURN_THRESHOLD_VOXELS),
+                "churn_threshold_scene_units": float(ds.ww_churn_threshold),
+                "emission_per_excess_voxel_second": (
+                    CALENDER_WW_EMISSION_PER_EXCESS_VOXEL_SECOND),
+                "emission_rate_scene_units": float(ds.ww_emission_rate),
+                "minimum_speed_fraction_of_roll_target": (
+                    CALENDER_WW_MIN_SPEED_FRACTION_OF_ROLL_TARGET),
+                "minimum_speed_scene_units": float(ds.ww_min_speed),
+                "roll_target_speed_scene_units": (
+                    whitewater_calibration.roll_target_speed),
+                "peak_population_fraction_envelope": [
+                    CALENDER_WW_MIN_PEAK_FRACTION,
+                    CALENDER_WW_MAX_PEAK_FRACTION,
+                ],
+            },
             "force_fields": ["FLUID_FLOW_UPPER", "FLUID_FLOW_LOWER", "DRAG"],
             "viscosity_enabled": True,
             "viscosity_from_particles": True,

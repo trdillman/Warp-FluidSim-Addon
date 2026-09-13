@@ -969,7 +969,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_attributes = (
-        host.output_attributes(fs, "particles", stride=step)
+        host.output_attributes(ds, "particles", stride=step)
         if fs.show_particles else {})
     particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
     particle_values = None
@@ -988,7 +988,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
                   np.zeros((0, 3), dtype=np.float32))
     whitewater_visible = bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     whitewater_attributes = (
-        host.output_attributes(fs, "whitewater", stride=ww_step)
+        host.output_attributes(ds, "whitewater", stride=ww_step)
         if whitewater_visible else {})
     whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
     whitewater_values = None
@@ -1012,7 +1012,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
     if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
         surface_attributes = host.output_attributes(
-            fs, "surface", positions=verts)
+            ds, "surface", positions=verts)
         surface_key = _canonical_attribute_key(fs.surface_attribute_mode)
         surface_values = None
         if surface_key is None or surface_key not in surface_attributes:
@@ -1168,16 +1168,17 @@ def ensure_output_shells(scene):
         scene, SURFACE_NAME,
         lambda: _new_blender_id(bpy.data.meshes.new, SURFACE_NAME), "MESH")
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
     particles = _ensure_point_object(
-        scene, PARTICLES_NAME, enabled_attribute_keys(fs, "particles"))
+        scene, PARTICLES_NAME, enabled_attribute_keys(ds, "particles"))
     whitewater = _ensure_point_object(
-        scene, WHITEWATER_NAME, enabled_attribute_keys(fs, "whitewater"))
+        scene, WHITEWATER_NAME, enabled_attribute_keys(ds, "whitewater"))
     foam = _ensure_point_object(
-        scene, FOAM_NAME, enabled_attribute_keys(fs, "whitewater"))
+        scene, FOAM_NAME, enabled_attribute_keys(ds, "whitewater"))
     bubbles = _ensure_point_object(
-        scene, BUBBLES_NAME, enabled_attribute_keys(fs, "whitewater"))
+        scene, BUBBLES_NAME, enabled_attribute_keys(ds, "whitewater"))
     spray = _ensure_point_object(
-        scene, SPRAY_NAME, enabled_attribute_keys(fs, "whitewater"))
+        scene, SPRAY_NAME, enabled_attribute_keys(ds, "whitewater"))
     _ensure_material(materials.ensure_surface_material, scene, surface)
     _ensure_material(materials.ensure_particle_material, scene, particles)
     _ensure_material(materials.ensure_whitewater_material, scene, whitewater)
@@ -1212,7 +1213,7 @@ def prepare_outputs(scene):
         _ensure_material(
             materials.ensure_particle_material,
             scene, _ensure_point_object(
-                scene, PARTICLES_NAME, enabled_attribute_keys(fs, "particles")))
+                scene, PARTICLES_NAME, enabled_attribute_keys(ds, "particles")))
     if fs.show_whitewater and getattr(ds, "whitewater_enabled", False):
         combined_enabled, separate_enabled = _whitewater_mode_flags(
             getattr(fs, "whitewater_output_mode", "COMBINED"))
@@ -1229,7 +1230,7 @@ def prepare_outputs(scene):
             _ensure_material(
                 ensure_material,
                 scene, _ensure_point_object(
-                    scene, name, enabled_attribute_keys(fs, "whitewater")))
+                    scene, name, enabled_attribute_keys(ds, "whitewater")))
 
 
 def _whitewater_mode_flags(mode: str) -> tuple[bool, bool]:

@@ -50,6 +50,8 @@ def main():
     args = parse_args()
     enable_repo_addon(str(ROOT), default_set=True, persistent=True)
     import fluidSim_warp_blender51 as addon
+    from fluidSim_warp_blender51.blender import scene_bridge
+    from fluidSim_warp_blender51.blender.migration import create_domain_object
     from fluidSim_warp_blender51.blender.scene_inputs import (
         SceneInputs,
         persistent_source_key,
@@ -66,6 +68,18 @@ def main():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     scene = bpy.context.scene
+    domain = create_domain_object(scene)
+    domain_settings = scene_bridge.active_domain_settings(scene)
+    check(
+        "canonical domain created and designated",
+        domain is not None
+        and scene.fluidsim.domain_object == domain
+        and domain_settings is not None
+        and domain_settings.id_data == domain,
+        getattr(scene.fluidsim.domain_object, "name", None),
+    )
+    if domain_settings is None:
+        raise RuntimeError("Phase 3 source UI acceptance requires a designated domain")
 
     emitter = add_cube("P3_MeshSolid", (0, 0, 0))
     select_only(emitter)
@@ -155,10 +169,10 @@ def main():
             value = (x + y) / 6.0
             pixels.extend((value, value, value, 1.0))
     image.pixels[:] = pixels
-    scene.fluidsim.height_enabled = True
-    scene.fluidsim.height_back_mode = "PROFILE"
-    scene.fluidsim.height_profile_image = image
-    scene.fluidsim.height_profile_scale = 0.5
+    domain_settings.height_enabled = True
+    domain_settings.height_back_mode = "PROFILE"
+    domain_settings.height_profile_image = image
+    domain_settings.height_profile_scale = 0.5
 
     inputs = SceneInputs()
     descriptors = inputs.gather_sources(scene)

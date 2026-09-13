@@ -455,16 +455,18 @@ def test_preset_scene_owned_settings_agree_with_setting_owner(monkeypatch):
 def test_settings_groups_are_setting_owner_made_structural(monkeypatch):
     """Every registered field is declared on the group setting_owner names.
 
-    The split turned the ownership declaration into two disjoint classes, so a
-    field declared on the wrong class would raise on every read the declaration
-    routes to it. Pinning the two against each other keeps them from drifting.
+    The split leaves only the hidden migration marker on both classes. A field
+    declared on the wrong class would raise on every read the declaration routes
+    to it, so pinning the two against each other keeps them from drifting.
     """
     properties, pending, _bridge = _modules(monkeypatch)
     scene, scene_group, _domain_group = _migrated_scene()
     scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
     domain_fields = _declared_fields(properties.FLUIDSIM_PG_domain)
 
-    assert not scene_fields & domain_fields
+    assert scene_fields & domain_fields == {"schema_version"}
+    assert "domain_object" in scene_fields
+    assert "domain_object" not in domain_fields
     for name in pending.SETTING_TRANSITION_REGISTRY:
         on_scene = pending.setting_owner(scene, name) is scene_group
         assert name in (scene_fields if on_scene else domain_fields), (name, on_scene)

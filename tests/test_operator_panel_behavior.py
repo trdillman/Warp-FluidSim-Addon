@@ -528,6 +528,44 @@ class _Layout:
         return None
 
 
+def test_capacity_dialog_never_displays_scene_mirror_fallback(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    session_operators = sys.modules[
+        "fluidSim_warp_blender51.operator_domains.session"
+    ]
+    domain_settings = SimpleNamespace()
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(
+            domain_object=SimpleNamespace(fluidsim_domain=domain_settings),
+            max_particles=987_654_321,
+        )
+    )
+    monkeypatch.setattr(
+        session_operators,
+        "_solver_settings",
+        lambda: SimpleNamespace(build_settings=lambda _scene: SimpleNamespace()),
+    )
+    context = SimpleNamespace(scene=scene)
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.layout = _Layout()
+    op.suggestion_label = "Safe"
+    op.changes_json = '{"max_particles": 4096}'
+    op.estimated_bytes = "1024"
+    op.budget_bytes = "2048"
+
+    op.draw(context)
+
+    change_label = next(
+        label["text"]
+        for label in op.layout.labels
+        if label["text"].startswith("max_particles:")
+    )
+    assert change_label.startswith("max_particles: None ")
+    assert change_label.endswith(" 4,096")
+    assert "987,654,321" not in change_label
+
+
 def test_initialize_operator_passes_explicit_memory_override(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
@@ -564,12 +602,21 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
     plan = SimpleNamespace(
         scene_signature="scene-v1", suggestions=(suggestion,), blockers=()
     )
-    fs = _RnaPropertyGroup(
+    domain_settings = _RnaPropertyGroup(
         CAPACITY_RNA,
         max_particles=2_000_000,
         leaf_capacity=8192,
-        domain_object=None,
+    )
+    domain = SimpleNamespace(
+        fluidsim_domain=domain_settings,
+        location=(0.0, 0.0, 0.0),
+        dimensions=(4.0, 4.0, 4.0),
+    )
+    fs = SimpleNamespace(
+        domain_object=domain,
         status="Capacity warning",
+        max_particles=111_111,
+        leaf_capacity=111,
     )
     scene = SimpleNamespace(fluidsim=fs)
     initialized = []
@@ -597,16 +644,18 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
 
     assert op.invoke(context, None) == {"RUNNING_MODAL"}
     assert dialogs == [(op, 560)]
-    assert fs.max_particles == 2_000_000
-    assert fs.leaf_capacity == 8192
+    assert domain_settings.max_particles == 2_000_000
+    assert domain_settings.leaf_capacity == 8192
     assert op.expected_scene_signature == "scene-v1"
     assert op.execute(context) == {"FINISHED"}
-    assert fs.max_particles == 4_000_000
-    assert fs.leaf_capacity == 16_384
+    assert domain_settings.max_particles == 4_000_000
+    assert domain_settings.leaf_capacity == 16_384
+    assert fs.max_particles == 111_111
+    assert fs.leaf_capacity == 111
     assert initialized == [scene]
     # RNA fires update= on every accepted write; approval must not skip them.
-    assert ("max_particles", 4_000_000) in fs.update_calls
-    assert ("leaf_capacity", 16_384) in fs.update_calls
+    assert ("max_particles", 4_000_000) in domain_settings.update_calls
+    assert ("leaf_capacity", 16_384) in domain_settings.update_calls
 
 
 def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch):
@@ -631,12 +680,21 @@ def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch)
     plan = SimpleNamespace(
         scene_signature="scene-v1", suggestions=(suggestion,), blockers=()
     )
-    fs = _RnaPropertyGroup(
+    domain_settings = _RnaPropertyGroup(
         CAPACITY_RNA,
         max_particles=2_000_000,
         leaf_capacity=8192,
-        domain_object=None,
+    )
+    domain = SimpleNamespace(
+        fluidsim_domain=domain_settings,
+        location=(0.0, 0.0, 0.0),
+        dimensions=(4.0, 4.0, 4.0),
+    )
+    fs = SimpleNamespace(
+        domain_object=domain,
         status="Capacity warning",
+        max_particles=111_111,
+        leaf_capacity=111,
     )
     scene = SimpleNamespace(fluidsim=fs)
     initialized = []
@@ -663,10 +721,57 @@ def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch)
     assert op.execute(context) == {"CANCELLED"}
     # Rolled back to the authored value, and no solver started against a
     # capacity the user never approved.
-    assert fs.leaf_capacity == 8192
+    assert domain_settings.leaf_capacity == 8192
+    assert fs.leaf_capacity == 111
     assert initialized == []
     assert "not applied" in fs.status.lower()
     assert "leaf_capacity" in fs.status
+
+
+def test_capacity_option_refuses_without_designated_domain(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="safe",
+        label="Safe",
+        changes={"max_particles": 4096},
+        estimated_bytes=1024,
+        budget_bytes=2048,
+    )
+    plan = SimpleNamespace(
+        scene_signature="scene-v1", suggestions=(suggestion,), blockers=()
+    )
+    fs = SimpleNamespace(
+        domain_object=None,
+        status="Capacity warning",
+        max_particles=111_111,
+    )
+    scene = SimpleNamespace(fluidsim=fs)
+    initialized = []
+    bridge = SimpleNamespace(
+        session=lambda: SimpleNamespace(capacity_plan=plan),
+        refresh_capacity_plan=lambda actual: plan,
+        clear_error=lambda actual: None,
+        initialize_session=lambda actual: initialized.append(actual),
+    )
+    monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda actual, width: {"RUNNING_MODAL"}
+        ),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "safe"
+
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    assert op.execute(context) == {"CANCELLED"}
+    assert fs.max_particles == 111_111
+    assert initialized == []
+    assert fs.status == (
+        "Capacity option was not applied: "
+        "Capacity option cannot apply setting 'max_particles'"
+    )
 
 
 def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
@@ -2268,7 +2373,17 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     operators = _reload_module("fluidSim_warp_blender51.operators")
-    fs = SimpleNamespace(max_particles=1024, status="")
+    domain_settings = SimpleNamespace(max_particles=1024)
+    domain = SimpleNamespace(
+        fluidsim_domain=domain_settings,
+        location=(0.0, 0.0, 0.0),
+        dimensions=(4.0, 4.0, 4.0),
+    )
+    fs = SimpleNamespace(
+        domain_object=domain,
+        max_particles=111,
+        status="",
+    )
     scene = SimpleNamespace(fluidsim=fs)
     sess = bridge.session()
     sess.solver = SimpleNamespace(
@@ -2283,7 +2398,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
         simulation_admission,
         "build_settings",
         lambda _scene: SimpleNamespace(
-            device="cuda:0", max_particles=int(fs.max_particles)
+            device="cuda:0", max_particles=int(domain_settings.max_particles)
         ),
     )
     from fluidSim_warp_blender51.sim import memory_safety
@@ -2342,7 +2457,8 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
     assert op.execute(context) == {"FINISHED"}
     assert planned[-1][0] == 1024
     assert planned[-1][1] == memory_safety.estimate_solver_bytes(sess.solver.settings)
-    assert fs.max_particles == 2048
+    assert domain_settings.max_particles == 2048
+    assert fs.max_particles == 111
     assert initialized == [scene]
 
 
@@ -2643,6 +2759,62 @@ def test_advanced_sim_panels_hidden_in_basic_mode(monkeypatch):
     ):
         assert cls.poll(basic) is True, cls.__name__
         assert cls.poll(adv) is True, cls.__name__
+
+
+def test_advanced_sim_panels_require_an_authoritative_domain(monkeypatch):
+    """Every simulation child owns its domain/Advanced visibility contract.
+
+    Blender normally combines a child panel with its parent's visibility, but
+    direct panel calls and the Physics-context mirror invoke each source
+    panel's own poll.  No child may therefore report itself visible when the
+    authoritative domain settings owner is absent.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    inactive = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(ui_mode="ADVANCED", domain_object=None)
+        )
+    )
+    domain_settings = _PermissiveSettings({})
+    active = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(
+                ui_mode="ADVANCED",
+                domain_object=SimpleNamespace(fluidsim_domain=domain_settings),
+            )
+        )
+    )
+    basic = SimpleNamespace(
+        scene=SimpleNamespace(
+            fluidsim=SimpleNamespace(
+                ui_mode="BASIC",
+                domain_object=active.scene.fluidsim.domain_object,
+            )
+        )
+    )
+    children = tuple(
+        cls for cls in ui_scene.SCENE_PANEL_CLASSES
+        if getattr(cls, "bl_parent_id", "") == "FLUIDSIM_PT_scene_simulation"
+    )
+
+    assert len(children) == 12
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(inactive) is False
+    assert all(cls.poll(inactive) is False for cls in children)
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(basic) is False
+    assert all(cls.poll(basic) is False for cls in children)
+    assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(active) is True
+    assert all(cls.poll(active) is True for cls in children)
+    for cls in children:
+        panel = cls()
+        panel.layout = _Layout()
+        panel.draw(active)
+        assert panel.layout.prop_calls, f"{cls.__name__} drew no domain controls"
+        assert all(
+            call["data"] is domain_settings
+            for call in panel.layout.prop_calls
+        ), f"{cls.__name__} did not bind every control to the domain owner"
 
 
 def test_basic_front_door_and_surrogates_are_present(monkeypatch):

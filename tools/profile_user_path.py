@@ -1056,6 +1056,28 @@ def _validate_contract(args, summary, sess, device, output_counts):
            entrypoints["warp_synchronizations"])
     expected_surface = _expected_surface_publications(
         frames, summary["config"]["live_surface_publish_cadence"])
+    whitewater_output_active = bool(
+        summary["config"].get("whitewater_output_active", False))
+    enabled_whitewater_attributes = tuple(
+        summary["config"].get("enabled_whitewater_attributes", ()))
+    whitewater_sources = {
+        "velocity": "velocity",
+        "speed": "velocity",
+        "age": "age",
+        "lifetime": "life",
+        "type": "type",
+    }
+    whitewater_attribute_sources = {
+        whitewater_sources[key]
+        for key in enabled_whitewater_attributes
+    }
+    nonempty_whitewater_frames = sum(
+        int(row.get("whitewater", 0)) > 0 for row in frames)
+    whitewater_device_readbacks = (
+        nonempty_whitewater_frames * (1 + len(whitewater_attribute_sources))
+        if whitewater_output_active else 0
+    )
+    whitewater_count_numpy_calls = measured if whitewater_output_active else 0
     if not args.particles:
         attribute_readbacks = expected_surface_attribute_readbacks(
             args.surface_attributes)
@@ -1066,6 +1088,8 @@ def _validate_contract(args, summary, sess, device, output_counts):
                 args.surface_attributes))
         expected_numpy = expected_surface * (
             5 + attribute_numpy_calls + bookkeeping_numpy_calls)
+        expected_numpy += (
+            whitewater_count_numpy_calls + whitewater_device_readbacks)
         _check(checks, "surface readback entrypoints cadence-bounded",
                entrypoints["warp_array_numpy"] == expected_numpy,
                f"{entrypoints['warp_array_numpy']} == {expected_numpy}")
@@ -1087,11 +1111,15 @@ def _validate_contract(args, summary, sess, device, output_counts):
     _check(checks, "one surface extraction per scheduled surface frame",
            live["surface_extractions"] == expected_surface,
            f"{live['surface_extractions']} == {expected_surface}")
-    expected_device_readbacks = expected_surface * attribute_readbacks
+    expected_surface_device_readbacks = expected_surface * attribute_readbacks
+    expected_device_readbacks = (
+        expected_surface_device_readbacks + whitewater_device_readbacks)
     host_operations = summary["host_output_operations"]
     _check(checks, "surface attribute device readbacks exactly bounded",
-           live["device_readbacks"] == expected_device_readbacks,
-           f"{live['device_readbacks']} == {expected_device_readbacks}")
+           live["device_readbacks"] - whitewater_device_readbacks
+           == expected_surface_device_readbacks,
+           f"{live['device_readbacks']} - {whitewater_device_readbacks} "
+           f"== {expected_surface_device_readbacks}")
     _check(checks, "HostFrame reports the same bounded device readbacks",
            host_operations["device_readbacks"] == expected_device_readbacks,
            f"{host_operations['device_readbacks']} == "
@@ -1136,18 +1164,20 @@ def _validate_contract(args, summary, sess, device, output_counts):
     return checks
 
 
-def main():
-    args = parse_args()
-    if args.frames <= 0:
-        raise SystemExit("--frames must be positive")
-    if args.surface_attribution and args.particles:
-        raise SystemExit(
-            "--surface-attribution requires surface viewport mode; "
-            "omit --particles")
-    import addon_utils
-    import bmesh
-    import bpy
+def _restore_profile_instrumentation(
+        wp, original_numpy, original_synchronize,
+        original_synchronize_device, restore_surface_attribution,
+        frame_csv_fh):
+    wp.array.numpy = original_numpy
+    wp.synchronize = original_synchronize
+    wp.synchronize_device = original_synchronize_device
+    if restore_surface_attribution is not None:
+        restore_surface_attribution()
+    if frame_csv_fh is not None:
+        frame_csv_fh.close()
 
+
+def _prepare_profile_run(args, addon_utils, bmesh, bpy):
     # Measure the repo checkout, not a possibly stale installed addon copy:
     # repo root precedes Blender's addon dirs on sys.path so the package
     # import inside addon_utils.enable resolves here.
@@ -1163,15 +1193,24 @@ def main():
     source_identity = _source_identity(repo_root, _fs_mod.__file__)
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = args.voxel_size
-    fs.max_particles = args.max_particles
+
+    assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
+    from fluidSim_warp_blender51.blender import scene_bridge
+
+    ds = scene_bridge.active_domain_settings(scene)
+    assert ds is not None, "guided setup did not designate a FluidSim domain"
+    ds.voxel_size = args.voxel_size
+    ds.max_particles = args.max_particles
     if args.cfl > 0.0:
-        fs.cfl = args.cfl
-    fs.max_whitewater = 500_000
-    fs.whitewater_enabled = not args.disable_whitewater
-    fs.surface_enabled = True
-    fs.profiling_enabled = bool(args.profile_phases)
-    fs.profiling_sync = bool(args.profile_sync)
+        ds.cfl = args.cfl
+    ds.max_whitewater = 500_000
+    ds.whitewater_enabled = not args.disable_whitewater
+    ds.surface_enabled = True
+    ds.profiling_enabled = bool(args.profile_phases)
+    ds.profiling_sync = bool(args.profile_sync)
+    enabled_surface_attributes = configure_surface_attribute_profile(
+        ds, args.surface_attributes)
+
     if args.particles:
         fs.liquid_view_mode = "PARTICLES"
     else:
@@ -1179,9 +1218,6 @@ def main():
     fs.particle_display_fraction = 1.0
     fs.cache_enabled = False  # timed manually below
 
-    assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
-    enabled_surface_attributes = configure_surface_attribute_profile(
-        fs, args.surface_attributes)
     if args.domain_scale_x > 0.0:
         domain = fs.domain_object
         domain.scale.x = args.domain_scale_x
@@ -1205,7 +1241,7 @@ def main():
 
     import warp as wp
 
-    from fluidSim_warp_blender51.blender import output_publication, scene_bridge
+    from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache as cache_io
 
     sess = scene_bridge.session()
@@ -1260,13 +1296,13 @@ def main():
         "warp_synchronizations": 0,
         "surface_attribution_synchronizations": 0,
     }
-    in_output_path = False
+    output_path_state = {"active": False}
     original_numpy = wp.array.numpy
     original_synchronize = wp.synchronize
     original_synchronize_device = wp.synchronize_device
 
     def counted_numpy(array, *args, **kwargs):
-        if in_output_path:
+        if output_path_state["active"]:
             output_entrypoint_counts["warp_array_numpy"] += 1
         if surface_probe is not None and surface_probe.active:
             with surface_probe.device_readback():
@@ -1274,7 +1310,7 @@ def main():
         return original_numpy(array, *args, **kwargs)
 
     def counted_synchronize(*args, **kwargs):
-        if in_output_path:
+        if output_path_state["active"]:
             output_entrypoint_counts["warp_synchronizations"] += 1
         if surface_probe is not None and surface_probe.active:
             output_entrypoint_counts[
@@ -1282,7 +1318,7 @@ def main():
         return original_synchronize(*args, **kwargs)
 
     def counted_synchronize_device(*args, **kwargs):
-        if in_output_path:
+        if output_path_state["active"]:
             output_entrypoint_counts["warp_synchronizations"] += 1
         if surface_probe is not None and surface_probe.active:
             output_entrypoint_counts[
@@ -1297,82 +1333,149 @@ def main():
         import cProfile
         solve_profiler = cProfile.Profile()
     frame_csv_fh, frame_csv_writer = _open_frame_csv(args.frame_csv_out)
-    try:
-        for f in range(args.frames):
-            scene.frame_set(f + 1)
-            if surface_probe is not None:
-                surface_probe.begin_frame(frame=f)
-            t0 = time.perf_counter()
-            dg = bpy.context.evaluated_depsgraph_get()
-            scene_bridge.sync_scene_to_solver(scene, sess, dg)
-            t1 = time.perf_counter()
-            if solve_profiler is not None:
-                solve_profiler.enable()
-            stats = sess.solver.step_frame()
-            if solve_profiler is not None:
-                solve_profiler.disable()
-            t2 = time.perf_counter()
-            in_output_path = True
-            try:
-                output_publication.update_outputs(scene, sess)
-            finally:
-                in_output_path = False
-            t3 = time.perf_counter()
-            if surface_probe is not None:
-                surface_probe.end_frame(
-                    handler_total_ms=(t3 - t0) * 1000.0)
-            counts = _viewport_counts(bpy, args.particles)
-            output_counts.append(counts)
-            cache_ms = 0.0
-            if args.cache:
-                tc = time.perf_counter()
-                cache_io.write_frame(
-                    scene,
-                    CacheFramePayload.capture(
-                        sess.solver,
-                        settings_signature=cache_io.settings_record(
-                            sess.solver.settings
-                        )["signature"],
-                    ),
-                    scene_key_value=sess.scene_key,
-                )
-                cache_ms = (time.perf_counter() - tc) * 1000.0
-            row = {
-                "frame": f,
-                "solver_frame": int(sess.solver.frame),
-                "sync_ms": (t1 - t0) * 1000.0,
-                "solve_ms": (t2 - t1) * 1000.0,
-                "view_ms": (t3 - t2) * 1000.0,
-                "cache_ms": cache_ms,
-                "total_ms": (t3 - t0) * 1000.0 + cache_ms,
-                "particles": int(stats.active_particles),
-                "voxels": int(stats.active_voxels),
-                "whitewater": int(stats.whitewater_particles),
-                "substeps": int(stats.substeps),
-                "pressure_iterations": int(stats.pressure_iterations),
-                "pressure_residual": float(stats.pressure_residual),
-                "surface_verts": counts["surface_verts"],
-                "particle_points": counts["particle_points"],
-                "surface_dense_dim": _surface_dense_dim(sess),
-            }
-            timers = getattr(stats, "timers", {}) or {}
-            row["timer_solver"] = float(timers.get("solver", 0.0))
-            for i in range(16):
-                row[f"timer_compute_{i}"] = float(timers.get(f"compute_{i}", 0.0))
-            rows.append(row)
-            if frame_csv_writer is not None:
-                frame_csv_writer.writerow(row)
-                frame_csv_fh.flush()
-            if args.stop_after_total_ms > 0.0 and row["total_ms"] >= args.stop_after_total_ms:
-                break
-    finally:
-        wp.array.numpy = original_numpy
-        wp.synchronize = original_synchronize
-        wp.synchronize_device = original_synchronize_device
-        if restore_surface_attribution is not None:
-            restore_surface_attribution()
-        if frame_csv_fh is not None:
-            frame_csv_fh.close()
+    return {
+        "scene": scene,
+        "fs": fs,
+        "enabled_surface_attributes": enabled_surface_attributes,
+        "wp": wp,
+        "output_publication": output_publication,
+        "scene_bridge": scene_bridge,
+        "cache_io": cache_io,
+        "CacheFramePayload": CacheFramePayload,
+        "host_output_operation_counts": host_output_operation_counts,
+        "surface_attribute_transfer_operation_counts": (
+            surface_attribute_transfer_operation_counts
+        ),
+        "sess": sess,
+        "source_identity": source_identity,
+        "runtime_identity": runtime_identity,
+        "process_identity": process_identity,
+        "domain_bounds": domain_bounds,
+        "contention_before": contention_before,
+        "surface_probe": surface_probe,
+        "restore_surface_attribution": restore_surface_attribution,
+        "rows": rows,
+        "output_counts": output_counts,
+        "output_entrypoint_counts": output_entrypoint_counts,
+        "output_path_state": output_path_state,
+        "original_numpy": original_numpy,
+        "original_synchronize": original_synchronize,
+        "original_synchronize_device": original_synchronize_device,
+        "solve_profiler": solve_profiler,
+        "frame_csv_fh": frame_csv_fh,
+        "frame_csv_writer": frame_csv_writer,
+    }
+
+
+def _measure_profile_frames(args, bpy, run):
+    scene = run["scene"]
+    surface_probe = run["surface_probe"]
+    scene_bridge = run["scene_bridge"]
+    sess = run["sess"]
+    output_publication = run["output_publication"]
+    cache_io = run["cache_io"]
+    CacheFramePayload = run["CacheFramePayload"]
+    rows = run["rows"]
+    output_counts = run["output_counts"]
+    output_path_state = run["output_path_state"]
+    solve_profiler = run["solve_profiler"]
+    frame_csv_fh = run["frame_csv_fh"]
+    frame_csv_writer = run["frame_csv_writer"]
+
+    for f in range(args.frames):
+        scene.frame_set(f + 1)
+        if surface_probe is not None:
+            surface_probe.begin_frame(frame=f)
+        t0 = time.perf_counter()
+        dg = bpy.context.evaluated_depsgraph_get()
+        scene_bridge.sync_scene_to_solver(scene, sess, dg)
+        t1 = time.perf_counter()
+        if solve_profiler is not None:
+            solve_profiler.enable()
+        stats = sess.solver.step_frame()
+        if solve_profiler is not None:
+            solve_profiler.disable()
+        t2 = time.perf_counter()
+        output_path_state["active"] = True
+        try:
+            output_publication.update_outputs(scene, sess)
+        finally:
+            output_path_state["active"] = False
+        t3 = time.perf_counter()
+        if surface_probe is not None:
+            surface_probe.end_frame(
+                handler_total_ms=(t3 - t0) * 1000.0)
+        counts = _viewport_counts(bpy, args.particles)
+        output_counts.append(counts)
+        cache_ms = 0.0
+        if args.cache:
+            tc = time.perf_counter()
+            cache_io.write_frame(
+                scene,
+                CacheFramePayload.capture(
+                    sess.solver,
+                    settings_signature=cache_io.settings_record(
+                        sess.solver.settings
+                    )["signature"],
+                ),
+                scene_key_value=sess.scene_key,
+            )
+            cache_ms = (time.perf_counter() - tc) * 1000.0
+        row = {
+            "frame": f,
+            "solver_frame": int(sess.solver.frame),
+            "sync_ms": (t1 - t0) * 1000.0,
+            "solve_ms": (t2 - t1) * 1000.0,
+            "view_ms": (t3 - t2) * 1000.0,
+            "cache_ms": cache_ms,
+            "total_ms": (t3 - t0) * 1000.0 + cache_ms,
+            "particles": int(stats.active_particles),
+            "voxels": int(stats.active_voxels),
+            "whitewater": int(stats.whitewater_particles),
+            "substeps": int(stats.substeps),
+            "pressure_iterations": int(stats.pressure_iterations),
+            "pressure_residual": float(stats.pressure_residual),
+            "surface_verts": counts["surface_verts"],
+            "particle_points": counts["particle_points"],
+            "surface_dense_dim": _surface_dense_dim(sess),
+        }
+        timers = getattr(stats, "timers", {}) or {}
+        row["timer_solver"] = float(timers.get("solver", 0.0))
+        for i in range(16):
+            row[f"timer_compute_{i}"] = float(timers.get(f"compute_{i}", 0.0))
+        rows.append(row)
+        if frame_csv_writer is not None:
+            frame_csv_writer.writerow(row)
+            frame_csv_fh.flush()
+        if args.stop_after_total_ms > 0.0 and row["total_ms"] >= args.stop_after_total_ms:
+            break
+
+
+def _build_profile_report(args, bpy, run):
+    scene = run["scene"]
+    fs = run["fs"]
+    enabled_surface_attributes = run["enabled_surface_attributes"]
+    output_publication = run["output_publication"]
+    scene_bridge = run["scene_bridge"]
+    host_output_operation_counts = run["host_output_operation_counts"]
+    surface_attribute_transfer_operation_counts = run[
+        "surface_attribute_transfer_operation_counts"
+    ]
+    sess = run["sess"]
+    source_identity = run["source_identity"]
+    runtime_identity = run["runtime_identity"]
+    process_identity = run["process_identity"]
+    domain_bounds = run["domain_bounds"]
+    contention_before = run["contention_before"]
+    surface_probe = run["surface_probe"]
+    rows = run["rows"]
+    output_counts = run["output_counts"]
+    output_entrypoint_counts = run["output_entrypoint_counts"]
+    solve_profiler = run["solve_profiler"]
+    domain_settings = scene_bridge.active_domain_settings(scene)
+    if domain_settings is None:
+        raise RuntimeError("profile scene has no active domain settings")
+
     contention_after = _nvidia_smi_snapshot()
     if solve_profiler is not None:
         solve_profiler.dump_stats("artifacts/perf_goal_solver.pstats")
@@ -1387,11 +1490,18 @@ def main():
     surface_attribute_transfer_operations = (
         surface_attribute_transfer_operation_counts()
     )
-    from fluidSim_warp_blender51.sim.attributes import ATTRIBUTE_SPECS
+    from fluidSim_warp_blender51.sim.attributes import (
+        ATTRIBUTE_SPECS,
+        enabled_attribute_keys,
+    )
 
     expected_surface_attributes = tuple(
         ATTRIBUTE_SPECS[key].blender_name
         for key in enabled_surface_attributes)
+    enabled_whitewater_attributes = enabled_attribute_keys(
+        domain_settings, "whitewater")
+    whitewater_output_active = bool(
+        fs.show_whitewater and domain_settings.whitewater_enabled)
     correctness_evidence = _output_correctness_evidence(
         bpy, rows, output_counts,
         expected_surface_attributes=expected_surface_attributes,
@@ -1459,13 +1569,13 @@ def main():
             "scene_name": str(scene.name),
             "frames_requested": int(args.frames),
             "frames_measured": len(rows),
-            "surface_enabled": bool(fs.surface_enabled),
+            "surface_enabled": bool(domain_settings.surface_enabled),
             "surface_visible": bool(fs.show_surface),
             "surface_attributes": str(args.surface_attributes),
             "surface_attribute_mode": str(fs.surface_attribute_mode),
             "enabled_surface_attributes": list(enabled_surface_attributes),
             "live_surface_publish_cadence": int(
-                fs.live_surface_publish_cadence),
+                domain_settings.live_surface_publish_cadence),
             "voxel_size": float(args.voxel_size),
             "max_particles": int(args.max_particles),
             "collider_subdiv": int(args.collider_subdiv),
@@ -1481,8 +1591,11 @@ def main():
         "config": {
             **vars(args),
             "live_surface_publish_cadence": int(
-                fs.live_surface_publish_cadence),
+                domain_settings.live_surface_publish_cadence),
             "enabled_surface_attributes": list(enabled_surface_attributes),
+            "enabled_whitewater_attributes": list(
+                enabled_whitewater_attributes),
+            "whitewater_output_active": whitewater_output_active,
         },
         "domain": domain_bounds,
         "means": {k: mean(k) for k in
@@ -1558,6 +1671,35 @@ def main():
         summary["result"] = "USER-PATH-REGRESSION-FAIL"
     elif binding_errors:
         summary["result"] = "USER-PATH-EVIDENCE-BINDING-FAIL"
+    return summary, n_surf_verts
+
+
+def main():
+    args = parse_args()
+    if args.frames <= 0:
+        raise SystemExit("--frames must be positive")
+    if args.surface_attribution and args.particles:
+        raise SystemExit(
+            "--surface-attribution requires surface viewport mode; "
+            "omit --particles")
+    import addon_utils
+    import bmesh
+    import bpy
+
+    run = _prepare_profile_run(args, addon_utils, bmesh, bpy)
+    try:
+        _measure_profile_frames(args, bpy, run)
+    finally:
+        _restore_profile_instrumentation(
+            run["wp"],
+            run["original_numpy"],
+            run["original_synchronize"],
+            run["original_synchronize_device"],
+            run["restore_surface_attribution"],
+            run["frame_csv_fh"],
+        )
+    summary, n_surf_verts = _build_profile_report(args, bpy, run)
+
     print("USER-PATH-PROFILE " + json.dumps(summary["means"]))
     print(f"scene: voxels={summary['voxels_mean']:.0f} "
           f"particles={summary['particles_mean']:.0f} "

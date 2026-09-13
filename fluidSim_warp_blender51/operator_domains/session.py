@@ -244,13 +244,15 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=560)
 
     def draw(self, context):
+        from ..blender.scene_bridge import active_domain_settings
+
         layout = self.layout
         layout.label(text="Approve these exact scene changes?", icon="QUESTION")
         layout.label(text=self.suggestion_label)
         changes = json.loads(self.changes_json or "{}")
-        settings = _solver_settings().build_settings(context.scene)
+        domain_settings = active_domain_settings(context.scene)
         for name, value in changes.items():
-            old_value = getattr(settings, name, getattr(context.scene.fluidsim, name, None))
+            old_value = getattr(domain_settings, name, None)
             layout.label(
                 text=(
                     f"{name}: {_format_capacity_value(old_value)} â†’ "
@@ -271,6 +273,8 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         layout.label(text="Settings are unchanged until you confirm.")
 
     def execute(self, context):
+        from ..blender.scene_bridge import active_domain_settings
+
         bridge = _bridge()
         scene = context.scene
         fs = scene.fluidsim
@@ -315,26 +319,31 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         changes = dict(suggestion.changes)
         domain_min = changes.pop("domain_min", None)
         domain_max = changes.pop("domain_max", None)
-        old_values = {name: getattr(fs, name) for name in changes if hasattr(fs, name)}
+        domain_settings = active_domain_settings(scene)
+        old_values = {
+            name: getattr(domain_settings, name)
+            for name in changes
+            if hasattr(domain_settings, name)
+        }
         domain = getattr(fs, "domain_object", None)
         old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
         changed = []
         try:
             for name, value in changes.items():
-                if not hasattr(fs, name):
+                if not hasattr(domain_settings, name):
                     raise RuntimeError(f"Capacity option cannot apply setting {name!r}")
-                rna = getattr(fs, "bl_rna", None)
+                rna = getattr(domain_settings, "bl_rna", None)
                 properties = getattr(rna, "properties", {})
                 rna_property = properties.get(name)
                 if rna_property is not None and rna_property.type == "INT":
                     value = int(value)
-                setattr(fs, name, value)
+                setattr(domain_settings, name, value)
                 # RNA clamps out-of-range assignments to the declared
                 # [min, max] silently, so a write can succeed while storing a
                 # different number than the one the dialog costed. Reporting
                 # that as approved would break the budget promise this whole
                 # flow exists to keep -- read back and fail into the rollback.
-                stored = getattr(fs, name)
+                stored = getattr(domain_settings, name)
                 if isinstance(value, float):
                     matches = math.isclose(stored, value, rel_tol=1e-6)
                 else:
@@ -355,7 +364,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 changed.append("domain bounds")
         except Exception as exc:  # noqa: BLE001
             for name, value in old_values.items():
-                setattr(fs, name, value)
+                setattr(domain_settings, name, value)
             if domain is not None and old_domain is not None:
                 domain.location, domain.dimensions = old_domain
             self.report({"ERROR"}, f"Capacity option was not applied: {exc}")

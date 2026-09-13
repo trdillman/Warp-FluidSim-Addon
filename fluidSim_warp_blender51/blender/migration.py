@@ -100,6 +100,7 @@ def migrate_domain_settings_schema(scene, domain_obj) -> bool:
     target = domain_obj.fluidsim_domain
     with _side_effect_free_copy():
         copy_domain_settings(fs, target, authored)
+        target.schema_version = _TARGET_SCHEMA_VERSION
         fs.schema_version = _TARGET_SCHEMA_VERSION   # guard stamped LAST; never re-zeroed
     return True
 
