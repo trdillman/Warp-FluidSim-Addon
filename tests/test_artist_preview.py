@@ -7,6 +7,15 @@ import pytest
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 
 
+def test_registered_actions_do_not_inherit_other_registered_operators(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ops = _reload_module('fluidSim_warp_blender51.operators')
+    registered = set(ops.CLASSES)
+    for cls in (ops.FLUIDSIM_OT_preview_start, ops.FLUIDSIM_OT_cache_preview_start,
+                ops.FLUIDSIM_OT_apply_changes, ops.FLUIDSIM_OT_restart_simulation):
+        assert not registered.intersection(cls.__mro__[1:]), cls.__name__
+
+
 def preview_fixture(monkeypatch):
     bpy = _install_bpy_stub(monkeypatch)
     ops = _reload_module('fluidSim_warp_blender51.operators')

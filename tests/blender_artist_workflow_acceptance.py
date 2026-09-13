@@ -114,6 +114,9 @@ def _tick():
                     param.float_value = param.float_value + 0.1
                     entries = [e for group in sess.solver.effects.by_stage.values() for e in group]
                     _check('parameter edit preserves solver/kernel', sess.solver is STATE['solver'] and entries[0].compiled_kernel is STATE['kernel'])
+                    _check('edited parameter reaches runtime binding', abs(
+                        entries[0].instance.effective_parameter_values()[param.key]
+                        - param.float_value) < 1e-6)
                 _check('Resume succeeds', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
                 STATE['phase'] = 'resume'
             elif phase == 'resume' and scene.frame_current >= STATE['frame'] + 3:

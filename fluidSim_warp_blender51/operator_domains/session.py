@@ -594,7 +594,7 @@ class _RestartConfirmation:
             raise RuntimeError("Scene or settings changed; review the restart again")
 
 
-class FLUIDSIM_OT_preview_start(_RestartConfirmation, bpy.types.Operator):
+class _PreviewStart(_RestartConfirmation):
     """Prepare the current simulation and start Blender playback"""
 
     bl_idname = "fluidsim.preview_start"
@@ -637,7 +637,13 @@ class FLUIDSIM_OT_preview_start(_RestartConfirmation, bpy.types.Operator):
             return {"CANCELLED"}
 
 
-class FLUIDSIM_OT_cache_preview_start(FLUIDSIM_OT_preview_start):
+class FLUIDSIM_OT_preview_start(_PreviewStart, bpy.types.Operator):
+    bl_idname = "fluidsim.preview_start"
+    bl_label = "Preview"
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+
+class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
     """Validate the cached frame and start Blender playback"""
 
     bl_idname = "fluidsim.cache_preview_start"
@@ -679,7 +685,7 @@ class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
             return {"CANCELLED"}
 
 
-class FLUIDSIM_OT_apply_changes(_RestartConfirmation, bpy.types.Operator):
+class _ApplyChanges(_RestartConfirmation):
     """Apply current changes, restarting only with explicit consent"""
 
     bl_idname = "fluidsim.apply_changes"
@@ -722,7 +728,13 @@ class FLUIDSIM_OT_apply_changes(_RestartConfirmation, bpy.types.Operator):
             return {"CANCELLED"}
 
 
-class FLUIDSIM_OT_restart_simulation(FLUIDSIM_OT_apply_changes):
+class FLUIDSIM_OT_apply_changes(_ApplyChanges, bpy.types.Operator):
+    bl_idname = "fluidsim.apply_changes"
+    bl_label = "Apply Changes"
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+
+class FLUIDSIM_OT_restart_simulation(_ApplyChanges, bpy.types.Operator):
     """Discard preview progress and restart at the scene start frame"""
 
     bl_idname = "fluidsim.restart_simulation"

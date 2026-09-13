@@ -266,7 +266,7 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
         )
         effects.add_instance_to_scene(context.scene, instance)
         context.scene.fluidsim_effects.selected_library_effect = definition.effect_id
-        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then Compile & Apply.")
+        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then Preview.")
         return {"FINISHED"}
 
 
