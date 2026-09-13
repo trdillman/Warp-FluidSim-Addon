@@ -77,6 +77,30 @@ def test_cache_action_is_independent_of_blender_instance_identifier(monkeypatch)
     assert context.scene.fluidsim.cache_playback_enabled
 
 
+@pytest.mark.parametrize(
+    "operator_name",
+    ("FLUIDSIM_OT_preview_start", "FLUIDSIM_OT_cache_preview_start"),
+)
+def test_background_preview_rejects_before_session_preparation(
+        monkeypatch, operator_name):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import playback
+
+    bpy.app = SimpleNamespace(background=True)
+    monkeypatch.setattr(
+        playback, "prepare_cache_preview", lambda _scene: calls.append("cache"))
+    frame = context.scene.frame_current
+
+    result = getattr(ops, operator_name)().execute(context)
+
+    assert result == {"CANCELLED"}
+    assert calls == []
+    assert not context.scene.fluidsim.live
+    assert not context.scene.fluidsim.cache_playback_enabled
+    assert context.scene.frame_current == frame
+    assert "needs a Blender window" in context.scene.fluidsim.status
+
+
 def test_restart_action_is_independent_of_blender_instance_identifier(monkeypatch):
     bpy, ops, context, calls = preview_fixture(monkeypatch)
     from fluidSim_warp_blender51.blender import pending_settings

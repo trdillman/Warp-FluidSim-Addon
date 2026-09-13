@@ -561,6 +561,8 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
 
 def _animation_override(context):
+    if bool(getattr(getattr(bpy, "app", None), "background", False)):
+        raise RuntimeError("Preview needs a Blender window showing this scene")
     window = getattr(context, "window", None)
     if window is None or window.scene != context.scene:
         raise RuntimeError("Preview needs a Blender window showing this scene")
