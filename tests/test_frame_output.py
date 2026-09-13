@@ -545,6 +545,7 @@ class _LiveAttributeHost:
 
     def __init__(self, attributes=None):
         self.attribute_calls = []
+        self.attribute_settings = []
         self.attributes = attributes if attributes is not None else {
             "particles": {"age": np.array([4.0], dtype=np.float32)},
             "whitewater": {
@@ -564,7 +565,8 @@ class _LiveAttributeHost:
     def whitewater_strided(self, _step):
         return self.whitewater
 
-    def output_attributes(self, _settings, output_kind, **kwargs):
+    def output_attributes(self, settings, output_kind, **kwargs):
+        self.attribute_settings.append(settings)
         self.attribute_calls.append((output_kind, kwargs))
         return self.attributes.get(output_kind, {})
 
@@ -586,6 +588,26 @@ def test_live_payload_gathers_enabled_attributes_for_visible_outputs():
     assert set(payload.surface_attributes) == {"velocity", "motion"}
     assert set(payload.particle_attributes) == {"age"}
     assert set(payload.whitewater_attributes) == {"velocity"}
+
+
+def test_live_payload_reads_attribute_inventory_from_designated_domain():
+    from fluidSim_warp_blender51.blender import output_publication
+
+    fs = split_settings(_live_settings(
+        particles_attribute_age=True,
+        whitewater_attribute_velocity=True,
+        surface_attribute_velocity=True,
+    ))
+    domain_settings = fs.domain_object.fluidsim_domain
+    fs.particles_attribute_age = False
+    fs.whitewater_attribute_velocity = False
+    fs.surface_attribute_velocity = False
+    host = _LiveAttributeHost()
+
+    output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
+
+    assert len(host.attribute_settings) == 3
+    assert all(item is domain_settings for item in host.attribute_settings)
 
 
 def test_live_payload_canonicalizes_selected_visualization_channel(monkeypatch):
