@@ -66,6 +66,28 @@ def test_start_is_idempotent_and_pause_preserves_frame(monkeypatch):
     assert context.scene.frame_current == 12
 
 
+def test_cache_action_is_independent_of_blender_instance_identifier(monkeypatch):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import playback
+    monkeypatch.setattr(playback, 'prepare_cache_preview', lambda scene: calls.append('cache'))
+    op = ops.FLUIDSIM_OT_cache_preview_start()
+    op.bl_idname = 'FLUIDSIM_OT_cache_preview_start'
+    assert op.execute(context) == {'FINISHED'}
+    assert calls == ['cache', 'play']
+    assert context.scene.fluidsim.cache_playback_enabled
+
+
+def test_restart_action_is_independent_of_blender_instance_identifier(monkeypatch):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import pending_settings
+    monkeypatch.setattr(pending_settings, 'apply_changes', lambda scene, **kw: calls.append(kw['force_restart']))
+    op = ops.FLUIDSIM_OT_restart_simulation()
+    op.bl_idname = 'FLUIDSIM_OT_restart_simulation'
+    op.allow_restart = True
+    assert op.execute(context) == {'FINISHED'}
+    assert calls == [True]
+
+
 @pytest.mark.parametrize('fault', ['no_window', 'prepare', 'play'])
 def test_failed_start_never_leaves_preview_armed(monkeypatch, fault):
     bpy, ops, context, calls = preview_fixture(monkeypatch)

@@ -599,6 +599,7 @@ class _PreviewStart(_RestartConfirmation):
 
     bl_idname = "fluidsim.preview_start"
     bl_label = "Preview"
+    _cache_preview = False
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
     @classmethod
@@ -614,7 +615,7 @@ class _PreviewStart(_RestartConfirmation):
             with context.temp_override(**_animation_override(context)):
                 if not bpy.ops.screen.animation_play.poll():
                     raise RuntimeError("No editor can start preview playback")
-                cache_preview = self.bl_idname == "fluidsim.cache_preview_start"
+                cache_preview = self._cache_preview
                 if cache_preview:
                     playback.prepare_cache_preview(scene)
                 else:
@@ -648,6 +649,7 @@ class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
 
     bl_idname = "fluidsim.cache_preview_start"
     bl_label = "Preview Cache"
+    _cache_preview = True
 
     @classmethod
     def poll(cls, context):
@@ -690,6 +692,7 @@ class _ApplyChanges(_RestartConfirmation):
 
     bl_idname = "fluidsim.apply_changes"
     bl_label = "Apply Changes"
+    _force_restart = False
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
     @classmethod
@@ -711,7 +714,7 @@ class _ApplyChanges(_RestartConfirmation):
             _pending().apply_changes(
                 scene, allow_restart=getattr(self, "allow_restart", False),
                 depsgraph=context.evaluated_depsgraph_get(),
-                force_restart=self.bl_idname == "fluidsim.restart_simulation")
+                force_restart=self._force_restart)
             if was_playing:
                 with context.temp_override(**_animation_override(context)):
                     with playback.suppress_mode_transitions():
@@ -739,6 +742,7 @@ class FLUIDSIM_OT_restart_simulation(_ApplyChanges, bpy.types.Operator):
 
     bl_idname = "fluidsim.restart_simulation"
     bl_label = "Restart Simulation"
+    _force_restart = True
     allow_restart: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):

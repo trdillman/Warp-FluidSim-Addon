@@ -137,8 +137,13 @@ def _tick():
                 _check('explicit apply succeeds', bpy.ops.fluidsim.apply_changes(allow_restart=True) == {'FINISHED'})
                 _check('Apply restarts at start frame paused', scene.frame_current == scene.frame_start and not window.screen.is_animation_playing)
                 _check('Apply installs current stack', not effects.production_blocking_reason(scene))
+                _check('Preview before explicit restart', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
+                STATE['phase'] = 'restart_progress'
+            elif phase == 'restart_progress' and scene.frame_current >= scene.frame_start + 3:
+                _check('Restart test has real progress', sess.solver.frame >= 3)
+                _check('Pause before explicit restart', bpy.ops.fluidsim.preview_pause() == {'FINISHED'})
                 _check('explicit Restart succeeds', bpy.ops.fluidsim.restart_simulation() == {'FINISHED'})
-                _check('Restart remains at start', scene.frame_current == scene.frame_start)
+                _check('Restart discards actual progress', scene.frame_current == scene.frame_start and sess.solver.frame <= 1)
                 STATE['report']['status'] = 'PASS'
                 STATE['path'].write_text(json.dumps(STATE['report'], indent=2), encoding='utf-8')
                 print('ARTIST-WORKFLOW-ACCEPTANCE-PASS')
