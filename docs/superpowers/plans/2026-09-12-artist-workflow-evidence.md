@@ -34,6 +34,14 @@ Final host verification before runtime: `python -m pytest -q --tb=short` complet
 
 ## Required remaining proof
 
+### Scope boundary after the `cec6c40` aggregate run
+
+All headless acceptance stages passed together, both canonical demos rebuilt in the isolated proof checkout, and demo analysis passed **18/18**. The aggregate nevertheless failed the final all-demo gate: `adhesive_calender` enables whitewater but emitted none in its declared 250-frame window (authored churn threshold 1.0, peak observed churn 0.0210415255, emission rate 1.0, first-live frame absent; applied settings matched authored settings). Its other recorded checks, including million-particle playback, passed. This is a separate demo behavior issue; it has not been repaired or hidden by weakening the gate. User direction is required before changing that unrelated simulation.
+
+The same all-demo run passed the tracked `custom_effects_vortex` domain/source/controller, applied-stack, actual effect execution, hot-parameter execution, and playback checks (2 Vortex Force calls; 13,728 particle points; runtime suction 48.5400009). Full aggregate log: `C:/tmp/fluidsim-artist-proof-20260913/artifacts/artist_headless_gate_cec6c40.log`. **No HEADLESS-GATE-PASS or full-production pass is claimed.** Main tracked demo files remain unchanged; the proof checkout retains its six generated dam-break/crown-splash blend, metadata, and preview changes.
+
+Latest host suite: **1538 passed in 82.98 seconds**, `artifacts/artist_host_suite_live_attributes.log`. Current-source broad GUI/panel acceptance, saved-demo GUI validation, and the final visible user handoff remain pending. Earlier targeted GUI receipts are explicitly tied to `2365aca`; later capacity and output-owner repairs have focused runtime proof but have not yet had that final GUI pass. Status: awaiting user scope direction, not complete.
+
 ### Updated verification checkpoint: product source `2365aca`
 
 The full host suite passed **1537 tests in 108.43 seconds**. The fresh isolated Blender 5.1 source-copy session (PID 51936, port 9877) passed paired runtime/addon identity checks and the following actual GUI cases before being explicitly closed:
