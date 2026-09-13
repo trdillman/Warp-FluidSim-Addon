@@ -51,6 +51,8 @@ DEFAULT_SCENES = (
 )
 CALENDER_LOW_VISCOSITY = 0.002
 CALENDER_HIGH_VISCOSITY = 0.5
+CALENDER_WW_CHURN_THRESHOLD = 0.005
+CALENDER_WW_MIN_SPEED = 0.05
 DAM_BREAK_RELEASE_VELOCITY = (0.7, 0.0, 0.0)
 DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
 CROWN_SPLASH_WW_CHURN_THRESHOLD = 0.05
@@ -1028,8 +1030,12 @@ def build_adhesive_calender():
     ds.whitewater_enabled = True
     ds.max_whitewater = 500_000
     ds.ww_churn_gain = 1.0
-    ds.ww_churn_threshold = 1.0
+    # The calibrated shear cell peaks near 0.021 churn and 0.099 m/s. These
+    # nonzero filters emitted from frame 30 without admission drops over the
+    # full 1M-particle / 250-frame run while excluding near-static material.
+    ds.ww_churn_threshold = CALENDER_WW_CHURN_THRESHOLD
     ds.ww_emission_rate = 1.0
+    ds.ww_min_speed = CALENDER_WW_MIN_SPEED
     fs.show_surface = True
     fs.show_particles = True
     fs.show_whitewater = True
