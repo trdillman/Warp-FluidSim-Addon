@@ -23,7 +23,7 @@ def test_custom_effects_is_a_closed_scene_properties_root_at_order_50():
     assert 'bl_options = {"DEFAULT_CLOSED"}' in block
 
 
-def test_artist_workflow_is_always_primary_and_raw_mode_toggle_is_not_drawn():
+def test_artist_workflow_is_primary_and_engineering_actions_are_not_drawn():
     source = ARTIST_UI.read_text(encoding="utf-8")
     block = _block(source, "FLUIDSIM_PT_custom_effects")
     selected = source.split("def _draw_selected_effect", 1)[1].split(
@@ -35,10 +35,39 @@ def test_artist_workflow_is_always_primary_and_raw_mode_toggle_is_not_drawn():
     for section in (
         "_draw_effect_stack",
         "_draw_selected_effect",
-        "_draw_effect_workflow",
         "_draw_status",
     ):
         assert section in block
+    assert 'operator("fluidsim.preview_start", text="Preview"' in block
+    assert 'operator("fluidsim.apply_changes", text="Apply Changes"' in block
+    assert "_draw_effect_workflow" not in block
+
+
+def test_effect_engineering_is_an_advanced_closed_child_panel():
+    source = ARTIST_UI.read_text(encoding="utf-8")
+    block = _block(source, "FLUIDSIM_PT_effect_engineering")
+    assert 'bl_parent_id = "FLUIDSIM_PT_custom_effects"' in block
+    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert 'getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED"' in block
+    assert "_draw_effect_workflow(self.layout)" in block
+    workflow = source.split("def _draw_effect_workflow", 1)[1].split("\nclass ", 1)[0]
+    for operator_id in (
+        "fluidsim.effect_test_draft",
+        "fluidsim.effect_apply_stack",
+        "fluidsim.effect_revert_draft",
+        "fluidsim.effect_preview_one_frame",
+    ):
+        assert operator_id in workflow
+
+
+def test_routine_effect_drafts_are_presented_as_pending_not_errors():
+    source = ARTIST_UI.read_text(encoding="utf-8")
+    status = source.split("def _draw_status", 1)[1].split("\n\nclass ", 1)[0]
+    assert "Changes will be prepared when you preview" in status
+    assert "routine_draft_messages" in status
+    assert "draft differs from applied effect" in status
+    assert "draft has not been tested and applied" in status
+    assert 'text="Live draft differs from applied effect", icon="ERROR"' not in status
 
 
 def test_effect_package_management_is_a_separate_closed_child_panel():
@@ -78,6 +107,9 @@ def test_effect_package_child_is_registered_after_the_root_panel():
     classes = source.split("CLASSES = (", 1)[1].split(")\n\n\ndef register", 1)[0]
     assert classes.index("FLUIDSIM_PT_custom_effects") < classes.index(
         "FLUIDSIM_PT_effect_packages"
+    )
+    assert classes.index("FLUIDSIM_PT_custom_effects") < classes.index(
+        "FLUIDSIM_PT_effect_engineering"
     )
 
 

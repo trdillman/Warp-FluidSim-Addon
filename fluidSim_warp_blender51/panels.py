@@ -58,34 +58,43 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
 
         controls = layout.column(align=True)
         activity = state["id"]
-        if activity == "LIVE_PREVIEW":
-            controls.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
+        screen = getattr(context, "screen", None)
+        playing = bool(
+            getattr(scene.fluidsim, "live", False)
+            and screen is not None
+            and getattr(screen, "is_animation_playing", False)
+        )
+        if activity == "PRODUCTION_BAKE":
+            controls.operator("fluidsim.bake_cancel", text="Cancel Production Bake", icon="CANCEL")
         elif activity == "CACHE_PLAYBACK":
             controls.operator(
-                "fluidsim.cache_playback_stop", text="Stop Cache Playback", icon="PAUSE"
+                "fluidsim.preview_pause" if playing else "fluidsim.cache_preview_start",
+                text="Pause Cache Preview" if playing else "Resume Cache Preview",
+                icon="PAUSE" if playing else "PLAY",
             )
-        elif activity == "PRODUCTION_BAKE":
-            controls.operator("fluidsim.bake_cancel", text="Cancel Production Bake", icon="CANCEL")
+        elif playing:
+            controls.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
         else:
             live = controls.column(align=True)
             live.enabled = runtime_ready
-            live.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
+            live.operator(
+                "fluidsim.preview_start",
+                text="Resume Preview" if state["owns_scene"] else "Preview",
+                icon="PLAY",
+            )
 
         if state["owns_scene"] and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
-            row = controls.row(align=True)
-            row.operator_context = "EXEC_DEFAULT"
-            row.operator("fluidsim.step", text="Step One Frame", icon="FRAME_NEXT").frames = 1
-            row.operator("fluidsim.release", text="Release Solver", icon="X")
-        elif not state["owns_scene"] and activity == "IDLE":
-            initialize = controls.column(align=True)
-            initialize.enabled = runtime_ready
-            initialize.operator("fluidsim.initialize", text="Initialize Solver", icon="MOD_FLUIDSIM")
+            controls.operator(
+                "fluidsim.restart_simulation",
+                text="Restart Simulation",
+                icon="FILE_REFRESH",
+            )
 
         pending = pending_ui_state(scene)
         if pending["action"] != "NONE":
             box = layout.box()
             box.label(text=pending["summary"], icon="INFO")
-            box.label(text="Review and apply staged values in Scene Properties.")
+            box.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
 
         layout.separator()
         layout.operator(

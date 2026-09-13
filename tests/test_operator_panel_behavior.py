@@ -894,6 +894,9 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     from fluidSim_warp_blender51.blender import simulation_admission
+    from fluidSim_warp_blender51.blender import effects
+    monkeypatch.setattr(effects, "build_effect_stack_for_admission", lambda scene: ())
+    monkeypatch.setattr(effects, "publish_admitted_effects", lambda scene, instances: None)
     import fluidSim_warp_blender51.blender.sources as sources
     import fluidSim_warp_blender51.blender.output_publication as output_publication
     from fluidSim_warp_blender51.sim.solver import SolverSettings
@@ -946,6 +949,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         force_fields = ("force",)
         height_source = "height-source"
         snippets = ("snippet",)
+        effects = ()
         seeds = ("seed",)
         configured_device = "cuda:0"
 
@@ -1535,6 +1539,9 @@ def test_cache_playback_operators_arm_and_stop_timeline_mode(monkeypatch):
         )
     )
     context = SimpleNamespace(scene=scene)
+    from fluidSim_warp_blender51.blender import playback
+    session = SimpleNamespace(active=False, release=lambda scene: None)
+    monkeypatch.setattr(playback, "_bridge", lambda: SimpleNamespace(session=lambda: session))
 
     assert operators.FLUIDSIM_OT_cache_playback_start().execute(context) == {"FINISHED"}
     assert scene.fluidsim.cache_playback_enabled is True
@@ -1856,8 +1863,8 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
     """The N-panel is a HUD + lean Live Tuning shelf, not a 50-panel mirror.
 
     D1/D5: the full Scene workflow is no longer re-hosted in the sidebar. The
-    only sidebar body panel is a shallow Live Tuning shelf exposing the four
-    per-iteration knobs bound to the solver's owner (``active_domain_settings``)
+    only sidebar body panel is a shallow Live Tuning shelf exposing the two
+    live-compatible knobs bound to the solver's owner (``active_domain_settings``)
     plus a jump back to the authoritative Properties workflow.
     """
     _install_bpy_stub(monkeypatch)
@@ -1928,11 +1935,9 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
 
     drawn = {call["name"]: call for call in panel.layout.prop_calls}
     assert set(drawn) == {
-        "voxel_size",
-        "particles_per_voxel",
         "flip_ratio",
         "particle_display_fraction",
-    }, "Live Tuning must draw exactly the four per-iteration knobs"
+    }, "Live Tuning must exclude structural quality and sampling settings"
     for name, call in drawn.items():
         assert call["data"] is domain_settings, (
             f"{name} must bind to active_domain_settings (the owner the solver reads)"
@@ -2479,7 +2484,7 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     assert long_status[-20:] in joined
 
 
-def test_transport_keeps_step_buttons_present_but_greyed_when_not_ready(monkeypatch):
+def test_transport_keeps_complete_preview_action_present_when_not_ready(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
     monkeypatch.setattr(ui_scene, "_runtime_ui_state",
@@ -2492,15 +2497,13 @@ def test_transport_keeps_step_buttons_present_but_greyed_when_not_ready(monkeypa
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
 
     op_ids = [op["id"] for op in panel.layout.operators]
-    assert "fluidsim.toggle_live" in op_ids
-    # Step One + Step Many always present (anti-reflow), never hidden.
-    assert op_ids.count("fluidsim.step") == 2
-    # Both step buttons drawn under a disabled sub-layout (greyed, not hidden).
-    step_ops = [op for op in panel.layout.operators if op["id"] == "fluidsim.step"]
-    assert step_ops and all(op["enabled"] is False for op in step_ops)
+    assert "fluidsim.preview_start" in op_ids
+    assert "fluidsim.step" not in op_ids
+    preview = next(op for op in panel.layout.operators if op["id"] == "fluidsim.preview_start")
+    assert preview["enabled"] is False
 
 
-def test_transport_enables_step_buttons_when_runtime_ready(monkeypatch):
+def test_advanced_lifecycle_enables_step_buttons_when_runtime_ready(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
     monkeypatch.setattr(ui_scene, "_runtime_ui_state",
@@ -2508,7 +2511,7 @@ def test_transport_enables_step_buttons_when_runtime_ready(monkeypatch):
     monkeypatch.setattr(ui_scene, "activity_ui_state",
                         lambda scene: {"id": "IDLE", "owns_scene": True,
                                        "label": "Idle", "icon": "PAUSE"})
-    panel = ui_scene.FLUIDSIM_PT_scene_transport()
+    panel = ui_scene.FLUIDSIM_PT_scene_lifecycle()
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
 

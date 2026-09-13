@@ -466,7 +466,10 @@ def _try_live_parameter_update(scene) -> bool:
     session = scene_bridge.session()
     if not session.active or not session.owns_scene(scene):
         return False
-    instances = scene_effect_instances(scene)
+    try:
+        instances = build_effect_stack_for_admission(scene)
+    except (RuntimeError, ValueError):
+        return False
     if not session.solver.update_custom_effect_runtime_bindings(instances):
         return False
     _publish_applied_state(scene, instances)
@@ -518,6 +521,10 @@ def refresh_stack_state(scene):
             else "DIRTY" if stack.applied_signature else "DRAFT"
         )
         stack.blocking_reason = "; ".join(blocking)
+        if signature != stack.applied_signature or blocking:
+            from .playback import pause_preview_for_changes
+
+            pause_preview_for_changes(scene)
         return signature, inventory
     except Exception as exc:
         stack.status = "INVALID"
@@ -776,7 +783,12 @@ def effect_report_state(scene) -> dict[str, object]:
     }
 
 def build_effect_stack_for_admission(scene) -> tuple[EffectInstanceV2, ...]:
-    """Return the exact applied stack or reject initialization before allocation."""
+    """Capture eligible authoring state; admission validates and installs it.
+
+    Unlike production_blocking_reason, capture does not require a previously
+    applied draft. Cache identity checks remain strict at their own boundary.
+    Keep disabled instances so successful admission can publish full evidence.
+    """
 
     legacy = tuple(getattr(getattr(scene, "fluidsim", None), "snippets", ()))
     stack = scene.fluidsim_effects
@@ -785,10 +797,23 @@ def build_effect_stack_for_admission(scene) -> tuple[EffectInstanceV2, ...]:
             "Legacy Custom Warp Snippets must be copied to disabled, untrusted "
             "Custom Effects before admission"
         )
-    reason = production_blocking_reason(scene)
-    if reason:
-        raise RuntimeError(f"Custom Effects admission blocked: {reason}")
-    return effective_stack_instances(scene_effect_instances(scene))
+    instances = scene_effect_instances(scene)
+    store = trust_store_for_scene(scene)
+    for instance in effective_stack_instances(instances):
+        digest = content_trust_digest(instance.definition)
+        trust = store.status(digest, built_in=instance.definition.built_in)
+        if trust not in {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}:
+            raise RuntimeError(
+                f"Custom Effects admission blocked: {instance.definition.name}: "
+                "exact source is not trusted")
+    return instances
+
+
+def publish_admitted_effects(scene, instances: tuple[EffectInstanceV2, ...]) -> None:
+    """Publish the full immutable snapshot installed by Simulation Admission."""
+    for item in scene.fluidsim_effects.items:
+        _clear_diagnostics(item)
+    _publish_applied_state(scene, instances)
 
 def trust_effect(scene, index: int) -> None:
     stack = scene.fluidsim_effects

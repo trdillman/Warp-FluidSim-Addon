@@ -166,7 +166,10 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
             text="Open Full FluidSim Settings",
             icon="PROPERTIES",
         )
-        if kind == "DOMAIN" or kind in _OUTPUT_KINDS.values():
+        if (
+            (kind == "DOMAIN" or kind in _OUTPUT_KINDS.values())
+            and ui_scene._advanced_visible(context)
+        ):
             install = layout.operator(
                 "fluidsim.install_render_nodes",
                 text="Create / Repair Outputs",
@@ -288,7 +291,8 @@ class FLUIDSIM_PT_physics_surface_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "liquid_view_mode")
         layout.prop(fs, "surface_material")
         layout.prop(fs, "surface_attribute_mode")
-        ui_scene._draw_attribute_group(layout, fs, "surface")
+        if ui_scene._advanced_visible(context):
+            ui_scene._draw_attribute_group(layout, fs, "surface")
 
 
 class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
@@ -305,7 +309,8 @@ class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "particle_display_scale")
         layout.prop(fs, "particle_attribute_mode")
         layout.prop(fs, "particle_material")
-        ui_scene._draw_attribute_group(layout, fs, "particles")
+        if ui_scene._advanced_visible(context):
+            ui_scene._draw_attribute_group(layout, fs, "particles")
 
 
 class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
@@ -323,7 +328,8 @@ class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "whitewater_attribute_mode")
         layout.prop(fs, "whitewater_material")
-        ui_scene._draw_attribute_group(layout, fs, "whitewater")
+        if ui_scene._advanced_visible(context):
+            ui_scene._draw_attribute_group(layout, fs, "whitewater")
 
 
 class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):

@@ -51,7 +51,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene/scene | 0 | UI_STATE |
 | `quality` | REINITIALIZE | scene | scene | - | - | scene/scene | 1 | OK |
 | `export_attributes` | PRESENTATION | scene | - | - | - | scene/scene | 0 | WRITE_ONLY |
-| `live` | ADAPTER | - | scene | scene | - | scene/scene | 5 | PUBLISHED |
+| `live` | ADAPTER | - | scene | scene | scene | scene/scene | 6 | PUBLISHED |
 | `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene/scene | 1 | OK |
 | `domain_object` | REINITIALIZE | scene | scene | scene | scene | scene/scene | 11 | OK |
@@ -101,8 +101,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `cache_enabled` | AUTHORED_NEXT_RUN | - | - | scene | - | scene/scene | 0 | INTERNAL |
 | `cache_path` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene/scene | 0 | OK |
 | `cache_compress` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 2 | OK |
-| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene/scene | 7 | PUBLISHED |
-| `cache_use_custom_range` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene/scene | 1 | OK |
+| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene/scene | 10 | PUBLISHED |
+| `cache_use_custom_range` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene/scene | 2 | OK |
 | `cache_frame_start` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `cache_frame_end` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `status` | PRESENTATION | - | scene | scene | scene | scene/scene | 3 | PUBLISHED |
@@ -297,11 +297,11 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `shortcut_constant_name` | UNOBSERVED | (never written either) |
 | `shortcut_constant_value` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
-| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:468` |
-| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:381`, `fluidSim_warp_blender51/blender/scene_bridge.py:393` |
-| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:382`, `fluidSim_warp_blender51/blender/scene_bridge.py:395` |
-| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:383`, `fluidSim_warp_blender51/blender/scene_bridge.py:397` |
-| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:384`, `fluidSim_warp_blender51/blender/scene_bridge.py:399` |
-| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:385`, `fluidSim_warp_blender51/blender/scene_bridge.py:401` |
-| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:386`, `fluidSim_warp_blender51/blender/scene_bridge.py:403` |
+| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:777` |
+| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:451`, `fluidSim_warp_blender51/blender/scene_bridge.py:401` |
+| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:452`, `fluidSim_warp_blender51/blender/scene_bridge.py:403` |
+| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:453`, `fluidSim_warp_blender51/blender/scene_bridge.py:405` |
+| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:454`, `fluidSim_warp_blender51/blender/scene_bridge.py:407` |
+| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:455`, `fluidSim_warp_blender51/blender/scene_bridge.py:409` |
+| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:456`, `fluidSim_warp_blender51/blender/scene_bridge.py:411` |
 

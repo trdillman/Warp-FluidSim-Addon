@@ -37,15 +37,15 @@ remove Windows from the product manifest or release artifacts.
 
 After selecting one or more mesh objects, the shortest workflow is:
 
-1. Open **Scene Properties → Setup**, click **Guided Setup…**, choose
+1. Open **Scene Properties → Setup**, click **Set Up & Preview…**, choose
    **Quick Liquid** and a product preset, then confirm.
-2. In **Scene Properties → Session & Status**, click **Initialize Solver**, then
-   **Start Live Preview**. Runtime and capacity preflight run before allocation.
-3. Press Play.
+2. FluidSim performs runtime and capacity preflight, prepares the solver and
+   outputs, and starts Blender timeline playback.
 
-The compact **3D View → FluidSim** status panel exposes lifecycle shortcuts.
-Its collapsed **Full Settings** child mirrors the authoritative Scene Properties
-workflow without duplicating state. Object roles and per-input controls remain
+The compact **3D View → FluidSim** status panel exposes Preview, Pause/Resume,
+Apply Changes, and Restart shortcuts. Its Live Tuning child contains only
+runtime-compatible adjustments and links to the authoritative Scene Properties
+workflow. Object roles and per-input controls remain
 in **Object Properties** and also appear contextually in **Physics Properties**.
 
 Guided setup creates or reuses one owned collection tree without deleting or
@@ -66,7 +66,8 @@ default materials appear in `Outputs`: `FluidSim Surface`, `FluidSim Particles`,
 typed shells are ready for **Separate** or **Combined + Separate** publication.
 The current bundled Geometry Nodes revision is attached to every owned output
 without replacing user-owned modifiers or node groups. Re-running the same
-setup is idempotent. The scene remains stopped; **Initialize Solver** and **Start Live Preview** are explicit lifecycle actions, and Play advances the timeline.
+setup is idempotent. Choose **Set Up Only…** when you want the same owned scene
+configuration without starting playback.
 
 Other setup modes are **Quick Container**, **Quick Viscous Liquid**,
 **Add Collider**, **Add Inflow**, and **Add Outflow**. Quick Container tags the
@@ -107,8 +108,8 @@ Manual setup remains available for authored pipelines:
    values describe the active object.
 4. Choose a product preset under **Scene Properties → Setup → Product Presets**
    or edit Simulation Physics directly.
-5. Review **Capacity & Safety**, initialize the solver from **Session & Status**,
-   and use Live Preview or Production Bake as appropriate.
+5. Review **Capacity & Safety**, then use **Preview** or Production Bake as
+   appropriate.
 
 Guided and manual workflows use the same object roles and solver settings; the
 setup wizard is a transaction service, not a separate solver architecture.
@@ -131,23 +132,25 @@ The root panels appear in this fixed order.
 
 Shows one derived activity state: **Idle**, **Live Preview**, **Cache Playback**,
 or **Production Bake**. It also shows runtime/device readiness and the actions
-valid for the current state. Stop, Cancel, Release, and Clear Error remain
-available when needed even if runtime readiness later degrades.
+valid for the current state. Pause, Resume, Restart, Cancel, and Clear Error
+remain available when relevant. Manual Initialize, Release, Reset, and stepping
+controls are retained in the default-closed **Advanced > Lifecycle** panel.
 
 Children:
 
 - **Pending Settings** appears only when a Reset or Reinitialize action is
-  staged. It offers **Apply & Reset**, **Apply & Reinitialize**, and
-  **Revert Pending Values** from the same lifecycle service used by execution.
+  staged. It offers **Apply Changes** and **Revert Pending Values** from the same
+  lifecycle service used by execution. Apply Changes selects the least
+  destructive valid transition and confirms only when progress will be lost.
 - **Runtime Statistics** appears when this scene owns the solver or its cache
   playback is active.
 - **Live Timeline Recovery** owns the bounded catch-up frame limit.
 
 #### Setup
 
-**Guided Setup…** configures the selected objects without automatically playing
-the timeline. **Product Presets** applies built-in or user presets and reports
-the active preset identity.
+**Set Up & Preview…** configures the selected objects and starts real timeline
+playback. **Set Up Only…** stops after configuration. **Product Presets** applies
+built-in or user presets and reports the active preset identity.
 
 #### Domain & Particles
 
@@ -187,11 +190,13 @@ of Scene Properties. The root contains four groups:
    remove.
 2. **Selected Effect** — artist-facing description, typed parameters, controller
    objects, frame window, and cadence.
-3. **Workflow** — **Test Draft**, **Compile & Apply**, **Revert Draft**, and
-   **Preview One Frame**.
+3. **Preview / Apply Changes** — prepares eligible draft effects through the
+   production admission path without a separate compile step.
 4. **Status** — trust, current draft/applied divergence, production admission,
    compile evidence, and the applied SHA-256 identity.
 
+**Effect Engineering** is an Advanced-only, closed child retaining Test Draft,
+Compile & Apply, Revert Draft, and Preview One Frame for troubleshooting.
 **Effect Packages** is a closed maintenance child for import, comparison,
 export, reveal, rename, and removal. Package mutation is shown only for an
 actually installed user package; embedded scene definitions are identified as
@@ -223,20 +228,22 @@ The root owns whitewater enablement. Children are:
 
 **Display** owns the combined liquid view mode, display fraction/scale,
 attribute-color selectors, whitewater visibility, and Combined/Separate output
-mode. **Materials & Collection** owns output collection, surface/particle and
-combined/typed whitewater materials, plus idempotent Geometry Nodes install or
-update. **Persistent Attributes** contains Surface, Particle, and Whitewater
-attribute children. Hidden compatibility aliases do not appear.
+mode. **Materials & Collection** owns output collection and surface/particle and
+combined/typed whitewater materials. Forced Geometry Nodes repair/update and
+the detailed Surface, Particle, and Whitewater attribute inventories are shown
+in Advanced mode. Hidden compatibility aliases do not appear.
 
 #### Cache & Production Bake
 
 The root owns the resolved Cache Path. Children are:
 
-- **Playback** — one Start or Stop Cache Playback action.
+- **Playback** — Preview, Pause, or Resume Cache; this starts the actual Blender
+  timeline and does not allocate a live solver.
 - **Shared Playback / Export Range** — optional playback/export range.
 - **Storage** — compression and checkpoint interval.
 - **Production Bake** — authored bake range, progress, one mutually exclusive
-  Start/Resume/Restart action, Cancel, and Copy Headless Bake Command. Resume
+  Start/Resume/Restart action and Cancel. Advanced mode also exposes Copy
+  Headless Bake Command. Resume
   still performs full signature/checksum/checkpoint verification at execution.
 - **Manage Cache** — shown only for a recognized FluidSim cache or interrupted
   FluidSim transaction. Move, Rename, orphan removal, and Free dialogs display
@@ -408,10 +415,13 @@ levels:
 
 1. Click **Add Effect** and select **Vortex Force**.
 2. Move the created Vortex controller and adjust Strength, Radius, and Falloff.
-3. Click **Test Draft**, then **Compile & Apply**.
-4. Click **Preview One Frame** or start Live Preview.
+3. Click **Preview**. FluidSim prepares the draft effect, solver, and outputs,
+   then starts timeline playback.
+4. Use **Apply Changes** after later edits; it confirms only when the required
+   transition discards current preview progress.
 
-Test Draft performs static validation, forces real Warp JIT compilation, runs
+The Advanced-only Test Draft action performs static validation, forces real
+Warp JIT compilation, runs
 bounded guarded fixtures, synchronizes the selected device, and verifies
 canaries and finite output. Compile & Apply swaps the entire candidate stack
 atomically. A failed effect never removes the previous working stack and is
@@ -626,8 +636,9 @@ sampling, leaf/whitewater capacity, domain, or a restart-only lifecycle value
 in the middle of a run does **not** silently erase that run. One neutral
 **Pending Settings** child appears under **Scene Properties → Session & Status**
 instead of injecting action rows into unrelated panels. Rewind to the timeline
-start to apply eligible changes automatically, or choose **Apply & Reset**,
-**Apply & Reinitialize**, or **Revert Pending Values**. A failed explicit action
+start to apply eligible changes automatically, or choose **Apply Changes** or
+**Revert Pending Values**. Apply Changes delegates Reset versus Reinitialize to
+the shared lifecycle policy and confirms the actual progress loss. A failed explicit action
 retains its pending reasons. Revert never changes or saves Blender add-on
 preferences; device changes remain explicit in Add-on Preferences.
 
@@ -642,8 +653,9 @@ preserving the initialized solver. No partial source batch is committed.
 
 The compact **3D View → FluidSim** launcher remains reachable without becoming
 a second settings surface. It shows solver activity, runtime readiness, the
-valid stop/start/initialize/release/step action, pending-change count, and a
-shortcut to Scene Properties. The viewport overlay remains informational only.
+valid Preview, Pause/Resume, Apply Changes, or Restart action, pending-change
+count, and a shortcut to Scene Properties. The viewport overlay remains
+informational only.
 
 ---
 

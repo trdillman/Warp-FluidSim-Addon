@@ -912,6 +912,78 @@ def _apply_pending(scene, requested=None, *, depsgraph=None):
         raise
 
 
+def _effect_changes(scene):
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None:
+        return False
+    from .effects import scene_effect_instances
+    from ..sim.effects.fingerprint import execution_stack_fingerprint
+
+    signature, _ = execution_stack_fingerprint(scene_effect_instances(scene))
+    return signature != stack.applied_signature
+
+
+def changes_require_restart(scene) -> bool:
+    """Whether applying current edits would discard owned preview progress."""
+    sess = session()
+    if not sess.owns_scene(scene) or _is_disposable_start(sess):
+        return False
+    state = refresh_pending_state(scene, sess)
+    return state.pending_action is not None or _effect_changes(scene)
+
+
+def change_confirmation_token(scene):
+    """Bind an interactive restart confirmation to this scene and draft."""
+    effects = ()
+    if getattr(scene, "fluidsim_effects", None) is not None:
+        from .effects import scene_effect_instances
+        effects = tuple(item.to_dict() for item in scene_effect_instances(scene))
+    return _scene_identity(scene), current_interaction_signatures(scene), effects
+
+
+def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=False) -> bool:
+    """Apply one registry-selected transition, including a structural effect draft."""
+    from . import playback, production_bake
+
+    if getattr(scene.fluidsim, "cache_playback_enabled", False):
+        raise RuntimeError("Cache Preview is selected; switch to Live Preview before applying simulation changes")
+    sess = session()
+    if production_bake.bake_is_active(scene):
+        raise RuntimeError("Production Bake owns this scene")
+    if sess.active and not sess.owns_scene(scene):
+        raise RuntimeError("Another scene owns the solver; release it from that scene first")
+    state = refresh_pending_state(scene, sess)
+    effect_changes = _effect_changes(scene)
+    if not force_restart and state.pending_action is None and not effect_changes:
+        return False
+    if not allow_restart and (force_restart or changes_require_restart(scene)):
+        raise RuntimeError("Restart required: current preview progress will be cleared")
+    original_frame = scene.frame_current
+    original_solver = sess.solver
+    def set_frame(frame):
+        setter = getattr(scene, "frame_set", None)
+        if callable(setter):
+            setter(frame)
+        else:
+            scene.frame_current = frame
+    with playback.suppress_frame_handlers():
+        set_frame(scene.frame_start)
+        try:
+            if not sess.owns_scene(scene):
+                sess.initialize(scene, depsgraph=depsgraph)
+                changed = True
+            elif state.pending_action is not None:
+                changed = _apply_pending(scene, depsgraph=depsgraph)
+            else:
+                sess.reset(scene, depsgraph=depsgraph)
+                changed = True
+        except Exception:
+            if sess.solver is original_solver:
+                set_frame(original_frame)
+            raise
+    return changed
+
+
 def reinitialize_eligibility(scene):
     if getattr(scene, "fluidsim", None) is None:
         return False, "No FluidSim scene is active"
