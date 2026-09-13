@@ -126,6 +126,11 @@ def test_output_rollback_preserves_existing_non_nodes_modifier():
         def as_pointer(self):
             return self._pointer
 
+        def items(self):
+            if self.type != "NODES":
+                raise TypeError("this modifier type does not support IDProperties")
+            return super().items()
+
     class Modifiers(list):
         pass
 

@@ -411,6 +411,13 @@ def _record_attributes(journal, owner, names) -> None:
 _MISSING = object()
 
 
+def _id_property_values(owner) -> dict:
+    try:
+        return dict(owner.items())
+    except (AttributeError, TypeError):
+        return {}
+
+
 def _record_property_keys(journal, owner, keys) -> None:
     values = {key: owner.get(key, _MISSING) for key in keys}
 
@@ -538,7 +545,7 @@ def _record_output_state(journal, obj, property_keys):
         modifier.as_pointer(): (
             modifier,
             getattr(modifier, "node_group", _MISSING),
-            dict(modifier.items()),
+            _id_property_values(modifier),
         )
         for modifier in obj.modifiers
     }
@@ -552,7 +559,7 @@ def _record_output_state(journal, obj, property_keys):
                 created_modifier_ids.add(pointer)
                 continue
             _original, node_group, values = before[pointer]
-            current = dict(modifier.items())
+            current = _id_property_values(modifier)
             keys = {
                 key for key in values.keys() | current.keys()
                 if values.get(key, _MISSING) != current.get(key, _MISSING)
@@ -589,7 +596,7 @@ def _record_output_state(journal, obj, property_keys):
     return capture_modifier_changes
 
 
-def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
+def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> SetupResult:
     """Apply one guided setup transaction to selected mesh objects."""
     mode = str(mode).upper()
     if mode not in SETUP_MODES:
@@ -632,6 +639,48 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
         for collection in (_root, inputs, outputs, helpers):
             if collection.name in collection_names:
                 created_ids.track(bpy.data.collections, collection, 1)
+
+        # Preset application invokes the normal settings callbacks, which may
+        # refresh materials on already-configured outputs.  Capture those
+        # outputs before the first setup-owned property write so rollback has
+        # the genuine pre-transaction state rather than the refreshed state.
+        existing_output_names = {obj.name for obj in outputs.objects}
+        existing_output_ids = {obj.as_pointer() for obj in outputs.objects}
+        point_type = (
+            "POINTCLOUD" if output_publication._supports_pointcloud() else "MESH"
+        )
+        expected_types = {
+            output_publication.SURFACE_NAME: "MESH",
+            output_publication.PARTICLES_NAME: point_type,
+            output_publication.WHITEWATER_NAME: point_type,
+            output_publication.FOAM_NAME: point_type,
+            output_publication.BUBBLES_NAME: point_type,
+            output_publication.SPRAY_NAME: point_type,
+        }
+        output_state_captures = []
+        output_property_keys = (
+            OWNER_TAG,
+            OWNER_ID_TAG,
+            KIND_TAG,
+            output_publication.OUTPUT_TAG,
+            *geometry_nodes._MODIFIER_OWNER_KEYS.values(),
+        )
+        for obj in tuple(outputs.objects):
+            kind = str(obj.get(output_publication.OUTPUT_TAG, "") or "")
+            candidate = kind if kind in expected_types else obj.name
+            if candidate not in expected_types:
+                continue
+            if obj.type != expected_types[candidate]:
+                raise ValueError(
+                    f"{obj.name}: existing configured output is {obj.type}, "
+                    f"expected {expected_types[candidate]}"
+                )
+            output_state_captures.append(
+                _record_output_state(journal, obj, output_property_keys)
+            )
+        existing_material_ids = {
+            material.as_pointer() for material in bpy.data.materials
+        }
         scene.fluidsim.output_collection_name = outputs.name
         for obj in selected:
             _link_if_needed(inputs, obj)
@@ -703,43 +752,6 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
                 height_owner.height_base = (
                     minimum[2] + (maximum[2] - minimum[2]) * 0.25
                 )
-        existing_output_names = {obj.name for obj in outputs.objects}
-        existing_output_ids = {obj.as_pointer() for obj in outputs.objects}
-        point_type = (
-            "POINTCLOUD" if output_publication._supports_pointcloud() else "MESH"
-        )
-        expected_types = {
-            output_publication.SURFACE_NAME: "MESH",
-            output_publication.PARTICLES_NAME: point_type,
-            output_publication.WHITEWATER_NAME: point_type,
-            output_publication.FOAM_NAME: point_type,
-            output_publication.BUBBLES_NAME: point_type,
-            output_publication.SPRAY_NAME: point_type,
-        }
-        output_state_captures = []
-        output_property_keys = (
-            OWNER_TAG,
-            OWNER_ID_TAG,
-            KIND_TAG,
-            output_publication.OUTPUT_TAG,
-            *geometry_nodes._MODIFIER_OWNER_KEYS.values(),
-        )
-        for obj in tuple(outputs.objects):
-            kind = str(obj.get(output_publication.OUTPUT_TAG, "") or "")
-            candidate = kind if kind in expected_types else obj.name
-            if candidate not in expected_types:
-                continue
-            if obj.type != expected_types[candidate]:
-                raise ValueError(
-                    f"{obj.name}: existing configured output is {obj.type}, "
-                    f"expected {expected_types[candidate]}"
-                )
-            output_state_captures.append(
-                _record_output_state(journal, obj, output_property_keys)
-            )
-        existing_material_ids = {
-            material.as_pointer() for material in bpy.data.materials
-        }
         output_objects = output_publication.ensure_output_shells(scene)
         for obj in output_objects:
             if obj.as_pointer() not in existing_output_ids:
@@ -798,8 +810,11 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
             message=message,
         )
     except Exception as setup_error:
+        from . import pending_settings
+
         try:
-            journal.rollback()
+            with pending_settings.suppress_callbacks(scene):
+                journal.rollback()
         except Exception as rollback_error:
             raise RuntimeError(
                 f"{setup_error}; setup rollback was incomplete: {rollback_error}"
@@ -807,3 +822,11 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
         raise
     journal.commit()
     return result
+
+
+def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
+    """Apply Guided Setup without publishing intermediate callback state."""
+    from . import pending_settings
+
+    with pending_settings.suppress_callbacks(context.scene):
+        return _setup_selected_transaction(context, mode, preset_id)

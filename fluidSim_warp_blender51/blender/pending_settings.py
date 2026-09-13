@@ -8,6 +8,7 @@ Session are adapters to this module.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -485,6 +486,18 @@ def _interaction_state(scene):
         state = SceneInteractionState(scene=scene)
         _INTERACTION_STATES[key] = state
     return state
+
+
+@contextmanager
+def suppress_callbacks(scene):
+    """Temporarily suppress setting callbacks, preserving nested owner state."""
+    state = _interaction_state(scene)
+    previous = state.suppress_callbacks
+    state.suppress_callbacks = True
+    try:
+        yield
+    finally:
+        state.suppress_callbacks = previous
 
 
 def _stable_value(value):

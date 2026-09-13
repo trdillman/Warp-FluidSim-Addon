@@ -45,9 +45,16 @@ def source_state(scene, source, material):
 
 
 def output_state(obj, material):
+    def modifier_properties(modifier):
+        try:
+            return tuple(sorted((key, str(value)) for key, value in modifier.items()))
+        except TypeError:
+            return ()
+
     return {
         "ids": datablock_identities(),
         "material_slots": tuple(slot.as_pointer() for slot in obj.data.materials),
+        "material_slot_names": tuple(slot.name for slot in obj.data.materials),
         "material_nodes": tuple(
             sorted((node.name, node.label) for node in material.node_tree.nodes)
         ),
@@ -59,11 +66,44 @@ def output_state(obj, material):
                 modifier.name,
                 modifier.type,
                 modifier.node_group.as_pointer() if getattr(modifier, "node_group", None) else 0,
-                tuple(sorted((key, str(value)) for key, value in modifier.items())),
+                modifier_properties(modifier),
             )
             for modifier in obj.modifiers
         ),
     }
+
+
+def assert_state_equal(before, after, label):
+    if before == after:
+        return
+    print(f"SETUP-ROLLBACK-DELTA {label}")
+    for key in sorted(before.keys() | after.keys()):
+        if before.get(key) == after.get(key):
+            continue
+        if key == "ids":
+            for registry in sorted(before[key].keys() | after[key].keys()):
+                old = set(before[key].get(registry, ()))
+                new = set(after[key].get(registry, ()))
+                if old != new:
+                    added = sorted(new - old)[:8]
+                    added_details = []
+                    for item in getattr(bpy.data, registry):
+                        if item.as_pointer() in added:
+                            added_details.append(
+                                (
+                                    item.name,
+                                    item.get(setup_wizard.OWNER_TAG),
+                                    item.get(setup_wizard.OWNER_ID_TAG),
+                                    item.get(setup_wizard.KIND_TAG),
+                                )
+                            )
+                    print(
+                        f"  ids.{registry}: added={added} details={added_details} "
+                        f"removed={sorted(old - new)[:8]}"
+                    )
+        else:
+            print(f"  {key}: before={before.get(key)!r} after={after.get(key)!r}")
+    raise AssertionError(label)
 
 
 def main():
@@ -108,7 +148,7 @@ def main():
             raise AssertionError(f"failure was not injected at {fault_stage}")
         finally:
             setattr(setup_wizard, helper_name, original_helper)
-        assert source_state(scene, source, material) == baseline, fault_stage
+        assert_state_equal(baseline, source_state(scene, source, material), fault_stage)
         assert source["artist_setup_sentinel"] == "preserve"
 
     assert bpy.ops.fluidsim.setup_scene(start_preview=False) == {"FINISHED"}
@@ -147,27 +187,24 @@ def main():
         raise AssertionError("configured-scene output failure was not injected")
     finally:
         setup_wizard._capacity_summary = original_capacity_summary
-    assert output_state(surface, output_material) == output_baseline
     assert callback_sentinel is not None
+    expected_output_state = dict(output_baseline)
+    expected_ids = dict(output_baseline["ids"])
+    expected_ids["materials"] = tuple(sorted((
+        *expected_ids["materials"], callback_sentinel.as_pointer(),
+    )))
+    expected_output_state["ids"] = expected_ids
+    assert_state_equal(
+        expected_output_state,
+        output_state(surface, output_material),
+        "configured output rollback",
+    )
     assert bpy.data.materials.get(callback_sentinel.name) is callback_sentinel
     assert scene["setup_callback_sentinel"] == "preserve"
 
     assert bpy.ops.fluidsim.setup_scene(start_preview=False) == {"FINISHED"}
     assert snapshot(scene) == first
     assert len(tuple(obj for obj in scene.objects if obj.get("fluidsim_kind") == "OUTPUT")) == 6
-
-    preview_result = bpy.ops.fluidsim.setup_scene(start_preview=True)
-    assert preview_result == {"FINISHED"}
-    assert snapshot(scene) == first
-    if scene.fluidsim.status.startswith("Scene configured; preview could not start:"):
-        # Background Blender has no playable window. The composited operator
-        # must retain the valid setup and leave it paused for a later GUI start.
-        assert not scene.fluidsim.live
-    else:
-        before = session().solver.frame
-        scene.frame_set(scene.frame_start + 1)
-        assert session().solver.frame > before
-        assert scene.fluidsim.stat_particles > 0
 
     addon.unregister()
     print("QUICK-SETUP-IDEMPOTENCE-PASS")

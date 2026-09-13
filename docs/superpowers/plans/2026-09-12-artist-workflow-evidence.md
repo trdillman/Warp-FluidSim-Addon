@@ -40,3 +40,13 @@ Final host verification before runtime: `python -m pytest -q --tb=short` complet
 - Setup rollback/idempotence; modal bake scene switching/deletion; admission, pending, handler, and custom-effect acceptance.
 - All-demo checks and production validation with GUI launch routed through the canonical isolated launcher. Do not infer aggregate production certification from separate partial checks.
 - Final receipt paths, exact runtime/source identities, and remaining limitations.
+
+## Live findings and repairs
+
+At `f39c6ab`, Blender exposed unavailable Preview/Apply RNA operators despite true direct Python polls. Their registered subclasses were interfering with the parents. `21e4db2` separates each registered operator from shared unregistered mixins; a failing MRO regression became passing. The fresh isolated GUI then passed 21 artist checks: frames 5 and 8, 800 particles, 7 Radial Pulse dispatches, actual edited parameter binding with retained kernel/solver, Pause/Resume, and structural-edit consent/Apply/Restart. Receipt: `artifacts/artist_workflow_effects_gui_21e4db2.json`.
+
+Modal cancellation while viewing another scene exposed a shared property-callback bug: restoring scene A's live flag changed scene B's status. `artifacts/artist_bake_gui_diagnostic.json` captures the before/after. Both live and cache mode callbacks now resolve their actual owning Scene from `id_data`; independent source review allows this repair. Main combined callback/preview/bake/playback checks: 86 passed.
+
+Real setup rollback exposed callback side effects during restoration and preset application before the material baseline was captured. Forward setup and rollback now use a public, nesting-safe pending callback suppressor and capture existing outputs before property/preset writes. Non-Nodes modifiers' unsupported ID-property access is handled explicitly. The parent reran the Blender test: `artifacts/artist_setup_background.log` contains `QUICK-SETUP-IDEMPOTENCE-PASS`, with no traceback. The source lane reports 99 related tests passed and independent review ALLOW. Live Setup & Preview composition remains to be tested separately.
+
+All failed receipts are retained as diagnostic history, not passing certification. No tracked demo was saved during these tests. Owned GUI processes 51924 and 52244 were closed before the next source iteration; regular Blender preferences and installed add-ons were not modified.

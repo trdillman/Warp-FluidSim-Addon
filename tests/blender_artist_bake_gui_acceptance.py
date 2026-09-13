@@ -152,6 +152,9 @@ def _begin_failure(exc):
     STATE["report"]["error"] = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
+    STATE["report"]["scene_b_before"] = STATE.get("scene_b_before")
+    if STATE.get("scene_b") is not None:
+        STATE["report"]["scene_b_at_failure"] = _scene_b_snapshot(STATE["scene_b"])
     active = cache_operators._ACTIVE_BAKE
     if active is not None:
         active.request_cancel()

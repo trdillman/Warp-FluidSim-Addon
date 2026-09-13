@@ -21,7 +21,14 @@ def preview_fixture(monkeypatch):
     ops = _reload_module('fluidSim_warp_blender51.operators')
     from fluidSim_warp_blender51.blender import playback, pending_settings
     scene = SimpleNamespace(fluidsim=SimpleNamespace(live=False, cache_playback_enabled=False, status=''), frame_current=12, frame_start=1)
-    screen = SimpleNamespace(is_animation_playing=False, areas=[SimpleNamespace(type='VIEW_3D', regions=[SimpleNamespace(type='WINDOW')])])
+    screen = SimpleNamespace(
+        is_animation_playing=False,
+        areas=[SimpleNamespace(
+            type='VIEW_3D',
+            regions=[SimpleNamespace(type='WINDOW')],
+            tag_redraw=lambda: None,
+        )],
+    )
     window = SimpleNamespace(scene=scene, screen=screen)
     context = SimpleNamespace(scene=scene, window=window, screen=screen, temp_override=lambda **kw: nullcontext(), evaluated_depsgraph_get=lambda: None)
     bpy.context = context
