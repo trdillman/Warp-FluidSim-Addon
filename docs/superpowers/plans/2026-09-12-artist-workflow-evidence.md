@@ -1,6 +1,6 @@
 # Artist workflow implementation evidence
 
-Status: source implemented and reviewed; 1,529 host tests pass; not runtime-certified.
+Status: historical execution ledger. Earlier pending/approval/failure statements below describe their checkpoints, not the current state. Final closure evidence is recorded in `2026-09-13-artist-workflow-final.md` alongside this file.
 
 Worktree: `C:/Users/Tyler/.codex/worktrees/c6d1/liquid_warp_blender51_port`.
 Initial HEAD: `08bac736a791eb32be63ff02b11671952dc8c4e7`.

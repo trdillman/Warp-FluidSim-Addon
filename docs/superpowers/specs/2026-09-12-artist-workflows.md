@@ -53,3 +53,7 @@ Structural effects may be installed in place only if the existing runtime explic
 ## Out of scope
 
 Installer changes, new effect features, new solvers, a general transaction framework, performance tuning unrelated to the changed path, cache schema migration, and broad role/GPU/preset UI redesign. The earlier installer investigation remains separate from this workflow plan.
+
+### Completion extension (2026-09-13)
+
+The user's subsequent instruction to leave no open work resumed the previously exposed adhesive-demo failure and the original installer verification. The bounded extension is a calibrated saved-demo repair plus isolated build/install/two-smoke/uninstall proof. The regular Blender profile and persistent installation remain untouched. Final evidence is recorded in `../plans/2026-09-13-artist-workflow-final.md`.

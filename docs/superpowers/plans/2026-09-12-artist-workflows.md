@@ -10,6 +10,21 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-12-artist-workflows.md` (read before execution).
 
+## Execution coverage
+
+The detailed checklists below preserve the original planned steps and suggested commit boundaries; actual implementation used reviewed shared-owner checkpoints rather than those exact commit messages. Current completion is tracked here and in `2026-09-13-artist-workflow-final.md`.
+
+| Task | Implementation status | Proof |
+|---|---|---|
+| 1 — Baseline and behavioral contracts | Complete | Initial baseline, new focused regressions, independent reviews |
+| 2 — Effect preparation | Complete | Admission/trust/hot-binding tests and real custom-effect dispatch |
+| 3 — Preview/Pause/Resume | Complete | Final real context matrix, saved playback, effect and no-effect GUI passes |
+| 4 — Apply/Restart | Complete | Host regressions and actual dialog cancellation, stale-token rejection and confirmation pass |
+| 5 — Setup composition | Complete | Scoped rollback tests, real idempotence and setup-preview receipts |
+| 6 — Cache/bake safety | Complete | Fault-injection tests, actual cache playback and modal scene switch/delete receipts |
+| 7 — Artist-facing panels/docs | Complete | Basic/Advanced source contracts and final broad GUI 55/55 pass |
+| 8 — Final integration and handoff | Complete | Installer, 1542 host tests, default headless aggregate, current GUI components and visible custom-effects handoff pass; see final report |
+
 ## Global Constraints
 
 - Target Blender 5.1 on Windows with the existing Warp/CUDA runtime; add no dependency.
