@@ -533,7 +533,6 @@ def _run_phase(phase, scene):
 
     if phase == "setup":
         fs = scene.fluidsim
-        fs.profiling_enabled = True
         fs.show_overlay = True
         bpy.ops.fluidsim.setup_scene(start_preview=False)
         check("setup_scene", fs.domain_object is not None)
@@ -541,6 +540,7 @@ def _run_phase(phase, scene):
 
         domain = active_domain_settings(scene)
         check("authoritative Domain settings available", domain is not None)
+        domain.profiling_enabled = True
         domain.voxel_size = 0.08
         domain.max_particles = 500_000
         domain.whitewater_enabled = True
