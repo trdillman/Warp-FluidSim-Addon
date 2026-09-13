@@ -230,6 +230,24 @@ def _call_panel(panel_id):
     return bpy.ops.wm.call_panel(**kwargs)
 
 
+def _panel_effectively_visible(panel_id, context):
+    """Match Blender's parent-aware panel disclosure for smoke selection."""
+    seen = set()
+    current_id = panel_id
+    while current_id:
+        if current_id in seen:
+            raise RuntimeError(f"Panel parent cycle at {current_id}")
+        seen.add(current_id)
+        panel_cls = getattr(bpy.types, current_id, None)
+        if panel_cls is None:
+            return False
+        poll = getattr(panel_cls, "poll", None)
+        if callable(poll) and not poll(context):
+            return False
+        current_id = getattr(panel_cls, "bl_parent_id", "") or ""
+    return True
+
+
 def _draw_all_panels_smoke(state_name, active_object_name=None):
     _install_panel_draw_probes()
     STATE["panel_draw_state"] = state_name
@@ -244,15 +262,13 @@ def _draw_all_panels_smoke(state_name, active_object_name=None):
 
     if not missing:
         for panel_id in PANEL_IDS:
-            panel_cls = getattr(bpy.types, panel_id)
-            poll = getattr(panel_cls, "poll", None)
             override = _panel_override(panel_id)
             try:
                 if override:
                     with bpy.context.temp_override(**override):
-                        visible = poll(bpy.context) if callable(poll) else True
+                        visible = _panel_effectively_visible(panel_id, bpy.context)
                 else:
-                    visible = poll(bpy.context) if callable(poll) else True
+                    visible = _panel_effectively_visible(panel_id, bpy.context)
             except Exception as exc:  # noqa: BLE001
                 call_failures.append(f"{panel_id}.poll: {exc!r}")
                 continue
@@ -386,9 +402,8 @@ def _assert_panel_disclosure(panel_id, state_name, expected_visible):
     if cls is None:
         check(f"panel disclosure {state_name}", False, f"{panel_id} missing")
         return
-    poll = getattr(cls, "poll", None)
     try:
-        visible = bool(poll(bpy.context) if callable(poll) else True)
+        visible = _panel_effectively_visible(panel_id, bpy.context)
     except Exception as exc:  # noqa: BLE001
         check(f"panel disclosure {state_name}", False, repr(exc))
         return
@@ -499,6 +514,18 @@ def _run_phase(phase, scene):
             "DEFAULT_CLOSED" in bpy.types.FLUIDSIM_PT_scene_lifecycle.bl_options,
         )
         scene.fluidsim.ui_mode = "BASIC"
+
+        # Factory-startup can legitimately provide an empty scene. Create the
+        # setup input only after proving the no-Domain Basic presentation.
+        bpy.ops.mesh.primitive_cube_add(size=2.0, location=(0.0, 0.0, 1.0))
+        setup_input = bpy.context.object
+        setup_input.name = "FluidSim GUI Setup Input"
+        STATE["setup_input_name"] = setup_input.name
+        check(
+            "guided setup input selected",
+            setup_input.select_get() and bpy.context.view_layer.objects.active == setup_input,
+            setup_input.name,
+        )
         STATE["phase"] = "setup"
         return 0.1
 
