@@ -101,16 +101,6 @@ def main():
 
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.12
-    fs.max_particles = 100_000
-    fs.auto_grow_particles = False
-    fs.max_whitewater = 5_000
-    fs.whitewater_enabled = True
-    fs.ww_churn_gain = 1_000.0
-    fs.ww_churn_threshold = 0.0
-    fs.ww_emission_rate = 2_000.0
-    fs.ww_min_speed = 0.0
-    fs.surface_enabled = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
     fs.cache_enabled = False
@@ -126,6 +116,25 @@ def main():
     original_update_outputs = None
     try:
         check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
+        from fluidSim_warp_blender51.blender.scene_bridge import (
+            active_domain_settings,
+        )
+
+        domain_fs = active_domain_settings(scene)
+        check("cache fixture domain settings exist", domain_fs is not None)
+        domain_fs.voxel_size = 0.12
+        domain_fs.max_particles = 100_000
+        domain_fs.auto_grow_particles = False
+        # Keep enough fixed capacity for the deliberately energetic three-frame
+        # source.  This gate exercises complete authoritative export, while the
+        # dedicated whitewater truth gate covers capacity-exhaustion reporting.
+        domain_fs.max_whitewater = 250_000
+        domain_fs.whitewater_enabled = True
+        domain_fs.ww_churn_gain = 1_000.0
+        domain_fs.ww_churn_threshold = 0.0
+        domain_fs.ww_emission_rate = 2_000.0
+        domain_fs.ww_min_speed = 0.0
+        domain_fs.surface_enabled = True
         # Give the short three-frame fixture an explicit energetic continuous
         # inflow so authoritative whitewater coverage cannot pass vacuously.
         source = next(
@@ -217,7 +226,7 @@ def main():
                     "surface_attribute": str(
                         fs.surface_attribute_mode),
                     "surface_cadence": int(
-                        fs.live_surface_publish_cadence),
+                        domain_fs.live_surface_publish_cadence),
                 },
                 "solver_particles": solver_particles,
                 "solver_whitewater": solver_whitewater,
@@ -323,7 +332,7 @@ def main():
         fs.show_whitewater = True
         fs.particle_attribute_mode = "HEIGHT"
         fs.surface_attribute_mode = "SPEED"
-        fs.live_surface_publish_cadence = 7
+        domain_fs.live_surface_publish_cadence = 7
         # Production Bake restores the pre-bake session state. Since this
         # fixture starts inactive, it must remain inactive between exports.
         from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -420,11 +429,12 @@ def main():
             json.dumps(count_evidence, sort_keys=True),
         )
         check(
-            "every production write records coherent whitewater admission state",
+            "every production write admits nonzero whitewater without loss",
             all(
                 item["whitewater_status"] == "OK"
-                and item["whitewater_required"]
-                == item["whitewater_admitted"] + item["whitewater_dropped"]
+                and item["whitewater_required"] > 0
+                and item["whitewater_admitted"] == item["whitewater_required"]
+                and item["whitewater_dropped"] == 0
                 for item in first_write + second_write
             ),
             json.dumps(count_evidence, sort_keys=True),
@@ -508,7 +518,7 @@ def main():
         fs.show_whitewater = False
         fs.particle_attribute_mode = "NONE"
         fs.surface_attribute_mode = "NONE"
-        fs.live_surface_publish_cadence = 1
+        domain_fs.live_surface_publish_cadence = 1
 
         from fluidSim_warp_blender51.blender.scene_bridge import session
 

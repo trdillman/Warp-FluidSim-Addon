@@ -34,6 +34,26 @@ Final host verification before runtime: `python -m pytest -q --tb=short` complet
 
 ## Required remaining proof
 
+### Updated verification checkpoint: product source `2365aca`
+
+The full host suite passed **1537 tests in 108.43 seconds**. The fresh isolated Blender 5.1 source-copy session (PID 51936, port 9877) passed paired runtime/addon identity checks and the following actual GUI cases before being explicitly closed:
+
+| Receipt under `artifacts/` | Observed proof |
+| --- | --- |
+| `artist_workflow_effects_gui_2365aca.json` | 24 checks; automatic effect admission, actual Radial Pulse dispatch, hot parameter binding with same kernel/solver, changing output, structural pause/consent, restart after real progress |
+| `artist_workflow_dam_break_gui_2365aca.json` | Non-effect startup sibling, then structural edit/apply/restart |
+| `artist_cache_preview_gui_2365aca.json` | Real production bake followed by cache playback from frame 1 to 4 without an active live solver; temporary cache removed |
+| `artist_bake_gui_2365aca.json` | Real modal bake keeps initiating-scene ownership across scene switch and cancellation; cleanup verified |
+| `artist_bake_deleted_scene_2365aca.json` | Deleting a disposable bake owner releases controller/session/cache reservation and preserves original scene |
+| `artist_setup_preview_gui_2365aca.json` | Set Up & Preview creates a domain and advances a new 512-particle solver with owned output |
+| `artist_effect_add_invoke_2365aca.json` | Actual Add Effect popup invocation returns RUNNING_MODAL; no NoneType return failure |
+
+Launch identity is retained in `artifacts/artist_launch_2365aca.json`. These are targeted workflow proofs, not aggregate production certification. Main tracked demos and the regular Blender installation/profile were not changed.
+
+Independent receipt review allows the targeted workflow claims and explicitly rejects aggregate certification until remaining gates pass. A direct SHA-256 comparison after that review checked all **244 tracked package files** against the retained session `5bedb4d235ff4d87bc911401b4b8f125` temporary add-on: **zero missing and zero mismatched files**, with main product source unchanged at `2365acac2128d26f1ec4fd60e56c5f160410b22e`. Setup's compact GUI receipt records its successful terminal state, not a complete created-ID journal; creation/rollback invariants additionally rely on the dedicated setup test. Negative cache/effect admission and failed restart preservation rely on focused host tests, not those positive GUI receipts.
+
+The broader headless production gate ran in a separate clean proof checkout at the same source (`C:/tmp/fluidsim-artist-proof-20260913`). It failed in the cache-export acceptance observer reading `scene.fluidsim.live_surface_publish_cadence`, a setting now owned by the Domain. Production Output Publication already uses the authoritative domain accessor. The fixture now uses Domain-owned solver settings and retains Scene-owned presentation settings. Its bounded 250,000 whitewater capacity preserves nonzero/no-loss export proof; the real focused Blender run reports `CACHE-EXPORT-PIPELINE-PASS`, and independent review allows the correction. Broad GUI probes also use actual Domain ownership and a verified preloaded add-on route, retaining Basic/Advanced and legacy-action coverage. The full host suite after these validation-input changes passed **1537 tests in 61.92 seconds** (`artifacts/artist_host_suite_validation_inputs.log`). The aggregate gate remains **not passed** pending rerun; its original failure log is `artifacts/artist_headless_gate.log` in the proof checkout. Broad GUI/playback acceptance and all-demo proof are still pending.
+
 - Final source review and generated ownership map; full pytest pass.
 - Frozen source identity; isolated source-loaded Blender launch and paired runtime gate.
 - Real Preview/Pause/Resume/Apply/Restart, effect dispatch, changing owned output, parameter kernel reuse, and non-effect sibling.
