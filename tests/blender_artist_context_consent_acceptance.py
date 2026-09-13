@@ -147,24 +147,40 @@ def check_background(report_path):
         if setup != {"FINISHED"}:
             raise AssertionError(f"guided setup failed: {setup}")
         before = (sess.solver, scene.frame_current)
-        result = bpy.ops.fluidsim.preview_start()
+        raw_operator_error = ""
+        try:
+            result = bpy.ops.fluidsim.preview_start()
+        except RuntimeError as exc:
+            raw_operator_error = str(exc).strip()
+            expected_error = (
+                "Error: Preview could not start: Preview needs a Blender window "
+                "showing this scene"
+            )
+            if raw_operator_error != expected_error:
+                raise
+            # bpy.ops converts an operator ERROR report into RuntimeError for
+            # Python callers. Preserve that raw truth while evaluating the
+            # operator's effective cancellation contract below.
+            result = {"CANCELLED"}
         preserved = sess.solver is before[0] and scene.frame_current == before[1]
         passed = bool(
             result == {"CANCELLED"}
+            and bool(raw_operator_error)
             and preserved
             and not scene.fluidsim.live
             and "needs a Blender window" in scene.fluidsim.status
         )
         report.update(
             status="PASS" if passed else "FAIL",
-            result=sorted(result),
+            raw_operator_error=raw_operator_error,
+            effective_result=sorted(result),
             message=scene.fluidsim.status,
             solver_preserved=preserved,
             source_enabled=True,
             checks=[
                 "real background context",
                 "expected source package enabled",
-                "Preview returned CANCELLED",
+                "Preview cancellation reported as expected RuntimeError",
                 "no solver or frame mutation",
                 "actionable no-window message",
             ] if passed else [],
