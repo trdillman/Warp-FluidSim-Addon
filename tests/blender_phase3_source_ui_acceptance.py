@@ -54,6 +54,7 @@ def main():
         SceneInputs,
         persistent_source_key,
     )
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
     from fluidSim_warp_blender51.sim.enums import MeshSourceRegion, SourceRegionKind
     from fluidSim_warp_blender51.sim.source_regions import CompileContext, SourceCompiler
     from fluidSim_warp_blender51.version import VERSION
@@ -66,6 +67,12 @@ def main():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     scene = bpy.context.scene
+    domain = add_cube("P3_Domain")
+    domain.scale = (3.0, 3.0, 3.0)
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    scene.fluidsim.domain_object = domain
+    ds = active_domain_settings(scene)
 
     emitter = add_cube("P3_MeshSolid", (0, 0, 0))
     select_only(emitter)
@@ -155,10 +162,10 @@ def main():
             value = (x + y) / 6.0
             pixels.extend((value, value, value, 1.0))
     image.pixels[:] = pixels
-    scene.fluidsim.height_enabled = True
-    scene.fluidsim.height_back_mode = "PROFILE"
-    scene.fluidsim.height_profile_image = image
-    scene.fluidsim.height_profile_scale = 0.5
+    ds.height_enabled = True
+    ds.height_back_mode = "PROFILE"
+    ds.height_profile_image = image
+    ds.height_profile_scale = 0.5
 
     inputs = SceneInputs()
     descriptors = inputs.gather_sources(scene)

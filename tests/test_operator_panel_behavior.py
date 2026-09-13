@@ -564,11 +564,19 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
     plan = SimpleNamespace(
         scene_signature="scene-v1", suggestions=(suggestion,), blockers=()
     )
-    fs = _RnaPropertyGroup(
+    domain_fs = _RnaPropertyGroup(
         CAPACITY_RNA,
         max_particles=2_000_000,
         leaf_capacity=8192,
-        domain_object=None,
+    )
+    fs = SimpleNamespace(
+        domain_object=SimpleNamespace(
+            fluidsim_domain=domain_fs,
+            location=(0.0, 0.0, 0.0),
+            dimensions=(2.0, 2.0, 2.0),
+        ),
+        max_particles=-1,
+        leaf_capacity=-1,
         status="Capacity warning",
     )
     scene = SimpleNamespace(fluidsim=fs)
@@ -597,16 +605,17 @@ def test_capacity_option_changes_nothing_until_approval_then_retries(monkeypatch
 
     assert op.invoke(context, None) == {"RUNNING_MODAL"}
     assert dialogs == [(op, 560)]
-    assert fs.max_particles == 2_000_000
-    assert fs.leaf_capacity == 8192
+    assert domain_fs.max_particles == 2_000_000
+    assert domain_fs.leaf_capacity == 8192
     assert op.expected_scene_signature == "scene-v1"
     assert op.execute(context) == {"FINISHED"}
-    assert fs.max_particles == 4_000_000
-    assert fs.leaf_capacity == 16_384
+    assert domain_fs.max_particles == 4_000_000
+    assert domain_fs.leaf_capacity == 16_384
+    assert (fs.max_particles, fs.leaf_capacity) == (-1, -1)
     assert initialized == [scene]
     # RNA fires update= on every accepted write; approval must not skip them.
-    assert ("max_particles", 4_000_000) in fs.update_calls
-    assert ("leaf_capacity", 16_384) in fs.update_calls
+    assert ("max_particles", 4_000_000) in domain_fs.update_calls
+    assert ("leaf_capacity", 16_384) in domain_fs.update_calls
 
 
 def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch):
@@ -631,11 +640,18 @@ def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch)
     plan = SimpleNamespace(
         scene_signature="scene-v1", suggestions=(suggestion,), blockers=()
     )
-    fs = _RnaPropertyGroup(
+    domain_fs = _RnaPropertyGroup(
         CAPACITY_RNA,
         max_particles=2_000_000,
         leaf_capacity=8192,
-        domain_object=None,
+    )
+    fs = SimpleNamespace(
+        domain_object=SimpleNamespace(
+            fluidsim_domain=domain_fs,
+            location=(0.0, 0.0, 0.0),
+            dimensions=(2.0, 2.0, 2.0),
+        ),
+        leaf_capacity=-1,
         status="Capacity warning",
     )
     scene = SimpleNamespace(fluidsim=fs)
@@ -663,7 +679,8 @@ def test_capacity_option_refuses_when_rna_clamps_the_approved_value(monkeypatch)
     assert op.execute(context) == {"CANCELLED"}
     # Rolled back to the authored value, and no solver started against a
     # capacity the user never approved.
-    assert fs.leaf_capacity == 8192
+    assert domain_fs.leaf_capacity == 8192
+    assert fs.leaf_capacity == -1
     assert initialized == []
     assert "not applied" in fs.status.lower()
     assert "leaf_capacity" in fs.status
@@ -2273,8 +2290,16 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
     _install_bpy_stub(monkeypatch)
     bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     operators = _reload_module("fluidSim_warp_blender51.operators")
-    fs = SimpleNamespace(max_particles=1024, status="")
-    scene = SimpleNamespace(fluidsim=fs)
+    fs = SimpleNamespace(max_particles=1024)
+    scene_fs = SimpleNamespace(
+        domain_object=SimpleNamespace(
+            fluidsim_domain=fs,
+            location=(0.0, 0.0, 0.0),
+            dimensions=(2.0, 2.0, 2.0),
+        ),
+        status="",
+    )
+    scene = SimpleNamespace(fluidsim=scene_fs)
     sess = bridge.session()
     sess.solver = SimpleNamespace(
         settings=SimpleNamespace(device="cuda:0", max_particles=65_536),

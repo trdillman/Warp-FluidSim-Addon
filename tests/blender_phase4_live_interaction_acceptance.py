@@ -42,17 +42,18 @@ def main():
     scene = bpy.context.scene
     fs = scene.fluidsim
     bpy.ops.fluidsim.setup_scene()
-    fs.voxel_size = 0.12
-    fs.leaf_capacity = 256
-    fs.max_particles = 80_000
-    fs.max_whitewater = 10_000
-    fs.whitewater_enabled = False
-    fs.surface_enabled = False
+    ds = scene_bridge.active_domain_settings(scene)
+    ds.voxel_size = 0.12
+    ds.leaf_capacity = 256
+    ds.max_particles = 80_000
+    ds.max_whitewater = 10_000
+    ds.whitewater_enabled = False
+    ds.surface_enabled = False
     fs.show_surface = False
     fs.show_particles = False
-    fs.spacetime_enabled = True
-    fs.spacetime_reference_mass = 0.0
-    fs.particles_per_voxel = 8
+    ds.spacetime_enabled = True
+    ds.spacetime_reference_mass = 0.0
+    ds.particles_per_voxel = 8
 
     result = bpy.ops.fluidsim.initialize()
     sess = scene_bridge.session()
@@ -65,13 +66,13 @@ def main():
     particle_state = solver.particles
     initial_reference = solver._st_reference_mass_cached
     t0 = time.perf_counter()
-    fs.flip_ratio = 0.35
-    fs.gravity = (0.0, 0.0, -3.0)
-    fs.use_scene_gravity = False
-    fs.pressure_iterations = 18
-    fs.viscosity_enabled = True
-    fs.viscosity_constant = 0.02
-    fs.particles_per_voxel = 12
+    ds.flip_ratio = 0.35
+    ds.gravity = (0.0, 0.0, -3.0)
+    ds.use_scene_gravity = False
+    ds.pressure_iterations = 18
+    ds.viscosity_enabled = True
+    ds.viscosity_constant = 0.02
+    ds.particles_per_voxel = 12
     live_apply_ms = (time.perf_counter() - t0) * 1000.0
     hot_values = (solver.settings.flip_ratio, tuple(solver.settings.gravity),
                   solver.settings.pressure_iterations,
@@ -95,18 +96,18 @@ def main():
           f"{initial_reference} -> {solver._st_reference_mass_cached}; {sampling_pending}")
     check("sampling Reset change can be discarded",
           bpy.ops.fluidsim.revert_pending() == {"FINISHED"}
-          and fs.particles_per_voxel == 8)
+          and ds.particles_per_voxel == 8)
     check("live refresh is bounded", live_apply_ms < 250.0, f"{live_apply_ms:.2f} ms")
 
     # Keyframed RNA is evaluated before each authoritative step seam.
-    fs.cfl = 2.0
-    fs.flip_ratio = 0.8
-    fs.keyframe_insert("cfl", frame=1)
-    fs.keyframe_insert("flip_ratio", frame=1)
-    fs.cfl = 1.25
-    fs.flip_ratio = 0.4
-    fs.keyframe_insert("cfl", frame=2)
-    fs.keyframe_insert("flip_ratio", frame=2)
+    ds.cfl = 2.0
+    ds.flip_ratio = 0.8
+    ds.keyframe_insert("cfl", frame=1)
+    ds.keyframe_insert("flip_ratio", frame=1)
+    ds.cfl = 1.25
+    ds.flip_ratio = 0.4
+    ds.keyframe_insert("cfl", frame=2)
+    ds.keyframe_insert("flip_ratio", frame=2)
     manual_values = []
     for frame in (1, 2):
         scene.frame_set(frame)
@@ -158,7 +159,7 @@ def main():
     advanced_particles = advanced_solver.particles
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
-    fs.voxel_size = 0.1
+    ds.voxel_size = 0.1
     pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
@@ -172,12 +173,17 @@ def main():
 
     # Real Blender RNA/Scene instances keep independent cached pending state.
     first = scene
-    first.fluidsim.leaf_capacity += 64
+    first_ds = scene_bridge.active_domain_settings(first)
+    first_ds.leaf_capacity += 64
     pending_settings.request_scene_update(first, pending_settings.SceneUpdate.REBUILD)
     second = first.copy()
     second.name = "Phase4 Pending Isolation"
+    second_domain = first.fluidsim.domain_object.copy()
+    second.collection.objects.link(second_domain)
+    second.fluidsim.domain_object = second_domain
+    second_ds = scene_bridge.active_domain_settings(second)
     pending_settings.capture_applied_state(second, sess)
-    second.fluidsim.voxel_size = 0.09
+    second_ds.voxel_size = 0.09
     pending_settings.request_scene_update(second, pending_settings.SceneUpdate.REBUILD)
     first_pending = pending_settings.pending_presentation(first)
     second_pending = pending_settings.pending_presentation(second)

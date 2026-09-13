@@ -44,11 +44,15 @@ try:
     scene = bpy.context.scene
     fs = scene.fluidsim
     fs.liquid_view_mode = "PARTICLES"
-    fs.voxel_size = 0.1
-    fs.max_particles = 120_000
-    fs.gravity = (0.0, 0.0, 0.0)
     if bpy.ops.fluidsim.setup_scene() != {"FINISHED"}:
         raise RuntimeError("quick setup failed")
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    ds = active_domain_settings(scene)
+    ds.voxel_size = 0.1
+    ds.max_particles = 120_000
+    ds.use_scene_gravity = False
+    ds.gravity = (0.0, 0.0, 0.0)
 
     source = next(
         (

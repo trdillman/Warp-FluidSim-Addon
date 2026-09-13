@@ -79,28 +79,31 @@ def main():
           fs.liquid_view_mode == "SURFACE",
           fs.liquid_view_mode)
     fs.liquid_view_mode = "SURFACE"
-    fs.voxel_size = 0.08
-    fs.max_particles = 500_000
-    fs.whitewater_enabled = True
-    fs.profiling_enabled = True
     fs.show_particles = True
-    fs.directional_force = (0.0, 0.0, 0.1)
-    fs.omnidirectional_force_center = (0.0, 0.0, 1.0)
-    fs.omnidirectional_force_strength = 0.05
-    fs.omnidirectional_force_radius = 1.0
-    fs.force_diffusion = 0.05
-    fs.dissipation_enabled = True
-    fs.dissipation_attribute = "density"
-    fs.dissipation_rate = 0.1
-    fs.dissipation_target = 1.0
-    fs.attraction_enabled = True
-    fs.attraction_strength = 0.05
-    fs.attraction_max_distance = 0.5
 
     # -- quick setup ----------------------------------------------------------
     result = bpy.ops.fluidsim.setup_scene()
     check("setup_scene operator", result == {"FINISHED"})
     check("domain object assigned", fs.domain_object is not None)
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    ds = active_domain_settings(scene)
+    ds.voxel_size = 0.08
+    ds.max_particles = 500_000
+    ds.whitewater_enabled = True
+    ds.profiling_enabled = True
+    ds.directional_force = (0.0, 0.0, 0.1)
+    ds.omnidirectional_force_center = (0.0, 0.0, 1.0)
+    ds.omnidirectional_force_strength = 0.05
+    ds.omnidirectional_force_radius = 1.0
+    ds.force_diffusion = 0.05
+    ds.dissipation_enabled = True
+    ds.dissipation_attribute = "density"
+    ds.dissipation_rate = 0.1
+    ds.dissipation_target = 1.0
+    ds.attraction_enabled = True
+    ds.attraction_strength = 0.05
+    ds.attraction_max_distance = 0.5
     src = next(
         (
             obj for obj in scene.objects
@@ -183,14 +186,14 @@ def main():
     surface_mat.diffuse_color = (0.9, 0.2, 0.05, 1.0)
     fs.surface_material = surface_mat
     fs.surface_attribute_mode = "NONE"
-    fs.particle_radius_scale = 1.6
-    fs.surface_dilate_iterations = 1
-    fs.surface_dilate_strength = 0.2
-    fs.surface_erode_iterations = 2
-    fs.surface_erode_strength = 0.35
-    fs.surface_smooth_type = "MEAN_CURVATURE_FLOW"
-    fs.surface_smooth_iterations = 2
-    fs.surface_smooth_strength = 0.45
+    ds.particle_radius_scale = 1.6
+    ds.surface_dilate_iterations = 1
+    ds.surface_dilate_strength = 0.2
+    ds.surface_erode_iterations = 2
+    ds.surface_erode_strength = 0.35
+    ds.surface_smooth_type = "MEAN_CURVATURE_FLOW"
+    ds.surface_smooth_iterations = 2
+    ds.surface_smooth_strength = 0.45
     check("realtime surface refresh keeps frame",
           sess.solver.frame == paused_frame,
           f"{paused_frame} -> {sess.solver.frame}")
@@ -221,14 +224,14 @@ def main():
               if surf and getattr(surf.data.color_attributes, "active_color", None) else ""))
 
     paused_frame = sess.solver.frame
-    fs.whitewater_enabled = False
+    ds.whitewater_enabled = False
     check("realtime whitewater toggle keeps frame",
           sess.solver.frame == paused_frame,
           f"{paused_frame} -> {sess.solver.frame}")
     check("realtime whitewater setting applied",
           sess.solver.settings.whitewater_enabled is False,
           str(sess.solver.settings.whitewater_enabled))
-    fs.whitewater_enabled = True
+    ds.whitewater_enabled = True
 
     parts = bpy.data.objects.get("FluidSim Particles")
     check("particles object exists", parts is not None,

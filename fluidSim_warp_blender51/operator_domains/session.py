@@ -273,7 +273,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
     def execute(self, context):
         bridge = _bridge()
         scene = context.scene
-        fs = scene.fluidsim
+        scene_fs = scene.fluidsim
         if self.expected_scene_identity and self.expected_scene_identity != _scene_identity_token(
             scene
         ):
@@ -301,7 +301,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "Scene changed after the warning; initialize again for new options",
             )
-            fs.status = "Capacity options changed â€” review the refreshed warning"
+            scene_fs.status = "Capacity options changed â€” review the refreshed warning"
             return {"CANCELLED"}
         suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
         if suggestion is None:
@@ -309,14 +309,22 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "This option is no longer inside the live safety budget",
             )
-            fs.status = "Capacity option is no longer safe â€” review alternatives"
+            scene_fs.status = "Capacity option is no longer safe â€” review alternatives"
             return {"CANCELLED"}
 
+        from ..blender.scene_bridge import active_domain_settings
+
+        fs = active_domain_settings(scene)
+        if fs is None:
+            message = "Capacity option cannot apply without a designated domain"
+            self.report({"ERROR"}, message)
+            scene_fs.status = message
+            return {"CANCELLED"}
         changes = dict(suggestion.changes)
         domain_min = changes.pop("domain_min", None)
         domain_max = changes.pop("domain_max", None)
         old_values = {name: getattr(fs, name) for name in changes if hasattr(fs, name)}
-        domain = getattr(fs, "domain_object", None)
+        domain = getattr(scene_fs, "domain_object", None)
         old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
         changed = []
         try:
@@ -359,22 +367,22 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             if domain is not None and old_domain is not None:
                 domain.location, domain.dimensions = old_domain
             self.report({"ERROR"}, f"Capacity option was not applied: {exc}")
-            fs.status = f"Capacity option was not applied: {exc}"
+            scene_fs.status = f"Capacity option was not applied: {exc}"
             return {"CANCELLED"}
 
         bridge.clear_error(scene)
-        fs.status = "Approved capacity settings: " + ", ".join(changed)
+        scene_fs.status = "Approved capacity settings: " + ", ".join(changed)
         try:
             sess = bridge.initialize_session(scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Approved retry stopped safely: {exc}")
-            fs.status = f"Approved retry stopped safely: {exc}"
+            scene_fs.status = f"Approved retry stopped safely: {exc}"
             return {"CANCELLED"}
         self.report(
             {"INFO"},
             f"Solver ready with approved option: {suggestion.label}",
         )
-        fs.status = f"Solver ready on {sess.solver.device}; approved {suggestion.label}"
+        scene_fs.status = f"Solver ready on {sess.solver.device}; approved {suggestion.label}"
         return {"FINISHED"}
 
 

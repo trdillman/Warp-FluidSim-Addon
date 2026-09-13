@@ -30,16 +30,21 @@ def main():
     enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
     scene = bpy.context.scene
     fs = scene.fluidsim
-    fs.voxel_size = 0.10
-    fs.max_particles = 120_000
-    fs.max_whitewater = 20_000
-    fs.whitewater_enabled = True
-    fs.surface_enabled = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
 
     check("setup_scene", bpy.ops.fluidsim.setup_scene() == {"FINISHED"})
-    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.scene_bridge import (
+        active_domain_settings,
+        session,
+    )
+
+    ds = active_domain_settings(scene)
+    ds.voxel_size = 0.10
+    ds.max_particles = 120_000
+    ds.max_whitewater = 20_000
+    ds.whitewater_enabled = True
+    ds.surface_enabled = True
 
     sess = session()
     fs.live = True

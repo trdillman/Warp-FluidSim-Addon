@@ -54,14 +54,18 @@ def main():
     fs = scene.fluidsim
     fs.live = False
     scene.frame_set(scene.frame_start)
-    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.scene_bridge import (
+        active_domain_settings,
+        session,
+    )
 
     sess = session()
     if sess.active:
         sess.release(scene)
     check("initialize", bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
-    check("closed scene", not fs.open_boundaries)
-    check("saved wall policy", fs.domain_sdf_walls)
+    ds = active_domain_settings(scene)
+    check("closed scene", not ds.open_boundaries)
+    check("saved wall policy", ds.domain_sdf_walls)
     check("runtime wall policy", sess.solver.settings.domain_sdf_walls)
 
     initial = particle_metrics(sess.solver)

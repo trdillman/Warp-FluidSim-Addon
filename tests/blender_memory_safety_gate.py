@@ -15,13 +15,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import fluidSim_warp_blender51 as addon
-from fluidSim_warp_blender51.blender import scene_bridge
+from fluidSim_warp_blender51.blender import migration, scene_bridge
 
 
 def main():
     addon.register()
     scene = bpy.context.scene
-    fs = scene.fluidsim
+    migration.create_domain_object(scene)
+    fs = scene_bridge.active_domain_settings(scene)
+    assert fs is not None, "memory fixture domain settings missing"
     fs.leaf_capacity = 4096
     fs.max_particles = 250_000
     fs.max_whitewater = 100_000
