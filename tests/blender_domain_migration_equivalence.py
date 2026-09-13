@@ -9,10 +9,10 @@ The gate builds two scenes that share an identically-shaped domain cube and
 identical distinctive solver values on ``obj.fluidsim_domain``:
 
   * Scene A is produced by the real ``load_post`` handler (author a
-    ``schema_version == 0`` scene, save, reopen), then its ``scene.fluidsim``
-    mirror is poisoned with one set of wrong values.
-  * Scene B authors the values directly on the object and poisons its
-    ``scene.fluidsim`` mirror with a *different* set of wrong values.
+    ``schema_version == 0`` scene, save, reopen), then its hidden legacy Scene
+    IDProperties are poisoned with one set of wrong values.
+  * Scene B authors the values directly on the object and poisons the same
+    hidden Scene IDProperties with a *different* set of wrong values.
 
 Because the two mirrors disagree, any solver-determining read that still hits
 ``scene.fluidsim`` makes ``build_settings`` diverge between A and B — the gate
@@ -54,7 +54,7 @@ SOLVER_DISTINCTIVE = {
     "pressure_iterations": 37,
 }
 
-# Two DIFFERENT poison sets written to each scene's scene.fluidsim mirror.
+# Two DIFFERENT poison sets written to each scene's hidden legacy IDProperties.
 # They must differ from SOLVER_DISTINCTIVE and from each other so that a leak
 # to the mirror makes scene A and scene B diverge.
 POISON_A = {
@@ -113,6 +113,11 @@ def author_group(group, values):
         setattr(group, name, value)
 
 
+def poison_legacy_scene_values(group, values):
+    for name, value in values.items():
+        group[name] = value
+
+
 def clear_scene_objects():
     scene = bpy.context.scene
     scene.fluidsim.domain_object = None
@@ -121,14 +126,17 @@ def clear_scene_objects():
 
 
 def build_migrated_scene_a(tmpdir):
-    """Scene A: real load_post migration, then poison the scene mirror."""
+    """Scene A: real migration, then poison hidden legacy Scene values."""
+    from fluidSim_warp_blender51.properties import legacy_scene_settings
+
     clear_scene_objects()
     scene = bpy.context.scene
     cube = make_domain_cube("Domain A")
-    fs = scene.fluidsim
-    fs.schema_version = 0
-    fs.domain_object = cube
-    author_group(fs, SOLVER_DISTINCTIVE)
+    with legacy_scene_settings():
+        fs = scene.fluidsim
+        fs.schema_version = 0
+        fs.domain_object = cube
+        author_group(fs, SOLVER_DISTINCTIVE)
 
     path = os.path.join(tmpdir, "equivalence_a_v0.blend")
     bpy.ops.wm.save_as_mainfile(filepath=path)
@@ -140,13 +148,13 @@ def build_migrated_scene_a(tmpdir):
           fs.schema_version)
     check("A: domain object designated", fs.domain_object is not None,
           getattr(fs.domain_object, "name", None))
-    # The mirror must be irrelevant: poison it with A's wrong values.
-    author_group(fs, POISON_A)
+    # Hidden legacy values must be irrelevant after the Scene/Domain split.
+    poison_legacy_scene_values(fs, POISON_A)
     bpy.context.view_layer.update()
 
 
 def build_fresh_scene_b():
-    """Scene B: author values directly on the object; poison the mirror."""
+    """Scene B: author the Domain, then poison hidden legacy Scene values."""
     clear_scene_objects()
     scene = bpy.context.scene
     cube = make_domain_cube("Domain B")
@@ -154,7 +162,7 @@ def build_fresh_scene_b():
     fs = scene.fluidsim
     fs.schema_version = 1
     fs.domain_object = cube
-    author_group(fs, POISON_B)
+    poison_legacy_scene_values(fs, POISON_B)
     bpy.context.view_layer.update()
 
 

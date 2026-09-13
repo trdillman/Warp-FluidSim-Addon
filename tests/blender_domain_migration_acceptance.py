@@ -9,9 +9,10 @@ spec §9 requires) — each carrying distinctive scalar/enum/vector values plus 
 material and an image pointer (so the pointer path from Issue 3 is exercised).
 Each fixture is saved, reopened so the ``load_post`` migration handler runs, and
 asserted: every migrated field (scalars AND the two datablock pointers) landed
-on ``obj.fluidsim_domain`` with identical values and ``schema_version == 1``.
-The migrated state is then saved and reopened to prove the guard makes a second
-load a no-op (no duplicate domain, values and schema unchanged).
+on its current authoritative owner with identical values, while the migration
+guard was stamped only on ``scene.fluidsim``. The migrated state is then saved
+and reopened to prove the guard makes a second load a no-op (no duplicate
+domain, values and schema unchanged).
 """
 
 import os
@@ -30,7 +31,7 @@ FAILURES = []
 
 # Distinctive, non-default values spanning float / int / bool / vector / enum,
 # so a migration that silently keeps target defaults is caught.
-DISTINCTIVE = {
+DOMAIN_DISTINCTIVE = {
     "voxel_size": 0.037,
     "max_particles": 1_234_567,
     "whitewater_enabled": True,
@@ -38,10 +39,6 @@ DISTINCTIVE = {
     "particles_per_voxel": 12,
     "directional_force": (0.1, 0.2, 0.3),
     "height_back_mode": "FLAT",
-    # ``live`` carries an RNA update callback that spawns a Solver Session.
-    # It MUST migrate as a plain value: the copy fires the callback in real
-    # Blender, so a non-suppressed copy would auto-start a solver mid-load.
-    "live": True,
 }
 
 
@@ -69,30 +66,41 @@ def norm(value):
 
 def author_v0_scene(with_domain):
     """Rebuild the current scene as a pre-migration (schema 0) template."""
+    from fluidSim_warp_blender51.blender.migration import migrated_field_names
+    from fluidSim_warp_blender51.properties import (
+        FLUIDSIM_PG_domain,
+        legacy_scene_settings,
+    )
+
     scene = bpy.context.scene
     for obj in list(scene.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    fs = scene.fluidsim
-    fs.domain_object = None
-    fs.schema_version = 0
-    for name, value in DISTINCTIVE.items():
-        setattr(fs, name, value)
     material = bpy.data.materials.new("Migration Surface Mat")
     image = bpy.data.images.new("Migration Height Profile", width=2, height=2)
-    fs.surface_material = material
-    fs.height_profile_image = image
-    if with_domain:
-        mesh = bpy.data.meshes.new("Preset Domain")
-        domain = bpy.data.objects.new("Preset Domain", mesh)
-        scene.collection.objects.link(domain)
-        fs.domain_object = domain
-    return scene, material.name, image.name
+    with legacy_scene_settings():
+        fs = scene.fluidsim
+        fs.domain_object = None
+        fs.schema_version = 0
+        for name, value in DOMAIN_DISTINCTIVE.items():
+            setattr(fs, name, value)
+        fs.live = True
+        fs.surface_material = material
+        fs.height_profile_image = image
+        if with_domain:
+            mesh = bpy.data.meshes.new("Preset Domain")
+            domain = bpy.data.objects.new("Preset Domain", mesh)
+            scene.collection.objects.link(domain)
+            fs.domain_object = domain
+        expected_domain = {
+            name: norm(getattr(fs, name))
+            for name in migrated_field_names(FLUIDSIM_PG_domain)
+        }
+    return scene, material.name, image.name, expected_domain
 
 
-def migrated_domains(scene):
-    """Objects this scene has stamped as a migrated domain."""
-    return [obj for obj in scene.objects
-            if obj.fluidsim_domain.schema_version == 1]
+def fixture_domains(scene):
+    """Domain candidates in this domain-only migration fixture."""
+    return [obj for obj in scene.objects if obj.type == "MESH"]
 
 
 def run_fixture(label, with_domain, tmpdir):
@@ -101,7 +109,7 @@ def run_fixture(label, with_domain, tmpdir):
     v0_path = os.path.join(tmpdir, f"{label}_v0.blend")
     v1_path = os.path.join(tmpdir, f"{label}_v1.blend")
 
-    _scene, material_name, image_name = author_v0_scene(with_domain)
+    _scene, material_name, image_name, expected_domain = author_v0_scene(with_domain)
     check(f"{label}: authored schema_version == 0",
           bpy.context.scene.fluidsim.schema_version == 0)
     bpy.ops.wm.save_as_mainfile(filepath=v0_path)
@@ -113,18 +121,16 @@ def run_fixture(label, with_domain, tmpdir):
     check(f"{label}: source guard stamped 1", fs.schema_version == 1,
           fs.schema_version)
 
-    # Regression (load semantics): migration is state restoration, not a user
-    # action. Copying ``live=True`` fires its RNA update callback in real
-    # Blender; without suppression that callback auto-starts a Solver Session
-    # mid-load, before object transforms are evaluated, binding the scene to a
-    # bogus unit-cube domain. Opening a file must never leave a live solver.
+    # Regression (load semantics): reopening a saved scene with its scene-owned
+    # ``live`` flag set is state restoration, not a user request to start a
+    # Solver Session. Opening a file must never leave a live solver.
     from fluidSim_warp_blender51.blender import scene_bridge
     sess = scene_bridge.session()
     check(f"{label}: migration left no active session (side-effect-free copy)",
           not sess.active and not sess.error,
           f"active={sess.active} error={sess.error!r}")
 
-    domains = migrated_domains(scene)
+    domains = fixture_domains(scene)
     check(f"{label}: exactly one migrated domain object", len(domains) == 1,
           [obj.name for obj in domains])
     if with_domain:
@@ -154,25 +160,32 @@ def run_fixture(label, with_domain, tmpdir):
         check(f"{label}: domain object present for field checks", False)
         return
     target = fs.domain_object.fluidsim_domain
-    check(f"{label}: target schema_version == 1", target.schema_version == 1,
-          target.schema_version)
+    check(f"{label}: migration guard is not duplicated on the domain",
+          not hasattr(target, "schema_version"))
 
-    for name, value in DISTINCTIVE.items():
+    for name, value in DOMAIN_DISTINCTIVE.items():
         check(f"{label}: scalar field {name!r} migrated",
               norm(getattr(target, name)) == norm(value),
               f"{norm(getattr(target, name))} != {norm(value)}")
-    check(f"{label}: material pointer migrated (Issue 3)",
-          target.surface_material is not None
-          and target.surface_material.name == material_name,
-          getattr(target.surface_material, "name", None))
+    check(f"{label}: scene-owned material pointer preserved (Issue 3)",
+          fs.surface_material is not None
+          and fs.surface_material.name == material_name,
+          getattr(fs.surface_material, "name", None))
     check(f"{label}: image pointer migrated (Issue 3)",
           target.height_profile_image is not None
           and target.height_profile_image.name == image_name,
           getattr(target.height_profile_image, "name", None))
-
-    mismatches = [name for name in migrated_field_names(type(fs))
-                  if norm(getattr(fs, name)) != norm(getattr(target, name))]
-    check(f"{label}: every migrated field identical to source mirror",
+    check(f"{label}: scene-owned live flag preserved", fs.live)
+    migrated_names = set(migrated_field_names(type(target)))
+    check(f"{label}: complete Domain migration inventory preserved",
+          migrated_names == set(expected_domain),
+          sorted(migrated_names ^ set(expected_domain)))
+    mismatches = {
+        name: (expected_domain[name], norm(getattr(target, name)))
+        for name in expected_domain
+        if expected_domain[name] != norm(getattr(target, name))
+    }
+    check(f"{label}: every Domain field matches the legacy snapshot",
           not mismatches, mismatches)
 
     # -- idempotency: save the migrated state, reopen, expect a no-op --------
@@ -183,8 +196,8 @@ def run_fixture(label, with_domain, tmpdir):
     scene = bpy.context.scene
     fs = scene.fluidsim
     check(f"{label}: reopen creates no duplicate domain",
-          len(migrated_domains(scene)) == 1,
-          [obj.name for obj in migrated_domains(scene)])
+          len(fixture_domains(scene)) == 1,
+          [obj.name for obj in fixture_domains(scene)])
     check(f"{label}: reopen keeps schema_version == 1", fs.schema_version == 1,
           fs.schema_version)
     check(f"{label}: reopen keeps the designated domain",
@@ -194,6 +207,17 @@ def run_fixture(label, with_domain, tmpdir):
           fs.domain_object is not None
           and round(fs.domain_object.fluidsim_domain.voxel_size, 6) == before_voxel,
           getattr(getattr(fs.domain_object, "fluidsim_domain", None), "voxel_size", None))
+    reopened_target = (
+        fs.domain_object.fluidsim_domain if fs.domain_object is not None else None
+    )
+    reopened_mismatches = {
+        name: (expected_domain[name], norm(getattr(reopened_target, name)))
+        for name in expected_domain
+        if reopened_target is None
+        or expected_domain[name] != norm(getattr(reopened_target, name))
+    }
+    check(f"{label}: second reopen preserves every Domain field",
+          not reopened_mismatches, reopened_mismatches)
 
 
 def main():
