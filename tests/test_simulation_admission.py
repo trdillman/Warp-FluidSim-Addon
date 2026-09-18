@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from fluidSim_warp_blender51.blender import simulation_admission as admission
+from fluidSim_warp_blender51.sim import memory_safety
 
 
 class _Runtime:
@@ -119,6 +120,9 @@ def test_preflight_failure_preserves_existing_solver(monkeypatch):
 @pytest.mark.parametrize("failure_phase", ("allocate", "configure", "seed", "output"))
 def test_candidate_failures_preserve_live_session_and_post_cutover_failure_cleans(
         monkeypatch, failure_phase):
+    # Cutover releases the outgoing (mocked) solver's device memory; this
+    # contract is host-side and doesn't need a real CUDA device to exercise.
+    monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda *_a, **_kw: None)
     session = _Session()
     old_solver = session.solver
     owner = _owner(session)
@@ -165,6 +169,8 @@ def test_candidate_failures_preserve_live_session_and_post_cutover_failure_clean
 
 
 def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
+    # See the note above: cutover's device-memory release is host-side here.
+    monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda *_a, **_kw: None)
     session = _Session()
     old_solver = session.solver
     events = []

@@ -1,9 +1,14 @@
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
+warp = pytest.importorskip("warp")
+
 
 def _settings(**overrides):
+    if not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     values = dict(
         domain_min=(0.0, 0.0, 0.0),
         domain_max=(1.0, 1.0, 1.0),

@@ -996,6 +996,9 @@ def test_inactive_live_update_status_is_truthful(monkeypatch):
 
 
 def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypatch):
+    warp = pytest.importorskip("warp")
+    if not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     from fluidSim_warp_blender51.blender import simulation_admission

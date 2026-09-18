@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from fluidSim_warp_blender51.sim import constants as C, sourcing
 from fluidSim_warp_blender51.sim.enums import (
     BlendMode, SourceEvaluationCadence, SourceLifecycle, SourceOperation,
@@ -33,6 +34,7 @@ def test_collision_precedence_blocks_later_liquid_classification():
 
 
 def test_pressure_source_is_applied_after_solve_before_projection_without_liquid():
+ if not sourcing.wp.is_cuda_available(): pytest.skip("CUDA not available")
  settings=SolverSettings();settings.domain_min=(0,0,0);settings.domain_max=(2,2,2)
  settings.voxel_size=.25;settings.max_particles=64;settings.surface_enabled=False
  settings.whitewater_enabled=False;settings.pressure_iterations=20;settings.device="cuda:0"
@@ -50,6 +52,7 @@ def test_pressure_source_is_applied_after_solve_before_projection_without_liquid
 
 
 def test_pressure_source_changes_projected_liquid_velocity():
+ if not sourcing.wp.is_cuda_available(): pytest.skip("CUDA not available")
  def run(with_pressure):
   settings=SolverSettings();settings.domain_min=(0,0,0);settings.domain_max=(2,2,2)
   settings.voxel_size=.25;settings.max_particles=128;settings.surface_enabled=False
@@ -75,6 +78,7 @@ def test_pressure_source_changes_projected_liquid_velocity():
 
 
 def test_staggered_source_survives_p2g_ordering_in_real_solver():
+ if not sourcing.wp.is_cuda_available(): pytest.skip("CUDA not available")
  settings=SolverSettings();settings.domain_min=(0,0,0);settings.domain_max=(2,2,2)
  settings.voxel_size=.25;settings.max_particles=32;settings.surface_enabled=False
  settings.whitewater_enabled=False;settings.gravity=(0,0,0);settings.device="cuda:0"

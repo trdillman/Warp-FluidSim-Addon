@@ -636,6 +636,7 @@ def test_live_payload_schema_comes_from_domain_when_scene_mirror_is_poisoned():
 
 def test_output_preparation_uses_domain_owned_point_attribute_inventory(
         monkeypatch):
+    pytest.importorskip("bpy")
     from fluidSim_warp_blender51.blender import output_publication
 
     domain_settings = _live_settings(

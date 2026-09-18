@@ -989,6 +989,12 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
 
 
 def test_release_session_closes_solver_before_dropping_runtime(monkeypatch):
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    # release() itself is a host-side fake; only the incidental device-memory
+    # cleanup after it needs a real CUDA device, so stub that instead of
+    # skipping this teardown-ordering contract on CPU-only machines.
+    monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda *_a, **_kw: None)
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     calls = []
