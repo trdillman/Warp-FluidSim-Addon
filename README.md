@@ -42,6 +42,19 @@ python tools/run_production_gate.py --include-gui
 
 Use the focused commands in `AGENTS.md` for the subsystem being changed. After a GUI-inclusive pass and report refresh, run `python tools/validate_policy_drift_reports.py`.
 
+## Artist workflow
+
+For everyday work, choose **Set Up & Preview** for a selected mesh or use the
+Scene Properties controls to configure an existing domain, then press
+**Preview**. Preview prepares the effects, solver, and outputs and starts the
+Blender timeline. Use **Pause**, **Resume Preview**, **Apply Changes**, or the
+explicit **Restart Simulation** action as needed; production bake and cached
+preview remain separate workflows.
+
+See [`docs/ARTIST_WORKFLOWS.md`](docs/ARTIST_WORKFLOWS.md) for the consequences
+of each action, effect trust, safe versus structural changes, cached playback,
+and the Advanced diagnostic controls.
+
 ## Archived experiments
 
 The following checkouts are historical branched experiments and are **not merge candidates**:

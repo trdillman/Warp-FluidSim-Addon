@@ -79,9 +79,20 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         options={"SKIP_SAVE"},
     )
     preset_id: StringProperty(default="", options={"SKIP_SAVE"})
+    start_preview: BoolProperty(
+        name="Start Preview",
+        description="Start timeline preview after the scene is configured",
+        default=False,
+        options={"SKIP_SAVE"},
+    )
 
     @classmethod
     def poll(cls, context):
+        from ..blender import production_bake
+
+        if production_bake.bake_is_active(context.scene):
+            cls.poll_message_set("Production Bake owns this scene")
+            return False
         selected = getattr(context, "selected_objects", ())
         if not any(getattr(obj, "type", None) == "MESH" for obj in selected):
             cls.poll_message_set("Select at least one mesh object")
@@ -95,6 +106,7 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         layout = self.layout
         layout.use_property_split = True
         layout.prop(self, "mode")
+        layout.prop(self, "start_preview")
 
     def execute(self, context):
         from ..blender.setup_wizard import setup_selected
@@ -108,6 +120,21 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
         context.scene.fluidsim.status = result.message
         for warning in result.warnings[:3]:
             self.report({"WARNING"}, warning)
+        if getattr(self, "start_preview", False):
+            try:
+                preview_result = bpy.ops.fluidsim.preview_start()
+                if "FINISHED" not in preview_result:
+                    reason = context.scene.fluidsim.status or str(preview_result)
+                    prefix = "Preview could not start: "
+                    if reason.startswith(prefix):
+                        reason = reason[len(prefix):]
+                    raise RuntimeError(reason)
+            except Exception as exc:  # noqa: BLE001 - setup remains committed
+                context.scene.fluidsim.status = (
+                    f"Scene configured; preview could not start: {exc}"
+                )
+                self.report({"WARNING"}, context.scene.fluidsim.status)
+                return {"FINISHED"}
         self.report({"INFO"}, result.message)
         return {"FINISHED"}
 def _execute_role_tag(operator, context, role):

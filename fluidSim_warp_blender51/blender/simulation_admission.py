@@ -343,10 +343,11 @@ class SimulationAdmission:
 
     def __init__(self, session, *, scene_identity,
                  applied_state_capture, reset_settings_apply,
-                 effect_builder=None):
+                 effect_builder=None, effect_publisher=None):
         self.session = session
         self._scene_identity = scene_identity
         self._effect_builder = effect_builder or (lambda _scene: ())
+        self._effect_publisher = effect_publisher
         self._capture_applied_state = applied_state_capture
         self._apply_reset_settings = reset_settings_apply
 
@@ -637,6 +638,15 @@ class SimulationAdmission:
 
         output_publication.prepare_outputs(scene)
 
+    def _validate_effect_snapshot(self, scene, snapshot):
+        if self._effect_publisher is not None:
+            if tuple(self._effect_builder(scene)) != snapshot.effects:
+                raise RuntimeError("Custom Effects changed during admission; retry preview")
+
+    def _publish_effect_snapshot(self, scene, snapshot):
+        if self._effect_publisher is not None:
+            self._effect_publisher(scene, snapshot.effects)
+
     @staticmethod
     def _release_snapshot(snapshot):
         release = getattr(snapshot, "release_transients", None)
@@ -673,6 +683,7 @@ class SimulationAdmission:
                     sync=bool(getattr(snapshot, "profiling_sync", False)))
             candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, profiler)
+            self._validate_effect_snapshot(scene, snapshot)
 
             # Replacement Cutover: the candidate has passed admission. This is
             # the single authority swap; all candidate failures above preserve
@@ -708,6 +719,7 @@ class SimulationAdmission:
             self.session.memory_assessment = {}
             self.session.clear_error(scene)
             self._capture_applied_state(scene, self.session)
+            self._publish_effect_snapshot(scene, snapshot)
             return self.session
         except Exception as exc:
             self.session.set_error(scene, repr(exc))
@@ -739,6 +751,7 @@ class SimulationAdmission:
             settings = snapshot.settings
             candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
+            self._validate_effect_snapshot(scene, snapshot)
             self._commit_solver_replacement(
                 candidate, snapshot, profiler=self.session.profiler,
                 settings=settings)
@@ -755,6 +768,7 @@ class SimulationAdmission:
             from . import output_publication
             output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(scene, self.session, reset_only=True)
+            self._publish_effect_snapshot(scene, snapshot)
             if replacement_growth is None:
                 scene.fluidsim.status = "Simulation reset"
             else:

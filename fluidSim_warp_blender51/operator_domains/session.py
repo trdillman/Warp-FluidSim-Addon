@@ -277,7 +277,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
         bridge = _bridge()
         scene = context.scene
-        fs = scene.fluidsim
+        scene_fs = scene.fluidsim
         if self.expected_scene_identity and self.expected_scene_identity != _scene_identity_token(
             scene
         ):
@@ -305,7 +305,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "Scene changed after the warning; initialize again for new options",
             )
-            fs.status = "Capacity options changed â€” review the refreshed warning"
+            scene_fs.status = "Capacity options changed â€” review the refreshed warning"
             return {"CANCELLED"}
         suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
         if suggestion is None:
@@ -313,19 +313,26 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "This option is no longer inside the live safety budget",
             )
-            fs.status = "Capacity option is no longer safe â€” review alternatives"
+            scene_fs.status = "Capacity option is no longer safe â€” review alternatives"
             return {"CANCELLED"}
 
+        from ..blender.scene_bridge import active_domain_settings
+
+        domain_settings = active_domain_settings(scene)
+        if domain_settings is None:
+            message = "Capacity option cannot apply without a designated domain"
+            self.report({"ERROR"}, message)
+            scene_fs.status = message
+            return {"CANCELLED"}
         changes = dict(suggestion.changes)
         domain_min = changes.pop("domain_min", None)
         domain_max = changes.pop("domain_max", None)
-        domain_settings = active_domain_settings(scene)
         old_values = {
             name: getattr(domain_settings, name)
             for name in changes
             if hasattr(domain_settings, name)
         }
-        domain = getattr(fs, "domain_object", None)
+        domain = getattr(scene_fs, "domain_object", None)
         old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
         changed = []
         try:
@@ -368,22 +375,22 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             if domain is not None and old_domain is not None:
                 domain.location, domain.dimensions = old_domain
             self.report({"ERROR"}, f"Capacity option was not applied: {exc}")
-            fs.status = f"Capacity option was not applied: {exc}"
+            scene_fs.status = f"Capacity option was not applied: {exc}"
             return {"CANCELLED"}
 
         bridge.clear_error(scene)
-        fs.status = "Approved capacity settings: " + ", ".join(changed)
+        scene_fs.status = "Approved capacity settings: " + ", ".join(changed)
         try:
             sess = bridge.initialize_session(scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Approved retry stopped safely: {exc}")
-            fs.status = f"Approved retry stopped safely: {exc}"
+            scene_fs.status = f"Approved retry stopped safely: {exc}"
             return {"CANCELLED"}
         self.report(
             {"INFO"},
             f"Solver ready with approved option: {suggestion.label}",
         )
-        fs.status = f"Solver ready on {sess.solver.device}; approved {suggestion.label}"
+        scene_fs.status = f"Solver ready on {sess.solver.device}; approved {suggestion.label}"
         return {"FINISHED"}
 
 
@@ -561,6 +568,205 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _animation_override(context):
+    if bool(getattr(getattr(bpy, "app", None), "background", False)):
+        raise RuntimeError("Preview needs a Blender window showing this scene")
+    window = getattr(context, "window", None)
+    if window is None or window.scene != context.scene:
+        raise RuntimeError("Preview needs a Blender window showing this scene")
+    for area in window.screen.areas:
+        if area.type in {"VIEW_3D", "DOPESHEET_EDITOR", "GRAPH_EDITOR", "NLA_EDITOR", "SEQUENCE_EDITOR"}:
+            region = next((r for r in area.regions if r.type == "WINDOW"), None)
+            if region is not None:
+                return dict(window=window, screen=window.screen, area=area, region=region)
+    raise RuntimeError("Preview needs a 3D View or animation editor in this window")
+
+
+def _stop_failed_playback(context):
+    """Best-effort timeline cleanup, returning any actionable cleanup error."""
+    window = getattr(context, "window", None)
+    try:
+        if window and window.scene == context.scene and window.screen.is_animation_playing:
+            with context.temp_override(**_animation_override(context)):
+                bpy.ops.screen.animation_cancel(restore_frame=False)
+    except (RuntimeError, ReferenceError) as exc:
+        return f"; timeline could not pause: {exc}"
+    return ""
+
+
+class _RestartConfirmation:
+    def invoke(self, context, event):
+        if _pending().changes_require_restart(context.scene):
+            self.allow_restart = True
+            self._confirmation_token = _pending().change_confirmation_token(context.scene)
+            return context.window_manager.invoke_props_dialog(self)
+        return self.execute(context)
+
+    def draw(self, context):
+        self.layout.label(text=f"Restart simulation from frame {context.scene.frame_start}?")
+        self.layout.label(text="Current preview progress will be cleared.")
+
+    def _validate_confirmation(self, scene):
+        token = getattr(self, "_confirmation_token", None)
+        if token is not None and token != _pending().change_confirmation_token(scene):
+            raise RuntimeError("Scene or settings changed; review the restart again")
+
+
+class _PreviewStart(_RestartConfirmation):
+    """Prepare the current simulation and start Blender playback"""
+
+    bl_idname = "fluidsim.preview_start"
+    bl_label = "Preview"
+    _cache_preview = False
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return _mutation_poll(cls, context)
+
+    def execute(self, context):
+        from ..blender import playback
+
+        scene = context.scene
+        try:
+            self._validate_confirmation(scene)
+            with context.temp_override(**_animation_override(context)):
+                if not bpy.ops.screen.animation_play.poll():
+                    raise RuntimeError("No editor can start preview playback")
+                cache_preview = self._cache_preview
+                if cache_preview:
+                    playback.prepare_cache_preview(scene)
+                else:
+                    playback.prepare_live_preview(
+                        scene, depsgraph=context.evaluated_depsgraph_get(),
+                        allow_restart=getattr(self, "allow_restart", False))
+                with playback.suppress_mode_transitions():
+                    scene.fluidsim.cache_playback_enabled = cache_preview
+                    scene.fluidsim.live = True
+                if not context.window.screen.is_animation_playing:
+                    if bpy.ops.screen.animation_play() != {"FINISHED"}:
+                        raise RuntimeError("Preview was prepared but playback did not start")
+                scene.fluidsim.status = "Playing preview"
+            return {"FINISHED"}
+        except Exception as exc:
+            scene.fluidsim.live = False
+            cleanup_error = _stop_failed_playback(context)
+            scene.fluidsim.status = f"Preview could not start: {exc}{cleanup_error}"
+            self.report({"ERROR"}, scene.fluidsim.status)
+            return {"CANCELLED"}
+
+
+class FLUIDSIM_OT_preview_start(_PreviewStart, bpy.types.Operator):
+    bl_idname = "fluidsim.preview_start"
+    bl_label = "Preview"
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+
+class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
+    """Validate the cached frame and start Blender playback"""
+
+    bl_idname = "fluidsim.cache_preview_start"
+    bl_label = "Preview Cache"
+    _cache_preview = True
+
+    @classmethod
+    def poll(cls, context):
+        from ..blender import production_bake
+
+        scene = getattr(context, "scene", None)
+        if getattr(scene, "fluidsim", None) is None:
+            return False
+        if production_bake.bake_is_active(scene):
+            cls.poll_message_set("Production Bake owns this scene")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        return self.execute(context)
+
+
+class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
+    """Pause playback, keeping the current simulation and frame"""
+
+    bl_idname = "fluidsim.preview_pause"
+    bl_label = "Pause"
+
+    def execute(self, context):
+        try:
+            with context.temp_override(**_animation_override(context)):
+                if context.window.screen.is_animation_playing:
+                    bpy.ops.screen.animation_cancel(restore_frame=False)
+            context.scene.fluidsim.live = False
+            context.scene.fluidsim.status = "Preview paused"
+            return {"FINISHED"}
+        except Exception as exc:
+            context.scene.fluidsim.live = False
+            self.report({"ERROR"}, f"Could not pause timeline: {exc}")
+            return {"CANCELLED"}
+
+
+class _ApplyChanges(_RestartConfirmation):
+    """Apply current changes, restarting only with explicit consent"""
+
+    bl_idname = "fluidsim.apply_changes"
+    bl_label = "Apply Changes"
+    _force_restart = False
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return _mutation_poll(cls, context)
+
+    def execute(self, context):
+        from ..blender import playback
+
+        scene = context.scene
+        window = getattr(context, "window", None)
+        was_playing = bool(window and window.scene == scene and window.screen.is_animation_playing)
+        try:
+            self._validate_confirmation(scene)
+            if was_playing:
+                with context.temp_override(**_animation_override(context)):
+                    bpy.ops.screen.animation_cancel(restore_frame=False)
+            scene.fluidsim.live = False
+            _pending().apply_changes(
+                scene, allow_restart=getattr(self, "allow_restart", False),
+                depsgraph=context.evaluated_depsgraph_get(),
+                force_restart=self._force_restart)
+            if was_playing:
+                with context.temp_override(**_animation_override(context)):
+                    with playback.suppress_mode_transitions():
+                        scene.fluidsim.live = True
+                    if bpy.ops.screen.animation_play() != {"FINISHED"}:
+                        raise RuntimeError("Changes applied, but playback could not resume")
+            scene.fluidsim.status = "Changes applied" if not was_playing else "Playing preview"
+            return {"FINISHED"}
+        except Exception as exc:
+            scene.fluidsim.live = False
+            cleanup_error = _stop_failed_playback(context)
+            scene.fluidsim.status = f"Changes not completed: {exc}{cleanup_error}"
+            self.report({"ERROR"}, scene.fluidsim.status)
+            return {"CANCELLED"}
+
+
+class FLUIDSIM_OT_apply_changes(_ApplyChanges, bpy.types.Operator):
+    bl_idname = "fluidsim.apply_changes"
+    bl_label = "Apply Changes"
+    allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+
+class FLUIDSIM_OT_restart_simulation(_ApplyChanges, bpy.types.Operator):
+    """Discard preview progress and restart at the scene start frame"""
+
+    bl_idname = "fluidsim.restart_simulation"
+    bl_label = "Restart Simulation"
+    _force_restart = True
+    allow_restart: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        return self.execute(context)
+
+
 class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
     """Toggle live simulation during animation playback"""
 
@@ -618,9 +824,14 @@ class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
         return not bool(getattr(fs, "cache_playback_enabled", False))
 
     def execute(self, context):
+        from ..blender import playback
+
         fs = context.scene.fluidsim
-        fs.cache_playback_enabled = True
-        fs.live = True
+        if not playback.set_cache_playback_enabled(context.scene, True):
+            return {"CANCELLED"}
+        with playback.suppress_mode_transitions():
+            fs.cache_playback_enabled = True
+            fs.live = True
         fs.status = "Cache Playback ready - press Timeline Play"
         return {"FINISHED"}
 

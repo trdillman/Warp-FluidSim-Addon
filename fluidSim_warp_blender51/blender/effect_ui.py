@@ -21,7 +21,7 @@ _STATUS_ICONS = {
     "APPLIED": "CHECKMARK",
     "TESTED": "FILE_TICK",
     "DRAFT": "GREASEPENCIL",
-    "DIRTY": "ERROR",
+    "DIRTY": "INFO",
     "INVALID": "CANCEL",
     "UNTRUSTED": "LOCKED",
     "RUNTIME_ERROR": "ERROR",
@@ -162,10 +162,12 @@ def _draw_status(layout, scene, stack, item):
         live_signature = ""
         live_error = f"{type(exc).__name__}: {exc}"
     live_dirty = bool(live_error or live_signature != stack.applied_signature)
-    if live_dirty:
-        box.label(text="Live draft differs from applied effect", icon="ERROR")
+    if live_error:
+        box.label(text="Effect draft could not be inspected", icon="CANCEL")
+    elif live_dirty:
+        box.label(text="Changes will be prepared when you preview", icon="INFO")
     elif item.status == "DIRTY":
-        box.label(text="Draft differs from applied effect", icon="ERROR")
+        box.label(text="Changes will be prepared when you preview", icon="INFO")
     if live_error:
         box.label(text=live_error[:160], icon="CANCEL")
     if item.trust_state not in {
@@ -178,9 +180,21 @@ def _draw_status(layout, scene, stack, item):
     elif item.trust_state == TrustState.LOCAL_TRUSTED.value:
         op = box.operator("fluidsim.effect_untrust", text="Revoke Local Trust", icon="LOCKED")
         op.index = int(stack.active_index)
-    if stack.blocking_reason:
+    routine_draft_messages = (
+        "draft differs from applied effect",
+        "draft has not been tested and applied",
+        "draft tested; compile & apply before production bake",
+    )
+    blocking_reasons = tuple(
+        reason.strip()
+        for reason in str(stack.blocking_reason or "").split(";")
+        if reason.strip()
+        and not any(message in reason.lower() for message in routine_draft_messages)
+    )
+    if blocking_reasons:
         box.label(text="Production Bake blocked", icon="CANCEL")
-        box.label(text=stack.blocking_reason[:160])
+        for reason in blocking_reasons[:3]:
+            box.label(text=reason[:160])
     else:
         box.label(text="Production Bake effect identity is ready", icon="CHECKMARK")
     if stack.applied_signature:
@@ -252,7 +266,7 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
         )
         effects.add_instance_to_scene(context.scene, instance)
         context.scene.fluidsim_effects.selected_library_effect = definition.effect_id
-        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then Compile & Apply.")
+        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then Preview.")
         return {"FINISHED"}
 
 
@@ -815,12 +829,38 @@ class FLUIDSIM_PT_custom_effects(bpy.types.Panel):
         item = _active_effect(context.scene)
         if item is None:
             box = layout.box()
-            box.label(text="Add an effect, adjust its controls, then Test Draft and Compile & Apply.", icon="INFO")
+            box.label(text="Add an effect, adjust its controls, then press Preview.", icon="INFO")
             return
 
         _draw_selected_effect(layout, item)
-        _draw_effect_workflow(layout)
+        actions = layout.row(align=True)
+        actions.operator("fluidsim.preview_start", text="Preview", icon="PLAY")
+        actions.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
         _draw_status(layout, context.scene, stack, item)
+
+
+class FLUIDSIM_PT_effect_engineering(bpy.types.Panel):
+    """Legacy compile/test tools retained for Advanced troubleshooting."""
+
+    bl_label = "Effect Engineering"
+    bl_idname = "FLUIDSIM_PT_effect_engineering"
+    bl_parent_id = "FLUIDSIM_PT_custom_effects"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        fs = getattr(scene, "fluidsim", None) if scene is not None else None
+        return bool(
+            getattr(scene, "fluidsim_effects", None) is not None
+            and (fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+        )
+
+    def draw(self, context):
+        _draw_effect_workflow(self.layout)
 
 
 class FLUIDSIM_PT_effect_packages(bpy.types.Panel):
@@ -904,6 +944,7 @@ CLASSES = (
     FLUIDSIM_OT_effect_rename_installed,
     FLUIDSIM_OT_effect_export_package,
     FLUIDSIM_PT_custom_effects,
+    FLUIDSIM_PT_effect_engineering,
     FLUIDSIM_PT_effect_packages,
 )
 

@@ -470,3 +470,25 @@ def test_settings_groups_are_setting_owner_made_structural(monkeypatch):
     for name in pending.SETTING_TRANSITION_REGISTRY:
         on_scene = pending.setting_owner(scene, name) is scene_group
         assert name in (scene_fields if on_scene else domain_fields), (name, on_scene)
+
+
+def test_suppress_callbacks_is_nested_and_exception_safe(monkeypatch):
+    _properties, pending, _bridge = _modules(monkeypatch)
+    scene = SimpleNamespace()
+    state = pending._interaction_state(scene)
+
+    assert not state.suppress_callbacks
+    with pending.suppress_callbacks(scene):
+        assert state.suppress_callbacks
+        with pending.suppress_callbacks(scene):
+            assert state.suppress_callbacks
+        assert state.suppress_callbacks
+    assert not state.suppress_callbacks
+
+    state.suppress_callbacks = True
+    try:
+        with pending.suppress_callbacks(scene):
+            raise RuntimeError("sentinel")
+    except RuntimeError as exc:
+        assert str(exc) == "sentinel"
+    assert state.suppress_callbacks

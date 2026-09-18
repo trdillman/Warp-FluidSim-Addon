@@ -33,6 +33,22 @@ def test_blender_smoke_proves_external_warp_cpu_execution_and_lifecycle():
     assert "cpu_kernel_output" in source
     assert "fluidsim.refresh_runtime_probe" in source
     assert "fluidsim.setup_scene" in source
+    assert "active_domain_settings(scene)" in source
+    assert "_preset_field_owner(scene)" in source
+    assert "source=domain_fs" in source
+    assert "field_source=field_owner" in source
+    assert source.count("target=domain_fs") >= 2
+    assert source.count("field_target=field_owner") >= 2
+    for domain_field in (
+        "surface_attribute_velocity",
+        "surface_attribute_motion",
+        "particles_attribute_age",
+        "particles_attribute_lifetime",
+        "whitewater_attribute_type",
+        "surface_tension_enabled",
+        "surface_tension_coefficient",
+    ):
+        assert f"domain_fs.{domain_field}" in source
     assert "BUILTIN:preview_water" in source
     assert "EXPECTED_PRESETS" in source
     assert "bpy.ops.wm.save_as_mainfile" in source

@@ -195,6 +195,76 @@ def suppress_mode_transitions():
         _IN_MODE_TRANSITION = previous
 
 
+def prepare_live_preview(scene, *, depsgraph=None, allow_restart=False):
+    """Make the owned simulation ready without starting GUI playback."""
+    from . import pending_settings, production_bake
+
+    sess = _bridge().session()
+    if production_bake.bake_is_active(scene):
+        raise RuntimeError("Production Bake owns this scene")
+    if sess.active and not sess.owns_scene(scene):
+        raise RuntimeError("Another scene owns the solver; release it from that scene first")
+    previous_cache_mode = bool(getattr(scene.fluidsim, "cache_playback_enabled", False))
+    with suppress_mode_transitions():
+        scene.fluidsim.cache_playback_enabled = False
+    try:
+        if not sess.owns_scene(scene):
+            pending_settings.apply_changes(
+                scene, depsgraph=depsgraph, allow_restart=True, force_restart=True)
+            return
+        pending_settings.apply_changes(scene, depsgraph=depsgraph, allow_restart=allow_restart)
+    except Exception:
+        with suppress_mode_transitions():
+            scene.fluidsim.cache_playback_enabled = previous_cache_mode
+        raise
+
+
+def pause_preview_for_changes(scene):
+    """Stop this scene's advancement after an incompatible authoring edit."""
+    fs = scene.fluidsim
+    if not fs.live or getattr(fs, "cache_playback_enabled", False):
+        return
+    fs.live = False
+    fs.status = "Preview paused: apply changes or resume to prepare the edited effects"
+    manager = getattr(bpy.context, "window_manager", None)
+    for window in getattr(manager, "windows", ()):
+        if window.scene == scene and window.screen.is_animation_playing:
+            try:
+                with bpy.context.temp_override(window=window, screen=window.screen):
+                    bpy.ops.screen.animation_cancel(restore_frame=False)
+            except RuntimeError as exc:
+                fs.status = f"Simulation paused; timeline could not pause: {exc}"
+
+
+def prepare_cache_preview(scene):
+    """Validate the requested frame before handing the scene to cache playback."""
+    from ..io import cache
+    from . import production_bake
+
+    sess = _bridge().session()
+    if production_bake.bake_is_active(scene):
+        raise RuntimeError("Production Bake owns this scene")
+    if sess.active and not sess.owns_scene(scene):
+        raise RuntimeError("Another scene owns the solver; release it from that scene first")
+    base = bpy.path.abspath(scene.fluidsim.cache_path)
+    frame = int(scene.frame_current)
+    if getattr(scene.fluidsim, "cache_use_custom_range", False):
+        start, end = cache.resolve_frame_range(
+            scene, use_custom=True, frame_start=scene.fluidsim.cache_frame_start,
+            frame_end=scene.fluidsim.cache_frame_end)
+        if not start <= frame <= end:
+            raise FileNotFoundError(f"Cache frame {frame} is outside playback range {start}-{end}")
+    data = cache.read_frame(base, frame)
+    if data is None:
+        raise FileNotFoundError(f"Cache frame {frame} is missing or corrupt in {base}")
+    _check_cache_scene_key(scene, base, data)
+    if not set_cache_playback_enabled(scene, True):
+        raise RuntimeError(scene.fluidsim.status)
+    with suppress_mode_transitions():
+        scene.fluidsim.cache_playback_enabled = True
+    play_cache_frame(sess, scene, frame)
+
+
 def set_live_enabled(scene, enabled: bool):
     """Apply the characterized live enable/disable transition."""
     global _IN_MODE_TRANSITION

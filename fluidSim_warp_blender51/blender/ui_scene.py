@@ -161,6 +161,12 @@ def _advanced_visible(context):
     return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
 
 
+def _timeline_playing(context) -> bool:
+    """Return Blender's actual playback state for the current UI context."""
+    screen = getattr(context, "screen", None)
+    return bool(screen is not None and getattr(screen, "is_animation_playing", False))
+
+
 class _FluidSimSimulationPanel(FluidSimScenePanel):
     """Shared visibility contract for the Advanced domain-physics fan."""
 
@@ -180,33 +186,71 @@ class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
         state = activity_ui_state(scene)
         _probe, _selected, runtime_ready, _message = _runtime_ui_state()
 
-        # Primary Start/Stop occupies its own full-width, emphasised row so it
-        # never shares space with the step controls below it.
+        fs = scene.fluidsim
+        playing = bool(getattr(fs, "live", False) and _timeline_playing(context))
+
+        # Preview is a complete action: preparation and Blender playback are
+        # owned by the operator.  The timeline flag distinguishes a genuinely
+        # playing preview from an armed or paused session.
         primary = layout.row(align=True)
         primary.scale_y = 1.3
-        if state["id"] == "LIVE_PREVIEW":
-            primary.operator("fluidsim.toggle_live", text="Stop Live Preview", icon="PAUSE")
-        elif state["id"] == "CACHE_PLAYBACK":
-            primary.operator(
-                "fluidsim.cache_playback_stop",
-                text="Stop Cache Playback",
-                icon="PAUSE",
-            )
-        elif state["id"] == "PRODUCTION_BAKE":
+        if state["id"] == "PRODUCTION_BAKE":
             primary.operator(
                 "fluidsim.bake_cancel",
                 text="Cancel Production Bake",
                 icon="CANCEL",
             )
+        elif state["id"] == "CACHE_PLAYBACK":
+            if playing:
+                primary.operator(
+                    "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
+                )
+            else:
+                primary.operator(
+                    "fluidsim.cache_preview_start",
+                    text="Resume Cache Preview",
+                    icon="PLAY",
+                )
+        elif playing:
+            primary.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
         else:
             primary.enabled = runtime_ready
-            primary.operator("fluidsim.toggle_live", text="Start Live Preview", icon="PLAY")
+            primary.operator(
+                "fluidsim.preview_start",
+                text="Resume Preview" if state["owns_scene"] else "Preview",
+                icon="PLAY",
+            )
 
-        # Step One / Step Many are ALWAYS emitted (anti-reflow): greyed out when
-        # the solver cannot single-step, never hidden, so buttons never move.
+        if state["owns_scene"] and state["id"] not in {
+            "CACHE_PLAYBACK", "PRODUCTION_BAKE"
+        }:
+            layout.operator(
+                "fluidsim.restart_simulation",
+                text="Restart Simulation",
+                icon="FILE_REFRESH",
+            )
+
+
+class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Lifecycle"
+    bl_idname = "FLUIDSIM_PT_scene_lifecycle"
+    bl_order = 1
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        state = activity_ui_state(scene)
+        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
+        owns = state["owns_scene"]
+
         can_step = bool(
             runtime_ready
-            and state["owns_scene"]
+            and owns
             and state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}
         )
         step_once = layout.row(align=True)
@@ -218,19 +262,6 @@ class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
         step_many.enabled = can_step
         step_many.operator_context = "INVOKE_DEFAULT"
         step_many.operator("fluidsim.step", text="Step Multiple Frames…", icon="FORWARD")
-
-
-class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Lifecycle"
-    bl_idname = "FLUIDSIM_PT_scene_lifecycle"
-    bl_order = 1
-
-    def draw(self, context):
-        layout = _layout(self)
-        scene = context.scene
-        state = activity_ui_state(scene)
-        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
-        owns = state["owns_scene"]
 
         # Constructive: bring a solver into existence for this scene.
         if not owns and state["id"] == "IDLE":
@@ -246,7 +277,7 @@ class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
             danger = layout.column(align=True)
             danger.alert = True
             release = danger.column(align=True)
-            release.label(text="Frees the GPU solver; requires Initialize to resume.", icon="X")
+            release.label(text="Frees the GPU solver; Preview can allocate it again.", icon="X")
             release.operator("fluidsim.release", text="Release Solver", icon="X")
             if state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
                 reset = danger.column(align=True)
@@ -300,6 +331,13 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
         if error:
             box = layout.box()
             _draw_wrapped(box, error, icon="ERROR")
+            if any(word in error.lower() for word in ("output", "render node", "material")):
+                repair = box.operator(
+                    "fluidsim.install_render_nodes",
+                    text="Repair Outputs",
+                    icon="GEOMETRY_NODES",
+                )
+                repair.force = False
             box.operator("fluidsim.clear_error", text="Clear Error", icon="X")
 
 
@@ -324,10 +362,7 @@ class FLUIDSIM_PT_scene_pending(FluidSimScenePanel, bpy.types.Panel):
         if pending.get("blocked_reason"):
             _draw_wrapped(layout, pending["blocked_reason"], icon="ERROR")
         row = layout.row(align=True)
-        if pending.get("action") == "REINIT_PENDING":
-            row.operator("fluidsim.apply_pending_reinitialize", text="Apply & Reinitialize", icon="FILE_REFRESH")
-        else:
-            row.operator("fluidsim.apply_pending_reset", text="Apply & Reset", icon="FILE_REFRESH")
+        row.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
         row.operator("fluidsim.revert_pending", text="Revert Pending Values", icon="LOOP_BACK")
 
 
@@ -357,7 +392,16 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
         layout.prop(fs, "quality")
         if getattr(fs, "setup_mode", ""):
             layout.label(text=f"Current setup: {fs.setup_mode.replace('_', ' ').title()}", icon="MOD_FLUIDSIM")
-        layout.operator("fluidsim.setup_scene", text="Guided Setup…", icon="MOD_FLUIDSIM")
+        primary = layout.row(align=True)
+        primary.scale_y = 1.25
+        setup_preview = primary.operator(
+            "fluidsim.setup_scene", text="Set Up & Preview…", icon="PLAY"
+        )
+        setup_preview.start_preview = True
+        setup_only = layout.operator(
+            "fluidsim.setup_scene", text="Set Up Only…", icon="MOD_FLUIDSIM"
+        )
+        setup_only.start_preview = False
 
 
 class FLUIDSIM_PT_scene_presets(FluidSimScenePanel, bpy.types.Panel):
@@ -993,11 +1037,12 @@ class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):
                 layout.prop(fs, "foam_material")
                 layout.prop(fs, "bubble_material")
                 layout.prop(fs, "spray_material")
-        row = layout.row(align=True)
-        install = row.operator("fluidsim.install_render_nodes", text="Install Render Nodes", icon="GEOMETRY_NODES")
-        install.force = False
-        update = row.operator("fluidsim.install_render_nodes", text="Update FluidSim Render Nodes…", icon="FILE_REFRESH")
-        update.force = True
+        if _advanced_visible(context):
+            row = layout.row(align=True)
+            install = row.operator("fluidsim.install_render_nodes", text="Repair Outputs", icon="GEOMETRY_NODES")
+            install.force = False
+            update = row.operator("fluidsim.install_render_nodes", text="Force Render-Node Update…", icon="FILE_REFRESH")
+            update.force = True
 
 
 class FLUIDSIM_PT_output_attributes(FluidSimScenePanel, bpy.types.Panel):
@@ -1075,9 +1120,22 @@ class FLUIDSIM_PT_cache_playback(FluidSimScenePanel, bpy.types.Panel):
         layout = _layout(self)
         state = activity_ui_state(context.scene)
         if state["id"] == "CACHE_PLAYBACK":
-            layout.operator("fluidsim.cache_playback_stop", text="Stop Cache Playback", icon="PAUSE")
+            playing = bool(
+                getattr(context.scene.fluidsim, "live", False)
+                and _timeline_playing(context)
+            )
+            if playing:
+                layout.operator(
+                    "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
+                )
+            else:
+                layout.operator(
+                    "fluidsim.cache_preview_start",
+                    text="Resume Cache Preview",
+                    icon="PLAY",
+                )
         else:
-            layout.operator("fluidsim.cache_playback_start", text="Start Cache Playback", icon="PLAY")
+            layout.operator("fluidsim.cache_preview_start", text="Preview Cache", icon="PLAY")
         layout.label(text="Cache playback does not allocate the solver.", icon="INFO")
 
 
@@ -1150,7 +1208,8 @@ class FLUIDSIM_PT_cache_bake(FluidSimScenePanel, bpy.types.Panel):
                 icon = "FILE_REFRESH" if presentation.destructive else "PLAY"
                 start = actions.operator("fluidsim.bake_start", text=label, icon=icon)
                 start.restart_existing = presentation.destructive
-        layout.operator("fluidsim.copy_bake_command", text="Copy Headless Bake Command", icon="COPYDOWN")
+        if _advanced_visible(context):
+            layout.operator("fluidsim.copy_bake_command", text="Copy Headless Bake Command", icon="COPYDOWN")
 
 
 class FLUIDSIM_PT_cache_manage(FluidSimScenePanel, bpy.types.Panel):
@@ -1189,6 +1248,10 @@ class FLUIDSIM_PT_scene_diagnostics(FluidSimScenePanel, bpy.types.Panel):
     bl_idname = "FLUIDSIM_PT_scene_diagnostics"
     bl_order = 100
     bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
 
     def draw(self, context):
         layout = _layout(self)

@@ -247,9 +247,17 @@ class Session:
 
                 return effects.build_effect_stack_for_admission(scene)
 
+            def publish_effect_stack(scene, instances):
+                if not hasattr(bpy, "props"):
+                    return
+                from . import effects
+
+                effects.publish_admitted_effects(scene, instances)
+
             self._admission_owner = SimulationAdmission(
                 self, scene_identity=_scene_identity,
                 effect_builder=build_effect_stack,
+                effect_publisher=publish_effect_stack,
                 applied_state_capture=pending_settings.capture_applied_state,
                 reset_settings_apply=pending_settings.apply_reset_solver_settings,
             )

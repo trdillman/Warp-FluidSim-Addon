@@ -104,13 +104,16 @@ def test_installed_headless_entry_point_is_the_only_release_runtime_tool():
     assert "release/build_extension.py" not in manifest
 
 
-def test_guided_workflow_exposes_three_action_live_preview_path():
+def test_guided_workflow_exposes_complete_artist_preview_actions():
     scene_ui = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     launcher = (ROOT / "panels.py").read_text(encoding="utf-8")
     operator = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
-    assert "Guided Setup…" in scene_ui
-    assert "Start Live Preview" in scene_ui
-    assert "Start Live Preview" in launcher
-    assert "bridge.initialize_session(scene)" in operator
-    assert "3. Press Play." in guide
+    assert "Set Up & Preview…" in scene_ui
+    assert "Set Up Only…" in scene_ui
+    assert "fluidsim.preview_start" in scene_ui
+    assert "fluidsim.preview_pause" in scene_ui
+    assert "fluidsim.preview_start" in launcher
+    assert "fluidsim.apply_changes" in launcher
+    assert 'bl_idname = "fluidsim.preview_start"' in operator
+    assert "starts Blender timeline playback" in guide

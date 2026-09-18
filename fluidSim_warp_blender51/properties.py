@@ -248,8 +248,24 @@ def _request_whitewater_refresh(self, context):
     _request_scene_update(context, SceneUpdate.WHITEWATER)
 
 
+def _scene_for_mode_callback(self, context):
+    """Resolve the Scene that owns this scene-level property group."""
+    try:
+        owner = getattr(self, "id_data", None)
+    except ReferenceError:
+        owner = None
+    scene_type = getattr(bpy.types, "Scene", None)
+    if scene_type is not None:
+        try:
+            if isinstance(owner, scene_type):
+                return owner
+        except TypeError:
+            pass
+    return getattr(context, "scene", None) if context is not None else None
+
+
 def _on_live_changed(self, context):
-    scene = getattr(context, "scene", None) if context is not None else None
+    scene = _scene_for_mode_callback(self, context)
     if scene is None:
         return
     try:
@@ -261,7 +277,7 @@ def _on_live_changed(self, context):
 
 
 def _on_cache_playback_changed(self, context):
-    scene = getattr(context, "scene", None) if context is not None else None
+    scene = _scene_for_mode_callback(self, context)
     if scene is None:
         return
     try:

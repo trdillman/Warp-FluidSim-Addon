@@ -165,7 +165,15 @@ try:
     seed = bpy.data.objects.new("Persistence Seed", mesh)
     bpy.context.scene.collection.objects.link(seed)
     seed.fluidsim.auto_inject_seed = True
-    bpy.context.scene.fluidsim.domain_sdf_walls = True
+    bpy.ops.mesh.primitive_cube_add(size=4.0)
+    domain = bpy.context.object
+    domain.name = "Persistence Domain"
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    bpy.context.scene.fluidsim.domain_object = domain
+    from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+
+    active_domain_settings(bpy.context.scene).domain_sdf_walls = True
     bpy.context.scene.fluidsim.live = True
 
     with tempfile.TemporaryDirectory(prefix="fluidsim-handler-gate-") as temp_dir:

@@ -112,7 +112,7 @@ def test_scene_properties_root_order_and_context_are_stable():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     roots = (
         ("FLUIDSIM_PT_scene_transport", 0, False),
-        ("FLUIDSIM_PT_scene_lifecycle", 1, False),
+        ("FLUIDSIM_PT_scene_lifecycle", 1, True),
         ("FLUIDSIM_PT_scene_control", 2, False),
         ("FLUIDSIM_PT_scene_setup", 10, False),
         ("FLUIDSIM_PT_scene_domain", 20, False),
@@ -227,25 +227,28 @@ def test_root_registration_includes_scene_and_object_properties_modules():
     assert "ui_object.unregister" in source
 
 
-def test_scene_control_exposes_the_matching_stop_action_for_each_activity():
+def test_transport_exposes_complete_state_dependent_artist_actions():
     # After the D3 hub split the activity-aware Start/Stop primary control
     # lives in the dedicated Transport panel; the hub is read-only status.
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     block = _class_block(source, "FLUIDSIM_PT_scene_transport")
-    assert 'state["id"] == "LIVE_PREVIEW"' in block
     assert 'state["id"] == "CACHE_PLAYBACK"' in block
     assert 'state["id"] == "PRODUCTION_BAKE"' in block
-    assert 'operator("fluidsim.toggle_live", text="Stop Live Preview"' in block
-    assert '"fluidsim.cache_playback_stop"' in block
-    assert 'text="Stop Cache Playback"' in block
+    assert 'getattr(fs, "live", False) and _timeline_playing(context)' in block
+    assert 'operator("fluidsim.preview_pause", text="Pause Preview"' in block
+    assert '"fluidsim.cache_preview_start"' in block
+    assert '"fluidsim.preview_start"' in block
+    assert '"fluidsim.restart_simulation"' in block
     assert '"fluidsim.bake_cancel"' in block
     assert 'text="Cancel Production Bake"' in block
 
 
 def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
-    # Step One / Step Many moved into the Transport panel with the D3 split.
+    # Manual stepping remains available in the default-closed Advanced lifecycle.
     scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(scene_source, "FLUIDSIM_PT_scene_transport")
+    block = _class_block(scene_source, "FLUIDSIM_PT_scene_lifecycle")
+    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "_advanced_visible(context)" in block
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in block
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in block
     operator_source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")

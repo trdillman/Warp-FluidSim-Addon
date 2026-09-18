@@ -137,6 +137,7 @@ def _active_reset(
         return SimpleNamespace(
             capacity_plan=plan,
             seeds=(),
+            effects=(),
             scene_inputs=SimpleNamespace(clear=lambda: None),
         )
 

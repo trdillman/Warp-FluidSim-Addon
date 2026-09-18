@@ -19,8 +19,6 @@ from .ui_common import FluidSimView3DPanel, draw_property
 # The per-iteration knobs an artist scrubs during a live preview. Kept
 # deliberately short (D5); the full parameter set stays in Scene Properties.
 LIVE_TUNING_PROPS = (
-    "voxel_size",
-    "particles_per_voxel",
     "flip_ratio",
     "particle_display_fraction",
 )

@@ -16,7 +16,7 @@ def test_custom_effects_ui_is_a_direct_artist_workflow():
     assert "Revert Draft" in source
     assert "Preview One Frame" in source
     assert "Review & Trust" in source
-    assert "Draft differs from applied" in source
+    assert "Changes will be prepared when you preview" in source
     assert "Production Bake blocked" in source
 
 
@@ -97,7 +97,9 @@ def test_library_failures_and_live_draft_drift_are_visible_in_the_panel():
     assert "library_diagnostics" in source
     assert "Installed package problem" in source
     assert "execution_stack_fingerprint" in source
-    assert "Live draft differs from applied" in source
+    assert 'live_signature != stack.applied_signature' in source
+    assert 'Changes will be prepared when you preview' in source
+    assert 'Effect draft could not be inspected' in source
     assert "effect_refresh_status" in source
 
 

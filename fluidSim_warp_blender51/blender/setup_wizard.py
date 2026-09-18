@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
-from typing import Sequence
 import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 OWNER_TAG = "fluidsim_owned"
 OWNER_ID_TAG = "fluidsim_owner_id"
@@ -20,6 +20,36 @@ SETUP_MODES = (
     "ADD_INFLOW",
     "ADD_OUTFLOW",
 )
+
+class _SetupRollbackJournal:
+    """Small LIFO unwind journal scoped to one Guided Setup invocation."""
+
+    def __init__(self) -> None:
+        self._undo: list[Callable[[], None]] = []
+        self._closed = False
+
+    def record(self, undo: Callable[[], None]) -> None:
+        if self._closed:
+            raise RuntimeError("setup rollback journal is already closed")
+        self._undo.append(undo)
+
+    def commit(self) -> None:
+        self._undo.clear()
+        self._closed = True
+
+    def rollback(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        errors = []
+        for undo in reversed(self._undo):
+            try:
+                undo()
+            except Exception as exc:  # noqa: BLE001 - finish the remaining unwind
+                errors.append(str(exc))
+        self._undo.clear()
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
 
 @dataclass(frozen=True)
@@ -361,12 +391,221 @@ def _selected_meshes(context):
     )
 
 
-def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
+def _record_attributes(journal, owner, names) -> None:
+    values = {}
+    for name in names:
+        if not hasattr(owner, name):
+            continue
+        value = getattr(owner, name)
+        if hasattr(value, "copy") and not hasattr(value, "as_pointer"):
+            value = value.copy()
+        values[name] = value
+
+    def restore():
+        for name, value in values.items():
+            setattr(owner, name, value)
+
+    journal.record(restore)
+
+
+_MISSING = object()
+
+
+def _id_property_values(owner) -> dict:
+    try:
+        return dict(owner.items())
+    except (AttributeError, TypeError):
+        return {}
+
+
+def _record_property_keys(journal, owner, keys) -> None:
+    values = {key: owner.get(key, _MISSING) for key in keys}
+
+    def restore():
+        for key, value in values.items():
+            if value is _MISSING:
+                if key in owner:
+                    del owner[key]
+            else:
+                owner[key] = value
+
+    journal.record(restore)
+
+
+class _CreatedSetupIDs:
+    """Exact datablocks returned as newly created by this setup."""
+
+    def __init__(self, journal) -> None:
+        self._items = []
+        journal.record(self.remove)
+
+    def track(self, registry, datablock, order: int) -> None:
+        pointer = datablock.as_pointer()
+        if any(item[3] == pointer for item in self._items):
+            return
+        self._items.append(
+            (order, registry, datablock, pointer, str(getattr(datablock, "name", "")))
+        )
+
+    def remove(self) -> None:
+        errors = []
+        for _order, registry, _datablock, pointer, name in sorted(
+            self._items, key=lambda item: item[0]
+        ):
+            candidate = next(
+                (
+                    item for item in tuple(registry)
+                    if item.as_pointer() == pointer
+                    and str(getattr(item, "name", "")) == name
+                ),
+                None,
+            )
+            if candidate is None:
+                continue
+            try:
+                registry.remove(candidate, do_unlink=True)
+            except TypeError:
+                try:
+                    registry.remove(candidate)
+                except Exception as exc:  # noqa: BLE001 - continue exact cleanup
+                    errors.append(str(exc))
+            except Exception as exc:  # noqa: BLE001 - continue exact cleanup
+                errors.append(str(exc))
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+
+def _track_object_ids(created, bpy, obj) -> None:
+    created.track(bpy.data.objects, obj, 0)
+    data = getattr(obj, "data", None)
+    if data is None:
+        return
+    for name in ("meshes", "pointclouds"):
+        registry = getattr(bpy.data, name, None)
+        if registry is not None and any(
+            item.as_pointer() == data.as_pointer() for item in tuple(registry)
+        ):
+            created.track(registry, data, 2)
+            return
+
+
+def _record_object_links(journal, obj) -> None:
+    previous = tuple(obj.users_collection)
+
+    def restore():
+        for collection in tuple(obj.users_collection):
+            if collection not in previous:
+                collection.objects.unlink(obj)
+        for collection in previous:
+            if collection not in tuple(obj.users_collection):
+                collection.objects.link(obj)
+
+    journal.record(restore)
+
+
+def _record_selected_state(journal, selected) -> None:
+    setting_names = (
+        "role", "shape", "source_mode", "source_ui_schema_version",
+        "source_sampling_mode", "source_sampling_multiplier", "source_region_kind",
+        "sink_region_kind", "emission_mode", "use_mesh_shape", "geometry_mode",
+        "mesh_object", "mesh_evaluation_mode", "collider_friction",
+        "collider_restitution", "transfer_velocity",
+    )
+    for obj in selected:
+        _record_object_links(journal, obj)
+        _record_attributes(journal, obj, ("display_type", "hide_render"))
+        _record_attributes(journal, obj.fluidsim, setting_names)
+
+
+def _record_domain_state(journal, domain, preset_fields, mode) -> None:
+    _record_attributes(
+        journal, domain,
+        ("location", "rotation_euler", "scale", "display_type", "hide_render", "show_in_front"),
+    )
+    fields = list(preset_fields)
+    if mode == "QUICK_CONTAINER":
+        fields.extend(("height_enabled", "height_emission_mode", "height_base"))
+    _record_attributes(journal, domain.fluidsim_domain, fields)
+
+
+def _record_output_state(journal, obj, property_keys):
+    _record_property_keys(journal, obj, property_keys)
+    _record_attributes(journal, obj, ("color", "display_type"))
+    materials = tuple(getattr(obj.data, "materials", ()))
+
+    def restore_materials():
+        slots = getattr(obj.data, "materials", None)
+        if slots is not None:
+            slots.clear()
+            for material in materials:
+                slots.append(material)
+
+    journal.record(restore_materials)
+    before = {
+        modifier.as_pointer(): (
+            modifier,
+            getattr(modifier, "node_group", _MISSING),
+            _id_property_values(modifier),
+        )
+        for modifier in obj.modifiers
+    }
+    created_modifier_ids = set()
+    changed_modifiers = []
+
+    def capture_modifier_changes():
+        for modifier in obj.modifiers:
+            pointer = modifier.as_pointer()
+            if pointer not in before:
+                created_modifier_ids.add(pointer)
+                continue
+            _original, node_group, values = before[pointer]
+            current = _id_property_values(modifier)
+            keys = {
+                key for key in values.keys() | current.keys()
+                if values.get(key, _MISSING) != current.get(key, _MISSING)
+            }
+            group_changed = (
+                node_group is not _MISSING
+                and getattr(modifier, "node_group", _MISSING) is not node_group
+            )
+            if keys or group_changed:
+                changed_modifiers.append(
+                    (pointer, node_group, values, keys, group_changed)
+                )
+
+    def restore_modifiers():
+        for modifier in tuple(obj.modifiers):
+            if modifier.as_pointer() in created_modifier_ids:
+                obj.modifiers.remove(modifier)
+        current = {modifier.as_pointer(): modifier for modifier in obj.modifiers}
+        for pointer, node_group, values, keys, group_changed in changed_modifiers:
+            modifier = current.get(pointer)
+            if modifier is None:
+                continue
+            if group_changed and hasattr(modifier, "node_group"):
+                modifier.node_group = node_group
+            for key in keys:
+                value = values.get(key, _MISSING)
+                if value is _MISSING:
+                    if key in modifier:
+                        del modifier[key]
+                else:
+                    modifier[key] = value
+
+    journal.record(restore_modifiers)
+    return capture_modifier_changes
+
+
+def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> SetupResult:
     """Apply one guided setup transaction to selected mesh objects."""
     mode = str(mode).upper()
     if mode not in SETUP_MODES:
         raise ValueError(f"unsupported setup mode {mode!r}")
     scene = context.scene
+    from . import production_bake
+
+    if production_bake.bake_is_active(scene):
+        raise RuntimeError("Production Bake owns this scene; finish or cancel it before setup")
     selected = _selected_meshes(context)
     if not selected:
         raise ValueError("Select at least one mesh object")
@@ -378,113 +617,216 @@ def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
     preset_id = preset_id or default_preset
     apply_preset = mode in {"QUICK_LIQUID", "QUICK_CONTAINER", "QUICK_VISCOUS"}
     preset = library.load_preset(preset_id) if apply_preset else None
+    import bpy
 
-    owner_id, _root, inputs, outputs, helpers, collection_names = (
-        ensure_collection_tree(scene)
-    )
-    scene.fluidsim.output_collection_name = outputs.name
-    for obj in selected:
-        _link_if_needed(inputs, obj)
-
-    warnings: list[str] = []
-    created = list(collection_names)
-    # Quick setups (and any setup on a scene without a domain) size the domain
-    # from the preset's gravity and voxel size. Those are domain-owned, so the
-    # domain object has to exist before the preset can be written to it.
-    fit_domain = apply_preset or getattr(scene.fluidsim, "domain_object", None) is None
-    domain = None
-    if fit_domain:
-        domain, domain_created = _ensure_domain(helpers, owner_id)
-        if domain_created:
-            created.append(domain.name)
-    applied = (
-        library.apply_preset(scene, preset, target=domain.fluidsim_domain)
-        if apply_preset else None
-    )
-    if mode in {"QUICK_LIQUID", "QUICK_VISCOUS", "ADD_INFLOW"}:
-        continuous = mode == "ADD_INFLOW"
-        for obj in selected:
-            _tag_source_mesh(obj, continuous=continuous)
-            warning = _mesh_watertight_warning(obj)
-            if warning:
-                warnings.append(warning)
-    elif mode == "QUICK_CONTAINER":
-        for obj in selected:
-            colliders.tag_collider(obj)
-        warnings.extend(
-            warning for obj in selected
-            if (warning := _mesh_watertight_warning(obj))
+    journal = _SetupRollbackJournal()
+    created_ids = _CreatedSetupIDs(journal)
+    _record_property_keys(journal, scene, (SCENE_SETUP_ID,))
+    scene_fields = [
+        "output_collection_name", "domain_object", "live", "cache_enabled",
+        "bake_start", "bake_end", "setup_mode", "active_preset_id",
+    ]
+    if preset is not None:
+        scene_fields.extend(
+            key for key in preset.settings if key in library.SCENE_OWNED_SETTINGS
         )
-    elif mode == "ADD_COLLIDER":
-        for obj in selected:
-            colliders.tag_collider(obj)
-    elif mode == "ADD_OUTFLOW":
-        for obj in selected:
-            _tag_sink_mesh(obj)
-
-    if fit_domain:
-        domain_fs = domain.fluidsim_domain
-        gravity = (
-            tuple(scene.gravity)
-            if bool(getattr(domain_fs, "use_scene_gravity", True))
-            else tuple(domain_fs.gravity)
-        )
-        bounds = compute_domain_bounds(
-            selected,
-            float(domain_fs.voxel_size),
-            gravity=gravity,
-            depsgraph=context.evaluated_depsgraph_get(),
-        )
-        _fit_domain(scene, domain, bounds)
-        if mode == "QUICK_CONTAINER":
-            minimum, maximum = bounds
-            # The wizard seeds the same height fields the Height panel edits, so
-            # it has to write the owner the solver reads -- otherwise Quick
-            # Container produces a scene whose height fill never runs.
-            height_owner = domain_fs
-            height_owner.height_enabled = True
-            height_owner.height_emission_mode = "INITIAL_FILL"
-            height_owner.height_base = minimum[2] + (maximum[2] - minimum[2]) * 0.25
-
-    existing_output_names = {obj.name for obj in outputs.objects}
-    output_objects = output_publication.ensure_output_shells(scene)
-    for obj in output_objects:
-        _mark_owned(obj, owner_id, "OUTPUT")
-        if obj.name not in existing_output_names:
-            created.append(obj.name)
+    _record_attributes(journal, scene.fluidsim, scene_fields)
+    _record_selected_state(journal, selected)
     try:
-        render_result = geometry_nodes.install_render_nodes(
-            scene,
-            output_objects={
-                str(obj.get(output_publication.OUTPUT_TAG, obj.name)): obj
-                for obj in output_objects
-            },
+        owner_id, _root, inputs, outputs, helpers, collection_names = (
+            ensure_collection_tree(scene)
         )
-        warnings.extend(render_result.warnings)
-    except Exception as exc:  # noqa: BLE001 - setup remains recoverable
-        warnings.append(f"Render-node installation deferred: {exc}")
+        for collection in (_root, inputs, outputs, helpers):
+            if collection.name in collection_names:
+                created_ids.track(bpy.data.collections, collection, 1)
 
-    scene.fluidsim.live = False
-    scene.fluidsim.cache_enabled = False
-    scene.fluidsim.bake_start = int(scene.frame_start)
-    scene.fluidsim.bake_end = int(scene.frame_end)
-    if hasattr(scene.fluidsim, "setup_mode"):
-        scene.fluidsim.setup_mode = mode
-    if hasattr(scene.fluidsim, "active_preset_id") and applied is not None:
-        scene.fluidsim.active_preset_id = applied.preset_id
-    capacity = _capacity_summary(scene)
-    message = (
-        f"{mode.replace('_', ' ').title()} configured from {len(selected)} selected "
-        f"mesh object(s); arm Live and press Play, or initialize for manual stepping"
-    )
-    return SetupResult(
-        mode=mode,
-        preset_id=applied.preset_id if applied else "",
-        domain_name=getattr(domain, "name", ""),
-        input_names=tuple(obj.name for obj in selected),
-        output_names=tuple(obj.name for obj in output_objects),
-        created_names=tuple(created),
-        warnings=tuple(warnings),
-        capacity_message=capacity,
-        message=message,
-    )
+        # Preset application invokes the normal settings callbacks, which may
+        # refresh materials on already-configured outputs.  Capture those
+        # outputs before the first setup-owned property write so rollback has
+        # the genuine pre-transaction state rather than the refreshed state.
+        existing_output_names = {obj.name for obj in outputs.objects}
+        existing_output_ids = {obj.as_pointer() for obj in outputs.objects}
+        point_type = (
+            "POINTCLOUD" if output_publication._supports_pointcloud() else "MESH"
+        )
+        expected_types = {
+            output_publication.SURFACE_NAME: "MESH",
+            output_publication.PARTICLES_NAME: point_type,
+            output_publication.WHITEWATER_NAME: point_type,
+            output_publication.FOAM_NAME: point_type,
+            output_publication.BUBBLES_NAME: point_type,
+            output_publication.SPRAY_NAME: point_type,
+        }
+        output_state_captures = []
+        output_property_keys = (
+            OWNER_TAG,
+            OWNER_ID_TAG,
+            KIND_TAG,
+            output_publication.OUTPUT_TAG,
+            *geometry_nodes._MODIFIER_OWNER_KEYS.values(),
+        )
+        for obj in tuple(outputs.objects):
+            kind = str(obj.get(output_publication.OUTPUT_TAG, "") or "")
+            candidate = kind if kind in expected_types else obj.name
+            if candidate not in expected_types:
+                continue
+            if obj.type != expected_types[candidate]:
+                raise ValueError(
+                    f"{obj.name}: existing configured output is {obj.type}, "
+                    f"expected {expected_types[candidate]}"
+                )
+            output_state_captures.append(
+                _record_output_state(journal, obj, output_property_keys)
+            )
+        existing_material_ids = {
+            material.as_pointer() for material in bpy.data.materials
+        }
+        scene.fluidsim.output_collection_name = outputs.name
+        for obj in selected:
+            _link_if_needed(inputs, obj)
+
+        warnings: list[str] = []
+        created = list(collection_names)
+        # Quick setups (and any setup on a scene without a domain) size the domain
+        # from the preset's gravity and voxel size. Those are domain-owned, so the
+        # domain object has to exist before the preset can be written to it.
+        fit_domain = apply_preset or getattr(scene.fluidsim, "domain_object", None) is None
+        domain = None
+        if fit_domain:
+            domain, domain_created = _ensure_domain(helpers, owner_id)
+            if domain_created:
+                created.append(domain.name)
+                _track_object_ids(created_ids, bpy, domain)
+            else:
+                preset_fields = (
+                    key for key in preset.settings
+                    if key not in library.SCENE_OWNED_SETTINGS
+                ) if preset is not None else ()
+                _record_domain_state(journal, domain, preset_fields, mode)
+        applied = (
+            library.apply_preset(scene, preset, target=domain.fluidsim_domain)
+            if apply_preset else None
+        )
+        if mode in {"QUICK_LIQUID", "QUICK_VISCOUS", "ADD_INFLOW"}:
+            continuous = mode == "ADD_INFLOW"
+            for obj in selected:
+                _tag_source_mesh(obj, continuous=continuous)
+                warning = _mesh_watertight_warning(obj)
+                if warning:
+                    warnings.append(warning)
+        elif mode == "QUICK_CONTAINER":
+            for obj in selected:
+                colliders.tag_collider(obj)
+            warnings.extend(
+                warning for obj in selected
+                if (warning := _mesh_watertight_warning(obj))
+            )
+        elif mode == "ADD_COLLIDER":
+            for obj in selected:
+                colliders.tag_collider(obj)
+        elif mode == "ADD_OUTFLOW":
+            for obj in selected:
+                _tag_sink_mesh(obj)
+        if fit_domain:
+            domain_fs = domain.fluidsim_domain
+            gravity = (
+                tuple(scene.gravity)
+                if bool(getattr(domain_fs, "use_scene_gravity", True))
+                else tuple(domain_fs.gravity)
+            )
+            bounds = compute_domain_bounds(
+                selected,
+                float(domain_fs.voxel_size),
+                gravity=gravity,
+                depsgraph=context.evaluated_depsgraph_get(),
+            )
+            _fit_domain(scene, domain, bounds)
+            if mode == "QUICK_CONTAINER":
+                minimum, maximum = bounds
+                # The wizard seeds the same height fields the Height panel edits, so
+                # it has to write the owner the solver reads -- otherwise Quick
+                # Container produces a scene whose height fill never runs.
+                height_owner = domain_fs
+                height_owner.height_enabled = True
+                height_owner.height_emission_mode = "INITIAL_FILL"
+                height_owner.height_base = (
+                    minimum[2] + (maximum[2] - minimum[2]) * 0.25
+                )
+        output_objects = output_publication.ensure_output_shells(scene)
+        for obj in output_objects:
+            if obj.as_pointer() not in existing_output_ids:
+                _track_object_ids(created_ids, bpy, obj)
+            for material in getattr(obj.data, "materials", ()):
+                if material.as_pointer() not in existing_material_ids:
+                    created_ids.track(bpy.data.materials, material, 4)
+            _mark_owned(obj, owner_id, "OUTPUT")
+            if obj.name not in existing_output_names:
+                created.append(obj.name)
+        existing_node_group_ids = {
+            group.as_pointer() for group in bpy.data.node_groups
+        }
+        try:
+            render_result = geometry_nodes.install_render_nodes(
+                scene,
+                output_objects={
+                    str(obj.get(output_publication.OUTPUT_TAG, obj.name)): obj
+                    for obj in output_objects
+                },
+            )
+            warnings.extend(render_result.warnings)
+        except Exception as exc:  # noqa: BLE001 - rendering is optional
+            warnings.append(f"Render-node installation deferred: {exc}")
+        finally:
+            for capture in output_state_captures:
+                capture()
+            for group in bpy.data.node_groups:
+                if (
+                    group.as_pointer() not in existing_node_group_ids
+                    and group.get(geometry_nodes._ASSET_KEY_TAG) in geometry_nodes.GROUP_BY_OUTPUT.values()
+                ):
+                    created_ids.track(bpy.data.node_groups, group, 3)
+        scene.fluidsim.live = False
+        scene.fluidsim.cache_enabled = False
+        scene.fluidsim.bake_start = int(scene.frame_start)
+        scene.fluidsim.bake_end = int(scene.frame_end)
+        if hasattr(scene.fluidsim, "setup_mode"):
+            scene.fluidsim.setup_mode = mode
+        if hasattr(scene.fluidsim, "active_preset_id") and applied is not None:
+            scene.fluidsim.active_preset_id = applied.preset_id
+        capacity = _capacity_summary(scene)
+        message = (
+            f"{mode.replace('_', ' ').title()} configured from {len(selected)} selected "
+            f"mesh object(s); use Start Preview to simulate"
+        )
+        result = SetupResult(
+            mode=mode,
+            preset_id=applied.preset_id if applied else "",
+            domain_name=getattr(domain, "name", ""),
+            input_names=tuple(obj.name for obj in selected),
+            output_names=tuple(obj.name for obj in output_objects),
+            created_names=tuple(created),
+            warnings=tuple(warnings),
+            capacity_message=capacity,
+            message=message,
+        )
+    except Exception as setup_error:
+        from . import pending_settings
+
+        try:
+            with pending_settings.suppress_callbacks(scene):
+                journal.rollback()
+        except Exception as rollback_error:
+            raise RuntimeError(
+                f"{setup_error}; setup rollback was incomplete: {rollback_error}"
+            ) from setup_error
+        raise
+    journal.commit()
+    return result
+
+
+def setup_selected(context, mode: str, preset_id: str = "") -> SetupResult:
+    """Apply Guided Setup without publishing intermediate callback state."""
+    from . import pending_settings
+
+    with pending_settings.suppress_callbacks(context.scene):
+        return _setup_selected_transaction(context, mode, preset_id)

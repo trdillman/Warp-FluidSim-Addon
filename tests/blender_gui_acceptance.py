@@ -12,6 +12,10 @@ frame, and writes a JSON verdict before quitting Blender.
 
 Set FLUIDSIM_PANEL_DRAW_INJECT_FAILURE=1 to prove the panel draw smoke gate
 fails on real Blender panel draw exceptions.
+
+For an isolated source-loaded GUI, set FLUIDSIM_EXPECTED_ADDON_ROOT to the
+expected package directory and FLUIDSIM_GUI_RESULT to the receipt path. This
+mode verifies the loaded/enabled add-on and leaves Blender open.
 """
 
 import json
@@ -20,7 +24,9 @@ import sys
 import tempfile
 import time
 import traceback
+from pathlib import Path
 
+import addon_utils
 import bpy
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +43,7 @@ SCREENSHOT_PATH = os.path.join(ARTIFACTS, "phase3_gui_viewport.png")
 RENDER_PATH = os.path.join(ARTIFACTS, "phase3_gui_render.png")
 PANEL_DRAW_FAILURE_ENV = "FLUIDSIM_PANEL_DRAW_INJECT_FAILURE"
 PANEL_DRAW_FAILURE_PANEL = "FLUIDSIM_PT_scene_control"
+EXPECTED_PRELOADED_ADDON_ROOT = os.environ.get("FLUIDSIM_EXPECTED_ADDON_ROOT")
 PANEL_CALL_SUCCESS = ({"FINISHED"}, {"RUNNING_MODAL"}, {"INTERFACE"})
 PLAYBACK_MIN_FRAMES = 3
 PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
@@ -46,7 +53,9 @@ PANEL_IDS = [
     "FLUIDSIM_VIEW3D_PT_live_tuning",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
+    "FLUIDSIM_PT_scene_transport", "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
+    "FLUIDSIM_PT_scene_setup",
     "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
     "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_time",
     "FLUIDSIM_PT_sim_gravity", "FLUIDSIM_PT_sim_pressure",
@@ -60,7 +69,8 @@ PANEL_IDS = [
     "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
     "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
-    "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_packages",
+    "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_engineering",
+    "FLUIDSIM_PT_effect_packages",
     "FLUIDSIM_PT_effect_warp_code",
 ]
 
@@ -125,7 +135,9 @@ def _image_has_visible_content(path, min_width, min_height,
 
 def _view3d_override():
     wm = bpy.context.window_manager
-    for window in wm.windows:
+    scene = getattr(bpy.context, "scene", None)
+    windows = sorted(wm.windows, key=lambda window: window.scene != scene)
+    for window in windows:
         for area in window.screen.areas:
             if area.type == "VIEW_3D":
                 region = next(r for r in area.regions if r.type == "WINDOW")
@@ -223,6 +235,24 @@ def _call_panel(panel_id):
     return bpy.ops.wm.call_panel(**kwargs)
 
 
+def _panel_effectively_visible(panel_id, context):
+    """Match Blender's parent-aware panel disclosure for smoke selection."""
+    seen = set()
+    current_id = panel_id
+    while current_id:
+        if current_id in seen:
+            raise RuntimeError(f"Panel parent cycle at {current_id}")
+        seen.add(current_id)
+        panel_cls = getattr(bpy.types, current_id, None)
+        if panel_cls is None:
+            return False
+        poll = getattr(panel_cls, "poll", None)
+        if callable(poll) and not poll(context):
+            return False
+        current_id = getattr(panel_cls, "bl_parent_id", "") or ""
+    return True
+
+
 def _draw_all_panels_smoke(state_name, active_object_name=None):
     _install_panel_draw_probes()
     STATE["panel_draw_state"] = state_name
@@ -237,15 +267,13 @@ def _draw_all_panels_smoke(state_name, active_object_name=None):
 
     if not missing:
         for panel_id in PANEL_IDS:
-            panel_cls = getattr(bpy.types, panel_id)
-            poll = getattr(panel_cls, "poll", None)
             override = _panel_override(panel_id)
             try:
                 if override:
                     with bpy.context.temp_override(**override):
-                        visible = poll(bpy.context) if callable(poll) else True
+                        visible = _panel_effectively_visible(panel_id, bpy.context)
                 else:
-                    visible = poll(bpy.context) if callable(poll) else True
+                    visible = _panel_effectively_visible(panel_id, bpy.context)
             except Exception as exc:  # noqa: BLE001
                 call_failures.append(f"{panel_id}.poll: {exc!r}")
                 continue
@@ -306,6 +334,9 @@ class _PanelCaptureLayout:
 
     def grid_flow(self, **_kwargs):
         return self
+
+    def template_list(self, *_args, **_kwargs):
+        return None
 
     def separator(self):
         return None
@@ -371,6 +402,37 @@ def _assert_panel_state(panel_id, state_name, *, label_contains=None,
     )
 
 
+def _assert_panel_disclosure(panel_id, state_name, expected_visible):
+    cls = getattr(bpy.types, panel_id, None)
+    if cls is None:
+        check(f"panel disclosure {state_name}", False, f"{panel_id} missing")
+        return
+    try:
+        visible = _panel_effectively_visible(panel_id, bpy.context)
+    except Exception as exc:  # noqa: BLE001
+        check(f"panel disclosure {state_name}", False, repr(exc))
+        return
+    check(
+        f"panel disclosure {state_name}",
+        visible == expected_visible,
+        f"visible={visible}, expected={expected_visible}",
+    )
+
+
+def _verify_preloaded_addon():
+    expected_root = Path(EXPECTED_PRELOADED_ADDON_ROOT).resolve()
+    module = sys.modules.get("fluidSim_warp_blender51")
+    loaded_path = Path(getattr(module, "__file__", "")).resolve()
+    path_matches = loaded_path == expected_root or expected_root in loaded_path.parents
+    runtime_enabled = bool(addon_utils.check("fluidSim_warp_blender51")[1])
+    preferences_enabled = "fluidSim_warp_blender51" in bpy.context.preferences.addons
+    check("preloaded add-on source", path_matches,
+          f"expected={expected_root}, loaded={loaded_path}")
+    check("preloaded add-on enabled", runtime_enabled)
+    check("preloaded add-on preferences enabled", preferences_enabled)
+    return path_matches and runtime_enabled and preferences_enabled
+
+
 def finish():
     passed = [c for c in STATE["checks"] if c["passed"]]
     verdict = {
@@ -385,7 +447,8 @@ def finish():
         json.dump(verdict, fh, indent=2)
     print(f"GUI-ACCEPTANCE-{verdict['result'].upper()} "
           f"({verdict['passed']}/{verdict['total']})")
-    bpy.ops.wm.quit_blender()
+    if not EXPECTED_PRELOADED_ADDON_ROOT:
+        bpy.ops.wm.quit_blender()
 
 
 def state_machine():
@@ -404,21 +467,69 @@ def state_machine():
 
 def _run_phase(phase, scene):
     if phase == "init":
-        try:
-            enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
-            check("addon enable", True)
-        except Exception as exc:  # noqa: BLE001
-            check("addon enable", False, repr(exc))
-            finish()
-            return None
+        if EXPECTED_PRELOADED_ADDON_ROOT:
+            if not _verify_preloaded_addon():
+                finish()
+                return None
+        else:
+            try:
+                enable_repo_addon(REPO_ROOT, default_set=True, persistent=True)
+                check("addon enable", True)
+            except Exception as exc:  # noqa: BLE001
+                check("addon enable", False, repr(exc))
+                finish()
+                return None
         check("gui mode", not bpy.app.background)
+        scene.fluidsim.ui_mode = "BASIC"
         _draw_all_panels_smoke("addon enabled, solver inactive")
-        # After the D3 hub split the Initialize action lives in the dedicated
-        # Lifecycle panel; the read-only Status hub no longer draws operators.
+        _assert_panel_state(
+            "FLUIDSIM_PT_scene_transport",
+            "Basic Preview action",
+            operator_id="fluidsim.preview_start",
+        )
+        _assert_panel_state(
+            "FLUIDSIM_PT_scene_setup",
+            "Basic guided setup action",
+            operator_id="fluidsim.setup_scene",
+        )
+        _assert_panel_disclosure(
+            "FLUIDSIM_PT_scene_lifecycle", "Basic hides Lifecycle", False)
+        _assert_panel_disclosure(
+            "FLUIDSIM_PT_scene_diagnostics", "Basic hides Diagnostics", False)
+        _assert_panel_disclosure(
+            "FLUIDSIM_PT_effect_engineering", "Basic hides Effect Engineering", False)
+
+        # Legacy manual controls remain available only through the explicit
+        # Advanced disclosure tier.
+        scene.fluidsim.ui_mode = "ADVANCED"
+        _assert_panel_disclosure(
+            "FLUIDSIM_PT_scene_lifecycle", "Advanced shows Lifecycle", True)
         _assert_panel_state(
             "FLUIDSIM_PT_scene_lifecycle",
-            "uninitialized status",
+            "Advanced manual Initialize",
             operator_id="fluidsim.initialize",
+        )
+        _assert_panel_state(
+            "FLUIDSIM_PT_scene_lifecycle",
+            "Advanced manual Step",
+            operator_id="fluidsim.step",
+        )
+        check(
+            "Lifecycle defaults closed",
+            "DEFAULT_CLOSED" in bpy.types.FLUIDSIM_PT_scene_lifecycle.bl_options,
+        )
+        scene.fluidsim.ui_mode = "BASIC"
+
+        # Factory-startup can legitimately provide an empty scene. Create the
+        # setup input only after proving the no-Domain Basic presentation.
+        bpy.ops.mesh.primitive_cube_add(size=2.0, location=(0.0, 0.0, 1.0))
+        setup_input = bpy.context.object
+        setup_input.name = "FluidSim GUI Setup Input"
+        STATE["setup_input_name"] = setup_input.name
+        check(
+            "guided setup input selected",
+            setup_input.select_get() and bpy.context.view_layer.objects.active == setup_input,
+            setup_input.name,
         )
         STATE["phase"] = "setup"
         return 0.1
@@ -431,7 +542,7 @@ def _run_phase(phase, scene):
     if phase == "setup":
         fs = scene.fluidsim
         fs.show_overlay = True
-        bpy.ops.fluidsim.setup_scene()
+        bpy.ops.fluidsim.setup_scene(start_preview=False)
         check("setup_scene", fs.domain_object is not None)
         domain_settings = active_domain_settings(scene)
         check(
@@ -512,6 +623,16 @@ def _run_phase(phase, scene):
         if result != {"FINISHED"}:
             raise RuntimeError(f"Custom Effect setup failed: {sorted(result)}")
         scene.fluidsim_effects.items[-1].enabled = False
+        _assert_panel_state(
+            "FLUIDSIM_PT_custom_effects",
+            "Basic effect Preview action",
+            operator_id="fluidsim.preview_start",
+        )
+        _assert_panel_state(
+            "FLUIDSIM_PT_custom_effects",
+            "Basic effect Apply Changes action",
+            operator_id="fluidsim.apply_changes",
+        )
         _draw_all_panels_smoke(
             "demo configured, solver inactive", STATE.get("source_name"))
 
@@ -528,6 +649,7 @@ def _run_phase(phase, scene):
         scene.collection.objects.link(light)
         light.rotation_euler = (0.6, 0.2, 0.0)
 
+        scene.fluidsim.ui_mode = "ADVANCED"
         result = bpy.ops.fluidsim.initialize()
         sess = session()
         check("initialize solver", result == {"FINISHED"} and sess.active,
@@ -545,26 +667,31 @@ def _run_phase(phase, scene):
             "initialized stats",
             label_contains="Particles",
         )
+        _assert_panel_state(
+            "FLUIDSIM_PT_scene_lifecycle",
+            "Advanced manual Release",
+            operator_id="fluidsim.release",
+        )
+        scene.fluidsim.ui_mode = "BASIC"
         STATE["phase"] = "play"
         return 0.2
 
     if phase == "play":
         fs = scene.fluidsim
         sess = session()
-        bpy.ops.fluidsim.toggle_live()
-        check("live toggled on", fs.live)
         scene.frame_set(scene.frame_start)
         STATE["frame_at_play"] = scene.frame_current
         STATE["solver_frame_at_play"] = sess.solver.frame
         STATE["t_play_start"] = time.perf_counter()
-        override = _view3d_override()
-        if override:
-            with bpy.context.temp_override(**override):
-                bpy.ops.screen.animation_play()
-        else:
-            bpy.ops.screen.animation_play()
-        check("animation playing", bpy.context.screen.is_animation_playing
-              if bpy.context.screen else True)
+        result = bpy.ops.fluidsim.preview_start()
+        check("Preview starts", result == {"FINISHED"} and fs.live,
+              scene.fluidsim.status)
+        owner_windows = [
+            window for window in bpy.context.window_manager.windows
+            if window.scene == scene
+        ]
+        check("animation playing", bool(owner_windows) and any(
+            window.screen.is_animation_playing for window in owner_windows))
         STATE["phase"] = "playing"
         return 3.0
 
@@ -580,14 +707,6 @@ def _run_phase(phase, scene):
             # produced the required live frames; a fixed one-shot timer would
             # otherwise cancel immediately after that cold first frame.
             return 0.2
-        # Stop playback.
-        if bpy.context.screen and bpy.context.screen.is_animation_playing:
-            override = _view3d_override()
-            if override:
-                with bpy.context.temp_override(**override):
-                    bpy.ops.screen.animation_cancel(restore_frame=False)
-            else:
-                bpy.ops.screen.animation_cancel(restore_frame=False)
         check("playback advanced timeline",
               scene_frames >= PLAYBACK_MIN_FRAMES,
               f"{scene_frames} frames in {elapsed:.1f}s")
@@ -597,12 +716,14 @@ def _run_phase(phase, scene):
         fs = bpy.context.scene.fluidsim
         check("particles during playback", fs.stat_particles > 1000,
               f"{fs.stat_particles:,}")
-        surf = bpy.data.objects.get("FluidSim Surface")
+        from fluidSim_warp_blender51.blender import output_publication
+
+        surf = output_publication.output_object(scene, "FluidSim Surface")
         check("surface visible in viewport",
               surf is not None and surf.visible_get()
               and len(surf.data.vertices) > 100,
               f"{len(surf.data.vertices) if surf else 0} verts")
-        ww = bpy.data.objects.get("FluidSim Whitewater")
+        ww = output_publication.output_object(scene, "FluidSim Whitewater")
         check("whitewater object present", ww is not None,
               ww.type if ww else "")
         STATE["phase"] = "rewind"
@@ -611,13 +732,24 @@ def _run_phase(phase, scene):
     if phase == "rewind":
         sess = session()
         scene = bpy.context.scene
-        # Rewinding to the start frame must reset the simulation.
+        # Rewind while Preview is still armed so the production frame handler
+        # owns the reset. Pausing first would intentionally bypass that handler.
         scene.frame_set(scene.frame_start)
         check("rewind resets solver", sess.solver.frame == 0,
               f"solver frame {sess.solver.frame}")
-        bpy.ops.fluidsim.toggle_live()
-        check("live toggled off", not scene.fluidsim.live)
-        # Step manually after reset (operator path in GUI context).
+        pause_result = bpy.ops.fluidsim.preview_pause()
+        owner_windows = [
+            window for window in bpy.context.window_manager.windows
+            if window.scene == scene
+        ]
+        check("Pause Preview", pause_result == {"FINISHED"}
+              and not scene.fluidsim.live
+              and bool(owner_windows)
+              and all(not window.screen.is_animation_playing
+                      for window in owner_windows),
+              scene.fluidsim.status)
+        # Step manually after reset through the Advanced compatibility path.
+        scene.fluidsim.ui_mode = "ADVANCED"
         result = bpy.ops.fluidsim.step(frames=3)
         check("manual step after reset", result == {"FINISHED"},
               scene.fluidsim.status)
@@ -644,6 +776,8 @@ def _run_phase(phase, scene):
         check("ui redraw with overlay", True)
 
         # Property edits through the UI data path (as the panels would).
+        from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
+
         scene = bpy.context.scene
         domain_settings = active_domain_settings(scene)
         if domain_settings is None:
@@ -656,7 +790,6 @@ def _run_phase(phase, scene):
               and domain_settings.pressure_iterations == 150)
 
         # Pending state is owned by the simplified Scene Properties panel.
-        from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
         sess = scene_bridge.session()
         solver_before_pending = sess.solver
         domain_settings.voxel_size *= 0.9

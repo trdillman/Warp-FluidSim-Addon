@@ -1,10 +1,18 @@
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 from tools import run_production_gate
 from tools import validate_gui_playback_report
+
+
+def test_broad_gui_authors_profiling_on_the_admission_owner():
+    source = (Path(__file__).parent / "blender_gui_acceptance.py").read_text()
+    assert "fs.profiling_enabled = True" not in source
+    assert source.index("domain_settings = active_domain_settings(scene)") < (
+        source.index("domain_settings.profiling_enabled = True"))
 
 
 def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, capsys):
