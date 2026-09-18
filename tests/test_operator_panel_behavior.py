@@ -20,8 +20,6 @@ from types import SimpleNamespace
 import pytest
 from settings_doubles import split_settings
 
-warp = pytest.importorskip("warp")
-
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -998,6 +996,7 @@ def test_inactive_live_update_status_is_truthful(monkeypatch):
 
 
 def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypatch):
+    warp = pytest.importorskip("warp")
     if not warp.is_cuda_available():
         pytest.skip("CUDA not available")
     _install_bpy_stub(monkeypatch)
