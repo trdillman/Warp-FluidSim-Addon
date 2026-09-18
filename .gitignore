@@ -45,3 +45,6 @@ Desktop.ini
 /fluidsim_report.json
 /fluidsim_test_*.obj
 /fluidsim_test_*.ply
+
+# graft local graph cache — regenerable, not committed (run `graft build`).
+/graft/
