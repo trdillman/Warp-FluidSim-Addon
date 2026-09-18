@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 from settings_doubles import split_settings
 
+warp = pytest.importorskip("warp")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -989,6 +991,8 @@ def test_release_session_clears_all_runtime_state_and_error(monkeypatch):
 
 
 def test_release_session_closes_solver_before_dropping_runtime(monkeypatch):
+    if not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     calls = []

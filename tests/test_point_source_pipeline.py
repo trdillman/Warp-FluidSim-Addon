@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+warp = pytest.importorskip("warp")
+
 from fluidSim_warp_blender51.sim.enums import (
     SourceEvaluationCadence, SourceLifecycle, SourceOperation, SourcePayloadKind,
 )
@@ -96,6 +98,8 @@ def test_point_region_accepts_exact_vector_and_scalar_ranks():
 
 
 def test_direct_point_arrays_reach_live_particles_without_constant_substitution():
+    if not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     settings = SolverSettings()
     settings.domain_min = (0.0, 0.0, 0.0)
     settings.domain_max = (2.0, 2.0, 2.0)

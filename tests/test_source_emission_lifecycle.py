@@ -11,6 +11,7 @@ These tests encode the source-emission truth contract:
 """
 
 import numpy as np
+import pytest
 
 from fluidSim_warp_blender51.sim import sourcing
 from fluidSim_warp_blender51.sim.enums import (
@@ -110,6 +111,8 @@ def _device():
 
 
 def _settings(*, max_substeps):
+    if not sourcing.wp.is_cuda_available():
+        pytest.skip("CUDA not available")
     s = SolverSettings()
     s.domain_min = (-0.6, -0.6, 0.0)
     s.domain_max = (0.6, 0.6, 1.2)

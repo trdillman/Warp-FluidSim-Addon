@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+warp = pytest.importorskip("warp")
+
 from fluidSim_warp_blender51.blender import simulation_admission as admission
 
 
@@ -119,6 +121,8 @@ def test_preflight_failure_preserves_existing_solver(monkeypatch):
 @pytest.mark.parametrize("failure_phase", ("allocate", "configure", "seed", "output"))
 def test_candidate_failures_preserve_live_session_and_post_cutover_failure_cleans(
         monkeypatch, failure_phase):
+    if failure_phase == "output" and not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     session = _Session()
     old_solver = session.solver
     owner = _owner(session)
@@ -165,6 +169,8 @@ def test_candidate_failures_preserve_live_session_and_post_cutover_failure_clean
 
 
 def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
+    if not warp.is_cuda_available():
+        pytest.skip("CUDA not available")
     session = _Session()
     old_solver = session.solver
     events = []

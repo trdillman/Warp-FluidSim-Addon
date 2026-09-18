@@ -96,7 +96,7 @@ def test_realistic_dynamic_mesh_work_is_bounded_before_distance_evaluation(monke
 
 def test_cuda_bvh_shell_matches_cpu_compiler_coverage_and_distance():
     wp.init()
-    if not wp.get_device("cuda:0").is_cuda:
+    if not wp.is_cuda_available():
         pytest.skip("CUDA device unavailable")
     vertices, triangles = cube()
     cpu_source = plan(MeshRegionPlan(
