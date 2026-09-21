@@ -6,6 +6,7 @@ audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_ble
 git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
 gate_run_at: 2026-09-21T03:12:48.375188Z
 gate_verdict: 'BLOCKED-INTERACTIVE-GUI-NO-RECEIPT'
+unit_verdict: 'NON-GUI-EVIDENCE-CURRENT-GUI-RECEIPT-MISSING'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
 demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 git_dirty: true
@@ -60,6 +61,14 @@ test doubles were not promoted as heuristic-runtime findings. The fresh
 `18/18` analyzer and package release verification are concrete current
 evidence, but they do not substitute for the missing GUI-inclusive receipt.
 
+`gate_verdict` is bound to the gate run, not to this unit:
+`tools/validate_policy_drift_reports.py` compares it against `gate_verdict` in
+`artifacts/production_gate_manifest.json`, so every unit report sharing one
+`gate_run_at` must carry the identical string, and it must read
+`FULL-PRODUCTION-GATE-PASS` once a passing manifest exists
+(`tools/run_production_gate.py` writes no other value). The unit-scoped rollup
+belongs in `unit_verdict`, which is free-form and may differ per unit.
+
 ## Machine-readable audit footer
 
 ```yaml
@@ -70,6 +79,7 @@ audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_ble
 git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
 gate_run_at: 2026-09-21T03:12:48.375188Z
 gate_verdict: 'BLOCKED-INTERACTIVE-GUI-NO-RECEIPT'
+unit_verdict: 'NON-GUI-EVIDENCE-CURRENT-GUI-RECEIPT-MISSING'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
 demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 freshness: fresh
