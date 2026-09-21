@@ -7,6 +7,7 @@ import pytest
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 from test_simulation_admission import _Runtime, _Session, _Snapshot
 from fluidSim_warp_blender51.blender.simulation_admission import SimulationAdmission
+from fluidSim_warp_blender51.sim import memory_safety
 from fluidSim_warp_blender51.sim.effects.builtins import builtin_effect_definitions
 from fluidSim_warp_blender51.sim.effects.schema import EffectInstanceV2
 from fluidSim_warp_blender51.sim.effects.trust import TrustStore
@@ -32,6 +33,11 @@ def test_draft_capture_preserves_disabled_authoring_and_rejects_untrusted(monkey
 
 @pytest.mark.parametrize('failure', ['none', 'configure', 'output', 'stale'])
 def test_effect_evidence_is_published_only_after_successful_admission(monkeypatch, failure):
+    # Commit/discard of the (fake) old or candidate solver releases its device
+    # memory via memory_safety.release_cuda_memory; this contract is host-side
+    # and doesn't need a real CUDA device to exercise. Same fix as PR #6 used
+    # in test_simulation_admission.py.
+    monkeypatch.setattr(memory_safety, 'release_cuda_memory', lambda *_a, **_kw: None)
     sess = _Session()
     old_solver = sess.solver
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=''), applied='old')

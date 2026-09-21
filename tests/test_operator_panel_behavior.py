@@ -993,6 +993,11 @@ def test_inactive_live_update_status_is_truthful(monkeypatch):
 
 
 def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypatch):
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    # Cutover releases the outgoing (mocked) solver's device memory; this
+    # contract is host-side and doesn't need a real CUDA device to exercise.
+    monkeypatch.setattr(memory_safety, "release_cuda_memory", lambda *_a, **_kw: None)
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     from fluidSim_warp_blender51.blender import simulation_admission
