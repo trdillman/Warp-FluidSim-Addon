@@ -1,13 +1,13 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-12T18:32:21.911773+00:00
-audit_unit: 'demos'
-git_head: 01c4bf837bcec9b580bcf42511b87f3ed9b15502
-gate_run_at: 2026-09-12T18:32:21.911773+00:00
-gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
-demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1
+generated_at: 2026-09-21T03:36:27.7252393Z
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
+git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
+gate_run_at: 2026-09-21T03:12:48.375188Z
+gate_verdict: 'BLOCKED-INTERACTIVE-GUI-NO-RECEIPT'
+demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
+demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 git_dirty: true
 ---
 
@@ -15,78 +15,57 @@ git_dirty: true
 
 ## Audit conclusion
 
-The saved demo scenes are backed by real runtime behavior, not static preview
-data. The current GUI-inclusive parent gate used Blender 5.1, external Warp
-1.16.0, and CUDA on the RTX 4080 SUPER; it rebuilt and checked the demos,
-validated live playback, and finished with `FULL-PRODUCTION-GATE-PASS` and
-`SAVED-DEMO-GUI-PLAYBACK-PASS`.
-
-The generated 18/18 artifact is now copied byte-for-byte into the checked-in
-JSON, while the Markdown and nested technical report promote the same metrics
-and gate provenance. The report-authority and evidence mismatches found at the
-start of the audit are repaired; the recurrence card remains visible.
-
-## Strongest live evidence
-
-- `artifacts/production_gate_manifest.json` records proof HEAD
-  `01c4bf837bce`, `GUI-ACCEPTANCE-PASS (41/41)`,
-  `SAVED-DEMO-GUI-PLAYBACK-PASS`, and `FULL-PRODUCTION-GATE-PASS`.
-- The generated and checked-in JSON both have SHA-256
-  `afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1`.
-- The rebuilt `demos/*.blend` files passed the all-demo gate and real saved
-  timeline playback at the same proof HEAD.
+The current demo analyzer passes `18/18`, so the saved demos continue to
+exercise real generated behavior rather than only static preview geometry.
+The checked-in evidence is not synchronized to this fresh artifact, and the
+parent GUI-inclusive gate did not produce a current completion receipt.
 
 ## Findings
 
-### PD-DEMO-001: checked-in demo evidence recurrence repaired (validation drift)
+### PD-DEMO-001: checked-in evidence is stale against the fresh artifact (validation drift)
 
-The synchronized evidence promotes dam-break front speed `1.0113339117`, dam
-column height `0.3376998901`, crown correlation `0.9714301207`, and crown
-height `0.2944921553`. The JSON equality and shared metric tokens are enforced
-by the parent validator. Recurrence tracking remains in
-`demos/backlog/tasks/TASK-POLICY-DRIFT-007-CHECKED-IN-EVIDENCE-RECURRENCE.md`.
+The fresh artifact hash is
+`ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a`; the
+checked-in JSON remains
+`afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1`. Current
+dam-break column height is `0.3355760574 m` versus checked-in `0.3376998901 m`,
+and current crown height is `0.2811620831 m` versus checked-in `0.2944921553 m`.
+The existing local card is
+`backlog/tasks/TASK-POLICY-DRIFT-007-CHECKED-IN-EVIDENCE-RECURRENCE.md`.
 
-### PD-DEMO-002: report provenance was stale at audit start (documentation drift)
+## Scope boundary
 
-The prior report named temporary root `C:\tmp\fluidsim-main-release\demos`,
-old HEAD `bb6d3fc5...`, and an old gate timestamp. This report now names the
-actual demos directory and current gate provenance. The completed local card
-is `demos/backlog/tasks/TASK-POLICY-DRIFT-008-REPORT-AUTHORITY-RECURRENCE.md`.
-
-## Scope boundary and non-findings
-
-No demos-unit evidence supports calling the live solver or playback path a
-narrow heuristic. `tools/analyze_demos.py` is a parent-root tool; its separate
-uncalibrated paddle threshold is reported and tracked by the root unit. The
-known first full-gate GUI exit was followed by a focused GUI pass and a full
-retry pass, so it is tracked at the root validation workflow rather than
-misattributed to these saved scenes.
+The demo analyzer's `18/18` pass is current evidence for this unit. It does
+not certify the parent GUI lane, whose current receipt is missing; that gate
+finding remains owned by the root report.
 
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-12T18:32:21.911773+00:00
-generated_at_utc: 2026-09-12T18:32:21.911773Z
+generated_at: 2026-09-21T03:36:27.7252393Z
+generated_at_utc: 2026-09-21T03:36:27.7252393Z
 escalated: false
-audit_unit: 'demos'
-git_head: 01c4bf837bcec9b580bcf42511b87f3ed9b15502
-gate_run_at: 2026-09-12T18:32:21.911773+00:00
-gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
-demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1
+audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
+git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
+gate_run_at: 2026-09-21T03:12:48.375188Z
+gate_verdict: 'BLOCKED-INTERACTIVE-GUI-NO-RECEIPT'
+demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
+demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 freshness: fresh
 status: fresh
 blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification_commands_artifacts:
-  - 'rtk python tools/run_production_gate.py --include-gui -> artifacts/production_gate_manifest.json'
-  - 'blender --background --python tools/check_demo_blends.py -> included in full-gate pass'
   - 'rtk python tools/analyze_demos.py -> DEMO-ANALYSIS-PASS (18/18)'
-  - 'artifacts/production_gate_manifest.json -> SAVED-DEMO-GUI-PLAYBACK-PASS at 01c4bf837bce'
-files_that_need_correction: []
+  - 'artifacts/demo_analysis/analysis_report.json -> fresh mtime 2026-09-21T03:27:36Z'
+  - 'parent rtk python tools/run_production_gate.py --include-gui -> no current receipt'
+files_that_need_correction:
+  - 'analysis_report.json'
+  - 'ANALYSIS.md'
 active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-007-CHECKED-IN-EVIDENCE-RECURRENCE.md'
 repair_checklist:
-  - 'Keep generated JSON, promoted metrics, and exact artifact hash synchronized.'
-  - 'Run the parent policy-drift validator after every evidence refresh.'
+  - 'Copy one stable generated JSON into the checked-in demo evidence.'
+  - 'Refresh ANALYSIS.md and preserve the exact artifact hash.'
+  - 'Run the policy-drift validator after synchronization.'
 ```

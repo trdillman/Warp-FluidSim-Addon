@@ -1,87 +1,71 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-01T05:31:42.102923+00:00
+generated_at: 2026-09-21T03:36:27.7252393Z
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
-gate_run_at: 2026-09-01T05:31:42.102923+00:00
-gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
-demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
+git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
+gate_run_at: 2026-09-21T03:12:48.375188Z
+gate_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GUI-BLOCKED'
+demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
+demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 git_dirty: true
 ---
 
-# Policy Drift Report: nested package unit
+# Policy Drift Report: fluidSim_warp_blender51 unit
 
 ## Audit conclusion
 
-The nested `fluidSim_warp_blender51` package is an executable add-on/runtime
-unit, not a report-only or heuristic facade. Its current package-local suite
-passed `398` tests, and `release/build_extension.py --verify-only` reported
-`release_ready: true` for extension `fluidsim_warp`, version `1.0.255`, with
-external Warp runtime metadata. The parent GUI-inclusive production gate also
-exercised the real Blender/Warp package path and passed.
-
-The promoted section in `docs/technical_report.md` is synchronized to the
-current parent proof HEAD, demo metrics, and artifact hash. Older package-local
-suite and verify-only results remain historical evidence rather than claims
-that those lanes were rerun during this refresh.
-
-## Strongest live evidence
-
-- Historical package-local evidence records `398` tests passed in `15.74s`.
-- `rtk python release/build_extension.py --verify-only --json-report
-  ..\artifacts\package_verify_only.json` returned `release_ready: true`,
-  extension `fluidsim_warp`, version `1.0.255`, and external Warp 1.16.0
-  runtime metadata.
-- Parent `artifacts/production_gate_manifest.json` records proof HEAD
-  `69a51c86954b`, real CUDA/Warp execution, GUI `40/40`, saved-demo playback,
-  and `FULL-PRODUCTION-GATE-PASS`.
+The package verifier is current and reports `release_ready: true` for
+`fluidsim_warp`, version `1.0.255`. The current demo analyzer also passes
+`18/18`, so this audit found no evidence that the package's real solver path is
+only a narrow heuristic. The package technical report is nevertheless stale
+against the current generated artifact, and the parent GUI gate has no current
+completion receipt.
 
 ## Findings
 
-### PD-PKG-001: technical report proof snapshot repaired (documentation drift)
+### PD-PKG-001: technical-report provenance and metrics lag the current artifact (documentation drift)
 
-The promoted section now names parent proof HEAD `69a51c86954b`, the current
-four demo metrics, and generated artifact hash
-`6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495`.
-Package-local results remain explicitly historical. Recurrence tracking is in
-`fluidSim_warp_blender51/backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`.
+`docs/technical_report.md` still promotes proof HEAD `01c4bf…`, artifact hash
+`afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1`, and
+older column/crown metrics. The current generated artifact is
+`ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a` with
+column height `0.3355760574 m` and crown height `0.2811620831 m`. The existing
+local card is
+`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`.
 
-## Scope boundary and non-findings
+## Scope boundary
 
-The current nested dirty files are promoted evidence only. Current tests,
-historical package verification, and parent runtime proof do not
-support a claim that the solver, package builder, or add-on lifecycle is a
-narrow heuristic. Intentional material/custom-effect fallbacks and synthetic
-validation fixtures are not runtime fallbacks. Root and demos report their
-own report-authority, checked-in demo-evidence, paddle-calibration, and GUI
-gate-reproducibility findings.
+The package verification pass is current package evidence. It does not prove
+the parent interactive GUI lane, which was blocked without a fresh receipt;
+that remains a root-unit finding.
 
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-01T05:31:42.102923+00:00
-generated_at_utc: 2026-09-01T05:31:42.102923Z
+generated_at: 2026-09-21T03:36:27.7252393Z
+generated_at_utc: 2026-09-21T03:36:27.7252393Z
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 69a51c86954b61d7c8ce5f0d0e4bf1cead2fd528
-gate_run_at: 2026-09-01T05:31:42.102923+00:00
-gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
-demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 6b379e9d15ac2a86ffa1a0b49d698b4456911e932f74ebdb07da060936608495
+git_head: efb02e4e8cb4a8833e2e0631b5f33eee205ea77c
+gate_run_at: 2026-09-21T03:12:48.375188Z
+gate_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GUI-BLOCKED'
+demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
+demo_artifact_sha256: ef62e6506d4e4131a20804d3d67dfecdbdf20517196d204fe79eb515c3051c2a
 freshness: fresh
 status: fresh
 blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification_commands_artifacts:
-  - 'rtk python -m pytest -q -> 398 passed in 15.74s'
-  - 'rtk python release/build_extension.py --verify-only -> artifacts/package_verify_only.json, release_ready=true'
-  - 'parent rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS'
-files_that_need_correction: []
+  - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
+  - 'rtk python tools/analyze_demos.py -> DEMO-ANALYSIS-PASS (18/18)'
+  - 'parent rtk python tools/run_production_gate.py --include-gui -> no current receipt'
+files_that_need_correction:
+  - 'docs/technical_report.md'
 active_backlog_tasks:
-  - 'fluidSim_warp_blender51/backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md'
+  - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md'
 repair_checklist:
-  - 'Keep parent proof HEAD, promoted metrics, and artifact hash synchronized.'
-  - 'Keep package-local and installed/no-CUDA lanes labeled by execution date.'
+  - 'Refresh technical-report HEAD, hash, and promoted metrics from one stable artifact.'
+  - 'Keep package verification and parent GUI evidence labeled by execution date.'
+  - 'Do not promote the stale 2026-09-19 GUI receipts as current proof.'
 ```
