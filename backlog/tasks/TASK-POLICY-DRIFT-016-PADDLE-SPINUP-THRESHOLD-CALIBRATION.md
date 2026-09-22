@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+done (2026-09-22)
 
 ## What to build
 
@@ -13,16 +13,69 @@ threshold is a placeholder.
 
 ## Acceptance criteria
 
-- [ ] Measure repeated real `paddle_stir` bakes across the supported frame,
+- [x] Measure repeated real `paddle_stir` bakes across the supported frame,
       resolution, and particle-count envelope.
-- [ ] Derive and document a threshold from those measurements rather than
+- [x] Derive and document a threshold from those measurements rather than
       retaining an unexplained magic number.
-- [ ] Add a negative or degraded-motion case that proves the check rejects
+- [x] Add a negative or degraded-motion case that proves the check rejects
       missing spin-up and still accepts valid scale variants.
-- [ ] Remove the `UNCALIBRATED` qualification and rerun
+- [x] Remove the `UNCALIBRATED` qualification and rerun
       `python tools/analyze_demos.py paddle_stir` with a recorded `10/10`
       result.
 
 ## Blocked by
 
 None - can start immediately
+
+## Disposition (2026-09-22)
+
+Calibrated against 21 real bakes at HEAD `f383eae`, sweeping resolution
+(voxel 0.008-0.016), particle count (19k-311k), duration (48-144 frames) and
+paddle speed (0-100 RPM), with five repeats at the shipped settings.
+Full table, derivation and verification: `docs/paddle_spinup_calibration.md`.
+
+**The placeholder hid a real false accept.** The margin divides by the
+steady-window mean, so a scene with effectively no drive divides by noise and
+the ratio *explodes* rather than collapsing: the 0.5 RPM bake measures a
+spin-up ratio of 19.589 and the shipped 0.3 accepted it. No value of a single
+relative constant separates that case from a real bake, so the fix is two
+conditions, not a retuned one:
+
+- `PADDLE_STEADY_CIRCULATION_FLOOR = 0.005` (new) - steady Lz nondimensionalised
+  by the solid-body circulation the paddle could impose, `N*|omega|*r_out^2`.
+  Worst supported case 0.0152, shipped 0.171, degraded 0.00048.
+- `PADDLE_SPINUP_MOMENTUM_MARGIN = 0.30` (was an unexplained 0.3, now measured)
+  - the supported envelope runs 0.620 to 0.971; 0.30 is half the worst case.
+  Five repeats spread by 7e-4, three orders of magnitude below the envelope,
+  so the envelope sets the number and not the noise.
+
+The supported envelope has two measured bounds, and outside either one the
+rejection is correct rather than a false negative: at least one seed particle
+per voxel, and paddle speed >= 25 RPM for a 96-frame window (below that the
+pool has not equilibrated when the window ends, and the pre-existing `decays`
+clause rejects it - `rpm_10` measures late 1962 against steady 1831).
+
+Verification, replaying the shipped `analyze_paddle_stir` over all 21 caches
+with only `load_scene` monkeypatched: every in-envelope case accepted, all
+three degraded cases rejected, `CALIBRATION-VERIFY-PASS`. Regression coverage
+in `tests/test_demo_analysis_contract.py` (4 new tests, 6/6 pass).
+
+Recorded result on the shipped scene:
+
+```
+python tools/analyze_demos.py paddle_stir
+[PASS] paddle_stir: angular momentum spins up and decays - mean Lz (mass
+omitted, uniform particle mass): early(1-5)=2317.4351, steady=41384.3544,
+late(last 5)=32091.8230; spin-up ratio 0.9440 (floor 0.3), steady circulation
+0.17297 (floor 0.005)
+DEMO-ANALYSIS-PASS (10/10)
+```
+
+Bakes, harness and raw results are archived under
+`artifacts/paddle_calibration/` (gitignored).
+
+**Incidental finding, not addressed here:** rebuilding `paddle_stir` from
+`tools/build_demo_scenes.py` produces a 280 KB `.blend` where the checked-in
+one is 5.7 MB. The rebuilt scene analyses 10/10, but the shipped artifact is
+evidently not what the builder currently emits. The checked-in `.blend` was
+restored; this deserves its own card.

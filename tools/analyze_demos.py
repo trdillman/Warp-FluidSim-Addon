@@ -44,11 +44,42 @@ ANALYSIS_OUT = os.path.join(REPO, "artifacts", "demo_analysis")
 CHECKS = []
 MARTIN_MOSES_FRONT_POSITION_RANGE = (2.5, 4.0)
 
-# UNCALIBRATED — no real paddle_stir bake has been measured yet. Placeholder
-# only; the orchestrator must tune this against real bake data and freeze it.
-# Fraction of the steady-window mean angular momentum that the early-window
-# (frames 1-5) mean must fall short by before spin-up counts as "meaningful".
-PADDLE_SPINUP_MOMENTUM_MARGIN = 0.3
+# Paddle spin-up acceptance. Calibrated 2026-09-22 against 21 real
+# paddle_stir bakes at HEAD f383eae, sweeping resolution (voxel 0.008-0.016),
+# particle count (19k-311k), duration (48-144 frames) and paddle speed
+# (0-100 RPM). docs/paddle_spinup_calibration.md carries the full table.
+#
+# The supported envelope has two measured bounds, and outside either one a
+# rejection is correct rather than a false negative:
+#   * at least one seed particle per voxel (seed spacing <= voxel size).
+#     Below that the pool is under-seeded, FLIP stops resolving the flow, and
+#     the scene genuinely does not spin up.
+#   * paddle speed >= 25 RPM for a 96-frame window. Below that the pool has
+#     not equilibrated before the window ends, so it is still accelerating at
+#     the last frame and the "decays" clause -- not this threshold -- rejects
+#     it (the 10 RPM bake measures late 1962 against steady 1831).
+#
+# Two conditions are needed, not one. The relative margin divides by the
+# steady-window mean, so when the paddle barely turns that denominator is
+# noise and the ratio explodes: a 0.5 RPM bake -- a scene with effectively no
+# drive -- measures a spin-up ratio of 19.6 and the margin alone *accepts*
+# it. The absolute floor closes that false accept.
+
+# (a) Absolute. Steady-window Lz, nondimensionalised by the solid-body
+# circulation the paddle could impose on the pool (N * |omega| * r_out^2).
+# Measured 0.0152 at the worst supported corner (voxel 0.010, 1.0
+# particle/voxel), 0.171 at the shipped settings, 0.334 at the coarsest; the
+# degraded 0.5 RPM bake measures 0.00048. This floor sits ~3x below the worst
+# supported case and ~10x above the degraded one.
+PADDLE_STEADY_CIRCULATION_FLOOR = 0.005
+
+# (b) Relative. Fraction of the steady-window mean angular momentum that the
+# early-window (frames 1-5) mean must fall short by. Measured over the
+# supported envelope: minimum 0.620 (voxel 0.010), 0.943 +/- 0.0003 over five
+# repeats at the shipped settings, maximum 0.971. Run-to-run spread is 7e-4,
+# three orders of magnitude below the envelope spread, so the envelope sets
+# this number and not the noise. 0.30 is half the worst supported case.
+PADDLE_SPINUP_MOMENTUM_MARGIN = 0.30
 
 
 def check(scene, name, passed, detail):
@@ -403,13 +434,29 @@ def analyze_paddle_stir():
                       if early_frames else 0.0)
     late_mean_lz = (float(np.mean([lz_by_frame[f] for f in late_frames]))
                      if late_frames else 0.0)
+    # Nondimensionalise against the solid-body circulation the paddle could
+    # impose, so the floor means the same thing at every resolution, particle
+    # count and paddle speed. A stationary paddle has no such scale at all,
+    # which is itself a failure rather than a division to attempt.
+    n_particles = frames[min(frames)]["positions"].shape[0]
+    circulation_scale = n_particles * abs(meta["peak_rad_per_s"]) * r_out ** 2
+    steady_circulation = (steady_mean_lz / circulation_scale
+                          if circulation_scale else 0.0)
+    driven = abs(steady_circulation) >= PADDLE_STEADY_CIRCULATION_FLOOR
     spins_up = (steady_mean_lz - early_mean_lz) > \
         PADDLE_SPINUP_MOMENTUM_MARGIN * abs(steady_mean_lz)
     decays = late_mean_lz < steady_mean_lz
-    check(name, "angular momentum spins up and decays", spins_up and decays,
+    spinup_ratio = ((steady_mean_lz - early_mean_lz) / abs(steady_mean_lz)
+                    if steady_mean_lz else float("nan"))
+    check(name, "angular momentum spins up and decays",
+          driven and spins_up and decays,
           f"mean Lz (mass omitted, uniform particle mass): "
           f"early(1-5)={early_mean_lz:.4f}, steady={steady_mean_lz:.4f}, "
-          f"late(last 5)={late_mean_lz:.4f}")
+          f"late(last 5)={late_mean_lz:.4f}; "
+          f"spin-up ratio {spinup_ratio:.4f} "
+          f"(floor {PADDLE_SPINUP_MOMENTUM_MARGIN}), "
+          f"steady circulation {steady_circulation:.5f} "
+          f"(floor {PADDLE_STEADY_CIRCULATION_FLOOR})")
 
     # 5) Rotational depression of the free surface: axis column sits lower
     # than the near-wall annulus during the steady window.

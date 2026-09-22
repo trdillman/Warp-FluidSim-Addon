@@ -1551,12 +1551,24 @@ def build_paddle_stir():
     from fluidSim_warp_blender51.blender import colliders as _colliders
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
+    # Calibration envelope overrides. Defaults reproduce the shipped bake
+    # exactly; a non-empty FLUIDSIM_PADDLE_VARIANT redirects every output so
+    # variant bakes never touch the shipped demo .blend/meta.json. Used by the
+    # spin-up threshold calibration (TASK-POLICY-DRIFT-016) to sweep
+    # resolution, particle count, duration and paddle speed.
+    variant = os.environ.get("FLUIDSIM_PADDLE_VARIANT", "").strip()
+    voxel = float(os.environ.get("FLUIDSIM_PADDLE_VOXEL", "0.012"))
+    seed_spacing = float(os.environ.get("FLUIDSIM_PADDLE_SEED_SPACING", "0.010"))
+    rpm = float(os.environ.get("FLUIDSIM_PADDLE_RPM", "100.0"))
+    frame_scale = float(os.environ.get("FLUIDSIM_PADDLE_FRAME_SCALE", "1.0"))
+    scene_name = f"paddle_stir__{variant}" if variant else "paddle_stir"
+
     scene = fresh_scene()
     fs = scene.fluidsim
     lo, hi = (-0.60, -0.60, 0.0), (0.60, 0.60, 0.90)
     make_domain(scene, lo, hi, "PaddleStir Domain")
     ds = domain_settings(scene)
-    ds.voxel_size = 0.012
+    ds.voxel_size = voxel
     ds.max_particles = 900_000
     ds.min_substeps = 1
     ds.max_substeps = 24
@@ -1568,7 +1580,7 @@ def build_paddle_stir():
     fs.particle_display_fraction = 1.0
     fs.show_whitewater = True
     scene.frame_start = 1
-    scene.frame_end = 96
+    scene.frame_end = max(8, int(round(96 * frame_scale)))
 
     # -- Tank: closed manifold tube, outward normals, open top, cavity R=0.45.
     # SOLIDIFY offset=-1 keeps the original radius-0.49 surface as the outer
@@ -1634,8 +1646,10 @@ def build_paddle_stir():
     # 0 by f96. Every frame is a keyframe so the integer-frame solver samples
     # equal the analyzer's np.interp reconstruction exactly; LINEAR keeps the
     # per-frame angular velocity clean.
-    omega_peak = 2.0 * math.pi * 100.0 / 60.0
-    spinup_end, steady_end, total = 24, 72, 96
+    omega_peak = 2.0 * math.pi * rpm / 60.0
+    spinup_end, steady_end, total = (max(2, int(round(24 * frame_scale))),
+                                     max(4, int(round(72 * frame_scale))),
+                                     max(8, int(round(96 * frame_scale))))
     dt = 1.0 / FPS
     prefs = bpy.context.preferences.edit
     old_interp = prefs.keyframe_new_interpolation_type
@@ -1663,29 +1677,31 @@ def build_paddle_stir():
     sess = session()
     pool_depth = 0.32
     pool = lattice((-tank_inner_radius, -tank_inner_radius, 0.05),
-                   (tank_inner_radius, tank_inner_radius, pool_depth), 0.010)
+                   (tank_inner_radius, tank_inner_radius, pool_depth),
+                   seed_spacing)
     radial = np.hypot(pool[:, 0], pool[:, 1])
     pool = pool[radial < (tank_inner_radius - 1.5 * ds.voxel_size)]
     n_pool = admitted_total(
-        sess.solver.inject_particles(pool), label="paddle_stir pool")
-    log(f"paddle_stir: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
+        sess.solver.inject_particles(pool), label=f"{scene_name} pool")
+    log(f"{scene_name}: pool {n_pool:,} particles, peak {omega_peak:.2f} rad/s")
     add_camera_light(scene, (0.95, -1.30, 1.05), (1.10, 0.0, 0.62))
-    series = run_scene("paddle_stir", total, advance_timeline=True)
+    series = run_scene(scene_name, total, advance_timeline=True)
     if not series["particle_count"] or min(series["particle_count"]) <= 0:
-        raise RuntimeError("paddle_stir measured run lost its seeded pool")
+        raise RuntimeError(f"{scene_name} measured run lost its seeded pool")
     add_text_block(
         "README_Paddle_Stir",
         "Keyframed rotating paddle (moving collider). run_scene advances the "
         "timeline so object_angular_velocity is nonzero; blades pierce the "
         "waterline to emit whitewater. Scrub 1-96 to see the paddle turn.")
-    save_scene("paddle_stir")
-    os.makedirs(os.path.join(DEMOS, "paddle_stir"), exist_ok=True)
+    if not variant:
+        save_scene("paddle_stir")
+    os.makedirs(os.path.join(DEMOS, scene_name), exist_ok=True)
     meta = {
-        "scene": "paddle_stir",
+        "scene": scene_name,
         "gravity": 9.81,
         "fps": FPS,
         "domain": [list(lo), list(hi)],
-        "voxel_size": 0.012,
+        "voxel_size": voxel,
         "tank_center": [0.0, 0.0, 0.40],
         "tank_inner_radius": tank_inner_radius,
         "tank_height": 0.80,
@@ -1707,12 +1723,20 @@ def build_paddle_stir():
         "whitewater_churn_gain": 2.5,
         "collider_objects": ["PaddleStir Tank", "PaddleStir Paddle"],
     }
-    with open(os.path.join(DEMOS, "paddle_stir", "meta.json"), "w",
+    with open(os.path.join(DEMOS, scene_name, "meta.json"), "w",
               encoding="utf-8", newline="\n") as fh:
         meta["playable_live_setup"] = True
         meta["seed_objects"] = ["Paddle Stir Pool Seed"]
         json.dump(meta, fh, indent=2)
         fh.write("\n")
+    if variant:
+        # Calibration bake: the cache and meta are the whole deliverable. The
+        # live-playback packaging below rewrites the shipped demo .blend, so a
+        # variant stops here and leaves the shipped assets untouched.
+        log(f"{scene_name}: variant bake complete ({n_pool:,} particles, "
+            f"{total} frames, voxel {voxel}, {rpm:.1f} RPM)")
+        bpy.ops.fluidsim.release()
+        return
     seed = make_particle_seed(scene, pool, "Paddle Stir Pool Seed")
     seed.fluidsim.enabled = True
     seed.fluidsim.auto_inject_seed = True
