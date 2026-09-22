@@ -37,6 +37,10 @@ REQUIRED_BINDINGS = (
     "gate_verdict",
     "demo_artifact",
     "demo_artifact_sha256",
+    # Unit-scoped rollup. Not compared against the manifest (it is free-form
+    # and differs per unit), but it must not disagree with itself across a
+    # report's own frontmatter and footer.
+    "unit_verdict",
 )
 METRIC_KEYS = (
     "front_speed_over_c0",
@@ -45,6 +49,13 @@ METRIC_KEYS = (
     "max_crown_height",
 )
 ACTIVE_CARD_STATES = {"ready-for-agent", "in-progress", "active", "blocked"}
+# Every audit unit that publishes a policy-drift report. All of them share one
+# gate run, so all of them are held to the same manifest bindings.
+UNIT_REPORTS = (
+    ROOT / "POLICY_DRIFT_REPORT.md",
+    ROOT / "demos" / "POLICY_DRIFT_REPORT.md",
+    ROOT / "fluidSim_warp_blender51" / "POLICY_DRIFT_REPORT.md",
+)
 
 
 def _sha256(path: Path) -> str:
@@ -225,8 +236,7 @@ def validate_report_authority(manifest_path: Path = DEFAULT_MANIFEST) -> list[st
     if generated != checked_in:
         errors.append("checked-in demo JSON does not match the gate artifact")
 
-    for report_path in (ROOT / "POLICY_DRIFT_REPORT.md",
-                        ROOT / "demos" / "POLICY_DRIFT_REPORT.md"):
+    for report_path in UNIT_REPORTS:
         try:
             front, footer, active = _parse_report(report_path)
         except (OSError, ValueError) as exc:
@@ -244,6 +254,11 @@ def validate_report_authority(manifest_path: Path = DEFAULT_MANIFEST) -> list[st
             errors.append(f"{report_path}: gate timestamp is stale")
         if footer.get("generated_at") != manifest.get("gate_run_at"):
             errors.append(f"{report_path}: generated timestamp is stale")
+        # gate_verdict mirrors the manifest, so it is a property of the gate
+        # run and must be byte-identical in every unit report sharing one
+        # gate_run_at; run_production_gate.py writes only
+        # FULL-PRODUCTION-GATE-PASS. A unit-scoped rollup belongs in the
+        # free-form unit_verdict field, never here.
         if footer.get("gate_verdict") != manifest.get("gate_verdict"):
             errors.append(f"{report_path}: gate verdict is not authoritative")
         if footer.get("demo_artifact_sha256") != artifact_hash:
