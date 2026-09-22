@@ -538,9 +538,16 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`01c4bf837bcec9b580bcf42511b87f3ed9b15502` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0113339117`,
-`column_height_end=0.3376998901`, `crown_sqrt_t_corr=0.9714301207`, and
-`max_crown_height=0.2944921553`. The authoritative source is
+`7fa865984b7c0772e3c3d452d5d4b9f522b94858` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0119600894`,
+`column_height_end=0.3361816406`, `crown_sqrt_t_corr=0.9713680253`, and
+`max_crown_height=0.2547363043`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`afb53b3f847818b77e13e64b320d9d85b134a61855a30dcfb29e4ddb7efa15a1`.
+`453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9`, mirrored in-tree at `demos/analysis_report.json`.
+
+`max_crown_height` is a max-over-frames of a 98th-percentile particle height
+and is not reproducible to its promoted precision: three runs of this same
+commit produced `0.2494970709`, `0.2547363043`, and `0.2904101610`, a spread of
+about 16% of the mean. Its bounded check is `> 0.03`, which all runs clear by
+roughly an order of magnitude. Read the promoted value as one sampled run, not
+as a stable constant; `crown_sqrt_t_corr` by contrast repeats to five decimals.
