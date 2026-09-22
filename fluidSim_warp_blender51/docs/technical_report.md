@@ -474,7 +474,7 @@ and promoted demo evidence are recorded below the baseline.
 
 | Gate | Result in this environment |
 |---|---|
-| Full Python suite | **1,043 passed** |
+| Full Python suite | **1,043 passed** (historical baseline row; the original Windows run did not record whether this counted the nested package suite alone or the parent repository suite, and no run at that proof HEAD is available to re-attribute it — see current counts below the table) |
 | Python compilation | Passed |
 | Source/release verification | Passed; seven example scenes, three durable Custom Effects renders, eight built-ins, and no bundled Blender/Warp payload |
 | Blender host | **5.1.0 Windows x64**; GUI acceptance passed **40/40** and saved-demo timeline playback passed |
@@ -483,7 +483,7 @@ and promoted demo evidence are recorded below the baseline.
 | P5 analytic kernel proof | Inward droplet force, finite normals/curvature/acceleration, curvature clamp, 2× coefficient scaling, collision exclusion, MAC integration, scratch lifecycle, and real solver-limiter selection/clamp passed |
 | Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
 | Installed package lifecycle | **Passed** twice from the final 1.0.255 Windows archive in clean profiles on Blender 5.1.0 with external Warp 1.16.0; registration cycled twice per run, Custom Effects applied, CUDA was detected, and the builder reported `release_ready=true` |
-| Installed headless no-CUDA exit | Prior packaging proof exited `12`, wrote an atomic report, committed **0 frames**, and removed the package cleanly; final 1.0.255 artifact rerun remains required |
+| Installed headless no-CUDA exit | **PENDING — not current proof.** A prior packaging proof (predating the final 1.0.255 artifact) exited `12`, wrote an atomic report, committed **0 frames**, and removed the package cleanly. That rerun against the final 1.0.255 artifact has not happened; this row is historical evidence of the contract, not verification of the shipped 1.0.255 build |
 | Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and static validation-example contracts passed |
 | Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
 | Custom Effects supplied-Blender proof | Three static validation/review scenes, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed; this is not live demo-playback proof |
@@ -495,6 +495,27 @@ The GUI-inclusive production gate proves the current Windows source, Blender
 registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
 and bounded interactive publication. GPU results are physical/schema/lifecycle
 bounds, not a claim of bitwise determinism across atomic or compaction order.
+
+### Current attributed Python suite counts
+
+Distinct from the historical, unattributed `1,043 passed` baseline row above,
+these two counts are each from a specific, reproducible scope, run in a
+GPU-less cloud session at proof HEAD `df1868bfe301751866434c621bd8d9133740c4f0`
+(2026-09-22T11:21:11Z):
+
+- Nested package suite (`python3 -m pytest fluidSim_warp_blender51/tests -q`):
+  **427 passed**.
+- Parent repository suite (`python3 -m pytest -q` from the repo root):
+  **1,443 passed, 115 skipped**. The skips are CUDA/`bpy`-only tests that
+  require GPU/Blender hardware this environment doesn't have; they are not
+  failures.
+
+Neither count is a substitute for the GUI-inclusive gate's own scoped pytest
+lane (`tests/test_pressure_projection_regressions.py`,
+`tests/test_cache_io.py`, `tests/test_io_path_policy.py`; 79 passed at
+`gate_run_at: 2026-09-22T06:23:28Z`) — that lane is real-GPU evidence for
+those regressions specifically, while the two counts above are broader but
+CPU-only.
 
 ## 13. Performance Notes
 
