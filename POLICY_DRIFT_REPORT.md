@@ -121,11 +121,17 @@ degraded cases rejected. Regression coverage added in
 `backlog/tasks/TASK-POLICY-DRIFT-016-PADDLE-SPINUP-THRESHOLD-CALIBRATION.md`
 is closed.
 
-One incidental finding is left open: rebuilding `paddle_stir` from
-`tools/build_demo_scenes.py` emits a 280 KB `.blend` where the checked-in one
-is 5.7 MB. The rebuilt scene analyses 10/10 and the checked-in artifact was
-restored untouched, but the shipped `.blend` is evidently not what the builder
-currently produces, and that has no card yet.
+One incidental finding was raised here and has since been diagnosed:
+rebuilding `paddle_stir` from `tools/build_demo_scenes.py` emits a 280 KB
+`.blend` where the checked-in one is 5.7 MB. The cause is compression, not
+content. The checked-in file begins `42 4c 45 4e 44 45 52` (`BLENDER`,
+uncompressed); the rebuild and every other demo blend begin `28 b5 2f fd`
+(Zstandard). Both files were inspected headlessly and hold the same
+datablocks, including the same 158,220-vertex `Paddle Stir Pool Seed`, so
+`paddle_stir.blend` is simply the only uncompressed demo blend in the
+repository. It loads, plays back and passes the gate as-is, so this is
+repository weight and reproducibility rather than correctness. Tracked as
+`backlog/tasks/TASK-POLICY-DRIFT-018-PADDLE-STIR-BLEND-UNCOMPRESSED.md`.
 
 ### PD-ROOT-004: promoted metrics are not reproducible to their promoted precision (root cause found)
 
@@ -230,10 +236,12 @@ files_that_need_correction:
   - 'tools/analyze_demos.py'
 active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md'
+  - 'backlog/tasks/TASK-POLICY-DRIFT-018-PADDLE-STIR-BLEND-UNCOMPRESSED.md'
 repair_checklist:
   - 'Decide how max_crown_height should be promoted given its run-to-run spread (PD-ROOT-004); it currently has no card.'
-  - 'Open a card for the paddle_stir .blend size divergence noted in PD-ROOT-003 (checked-in 5.7 MB, builder emits 280 KB).'
-  - 'Refresh report HEAD, gate timestamp and artifact provenance in all three unit reports, and the promoted metrics in demos/ANALYSIS.md and fluidSim_warp_blender51/docs/technical_report.md, from a fresh --include-gui gate run. These are the remaining validator failures and predate this run.'
+  - 'Re-save demos/paddle_stir.blend compressed so the checked-in file matches what the builder emits (TASK-POLICY-DRIFT-018).'
+  - 'Done this run: all three unit reports and both promoted-metric surfaces rebound to the 2026-09-22T16:08:07Z GUI-inclusive gate at a015e95; the validator passes.'
+  - 'Done this run: the paddle_stir .blend size divergence was diagnosed as an uncompressed save and carded as TASK-POLICY-DRIFT-018.'
   - 'Done this run: PD-ROOT-002 closed - the GUI-inclusive gate passed 3/3 consecutive detached runs at f383eae with structurally identical logs (TASK-POLICY-DRIFT-017 closed).'
   - 'Done this run: PD-ROOT-003 closed - paddle spin-up acceptance calibrated against 21 real bakes, and a false accept the placeholder allowed was fixed with a second, absolute condition (TASK-POLICY-DRIFT-016 closed).'
   - 'Done earlier: checked-in JSON, ANALYSIS.md, and technical-report metrics refreshed from the gate artifact.'
