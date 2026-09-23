@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-22T06:23:28.891512+00:00
+generated_at: 2026-09-22T16:08:07.118697+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 7fa865984b7c0772e3c3d452d5d4b9f522b94858
-gate_run_at: 2026-09-22T06:23:28.891512+00:00
+git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
+gate_run_at: 2026-09-22T16:08:07.118697+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9
+demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
 git_dirty: true
 ---
 
@@ -126,18 +126,18 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-22T06:23:28.891512+00:00
+generated_at: 2026-09-22T16:08:07.118697+00:00
 generated_at_utc: 2026-09-22T06:23:28.891512+00:00
 amended_at: 2026-09-21T10:19:23.7950210Z
 amendment_basis: 'same audit evidence; findings re-scoped to the card acceptance criteria, no new execution'
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 7fa865984b7c0772e3c3d452d5d4b9f522b94858
-gate_run_at: 2026-09-22T06:23:28.891512+00:00
+git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
+gate_run_at: 2026-09-22T16:08:07.118697+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9
+demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
 freshness: fresh
 status: fresh
 blocking_criticality: medium
