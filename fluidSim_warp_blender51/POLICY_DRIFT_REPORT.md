@@ -1,10 +1,10 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
@@ -38,7 +38,7 @@ criteria have not, so the card must stay open.
 ### PD-PKG-001: technical-report provenance and metrics lag the current artifact (resolved this run)
 
 Resolved in this commit. `docs/technical_report.md` now promotes proof HEAD
-`19864c3f30ef1a99153f1d8e4bd88df40a35c264` and artifact hash
+`21d4d37ff210ef0e25f0854423502dd5fbd51fce` and artifact hash
 `a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926`, with column height
 `0.3388671875 m` and crown height `0.0883056670 m`.
 
@@ -61,7 +61,8 @@ change from variance on every promoted key, and the document says so.
 (frames 2-5), not the frame-15 jet spray, which was deterministic but swung
 20% under a 1e-6 nudge to the drop speed. That is a deliberate analyzer change,
 so the token and the artifact hash moved. The other three tokens did not
-move.
+move. The gate at `21d4d37`, after the non-demo scenes were removed,
+reproduced that artifact byte for byte.
 
 The generated artifact at `../artifacts/demo_analysis/analysis_report.json` is
 untracked, and `tools/analyze_demos.py` reads an equally untracked
@@ -133,14 +134,14 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-24T14:17:05.104120+00:00
-generated_at_utc: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
+generated_at_utc: 2026-09-24T15:09:27.444825+00:00
 amended_at: 2026-09-21T10:19:23.7950210Z
 amendment_basis: 'same audit evidence; findings re-scoped to the card acceptance criteria, no new execution'
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
@@ -151,7 +152,7 @@ blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification_commands_artifacts:
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
-  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 a32872b8...250926, differs from the cb9ad00 gate only in the redefined crown_splash max_crown_height and its check detail'
+  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 a32872b8...250926, byte-identical to the 19864c3 gate'
   - 'parent rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS with a current manifest'
   - 'gate pytest lane -> 79 passed (pressure-projection, cache-io, io-path-policy only); the promoted four-figure suite count remains unbacked this run'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'

@@ -1,10 +1,10 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'DEMO-ANALYSIS-PASS-EVIDENCE-CURRENT'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
@@ -40,6 +40,12 @@ not re-committed: the previews are pixel-identical (only the PNG `Date` and
 `RenderTime` text differs), the blends differ only in save bytes, and
 `meta.json` differs only in line endings.
 
+At `21d4d37` the ten non-demo scenes were removed, so `demos/` holds exactly
+the four demos (`dam_break`, `crown_splash`, `paddle_stir`,
+`chromatic_vortex`) and `tools/check_demo_blends.py` checks only those. The
+gate at that HEAD passed the demo-blend check and reproduced the artifact
+byte for byte.
+
 `backlog/tasks/TASK-POLICY-DRIFT-007-CHECKED-IN-EVIDENCE-RECURRENCE.md` stays
 active, because it owns the recurrence rather than this one synchronization.
 
@@ -70,12 +76,12 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-24T14:17:05.104120+00:00
-generated_at_utc: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
+generated_at_utc: 2026-09-24T15:09:27.444825+00:00
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\demos'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'DEMO-ANALYSIS-PASS-EVIDENCE-CURRENT'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
@@ -87,7 +93,8 @@ human_decision_required: false
 strongest_live_verification_commands_artifacts:
   - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18)'
   - 'artifacts/demo_analysis/analysis_report.json -> sha256 a32872b8...250926, mirrored byte for byte into demos/analysis_report.json'
-  - 'vs the cb9ad00 gate (artifacts/gate_repro/det_cb9ad00/analysis_report.json): only crown_splash max_crown_height (0.2607910037 -> 0.0883056670) and its check detail differ'
+  - 'vs the 19864c3 gate (artifacts/gate_repro/det_19864c3/analysis_report.json): byte-identical'
+  - 'gate demo-blend lane -> DEMO-BLEND-CHECK-PASS on exactly the four demos'
   - 'parent rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS with a current manifest'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
 files_that_need_correction: []

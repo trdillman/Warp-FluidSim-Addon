@@ -1,10 +1,10 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'FULL-GATE-PASS-EVIDENCE-CURRENT'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
@@ -25,8 +25,12 @@ and ended `FULL-PRODUCTION-GATE-PASS`: the interactive Blender lane returned
 Package verification reports `release_ready: true`. No source evidence found a
 narrow heuristic solver or fabricated runtime output.
 
-All four findings are now resolved. This run rebinds `max_crown_height` to the
-crown phase (`19864c3`), closing the follow-up recorded under PD-ROOT-004: the
+All four findings are now resolved. This run, at `21d4d37`, follows the
+removal of the ten non-demo scenes from `demos/`: the demo set is now
+`dam_break`, `crown_splash`, `paddle_stir` and `chromatic_vortex`, and the
+demo-blend check passed on exactly those four. The artifact SHA-256 is
+byte-identical to the `19864c3` gate. The previous run rebound
+`max_crown_height` to the crown phase (`19864c3`), closing the follow-up recorded under PD-ROOT-004: the
 old statistic was bitwise reproducible but chaotic, and it measured late jet
 spray rather than the crown. The demo bakes themselves are unchanged from the
 `cb9ad00` gate. The artifact SHA-256 moved only because the analyzer's output
@@ -90,6 +94,13 @@ changed the `max_crown_height` definition. The receipt still separates a
 change from variance. Every other value in the artifact is byte-identical to
 the `cb9ad00` run, and the `crown_splash` bake cache is bitwise identical to
 the pre-change bakes. Only the redefined metric and its check detail moved.
+
+At `21d4d37` the gate reproduced `a32872b8…` exactly, after the non-demo
+scenes, their builders and their checker branches were removed. The
+log has the same 383 `[PASS]` lines and zero `[FAIL]` lines; it is shorter
+(1538 lines, not 1916) only because the demo-blend check no longer walks the
+removed scenes. The run is archived under
+`artifacts/gate_repro/det_21d4d37/`.
 
 The gate still asserts `exact payload hashes recorded as diagnostics only`,
 and equality is still not an acceptance condition. The artifact hash is now a
@@ -255,12 +266,12 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-24T14:17:05.104120+00:00
-generated_at_utc: 2026-09-24T14:17:05.104120+00:00
+generated_at: 2026-09-24T15:09:27.444825+00:00
+generated_at_utc: 2026-09-24T15:09:27.444825+00:00
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: 19864c3f30ef1a99153f1d8e4bd88df40a35c264
-gate_run_at: 2026-09-24T14:17:05.104120+00:00
+git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
+gate_run_at: 2026-09-24T15:09:27.444825+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'FULL-GATE-PASS-EVIDENCE-CURRENT'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
@@ -273,7 +284,8 @@ strongest_live_verification_commands_artifacts:
   - 'rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS; wrote artifacts/production_gate_manifest.json (include_gui=true)'
   - 'gate GUI lane -> GUI-ACCEPTANCE-PASS (53/53); saved-demo lane -> SAVED-DEMO-GUI-PLAYBACK-PASS'
   - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 a32872b8...250926 mirrored to demos/analysis_report.json'
-  - 'artifacts/demo_analysis/analysis_report.json vs artifacts/gate_repro/det_cb9ad00/analysis_report.json -> only crown_splash max_crown_height (0.2607910037 -> 0.0883056670) and its check detail differ'
+  - 'gate demo-blend lane -> DEMO-BLEND-CHECK-PASS on exactly the four demos (dam_break, crown_splash, chromatic_vortex, paddle_stir)'
+  - 'artifacts/demo_analysis/analysis_report.json vs artifacts/gate_repro/det_19864c3/analysis_report.json -> byte-identical (sha256 a32872b8...250926)'
   - 'gate pytest lane (pressure-projection, cache-io, io-path-policy) -> 79 passed; full suite not run this proof'
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
@@ -283,7 +295,8 @@ active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-018-PADDLE-STIR-BLEND-UNCOMPRESSED.md'
 repair_checklist:
   - 'Re-save demos/paddle_stir.blend compressed so the checked-in file matches what the builder emits (TASK-POLICY-DRIFT-018).'
-  - 'Done this run: max_crown_height rebound to the crown phase in 19864c3 (0.2607910037 -> 0.0883056670, frames 2-5, stable under 1e-6/1e-5 drop-speed nudges); all three unit reports and both promoted-metric surfaces rebound to the GUI-inclusive gate at 19864c3; the validator passes.'
+  - 'Done this run: non-demo scenes removed in 21d4d37; all three unit reports and both promoted-metric surfaces rebound to the GUI-inclusive gate at 21d4d37, whose artifact is byte-identical to the 19864c3 gate; the validator passes.'
+  - 'Done earlier: max_crown_height rebound to the crown phase in 19864c3 (0.2607910037 -> 0.0883056670, frames 2-5, stable under 1e-6/1e-5 drop-speed nudges); all three unit reports and both promoted-metric surfaces rebound to the GUI-inclusive gate at 19864c3; the validator passes.'
   - 'Done earlier: all three unit reports and both promoted-metric surfaces rebound to the 2026-09-24T10:10:12Z GUI-inclusive gate at cb9ad00.'
   - 'Done earlier: PD-ROOT-004 closed - d2a6b6d made the demo bakes bitwise deterministic; two consecutive gate runs produced the same artifact SHA-256 and identical promoted tokens.'
   - 'Done earlier: all three unit reports rebound to the 2026-09-22T16:08:07Z gate at a015e95.'
