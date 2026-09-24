@@ -237,6 +237,14 @@ def check_playback_contract(scene, fs, *, cache_mode=False):
     return result
 
 
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def is_zstd_blend(path):
+    with open(path, "rb") as handle:
+        return handle.read(4) == ZSTD_MAGIC
+
+
 def check_scene(name):
     path = os.path.join(DEMOS, name + ".blend")
     result = {
@@ -265,6 +273,9 @@ def check_scene(name):
     whitewater = bpy.data.objects.get("FluidSim Whitewater")
 
     checks = {
+        # The builder saves Zstandard-compressed; an uncompressed file means a
+        # hand save replaced the builder output (TASK-POLICY-DRIFT-018).
+        "saved_compressed": is_zstd_blend(path),
         "fluidsim_settings": fs is not None,
         "domain_object": bool(fs and fs.domain_object),
         "camera": bool(scene.camera),
