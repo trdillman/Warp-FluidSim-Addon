@@ -259,20 +259,32 @@ def analyze_crown_splash():
           crown_n[peak_f] > 500 and peak_f >= f_impact,
           f"peak {crown_n[peak_f]:,} crown particles at frame {peak_f} "
           f"(impact ~frame {f_impact})")
-    check(name, "crown rises above pool",
-          max(crown_h.values()) > 0.03,
-          f"max crown height {max(crown_h.values()) * 1000:.0f} mm above pool")
 
-    # sqrt(t) rim growth (Yarin-Weiss): correlate rim radius with
-    # sqrt(t - t0) over the crown-expansion window only (the window ends
-    # when the rim collapses back into the pool; afterwards the central
-    # Worthington jet would pollute the radius statistic).
+    # The crown-expansion window ends when the rim collapses back into the
+    # pool; afterwards the central Worthington jet pollutes the crown
+    # statistics.
     expand_end = peak_f
     for f in range(peak_f, max(frames)):
         if crown_n.get(f + 1, 0) < crown_n.get(f, 0):
             expand_end = f + 1
             break
-    grow = [(f / fps, crown_r[f]) for f in sorted(frames)
+
+    # Crown height is measured over the crown phase only. It starts once the
+    # droplet has fully passed the pool surface, because before that the
+    # intact droplet tops the height statistic. It ends at the rim collapse,
+    # because after that the band holds the jet's breakup spray. There,
+    # p98 is the ~4th-highest of ~200 particles and chaotic: a 1e-6
+    # relative change in drop speed moved an all-frames max by 20%.
+    t_submerged = (gap + 2.0 * meta["drop_radius"]) / meta["drop_speed"]
+    crown_start = max(f_impact, math.ceil(t_submerged * fps))
+    crown_height = crown_phase_height(crown_h, crown_start, expand_end)
+    check(name, "crown rises above pool", crown_height > 0.03,
+          f"max crown height {crown_height * 1000:.0f} mm above pool "
+          f"(frames {crown_start}-{expand_end})")
+
+    # sqrt(t) rim growth (Yarin-Weiss): correlate rim radius with
+    # sqrt(t - t0) over the crown-expansion window only.
+    grow =[(f / fps, crown_r[f]) for f in sorted(frames)
             if f_impact <= f <= expand_end and crown_n[f] > 200]
     if len(grow) >= 4:
         tt = np.array([v[0] for v in grow]) - (f_impact - 1) / fps
@@ -315,7 +327,13 @@ def analyze_crown_splash():
           f"sector-radius CV = {cv:.3f} over {len(sector_r)}/12 sectors")
     return {"impact_frame": f_impact, "peak_frame": peak_f,
             "crown_sqrt_t_corr": corr, "crown_symmetry_cv": cv,
-            "max_crown_height": max(crown_h.values())}
+            "max_crown_height": crown_height}
+
+
+def crown_phase_height(crown_h, first_frame, last_frame):
+    """Highest per-frame crown height in [first_frame, last_frame], else 0."""
+    heights = [h for f, h in crown_h.items() if first_frame <= f <= last_frame]
+    return max(heights) if heights else 0.0
 
 
 # ---------------------------------------------------------------------------

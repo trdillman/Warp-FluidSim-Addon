@@ -128,13 +128,16 @@ repeats give 0.9433, 0.9432, 0.9436, 0.9439, 0.9434 - a spread of 7e-4, three
 orders of magnitude below the envelope spread. The envelope sets this number,
 not the noise, and 0.30 is half the worst supported case.
 
-The tight repeat spread is worth contrasting with `max_crown_height`, which
-swings ~40% across bakes of the same commit (see
-`memory/max-crown-height-not-reproducible.md`). Both statistics sit on the same
-nondeterministic solver; `Lz` is a bulk sum over ~158k particles, where the
-order-dependent float atomics average out, while `max_crown_height` is a
-6-particle tail extremum, where they do not. A bulk statistic is the reason
-this threshold can be calibrated at all.
+The tight repeat spread is worth contrasting with the old `max_crown_height`.
+At calibration time it swung ~40% across bakes of the same commit. `Lz` is a
+bulk sum over ~158k particles, where the solver's order-dependent float
+atomics averaged out. The old crown height was a tail extremum over ~200
+particles of late jet spray, where they did not. A bulk statistic is the
+reason this threshold can be calibrated at all.
+
+The solver has since been made bitwise deterministic (`d2a6b6d`). The old
+statistic still swung 20% under a 1e-6 relative change in drop speed, so it
+was rebound to the crown phase only (see `tools/analyze_demos.py`).
 
 ## Verification
 

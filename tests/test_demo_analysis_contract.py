@@ -4,6 +4,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def _load_demo_analyzer():
@@ -188,3 +189,61 @@ def test_paddle_spinup_rejects_stationary_paddle(monkeypatch):
         _paddle_scene(0.0, early_speed=0.001, steady_speed=0.02, late_speed=0.01),
     )
     assert not passed, detail
+
+
+# --- crown splash height (crown phase only) ----------------------------------
+
+_POOL = 0.05
+_CROWN_CENTER = (0.4, 0.4)
+
+
+def _ring(count, radius, height):
+    angles = np.linspace(0.0, 2.0 * np.pi, count, endpoint=False)
+    positions = np.empty((count, 3), dtype=np.float64)
+    positions[:, 0] = _CROWN_CENTER[0] + radius * np.cos(angles)
+    positions[:, 1] = _CROWN_CENTER[1] + radius * np.sin(angles)
+    positions[:, 2] = _POOL + height
+    return positions
+
+
+def test_crown_height_ignores_intact_droplet_and_late_jet_spray(monkeypatch):
+    """max_crown_height must come from the crown rim alone.
+
+    The drop reaches the pool at 30 ms and is fully submerged by 56 ms, so
+    frame 1 (42 ms) still holds the intact droplet. Frames after the rim
+    collapse hold jet breakup spray just outside the 2 cm core exclusion.
+    Both sit higher than the rim here, and both must be excluded.
+    """
+    analyzer = _load_demo_analyzer()
+    crown = {2: (300, 0.10, 0.05), 3: (600, 0.12, 0.07),
+             4: (1000, 0.14, 0.09), 5: (400, 0.15, 0.06)}
+    frames = {1: {"positions": _ring(60, 0.03, 0.12)}}
+    for f, (count, radius, height) in crown.items():
+        frames[f] = {"positions": _ring(count, radius, height)}
+    for f in range(6, 11):
+        frames[f] = {"positions": _ring(30, 0.03, 0.30)}
+    meta = {"fps": 24, "pool_depth": _POOL,
+            "drop_center": [_CROWN_CENTER[0], _CROWN_CENTER[1], 0.2],
+            "drop_radius": 0.045, "drop_speed": 3.5}
+    series = {"frames": sorted(frames), "whitewater_count": [0] * len(frames)}
+    captured = []
+    monkeypatch.setattr(analyzer, "load_scene", lambda _name: (meta, series, frames))
+    monkeypatch.setattr(analyzer, "common_checks", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        analyzer,
+        "check",
+        lambda _scene, name, passed, detail: captured.append((name, passed, detail)),
+    )
+
+    result = analyzer.analyze_crown_splash()
+
+    assert result["peak_frame"] == 4
+    assert result["max_crown_height"] == pytest.approx(0.09)
+    rise = next(item for item in captured if item[0] == "crown rises above pool")
+    assert rise[1], rise[2]
+    assert "(frames 2-5)" in rise[2]
+
+
+def test_crown_phase_height_is_zero_for_an_empty_window():
+    analyzer = _load_demo_analyzer()
+    assert analyzer.crown_phase_height({1: 0.2, 6: 0.3}, 2, 5) == 0.0
