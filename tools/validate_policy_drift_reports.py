@@ -28,6 +28,8 @@ ALLOWED_EVIDENCE_PATTERNS = (
     "demos/analysis_report.json",
     "demos/*.blend",
     "demos/*_preview.png",
+    # Written by tools/build_demo_scenes.py on every demo build.
+    "demos/*/meta.json",
 )
 REQUIRED_BINDINGS = (
     "generated_at",

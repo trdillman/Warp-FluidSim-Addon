@@ -79,6 +79,14 @@ def test_nested_package_report_is_gate_evidence():
     )
 
 
+def test_demo_build_meta_is_gate_evidence():
+    # build_demo_scenes.py rewrites these on every gate demo build, so a
+    # commit that records them must not invalidate the proof it came from.
+    for scene in ("dam_break", "crown_splash", "paddle_stir"):
+        assert validator._is_evidence_path(f"demos/{scene}/meta.json")
+    assert not validator._is_evidence_path("demos/crown_splash/series.json")
+
+
 def test_non_evidence_commit_after_the_proof_head_is_drift(
         tmp_path, monkeypatch):
     monkeypatch.setattr(validator, "ROOT", tmp_path)
