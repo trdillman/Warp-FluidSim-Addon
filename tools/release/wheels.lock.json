@@ -8,6 +8,13 @@
       "sha256": "78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b",
       "size": 163074461,
       "source": "local-certified-binary"
+    },
+    "warp_lang-1.16.0+cu12-py3-none-win_amd64.whl": {
+      "platform": "windows-x64",
+      "sha256": "516a53c0071661346de8a25f0a22c7e4a6bc6ada010a386b606063e0aeff2714",
+      "size": 146387368,
+      "source": "local-certified-binary",
+      "url": "https://github.com/NVIDIA/warp/releases/download/v1.16.0/warp_lang-1.16.0%2Bcu12-py3-none-win_amd64.whl"
     }
   }
 }
