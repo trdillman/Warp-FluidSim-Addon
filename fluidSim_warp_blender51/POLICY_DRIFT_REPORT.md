@@ -1,5 +1,5 @@
 ---
-status: fresh
+status: stale
 escalated: false
 generated_at: 2026-09-24T15:09:27.444825+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
@@ -22,16 +22,45 @@ The package verifier is current and reports `release_ready: true` for
 only a narrow heuristic. The parent GUI-inclusive gate completed and wrote a
 current receipt. Of the three technical-report drifts recorded here - promoted
 provenance and metrics, an unattributed suite count, and a self-declared
-incomplete lane tabulated as current verification - the first is resolved in
-this commit; the other two remain open.
+incomplete lane tabulated as current verification - all three are resolved:
+the first on Tyler's machine in the commit that landed this proof HEAD, and
+the other two in a GPU-less cloud session merging that history forward (same
+resolution as a 2026-09-22 pass at the prior proof HEAD, re-applied here
+after this run's regeneration reset the findings to "open" without knowledge
+of that branch).
 
 All three findings are documentation drift in one file,
 `docs/technical_report.md`, and all three are owned by the single existing card
-`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. They are
-separated here so that closing the card requires satisfying each of its
-acceptance criteria rather than only the metrics refresh. That separation is
-load-bearing this run: the metrics refresh has landed and the other two
-criteria have not, so the card must stay open.
+`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. The
+content fixes for all three are correct and stand on their own merits, but
+the card itself is **reopened (`blocked`)**, not closed — see the Caveat
+below for why a content fix isn't the same as a fresh proof.
+
+## Caveat: this branch's own non-evidence changes are already past the proof HEAD
+
+This report's `git_head` (`21d4d37`) is the gate's real proof commit on
+Tyler's machine, and `gate_verdict: FULL-PRODUCTION-GATE-PASS` is true for
+that tree. The branch carrying this file (`claude/project-thread-jardkj`,
+PR #7) has since added its own commits with real, non-evidence changes that
+postdate that proof and are **not** in `ALLOWED_EVIDENCE_PATTERNS`: two
+test-guard fixes (`tests/test_artist_effect_admission.py`,
+`tests/test_operator_panel_behavior.py`), a packaging-exclusion edit
+(`fluidSim_warp_blender51/blender_manifest.toml`), and this unit's own
+`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. None of
+these change solver or runtime behavior, but `_non_evidence_drift` in
+`tools/validate_policy_drift_reports.py` compares the proof HEAD against
+*current* HEAD, not HEAD at merge time — so this is **already true on this
+branch right now**, not something that only starts once PR #7 merges into
+`master`. Anyone running the validator against this branch's HEAD, with
+Tyler's cached `artifacts/production_gate_manifest.json` from the `21d4d37`
+run in place, will get exactly the failure `_non_evidence_drift` is designed
+to produce. `status: fresh` above would be false; this report says `stale`.
+**A fresh `tools/run_production_gate.py --include-gui` run on Tyler's
+machine, at or after this branch's HEAD, is needed** before re-asserting
+`FULL-PRODUCTION-GATE-PASS`/`status: fresh`. Flagged by an automated PR
+review (`chatgpt-codex-connector[bot]`, P1, 2026-09-24, on both this report
+and the task card); this caveat and the reopened card are the response, not
+a rerun this GPU-less cloud session can perform.
 
 ## Findings
 
@@ -76,29 +105,35 @@ proof. The refresh accordingly landed the artifact mirror and the document edit
 in one commit, and the document names that in-tree mirror so the promoted hash
 is verifiable from HEAD.
 
-### PD-PKG-002: the promoted suite count does not distinguish the nested package suite from the parent repository suite (documentation drift)
+### PD-PKG-002: the promoted suite count does not distinguish the nested package suite from the parent repository suite (resolved, cloud session)
 
-`docs/technical_report.md` line 477 promotes `| Full Python suite | **1,043
+`docs/technical_report.md` line 477 promoted `| Full Python suite | **1,043
 passed** |` with no attribution to either the nested package suite or the
-parent repository suite, and this audit executed no suite that would refresh
-it. Still open. The gate's own pytest lane is scoped rather than exhaustive: it
-runs `tests/test_pressure_projection_regressions.py`, `tests/test_cache_io.py`,
-and `tests/test_io_path_policy.py`, reporting `79 passed`. That is current
-evidence for those regressions and cannot substitute for the promoted
-four-figure count, so no current run backs the number from either side. This is
-acceptance criterion 1 of the card.
+parent repository suite. That historical row cannot be retroactively
+attributed and is now explicitly labeled unattributed historical baseline
+data. A "Current attributed Python suite counts" subsection immediately
+after the results table gives two current, reproducible, distinctly-scoped
+counts, refreshed 2026-09-24 after merging master's `21d4d37`: nested
+package suite (`fluidSim_warp_blender51/tests`) **426 passed**; parent
+repository suite (repo-root `pytest`) **1,440 passed, 116 skipped** (skips
+are CUDA/`bpy`-only tests this environment can't run, not failures). The
+gate's own scoped pytest lane (79 passed: pressure-projection, cache-io,
+io-path-policy) remains noted as real-GPU evidence for those specific
+regressions, not a substitute for either count. This satisfies acceptance
+criterion 1 of the card.
 
-### PD-PKG-003: a self-declared incomplete lane is tabulated as current verification (documentation drift)
+### PD-PKG-003: a self-declared incomplete lane is tabulated as current verification (resolved, cloud session)
 
 Section 12 does correctly label its table as a retained baseline captured at
-proof HEAD `bb6d3fc5a5be9b944d4316c46aeb9ed47f011409`, so this finding is
-row-level rather than table-level. The `Installed headless no-CUDA exit` row at
-line 486 reports a prior packaging proof and then states that the `final 1.0.255
-artifact rerun remains required`, while still being presented as a gate result
-in a verification table. It must be marked historical or pending rather than
-read as current proof. Still open; nothing in this gate run reruns the
-installed no-CUDA packaging proof against the final 1.0.255 artifact. This is
-acceptance criterion 3 of the card.
+proof HEAD `bb6d3fc5a5be9b944d4316c46aeb9ed47f011409`, so this finding was
+row-level rather than table-level. The `Installed headless no-CUDA exit` row
+now opens with `**PENDING — not current proof.**` and states plainly that
+it's historical evidence of the contract, predating the final 1.0.255
+artifact, not verification of the shipped build. The installed no-CUDA
+packaging proof itself still hasn't been rerun against the final 1.0.255
+artifact — that still needs GPU/Blender hardware — but the row can no
+longer be misread as current proof. This satisfies acceptance criterion 3 of
+the card.
 
 ## Relationship to the root-unit finding
 
@@ -110,9 +145,12 @@ root unit's
 `fluidSim_warp_blender51/docs/technical_report.md`, so this file is jointly
 owned by `TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY` in this unit and
 `TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE` at the root. The
-refresh in this commit closes the document half of both. Neither card is closed
-here: TASK-POLICY-DRIFT-001 still owns the suite-count and no-CUDA-row criteria,
-and TASK-POLICY-DRIFT-015 still owns the recurrence.
+refresh closes the document half of both, and this unit's own suite-count/
+no-CUDA-row criteria (PD-PKG-002, PD-PKG-003) are content-resolved, but
+`TASK-POLICY-DRIFT-001` itself is reopened (`blocked`) pending a fresh gate
+run — see the Caveat above. `TASK-POLICY-DRIFT-015` at root is a
+separate concern (checked-in demo evidence recurrence) untouched by this
+session — it stands on its own merits.
 
 ## Scope boundary
 
@@ -136,8 +174,8 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ```yaml
 generated_at: 2026-09-24T15:09:27.444825+00:00
 generated_at_utc: 2026-09-24T15:09:27.444825+00:00
-amended_at: 2026-09-21T10:19:23.7950210Z
-amendment_basis: 'same audit evidence; findings re-scoped to the card acceptance criteria, no new execution'
+amended_at: 2026-09-24T16:30:00+00:00
+amendment_basis: 'PD-PKG-002 and PD-PKG-003 content fixes stand (docs/technical_report.md attributes the suite count and relabels the no-CUDA row). TASK-POLICY-DRIFT-001 reopened to blocked: an automated PR review (chatgpt-codex-connector[bot], P1, 2026-09-24) correctly identified that this branch already carries non-evidence commits past the 21d4d37 proof HEAD (two test-guard fixes, blender_manifest.toml, this task card), so _non_evidence_drift already fails against this branch HEAD, not only after merge. status set to stale; card blocked on a fresh --include-gui gate run on Tyler machine.'
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
 git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
@@ -146,18 +184,19 @@ gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
 demo_artifact_sha256: a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926
-freshness: fresh
-status: fresh
+freshness: stale
+status: stale
 blocking_criticality: medium
-human_decision_required: false
+human_decision_required: true
 strongest_live_verification_commands_artifacts:
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
   - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 a32872b8...250926, byte-identical to the 19864c3 gate'
   - 'parent rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS with a current manifest'
-  - 'gate pytest lane -> 79 passed (pressure-projection, cache-io, io-path-policy only); the promoted four-figure suite count remains unbacked this run'
+  - 'gate pytest lane -> 79 passed (pressure-projection, cache-io, io-path-policy only); scoped regression evidence, not the promoted suite count'
+  - 'cloud session python3 -m pytest fluidSim_warp_blender51/tests -q -> 426 passed (2026-09-24, post-merge of 21d4d37)'
+  - 'cloud session python3 -m pytest -q (repo root) -> 1440 passed, 116 skipped (2026-09-24, post-merge of 21d4d37)'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
-files_that_need_correction:
-  - 'docs/technical_report.md'
+files_that_need_correction: []
 active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md'
 related_findings:
@@ -166,11 +205,11 @@ related_findings:
   - 'root PD-ROOT-004 -> resolved by d2a6b6d (demo bakes bitwise deterministic; promoted tokens reproduce exactly)'
   - 'root PD-ROOT-004 follow-up -> max_crown_height rebound to the crown phase in 19864c3 (deterministic but chaotic before; now stable under 1e-6/1e-5 drop-speed nudges)'
 repair_checklist:
-  - 'Attribute the promoted suite count to the nested package suite or the parent repository suite, and record the count from a run executed for this proof; the gate pytest lane covers only 79 targeted regressions and does not supply it (PD-PKG-002, open).'
-  - 'Mark the installed headless no-CUDA row historical or pending until the final 1.0.255 artifact rerun exists (PD-PKG-003, open).'
+  - 'Done in a GPU-less cloud session, 2026-09-24: attributed the promoted suite count to two current, reproducible scopes, refreshed for 21d4d37 (PD-PKG-002, resolved).'
+  - 'Done in a GPU-less cloud session, 2026-09-24: marked the installed headless no-CUDA row PENDING/historical (PD-PKG-003, resolved).'
   - 'Keep package verification and parent GUI evidence labeled by execution date.'
   - 'Done this run: one artifact regenerated, mirrored to demos/analysis_report.json, and committed alongside the technical-report edit, so the promoted hash is verifiable from HEAD.'
   - 'Done this run: all four promoted metrics written as literal <key>=<%.10f> tokens - front_speed_over_c0=1.0082030232, column_height_end=0.3388671875, crown_sqrt_t_corr=0.9713672681, max_crown_height=0.0883056670 - and _check_doc_metrics passes. Recompute only if the solver or analyzer changes; the values reproduce run to run since d2a6b6d (root PD-ROOT-004, resolved).'
   - 'Done this run: the stale 2026-09-19 GUI receipts are superseded by a current manifest and are not promoted as proof.'
-  - 'TASK-POLICY-DRIFT-001 stays open on criteria 1 and 3; root TASK-POLICY-DRIFT-015 stays open on the recurrence. The shared document half is closed.'
+  - 'TASK-POLICY-DRIFT-001 reopened to blocked 2026-09-24: this branch already carries non-evidence commits past the 21d4d37 proof HEAD, so a fresh --include-gui gate run on Tyler machine is needed before re-closing, even though PD-PKG-002/003 content fixes are correct as written. Root TASK-POLICY-DRIFT-015 stays open on the checked-in demo evidence recurrence - a separate, unrelated card, untouched by this session.'
 ```

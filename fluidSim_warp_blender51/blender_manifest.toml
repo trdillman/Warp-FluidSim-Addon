@@ -29,4 +29,6 @@ paths_exclude_pattern = [
   "requirements-dev.txt",
   "build/",
   "dist/",
+  "backlog/",
+  "POLICY_DRIFT_REPORT.md",
 ]
