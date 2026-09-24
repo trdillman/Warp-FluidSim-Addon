@@ -349,6 +349,10 @@ def _record_warp(monkeypatch):
     class DeviceArray:
         def __init__(self, shape):
             self.values = np.zeros(shape, dtype=np.int32)
+            self.shape = self.values.shape
+
+        def __getitem__(self, _index):
+            return self
 
         def zero_(self):
             self.values.fill(0)
@@ -370,6 +374,12 @@ def _record_warp(monkeypatch):
         return result
 
     monkeypatch.setattr(sourcing.wp, "array", array)
+    monkeypatch.setattr(
+        sourcing.wp.utils,
+        "array_scan",
+        lambda src, dst, inclusive=True: launches.append(
+            ("array_scan", {"inputs": (src, dst, inclusive)})),
+    )
 
     def launch(kernel, **kwargs):
         launches.append((kernel, kwargs))
@@ -468,13 +478,18 @@ def test_height_emission_reuses_cached_shapes_and_refreshes_after_growth(monkeyp
     assert pipeline.apply(0.01) is True
     assert pipeline.apply(0.01) is True
 
-    assert [kernel for kernel, _ in launches[:5]] == [
+    assert [kernel for kernel, _ in launches[:8]] == [
         sourcing.k_count_source_shapes_particles,
         sourcing.k_admit_emission_batch,
         sourcing.k_source_height,
         sourcing.k_source_resolve_type,
+        # Voxel-ordered slot placement: demand, exclusive scan, one block.
+        sourcing.k_source_shapes_particle_demand,
+        "array_scan",
+        sourcing.k_reserve_scanned_slots,
         sourcing.k_source_shapes_particles,
     ]
+    assert launches[5][1]["inputs"][2] is False
     assert len(arrays) == 2  # disabled field placeholder + derived height box
     assert owner.particles.refresh_calls == 2
 
@@ -499,6 +514,7 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     assert [kernel for kernel, _ in launches] == [
         sourcing.k_add_emission_demand,
         sourcing.k_admit_emission_batch,
+        sourcing.k_reserve_owned_point_slots,
         sourcing.k_source_owned_points,
     ]
     assert launches[-1][1]["dim"] == 2
@@ -517,7 +533,7 @@ def test_inject_particles_owns_upload_launch_and_count_refresh(monkeypatch):
     assert empty.admitted is True
     assert empty.emitted == 0
     assert pipeline.inject_particles_legacy_total([]) == 0
-    assert len(launches) == 3
+    assert len(launches) == 4  # empty injections launch nothing
     assert owner.particles.refresh_calls == 2
 
 

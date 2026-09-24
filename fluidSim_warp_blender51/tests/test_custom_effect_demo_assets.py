@@ -9,8 +9,6 @@ VALIDATOR = TOOLS_RELEASE / "validate_custom_effects_blender.py"
 RUNTIME = TOOLS_RELEASE / "custom_effect_demo_runtime.py"
 EXAMPLES = ROOT / "resources" / "examples"
 ACCEPTANCE = ROOT.parent / "tests" / "blender_custom_effects_acceptance.py"
-DEMO_BUILDER = ROOT.parent / "tools" / "build_demo_scenes.py"
-DEMO_CHECKER = ROOT.parent / "tools" / "check_demo_blends.py"
 
 DEMO_NAMES = (
     "05_custom_effects_vortex.blend",
@@ -158,25 +156,3 @@ def test_custom_effects_acceptance_covers_visible_library_and_import_operator():
         "CUSTOM-EFFECTS-ACCEPTANCE-PASS",
     ):
         assert token in source
-
-
-def test_playable_custom_effect_demo_is_built_and_checked_through_live_solver():
-    builder = DEMO_BUILDER.read_text(encoding="utf-8")
-    checker = DEMO_CHECKER.read_text(encoding="utf-8")
-    for token in (
-        '"custom_effects_vortex"',
-        "def build_custom_effects_vortex",
-        'add_builtin_effect(scene, "fluidsim.vortex_force"',
-        'bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")',
-        'scene["fluidsim_custom_effect_demo"] = "vortex_force"',
-        'save_live_playback_ready("custom_effects_vortex"',
-    ):
-        assert token in builder
-    for token in (
-        '"custom_effects_vortex"',
-        '"custom_effect_stack"',
-        '"custom_effect_applied"',
-        '"custom_effect_executed"',
-        'item.effect_id == "fluidsim.vortex_force" and item.calls > 0',
-    ):
-        assert token in checker

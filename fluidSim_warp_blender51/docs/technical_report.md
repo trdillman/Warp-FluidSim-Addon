@@ -494,21 +494,27 @@ and promoted demo evidence are recorded below the baseline.
 The GUI-inclusive production gate proves the current Windows source, Blender
 registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
 and bounded interactive publication. GPU results are physical/schema/lifecycle
-bounds, not a claim of bitwise determinism across atomic or compaction order.
+bounds. Since `d2a6b6d` the dam_break and crown_splash bakes are bitwise
+reproducible run-to-run on one device. Mesh and compiled-source emitters and
+some float atomics (color mixing, splat, pressure RHS) are still unaudited, and
+there is no cross-device determinism claim.
 
 ### Current attributed Python suite counts
 
 Distinct from the historical, unattributed `1,043 passed` baseline row above,
 these two counts are each from a specific, reproducible scope, run in a
-GPU-less cloud session at proof HEAD `df1868bfe301751866434c621bd8d9133740c4f0`
-(2026-09-22T11:21:11Z):
+GPU-less cloud session after merging master's `21d4d37` (the demo-bake
+determinism fix and four-demo cleanup), 2026-09-24:
 
 - Nested package suite (`python3 -m pytest fluidSim_warp_blender51/tests -q`):
-  **427 passed**.
+  **426 passed**.
 - Parent repository suite (`python3 -m pytest -q` from the repo root):
-  **1,443 passed, 115 skipped**. The skips are CUDA/`bpy`-only tests that
+  **1,440 passed, 116 skipped**. The skips are CUDA/`bpy`-only tests that
   require GPU/Blender hardware this environment doesn't have; they are not
-  failures.
+  failures. (Counts moved slightly from an earlier 2026-09-22 run at HEAD
+  `df1868b` — `427`/`1,443 passed, 115 skipped` — because `21d4d37` removed
+  the adhesive-whitewater calibration tool and its tests along with the
+  pruned non-demo scenes.)
 
 Neither count is a substitute for the GUI-inclusive gate's own scoped pytest
 lane (`tests/test_pressure_projection_regressions.py`,
@@ -559,16 +565,24 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`7fa865984b7c0772e3c3d452d5d4b9f522b94858` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0119600894`,
-`column_height_end=0.3361816406`, `crown_sqrt_t_corr=0.9713680253`, and
-`max_crown_height=0.2547363043`. The authoritative source is
+`21d4d37ff210ef0e25f0854423502dd5fbd51fce` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0082030232`,
+`column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`, and
+`max_crown_height=0.0883056670`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9`, mirrored in-tree at `demos/analysis_report.json`.
+`a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926`, mirrored in-tree at `demos/analysis_report.json`.
 
-`max_crown_height` is a max-over-frames of a 98th-percentile particle height
-and is not reproducible to its promoted precision: three runs of this same
-commit produced `0.2494970709`, `0.2547363043`, and `0.2904101610`, a spread of
-about 16% of the mean. Its bounded check is `> 0.03`, which all runs clear by
-roughly an order of magnitude. Read the promoted value as one sampled run, not
-as a stable constant; `crown_sqrt_t_corr` by contrast repeats to five decimals.
+These values are reproducible. Before `d2a6b6d`, `max_crown_height` varied
+by about 16% between runs of the same commit. The cause was four
+order-dependent sites: the PCG dot-product combine, the P2G scatter, the
+shape-emission slot reservation, and the whitewater free list. That commit
+made all four order-independent. The dam_break and crown_splash bakes are now
+bitwise identical run-to-run on one device, and two consecutive gate runs (at
+`d2a6b6d` and `cb9ad00`) produced the same artifact SHA-256.
+
+Since `19864c3`, `max_crown_height` is the peak crown height over the crown
+phase only. That window runs from the moment the droplet has fully entered the
+pool to rim collapse, which is frames 2-5 on the shipped scene. The earlier
+statistic took its maximum at frame 15, which is Worthington-jet spray. It was
+deterministic but chaotic: a 1e-6 relative nudge to the drop speed moved it by
+up to 20%. The crown-phase value is unchanged under the same nudges.

@@ -26,6 +26,8 @@ from fluidSim_warp_blender51.sim.solver import (
 from fluidSim_warp_blender51.sim.sourcing import (
     SourcePipeline,
     SourceShape,
+    k_reserve_scanned_slots,
+    k_source_shapes_particle_demand,
     k_source_shapes_particles,
 )
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
@@ -80,11 +82,29 @@ def test_particle_emission_saturates_device_and_host_counts():
     voxel_counts = wp.zeros(512, dtype=wp.int32, device=device)
     emission_state = wp.array(
         [0, 1, 0, 0], dtype=wp.int32, device=device)
+    demand = wp.zeros(512, dtype=wp.int32, device=device)
+    offsets = wp.zeros(512, dtype=wp.int32, device=device)
+    slot_base = wp.zeros(1, dtype=wp.int32, device=device)
+    slot_limit = wp.zeros(1, dtype=wp.int32, device=device)
 
+    wp.launch(
+        k_source_shapes_particle_demand, dim=512,
+        inputs=[shapes, 1, leaf_coords, num_leaves, wp.vec3(0.0), 0.1,
+                voxel_counts, emission_state],
+        outputs=[demand],
+        device=device,
+    )
+    wp.utils.array_scan(demand, offsets, inclusive=False)
+    wp.launch(
+        k_reserve_scanned_slots, dim=1,
+        inputs=[demand, offsets, 512, particles.capacity, emission_state],
+        outputs=[particles.count, slot_base, slot_limit],
+        device=device,
+    )
     wp.launch(
         k_source_shapes_particles, dim=512,
         inputs=[shapes, 1, leaf_coords, num_leaves, wp.vec3(0.0), 0.1,
-                voxel_counts, 1, 0, 0, particles.capacity],
+                voxel_counts, 1, 0, 0, offsets, slot_base, slot_limit],
         outputs=[particles.position, particles.velocity,
                  particles.attr("age"), particles.attr("life"),
                  particles.attr("temperature"), particles.attr("viscosity"),
@@ -92,7 +112,7 @@ def test_particle_emission_saturates_device_and_host_counts():
                  particles.optional_array("color"),
                  particles.optional_array("source_id"),
                  particles.time_offset,
-                 particles.alive, particles.count, emission_state],
+                 particles.alive, emission_state],
         device=device,
     )
 
@@ -218,8 +238,8 @@ def test_whitewater_compaction_is_frame_batched_without_substep_readback():
 
     assert "synchronize_device" not in substep_source
     assert "ww.compact()" not in substep_source
-    assert "ww.free_slots" in substep_source
-    assert "ww.free_count" in substep_source
+    assert "outputs=[ww.dead]" in substep_source
+    assert "ww.recycle_dead_slots(nww)" in substep_source
     emit_source = inspect.getsource(WhitewaterSystem.emit)
     assert "ww.compact(active_whitewater)" in finalize_source
     assert "dim=max(1, active_whitewater)" in finalize_source
@@ -357,6 +377,29 @@ def test_whitewater_emission_reuses_dead_slot_at_capacity():
     assert int(ww.count.numpy()[0]) == ww.capacity
     assert int(ww.free_count.numpy()[0]) == 0
     assert int(ww.alive.numpy()[1]) == 1
+
+
+def test_whitewater_recycled_slots_stack_in_ascending_slot_order():
+    if not wp.is_cuda_available():
+        pytest.skip("CUDA required")
+    device = "cuda:0"
+    ww = WhitewaterSystem(capacity=4096, device=device)
+    rng = np.random.default_rng(7)
+    dead = (rng.random(ww.capacity) < 0.3).astype(np.int32)
+    wp.copy(ww.dead, wp.array(dead, dtype=wp.int32, device=device))
+    wp.copy(ww.free_slots, wp.array([9, 3], dtype=wp.int32, device=device),
+            count=2)
+    wp.copy(ww.free_count, wp.array([2], dtype=wp.int32, device=device))
+
+    ww.recycle_dead_slots(ww.capacity)
+
+    expected = np.flatnonzero(dead)
+    free_count = int(ww.free_count.numpy()[0])
+    assert free_count == 2 + len(expected)
+    free_slots = ww.free_slots.numpy()[:free_count]
+    # Pre-existing stack entries stay beneath the new, slot-ordered pushes.
+    assert free_slots[:2].tolist() == [9, 3]
+    np.testing.assert_array_equal(free_slots[2:], expected)
 
 
 def test_pressure_index_contains_only_fluid_non_collision_voxels():

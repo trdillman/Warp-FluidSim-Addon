@@ -436,11 +436,15 @@ def k_advect_whitewater(
     domain_min: wp.vec3,
     domain_max: wp.vec3,
     ww_capacity: int,
-    ww_free_slots: wp.array(dtype=wp.int32),
-    ww_free_count: wp.array(dtype=wp.int32),
+    ww_dead: wp.array(dtype=wp.int32),
 ):
-    """Advect persistent foam/bubble/spray types with hysteretic transitions."""
+    """Advect persistent foam/bubble/spray types with hysteretic transitions.
+
+    Deaths are flagged per slot, not pushed onto the free list: an arrival-order
+    push makes slot reuse (and therefore the cache) nondeterministic.
+    """
     tid = wp.tid()
+    ww_dead[tid] = 0
     if tid >= ww_count[0]:
         return
     if ww_alive[tid] == 0:
@@ -537,11 +541,7 @@ def k_advect_whitewater(
 
     if dead:
         ww_alive[tid] = 0
-        free_slot = wp.atomic_add(ww_free_count, 0, 1)
-        if free_slot < ww_capacity:
-            ww_free_slots[free_slot] = tid
-        else:
-            wp.atomic_sub(ww_free_count, 0, 1)
+        ww_dead[tid] = 1
 
     ww_positions[tid] = p
     ww_velocities[tid] = vel
@@ -549,6 +549,37 @@ def k_advect_whitewater(
 
 register_fn(k_advect_whitewater, "fluidSimAdvectWhiteWater",
             notes="Persistent foam/bubble/spray types with hysteretic transitions.")
+
+
+@wp.kernel
+def k_push_whitewater_free_slots(
+    ww_dead: wp.array(dtype=wp.int32),
+    dead_offsets: wp.array(dtype=wp.int32),
+    ww_free_count: wp.array(dtype=wp.int32),
+    ww_capacity: int,
+    ww_free_slots: wp.array(dtype=wp.int32),
+):
+    """Append newly dead slots to the free stack in ascending slot order."""
+    tid = wp.tid()
+    if ww_dead[tid] == 0:
+        return
+    free_slot = ww_free_count[0] + dead_offsets[tid]
+    if free_slot < ww_capacity:
+        ww_free_slots[free_slot] = tid
+
+
+@wp.kernel
+def k_publish_whitewater_free_count(
+    ww_dead: wp.array(dtype=wp.int32),
+    dead_offsets: wp.array(dtype=wp.int32),
+    n: int,
+    ww_capacity: int,
+    ww_free_count: wp.array(dtype=wp.int32),
+):
+    total = ww_free_count[0] + dead_offsets[n - 1] + ww_dead[n - 1]
+    if total > ww_capacity:
+        total = ww_capacity
+    ww_free_count[0] = total
 
 
 # Whitewater grid data (density splat used for rendering/emission limits)
@@ -626,6 +657,9 @@ class WhitewaterSystem:
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
         self.free_slots = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.free_count = wp.zeros(1, dtype=wp.int32, device=device)
+        # Per-substep death flags and their scan build the free stack in slot order.
+        self.dead = wp.zeros(self.capacity, dtype=wp.int32, device=device)
+        self.dead_offsets = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.host_count = 0
         # Compaction double buffers.
         self._position2 = wp.zeros_like(self.position)
@@ -769,6 +803,27 @@ class WhitewaterSystem:
             k_finalize_whitewater_admission, dim=1,
             inputs=[self.admission_plan],
             outputs=[self.count, self.free_count], device=self.device,
+        )
+
+    def recycle_dead_slots(self, n):
+        """Push slots flagged dead by advection onto the free stack.
+
+        Ascending slot order (scan, not arrival-order atomics) keeps admission
+        slot reuse, and therefore the baked cache, bitwise reproducible.
+        """
+        n = max(1, min(int(n), self.capacity))
+        wp.utils.array_scan(
+            self.dead[:n], self.dead_offsets[:n], inclusive=False)
+        wp.launch(
+            k_push_whitewater_free_slots, dim=n,
+            inputs=[self.dead, self.dead_offsets, self.free_count,
+                    self.capacity],
+            outputs=[self.free_slots], device=self.device,
+        )
+        wp.launch(
+            k_publish_whitewater_free_count, dim=1,
+            inputs=[self.dead, self.dead_offsets, n, self.capacity],
+            outputs=[self.free_count], device=self.device,
         )
 
     def clamp_count(self):

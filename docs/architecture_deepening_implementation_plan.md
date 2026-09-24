@@ -40,7 +40,7 @@ Archived native-interop, rendering-API, and ST-FLIP experiment worktrees are exc
 10. Existing structural point-cloud replacement for capacity growth, capacity shrink, or attribute-schema change is preserved and measured; the plan does not falsely claim that all allocation is eliminated.
 11. Live and cached inputs produce equivalent published output where their data overlaps. Missing cache data follows explicit, characterized fallback.
 12. Preview Playback is non-authoritative visual feedback.
-13. Production Cache Bake is **control-flow deterministic**: frame order, synchronization, stepping, writes, and metadata are sequential and independent of Blender viewport event delivery and preview/display settings. Nondeterministic CUDA numerics are explicitly outside this claim.
+13. Production Cache Bake is **control-flow deterministic**: frame order, synchronization, stepping, writes, and metadata are sequential and independent of Blender viewport event delivery and preview/display settings. Nondeterministic CUDA numerics are explicitly outside this claim. (2026-09-23: repeated `dam_break` + `crown_splash` bakes on one device are now bitwise identical in particle and whitewater caches — ordered PCG dot combine, gather P2G, voxel-scanned shape emission, and slot-ordered whitewater free stack. This is verified for those configurations only, not a general contract; see §5.6.)
 14. Preserve current playback behavior, catch-up behavior, desynchronization behavior, status strings, and backend-status presentation. Do not introduce lag, progress, recovery, or authority states.
 
 ## 3. Truth contract
@@ -158,7 +158,7 @@ Solver Session remains responsible for direct synchronization and stepping. Play
 
 ### 5.6 `blender/cache_bake.py` — deep control-flow-deterministic runner
 
-Owns sequential production frame advancement, cache writes, metadata, scene-frame restoration, temporary live-state changes, and failure cleanup. It cannot depend on frame-change delivery or Output Publication state. “Deterministic” here describes ordered control flow only; CUDA atomic accumulation, compaction/emission order, particle values, and derived marching-cubes geometry are not promised repeatable.
+Owns sequential production frame advancement, cache writes, metadata, scene-frame restoration, temporary live-state changes, and failure cleanup. It cannot depend on frame-change delivery or Output Publication state. “Deterministic” here describes ordered control flow only; CUDA atomic accumulation, compaction/emission order, particle values, and derived marching-cubes geometry are not promised repeatable. Update 2026-09-23: the default liquid path (shape sources, gather P2G, pressure PCG, whitewater) no longer relies on order-dependent atomics, and two same-device bakes of `dam_break` and `crown_splash` produce bitwise-identical caches with exactly reproducing analysis metrics. Known unaudited residuals: float `atomic_add` in color mixing, the `kernels_core` splat, pressure `leaf_rhs` accumulation and the legacy scatter P2G; arrival-order slot cursors in the mesh and compiled-source emitters; marching-cubes surface output was not tested.
 
 ### 5.7 `blender/pending_settings.py` — deep module
 

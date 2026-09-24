@@ -83,7 +83,7 @@ The GPU path does not change solver state, surface geometry generation, topology
 - Full final-branch Python suite: `1,298 passed`; combined focused suite: `175 passed`; compileall and `git diff --check` passed.
 - Final integrated worktree was clean before this report was added.
 
-Cross-process surface hashes are not required to be bitwise identical because CUDA atomics and marching-cubes ordering are not globally deterministic. Correctness is bound by exact transfer fixtures, unchanged simulation ownership, stable live counts/workload, complete per-run attribute inventory/dtype/count/byte fingerprints, and live Blender output validation.
+Cross-process surface hashes are not required to be bitwise identical because CUDA atomics and marching-cubes ordering are not globally deterministic (true as of this report; since 2026-09-23 the default demo bakes are bitwise reproducible on one device, but surface hashes were not re-verified). Correctness is bound by exact transfer fixtures, unchanged simulation ownership, stable live counts/workload, complete per-run attribute inventory/dtype/count/byte fingerprints, and live Blender output validation.
 
 ## Rejected work preserved as negative evidence
 
