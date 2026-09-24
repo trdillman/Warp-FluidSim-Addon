@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-22T16:08:07.118697+00:00
+generated_at: 2026-09-24T10:10:12.810378+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
-gate_run_at: 2026-09-22T16:08:07.118697+00:00
+git_head: cb9ad0082fa27392ffdae1bff6fd481e998e8aa7
+gate_run_at: 2026-09-24T10:10:12.810378+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
+demo_artifact_sha256: 98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8
 git_dirty: true
 ---
 
@@ -38,23 +38,24 @@ criteria have not, so the card must stay open.
 ### PD-PKG-001: technical-report provenance and metrics lag the current artifact (resolved this run)
 
 Resolved in this commit. `docs/technical_report.md` now promotes proof HEAD
-`7fa865984b7c0772e3c3d452d5d4b9f522b94858` and artifact hash
-`453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9`, with column height
-`0.3361816406 m` and crown height `0.2547363043 m`.
+`cb9ad0082fa27392ffdae1bff6fd481e998e8aa7` and artifact hash
+`98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8`, with column height
+`0.3388671875 m` and crown height `0.2607910037 m`.
 
 The refresh is machine-checked, not free-form: `_check_doc_metrics` in
 `tools/validate_policy_drift_reports.py` requires this document to contain each
 promoted metric as a literal `<key>=<value formatted %.10f>` token derived from
 the gate artifact. For the current artifact those four tokens are
-`front_speed_over_c0=1.0119600894`, `column_height_end=0.3361816406`,
-`crown_sqrt_t_corr=0.9713680253`, and `max_crown_height=0.2547363043`. The
+`front_speed_over_c0=1.0082030232`, `column_height_end=0.3388671875`,
+`crown_sqrt_t_corr=0.9713672681`, and `max_crown_height=0.2607910037`. The
 document now carries all four, and the validator passes.
 
-One caveat is recorded alongside them in the document itself:
-`max_crown_height` does not reproduce to its promoted precision across repeat
-runs of the same commit, ranging `0.2494970709` to `0.2904101610` (root
-`PD-ROOT-004`). The exact-token contract still catches an unrefreshed document,
-but for that one key it cannot separate variance from regression.
+The earlier caveat, that `max_crown_height` did not reproduce to its promoted
+precision, is withdrawn. Repeat runs of one commit used to range `0.2494970709`
+to `0.2904101610` (root `PD-ROOT-004`). `d2a6b6d` made the demo bakes bitwise
+deterministic, and two consecutive gate runs (at `d2a6b6d` and `cb9ad00`)
+produced the same artifact hash. The exact-token contract now separates a real
+change from variance on every promoted key, and the document says so.
 
 The generated artifact at `../artifacts/demo_analysis/analysis_report.json` is
 untracked, and `tools/analyze_demos.py` reads an equally untracked
@@ -126,25 +127,25 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-22T16:08:07.118697+00:00
-generated_at_utc: 2026-09-22T06:23:28.891512+00:00
+generated_at: 2026-09-24T10:10:12.810378+00:00
+generated_at_utc: 2026-09-24T10:10:12.810378+00:00
 amended_at: 2026-09-21T10:19:23.7950210Z
 amendment_basis: 'same audit evidence; findings re-scoped to the card acceptance criteria, no new execution'
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
-git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
-gate_run_at: 2026-09-22T16:08:07.118697+00:00
+git_head: cb9ad0082fa27392ffdae1bff6fd481e998e8aa7
+gate_run_at: 2026-09-24T10:10:12.810378+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
+demo_artifact_sha256: 98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8
 freshness: fresh
 status: fresh
 blocking_criticality: medium
 human_decision_required: false
 strongest_live_verification_commands_artifacts:
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
-  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 453b814b...fee3b9'
+  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 98379db7...84b5c8, identical to the preceding gate run at d2a6b6d'
   - 'parent rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS with a current manifest'
   - 'gate pytest lane -> 79 passed (pressure-projection, cache-io, io-path-policy only); the promoted four-figure suite count remains unbacked this run'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
@@ -154,14 +155,14 @@ active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md'
 related_findings:
   - 'root PD-ROOT-001 -> backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md (same divergence, same file)'
-  - 'root PD-ROOT-002 -> backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md (parent GUI lane; receipt captured this run, reproducibility still open)'
-  - 'root PD-ROOT-004 -> no card yet (max_crown_height is promoted to a precision it does not reproduce)'
+  - 'root PD-ROOT-002 -> backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md (closed; 3/3 passes, and the artifact hash now reproduces across runs)'
+  - 'root PD-ROOT-004 -> resolved by d2a6b6d (demo bakes bitwise deterministic; promoted tokens reproduce exactly)'
 repair_checklist:
   - 'Attribute the promoted suite count to the nested package suite or the parent repository suite, and record the count from a run executed for this proof; the gate pytest lane covers only 79 targeted regressions and does not supply it (PD-PKG-002, open).'
   - 'Mark the installed headless no-CUDA row historical or pending until the final 1.0.255 artifact rerun exists (PD-PKG-003, open).'
   - 'Keep package verification and parent GUI evidence labeled by execution date.'
   - 'Done this run: one artifact regenerated, mirrored to demos/analysis_report.json, and committed alongside the technical-report edit, so the promoted hash is verifiable from HEAD.'
-  - 'Done this run: all four promoted metrics written as literal <key>=<%.10f> tokens - front_speed_over_c0=1.0119600894, column_height_end=0.3361816406, crown_sqrt_t_corr=0.9713680253, max_crown_height=0.2547363043 - and _check_doc_metrics passes. Recompute if the artifact is regenerated, and expect max_crown_height to move (root PD-ROOT-004).'
+  - 'Done this run: all four promoted metrics written as literal <key>=<%.10f> tokens - front_speed_over_c0=1.0082030232, column_height_end=0.3388671875, crown_sqrt_t_corr=0.9713672681, max_crown_height=0.2607910037 - and _check_doc_metrics passes. Recompute only if the solver or analyzer changes; the values reproduce run to run since d2a6b6d (root PD-ROOT-004, resolved).'
   - 'Done this run: the stale 2026-09-19 GUI receipts are superseded by a current manifest and are not promoted as proof.'
   - 'TASK-POLICY-DRIFT-001 stays open on criteria 1 and 3; root TASK-POLICY-DRIFT-015 stays open on the recurrence. The shared document half is closed.'
 ```

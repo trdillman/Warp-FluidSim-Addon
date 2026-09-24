@@ -494,7 +494,10 @@ and promoted demo evidence are recorded below the baseline.
 The GUI-inclusive production gate proves the current Windows source, Blender
 registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
 and bounded interactive publication. GPU results are physical/schema/lifecycle
-bounds, not a claim of bitwise determinism across atomic or compaction order.
+bounds. Since `d2a6b6d` the dam_break and crown_splash bakes are bitwise
+reproducible run-to-run on one device. Mesh and compiled-source emitters and
+some float atomics (color mixing, splat, pressure RHS) are still unaudited, and
+there is no cross-device determinism claim.
 
 ## 13. Performance Notes
 
@@ -538,16 +541,17 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`7fa865984b7c0772e3c3d452d5d4b9f522b94858` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0113339117`,
-`column_height_end=0.3378906250`, `crown_sqrt_t_corr=0.9713980452`, and
-`max_crown_height=0.2897167802`. The authoritative source is
+`cb9ad0082fa27392ffdae1bff6fd481e998e8aa7` passed all 18 bounded demo checks.
+Its promoted values are `front_speed_over_c0=1.0082030232`,
+`column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`, and
+`max_crown_height=0.2607910037`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9`, mirrored in-tree at `demos/analysis_report.json`.
+`98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8`, mirrored in-tree at `demos/analysis_report.json`.
 
-`max_crown_height` is a max-over-frames of a 98th-percentile particle height
-and is not reproducible to its promoted precision: three runs of this same
-commit produced `0.2494970709`, `0.2547363043`, and `0.2904101610`, a spread of
-about 16% of the mean. Its bounded check is `> 0.03`, which all runs clear by
-roughly an order of magnitude. Read the promoted value as one sampled run, not
-as a stable constant; `crown_sqrt_t_corr` by contrast repeats to five decimals.
+These values are reproducible. Before `d2a6b6d`, `max_crown_height` varied
+by about 16% between runs of the same commit. The cause was four
+order-dependent sites: the PCG dot-product combine, the P2G scatter, the
+shape-emission slot reservation, and the whitewater free list. That commit
+made all four order-independent. The dam_break and crown_splash bakes are now
+bitwise identical run-to-run on one device, and two consecutive gate runs (at
+`d2a6b6d` and `cb9ad00`) produced the same artifact SHA-256.

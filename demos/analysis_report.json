@@ -25,19 +25,19 @@
       "scene": "dam_break",
       "check": "velocity bounded (p99.9)",
       "passed": true,
-      "detail": "p99.9 speed 5.60 m/s (limit 13.724139317275965)"
+      "detail": "p99.9 speed 5.56 m/s (limit 13.724139317275965)"
     },
     {
       "scene": "dam_break",
       "check": "front advances monotonically",
       "passed": true,
-      "detail": "min frame-to-frame delta 56.6 mm"
+      "detail": "min frame-to-frame delta 57.6 mm"
     },
     {
       "scene": "dam_break",
       "check": "front speed vs shallow-water theory",
       "passed": true,
-      "detail": "3.47 m/s = 1.01*sqrt(gH) (accept 0.6-2.2)"
+      "detail": "3.46 m/s = 1.01*sqrt(gH) (accept 0.6-2.2)"
     },
     {
       "scene": "dam_break",
@@ -55,7 +55,7 @@
       "scene": "dam_break",
       "check": "whitewater emitted by turbulent bore",
       "passed": true,
-      "detail": "peak whitewater 9,733"
+      "detail": "peak whitewater 10,277"
     },
     {
       "scene": "crown_splash",
@@ -91,7 +91,7 @@
       "scene": "crown_splash",
       "check": "crown rises above pool",
       "passed": true,
-      "detail": "max crown height 290 mm above pool"
+      "detail": "max crown height 261 mm above pool"
     },
     {
       "scene": "crown_splash",
@@ -103,7 +103,7 @@
       "scene": "crown_splash",
       "check": "Worthington jet rebounds at center",
       "passed": true,
-      "detail": "peak 767 jet particles, height 211 mm"
+      "detail": "peak 758 jet particles, height 199 mm"
     },
     {
       "scene": "crown_splash",
@@ -114,16 +114,16 @@
   ],
   "metrics": {
     "dam_break": {
-      "front_speed_over_c0": 1.0113339116667397,
-      "z_at_T2": 2.5878494958278724,
-      "column_height_end": 0.337890625
+      "front_speed_over_c0": 1.0082030231638879,
+      "z_at_T2": 2.586567044651466,
+      "column_height_end": 0.3388671875
     },
     "crown_splash": {
       "impact_frame": 1,
       "peak_frame": 4,
-      "crown_sqrt_t_corr": 0.9713980451502646,
+      "crown_sqrt_t_corr": 0.9713672681399307,
       "crown_symmetry_cv": 0.006602034438401461,
-      "max_crown_height": 0.28971678018569946
+      "max_crown_height": 0.26079100370407104
     }
   }
 }

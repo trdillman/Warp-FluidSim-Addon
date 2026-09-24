@@ -1,14 +1,14 @@
 ---
 status: fresh
 escalated: false
-generated_at: 2026-09-22T16:08:07.118697+00:00
+generated_at: 2026-09-24T10:10:12.810378+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
-gate_run_at: 2026-09-22T16:08:07.118697+00:00
+git_head: cb9ad0082fa27392ffdae1bff6fd481e998e8aa7
+gate_run_at: 2026-09-24T10:10:12.810378+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'FULL-GATE-PASS-EVIDENCE-CURRENT'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
+demo_artifact_sha256: 98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8
 git_dirty: true
 ---
 
@@ -25,8 +25,10 @@ and ended `FULL-PRODUCTION-GATE-PASS`: the interactive Blender lane returned
 Package verification reports `release_ready: true`. No source evidence found a
 narrow heuristic solver or fabricated runtime output.
 
-Two prior findings are resolved by this run and by the evidence refresh landing
-in the same commit. One remains open, and one is newly observed.
+All four findings are now resolved. This run confirms PD-ROOT-004, the bake
+nondeterminism, is fixed. The gate ran twice, at `d2a6b6d` and at this proof
+HEAD, and both runs produced a byte-identical demo artifact. The evidence refresh
+for this run lands in the same commit as this report.
 
 ## Findings
 
@@ -34,11 +36,14 @@ in the same commit. One remains open, and one is newly observed.
 
 Resolved in the same commit as this report. `demos/analysis_report.json` now
 mirrors the gate artifact byte for byte, SHA-256
-`453b814b588c854c4f9529ba30c121564b1d8a21f36b4e30c96ac7d935fee3b9`, and `demos/ANALYSIS.md` and
+`98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8`. `demos/ANALYSIS.md` and
 `fluidSim_warp_blender51/docs/technical_report.md` promote that artifact's four
 metric tokens. The current artifact reports dam-break column height
-`0.3361816406 m` and crown height `0.2547363043 m`. All three files are in
-`ALLOWED_EVIDENCE_PATTERNS`, so landing them does not invalidate the proof.
+`0.3388671875 m` and crown height `0.2607910037 m`. All three files match
+`ALLOWED_EVIDENCE_PATTERNS`, so landing them does not invalidate the proof. So do
+the rebuilt demo blends, the previews, and `demos/*/meta.json`. `meta.json` was
+added to the allowlist in `cb9ad00`, because `tools/build_demo_scenes.py`
+rewrites it on every gate demo build.
 
 `backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md`
 stays active: it owns the recurrence, and one synchronization does not close
@@ -65,17 +70,20 @@ The three runs are structurally identical, not merely identically verdicted:
   `fluidsim_migration_*`, `fluidsim_equivalence_*`), `bpy_struct` pointer
   addresses, Python set iteration order, timestamps, and diagnostic hashes.
 
-One manifest field is *not* stable: `demo_artifact_sha256` differs on every
-run (`c0888aca…`, `b3a1cf8c…`, `a0b2348c…`), as does `gate_run_at`;
-`gate_verdict`, `git_head`, `include_gui` and `demo_artifact` are identical.
-That instability is the bake nondeterminism of PD-ROOT-004 surfacing in the
-receipt, and it means the manifest hash is a per-run receipt rather than a
-reproducibility anchor. The gate already takes this position itself — it
-asserts `exact payload hashes recorded as diagnostics only — no cross-bake
-hash or numerical equality is an acceptance condition` and `CUDA derived
-surface nondeterminism reported without equality claim`. Any future
-verification should compare verdicts and marker sequences, never manifest
-hashes.
+At `f383eae`, one manifest field was *not* stable: `demo_artifact_sha256`
+differed on every run (`c0888aca…`, `b3a1cf8c…`, `a0b2348c…`), as did
+`gate_run_at`. That instability was the bake nondeterminism of PD-ROOT-004
+surfacing in the receipt. Since `d2a6b6d` it is gone. Two consecutive GUI-inclusive
+runs, at `d2a6b6d` and at `cb9ad00`, wrote the same
+`demo_artifact_sha256` (`98379db7…`). The analysis artifacts are byte-identical,
+and so are the dam_break and crown_splash `meta.json` files. Both logs are 1916
+lines with the same 383 `[PASS]` lines and zero `[FAIL]` lines. Run 1 is
+archived under `artifacts/gate_repro/det_d2a6b6d/`.
+
+The gate still asserts `exact payload hashes recorded as diagnostics only`,
+and equality is still not an acceptance condition. The artifact hash is now a
+usable reproducibility check on one device. Other devices, or Warp/driver
+upgrades, may still change it.
 
 The lane is therefore reliable, and the two earlier failures were process
 faults rather than gate faults: an attempt launched non-detached hung before
@@ -108,10 +116,11 @@ relative margin (`0.30`, half the worst supported case in an envelope running
 
 Run-to-run spread over five repeats is 7e-4, three orders of magnitude below
 the envelope spread, so the envelope sets the threshold and not the noise.
-That contrast with PD-ROOT-004 is structural rather than coincidental: `Lz` is
-a bulk sum over ~158k particles, where the order-dependent float atomics
-average out, while `max_crown_height` is a 6-particle tail extremum, where
-they do not.
+The contrast with the pre-`d2a6b6d` behaviour of PD-ROOT-004 was structural,
+not coincidental. `Lz` is a bulk sum over ~158k particles, so the
+order-dependent float atomics averaged out. `max_crown_height` was a
+6-particle tail extremum, so they did not. `paddle_stir` was not in the
+determinism proof, so its bakes may still vary in the last bits.
 
 Verified by replaying the shipped `analyze_paddle_stir` over all 21 caches
 (`CALIBRATION-VERIFY-PASS`): every in-envelope case accepted, all three
@@ -133,58 +142,59 @@ repository. It loads, plays back and passes the gate as-is, so this is
 repository weight and reproducibility rather than correctness. Tracked as
 `backlog/tasks/TASK-POLICY-DRIFT-018-PADDLE-STIR-BLEND-UNCOMPRESSED.md`.
 
-### PD-ROOT-004: promoted metrics are not reproducible to their promoted precision (root cause found)
+### PD-ROOT-004: promoted metrics were not reproducible to their promoted precision (resolved by `d2a6b6d`)
 
-**Root cause: the bake is not bitwise deterministic.** The analyzer is a pure
-function of the cache — re-running it on the preserved gate cache reproduces
-`0.2904101610` exactly — so all variance is upstream, in the solver. Two
-order-dependent mechanisms in `fluidSim_warp_blender51/sim/kernels_fluid.py`
-are responsible: `k_scatter_particles_to_bins` assigns slots via
-`starts[voxel] + wp.atomic_add(cursor, voxel, 1)`, so within-voxel particle
-order varies per run, and the P2G scatter accumulates with float
-`wp.atomic_add`, which is non-associative, so a different arrival order changes
-the last bits of every grid velocity. Measured amplification between two runs
-(sorted-z max|Δ|, order-invariant): ~6e-5 m at frames 1-6, 2.4e-4 at impact,
-9.6e-3 by frame 10, 3.2e-2 m by frame 15 — a 300-500x chaotic blow-up.
+**Root cause: the bake was not bitwise deterministic.** The analyzer is a pure
+function of the cache, so all variance came from the solver. Over 10
+`crown_splash` bakes and 3 `dam_break` bakes at one HEAD, none of the four
+promoted metrics reproduced to 10 decimals:
 
-**The instability is not specific to one statistic.** Over 10 fresh
-`crown_splash` bakes and 3 `dam_break` bakes at this HEAD, none of the four
-promoted metrics reproduces to its promoted 10 decimals:
+* `max_crown_height` had a range of 40.5% of its mean.
+* `column_height_end` varied by about 1.5%.
+* `front_speed_over_c0` varied by about 0.1%.
+* `crown_sqrt_t_corr` varied in the 5th decimal.
 
-| metric | observed range over re-bakes |
-| --- | --- |
-| `crown_sqrt_t_corr` | 0.971368 – 0.971430 (5th decimal) |
-| `front_speed_over_c0` | 1.01031 – 1.01133 (~0.1%) |
-| `column_height_end` | 0.33365 – 0.33862 (~1.5%) |
-| `max_crown_height` | 0.21599 – 0.32566, mean 0.27109, sd 0.03070 (range 40.5% of mean, CV 11.3%) |
+A stage-hash bisection (`artifacts/determinism/probe_stage_hashes.py` +
+`diff_runs.py`) found four order-dependent sites on the demo path:
 
-The earlier "roughly 16%" figure for `max_crown_height` was a 4-sample
-underestimate. That metric screams loudest because it is the max over frames of
-`percentile(z[crown_mask], 98)` and the argmax frame carries only 39-324 masked
-particles — effectively the ~5th-highest particle out of 259,112 at a single
-frame. No re-estimation rescues it: over 6 bakes, max-p90 spreads 38.3%,
-max-p75 39.7%, p98 gated to frames with n>=500 23.3%, mean-p98 over frames
-10-20 24.6%. Two candidates were perfectly stable but are attained at frame 4,
-the pre-impact ballistic phase — they measure the falling droplet, not the
-crown. Note also that cached positions are stored as float16 (~0.24 mm ulp at
-these magnitudes), so 10-decimal promotion was never physically meaningful.
+1. `fluid_dot_reduce` (`sim/cuda_reduction.py`), the PCG dot product, combined
+   block partials with float `atomicAdd`. It now uses an ordered last-block
+   combine.
+2. The P2G float-atomic scatter. It is now a gather over the counting-sort bins.
+3. Shape emission reserved particle slots with an arrival-order `atomic_add`.
+   That permuted the particle arrays, which the ordered gather then summed in a
+   different order. It now reserves by demand kernel, then
+   `wp.utils.array_scan`, then a scanned-slot commit.
+4. The whitewater free list was pushed in arrival order inside advection. It is
+   now a scan-ordered push over `ww.dead` flags.
 
-Nothing regressed. Every bounded acceptance check still passes by a wide
-margin — crown height is checked only as `> 0.03`, which every run clears by
-about an order of magnitude — and the gate itself already asserts that
-`exact payload hashes recorded as diagnostics only — no cross-bake hash or
-numerical equality is an acceptance condition`.
+**Resolution evidence:**
 
-The consequence is that the exact-token contract in `_check_doc_metrics`
-(`tools/validate_policy_drift_reports.py`) contradicts that stated policy: it
-only ever holds because the documents are regenerated from whichever gate run
-last ran, and for these keys it cannot distinguish expected variance from a
-genuine regression. A mismatch on any of them is variance, not regression. The
-open decision — per-metric tolerance bands, dropping the exact-token contract
-for these keys, or making P2G deterministic via a gather-style pass over the
-sorted bins the counting sort already produces — is not taken here. `CHANGELOG`
-already lists CUDA solver determinism as an open release gate, so this is a
-known gap rather than a new defect. No backlog card owns it yet.
+* Two full bakes of each scene are byte-identical in every `frame_*.npz`.
+  Their analysis JSON is identical, and `series.json` differs only in timing
+  fields.
+* This gate run and the preceding one produced the same artifact SHA-256, and
+  all four promoted tokens repeat exactly: `front_speed_over_c0=1.0082030232`,
+  `column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`,
+  `max_crown_height=0.2607910037`.
+* Full pytest passed 1145 tests at `d2a6b6d`. No consistent step-time
+  regression was measured.
+
+This resolves the conflict between the exact-token contract in
+`_check_doc_metrics` and the gate's "diagnostics only" hash policy. On the
+promoted demo path, a token mismatch now indicates a solver or analyzer change,
+not run-to-run variance.
+
+**Still out of scope:**
+
+* Mesh and compiled-source emitters still reserve slots with arrival-order
+  cursors.
+* Float atomics in color mixing, the `kernels_core` splat, the pressure
+  `leaf_rhs` sums and the legacy scatter P2G are unaudited.
+* Marching-cubes surface output was not tested for determinism.
+* There is no claim of determinism across devices or Warp versions.
+
+None of these affect the four promoted metrics.
 
 ## Scope boundary and non-findings
 
@@ -211,16 +221,16 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ## Machine-readable audit footer
 
 ```yaml
-generated_at: 2026-09-22T16:08:07.118697+00:00
-generated_at_utc: 2026-09-22T06:23:28.891512+00:00
+generated_at: 2026-09-24T10:10:12.810378+00:00
+generated_at_utc: 2026-09-24T10:10:12.810378+00:00
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port'
-git_head: a015e953bbb4ac44cc069b3971cc956ac399eaa7
-gate_run_at: 2026-09-22T16:08:07.118697+00:00
+git_head: cb9ad0082fa27392ffdae1bff6fd481e998e8aa7
+gate_run_at: 2026-09-24T10:10:12.810378+00:00
 gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'FULL-GATE-PASS-EVIDENCE-CURRENT'
 demo_artifact: 'artifacts/demo_analysis/analysis_report.json'
-demo_artifact_sha256: 57b48bfb81a1c1512504e333127a1552ef5453f3463cb5481538536c36b6c59c
+demo_artifact_sha256: 98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8
 freshness: fresh
 status: fresh
 blocking_criticality: medium
@@ -228,7 +238,8 @@ human_decision_required: false
 strongest_live_verification_commands_artifacts:
   - 'rtk python tools/run_production_gate.py --include-gui -> FULL-PRODUCTION-GATE-PASS; wrote artifacts/production_gate_manifest.json (include_gui=true)'
   - 'gate GUI lane -> GUI-ACCEPTANCE-PASS (53/53); saved-demo lane -> SAVED-DEMO-GUI-PLAYBACK-PASS'
-  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 453b814b...fee3b9 mirrored to demos/analysis_report.json'
+  - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 98379db7...84b5c8 mirrored to demos/analysis_report.json'
+  - 'cmp artifacts/demo_analysis/analysis_report.json artifacts/gate_repro/det_d2a6b6d/analysis_report.json -> identical (gate runs at d2a6b6d and cb9ad00)'
   - 'gate pytest lane (pressure-projection, cache-io, io-path-policy) -> 79 passed; full suite not run this proof'
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
@@ -238,9 +249,10 @@ active_backlog_tasks:
   - 'backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md'
   - 'backlog/tasks/TASK-POLICY-DRIFT-018-PADDLE-STIR-BLEND-UNCOMPRESSED.md'
 repair_checklist:
-  - 'Decide how max_crown_height should be promoted given its run-to-run spread (PD-ROOT-004); it currently has no card.'
   - 'Re-save demos/paddle_stir.blend compressed so the checked-in file matches what the builder emits (TASK-POLICY-DRIFT-018).'
-  - 'Done this run: all three unit reports and both promoted-metric surfaces rebound to the 2026-09-22T16:08:07Z GUI-inclusive gate at a015e95; the validator passes.'
+  - 'Done this run: all three unit reports and both promoted-metric surfaces rebound to the 2026-09-24T10:10:12Z GUI-inclusive gate at cb9ad00; the validator passes.'
+  - 'Done this run: PD-ROOT-004 closed - d2a6b6d made the demo bakes bitwise deterministic; two consecutive gate runs produced the same artifact SHA-256 and identical promoted tokens.'
+  - 'Done earlier: all three unit reports rebound to the 2026-09-22T16:08:07Z gate at a015e95.'
   - 'Done this run: the paddle_stir .blend size divergence was diagnosed as an uncompressed save and carded as TASK-POLICY-DRIFT-018.'
   - 'Done this run: PD-ROOT-002 closed - the GUI-inclusive gate passed 3/3 consecutive detached runs at f383eae with structurally identical logs (TASK-POLICY-DRIFT-017 closed).'
   - 'Done this run: PD-ROOT-003 closed - paddle spin-up acceptance calibrated against 21 real bakes, and a false accept the placeholder allowed was fixed with a second, absolute condition (TASK-POLICY-DRIFT-016 closed).'
