@@ -582,6 +582,57 @@ def k_publish_whitewater_free_count(
     ww_free_count[0] = total
 
 
+
+# One block recycles the live prefix in a single launch while the last known
+# live count is at most this; above it the scan path keeps GPU time flat.
+# Both paths produce the same free stack, so the choice only affects speed.
+WW_RECYCLE_BLOCK = wp.constant(256)
+WW_RECYCLE_SINGLE_BLOCK_MAX = 65536
+
+
+@wp.kernel
+def k_recycle_whitewater_dead_slots(
+    ww_dead: wp.array(dtype=wp.int32),
+    ww_count: wp.array(dtype=wp.int32),
+    n: int,
+    ww_capacity: int,
+    ww_free_count: wp.array(dtype=wp.int32),
+    ww_free_slots: wp.array(dtype=wp.int32),
+):
+    """Scan, push and publish in one single-block launch.
+
+    Each lane owns a contiguous run of slots, so a block-wide exclusive scan
+    of the per-lane dead counts gives every lane its ascending-order offset:
+    the same free stack as scan + push + publish, for one launch instead of
+    three.  The scan also orders every lane's read of ``ww_free_count``
+    before lane 0 overwrites it.  Advection clears every flag below ``n`` and
+    sets flags only below the live count, so stopping at the live count skips
+    only zeros while the host bound ``n`` may be far larger.
+    """
+    _block, lane = wp.tid()
+    live = wp.max(wp.min(ww_count[0], n), 0)
+    chunk = (live + WW_RECYCLE_BLOCK - 1) // WW_RECYCLE_BLOCK
+    begin = lane * chunk
+    end = wp.min(begin + chunk, live)
+    dead_count = int(0)
+    for i in range(begin, end):
+        dead_count += ww_dead[i]
+    base = ww_free_count[0]
+    counts = wp.tile(dead_count)
+    offsets = wp.tile_scan_exclusive(counts)
+    total = wp.tile_sum(counts)
+    free_slot = base + wp.untile(offsets)
+    for i in range(begin, end):
+        if ww_dead[i] != 0:
+            if free_slot < ww_capacity:
+                ww_free_slots[free_slot] = i
+            free_slot += 1
+    if lane == 0:
+        published = base + wp.tile_extract(total, 0)
+        if published > ww_capacity:
+            published = ww_capacity
+        ww_free_count[0] = published
+
 # Whitewater grid data (density splat used for rendering/emission limits)
 
 
@@ -809,9 +860,23 @@ class WhitewaterSystem:
         """Push slots flagged dead by advection onto the free stack.
 
         Ascending slot order (scan, not arrival-order atomics) keeps admission
-        slot reuse, and therefore the baked cache, bitwise reproducible.
+        slot reuse, and therefore the baked cache, bitwise reproducible.  This
+        runs every substep and each launch costs host time, so typical
+        whitewater counts take the one-launch path.  ``n`` is the advection
+        launch bound (live prefix plus worst-case admissions), usually far
+        above the live count, so the path is chosen from the last known live
+        count; the kernel itself stops at the device live count.
         """
         n = max(1, min(int(n), self.capacity))
+        if self.host_count <= WW_RECYCLE_SINGLE_BLOCK_MAX:
+            wp.launch_tiled(
+                k_recycle_whitewater_dead_slots, dim=[1],
+                inputs=[self.dead, self.count, n, self.capacity,
+                        self.free_count],
+                outputs=[self.free_slots],
+                block_dim=int(WW_RECYCLE_BLOCK), device=self.device,
+            )
+            return
         wp.utils.array_scan(
             self.dead[:n], self.dead_offsets[:n], inclusive=False)
         wp.launch(

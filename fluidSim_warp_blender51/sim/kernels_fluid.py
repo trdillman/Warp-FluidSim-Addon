@@ -1774,8 +1774,15 @@ def k_particle_to_voxel_count_and_update_index(
     voxel_size: float,
     voxel_counts: wp.array(dtype=wp.int32),
     particle_voxel: wp.array(dtype=wp.int32),
+    particle_arrival: wp.array(dtype=wp.int32),
 ):
-    """fluidSimParticleToVoxelCountAndUpdateVoxelIndex (+UpdateParticleVoxelIndex)."""
+    """fluidSimParticleToVoxelCountAndUpdateVoxelIndex (+UpdateParticleVoxelIndex).
+
+    ``particle_arrival`` receives the particle's arrival slot within its voxel
+    (the counter value before its own increment).  It is a unique slot in
+    ``[0, voxel_counts[voxel])`` but depends on thread arrival order, so it is
+    only used as a scratch position that ``k_rank_bin_particles`` reorders.
+    """
     tid = wp.tid()
     if tid >= count[0]:
         return
@@ -1784,57 +1791,81 @@ def k_particle_to_voxel_count_and_update_index(
     flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
     particle_voxel[tid] = flat
     if flat >= 0:
-        wp.atomic_add(voxel_counts, flat, 1)
+        particle_arrival[tid] = wp.atomic_add(voxel_counts, flat, 1)
 
 
 @wp.kernel
-def k_build_bin_sort_pairs(
+def k_scatter_particles_to_arrival_slots(
+    particle_voxel: wp.array(dtype=wp.int32),
+    particle_arrival: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    starts: wp.array(dtype=wp.int32),
+    unordered: wp.array(dtype=wp.int32),
+):
+    """Place each particle at its arrival slot: bins complete, order arbitrary."""
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    voxel = particle_voxel[tid]
+    if voxel < 0:
+        return
+    unordered[starts[voxel] + particle_arrival[tid]] = tid
+
+
+@wp.kernel
+def k_rank_bin_particles(
     particle_voxel: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
-    sentinel: wp.int32,
-    keys: wp.array(dtype=wp.uint32),
-    values: wp.array(dtype=wp.int32),
+    voxel_counts: wp.array(dtype=wp.int32),
+    starts: wp.array(dtype=wp.int32),
+    unordered: wp.array(dtype=wp.int32),
+    indices: wp.array(dtype=wp.int32),
 ):
-    """Seed the bin sort with (voxel, particle index) pairs in index order.
+    """Move each particle to its rank by particle index within its bin.
 
-    Particles past the live count and particles whose voxel is unallocated or
-    out of domain get ``sentinel``, which is above every valid flat voxel
-    index, so they sort past the used region and never appear in a bin.
+    The rank is the number of bin members with a smaller particle index, which
+    depends only on bin membership, never on the arrival order the unordered
+    pass recorded.  Cost is one read per bin member per particle; bins hold a
+    handful of particles (particles-per-voxel), so this is a short loop.
     """
     tid = wp.tid()
-    key = sentinel
-    if tid < count[0]:
-        voxel = particle_voxel[tid]
-        if voxel >= 0:
-            key = voxel
-    keys[tid] = wp.uint32(key)
-    values[tid] = tid
+    if tid >= count[0]:
+        return
+    voxel = particle_voxel[tid]
+    if voxel < 0:
+        return
+    start = starts[voxel]
+    n = voxel_counts[voxel]
+    rank = int(0)
+    for k in range(n):
+        if unordered[start + k] < tid:
+            rank += 1
+    indices[start + rank] = tid
 
 
-def scatter_particles_to_bins(particle_voxel, count, np_dim, voxel_capacity,
-                              keys, indices):
+def scatter_particles_to_bins(particle_voxel, particle_arrival, count, np_dim,
+                              voxel_counts, starts, unordered, indices):
     """fluidSimParticleToVoxelParticleArray + fluidSimVoxelParticleArraySort.
 
-    A stable radix sort by flat voxel index.  The seed kernel writes pairs in
-    ascending particle index, and the sort is stable, so each bin comes out in
-    ascending particle index -- the in-bin ordering the original performed as a
-    separate sort pass, and the property the P2G gather and the relaxation
-    sub-sampling need in order to be reproducible.
-
-    The sorted values are already grouped by voxel in ascending voxel order,
-    which is exactly the layout the exclusive scan of ``voxel_counts`` into
-    ``starts`` describes, so no offset fixup is needed.
+    Two launches: scatter every particle to the arrival slot the count kernel
+    reserved, then rank each bin by particle index.  The result is ascending
+    particle index within each bin -- identical to a stable sort by voxel, the
+    in-bin ordering the original performed as a separate sort pass, and the
+    property the P2G gather and the relaxation sub-sampling need in order to
+    be reproducible.  A stable radix sort gives the same array but costs about
+    twice the host launch overhead per call, which dominates at bake sizes.
     """
-    sentinel = int(voxel_capacity)
+    device = indices.device
     wp.launch(
-        k_build_bin_sort_pairs, dim=np_dim,
-        inputs=[particle_voxel, count, sentinel],
-        outputs=[keys, indices], device=keys.device,
+        k_scatter_particles_to_arrival_slots, dim=np_dim,
+        inputs=[particle_voxel, particle_arrival, count, starts],
+        outputs=[unordered], device=device,
     )
-    # Keys never exceed the sentinel, so the sort only has to scan the bits
-    # that a flat voxel index actually occupies.
-    wp.utils.radix_sort_pairs(
-        keys, indices, np_dim, end_bit=max(1, sentinel.bit_length()))
+    wp.launch(
+        k_rank_bin_particles, dim=np_dim,
+        inputs=[particle_voxel, count, voxel_counts, starts, unordered],
+        outputs=[indices], device=device,
+    )
 
 
 def voxel_count_to_starts(counts: wp.array, starts: wp.array):
@@ -1852,7 +1883,7 @@ register_fn(voxel_count_to_starts, "fluidSimVoxelCountToVoxelParticleArrayStart"
 register_fn(scatter_particles_to_bins, "fluidSimParticleToVoxelParticleArray",
             "fluidSimVoxelParticleArraySort",
             strategy="host_orchestrated",
-            notes="stable radix sort: ascending particle index within each bin")
+            notes="arrival scatter + rank: ascending particle index within each bin")
 
 
 # leaf-level binning (fluidSimParticleToLeafCount etc.)

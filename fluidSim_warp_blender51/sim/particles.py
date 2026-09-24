@@ -411,13 +411,13 @@ class ParticleBins:
       fluidSimVoxelCountToVoxelParticleArrayStart ->
       fluidSimParticleToVoxelParticleArray (+ optional in-bin sort)
 
-    The scatter is a stable radix sort of (voxel, particle index) rather than
-    an atomic cursor per voxel, so within-bin order is always ascending
-    particle index instead of thread-arrival order.  Both the relaxation
-    sub-sampling and the P2G gather read bins positionally, so an arbitrary
-    within-bin order makes those stages irreproducible between runs of the
-    same input.  ``sort_keys`` and ``indices`` are double-length because
-    ``wp.utils.radix_sort_pairs`` ping-pongs through the upper half.
+    The scatter places each particle at the arrival slot the count kernel
+    reserved and then ranks each bin by particle index, rather than keeping
+    the arrival order of an atomic cursor, so within-bin order is always
+    ascending particle index.  Both the relaxation sub-sampling and the P2G
+    gather read bins positionally, so an arbitrary within-bin order makes
+    those stages irreproducible between runs of the same input.
+    ``arrival`` and ``unordered`` are the per-particle scratch for that.
     """
 
     def __init__(self, particle_capacity: int, voxel_capacity: int, device):
@@ -427,9 +427,11 @@ class ParticleBins:
         self.counts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
         self.starts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
         self.indices = wp.zeros(
-            2 * self.particle_capacity, dtype=wp.int32, device=device)
-        self.sort_keys = wp.zeros(
-            2 * self.particle_capacity, dtype=wp.uint32, device=device)
+            self.particle_capacity, dtype=wp.int32, device=device)
+        self.arrival = wp.zeros(
+            self.particle_capacity, dtype=wp.int32, device=device)
+        self.unordered = wp.zeros(
+            self.particle_capacity, dtype=wp.int32, device=device)
 
     def zero(self):
         self.counts.zero_()

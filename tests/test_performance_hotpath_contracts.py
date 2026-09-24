@@ -379,27 +379,97 @@ def test_whitewater_emission_reuses_dead_slot_at_capacity():
     assert int(ww.alive.numpy()[1]) == 1
 
 
-def test_whitewater_recycled_slots_stack_in_ascending_slot_order():
+@pytest.mark.parametrize("single_block_max", [None, -1])
+@pytest.mark.parametrize("prior, dead_fraction", [(2, 0.3), (4000, 0.5)])
+def test_whitewater_recycled_slots_stack_in_ascending_slot_order(
+        monkeypatch, single_block_max, prior, dead_fraction):
+    """Both recycle paths (one-launch block scan, device scan) push dead slots
+    above the existing stack in ascending slot order and clamp at capacity.
+    As in the solver, the launch bound exceeds the live count and advection
+    has flagged deaths only inside the live prefix."""
     if not wp.is_cuda_available():
         pytest.skip("CUDA required")
+    from fluidSim_warp_blender51.sim import whitewater as ww_mod
+
+    if single_block_max is not None:
+        monkeypatch.setattr(ww_mod, "WW_RECYCLE_SINGLE_BLOCK_MAX", single_block_max)
     device = "cuda:0"
     ww = WhitewaterSystem(capacity=4096, device=device)
     rng = np.random.default_rng(7)
-    dead = (rng.random(ww.capacity) < 0.3).astype(np.int32)
+    live = ww.capacity - 96
+    dead = (rng.random(ww.capacity) < dead_fraction).astype(np.int32)
+    dead[live:] = 0
     wp.copy(ww.dead, wp.array(dead, dtype=wp.int32, device=device))
-    wp.copy(ww.free_slots, wp.array([9, 3], dtype=wp.int32, device=device),
-            count=2)
-    wp.copy(ww.free_count, wp.array([2], dtype=wp.int32, device=device))
+    wp.copy(ww.count, wp.array([live], dtype=wp.int32, device=device))
+    ww.host_count = live
+    stack = rng.integers(0, ww.capacity, prior).astype(np.int32)
+    wp.copy(ww.free_slots, wp.array(stack, dtype=wp.int32, device=device),
+            count=prior)
+    wp.copy(ww.free_count, wp.array([prior], dtype=wp.int32, device=device))
 
     ww.recycle_dead_slots(ww.capacity)
 
-    expected = np.flatnonzero(dead)
+    expected = np.flatnonzero(dead)[:ww.capacity - prior]
     free_count = int(ww.free_count.numpy()[0])
-    assert free_count == 2 + len(expected)
+    assert free_count == prior + len(expected)
     free_slots = ww.free_slots.numpy()[:free_count]
     # Pre-existing stack entries stay beneath the new, slot-ordered pushes.
-    assert free_slots[:2].tolist() == [9, 3]
-    np.testing.assert_array_equal(free_slots[2:], expected)
+    np.testing.assert_array_equal(free_slots[:prior], stack)
+    np.testing.assert_array_equal(free_slots[prior:], expected)
+
+
+def test_particle_bins_hold_ascending_particle_indices_per_voxel():
+    """Binning must equal a stable sort by voxel: the P2G gather and relaxation
+    read bins positionally, so any arrival-order dependence breaks bitwise
+    reproducible bakes."""
+    if not wp.is_cuda_available():
+        pytest.skip("CUDA required")
+    from fluidSim_warp_blender51.sim.kernels_fluid import (
+        k_particle_to_voxel_count_and_update_index,
+        scatter_particles_to_bins,
+        voxel_count_to_starts,
+    )
+    from fluidSim_warp_blender51.sim.particles import ParticleBins
+
+    device = "cuda:0"
+    grid = SparseGrid(
+        origin=(0.0, 0.0, 0.0), size=(1.6, 0.8, 0.8),
+        voxel_size=0.1, leaf_capacity=4, device=device)
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.79, 0.79, 0.79))
+    assert grid.finalize_topology() == 1
+    nv = grid.voxel_capacity
+    rng = np.random.default_rng(11)
+    capacity, live = 24000, 20000
+    positions = rng.uniform((-0.1, -0.1, -0.1), (1.7, 0.9, 0.9), (capacity, 3))
+    positions[:3000] = (0.25, 0.35, 0.45)   # one crowded voxel
+    rng.shuffle(positions[:live])
+    pos = wp.array(positions.astype(np.float32), dtype=wp.vec3, device=device)
+    count = wp.array([live], dtype=wp.int32, device=device)
+    counts = wp.zeros(nv, dtype=wp.int32, device=device)
+    voxel = wp.zeros(capacity, dtype=wp.int32, device=device)
+    bins = ParticleBins(capacity, nv, device)
+
+    results = []
+    for _ in range(2):
+        counts.zero_()
+        wp.launch(
+            k_particle_to_voxel_count_and_update_index, dim=capacity,
+            inputs=[pos, count, grid.leaf_table, grid.voxels_dim,
+                    grid.leaves_dim, grid.origin, grid.voxel_size],
+            outputs=[counts, voxel, bins.arrival], device=device)
+        voxel_count_to_starts(counts, bins.starts)
+        scatter_particles_to_bins(
+            voxel, bins.arrival, count, capacity, counts, bins.starts,
+            bins.unordered, bins.indices)
+        results.append(bins.indices.numpy().copy())
+
+    flat = voxel.numpy()[:live]
+    binned = flat >= 0
+    assert 0 < binned.sum() < live          # some particles fall outside
+    expected = np.flatnonzero(binned)[np.argsort(flat[binned], kind="stable")]
+    np.testing.assert_array_equal(results[0][:len(expected)], expected)
+    np.testing.assert_array_equal(results[0], results[1])
 
 
 def test_pressure_index_contains_only_fluid_non_collision_voxels():

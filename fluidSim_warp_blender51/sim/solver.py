@@ -1391,13 +1391,15 @@ class FluidSolver:
             inputs=[self.particles.position, self.particles.count,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size],
-            outputs=[self.voxel_counts.data, self.particles.voxel_index],
+            outputs=[self.voxel_counts.data, self.particles.voxel_index,
+                     self.bins.arrival],
             device=self.device,
         )
         voxel_count_to_starts(self.voxel_counts.data[:nv], self.bins.starts[:nv])
         scatter_particles_to_bins(
-            self.particles.voxel_index, self.particles.count, np_dim,
-            self.bins.voxel_capacity, self.bins.sort_keys, self.bins.indices,
+            self.particles.voxel_index, self.bins.arrival,
+            self.particles.count, np_dim, self.voxel_counts.data,
+            self.bins.starts, self.bins.unordered, self.bins.indices,
         )
 
     def _source(self, dt):
