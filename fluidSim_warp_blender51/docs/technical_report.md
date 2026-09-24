@@ -511,10 +511,18 @@ determinism fix and four-demo cleanup), 2026-09-24:
 - Parent repository suite (`python3 -m pytest -q` from the repo root):
   **1,440 passed, 116 skipped**. The skips are CUDA/`bpy`-only tests that
   require GPU/Blender hardware this environment doesn't have; they are not
-  failures. (Counts moved slightly from an earlier 2026-09-22 run at HEAD
-  `df1868b` — `427`/`1,443 passed, 115 skipped` — because `21d4d37` removed
-  the adhesive-whitewater calibration tool and its tests along with the
-  pruned non-demo scenes.)
+  failures.
+
+These are the counts on the tip of this PR's branch as merged (verified
+directly against that checkout, not carried forward from an earlier commit
+message). An earlier 2026-09-22 run at HEAD `df1868b`, before merging
+`21d4d37`, reported `427`/`1,443 passed, 115 skipped` — the difference is
+`21d4d37` removing the adhesive-whitewater calibration tool and its tests
+along with the pruned non-demo scenes, not drift or a stale rerun. Likewise,
+this PR's own CUDA-test-fix commit message (`ba9ca3d`, 2026-09-21) cites
+`1443 passed, 115 skipped` for the tree as it stood *at that commit*, before
+`21d4d37` landed; it is a historical record of that commit, not a claim
+about the current tree.
 
 Neither count is a substitute for the GUI-inclusive gate's own scoped pytest
 lane (`tests/test_pressure_projection_regressions.py`,

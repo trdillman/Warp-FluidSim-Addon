@@ -36,6 +36,28 @@ separated here so that closing the card required satisfying each of its
 acceptance criteria rather than only the metrics refresh. All three are now
 satisfied, so the card stays closed.
 
+## Caveat: this PR's own non-evidence changes after the proof HEAD
+
+This report's `git_head` (`21d4d37`) is the gate's real proof commit on
+Tyler's machine, and `gate_verdict: FULL-PRODUCTION-GATE-PASS` is true for
+that tree. The branch carrying this file (`claude/project-thread-jardkj`,
+PR #7) merges that history but also adds its own commits with real,
+non-evidence changes that postdate the proof and are **not** in
+`ALLOWED_EVIDENCE_PATTERNS`: two test-guard fixes
+(`tests/test_artist_effect_admission.py`,
+`tests/test_operator_panel_behavior.py`), a packaging-exclusion edit
+(`fluidSim_warp_blender51/blender_manifest.toml`), and this unit's own
+`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. None of
+these change solver or runtime behavior, but `tools/
+validate_policy_drift_reports.py`'s `_non_evidence_drift` check will
+correctly flag them once this branch is merged into `master` — the merged
+tree is no longer identical-except-evidence to the proof HEAD. **A fresh
+`tools/run_production_gate.py --include-gui` run is needed after merging
+this PR**, before re-asserting `FULL-PRODUCTION-GATE-PASS`/`status: fresh`
+on the merged tree. Flagged by an automated PR review
+(`chatgpt-codex-connector[bot]`, P1, 2026-09-24); this caveat is the
+response, not a rerun this cloud session can perform.
+
 ## Findings
 
 ### PD-PKG-001: technical-report provenance and metrics lag the current artifact (resolved this run)
