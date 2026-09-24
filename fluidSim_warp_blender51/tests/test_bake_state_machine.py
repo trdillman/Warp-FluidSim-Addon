@@ -183,3 +183,28 @@ def test_public_synchronous_bake_reserves_cache_path_before_initialization(
         (production_bake.BakeStatus.INITIALIZING, cache_path.resolve())]
     assert result.status is production_bake.BakeStatus.COMPLETE
     assert production_bake.cache_path_is_active(cache_path) is False
+
+
+def test_signal_cancellation_restores_handlers_installed_outside_python(monkeypatch):
+    # Blender installs its SIGINT handler in C, so getsignal() returns None.
+    # Restoring that None used to raise TypeError after every CLI bake.
+    import signal
+
+    from fluidsim_testpkg.blender import production_bake
+
+    installed: dict[int, object] = {}
+
+    def fake_signal(signum, handler):
+        if handler is None:
+            raise TypeError("signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object")
+        installed[signum] = handler
+
+    monkeypatch.setattr(production_bake.signal, "getsignal", lambda _signum: None)
+    monkeypatch.setattr(production_bake.signal, "signal", fake_signal)
+
+    controller = BakeController(backend=FakeBackend())
+    with production_bake.SignalCancellation(controller):
+        assert callable(installed[signal.SIGINT])
+
+    assert installed[signal.SIGINT] is signal.SIG_DFL
+    assert installed[signal.SIGTERM] is signal.SIG_DFL
