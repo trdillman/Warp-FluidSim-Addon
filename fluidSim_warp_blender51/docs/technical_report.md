@@ -541,12 +541,12 @@ and retains its recorded-launch/CUDA-graph PCG path.
 ## Current promoted demo evidence
 
 The GUI-inclusive 1.0.255 production gate at proof HEAD
-`cb9ad0082fa27392ffdae1bff6fd481e998e8aa7` passed all 18 bounded demo checks.
+`19864c3f30ef1a99153f1d8e4bd88df40a35c264` passed all 18 bounded demo checks.
 Its promoted values are `front_speed_over_c0=1.0082030232`,
 `column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`, and
-`max_crown_height=0.2607910037`. The authoritative source is
+`max_crown_height=0.0883056670`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`, SHA-256
-`98379db74ef635b73c284b4d0a50aeec0f258603763b8a0ef00a3a8ae884b5c8`, mirrored in-tree at `demos/analysis_report.json`.
+`a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926`, mirrored in-tree at `demos/analysis_report.json`.
 
 These values are reproducible. Before `d2a6b6d`, `max_crown_height` varied
 by about 16% between runs of the same commit. The cause was four
@@ -555,3 +555,10 @@ shape-emission slot reservation, and the whitewater free list. That commit
 made all four order-independent. The dam_break and crown_splash bakes are now
 bitwise identical run-to-run on one device, and two consecutive gate runs (at
 `d2a6b6d` and `cb9ad00`) produced the same artifact SHA-256.
+
+Since `19864c3`, `max_crown_height` is the peak crown height over the crown
+phase only. That window runs from the moment the droplet has fully entered the
+pool to rim collapse, which is frames 2-5 on the shipped scene. The earlier
+statistic took its maximum at frame 15, which is Worthington-jet spray. It was
+deterministic but chaotic: a 1e-6 relative nudge to the drop speed moved it by
+up to 20%. The crown-phase value is unchanged under the same nudges.
