@@ -198,7 +198,7 @@ strongest_live_verification_commands_artifacts:
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
 files_that_need_correction: []
 active_backlog_tasks:
-  - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md (blocked on a fresh --include-gui gate run; PD-PKG-002/003 content fixes stand)'
+  - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md'
 related_findings:
   - 'root PD-ROOT-001 -> backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md (same divergence, same file)'
   - 'root PD-ROOT-002 -> backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md (closed; 3/3 passes, and the artifact hash now reproduces across runs)'
