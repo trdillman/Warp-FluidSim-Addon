@@ -2,7 +2,7 @@
 
 ## State
 
-done
+blocked
 
 ## What to build
 
@@ -63,6 +63,30 @@ No actual regression; just two histories that hadn't met yet. Worth merging
 this PR into master soon so master's own audit stops rediscovering already-
 closed findings.
 
+## Third reopen: non-evidence drift already present on this branch (2026-09-24)
+
+An automated Codex review on PR #7 (P1, commit `8d6612f`) correctly pointed
+out that this card can't stay `done` while `_non_evidence_drift` would fail
+if run against this branch's current HEAD. That check compares the gate's
+proof HEAD (`21d4d37`, Tyler's machine) against the *current* HEAD, not
+against HEAD at merge time — and this branch already carries commits past
+`21d4d37` that touch non-evidence paths (two test-guard fixes,
+`blender_manifest.toml`, this task card itself), all before this reopen.
+The earlier "Caveat" section in `POLICY_DRIFT_REPORT.md` said the drift
+would appear "once merged into master," which understated it: it is already
+true on this branch's HEAD right now, for anyone who runs the validator here
+with Tyler's cached `artifacts/production_gate_manifest.json` in place.
+Reopened to `blocked` rather than `done`. Acceptance criteria PD-PKG-002 and
+PD-PKG-003 (the doc-wording fixes) are still individually correct and stay
+resolved on their own merits — what's missing is a fresh
+`tools/run_production_gate.py --include-gui` run on Tyler's machine to
+re-establish a proof HEAD downstream of all of this branch's non-evidence
+commits, after which this card can close for real.
+
 ## Blocked by
 
-None - closed 2026-09-22, reconfirmed 2026-09-24.
+A fresh `tools/run_production_gate.py --include-gui` run on Tyler's machine,
+at or after this branch's HEAD, to give `_non_evidence_drift` a proof HEAD
+that already includes this branch's non-evidence commits. Cannot be done
+from this GPU-less cloud session. PD-PKG-001/002/003 content fixes remain
+resolved; only the freshness of the proof itself is open.

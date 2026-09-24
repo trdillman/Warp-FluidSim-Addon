@@ -1,5 +1,5 @@
 ---
-status: fresh
+status: stale
 escalated: false
 generated_at: 2026-09-24T15:09:27.444825+00:00
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
@@ -31,32 +31,36 @@ of that branch).
 
 All three findings are documentation drift in one file,
 `docs/technical_report.md`, and all three are owned by the single existing card
-`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. They were
-separated here so that closing the card required satisfying each of its
-acceptance criteria rather than only the metrics refresh. All three are now
-satisfied, so the card stays closed.
+`backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. The
+content fixes for all three are correct and stand on their own merits, but
+the card itself is **reopened (`blocked`)**, not closed — see the Caveat
+below for why a content fix isn't the same as a fresh proof.
 
-## Caveat: this PR's own non-evidence changes after the proof HEAD
+## Caveat: this branch's own non-evidence changes are already past the proof HEAD
 
 This report's `git_head` (`21d4d37`) is the gate's real proof commit on
 Tyler's machine, and `gate_verdict: FULL-PRODUCTION-GATE-PASS` is true for
 that tree. The branch carrying this file (`claude/project-thread-jardkj`,
-PR #7) merges that history but also adds its own commits with real,
-non-evidence changes that postdate the proof and are **not** in
-`ALLOWED_EVIDENCE_PATTERNS`: two test-guard fixes
-(`tests/test_artist_effect_admission.py`,
+PR #7) has since added its own commits with real, non-evidence changes that
+postdate that proof and are **not** in `ALLOWED_EVIDENCE_PATTERNS`: two
+test-guard fixes (`tests/test_artist_effect_admission.py`,
 `tests/test_operator_panel_behavior.py`), a packaging-exclusion edit
 (`fluidSim_warp_blender51/blender_manifest.toml`), and this unit's own
 `backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md`. None of
-these change solver or runtime behavior, but `tools/
-validate_policy_drift_reports.py`'s `_non_evidence_drift` check will
-correctly flag them once this branch is merged into `master` — the merged
-tree is no longer identical-except-evidence to the proof HEAD. **A fresh
-`tools/run_production_gate.py --include-gui` run is needed after merging
-this PR**, before re-asserting `FULL-PRODUCTION-GATE-PASS`/`status: fresh`
-on the merged tree. Flagged by an automated PR review
-(`chatgpt-codex-connector[bot]`, P1, 2026-09-24); this caveat is the
-response, not a rerun this cloud session can perform.
+these change solver or runtime behavior, but `_non_evidence_drift` in
+`tools/validate_policy_drift_reports.py` compares the proof HEAD against
+*current* HEAD, not HEAD at merge time — so this is **already true on this
+branch right now**, not something that only starts once PR #7 merges into
+`master`. Anyone running the validator against this branch's HEAD, with
+Tyler's cached `artifacts/production_gate_manifest.json` from the `21d4d37`
+run in place, will get exactly the failure `_non_evidence_drift` is designed
+to produce. `status: fresh` above would be false; this report says `stale`.
+**A fresh `tools/run_production_gate.py --include-gui` run on Tyler's
+machine, at or after this branch's HEAD, is needed** before re-asserting
+`FULL-PRODUCTION-GATE-PASS`/`status: fresh`. Flagged by an automated PR
+review (`chatgpt-codex-connector[bot]`, P1, 2026-09-24, on both this report
+and the task card); this caveat and the reopened card are the response, not
+a rerun this GPU-less cloud session can perform.
 
 ## Findings
 
@@ -142,8 +146,9 @@ root unit's
 owned by `TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY` in this unit and
 `TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE` at the root. The
 refresh closes the document half of both, and this unit's own suite-count/
-no-CUDA-row criteria (PD-PKG-002, PD-PKG-003) are also resolved, so
-`TASK-POLICY-DRIFT-001` stays closed. `TASK-POLICY-DRIFT-015` at root is a
+no-CUDA-row criteria (PD-PKG-002, PD-PKG-003) are content-resolved, but
+`TASK-POLICY-DRIFT-001` itself is reopened (`blocked`) pending a fresh gate
+run — see the Caveat above. `TASK-POLICY-DRIFT-015` at root is a
 separate concern (checked-in demo evidence recurrence) untouched by this
 session — it stands on its own merits.
 
@@ -169,8 +174,8 @@ belongs in `unit_verdict`, which is free-form and may differ per unit.
 ```yaml
 generated_at: 2026-09-24T15:09:27.444825+00:00
 generated_at_utc: 2026-09-24T15:09:27.444825+00:00
-amended_at: 2026-09-24T15:54:39+00:00
-amendment_basis: 'PD-PKG-002 and PD-PKG-003 resolved in a GPU-less cloud session merging this proof HEAD forward: docs/technical_report.md edited to attribute the suite count (426/1,440+116 skipped, refreshed for 21d4d37) and relabel the no-CUDA row; no gate re-execution, no new demo/GUI evidence. Same resolution first landed 2026-09-22 at the prior proof HEAD, re-applied here since this run regenerated the findings as open without knowledge of that branch.'
+amended_at: 2026-09-24T16:30:00+00:00
+amendment_basis: 'PD-PKG-002 and PD-PKG-003 content fixes stand (docs/technical_report.md attributes the suite count and relabels the no-CUDA row). TASK-POLICY-DRIFT-001 reopened to blocked: an automated PR review (chatgpt-codex-connector[bot], P1, 2026-09-24) correctly identified that this branch already carries non-evidence commits past the 21d4d37 proof HEAD (two test-guard fixes, blender_manifest.toml, this task card), so _non_evidence_drift already fails against this branch HEAD, not only after merge. status set to stale; card blocked on a fresh --include-gui gate run on Tyler machine.'
 escalated: false
 audit_unit: 'C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_blender51_port\fluidSim_warp_blender51'
 git_head: 21d4d37ff210ef0e25f0854423502dd5fbd51fce
@@ -179,10 +184,10 @@ gate_verdict: 'FULL-PRODUCTION-GATE-PASS'
 unit_verdict: 'PACKAGE-VERIFY-PASS-PARENT-GATE-GREEN'
 demo_artifact: '../artifacts/demo_analysis/analysis_report.json'
 demo_artifact_sha256: a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926
-freshness: fresh
-status: fresh
+freshness: stale
+status: stale
 blocking_criticality: medium
-human_decision_required: false
+human_decision_required: true
 strongest_live_verification_commands_artifacts:
   - 'rtk python tools/release/build_extension.py --verify-only -> release_ready=true, version 1.0.255'
   - 'gate demo lane -> DEMO-ANALYSIS-PASS (18/18); artifact sha256 a32872b8...250926, byte-identical to the 19864c3 gate'
@@ -192,7 +197,8 @@ strongest_live_verification_commands_artifacts:
   - 'cloud session python3 -m pytest -q (repo root) -> 1440 passed, 116 skipped (2026-09-24, post-merge of 21d4d37)'
   - 'rtk python tools/validate_policy_drift_reports.py -> POLICY-DRIFT-REPORT-VALIDATION-PASS'
 files_that_need_correction: []
-active_backlog_tasks: []
+active_backlog_tasks:
+  - 'backlog/tasks/TASK-POLICY-DRIFT-001-TECHNICAL-REPORT-AUTHORITY.md (blocked on a fresh --include-gui gate run; PD-PKG-002/003 content fixes stand)'
 related_findings:
   - 'root PD-ROOT-001 -> backlog/tasks/TASK-POLICY-DRIFT-015-CHECKED-IN-DEMO-EVIDENCE-RECURRENCE.md (same divergence, same file)'
   - 'root PD-ROOT-002 -> backlog/tasks/TASK-POLICY-DRIFT-017-FULL-GUI-GATE-REPRODUCIBILITY.md (closed; 3/3 passes, and the artifact hash now reproduces across runs)'
@@ -205,5 +211,5 @@ repair_checklist:
   - 'Done this run: one artifact regenerated, mirrored to demos/analysis_report.json, and committed alongside the technical-report edit, so the promoted hash is verifiable from HEAD.'
   - 'Done this run: all four promoted metrics written as literal <key>=<%.10f> tokens - front_speed_over_c0=1.0082030232, column_height_end=0.3388671875, crown_sqrt_t_corr=0.9713672681, max_crown_height=0.0883056670 - and _check_doc_metrics passes. Recompute only if the solver or analyzer changes; the values reproduce run to run since d2a6b6d (root PD-ROOT-004, resolved).'
   - 'Done this run: the stale 2026-09-19 GUI receipts are superseded by a current manifest and are not promoted as proof.'
-  - 'TASK-POLICY-DRIFT-001 stays closed (all three criteria satisfied). Root TASK-POLICY-DRIFT-015 stays open on the checked-in demo evidence recurrence - a separate, unrelated card, untouched by this session.'
+  - 'TASK-POLICY-DRIFT-001 reopened to blocked 2026-09-24: this branch already carries non-evidence commits past the 21d4d37 proof HEAD, so a fresh --include-gui gate run on Tyler machine is needed before re-closing, even though PD-PKG-002/003 content fixes are correct as written. Root TASK-POLICY-DRIFT-015 stays open on the checked-in demo evidence recurrence - a separate, unrelated card, untouched by this session.'
 ```
