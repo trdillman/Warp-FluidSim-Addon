@@ -63,12 +63,17 @@ def test_launch_supports_warp_115_and_116_cuda_abis(monkeypatch, arity):
     )
     dot._kernel = 3
     dot._max_blocks = 4
+    dot._partials = SimpleNamespace(ptr=48)
+    dot._ticket = SimpleNamespace(ptr=64)
     array = SimpleNamespace(ptr=16)
 
     dot.launch(array, array, array, 32)
 
     assert len(calls) == 1
     assert len(calls[0]) == arity
+    # a, b, count, output, then the ordered-combine partials and ticket.
+    params = calls[0][6 if arity == 8 else 8]
+    assert len(params) == 6
 
 
 def test_module_cache_uses_runtime_context_identity_and_reference_leases(monkeypatch):

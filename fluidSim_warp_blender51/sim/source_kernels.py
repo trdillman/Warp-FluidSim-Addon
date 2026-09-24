@@ -458,6 +458,70 @@ register_fn(
 
 
 @wp.kernel
+def k_source_shapes_particle_demand(
+    shapes: wp.array(dtype=SourceShape),
+    num_shapes: int,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    emission_state: wp.array(dtype=wp.int32),
+    demand: wp.array(dtype=wp.int32),
+):
+    """Per-voxel particle count :func:`k_source_shapes_particles` will emit.
+
+    Predicate-identical to the commit pass. An exclusive scan of ``demand``
+    gives every voxel its own slot range, so emitted particles land in voxel
+    order instead of thread-arrival order (see k_reserve_owned_point_slots
+    for why arrival order makes the whole bake irreproducible).
+    """
+    tid = wp.tid()
+    demand[tid] = 0
+    if emission_state[1] == 0 or tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    pw = voxel_center_world(ijk, origin, voxel_size)
+    have = voxel_counts[tid]
+    total = int(0)
+    for si in range(num_shapes):
+        s = shapes[si]
+        if s.enabled == 0 or s.stype != 0 or s.mode != 1:
+            continue
+        if s.emission_mode == 0 and s.armed == 0:
+            continue
+        if shape_sdf_world(s, pw) > 0.0:
+            continue
+        want = int(s.emit_rate)
+        if want > have:
+            total += want - have
+    demand[tid] = total
+
+
+@wp.kernel
+def k_reserve_scanned_slots(
+    demand: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    n: int,
+    capacity: int,
+    emission_state: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    slot_base: wp.array(dtype=wp.int32),
+    slot_limit: wp.array(dtype=wp.int32),
+):
+    """Reserve one contiguous block for a scanned per-voxel emission batch."""
+    if emission_state[1] == 0 or n <= 0:
+        slot_base[0] = 0
+        slot_limit[0] = 0
+        return
+    base = count[0]
+    admitted = wp.min(offsets[n - 1] + demand[n - 1], wp.max(0, capacity - base))
+    slot_base[0] = base
+    slot_limit[0] = admitted
+    count[0] = base + admitted
+
+
+@wp.kernel
 def k_source_shapes_particles(
     shapes: wp.array(dtype=SourceShape),
     num_shapes: int,
@@ -469,7 +533,9 @@ def k_source_shapes_particles(
     seed: int,
     color_enabled: int,
     source_id_enabled: int,
-    capacity: int,
+    offsets: wp.array(dtype=wp.int32),
+    slot_base: wp.array(dtype=wp.int32),
+    slot_limit: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
     age: wp.array(dtype=float),
@@ -481,10 +547,15 @@ def k_source_shapes_particles(
     product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
-    count: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
-    """Emit particles inside particle-mode source shapes after batch admission."""
+    """Emit particles inside particle-mode source shapes after batch admission.
+
+    Voxel ``tid`` writes slots ``slot_base + offsets[tid] + k`` from the block
+    :func:`k_reserve_scanned_slots` reserved, so the layout is a function of
+    the grid alone. The admission gate already guarantees the batch fits, so
+    the short-reservation branch is a defensive guard.
+    """
     if emission_state[1] == 0:
         return
     tid = wp.tid()
@@ -492,6 +563,7 @@ def k_source_shapes_particles(
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     pw = voxel_center_world(ijk, origin, voxel_size)
+    local = offsets[tid]
 
     for si in range(num_shapes):
         s = shapes[si]
@@ -511,11 +583,11 @@ def k_source_shapes_particles(
         emit_n = want - have
         state = wp.rand_init(seed, tid * 31 + si)
         for _emit_index in range(emit_n):
-            slot = wp.atomic_add(count, 0, 1)
-            if slot >= capacity:
-                wp.atomic_sub(count, 0, 1)
+            if local >= slot_limit[0]:
                 emission_state[3] = 1
                 return
+            slot = slot_base[0] + local
+            local += 1
             jitter = wp.vec3(
                 (wp.randf(state) - 0.5) * voxel_size,
                 (wp.randf(state) - 0.5) * voxel_size,
@@ -871,6 +943,41 @@ register_fn(
 
 
 @wp.kernel
+def k_reserve_owned_point_slots(
+    src_count: int,
+    capacity: int,
+    emission_state: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    slot_base: wp.array(dtype=wp.int32),
+    slot_limit: wp.array(dtype=wp.int32),
+):
+    """Reserve one contiguous slot block for the next owned-point packet.
+
+    Single-threaded on purpose: it replaces the per-point atomic cursor in
+    :func:`k_source_owned_points` so a packet lands at ``slot_base + tid``
+    instead of in thread-arrival order.  Arrival order permutes the particle
+    arrays differently on every run, and both the bin sort and the P2G
+    accumulation read those arrays positionally, so the whole bake becomes
+    irreproducible.  The block reservation is exact and order-free, so the
+    stored layout is a function of the input point order alone.
+    """
+    if emission_state[1] == 0:
+        slot_base[0] = 0
+        slot_limit[0] = 0
+        return
+    base = count[0]
+    room = capacity - base
+    admitted = src_count
+    if admitted > room:
+        admitted = room
+    if admitted < 0:
+        admitted = 0
+    slot_base[0] = base
+    slot_limit[0] = admitted
+    count[0] = base + admitted
+
+
+@wp.kernel
 def k_source_owned_points(
     src_positions: wp.array(dtype=wp.vec3),
     src_velocities: wp.array(dtype=wp.vec3),
@@ -895,6 +1002,8 @@ def k_source_owned_points(
     default_lifespan: float,
     use_lifespan: int,
     capacity: int,
+    slot_base: wp.array(dtype=wp.int32),
+    slot_limit: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
     age: wp.array(dtype=float),
@@ -906,22 +1015,27 @@ def k_source_owned_points(
     product_source_id: wp.array(dtype=wp.int32),
     time_offset: wp.array(dtype=float),
     alive: wp.array(dtype=wp.int32),
-    count: wp.array(dtype=wp.int32),
     result: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
-    """Direct point append preserving every owned per-point attribute."""
+    """Direct point append preserving every owned per-point attribute.
+
+    Placement is ``slot_base + tid``, from the block
+    :func:`k_reserve_owned_point_slots` reserved just before this launch, so a
+    packet occupies a contiguous run in source-point order rather than in
+    thread-arrival order.  The admission gate already guarantees the whole
+    batch fits, so the short-reservation branch below is a defensive guard.
+    """
     if emission_state[1] == 0:
         return
     tid = wp.tid()
     if tid >= src_count:
         return
-    slot = wp.atomic_add(count, 0, 1)
-    if slot >= capacity:
-        wp.atomic_sub(count, 0, 1)
+    if tid >= slot_limit[0]:
         result[1] = 1
         emission_state[3] = 1
         return
+    slot = slot_base[0] + tid
     positions[slot] = src_positions[tid]
     velocities[slot] = default_velocity
     if has_velocity != 0:

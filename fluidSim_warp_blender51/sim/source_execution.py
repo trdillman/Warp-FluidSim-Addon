@@ -39,11 +39,14 @@ from .source_kernels import (
     k_emit_compiled_source_particles,
     k_mesh_source_field,
     k_mesh_source_particles,
+    k_reserve_owned_point_slots,
+    k_reserve_scanned_slots,
     k_source_height,
     k_source_owned_points,
     k_source_resolve_type,
     k_source_shape_forces,
     k_source_shapes,
+    k_source_shapes_particle_demand,
     k_source_shapes_particles,
 )
 
@@ -195,6 +198,17 @@ class CompiledSourceExecution:
                 point_values = region.points
                 count = len(point_values.positions)
                 wp.launch(
+                    k_reserve_owned_point_slots,
+                    dim=1,
+                    inputs=[count, particles.capacity, self._emission_state],
+                    outputs=[
+                        particles.count,
+                        self._point_slot_base,
+                        self._point_slot_limit,
+                    ],
+                    device=self.device,
+                )
+                wp.launch(
                     k_source_owned_points,
                     dim=max(1, count),
                     inputs=[
@@ -241,6 +255,8 @@ class CompiledSourceExecution:
                         payload.lifespan,
                         1 if payload.use_lifespan else 0,
                         particles.capacity,
+                        self._point_slot_base,
+                        self._point_slot_limit,
                     ],
                     outputs=[
                         particles.position,
@@ -254,7 +270,6 @@ class CompiledSourceExecution:
                         particles.optional_array("source_id"),
                         particles.time_offset,
                         particles.alive,
-                        particles.count,
                         self._compiled_result,
                         self._emission_state,
                     ],
@@ -796,6 +811,18 @@ class CompiledSourceExecution:
         )
         return True
 
+    def _shape_emission_scan_buffers(self, nvox):
+        """Per-voxel demand and exclusive-offset views for shape emission."""
+        buffers = getattr(self, "_shape_emit_scan", None)
+        if buffers is None or buffers[0].shape[0] < nvox:
+            size = max(1, int(nvox))
+            buffers = (
+                wp.zeros(size, dtype=wp.int32, device=self.device),
+                wp.zeros(size, dtype=wp.int32, device=self.device),
+            )
+            self._shape_emit_scan = buffers
+        return buffers[0][:nvox], buffers[1][:nvox]
+
     def _request_particle_growth(self, required_total):
         grow = getattr(self.runtime, "ensure_particle_capacity", None)
         if callable(grow):
@@ -1009,9 +1036,45 @@ class CompiledSourceExecution:
 
         particles = owner.particles
         if self._transaction_shape_count:
+            nvox = int(owner._nvox)
+            demand, offsets = self._shape_emission_scan_buffers(nvox)
+            wp.launch(
+                k_source_shapes_particle_demand,
+                dim=nvox,
+                inputs=[
+                    self._transaction_shapes,
+                    self._transaction_shape_count,
+                    grid.leaf_coords,
+                    grid.num_leaves,
+                    grid.origin,
+                    settings.voxel_size,
+                    owner.voxel_counts.data,
+                    self._emission_state,
+                ],
+                outputs=[demand],
+                device=self.device,
+            )
+            wp.utils.array_scan(demand, offsets, inclusive=False)
+            wp.launch(
+                k_reserve_scanned_slots,
+                dim=1,
+                inputs=[
+                    demand,
+                    offsets,
+                    nvox,
+                    particles.capacity,
+                    self._emission_state,
+                ],
+                outputs=[
+                    particles.count,
+                    self._point_slot_base,
+                    self._point_slot_limit,
+                ],
+                device=self.device,
+            )
             wp.launch(
                 k_source_shapes_particles,
-                dim=owner._nvox,
+                dim=nvox,
                 inputs=[
                     self._transaction_shapes,
                     self._transaction_shape_count,
@@ -1023,7 +1086,9 @@ class CompiledSourceExecution:
                     self._transaction_emit_seed,
                     1 if particles.has_optional_channel("color") else 0,
                     1 if particles.has_optional_channel("source_id") else 0,
-                    particles.capacity,
+                    offsets,
+                    self._point_slot_base,
+                    self._point_slot_limit,
                 ],
                 outputs=[
                     particles.position,
@@ -1037,7 +1102,6 @@ class CompiledSourceExecution:
                     particles.optional_array("source_id"),
                     particles.time_offset,
                     particles.alive,
-                    particles.count,
                     self._emission_state,
                 ],
                 device=self.device,
@@ -1117,6 +1181,17 @@ class CompiledSourceExecution:
         for packet, positions, velocities in uploaded:
             count = len(packet.positions)
             wp.launch(
+                k_reserve_owned_point_slots,
+                dim=1,
+                inputs=[count, particles.capacity, self._emission_state],
+                outputs=[
+                    particles.count,
+                    self._point_slot_base,
+                    self._point_slot_limit,
+                ],
+                device=self.device,
+            )
+            wp.launch(
                 k_source_owned_points,
                 dim=max(1, count),
                 inputs=[
@@ -1143,6 +1218,8 @@ class CompiledSourceExecution:
                     float(packet.life),
                     1 if packet.use_lifespan else 0,
                     particles.capacity,
+                    self._point_slot_base,
+                    self._point_slot_limit,
                 ],
                 outputs=[
                     particles.position,
@@ -1156,7 +1233,6 @@ class CompiledSourceExecution:
                     particles.optional_array("source_id"),
                     particles.time_offset,
                     particles.alive,
-                    particles.count,
                     self._compiled_result,
                     self._emission_state,
                 ],

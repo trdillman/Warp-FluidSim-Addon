@@ -93,6 +93,131 @@ def k_particle_set_grid_data(
 
 
 @wp.kernel
+def k_gather_grid_data(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    bin_starts: wp.array(dtype=wp.int32),
+    bin_indices: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+):
+    """Deterministic P2G: the transpose of :func:`k_particle_set_grid_data`.
+
+    One thread owns one active voxel and pulls every contribution addressed to
+    it, instead of every particle pushing into shared accumulators with
+    ``wp.atomic_add``.  Float addition is not associative, so the scatter's sum
+    depends on thread arrival order and no two runs of the same bake agree
+    bitwise; the gather sums in a fixed order and is reproducible.
+
+    The neighbourhood is exact rather than conservative.  MAC face offsets have
+    components in {0, 0.5}, so ``base = floor(vp - off)`` is either ``c`` or
+    ``c - 1`` per component for a particle binned at ``c = floor(vp)``, and the
+    scatter's targets are ``base + d`` for ``d`` in {0, 1}.  Every target
+    therefore lies within one voxel of ``c``, and sweeping the 3x3x3 bin
+    neighbourhood visits every particle that can reach this voxel -- no more,
+    no fewer.  Each term is recomputed with the identical expressions the
+    scatter uses, so only the summation order differs.
+
+    One semantic difference: a particle whose own voxel is outside the domain
+    or unallocated is absent from the bins and so contributes nothing here,
+    where the scatter would still deposit into any allocated neighbour.  The
+    same particles are already excluded from ``voxel_counts`` and from
+    relaxation, and topology is rebuilt from the live particle set before every
+    transfer, so the set is empty in practice.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    su = float(0.0)
+    sv = float(0.0)
+    sw = float(0.0)
+    swu = float(0.0)
+    swv = float(0.0)
+    sww = float(0.0)
+    for nz in range(-1, 2):
+        for ny in range(-1, 2):
+            for nx in range(-1, 2):
+                nflat = voxel_flat_index(
+                    leaf_table, voxels_dim, leaves_dim,
+                    wp.vec3i(ijk[0] + nx, ijk[1] + ny, ijk[2] + nz),
+                )
+                if nflat >= 0:
+                    start = bin_starts[nflat]
+                    for s in range(voxel_counts[nflat]):
+                        p = bin_indices[start + s]
+                        vp = world_to_voxel(positions[p], origin, voxel_size)
+                        vel = velocities[p]
+                        # The three MAC faces are unrolled by hand so each
+                        # one carries its own constant offset; a loop over
+                        # the axis index would have to select the offset
+                        # vector and the velocity component at run time.
+                        q = vp - wp.vec3(0.0, 0.5, 0.5)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            su += wgt * vel[0]
+                            swu += wgt
+                        q = vp - wp.vec3(0.5, 0.0, 0.5)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            sv += wgt * vel[1]
+                            swv += wgt
+                        q = vp - wp.vec3(0.5, 0.5, 0.0)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            sw += wgt * vel[2]
+                            sww += wgt
+    u[tid] = su
+    v[tid] = sv
+    w[tid] = sw
+    wu[tid] = swu
+    wv[tid] = swv
+    ww[tid] = sww
+
+
+@wp.kernel
 def k_normalize_mac(
     u: wp.array(dtype=float),
     v: wp.array(dtype=float),
@@ -267,6 +392,103 @@ def k_particle_set_grid_data_spacetime(
 
 
 @wp.kernel
+def k_gather_grid_data_spacetime(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    time_offsets: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    previous_dt: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    bin_starts: wp.array(dtype=wp.int32),
+    bin_indices: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+):
+    """Deterministic ST-FLIP P2G: the transpose of
+    :func:`k_particle_set_grid_data_spacetime`.
+
+    Same gather contract as :func:`k_gather_grid_data`; see that docstring for
+    why the 3x3x3 bin neighbourhood is exact.  The separable poly6 support is
+    ``|r| < 1`` with ``r = q - ijk``, which is the same two-voxel-per-axis stencil
+    the trilinear weights use, so the neighbourhood carries over unchanged.  The
+    temporal weight and the per-term products are evaluated with the scatter's
+    expressions, so only the summation order differs.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    safe_prev_dt = wp.max(wp.abs(previous_dt), 1.0e-8)
+    su = float(0.0)
+    sv = float(0.0)
+    sw = float(0.0)
+    swu = float(0.0)
+    swv = float(0.0)
+    sww = float(0.0)
+    for nz in range(-1, 2):
+        for ny in range(-1, 2):
+            for nx in range(-1, 2):
+                nflat = voxel_flat_index(
+                    leaf_table, voxels_dim, leaves_dim,
+                    wp.vec3i(ijk[0] + nx, ijk[1] + ny, ijk[2] + nz),
+                )
+                if nflat >= 0:
+                    start = bin_starts[nflat]
+                    for s in range(voxel_counts[nflat]):
+                        p = bin_indices[start + s]
+                        tau = wp.clamp(-time_offsets[p] / safe_prev_dt, -0.5, 0.5)
+                        wt = _st_temporal_weight(tau)
+                        if wt > 0.0:
+                            vp = world_to_voxel(positions[p], origin, voxel_size)
+                            vel = velocities[p]
+                            for axis in range(3):
+                                off = wp.vec3(0.5, 0.5, 0.5)
+                                if axis == 0:
+                                    off = wp.vec3(0.0, 0.5, 0.5)
+                                elif axis == 1:
+                                    off = wp.vec3(0.5, 0.0, 0.5)
+                                else:
+                                    off = wp.vec3(0.5, 0.5, 0.0)
+                                q = vp - off
+                                base = voxel_floor(q)
+                                dx = ijk[0] - base[0]
+                                dy = ijk[1] - base[1]
+                                dz = ijk[2] - base[2]
+                                inside = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                                if inside and dz >= 0 and dz <= 1:
+                                    rx = q[0] - float(ijk[0])
+                                    ry = q[1] - float(ijk[1])
+                                    rz = q[2] - float(ijk[2])
+                                    wgt = wt * _st_spatial_weight_1d(rx) * _st_spatial_weight_1d(ry) * _st_spatial_weight_1d(rz)
+                                    comp = vel[axis]
+                                    if axis == 0:
+                                        su += wgt * comp
+                                        swu += wgt
+                                    elif axis == 1:
+                                        sv += wgt * comp
+                                        swv += wgt
+                                    else:
+                                        sw += wgt * comp
+                                        sww += wgt
+    u[tid] = su
+    v[tid] = sv
+    w[tid] = sw
+    wu[tid] = swu
+    wv[tid] = swv
+    ww[tid] = sww
+
+
+@wp.kernel
 def k_spacetime_weights_to_phase_active(
     wu: wp.array(dtype=float),
     wv: wp.array(dtype=float),
@@ -326,8 +548,18 @@ def k_spacetime_weights_to_phase_active(
         voxel_type[tid] = vt & (~VOXEL_FLUID)
 
 
-register_fn(k_particle_set_grid_data, "fluidSimParticleSetGridData")
-register_fn(k_particle_set_grid_data_spacetime, "fluidSimParticleSetGridDataSpatiotemporal")
+register_fn(k_particle_set_grid_data, "fluidSimParticleSetGridData",
+            notes="faithful scatter reference; the solver runs the bitwise-equal "
+                  "gather in fluidSimParticleSetGridData_gather")
+register_fn(k_particle_set_grid_data_spacetime, "fluidSimParticleSetGridDataSpatiotemporal",
+            notes="faithful scatter reference; the solver runs "
+                  "fluidSimParticleSetGridDataSpatiotemporal_gather")
+register_fn(k_gather_grid_data, "fluidSimParticleSetGridData_gather",
+            notes="voxel-per-thread transpose of the scatter over the sorted "
+                  "bins: same terms, fixed summation order, no float atomics")
+register_fn(k_gather_grid_data_spacetime,
+            "fluidSimParticleSetGridDataSpatiotemporal_gather",
+            notes="ST-FLIP transpose of the scatter over the sorted bins")
 register_fn(k_spacetime_weights_to_phase_active, "fluidSimSpacetimeWeightsToPhaseActive")
 register_fn(k_normalize_mac, "fluidSimWhiteWaterSetGridDataNormalize_internal")
 register_fn(k_particle_to_count, "fluidSimParticleToCount")
@@ -1556,22 +1788,53 @@ def k_particle_to_voxel_count_and_update_index(
 
 
 @wp.kernel
-def k_scatter_particles_to_bins(
+def k_build_bin_sort_pairs(
     particle_voxel: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
-    starts: wp.array(dtype=wp.int32),
-    cursor: wp.array(dtype=wp.int32),
-    indices: wp.array(dtype=wp.int32),
+    sentinel: wp.int32,
+    keys: wp.array(dtype=wp.uint32),
+    values: wp.array(dtype=wp.int32),
 ):
-    """fluidSimParticleToVoxelParticleArray: bin scatter using start offsets."""
+    """Seed the bin sort with (voxel, particle index) pairs in index order.
+
+    Particles past the live count and particles whose voxel is unallocated or
+    out of domain get ``sentinel``, which is above every valid flat voxel
+    index, so they sort past the used region and never appear in a bin.
+    """
     tid = wp.tid()
-    if tid >= count[0]:
-        return
-    voxel = particle_voxel[tid]
-    if voxel < 0:
-        return
-    slot = starts[voxel] + wp.atomic_add(cursor, voxel, 1)
-    indices[slot] = tid
+    key = sentinel
+    if tid < count[0]:
+        voxel = particle_voxel[tid]
+        if voxel >= 0:
+            key = voxel
+    keys[tid] = wp.uint32(key)
+    values[tid] = tid
+
+
+def scatter_particles_to_bins(particle_voxel, count, np_dim, voxel_capacity,
+                              keys, indices):
+    """fluidSimParticleToVoxelParticleArray + fluidSimVoxelParticleArraySort.
+
+    A stable radix sort by flat voxel index.  The seed kernel writes pairs in
+    ascending particle index, and the sort is stable, so each bin comes out in
+    ascending particle index -- the in-bin ordering the original performed as a
+    separate sort pass, and the property the P2G gather and the relaxation
+    sub-sampling need in order to be reproducible.
+
+    The sorted values are already grouped by voxel in ascending voxel order,
+    which is exactly the layout the exclusive scan of ``voxel_counts`` into
+    ``starts`` describes, so no offset fixup is needed.
+    """
+    sentinel = int(voxel_capacity)
+    wp.launch(
+        k_build_bin_sort_pairs, dim=np_dim,
+        inputs=[particle_voxel, count, sentinel],
+        outputs=[keys, indices], device=keys.device,
+    )
+    # Keys never exceed the sentinel, so the sort only has to scan the bits
+    # that a flat voxel index actually occupies.
+    wp.utils.radix_sort_pairs(
+        keys, indices, np_dim, end_bit=max(1, sentinel.bit_length()))
 
 
 def voxel_count_to_starts(counts: wp.array, starts: wp.array):
@@ -1586,9 +1849,10 @@ register_fn(
 )
 register_fn(voxel_count_to_starts, "fluidSimVoxelCountToVoxelParticleArrayStart",
             strategy="host_orchestrated", notes="warp device scan")
-register_fn(k_scatter_particles_to_bins, "fluidSimParticleToVoxelParticleArray",
+register_fn(scatter_particles_to_bins, "fluidSimParticleToVoxelParticleArray",
             "fluidSimVoxelParticleArraySort",
-            notes="atomic in-bin order; original in-bin sort not required for correctness")
+            strategy="host_orchestrated",
+            notes="stable radix sort: ascending particle index within each bin")
 
 
 # leaf-level binning (fluidSimParticleToLeafCount etc.)

@@ -410,6 +410,14 @@ class ParticleBins:
       fluidSimParticleToVoxelCountAndUpdateVoxelIndex ->
       fluidSimVoxelCountToVoxelParticleArrayStart ->
       fluidSimParticleToVoxelParticleArray (+ optional in-bin sort)
+
+    The scatter is a stable radix sort of (voxel, particle index) rather than
+    an atomic cursor per voxel, so within-bin order is always ascending
+    particle index instead of thread-arrival order.  Both the relaxation
+    sub-sampling and the P2G gather read bins positionally, so an arbitrary
+    within-bin order makes those stages irreproducible between runs of the
+    same input.  ``sort_keys`` and ``indices`` are double-length because
+    ``wp.utils.radix_sort_pairs`` ping-pongs through the upper half.
     """
 
     def __init__(self, particle_capacity: int, voxel_capacity: int, device):
@@ -418,8 +426,10 @@ class ParticleBins:
         self.voxel_capacity = int(voxel_capacity)
         self.counts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
         self.starts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
-        self.cursor = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
-        self.indices = wp.zeros(particle_capacity, dtype=wp.int32, device=device)
+        self.indices = wp.zeros(
+            2 * self.particle_capacity, dtype=wp.int32, device=device)
+        self.sort_keys = wp.zeros(
+            2 * self.particle_capacity, dtype=wp.uint32, device=device)
 
     def zero(self):
         self.counts.zero_()

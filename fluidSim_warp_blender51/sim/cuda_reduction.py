@@ -15,22 +15,22 @@ from pathlib import Path
 import warp as wp
 from warp._src import build, context
 
+# The cross-block combine is deliberately not ``atomicAdd(output, block_sum)``:
+# float addition is not associative, so summing block partials in completion
+# order made every PCG dot product -- and therefore every pressure solve --
+# differ in its last bits from run to run. Each block instead publishes its
+# partial, and the last block to arrive (by ticket) sums them in block-index
+# order, so the result is a pure function of the inputs and the grid size.
+# ``output`` keeps its accumulate contract (``*output += total``); callers
+# zero it between uses.
 _CUDA_SOURCE = r"""
-extern "C" __global__ void fluid_dot_reduce(
-    const float *a, const float *b, int count, float *output)
+__device__ __forceinline__ float fluid_block_sum(float sum, float *warp_sums)
 {
   const int lane = threadIdx.x & 31;
   const int warp = threadIdx.x >> 5;
-  const int index = blockIdx.x * blockDim.x + threadIdx.x;
-  const int stride = blockDim.x * gridDim.x;
-  float sum = 0.0f;
-  for (int i = index; i < count; i += stride) {
-    sum += a[i] * b[i];
-  }
   for (int offset = 16; offset > 0; offset >>= 1) {
     sum += __shfl_down_sync(0xffffffff, sum, offset);
   }
-  __shared__ float warp_sums[32];
   if (lane == 0) {
     warp_sums[warp] = sum;
   }
@@ -40,9 +40,41 @@ extern "C" __global__ void fluid_dot_reduce(
     for (int offset = 16; offset > 0; offset >>= 1) {
       sum += __shfl_down_sync(0xffffffff, sum, offset);
     }
-    if (lane == 0) {
-      atomicAdd(output, sum);
-    }
+  }
+  return sum;  // valid in thread 0 only
+}
+
+extern "C" __global__ void fluid_dot_reduce(
+    const float *a, const float *b, int count, float *output,
+    float *partials, unsigned int *ticket)
+{
+  __shared__ float warp_sums[32];
+  __shared__ bool is_last;
+  const int index = blockIdx.x * blockDim.x + threadIdx.x;
+  const int stride = blockDim.x * gridDim.x;
+  float sum = 0.0f;
+  for (int i = index; i < count; i += stride) {
+    sum += a[i] * b[i];
+  }
+  sum = fluid_block_sum(sum, warp_sums);
+  if (threadIdx.x == 0) {
+    partials[blockIdx.x] = sum;
+    __threadfence();
+    is_last = atomicAdd(ticket, 1u) == gridDim.x - 1;
+  }
+  __syncthreads();
+  if (!is_last) {
+    return;
+  }
+  float total = 0.0f;
+  for (int i = threadIdx.x; i < (int)gridDim.x; i += blockDim.x) {
+    total += __ldcg(partials + i);
+  }
+  __syncthreads();  // warp_sums is reused
+  total = fluid_block_sum(total, warp_sums);
+  if (threadIdx.x == 0) {
+    *output += total;
+    *ticket = 0u;
   }
 }
 """
@@ -205,6 +237,11 @@ class CudaDotProduct:
         self._module = self._entry.module
         self._kernel = self._entry.kernel
         self._max_blocks = max(1, int(device.sm_count) * 2)
+        # Per-instance scratch for the ordered cross-block combine. The ticket
+        # is reset by the last block of every launch, so both buffers stay
+        # valid across graph replays without host involvement.
+        self._partials = wp.zeros(self._max_blocks, dtype=float, device=device)
+        self._ticket = wp.zeros(1, dtype=wp.uint32, device=device)
 
     def release(self):
         """Release this reduction's native-module lease exactly once."""
@@ -221,11 +258,15 @@ class CudaDotProduct:
         b_ptr = ctypes.c_void_p(b.ptr)
         count_value = ctypes.c_int(count)
         output_ptr = ctypes.c_void_p(output.ptr)
-        params = (ctypes.c_void_p * 4)(
+        partials_ptr = ctypes.c_void_p(self._partials.ptr)
+        ticket_ptr = ctypes.c_void_p(self._ticket.ptr)
+        params = (ctypes.c_void_p * 6)(
             ctypes.addressof(a_ptr),
             ctypes.addressof(b_ptr),
             ctypes.addressof(count_value),
             ctypes.addressof(output_ptr),
+            ctypes.addressof(partials_ptr),
+            ctypes.addressof(ticket_ptr),
         )
         launch = context.runtime.core.wp_cuda_launch_kernel
         args = (

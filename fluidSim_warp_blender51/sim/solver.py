@@ -81,8 +81,8 @@ from .kernels_core import (
 )
 from .kernels_fluid import (
     ForceFieldProxy,
-    k_particle_set_grid_data,
-    k_particle_set_grid_data_spacetime,
+    k_gather_grid_data,
+    k_gather_grid_data_spacetime,
     k_spacetime_weights_to_phase_active,
     k_normalize_mac,
     k_particle_to_count,
@@ -102,7 +102,7 @@ from .kernels_fluid import (
     k_forces_speed_limit,
     k_particle_to_voxel_count_and_update_index,
     voxel_count_to_starts,
-    k_scatter_particles_to_bins,
+    scatter_particles_to_bins,
     k_particle_age,
     k_particle_lifespan,
     k_particle_in_sink_check,
@@ -1395,12 +1395,9 @@ class FluidSolver:
             device=self.device,
         )
         voxel_count_to_starts(self.voxel_counts.data[:nv], self.bins.starts[:nv])
-        self.bins.cursor[:nv].zero_()
-        wp.launch(
-            k_scatter_particles_to_bins, dim=np_dim,
-            inputs=[self.particles.voxel_index, self.particles.count,
-                    self.bins.starts],
-            outputs=[self.bins.cursor, self.bins.indices], device=self.device,
+        scatter_particles_to_bins(
+            self.particles.voxel_index, self.particles.count, np_dim,
+            self.bins.voxel_capacity, self.bins.sort_keys, self.bins.indices,
         )
 
     def _source(self, dt):
@@ -1478,23 +1475,35 @@ class FluidSolver:
         g = self.grid
         p = self.particles
         st = self.settings
+        # Gather, not scatter: one thread per active voxel pulls its own
+        # contributions out of the sorted bins built by _index_particles.
+        # The scatter kernels stay registered as the faithful reference, but
+        # their float wp.atomic_add sums in thread-arrival order and makes the
+        # whole bake irreproducible; see k_gather_grid_data.
+        nv = self._nvox
         if st.spacetime_enabled:
             prev_dt = self._st_previous_dt if self._st_previous_dt > 0.0 else float(dt or (st.time_scale / max(st.frame_rate, 1.0)))
             wp.launch(
-                k_particle_set_grid_data_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, prev_dt],
+                k_gather_grid_data_spacetime, dim=nv,
+                inputs=[p.position, p.velocity, p.time_offset,
+                        g.leaf_table, g.leaf_coords, g.num_leaves,
+                        g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size, prev_dt,
+                        self.voxel_counts.data, self.bins.starts,
+                        self.bins.indices],
                 outputs=[self.vel.u, self.vel.v, self.vel.w,
                          self.vel.wu, self.vel.wv, self.vel.ww],
                 device=self.device,
             )
         else:
             wp.launch(
-                k_particle_set_grid_data, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.count,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size],
+                k_gather_grid_data, dim=nv,
+                inputs=[p.position, p.velocity,
+                        g.leaf_table, g.leaf_coords, g.num_leaves,
+                        g.voxels_dim, g.leaves_dim,
+                        g.origin, g.voxel_size,
+                        self.voxel_counts.data, self.bins.starts,
+                        self.bins.indices],
                 outputs=[self.vel.u, self.vel.v, self.vel.w,
                          self.vel.wu, self.vel.wv, self.vel.ww],
                 device=self.device,
@@ -1961,9 +1970,11 @@ class FluidSolver:
                     s.ww_bubble_life_multiplier,
                     s.ww_spray_life_multiplier,
                     wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                    ww.capacity, ww.free_slots, ww.free_count],
+                    ww.capacity],
+            outputs=[ww.dead],
             device=self.device,
         )
+        ww.recycle_dead_slots(nww)
 
     def _finalize_whitewater(self):
         """Compact, publish, and return the live whitewater count per frame."""

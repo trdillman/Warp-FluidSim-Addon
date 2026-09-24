@@ -55,6 +55,8 @@ from .source_kernels import (
     k_emit_compiled_source_particles,
     k_mesh_source_field,
     k_mesh_source_particles,
+    k_reserve_owned_point_slots,
+    k_reserve_scanned_slots,
     k_source_height,
     k_source_owned_points,
     k_source_particle_integer_constant,
@@ -65,6 +67,7 @@ from .source_kernels import (
     k_source_resolve_type,
     k_source_shape_forces,
     k_source_shapes,
+    k_source_shapes_particle_demand,
     k_source_shapes_particles,
     k_source_volume_float,
     k_source_volume_mask_fog,
@@ -120,12 +123,15 @@ __all__ = [
     "k_source_shape_forces",
     "k_source_shapes",
     "k_source_shapes_particles",
+    "k_source_shapes_particle_demand",
+    "k_reserve_scanned_slots",
     "_watertight_mesh_contains",
     "k_mesh_source_field",
     "k_mesh_source_particles",
     "k_source_height",
     "k_source_resolve_type",
     "k_source_particles",
+    "k_reserve_owned_point_slots",
     "k_source_owned_points",
     "k_source_particle_scalar_field_attribute",
     "k_source_particle_vector_field_attribute",
@@ -218,6 +224,11 @@ class SourcePipeline(CompiledSourceExecution):
         # passes and guarded commit kernels remain on-device until one
         # aggregate result is read after the whole source batch.
         self._emission_state = wp.zeros(5, dtype=wp.int32, device=self.device)
+        # Contiguous slot block reserved for the owned-point packet currently
+        # being appended, so placement is source-order rather than
+        # thread-arrival order. See k_reserve_owned_point_slots.
+        self._point_slot_base = wp.zeros(1, dtype=wp.int32, device=self.device)
+        self._point_slot_limit = wp.zeros(1, dtype=wp.int32, device=self.device)
         self._emission_scratch_counts = wp.zeros(
             max(1, int(getattr(grid, "voxel_capacity", 0) or active_voxel_count())),
             dtype=wp.int32,

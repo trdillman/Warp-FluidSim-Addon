@@ -380,8 +380,24 @@ def k_expand_leaf_flags(
 
 
 @wp.kernel
-def k_allocate_leaves(
+def k_mark_unallocated_leaves(
     leaf_flags: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32),
+    pending: wp.array(dtype=wp.int32),
+):
+    """Predicate feeding the allocation scan: flagged but not yet allocated."""
+    tid = wp.tid()
+    if leaf_flags[tid] != 0 and leaf_table[tid] < 0:
+        pending[tid] = 1
+    else:
+        pending[tid] = 0
+
+
+@wp.kernel
+def k_allocate_leaves(
+    pending: wp.array(dtype=wp.int32),
+    pending_rank: wp.array(dtype=wp.int32),
+    base: wp.array(dtype=wp.int32),
     leaves_dim: wp.vec3i,
     capacity: wp.int32,
     leaf_table: wp.array(dtype=wp.int32),
@@ -389,12 +405,22 @@ def k_allocate_leaves(
     num_leaves: wp.array(dtype=wp.int32),
     overflow: wp.array(dtype=wp.int32),
 ):
+    """Assign leaf slots in linear leaf-coordinate order.
+
+    Slot order is the exclusive prefix rank of the allocation predicate, not
+    the arrival order of an atomic cursor. Every flat voxel index in the solver
+    is ``leaf_slot * LEAF_VOLUME + offset``, so an order-dependent slot map
+    permutes the whole grid index space between otherwise identical runs and
+    makes every downstream accumulation, scatter and reduction irreproducible.
+    ``num_leaves`` is published with ``atomic_max``, which is order-invariant,
+    and is still raised past ``capacity`` so the overflow readback keeps
+    reporting the full required count.
+    """
     tid = wp.tid()
-    if leaf_flags[tid] == 0:
+    if pending[tid] == 0:
         return
-    if leaf_table[tid] >= 0:
-        return
-    slot = wp.atomic_add(num_leaves, 0, 1)
+    slot = base[0] + pending_rank[tid]
+    wp.atomic_max(num_leaves, 0, slot + 1)
     if slot >= capacity:
         overflow[0] = 1
         return
@@ -456,6 +482,12 @@ class SparseGrid:
         # lookup, so one pair can be reused across transactions.
         self.leaf_flags = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
         self.leaf_flags_tmp = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
+        # Allocation-order scratch: the pending predicate, its exclusive prefix
+        # rank, and the slot base captured before the scan publishes new slots.
+        self._leaf_pending = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
+        self._leaf_pending_rank = wp.zeros(
+            self.num_leaf_cells, dtype=wp.int32, device=device)
+        self._leaf_slot_base = wp.zeros(1, dtype=wp.int32, device=device)
         self._candidate_pending = False
         self.active_leaf_count = 0  # host mirror, refreshed by refresh_topology_counts
 
@@ -531,11 +563,27 @@ class SparseGrid:
             )
 
     def finalize_topology(self, sync: bool = True) -> int:
+        # Slot assignment is a prefix rank over linear leaf coordinates, so the
+        # admitted topology is identical for identical flags. The base is the
+        # already-admitted count, captured before the allocation kernel raises
+        # it, which keeps the incremental (non-cleared candidate table) path
+        # behaving exactly as the atomic cursor did.
+        wp.launch(
+            k_mark_unallocated_leaves,
+            dim=self.num_leaf_cells,
+            inputs=[self.leaf_flags, self._candidate_leaf_table],
+            outputs=[self._leaf_pending],
+            device=self.device,
+        )
+        wp.utils.array_scan(
+            self._leaf_pending, self._leaf_pending_rank, inclusive=False)
+        wp.copy(self._leaf_slot_base, self._candidate_num_leaves)
         wp.launch(
             k_allocate_leaves,
             dim=self.num_leaf_cells,
             inputs=[
-                self.leaf_flags, self.leaves_dim, self.capacity,
+                self._leaf_pending, self._leaf_pending_rank,
+                self._leaf_slot_base, self.leaves_dim, self.capacity,
                 self._candidate_leaf_table, self._candidate_leaf_coords,
                 self._candidate_num_leaves, self._candidate_overflow,
             ],
