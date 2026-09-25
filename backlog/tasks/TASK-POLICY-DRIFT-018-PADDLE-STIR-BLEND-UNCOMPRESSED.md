@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+done (2026-09-24)
 
 ## What to build
 
@@ -35,20 +35,45 @@ the demo loads, plays back and passes the gate as-is.
 
 ## Acceptance criteria
 
-- [ ] Re-save `demos/paddle_stir.blend` compressed, from the builder rather
+- [x] Re-save `demos/paddle_stir.blend` compressed, from the builder rather
       than by hand, so the checked-in file is the file the builder emits.
-- [ ] Confirm the result carries the Zstandard magic `28 b5 2f fd` and that no
+- [x] Confirm the result carries the Zstandard magic `28 b5 2f fd` and that no
       other demo blend is uncompressed.
-- [ ] Confirm the rebuilt scene still holds the 158,220-vertex
+- [x] Confirm the rebuilt scene still holds the 158,220-vertex
       `Paddle Stir Pool Seed` and still reports
       `saved live-playback-ready frame 1 with 158,220 particles`.
-- [ ] Run `python tools/analyze_demos.py paddle_stir` and record
+- [x] Run `python tools/analyze_demos.py paddle_stir` and record
       `DEMO-ANALYSIS-PASS (10/10)`.
-- [ ] Run `python tools/run_production_gate.py --include-gui` and record
+- [x] Run `python tools/run_production_gate.py --include-gui` and record
       `FULL-PRODUCTION-GATE-PASS`, then re-run
       `python tools/validate_policy_drift_reports.py`.
-- [ ] Decide whether the builder should assert compression on save so the
+- [x] Decide whether the builder should assert compression on save so the
       divergence cannot silently recur, and note the decision here.
+
+## Resolution (2026-09-24, RTX 4080 SUPER, Blender 5.1.0)
+
+Rebuilt with
+`blender --background --factory-startup --python tools/build_demo_scenes.py -- paddle_stir`
+and no `FLUIDSIM_PADDLE_*` variables set:
+
+- `demos/paddle_stir.blend`: 5,731,753 -> 206,335 bytes, header `28 b5 2f fd`.
+  All four demo blends now carry the Zstandard magic.
+- Builder log: `paddle_stir: saved live-playback-ready frame 1 with 158,220 particles`.
+- `demos/paddle_stir/meta.json` is byte-identical to the committed file; the
+  preview PNG re-rendered (156,113 -> 156,004 bytes).
+- `python tools/analyze_demos.py paddle_stir` -> `DEMO-ANALYSIS-PASS (10/10)`
+  with spin-up ratio 0.9437 and steady circulation 0.17241, the same values
+  the `b5e0050` recheck measured (see TASK-POLICY-DRIFT-016).
+- `tools/check_demo_blends.py` -> `DEMO-BLEND-CHECK-PASS`.
+- `python tools/run_production_gate.py --include-gui` ->
+  `FULL-PRODUCTION-GATE-PASS` (GUI 53/53, `DEMO-ANALYSIS-PASS (18/18)`,
+  demo artifact sha256 `a32872b8...250926`, unchanged from the previous gate).
+
+Decision: the guard lives in the checker, not the builder. The builder
+already saves compressed; the drift came from a hand save outside it, which
+a builder assertion would never see. `tools/check_demo_blends.py` now fails
+any demo blend without the Zstandard magic (`saved_compressed`), and the
+production gate runs that checker on every demo.
 
 ## Blocked by
 

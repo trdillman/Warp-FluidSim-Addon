@@ -158,3 +158,23 @@ was rebound to the crown phase only (see `tools/analyze_demos.py`).
 `base_r1..r5` - the shipped settings - score **10/10** on the full analyzer.
 Regression coverage for the accept and reject sides is in
 `tests/test_demo_analysis_contract.py`.
+
+## Recheck on master `b5e0050` (2026-09-24)
+
+After the determinism (`d2a6b6d`) and launch-overhead (`1a31f15`) solver
+changes, nine cases were re-baked (RTX 4080 SUPER, Blender 5.1) and replayed
+through the shipped analyzer the same way. Both constants hold unchanged:
+
+| label | R | Lhat | decay | verdict |
+|---|---:|---:|---:|---|
+| base_r1 / r2 / r3 | 0.9437 | 0.17241 | 0.7721 | accepted (10/10), bitwise identical repeats |
+| rpm_25 | 0.9263 | 0.11346 | 0.8259 | accepted |
+| voxel_fine | 0.6294 | 0.01563 | 0.5919 | accepted (worst supported case) |
+| seed_sparse | 0.6134 | 0.01039 | 0.4645 | out of envelope, accepted |
+| degraded_rpm0 | -0.0608 | 0.00000 | 1.2938 | rejected |
+| degraded_rpm05 | 11.1051 | -0.00074 | 24.3107 | rejected (circulation floor) |
+| degraded_rpm2 | 0.8115 | 0.02372 | 1.1701 | rejected (`decays`) |
+
+`CALIBRATION-VERIFY-PASS`. The worst supported R is now 0.629 (was 0.620), so
+0.30 stays at roughly half of it, and run-to-run spread at the shipped
+settings is now exactly zero.

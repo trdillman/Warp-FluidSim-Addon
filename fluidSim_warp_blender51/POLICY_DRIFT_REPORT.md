@@ -135,6 +135,11 @@ artifact — that still needs GPU/Blender hardware — but the row can no
 longer be misread as current proof. This satisfies acceptance criterion 3 of
 the card.
 
+**Rerun on GPU hardware, 2026-09-24.** The installed no-CUDA proof was rerun
+against a fresh 1.0.255 Windows build of master `b5e0050` with
+`CUDA_VISIBLE_DEVICES=-1`: exit `12`, atomic report, 0 frames committed,
+clean removal. The technical report row now records this as current proof.
+
 ## Relationship to the root-unit finding
 
 PD-PKG-001 and root-unit `PD-ROOT-001` described the same divergence: the same

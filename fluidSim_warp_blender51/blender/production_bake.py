@@ -721,5 +721,8 @@ class SignalCancellation:
 
     def __exit__(self, _exc_type, _exc, _tb):
         for signum, handler in self.previous.items():
-            signal.signal(signum, handler)
+            # getsignal() returns None when the previous handler was installed
+            # outside Python (Blender does this); it cannot be reinstalled, and
+            # passing None raises TypeError, so fall back to the default.
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
         return False

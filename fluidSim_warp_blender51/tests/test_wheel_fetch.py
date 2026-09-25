@@ -13,6 +13,7 @@ TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
 SHA256 = "78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b"
 SIZE = 163074461
+WINDOWS_WHEEL = "warp_lang-1.16.0+cu12-py3-none-win_amd64.whl"
 
 
 def test_lock_pins_exact_external_warp_validation_wheel():
@@ -21,7 +22,7 @@ def test_lock_pins_exact_external_warp_validation_wheel():
     assert "wheels" not in manifest or manifest["wheels"] == []
     assert lock["warp_version"] == "1.16.0"
     assert lock["distribution_version"] == "1.16.0+cu12"
-    assert set(lock["files"]) == {WHEEL}
+    assert set(lock["files"]) == {WHEEL, WINDOWS_WHEEL}
     assert lock["files"][WHEEL] == {
         "platform": "linux-x64",
         "sha256": SHA256,
@@ -108,3 +109,32 @@ def test_fetch_wheels_fails_closed_without_existing_or_declared_source(tmp_path)
             lock_path=lock_path,
             wheel_dir=tmp_path / "wheels",
         )
+
+
+def test_fetch_wheels_platform_filter_skips_other_platform_entries(tmp_path):
+    payload = b"linux payload"
+    lock_path = _write_lock(tmp_path, "linux.whl", payload)
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["files"]["windows.whl"] = {
+        "sha256": hashlib.sha256(b"windows payload").hexdigest(),
+        "size": len(b"windows payload"),
+        "source": "local-certified-binary",
+        "platform": "windows-x64",
+    }
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    source = tmp_path / "incoming"
+    source.mkdir()
+    (source / "linux.whl").write_bytes(payload)
+
+    written = fetch_warp_wheels.fetch_wheels(
+        lock_path=lock_path, wheel_dir=tmp_path / "wheels", source=source,
+        platform="linux-x64")
+    assert written == [tmp_path / "wheels" / "linux.whl"]
+
+    with pytest.raises(RuntimeError, match="no verified source"):
+        fetch_warp_wheels.fetch_wheels(
+            lock_path=lock_path, wheel_dir=tmp_path / "wheels", source=source,
+            offline=True)
+    with pytest.raises(RuntimeError, match="no entry for platform"):
+        fetch_warp_wheels.fetch_wheels(
+            lock_path=lock_path, wheel_dir=tmp_path / "wheels", platform="macos-arm64")

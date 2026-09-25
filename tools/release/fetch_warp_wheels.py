@@ -6,7 +6,9 @@ import argparse
 import hashlib
 import json
 import os
+import platform as _platform
 import shutil
+import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from urllib.request import urlopen
@@ -124,10 +126,15 @@ def fetch_wheels(
     source_dirs: Iterable[Path] = (),
     opener: Callable = urlopen,
     offline: bool = False,
+    platform: str | None = None,
 ) -> list[Path]:
     """Verify existing payloads, copy certified local payloads, or use locked HTTPS URLs."""
     lock = json.loads(Path(lock_path).read_text(encoding="utf-8"))
     files = _locked_files(lock)
+    if platform is not None:
+        files = {name: meta for name, meta in files.items() if meta.get("platform") == platform}
+        if not files:
+            raise RuntimeError(f"wheel lock has no entry for platform {platform!r}")
     wheel_dir = Path(wheel_dir)
     wheel_dir.mkdir(parents=True, exist_ok=True)
     supplied = ([source] if source is not None else []) + list(source_dirs)
@@ -185,6 +192,13 @@ def _environment_sources() -> list[Path]:
     return [Path(item) for item in value.split(os.pathsep) if item]
 
 
+def host_platform() -> str | None:
+    machine = _platform.machine().lower()
+    if machine not in ("amd64", "x86_64"):
+        return None
+    return {"win32": "windows-x64", "linux": "linux-x64"}.get(sys.platform)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, default=LOCK_PATH)
@@ -199,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Certified wheel file or directory; may be repeated",
     )
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument(
+        "--platform",
+        default=host_platform(),
+        help="Locked platform to verify (default: this host); 'all' verifies every entry",
+    )
     args = parser.parse_args(argv)
     sources = [*args.sources, *_environment_sources()]
     for path in fetch_wheels(
@@ -206,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         wheel_dir=args.wheel_dir,
         source_dirs=sources,
         offline=args.offline,
+        platform=None if args.platform in (None, "all") else args.platform,
     ):
         print(path)
     return 0

@@ -74,6 +74,29 @@ DEMO-ANALYSIS-PASS (10/10)
 Bakes, harness and raw results are archived under
 `artifacts/paddle_calibration/` (gitignored).
 
+## Recheck on master `b5e0050` (2026-09-24)
+
+The solver changed after calibration (bitwise determinism in `d2a6b6d`,
+launch-overhead cut in `1a31f15`), so nine of the 21 cases were re-baked on a
+GPU machine (RTX 4080 SUPER, Blender 5.1) and replayed through the shipped
+`analyze_paddle_stir`. The constants did not need to change.
+
+| label | R | Lhat | verdict |
+|---|---:|---:|---|
+| base_r1, r2, r3 | 0.9437 (all three bitwise identical) | 0.1724 | accepted, 10/10 |
+| rpm_25 | 0.9263 | 0.1135 | accepted |
+| voxel_fine (worst supported) | 0.6294 | 0.0156 | accepted |
+| seed_sparse (out of envelope) | 0.6134 | 0.0104 | accepted |
+| degraded_rpm0 | -0.0608 | 0.0000 | rejected |
+| degraded_rpm05 | 11.1051 | -0.0007 | rejected by the circulation floor |
+| degraded_rpm2 | 0.8115 | 0.0237 | rejected by `decays` |
+
+Result `CALIBRATION-VERIFY-PASS`. The worst supported R moved from 0.620 to
+0.629, so 0.30 is still about half of it, and the repeat spread is now zero
+rather than 7e-4. `degraded_rpm05` again shows why the margin alone is not
+enough (R 11.1 would pass it); the floor still catches it. Raw results are in
+`artifacts/paddle_calibration/recheck_b5e0050.*` (gitignored).
+
 **Incidental finding, not addressed here:** rebuilding `paddle_stir` from
 `tools/build_demo_scenes.py` produces a 280 KB `.blend` where the checked-in
 one is 5.7 MB. The rebuilt scene analyses 10/10, but the shipped artifact is
