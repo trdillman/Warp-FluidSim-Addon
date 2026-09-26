@@ -40,8 +40,7 @@ python tools/run_production_gate.py
 python tools/run_production_gate.py --include-gui
 ```
 
-Use the focused commands in `AGENTS.md` for the subsystem being changed. After a GUI-inclusive pass and report refresh, run `python tools/validate_policy_drift_reports.py`.
-
+Use the focused commands in `AGENTS.md` for the subsystem being changed.
 ## Artist workflow
 
 For everyday work, choose **Set Up & Preview** for a selected mesh or use the
