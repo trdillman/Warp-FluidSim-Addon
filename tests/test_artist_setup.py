@@ -52,7 +52,7 @@ def _load_source_roles(monkeypatch):
     for name in (
         "_bridge", "_configured_device", "_mutation_poll", "_owned_capacity_plan",
         "_owned_capacity_signature", "_pending", "_resolved_cache_path",
-        "_runtime_poll", "_scene_identity_token", "_snippets", "_solver_settings",
+        "_runtime_poll", "_scene_identity_token", "_solver_settings",
     ):
         setattr(common, name, lambda *args, **kwargs: None)
 

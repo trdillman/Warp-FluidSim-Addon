@@ -50,10 +50,6 @@ def _scene_identity_token(scene):
     return _runtime._scene_identity_token(scene)
 
 
-def _snippets():
-    return _runtime._snippets()
-
-
 def _solver_settings():
     return _runtime._solver_settings()
 

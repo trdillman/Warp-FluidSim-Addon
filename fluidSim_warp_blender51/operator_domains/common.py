@@ -22,12 +22,6 @@ def _pending():
     return pending_settings
 
 
-def _snippets():
-    from ..blender import snippets
-
-    return snippets
-
-
 def _solver_settings():
     from ..blender import solver_settings
 

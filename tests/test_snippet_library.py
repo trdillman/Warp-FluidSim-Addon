@@ -1,7 +1,7 @@
 """Unit tests for the snippet library: presets, validation, auto-fix,
 shortcuts, and user-preset persistence.
 
-Bpy-free lifecycle tests plus runtime compilation and launch checks.
+Bpy-free lifecycle tests plus a Custom Effects compile check for every preset.
 """
 
 import os
@@ -302,120 +302,12 @@ def test_frame_window_gating():
     assert open_ended.active_on_frame(100000)
 
 
-def test_snippet_manager_rejects_invalid_before_compile():
+def test_all_presets_compile_as_custom_effects():
     pytest.importorskip("warp")
     from fluidSim_warp_blender51.sim.custom import (
-        CustomArgument, CustomSnippet, SnippetManager,
+        CustomArgument, CustomSnippet, legacy_snippet_to_effect,
     )
-    from fluidSim_warp_blender51.sim.enums import (
-        CustomKernelArgumentMode, CustomKernelOrder, CustomKernelRunOver,
-    )
-
-    manager = SnippetManager()
-    bad = CustomSnippet(
-        kernel_name="bad_import", code="import os",
-        order=CustomKernelOrder.FINAL_STEP,
-        run_over=CustomKernelRunOver.PARTICLES)
-    issues = lib.validate_snippet(
-        bad.code, bad.run_over.name, bad.argument_names())
-    assert any(issue.level == "ERROR" for issue in issues)
-    good = CustomSnippet(
-        kernel_name="good_damp",
-        code="particle_velocity[particle_index] = velocity * 0.5",
-        order=CustomKernelOrder.FINAL_STEP,
-        run_over=CustomKernelRunOver.PARTICLES,
-        arguments=[CustomArgument(
-            mode=CustomKernelArgumentMode.FIELD, field="particle_velocity")])
-    manager.set_snippets([bad, good])
-    assert any(name == "bad_import" for name, _ in manager.errors)
-    assert manager.has_any()
-
-
-def _fake_solver_for_snippet_launch():
-    particles = SimpleNamespace(
-        capacity=1000,
-        position=object(),
-        velocity=object(),
-        alive=object(),
-        count=object(),
-    )
-    grid = SimpleNamespace(
-        voxel_capacity=2000,
-        voxel_size=0.1,
-        leaf_coords=object(),
-        num_leaves=object(),
-        origin=(0.0, 0.0, 0.0),
-    )
-    return SimpleNamespace(
-        particles=particles,
-        grid=grid,
-        voxel_type=SimpleNamespace(data=object()),
-        device="cuda:0",
-        _nvox=23,
-        _np_dim=lambda: 17,
-    )
-
-
-def _compiled_launch_probe(run_over):
-    pytest.importorskip("warp")
-    from fluidSim_warp_blender51.sim.custom import (
-        CompiledSnippet, CustomSnippet,
-    )
-    from fluidSim_warp_blender51.sim.enums import CustomKernelRunOver
-
-    compiled = object.__new__(CompiledSnippet)
-    compiled.kernel = object()
-    compiled.error = None
-    compiled._binders = []
-    compiled.snippet = CustomSnippet(run_over=CustomKernelRunOver[run_over])
-    return compiled
-
-
-def test_particle_snippet_launch_uses_active_particle_dimension(monkeypatch):
-    warp = pytest.importorskip("warp")
-
-    seen = {}
-
-    def fake_launch(_kernel, *, dim, inputs, device):
-        seen["dim"] = dim
-        seen["device"] = device
-
-    monkeypatch.setattr(warp, "launch", fake_launch)
-    compiled = _compiled_launch_probe("PARTICLES")
-    compiled.launch(
-        _fake_solver_for_snippet_launch(),
-        {"frame": 1, "time": 0.0, "real_time_step": 1 / 24,
-         "solver_time_step": 1 / 24, "time_scale": 1.0, "substeps": 1},
-    )
-
-    assert seen == {"dim": 17, "device": "cuda:0"}
-
-
-def test_voxel_snippet_launch_uses_active_voxel_dimension(monkeypatch):
-    warp = pytest.importorskip("warp")
-
-    seen = {}
-
-    def fake_launch(_kernel, *, dim, inputs, device):
-        seen["dim"] = dim
-        seen["device"] = device
-
-    monkeypatch.setattr(warp, "launch", fake_launch)
-    compiled = _compiled_launch_probe("VOXEL_LINEAR")
-    compiled.launch(
-        _fake_solver_for_snippet_launch(),
-        {"frame": 1, "time": 0.0, "real_time_step": 1 / 24,
-         "solver_time_step": 1 / 24, "time_scale": 1.0, "substeps": 1},
-    )
-
-    assert seen == {"dim": 23, "device": "cuda:0"}
-
-
-def test_all_presets_compile_with_warp():
-    pytest.importorskip("warp")
-    from fluidSim_warp_blender51.sim.custom import (
-        CompiledSnippet, CustomArgument, CustomSnippet,
-    )
+    from fluidSim_warp_blender51.sim.effects.compiler import compile_effect
     from fluidSim_warp_blender51.sim.enums import (
         CustomKernelArgumentMode, CustomKernelConstantType,
         CustomKernelOrder, CustomKernelRunOver,
@@ -442,9 +334,10 @@ def test_all_presets_compile_with_warp():
             order=CustomKernelOrder[preset.order],
             run_over=CustomKernelRunOver[preset.run_over],
             arguments=args)
-        compiled = CompiledSnippet(sn)
-        assert compiled.error is None, (
-            f"{preset.preset_id}: {compiled.error}")
+        instance, _warnings = legacy_snippet_to_effect(sn)
+        compiled = compile_effect(instance, device="cpu")
+        assert compiled.success, (
+            f"{preset.preset_id}: {[str(i) for i in compiled.issues]}")
 
 
 def test_field_permission_enforces_direct_read_write_effects():
@@ -539,40 +432,15 @@ def test_legacy_preset_and_runtime_objects_default_to_read_write_kernel():
     assert data["arguments"][0]["field_permission"] == "READ_WRITE"
 
 
-def test_function_snippet_is_rejected_before_compile_and_dispatch(monkeypatch):
-    from fluidSim_warp_blender51.blender import snippets
+def test_function_snippet_is_rejected_by_effect_conversion():
     from fluidSim_warp_blender51.sim.enums import CustomKernelType
 
-    pg = SimpleNamespace(
-        enabled=True, kernel_name="helper", snippet_type="FUNCTION",
-        order="FINAL_STEP", run_over="PARTICLES",
-        text_block=SimpleNamespace(as_string=lambda: "x = velocity[0]"),
-        arguments=[], frame_start=0, frame_end=0, frame_step=1,
-        is_valid=True, validated_hash="", validation_report="", last_error="")
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(snippets=[pg]))
-
-    assert snippets.build_snippets(scene) == []
-    assert not pg.is_valid
-    assert "FUNCTION" in pg.last_error
-    assert "unsupported" in pg.last_error.lower()
-
-    compiled = []
-    monkeypatch.setattr(
-        lib, "CompiledSnippet",
-        lambda snippet: compiled.append(snippet) or pytest.fail(
-            "FUNCTION reached code generation"))
-    manager = lib.SnippetManager()
-    manager.set_snippets([
-        lib.CustomSnippet(
-            kernel_name="helper", snippet_type=CustomKernelType.FUNCTION,
-            code="x = velocity[0]",
-        )
-    ])
-    assert compiled == []
-    assert not manager.has_any()
-    assert manager.errors == [
-        ("helper", "FUNCTION snippets are unsupported; helper linkage is undefined")
-    ]
+    snippet = lib.CustomSnippet(
+        kernel_name="helper", snippet_type=CustomKernelType.FUNCTION,
+        code="x = velocity[0]",
+    )
+    with pytest.raises(ValueError, match="FUNCTION snippets are unsupported"):
+        lib.legacy_snippet_to_effect(snippet)
 
 
 def test_legacy_effect_conversion_preserves_field_permission():
