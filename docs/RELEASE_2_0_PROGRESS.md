@@ -60,6 +60,11 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | `k_ww_compact_scatter` unwritten `out_count` (REVIEW-036 closed) | done (`2a6eec0`) | `tests/test_whitewater_kernel_outputs.py`; gate demo hash unchanged |
 | Gate truthfulness tests missed the `0e01cdf` certified-Warp stub | fixed (`55a4c6b`) | root 1191 passed |
 | `write_sequence_metadata` | moved to the cache-v1 removal: `fluidsim_sequence.json` is the v1 sidecar that `read_sequence_metadata` still falls back to | `io/cache.py:521` |
+| Dead snippet library UI (6 scene fields, enum builders, `user_snippet_dir`); `sim/custom.py` cut to the migration records + `legacy_snippet_to_effect` | done (`de038e7`, −1448 lines) | ownership map 233 → 227 fields; Blender 5.2 background acceptance pass |
+| D6: ST-FLIP labelled Experimental; Variable Projection default off (property + `SolverSettings`) | done (`3ba90d5`) | `tests/test_stflip_experimental_defaults.py`; no demo enables ST-FLIP |
+| Version 2.0.0 (manifest, `version.py`, docs); 2.0.0 CHANGELOG section opened | done (`3ba90d5`); `BUILD_CHANNEL` stays `beta` until owner review | `test_release_identity.py` |
+| `setting_owner`/`_authoring_owner` divergence | already resolved by the split (`b6fe26c`): both route through `_scene_owned`; no change needed | `blender/pending_settings.py:259-286, 402-415` |
+| 139 defaulted settings `getattr`s | kept (minimal test doubles depend on them); guarded instead: every one must name a declared field, so a removed/renamed field fails the suite rather than silently defaulting. Owner-review note: this deviates from the plan's "remove" | `tests/test_settings_getattr_names.py` (mutation-checked) |
 
 Phases 3–4: not started.
 
@@ -72,4 +77,4 @@ Phases 3–4: not started.
 
 ## Next action
 
-Phase 2: delete the dead legacy snippet UI fields and library helpers (keep `snippets`, both snippet PropertyGroups and the migration reader), regenerate `docs/ownership-map.md`; then D6 and the can-only-fail UI.
+Phase 2: can-only-fail UI (height-field `INFINITE`, FIELD source mode, compiled FORCE plans); then the `setting_owner`/`_authoring_owner` merge, then the D5 saved-file compatibility removals.
