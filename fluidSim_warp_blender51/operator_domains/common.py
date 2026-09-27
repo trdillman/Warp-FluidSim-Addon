@@ -41,7 +41,7 @@ def _configured_device():
 
 
 def _runtime_poll(cls) -> bool:
-    """Block GPU actions until external Warp and the selected CUDA GPU are ready."""
+    """Block GPU actions until Warp and the selected CUDA GPU are ready."""
     from ..runtime.warp_runtime import runtime_status_for_device
 
     ready, message = runtime_status_for_device(_configured_device())

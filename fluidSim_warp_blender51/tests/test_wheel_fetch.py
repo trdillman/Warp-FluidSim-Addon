@@ -10,25 +10,27 @@ from tools.release import fetch_warp_wheels
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_RELEASE = ROOT.parent / "tools" / "release"
-WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
-SHA256 = "78a726fbea71c8ff70642ae7a0a44c31d61518500a023e0cb7918df7fbe78e6b"
-SIZE = 163074461
-WINDOWS_WHEEL = "warp_lang-1.16.0+cu12-py3-none-win_amd64.whl"
+WHEEL = "warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl"
+SHA256 = "47cd93636828dd16e55eeb4e77a0e3547b5fb0f383000a3d228629df68f28fd8"
+SIZE = 164347636
+WINDOWS_WHEEL = "warp_lang-1.17.0-py3-none-win_amd64.whl"
 
 
-def test_lock_pins_exact_external_warp_validation_wheel():
+def test_lock_pins_exact_bundled_warp_wheels():
     manifest = tomllib.loads((ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
     lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
-    assert "wheels" not in manifest or manifest["wheels"] == []
-    assert lock["warp_version"] == "1.16.0"
-    assert lock["distribution_version"] == "1.16.0+cu12"
+    assert sorted(manifest["wheels"]) == [f"./wheels/{WHEEL}", f"./wheels/{WINDOWS_WHEEL}"]
+    assert lock["warp_version"] == "1.17.0"
+    assert lock["distribution_version"] == "1.17.0+cu12"
     assert set(lock["files"]) == {WHEEL, WINDOWS_WHEEL}
-    assert lock["files"][WHEEL] == {
-        "platform": "linux-x64",
-        "sha256": SHA256,
-        "size": SIZE,
-        "source": "local-certified-binary",
-    }
+    assert lock["files"][WHEEL]["platform"] == "linux-x64"
+    assert lock["files"][WHEEL]["sha256"] == SHA256
+    assert lock["files"][WHEEL]["size"] == SIZE
+    assert lock["files"][WHEEL]["source"] == "pypi"
+
+
+def test_default_fetch_target_is_the_bundled_wheels_directory():
+    assert fetch_warp_wheels.WHEEL_DIR == ROOT / "wheels"
 
 
 def _write_lock(path: pathlib.Path, filename: str, payload: bytes) -> pathlib.Path:

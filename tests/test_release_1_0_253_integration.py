@@ -25,15 +25,15 @@ def _assigned(path: Path, name: str):
     raise AssertionError(f"{name} is not assigned in {path}")
 
 
-def test_release_identity_targets_blender_51_without_bundled_runtimes():
+def test_release_identity_targets_blender_52_with_only_locked_warp_wheels():
     manifest = tomllib.loads(
         (ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
 
     assert manifest["id"] == "fluidsim_warp"
     assert manifest["version"] == "1.1.0"
-    assert manifest["blender_version_min"] == "5.1.0"
+    assert manifest["blender_version_min"] == "5.2.0"
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
-    assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 1, 0)
+    assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 2, 0)
     assert _assigned(ROOT / "version.py", "SUPPORTED_PLATFORMS") == (
         "windows-x64",
         "linux-x64",
@@ -42,8 +42,13 @@ def test_release_identity_targets_blender_51_without_bundled_runtimes():
         "windows-x64",
         "linux-x64",
     )
-    for forbidden in ("wheels", "runtimes", "vendor", "python"):
+    for forbidden in ("runtimes", "vendor", "python"):
         assert not (ROOT / forbidden).exists()
+    # wheels/ holds only the fetched, checksum-locked Warp wheels (git-ignored).
+    locked = set(json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(
+        encoding="utf-8"))["files"])
+    fetched = {path.name for path in (ROOT / "wheels").glob("*")}
+    assert fetched <= locked
 
 
 def test_viewport_panel_remains_a_compact_properties_launcher():

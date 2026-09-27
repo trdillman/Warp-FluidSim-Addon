@@ -25,9 +25,10 @@ ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 REQUIRED_EXTENSION_ID = "fluidsim_warp"
 REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
 REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
-REQUIRED_WARP_VERSION = "1.16.0"
-REQUIRED_WARP_DISTRIBUTION = "1.16.0+cu12"
-REQUIRED_BLENDER_MIN = "5.1.0"
+REQUIRED_WARP_VERSION = "1.17.0"
+REQUIRED_WARP_DISTRIBUTION = "1.17.0+cu12"
+REQUIRED_BLENDER_MIN = "5.2.0"
+BUNDLED_WHEEL_DIR = "wheels"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
 RELEASE_ONLY_PATHS = {
@@ -57,12 +58,20 @@ def _looks_like_blender_file(payload: bytes) -> bool:
 
 @dataclass(frozen=True)
 class SourceVerification:
-    """Result of verifying release metadata and external runtime locks."""
+    """Result of verifying release metadata and bundled runtime locks."""
 
     extension_id: str
     version: str
     platforms: tuple[str, ...]
-    external_runtime_wheels: tuple[str, ...]
+    bundled_warp_wheels: tuple[str, ...]
+    wheel_platforms: tuple[tuple[str, str], ...] = ()
+    wheel_sha256: tuple[tuple[str, str], ...] = ()
+
+    def wheel_for_platform(self, platform: str) -> str:
+        matches = [name for name, owner in self.wheel_platforms if owner == platform]
+        if len(matches) != 1:
+            raise RuntimeError(f"expected one locked Warp wheel for {platform}, found {matches}")
+        return matches[0]
 
     @property
     def release_ready(self) -> bool:
@@ -226,7 +235,7 @@ def _locked_files(lock: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def verify_source_tree(root: Path) -> SourceVerification:
-    """Validate release identity and external-only Warp runtime metadata."""
+    """Validate release identity and the bundled, hash-locked Warp wheels."""
     root = Path(root).resolve()
     required = (
         "__init__.py",
@@ -272,6 +281,13 @@ def verify_source_tree(root: Path) -> SourceVerification:
         raise RuntimeError(f"Warp version lock must be {REQUIRED_WARP_VERSION}")
     if lock.get("distribution_version") != REQUIRED_WARP_DISTRIBUTION:
         raise RuntimeError(f"Warp distribution lock must be {REQUIRED_WARP_DISTRIBUTION}")
+    if _assigned_literal(root / "version.py", "CERTIFIED_WARP_VERSION") != REQUIRED_WARP_VERSION:
+        raise RuntimeError("version.py CERTIFIED_WARP_VERSION does not match the Warp lock")
+    if (
+        _assigned_literal(root / "version.py", "CERTIFIED_WARP_DISTRIBUTION")
+        != REQUIRED_WARP_DISTRIBUTION
+    ):
+        raise RuntimeError("version.py CERTIFIED_WARP_DISTRIBUTION does not match the Warp lock")
 
     version = _assigned_literal(root / "version.py", "VERSION")
     extension_id = _assigned_literal(root / "version.py", "EXTENSION_ID")
@@ -298,8 +314,12 @@ def verify_source_tree(root: Path) -> SourceVerification:
         raise RuntimeError("locked wheel platforms must be a supported platform subset")
 
     manifest_wheels = manifest.get("wheels")
-    if manifest_wheels not in (None, []):
-        raise RuntimeError("FluidSim deliverables must not declare bundled wheels")
+    expected_wheels = sorted(f"./{BUNDLED_WHEEL_DIR}/{name}" for name in files)
+    if not isinstance(manifest_wheels, list) or sorted(manifest_wheels) != expected_wheels:
+        raise RuntimeError(
+            f"manifest wheels must be exactly the locked Warp wheels {expected_wheels}, "
+            f"got {manifest_wheels!r}"
+        )
     if "generated" in manifest.get("build", {}):
         raise RuntimeError("tracked source manifest must not contain generated metadata")
 
@@ -335,14 +355,17 @@ def verify_source_tree(root: Path) -> SourceVerification:
 
     forbidden_source_wheels = []
     ignored_roots = {".git", "build", "dist", "artifacts"}
+    allowed_wheels = {f"{BUNDLED_WHEEL_DIR}/{name}" for name in files}
     for path in root.rglob("*.whl"):
         rel = path.relative_to(root)
         if rel.parts and rel.parts[0] in ignored_roots:
             continue
+        if rel.as_posix() in allowed_wheels:
+            continue
         forbidden_source_wheels.append(str(rel))
     if forbidden_source_wheels:
         raise RuntimeError(
-            "runtime binary payloads must not be stored in the deliverable source tree: "
+            "only the locked Warp wheels may be stored in the deliverable source tree: "
             f"{sorted(forbidden_source_wheels)}"
         )
 
@@ -369,7 +392,13 @@ def verify_source_tree(root: Path) -> SourceVerification:
         extension_id=str(extension_id),
         version=version_string,
         platforms=platforms,
-        external_runtime_wheels=tuple(sorted(files)),
+        bundled_warp_wheels=tuple(sorted(files)),
+        wheel_platforms=tuple(
+            (name, str(files[name].get("platform", ""))) for name in sorted(files)
+        ),
+        wheel_sha256=tuple(
+            (name, str(files[name].get("sha256", ""))) for name in sorted(files)
+        ),
     )
 
 def _archive_relative_names(archive: zipfile.ZipFile) -> dict[str, str]:
@@ -422,9 +451,13 @@ def _is_forbidden_runtime_payload(relative: str) -> bool:
     return filename == "blender" and (not lower_parts or lower_parts[0] != "blender")
 
 
-def _validate_archive_members(names: Mapping[str, str]) -> None:
+def _validate_archive_members(
+    names: Mapping[str, str], allowed_payloads: frozenset[str] = frozenset()
+) -> None:
     for relative in names:
         path = PurePosixPath(relative)
+        if relative in allowed_payloads:
+            continue
         if _is_forbidden_runtime_payload(relative):
             raise RuntimeError(f"forbidden bundled runtime payload: {relative}")
         if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
@@ -530,22 +563,31 @@ def _validate_embedded_manifest_and_payload(
             f"embedded source platform mismatch: expected {list(source.platforms)}, "
             f"got {embedded.get('platforms')}"
         )
-    if embedded.get("wheels") not in (None, []):
-        raise RuntimeError(f"embedded manifest declares bundled wheels: {package.name}")
+    expected_wheels = sorted(
+        f"./{BUNDLED_WHEEL_DIR}/{name}" for name in source.bundled_warp_wheels
+    )
+    if sorted(embedded.get("wheels") or []) != expected_wheels:
+        raise RuntimeError(f"embedded manifest wheels mismatch: {package.name}")
     generated = embedded.get("build", {}).get("generated", {})
     if generated.get("platforms") != [platform]:
         raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
-    if generated.get("wheels", []) != []:
-        raise RuntimeError(f"generated package declares bundled wheels: {package.name}")
+    platform_wheel = f"./{BUNDLED_WHEEL_DIR}/{source.wheel_for_platform(platform)}"
+    if generated.get("wheels", []) != [platform_wheel]:
+        raise RuntimeError(
+            f"generated wheels must be [{platform_wheel!r}]: {package.name}"
+        )
 
     normalized_manifest = dict(embedded)
     normalized_build = dict(normalized_manifest.get("build", {}))
     normalized_build.pop("generated", None)
     normalized_manifest["build"] = normalized_build
+    # Each split package carries only its own platform's Warp wheel; compare the
+    # rest of the payload across platforms.
     payloads = {
         relative: _sha256_bytes(archive.read(archive_name))
         for relative, archive_name in names.items()
         if relative != "blender_manifest.toml"
+        and PurePosixPath(relative).parts[0] != BUNDLED_WHEEL_DIR
     }
     if reference_payloads is None:
         return payloads, normalized_manifest
@@ -556,8 +598,32 @@ def _validate_embedded_manifest_and_payload(
     return payloads, normalized_manifest
 
 
+def _validate_bundled_wheel(
+    package: Path,
+    platform: str,
+    archive: zipfile.ZipFile,
+    names: Mapping[str, str],
+    source: SourceVerification,
+) -> str:
+    """Require exactly the platform's locked Warp wheel, byte-identical to the lock."""
+    wheel_name = source.wheel_for_platform(platform)
+    relative = f"{BUNDLED_WHEEL_DIR}/{wheel_name}"
+    bundled = sorted(
+        name for name in names
+        if PurePosixPath(name).parts[0] == BUNDLED_WHEEL_DIR
+    )
+    if bundled != [relative]:
+        raise RuntimeError(
+            f"package {package.name} must bundle exactly {relative}, found {bundled}"
+        )
+    expected_sha = dict(source.wheel_sha256)[wheel_name]
+    if _sha256_bytes(archive.read(names[relative])) != expected_sha:
+        raise RuntimeError(f"bundled Warp wheel checksum mismatch in {package.name}")
+    return relative
+
+
 def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecord]:
-    """Inspect split archives and reject Blender/Warp binary payloads."""
+    """Inspect split archives: exactly one locked Warp wheel, no other binaries."""
     root = Path(root).resolve()
     source = verify_source_tree(root)
     collision_guard = _collision_guard(root)
@@ -583,7 +649,8 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
         platform = _platform_from_package_name(package, source.extension_id, source.version)
         with zipfile.ZipFile(package) as archive:
             names = _archive_relative_names(archive)
-            _validate_archive_members(names)
+            wheel = _validate_bundled_wheel(package, platform, archive, names, source)
+            _validate_archive_members(names, frozenset({wheel}))
             _validate_required_package_content(package, archive, names, collision_guard)
             reference_payloads, reference_manifest = _validate_embedded_manifest_and_payload(
                 package,
@@ -599,7 +666,7 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
             ArtifactRecord(
                 path=package,
                 platform=platform,
-                runtime_dependency="external",
+                runtime_dependency="bundled",
                 size=package.stat().st_size,
                 sha256=_sha256_path(package),
             )
@@ -652,6 +719,19 @@ def _write_checksums(output: Path, records: Sequence[ArtifactRecord]) -> Path:
     return path
 
 
+def _fetch_locked_wheels(root: Path) -> None:
+    """Place every locked Warp wheel in the add-on's wheels/ directory."""
+    sys.path.insert(0, str(_tool_root_for(root)))
+    try:
+        from fetch_warp_wheels import fetch_wheels
+    finally:
+        sys.path.pop(0)
+    fetch_wheels(
+        lock_path=_tool_root_for(root) / "wheels.lock.json",
+        wheel_dir=root / BUNDLED_WHEEL_DIR,
+    )
+
+
 def build(
     root: Path,
     blender: Path,
@@ -660,11 +740,14 @@ def build(
     runner: Runner = _run,
     run_python_checks: bool = True,
     run_lint: bool = True,
+    fetcher: Callable[[Path], object] | None = None,
 ) -> list[Path]:
-    """Run static gates, Blender validation, split build, and archive inspection."""
+    """Fetch the locked wheels, then run static gates, Blender validation,
+    split build, and archive inspection."""
     root = Path(root).resolve()
     blender = Path(blender)
     output = Path(output).resolve()
+    (fetcher or _fetch_locked_wheels)(root)
     source = verify_source_tree(root)
     output.mkdir(parents=True, exist_ok=True)
     for path in output.glob(f"{source.extension_id}-{source.version}-*.zip"):
@@ -802,7 +885,6 @@ def run_installed_script(
                 str(blender),
                 "--background",
                 "--offline-mode",
-                "--python-use-system-env",
                 "--python-exit-code",
                 "1",
                 "--python",

@@ -2,8 +2,8 @@
 
 Release metadata is owned by ``blender_manifest.toml`` and runtime identity by
 ``version.py``. Import-time registration neither probes nor installs runtime
-dependencies. The certified external Warp runtime is validated lazily through
-``runtime/warp_runtime.py``.
+dependencies: Blender installs the bundled, hash-locked NVIDIA Warp wheel with
+the extension, and ``runtime/warp_runtime.py`` validates it lazily.
 """
 
 

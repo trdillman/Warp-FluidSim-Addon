@@ -1,4 +1,4 @@
-"""Add-on preferences: external Warp runtime and CUDA device selection."""
+"""Add-on preferences: bundled Warp runtime and CUDA device selection."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def _refresh_runtime(prefs):
 
 
 class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
-    """Refresh external Warp import state and the CUDA device list."""
+    """Refresh Warp import state and the CUDA device list."""
 
     bl_idname = "fluidsim.refresh_runtime_probe"
     bl_label = "Refresh Runtime Detection"
@@ -161,7 +161,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
         if probe.module_file:
             box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
-        box.label(text="FluidSim uses an external Warp runtime; Blender and Warp are not bundled.")
+        box.label(text="NVIDIA Warp ships inside the FluidSim extension; nothing else to install.")
 
         authoring = layout.box()
         authoring.label(text="Custom Effects", icon="MODIFIER")

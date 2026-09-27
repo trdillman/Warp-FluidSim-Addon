@@ -8,8 +8,12 @@ from pathlib import Path
 import pytest
 from tools.release import build_extension
 
-EXTERNAL_WHEEL = "warp_lang-1.16.0+cu12-py3-none-manylinux_2_28_x86_64.whl"
-PAYLOAD = b"external-wheel-payload"
+LINUX_WHEEL = "warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl"
+WINDOWS_WHEEL = "warp_lang-1.17.0-py3-none-win_amd64.whl"
+WHEELS = {
+    "linux-x64": (LINUX_WHEEL, b"linux-wheel-payload"),
+    "windows-x64": (WINDOWS_WHEEL, b"windows-wheel-payload"),
+}
 STALE_OWNER_PAYLOAD = b"stale candidate owner\n"
 VERSION = "1.0.255"
 
@@ -19,13 +23,17 @@ def _manifest() -> str:
 id = "fluidsim_warp"
 name = "FluidSim Warp"
 version = "{VERSION}"
-tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
+tagline = "Interactive CUDA liquid simulation for Blender"
 maintainer = "FluidSim"
 type = "add-on"
-blender_version_min = "5.1.0"
+blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
+wheels = [
+  "./wheels/{LINUX_WHEEL}",
+  "./wheels/{WINDOWS_WHEEL}",
+]
 
 [permissions]
 files = "Read and write simulation caches, exports, and presets"
@@ -55,7 +63,9 @@ def _write_project(root: Path) -> None:
     (root / "wheels").mkdir()
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
-        'VERSION = (1, 0, 255)\nEXTENSION_ID = "fluidsim_warp"\nBLENDER_MIN_VERSION = (5, 1, 0)\n',
+        'VERSION = (1, 0, 255)\nEXTENSION_ID = "fluidsim_warp"\n'
+        'BLENDER_MIN_VERSION = (5, 2, 0)\nCERTIFIED_WARP_VERSION = "1.17.0"\n'
+        'CERTIFIED_WARP_DISTRIBUTION = "1.17.0+cu12"\n',
         encoding="utf-8",
     )
     (root / "__init__.py").write_text(
@@ -64,7 +74,7 @@ def _write_project(root: Path) -> None:
     )
     (root / "LICENSE").write_text("GPL-3.0-or-later\n", encoding="utf-8")
     (root / "THIRD_PARTY_NOTICES.md").write_text(
-        "NVIDIA Warp 1.16.0+cu12 — Apache License, Version 2.0 — "
+        "NVIDIA Warp 1.17.0 — Apache License, Version 2.0 — "
         "libmathdx-LICENSE.txt — nvrtc-LICENSE.txt\n",
         encoding="utf-8",
     )
@@ -92,15 +102,16 @@ def _write_project(root: Path) -> None:
     (tool_root / "wheels.lock.json").write_text(
         json.dumps(
             {
-                "warp_version": "1.16.0",
-                "distribution_version": "1.16.0+cu12",
+                "warp_version": "1.17.0",
+                "distribution_version": "1.17.0+cu12",
                 "files": {
-                    EXTERNAL_WHEEL: {
-                        "platform": "linux-x64",
-                        "sha256": hashlib.sha256(PAYLOAD).hexdigest(),
-                        "size": len(PAYLOAD),
-                        "source": "local-certified-binary",
+                    name: {
+                        "platform": platform,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": len(payload),
+                        "source": "pypi",
                     }
+                    for platform, (name, payload) in WHEELS.items()
                 },
             }
         ),
@@ -144,15 +155,22 @@ def _write_package(
     platform: str = "linux-x64",
     surface_tension_payload: bytes = b"# surface tension\n",
     extra: dict[str, bytes] | None = None,
+    wheel_platform: str | None = None,
+    wheel_payload: bytes | None = None,
 ) -> None:
-    generated = f'\n[build.generated]\nplatforms = ["{platform}"]\nwheels = []\n'
+    wheel_name, payload = WHEELS[wheel_platform or platform]
+    generated = (
+        f'\n[build.generated]\nplatforms = ["{platform}"]\n'
+        f'wheels = ["./wheels/{WHEELS[platform][0]}"]\n'
+    )
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("blender_manifest.toml", _manifest() + generated)
+        archive.writestr(f"wheels/{wheel_name}", wheel_payload or payload)
         archive.writestr("__init__.py", "def register(): pass\ndef unregister(): pass\n")
         archive.writestr("LICENSE", "GPL-3.0-or-later\n")
         archive.writestr(
             "THIRD_PARTY_NOTICES.md",
-            "NVIDIA Warp 1.16.0+cu12 — Apache License, Version 2.0 — "
+            "NVIDIA Warp 1.17.0 — Apache License, Version 2.0 — "
             "libmathdx-LICENSE.txt — nvrtc-LICENSE.txt\n",
         )
         archive.writestr("release/__init__.py", "\n")
@@ -196,14 +214,14 @@ def _write_package(
             archive.writestr(name, value)
 
 
-def test_verify_source_tree_keeps_supported_platforms_when_runtime_lock_is_linux_only(
-    tmp_path: Path,
-):
+def test_verify_source_tree_reports_one_locked_wheel_per_platform(tmp_path: Path):
     _write_project(tmp_path)
     result = build_extension.verify_source_tree(tmp_path)
     assert result.platforms == ("windows-x64", "linux-x64")
     assert result.release_ready is True
-    assert result.external_runtime_wheels == (EXTERNAL_WHEEL,)
+    assert result.bundled_warp_wheels == (LINUX_WHEEL, WINDOWS_WHEEL)
+    assert result.wheel_for_platform("linux-x64") == LINUX_WHEEL
+    assert result.wheel_for_platform("windows-x64") == WINDOWS_WHEEL
 
 
 def test_verify_source_tree_rejects_invalid_render_asset(tmp_path: Path):
@@ -221,10 +239,36 @@ def test_verify_source_tree_requires_custom_effect_product_shell(tmp_path: Path)
         build_extension.verify_source_tree(tmp_path)
 
 
-def test_verify_source_tree_rejects_wheel_payload_in_source_tree(tmp_path: Path):
+def test_verify_source_tree_accepts_fetched_locked_wheels(tmp_path: Path):
     _write_project(tmp_path)
-    (tmp_path / "wheels" / EXTERNAL_WHEEL).write_bytes(PAYLOAD)
-    with pytest.raises(RuntimeError, match="runtime binary payloads must not be stored"):
+    for name, payload in WHEELS.values():
+        (tmp_path / "wheels" / name).write_bytes(payload)
+    assert build_extension.verify_source_tree(tmp_path).bundled_warp_wheels
+
+
+@pytest.mark.parametrize(
+    "stray",
+    ["wheels/warp_lang-1.16.0+cu12-py3-none-win_amd64.whl", "vendor/numpy.whl"],
+)
+def test_verify_source_tree_rejects_unlocked_wheels_in_source_tree(
+    tmp_path: Path, stray: str
+):
+    _write_project(tmp_path)
+    target = tmp_path / stray
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"stray")
+    with pytest.raises(RuntimeError, match="only the locked Warp wheels"):
+        build_extension.verify_source_tree(tmp_path)
+
+
+def test_verify_source_tree_rejects_warp_identity_drift(tmp_path: Path):
+    _write_project(tmp_path)
+    version = tmp_path / "version.py"
+    version.write_text(
+        version.read_text(encoding="utf-8").replace('"1.17.0"', '"1.16.0"'),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="CERTIFIED_WARP_VERSION"):
         build_extension.verify_source_tree(tmp_path)
 
 
@@ -236,17 +280,24 @@ def test_verify_source_tree_rejects_stale_candidate_owner_payload(tmp_path: Path
         build_extension.verify_source_tree(tmp_path)
 
 
-def test_verify_source_tree_rejects_manifest_wheel_declaration(tmp_path: Path):
+@pytest.mark.parametrize(
+    "replacement",
+    ["", f'  "./wheels/{LINUX_WHEEL}",\n  "./wheels/numpy-2.0-py3-none-any.whl",\n'],
+)
+def test_verify_source_tree_requires_manifest_wheels_to_match_lock(
+    tmp_path: Path, replacement: str
+):
     _write_project(tmp_path)
     manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
-    manifest = manifest.replace('tags = ["Physics"]', f'wheels = ["./wheels/{EXTERNAL_WHEEL}"]\ntags = ["Physics"]')
+    manifest = manifest.replace(
+        f'  "./wheels/{LINUX_WHEEL}",\n  "./wheels/{WINDOWS_WHEEL}",\n', replacement)
     (tmp_path / "blender_manifest.toml").write_text(manifest, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="must not declare bundled wheels"):
+    with pytest.raises(RuntimeError, match="manifest wheels must be exactly"):
         build_extension.verify_source_tree(tmp_path)
 
 
 @pytest.mark.parametrize("platform", ["windows-x64", "linux-x64"])
-def test_inspect_packages_accepts_binary_free_platform_archive(
+def test_inspect_packages_accepts_archive_with_its_platform_wheel(
     tmp_path: Path,
     platform: str,
 ):
@@ -255,8 +306,24 @@ def test_inspect_packages_accepts_binary_free_platform_archive(
     _write_package(package, platform=platform)
     records = build_extension.inspect_packages(tmp_path, [package])
     assert [record.platform for record in records] == [platform]
-    assert records[0].runtime_dependency == "external"
+    assert records[0].runtime_dependency == "bundled"
     assert records[0].sha256
+
+
+def test_inspect_packages_rejects_other_platform_wheel(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(package, platform="linux-x64", wheel_platform="windows-x64")
+    with pytest.raises(RuntimeError, match="must bundle exactly"):
+        build_extension.inspect_packages(tmp_path, [package])
+
+
+def test_inspect_packages_rejects_wheel_checksum_mismatch(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(package, wheel_payload=b"tampered")
+    with pytest.raises(RuntimeError, match="checksum mismatch"):
+        build_extension.inspect_packages(tmp_path, [package])
 
 
 def test_inspect_packages_keeps_sorted_artifact_records_for_valid_archives(
@@ -272,7 +339,7 @@ def test_inspect_packages_keeps_sorted_artifact_records_for_valid_archives(
 
     assert [record.path for record in records] == [linux.resolve(), windows.resolve()]
     assert [record.platform for record in records] == ["linux-x64", "windows-x64"]
-    assert [record.runtime_dependency for record in records] == ["external", "external"]
+    assert [record.runtime_dependency for record in records] == ["bundled", "bundled"]
     assert [record.size for record in records] == [
         linux.stat().st_size,
         windows.stat().st_size,
@@ -314,8 +381,7 @@ def test_inspect_packages_rejects_stale_candidate_owner_payload(tmp_path: Path):
 @pytest.mark.parametrize(
     "name",
     [
-        f"wheels/{EXTERNAL_WHEEL}",
-        EXTERNAL_WHEEL,
+        LINUX_WHEEL,
         "vendor/blender-5.2.0-linux-x64.tar.xz",
         "vendor/blender-5.2.0-linux-x64.zip",
         "vendor/warp/bin/warp.so",
@@ -377,7 +443,10 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
                 platform="linux-x64",
             )
 
-    packages = build_extension.build(tmp_path, Path("/opt/blender"), output, runner=fake_run)
+    fetched: list[Path] = []
+    packages = build_extension.build(
+        tmp_path, Path("/opt/blender"), output, runner=fake_run, fetcher=fetched.append)
+    assert fetched == [tmp_path.resolve()]
     flattened = [" ".join(command) for command in commands]
     assert any("-m ruff check" in command for command in flattened)
     assert any("-m pytest" in command for command in flattened)
@@ -399,7 +468,7 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     ).read_text()
 
 
-def test_installed_smoke_uses_external_python_environment_and_uninstalls(tmp_path: Path):
+def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Path):
     package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
     package.write_bytes(b"zip")
     script = tmp_path / "smoke_test_blender.py"
@@ -421,7 +490,9 @@ def test_installed_smoke_uses_external_python_environment_and_uninstalls(tmp_pat
     )
     background = [command for command in commands if "--background" in command]
     assert len(background) == 2
-    assert all("--python-use-system-env" in command for command in background)
+    # No --python-use-system-env: Warp must come from the bundled wheel, not
+    # from PYTHONPATH or the Python user site.
+    assert all("--python-use-system-env" not in command for command in background)
     assert all(env.get("PYTHONPATH") == "/validation/warp-site" for env in environments)
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")
     assert all(env.get("WARP_CACHE_PATH") == expected_cache for env in environments)
@@ -459,7 +530,7 @@ def test_verify_only_is_successful_without_runtime_binary_payloads(tmp_path: Pat
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert payload["release_ready"] is True
-    assert payload["source"]["external_runtime_wheels"] == [EXTERNAL_WHEEL]
+    assert payload["source"]["bundled_warp_wheels"] == [LINUX_WHEEL, WINDOWS_WHEEL]
 
 
 def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):
@@ -468,7 +539,7 @@ def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):
     record = build_extension.ArtifactRecord(
         path=package,
         platform="linux-x64",
-        runtime_dependency="external",
+        runtime_dependency="bundled",
         size=123,
         sha256="a" * 64,
     )

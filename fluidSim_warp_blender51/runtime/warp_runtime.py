@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-EXPECTED_WARP_VERSION = "1.16.0"
+from ..version import CERTIFIED_WARP_VERSION, MIN_WARP_VERSION
+
+EXPECTED_WARP_VERSION = CERTIFIED_WARP_VERSION
 _UNAVAILABLE_DEVICE_ID = "__unavailable__"
 _DEVNULL_STREAM = None
 
@@ -34,6 +36,65 @@ class RuntimeProbe:
     cuda_toolkit_version: int = 0
     cuda_devices: tuple[DeviceRecord, ...] = ()
     last_error: str = ""
+    warning: str = ""
+
+
+def parse_warp_version(text: str) -> tuple[int, int, int] | None:
+    """Return the numeric release of a Warp version string, or ``None``."""
+    release = str(text).split("+", 1)[0].strip()
+    parts = release.split(".")
+    if len(parts) < 3:
+        return None
+    numbers = []
+    for part in parts[:3]:
+        digits = ""
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            return None
+        numbers.append(int(digits))
+    return (numbers[0], numbers[1], numbers[2])
+
+
+def warp_version_support(version: str) -> tuple[str, str]:
+    """Classify a loaded Warp version against the certified range.
+
+    Returns ``("certified" | "untested" | "unsupported", message)``. Versions
+    below the floor or on another major line are unsupported; newer 1.x
+    releases load with a warning because they have not been certified.
+    """
+    loaded = parse_warp_version(version)
+    floor = parse_warp_version(MIN_WARP_VERSION)
+    certified = parse_warp_version(CERTIFIED_WARP_VERSION)
+    if floor is None or certified is None:
+        raise RuntimeError("FluidSim Warp version constants are malformed")
+    if loaded is None or loaded < floor or loaded[0] != certified[0]:
+        return (
+            "unsupported",
+            f"FluidSim requires NVIDIA Warp {MIN_WARP_VERSION} or newer "
+            f"{certified[0]}.x (certified: {CERTIFIED_WARP_VERSION}), but loaded "
+            f"{version or 'an unknown version'}. Reinstall the FluidSim extension "
+            "so Blender installs its bundled Warp, and remove any older Warp "
+            "from Blender's Python user site-packages.",
+        )
+    if loaded > certified:
+        return (
+            "untested",
+            f"Warp {version} is newer than the certified {CERTIFIED_WARP_VERSION} "
+            "and has not been tested with FluidSim.",
+        )
+    return "certified", ""
+
+
+def _cuda_version_int(value: Any) -> int:
+    """Normalize Warp CUDA versions: ints pass through, ``(12, 9)`` -> 12090."""
+    if isinstance(value, (tuple, list)):
+        if len(value) < 2:
+            return 0
+        return int(value[0]) * 1000 + int(value[1]) * 10
+    return int(value)
 
 
 def ensure_host_streams() -> None:
@@ -63,7 +124,7 @@ def _safe_int_call(module: Any, name: str) -> int:
     if not callable(function):
         return 0
     try:
-        return int(function())
+        return _cuda_version_int(function())
     except Exception:  # noqa: BLE001 - a partial diagnostic must remain available
         return 0
 
@@ -103,13 +164,11 @@ def _cached_probe() -> RuntimeProbe:
         )
         driver = _safe_int_call(wp, "get_cuda_driver_version")
         toolkit = _safe_int_call(wp, "get_cuda_toolkit_version")
-        if version != EXPECTED_WARP_VERSION:
+        support, support_message = warp_version_support(version)
+        if support == "unsupported":
             return RuntimeProbe(
                 available=False,
-                message=(
-                    f"FluidSim requires external Warp {EXPECTED_WARP_VERSION}, "
-                    f"but loaded {version}. Install the certified Warp runtime in Blender's Python environment."
-                ),
+                message=support_message,
                 warp_version=version,
                 module_file=module_file,
                 cuda_driver_version=driver,
@@ -131,20 +190,25 @@ def _cached_probe() -> RuntimeProbe:
             )
         return RuntimeProbe(
             available=True,
-            message=f"Detected {len(devices)} CUDA device(s).",
+            message=" ".join(
+                part for part in (
+                    f"Detected {len(devices)} CUDA device(s).", support_message)
+                if part
+            ),
             warp_version=version,
             module_file=module_file,
             cuda_driver_version=driver,
             cuda_toolkit_version=toolkit,
             cuda_devices=devices,
+            warning=support_message,
         )
     except Exception as exc:  # imported by Blender UI; retain actionable state
         error = f"{type(exc).__name__}: {exc}"
         return RuntimeProbe(
             available=False,
             message=(
-                "FluidSim could not load its external Warp dependency: "
-                f"{error}. Install the certified Warp runtime in Blender's Python environment or provide it through the host environment."
+                "FluidSim could not load its bundled Warp runtime: "
+                f"{error}. Reinstall the FluidSim extension so Blender installs its bundled Warp runtime."
             ),
             last_error=error,
         )
@@ -177,10 +241,10 @@ def runtime_status_for_device(
             f"Refresh detection or choose one of: {choices}.",
         )
     memory = device.total_memory / 1024**3
-    return (
-        True,
-        f"Warp {state.warp_version} — {device.alias}: {device.name} ({memory:.1f} GiB)",
-    )
+    status = f"Warp {state.warp_version} — {device.alias}: {device.name} ({memory:.1f} GiB)"
+    if state.warning:
+        status += " (untested Warp version)"
+    return True, status
 
 
 def cuda_device_items(*, force: bool = False) -> list[tuple[str, str, str]]:

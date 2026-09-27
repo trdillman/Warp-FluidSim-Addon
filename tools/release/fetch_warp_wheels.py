@@ -1,4 +1,4 @@
-"""Verify a checksum-locked external NVIDIA Warp validation wheel."""
+"""Fetch the checksum-locked NVIDIA Warp wheels bundled in the extension."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 LOCK_PATH = Path(__file__).resolve().with_name("wheels.lock.json")
-WHEEL_DIR = ROOT / "build" / "external-warp-wheel"
+WHEEL_DIR = ROOT / "wheels"
 _CHUNK_SIZE = 1024 * 1024
 
 
@@ -170,7 +170,7 @@ def fetch_wheels(
             if offline or not url:
                 raise RuntimeError(
                     f"no verified source is available for locked wheel {filename}; "
-                    "provide --source/--source-dir or place the verified file in the external validation directory"
+                    "provide --source/--source-dir or place the verified file in the wheels directory"
                 )
             if not url.startswith("https://"):
                 raise RuntimeError(f"wheel URL must use HTTPS: {filename}")

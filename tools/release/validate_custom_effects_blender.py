@@ -30,6 +30,30 @@ DEMO_NAMES = (
 )
 
 
+def _certified(name: str):
+    """Read one certified release constant from the source tree's version.py."""
+    path = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "version.py"
+    import ast
+
+    values: dict = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in values:
+            value = values[node.value.id]  # e.g. CERTIFIED_X = VALIDATION_HOST_X
+        else:
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                values[target.id] = value
+    if name not in values:
+        raise RuntimeError(f"{name} is not a literal constant in {path}")
+    return values[name]
+
+
 def _args() -> argparse.Namespace:
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
     parser = argparse.ArgumentParser(description=__doc__)
@@ -60,7 +84,7 @@ def _assert_warp_root(expected: Path):
     expected = expected.resolve()
     if expected != actual and expected not in actual.parents:
         raise AssertionError(f"Warp imported from {actual}, expected beneath {expected}")
-    if str(getattr(wp, "__version__", "")) != "1.16.0":
+    if str(getattr(wp, "__version__", "")) != _certified("CERTIFIED_WARP_VERSION"):
         raise AssertionError(f"unexpected Warp version {getattr(wp, '__version__', None)!r}")
     return wp, actual
 

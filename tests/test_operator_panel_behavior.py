@@ -1288,7 +1288,7 @@ def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
                 is_cuda=True,
             )
         ],
-        __version__="1.16.0",
+        __version__="1.17.0",
         __file__="warp/__init__.py",
     )
     monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
@@ -1305,7 +1305,7 @@ def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
     assert calls == ["init", "init"]
 
 
-def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
+def test_runtime_warp_probe_accepts_certified_bundled_runtime(monkeypatch):
     _install_bpy_stub(monkeypatch)
     runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
     fake_warp = SimpleNamespace(
@@ -1318,7 +1318,7 @@ def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
                 is_cuda=True,
             )
         ],
-        __version__="1.16.0",
+        __version__="1.17.0",
         __file__="warp/__init__.py",
     )
     monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
@@ -1327,12 +1327,12 @@ def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
     probe = runtime.probe_runtime()
 
     assert probe.available
-    assert probe.warp_version == "1.16.0"
+    assert probe.warp_version == "1.17.0"
     assert "Detected" in probe.message
 
 
-@pytest.mark.parametrize("version", ["1.12.1", "1.16.1", "1.17.0", "unknown"])
-def test_runtime_warp_probe_rejects_noncertified_versions(
+@pytest.mark.parametrize("version", ["1.12.1", "1.16.1", "2.0.0", "unknown"])
+def test_runtime_warp_probe_rejects_unsupported_versions(
     monkeypatch,
     version,
 ):
@@ -1357,7 +1357,7 @@ def test_runtime_warp_probe_rejects_noncertified_versions(
     probe = runtime.probe_runtime()
 
     assert not probe.available
-    assert "requires external Warp 1.16.0" in probe.message
+    assert "requires NVIDIA Warp 1.17.0 or newer 1.x" in probe.message
 
 
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):

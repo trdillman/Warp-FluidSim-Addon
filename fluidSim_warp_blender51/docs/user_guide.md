@@ -1,7 +1,7 @@
 # FluidSim Warp — User Guide
 
 FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
-5.1.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
+5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
   and look development. It is responsive but not an authoritative production
@@ -15,21 +15,23 @@ FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 | Area | Validated target |
 |---|---|
 | FluidSim | 1.1.0 |
-| Blender | Blender 5.1.0 or newer |
+| Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | External NVIDIA Warp 1.16.0+cu12; FluidSim does not package, download, or install Warp |
+| Warp dependency | Bundled NVIDIA Warp 1.17.0 (CUDA 12 build), installed by Blender with the extension |
 | Cache compatibility | Cache v2 write/playback/resume; cache v1 playback only |
 
-Provision NVIDIA Warp `1.16.0+cu12` so Blender's Python environment can
-import `warp`. The current extension never searches arbitrary Python
-installations, invokes `pip`, downloads dependencies, or bundles Blender/Warp
-runtimes.
+Install the extension ZIP for your platform; there is nothing else to install.
+Blender installs the bundled, checksum-locked Warp wheel into its own
+extension site-packages. FluidSim never invokes `pip` or downloads anything at
+run time. It needs an NVIDIA driver that supports CUDA 12 (R525 or newer).
 
-The extension is packaged for both Windows x64 and Linux x64. The attached
-runtime evidence was executed on Linux because the supplied Blender and Warp
-validation packages are Linux builds; validation-host availability must never
-remove Windows from the product manifest or release artifacts.
+If a newer 1.x Warp is ever loaded instead (for example through a developer
+override), FluidSim still runs but marks the runtime status as
+"untested Warp version"; Warp older than 1.17.0 or a 2.x Warp is refused.
+
+The extension is packaged for both Windows x64 and Linux x64 (Linux is
+certified on WSL2 and native Linux with the same package).
 
 ---
 

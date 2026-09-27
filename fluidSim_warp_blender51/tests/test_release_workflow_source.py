@@ -69,7 +69,9 @@ def test_package_job_builds_installs_and_smoke_tests_on_blender():
     assert '--blender "$BLENDER"' in job
     assert "--smoke-platform linux-x64" in job
     assert "sha256sum -c -" in job
-    assert "FLUIDSIM_EXTERNAL_WARP_ROOT" in job
+    assert "FLUIDSIM_EXTERNAL_WARP_ROOT" not in job
+    assert "hashFiles('tools/release/wheels.lock.json')" in job
+    assert "fluidSim_warp_blender51/wheels/*.whl" in job
 
 
 def test_package_job_pins_the_certified_blender_by_checksum():
@@ -83,8 +85,9 @@ def test_ci_derives_versions_instead_of_hardcoding_them():
     source = _workflow()
     assert "fluidsim_warp-" not in source
     assert version.VERSION_STRING not in source
-    assert "warp-lang==" not in source.replace("warp-lang==${warp_version}", "")
-    assert "version.CERTIFIED_WARP_VERSION" in _job("package")
+    # The Warp pin lives only in wheels.lock.json and version.py.
+    assert "warp-lang" not in source
+    assert "1.17" not in source
 
 
 def test_ci_uses_current_actions():

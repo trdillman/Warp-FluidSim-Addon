@@ -3,14 +3,21 @@ schema_version = "1.0.0"
 id = "fluidsim_warp"
 name = "FluidSim Warp"
 version = "1.1.0"
-tagline = "Interactive CUDA liquid simulation with beta ST-FLIP"
+tagline = "Interactive CUDA liquid simulation for Blender"
 maintainer = "FluidSim"
 type = "add-on"
 
-blender_version_min = "5.1.0"
+blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
+
+# NVIDIA Warp is bundled. tools/release/fetch_warp_wheels.py fills wheels/
+# from tools/release/wheels.lock.json before a build.
+wheels = [
+  "./wheels/warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
+  "./wheels/warp_lang-1.17.0-py3-none-win_amd64.whl",
+]
 
 [permissions]
 files = "Read and write simulation caches, exports, and user presets"

@@ -81,8 +81,8 @@ jobs:
     env:
       # download.blender.org answers scripted downloads with a bot challenge, so
       # fetch from an official mirror and pin the checksum Blender publishes.
-      BLENDER_VERSION: "5.1.0"
-      BLENDER_SHA256: 7f2475990613c8d4c7ac5697803fcf40d09541c1fd8c23936f4b07a169a920c7
+      BLENDER_VERSION: "5.2.0"
+      BLENDER_SHA256: 96f6c181a30f4950607839dc84d42a354b250d8a0231b098b59b7bc69c351c48
       BLENDER_MIRROR: https://mirrors.ocf.berkeley.edu/blender
     steps:
       - uses: actions/checkout@v7
@@ -115,13 +115,13 @@ jobs:
           sudo apt-get update -q &&
           sudo apt-get install -y -q --no-install-recommends
           libegl1 libgl1 libsm6 libxi6 libxkbcommon0 libxrender1 libxxf86vm1 libxfixes3
-      - name: Provide the certified Warp runtime outside the package
-        run: |
-          warp_version="$(python -c 'import sys; sys.path.insert(0, "fluidSim_warp_blender51"); import version; print(version.CERTIFIED_WARP_VERSION)')"
-          python -m pip install --disable-pip-version-check --no-deps \
-            --target "$RUNNER_TEMP/external-warp-site" "warp-lang==${warp_version}"
-          echo "PYTHONPATH=$RUNNER_TEMP/external-warp-site" >> "$GITHUB_ENV"
-          echo "FLUIDSIM_EXTERNAL_WARP_ROOT=$RUNNER_TEMP/external-warp-site" >> "$GITHUB_ENV"
+      - name: Restore the locked Warp wheels
+        # build_extension.py fetches any missing wheel and verifies every
+        # checksum against tools/release/wheels.lock.json.
+        uses: actions/cache@v6
+        with:
+          path: fluidSim_warp_blender51/wheels/*.whl
+          key: warp-wheels-${{ hashFiles('tools/release/wheels.lock.json') }}
       - name: Build, validate, install, smoke-test and uninstall
         run: >-
           python tools/release/build_extension.py

@@ -19,6 +19,30 @@ if str(ROOT.parent) not in sys.path:
 VALIDATION_PACKAGE = "fluidsim_validation_source"
 
 
+def _certified(name: str):
+    """Read one certified release constant from the source tree's version.py."""
+    path = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "version.py"
+    import ast
+
+    values: dict = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in values:
+            value = values[node.value.id]  # e.g. CERTIFIED_X = VALIDATION_HOST_X
+        else:
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                values[target.id] = value
+    if name not in values:
+        raise RuntimeError(f"{name} is not a literal constant in {path}")
+    return values[name]
+
+
 def _ensure_source_package(module_name: str) -> None:
     """Install a synthetic package namespace without executing Blender code."""
 
@@ -58,7 +82,7 @@ def validate(expected_warp_root: Path, module_name: str = VALIDATION_PACKAGE) ->
     module_path = Path(wp.__file__).resolve()
     if expected_warp_root.resolve() not in module_path.parents:
         raise AssertionError(f"Warp loaded from {module_path}, expected under {expected_warp_root}")
-    if str(getattr(wp, "__version__", "")) != "1.16.0":
+    if str(getattr(wp, "__version__", "")) != _certified("CERTIFIED_WARP_VERSION"):
         raise AssertionError(f"unexpected Warp version {getattr(wp, '__version__', '')}")
 
     _ensure_source_package(module_name)

@@ -1,7 +1,7 @@
 # FluidSim Custom Effects validation examples
 
 These scenes are generated from real Custom Effects v2 kernel executions using the
-supplied Warp 1.16.0 package on the CPU validation backend.
+certified Warp package on the CPU validation backend.
 
 They are static validation/review artifacts, not playable FluidSim demos. They
 contain precomputed before/after geometry and evidence from the generator, but

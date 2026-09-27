@@ -1,28 +1,41 @@
 # Third-Party Notices
 
-FluidSim Warp is distributed under GPL-3.0-or-later. **FluidSim delivery archives do not include Blender, NVIDIA Warp, CUDA runtime packages, Python wheels, or other third-party runtime binaries.**
+FluidSim Warp is distributed under GPL-3.0-or-later. Each FluidSim platform
+package bundles exactly one unmodified NVIDIA Warp wheel for that platform.
+It does not include Blender or any other third-party runtime binary.
 
-NVIDIA Warp `warp-lang 1.16.0+cu12` is the certified external runtime. The Linux x64 and Windows x64 wheels are checksum-locked validation inputs (the Windows digest matches the NVIDIA v1.16.0 release asset); they do not restrict FluidSim's Windows x64 and Linux x64 product support. Users and CI systems must provision the matching platform runtime separately. FluidSim does not download, install, extract, or redistribute it at runtime.
+NVIDIA Warp `warp-lang 1.17.0` (the PyPI build for CUDA 12, CUDA Toolkit 12.9)
+is the certified runtime. The Windows x64 and Linux x64 wheels are pinned by
+SHA-256 in `../tools/release/wheels.lock.json`, listed in
+`blender_manifest.toml`, and installed by Blender itself when the extension is
+installed. FluidSim performs no runtime download, `pip` invocation, or
+automatic dependency installation.
 
-## External runtime references
+## Third-party components
 
 | Dependency or resource | Certified version/status | License or terms | Included in FluidSim ZIPs? |
 |---|---:|---|---:|
-| NVIDIA Warp (`warp-lang`) | 1.16.0+cu12 | Apache License, Version 2.0 | No |
-| CUDA runtime/compiler components used by Warp | As provided by the separately installed Warp distribution | NVIDIA Software License Agreement | No |
-| NVIDIA libmathdx components used by Warp | As provided by the separately installed Warp distribution | NVIDIA upstream terms | No |
-| NumPy | Version supplied by Blender 5.1.0 or newer | BSD 3-Clause License | No separate FluidSim copy |
-| Blender Python API | Blender 5.1.0 or newer | GNU General Public License | No |
+| NVIDIA Warp (`warp-lang`) | 1.17.0 (CUDA 12 build) | Apache License, Version 2.0 | Yes, as the unmodified upstream wheel |
+| CUDA runtime/compiler components used by Warp | As shipped inside the Warp wheel | NVIDIA Software License Agreement | Yes, inside the Warp wheel |
+| NVIDIA libmathdx components used by Warp | As shipped inside the Warp wheel | NVIDIA upstream terms | Yes, inside the Warp wheel |
+| NumPy | Version supplied by Blender 5.2.0 or newer | BSD 3-Clause License | No separate FluidSim copy |
+| Blender Python API | Blender 5.2.0 or newer | GNU General Public License | No |
 
-The upstream Warp distribution carries its own complete license inventory, including `LICENSE.md`, `cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. Those files remain with the separately provisioned Warp runtime and are **not copied into FluidSim deliverables**.
+The Warp wheel carries its own complete license inventory in
+`warp_lang-1.17.0.dist-info/licenses/`, including `LICENSE.md`,
+`cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. The wheel
+is redistributed byte-for-byte, so those notices travel with it and are
+installed alongside Warp.
 
 ## Distribution and runtime policy
 
-- Blender and Warp packages are validation inputs only and must remain outside FluidSim delivery archives.
-- `blender_manifest.toml` declares no Python wheels.
-- Release inspection rejects `.whl` payloads, Blender runtime archives, Warp package directories, and Warp distribution metadata inside the installable extension.
-- FluidSim performs no runtime network request, `pip` invocation, or automatic dependency installation.
-- `../tools/release/wheels.lock.json` records the exact external Warp validation binary and checksum; it is metadata, not a bundled dependency.
+- `blender_manifest.toml` declares exactly the locked Warp wheels; Blender's
+  split build puts only the matching platform wheel in each package.
+- Release inspection requires that one wheel, verifies its SHA-256 against the
+  lock, and rejects any other `.whl`, Blender runtime archive, or loose Warp
+  package directory inside the installable extension.
+- A developer-only override (`FLUIDSIM_ALLOW_EXTERNAL_WARP=1`) can point at a
+  Warp checkout for development; it is never used by release packages.
 
 ## Bundled first-party render resource
 

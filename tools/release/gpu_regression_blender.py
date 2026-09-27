@@ -42,17 +42,16 @@ def _require_finished(label: str, result) -> None:
         raise AssertionError(f"{label} failed: {result}")
 
 
-def _assert_installed_external_runtime(module: str, probe) -> None:
+def _assert_installed_bundled_runtime(module: str, probe) -> None:
     extension = importlib.import_module(module)
     extension_root = Path(extension.__file__).resolve().parent
     repository_value = os.environ.get("FLUIDSIM_CI_REPOSITORY", "")
     user_extensions_value = os.environ.get("BLENDER_USER_EXTENSIONS", "")
-    external_root_value = os.environ.get("FLUIDSIM_EXTERNAL_WARP_ROOT", "")
-    if not repository_value or not user_extensions_value or not external_root_value:
+    if not repository_value or not user_extensions_value:
         raise AssertionError("GPU release environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    user_extensions_root = Path(user_extensions_value).resolve()
-    external_root = Path(external_root_value).resolve()
+    # Blender installs extension wheels into <extensions>/.local site-packages.
+    wheel_root = Path(user_extensions_value).resolve() / ".local"
     if not probe.module_file:
         raise AssertionError("Warp runtime reported no module source path")
     warp_path = Path(probe.module_file).resolve()
@@ -63,25 +62,18 @@ def _assert_installed_external_runtime(module: str, probe) -> None:
             f"FluidSim loaded outside the isolated installed repository: {extension_root}"
         ) from exc
     try:
-        warp_path.relative_to(external_root)
+        warp_path.relative_to(wheel_root)
     except ValueError as exc:
         raise AssertionError(
-            f"Warp loaded outside the configured external runtime root: {warp_path}"
+            f"Warp loaded outside Blender's isolated extension wheel directory: {warp_path}"
         ) from exc
-    try:
-        warp_path.relative_to(user_extensions_root)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError(
-            f"Warp unexpectedly loaded from the isolated extension directory: {warp_path}"
-        )
 
 
 def main() -> None:
     if bpy.app.version[:3] != EXPECTED_BLENDER_VERSION:
         raise AssertionError(
-            f"expected Blender 5.1.x, running {bpy.app.version_string}"
+            f"expected Blender {'.'.join(map(str, EXPECTED_BLENDER_VERSION))}, "
+            f"running {bpy.app.version_string}"
         )
     started = time.time()
     module = _installed_module()
@@ -99,7 +91,7 @@ def main() -> None:
         raise AssertionError(
             f"expected Warp {EXPECTED_WARP_VERSION}, loaded {probe.warp_version}"
         )
-    _assert_installed_external_runtime(module, probe)
+    _assert_installed_bundled_runtime(module, probe)
     device = probe.cuda_devices[0].alias
     if not preferences.set_configured_device(device):
         raise AssertionError("installed FluidSim preferences are unavailable")

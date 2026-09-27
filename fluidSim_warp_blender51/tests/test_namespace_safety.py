@@ -16,15 +16,14 @@ def test_no_runtime_file_hardcodes_legacy_package_name():
     assert offenders == []
 
 
-def test_entrypoint_documents_external_warp_runtime_policy():
+def test_entrypoint_documents_bundled_warp_runtime_policy():
     source = " ".join(
         (ROOT / "__init__.py").read_text(encoding="utf-8").split()
     )
 
     assert "neither probes nor installs runtime dependencies" in source
-    assert "certified external Warp runtime" in source
+    assert "bundled, hash-locked NVIDIA Warp wheel" in source
     assert "runtime/warp_runtime.py" in source
-    assert "package-declared wheels" not in source
 
 
 def test_custom_package_root_handles_extension_namespace():
