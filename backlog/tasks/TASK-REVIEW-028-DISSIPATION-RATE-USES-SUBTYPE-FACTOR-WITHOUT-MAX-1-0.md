@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ Users can set dissipation rates above 1.0 via the UI or API. Depending on solver
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/properties.py:851` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Add max=1.0 to the FloatProperty definition, or if rates above 1.0 are intentionally allowed, remove subtype="FACTOR" to avoid the semantic mismatch.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/properties.py:851` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Add max=1.0 to the FloatProperty definition, or if rates above 1.0 are intentionally allowed, remove subtype="FACTOR" to avoid the semantic mismatch.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ Users can set dissipation rates above 1.0 via the UI or API. Depending on solver
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+`dissipation_rate` drops `subtype="FACTOR"` (the remediation's second option): the decay kernel computes `exp(-rate*dt)`, which is stable for any rate >= 0, so rates above 1.0 are intentional. The guard also requires every FACTOR property to be bounded at or below 1.0.
+
+Regression guard: `tests/test_settings_default_agreement.py`.

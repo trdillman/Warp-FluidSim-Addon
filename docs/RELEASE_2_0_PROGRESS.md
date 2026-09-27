@@ -65,6 +65,10 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Version 2.0.0 (manifest, `version.py`, docs); 2.0.0 CHANGELOG section opened | done (`3ba90d5`); `BUILD_CHANNEL` stays `beta` until owner review | `test_release_identity.py` |
 | `setting_owner`/`_authoring_owner` divergence | already resolved by the split (`b6fe26c`): both route through `_scene_owned`; no change needed | `blender/pending_settings.py:259-286, 402-415` |
 | 139 defaulted settings `getattr`s | kept (minimal test doubles depend on them); guarded instead: every one must name a declared field, so a removed/renamed field fails the suite rather than silently defaulting. Owner-review note: this deviates from the plan's "remove" | `tests/test_settings_getattr_names.py` (mutation-checked) |
+| Settings drift (REVIEW-028/029/037/045/046/047 closed): one default per setting across RNA, `SolverSettings` and literal fallbacks; DISTANCE/VELOCITY units; FACTOR bounded; smooth-type saved numbers pinned (the card's renumbering would have flipped saved files) | done (`427a42f`) | `tests/test_settings_default_agreement.py`. 2.1 handoff: `viscosity_constant`, `ww_bubble_drag`, `ww_spray_drag` differ between RNA and `SolverSettings`; aligning them moves headless baselines |
+| Can-only-fail UI: height-field `INFINITE` removed from the dropdown (FLAT/PROFILE keep stored 1/2; a saved Infinite reads back as "" and gets an actionable error) | done (`8b5c067`) | `test_height_back_mode_offers_only_runnable_modes_with_stable_numbers`, `test_height_source_rejects_removed_infinite_back_mode` |
+| FIELD source mode | not a can-only-fail choice: hidden, and runs as a compiled field plan (pressure by default). Stale "not exposed" text corrected | `8b5c067` |
+| Compiled FORCE plans | internal only: no UI path reaches them, and FORCE-role objects work through the analytic path. Left unchanged | `sim/source_regions.py:669` |
 
 Phases 3–4: not started.
 
@@ -77,4 +81,4 @@ Phases 3–4: not started.
 
 ## Next action
 
-Phase 2: can-only-fail UI (height-field `INFINITE`, FIELD source mode, compiled FORCE plans); then the `setting_owner`/`_authoring_owner` merge, then the D5 saved-file compatibility removals.
+Phase 2: the D5 saved-file compatibility removals (re-save demos first without touching the user's uncommitted `demos/*` edits), then REVIEW-009 validators and card 044, then GUI gate 3/3.

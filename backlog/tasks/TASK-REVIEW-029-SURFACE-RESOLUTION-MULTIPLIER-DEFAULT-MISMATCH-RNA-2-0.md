@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ Latent inconsistency: AuthoredQualitySettings constructed without explicit surfa
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/properties.py:989` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Align the defaults: either set AuthoredQualitySettings.surface_resolution_multiplier default to 2.0 to match RNA, or always pass the RNA value when constructing AuthoredQualitySettings.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/properties.py:989` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Align the defaults: either set AuthoredQualitySettings.surface_resolution_multiplier default to 2.0 to match RNA, or always pass the RNA value when constructing AuthoredQualitySettings.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ Latent inconsistency: AuthoredQualitySettings constructed without explicit surfa
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+Every literal fallback for `surface_resolution_multiplier` now equals the declared 2.0 (`AuthoredQualitySettings`, `resolve_quality`, `frame_output`, `surface`, `capacity_planner`). The same pass aligned `surface_leaf_capacity_scale` (8.0) and `surface_smooth_iterations` (1). The guard also pins the RNA/`SolverSettings` default agreement across 110 fields; three known divergences (`viscosity_constant`, `ww_bubble_drag`, `ww_spray_drag`) are named in the test and carried to the 2.1 handoff.
+
+Regression guard: `tests/test_settings_default_agreement.py`.

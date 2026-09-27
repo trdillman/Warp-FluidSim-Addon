@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ Minimal in the current code because ensure_resources() is always called before e
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/sim/surface.py:718` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Align the SurfaceExtractor.__init__ default to 512 to match capacity_planner.py and SurfacePipeline.ensure_resources. Better yet, make the default a module-level constant imported from a shared location.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/sim/surface.py:718` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Align the SurfaceExtractor.__init__ default to 512 to match capacity_planner.py and SurfacePipeline.ensure_resources. Better yet, make the default a module-level constant imported from a shared location.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ Minimal in the current code because ensure_resources() is always called before e
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+`SurfaceExtractor.__init__` and the `memory_safety` fallback use 512, the declared `surface_max_dense_dim` default. (`recommend_safe_settings` still clamps a candidate to 256 on purpose.)
+
+Regression guard: `tests/test_settings_default_agreement.py`.
