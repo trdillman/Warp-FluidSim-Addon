@@ -22,7 +22,8 @@ def _stub_gate(monkeypatch, commands=None):
             commands[label] = [str(part) for part in command]
 
     monkeypatch.setattr(run_production_gate, "_run", run)
-    monkeypatch.setattr(run_production_gate, "_warp_root", lambda _python: "warp-root")
+    monkeypatch.setattr(
+        run_production_gate, "_check_certified_warp", lambda _python, _env: "warp-root")
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(
         run_production_gate,
@@ -84,11 +85,12 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     monkeypatch.setattr(run_production_gate, "_git_text", lambda *_args: "abc123")
     monkeypatch.setattr(run_production_gate, "_fluidsim_version", lambda: "9.9.9")
 
-    run_production_gate._write_gate_manifest("blender-exe")
+    run_production_gate._write_gate_manifest("blender-exe", "1.17.0")
 
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["fluidsim_version"] == "9.9.9"
     assert data["blender_executable"] == "blender-exe"
+    assert data["warp_version"] == "1.17.0"
     assert data["git_head"] == "abc123"
     assert data["gate_verdict"] == "FULL-PRODUCTION-GATE-PASS"
 
@@ -98,3 +100,50 @@ def test_gate_reads_the_version_from_the_add_on():
     source = ROOT / "fluidSim_warp_blender51" / "version.py"
     exec(source.read_text(encoding="utf-8"), namespace)
     assert run_production_gate._fluidsim_version() == namespace["VERSION_STRING"]
+
+
+def test_gate_blender_lanes_use_the_gate_python_environment(monkeypatch):
+    commands = {}
+    envs = {}
+    labels = _stub_gate(monkeypatch, commands)
+
+    def run(label, command, env=None, reject_output=False, expect_marker=None):
+        labels.append(label)
+        commands[label] = [str(part) for part in command]
+        envs[label] = env
+
+    monkeypatch.setattr(run_production_gate, "_run", run)
+    monkeypatch.setenv("BLENDER_EXE", "blender-exe")
+    monkeypatch.setenv("FLUIDSIM_USER_PATH_PROFILE", "1")
+
+    assert run_production_gate.main(["--include-gui"]) == 0
+
+    blender_lanes = [label for label, cmd in commands.items() if cmd[0] == "blender-exe"]
+    assert len(blender_lanes) >= 20
+    for label in blender_lanes:
+        assert commands[label][1] == "--python-use-system-env", label
+    for label, env in envs.items():
+        if label == "git whitespace":
+            continue
+        assert env is not None and env["PYTHONNOUSERSITE"] == "1", label
+
+
+def test_gate_refuses_an_uncertified_warp(monkeypatch, capsys):
+    monkeypatch.setattr(run_production_gate, "_warp_version", lambda *_args: "1.16.1")
+    monkeypatch.setattr(run_production_gate, "_warp_root", lambda *_args: "user-site")
+
+    try:
+        run_production_gate._check_certified_warp("blender-py", {})
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("an uncertified Warp must stop the gate")
+    assert "requires certified Warp" in capsys.readouterr().out
+
+
+def test_gate_accepts_the_certified_warp(monkeypatch):
+    certified = run_production_gate._version_constant("CERTIFIED_WARP_VERSION")
+    monkeypatch.setattr(run_production_gate, "_warp_version", lambda *_args: certified)
+    monkeypatch.setattr(run_production_gate, "_warp_root", lambda *_args: "site")
+
+    assert run_production_gate._check_certified_warp("blender-py", {}) == "site"

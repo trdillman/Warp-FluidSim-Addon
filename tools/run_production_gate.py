@@ -12,6 +12,11 @@ Control surface
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
 - BLENDER_EXE, BLENDER_PY, and PYTEST_PATH override runtime resolution.
+- Warp comes from PYTHONPATH. Every lane runs with PYTHONNOUSERSITE=1 and
+  Blender lanes pass --python-use-system-env (Blender 5.2 ignores PYTHONPATH
+  and the user site otherwise), so a stray user-site Warp can never shadow the
+  certified one. The gate refuses to start unless Blender's Python imports
+  exactly version.py's CERTIFIED_WARP_VERSION.
 
 Debug surface
 -------------
@@ -33,11 +38,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if os.name == "nt":
-    DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
-    DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe"
+    DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
+    DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe"
 else:
-    DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
-    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
+    DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
+    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe"
 DEFAULT_PYTEST_PATH = ""
 BLENDER_FAILURE_MARKERS = (
     "Traceback (most recent call last):",
@@ -63,13 +68,34 @@ GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
 
 
-def _warp_root(python):
+def _warp_root(python, env=None):
     """Return the directory the given interpreter imports Warp from."""
     return subprocess.run(
         [python, "-c",
          "import pathlib, warp; print(pathlib.Path(warp.__file__).parents[1])"],
-        cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
+        cwd=ROOT, env=env, check=True, stdout=subprocess.PIPE, text=True,
     ).stdout.strip()
+
+
+def _warp_version(python, env=None):
+    """Return the Warp version the given interpreter imports."""
+    return subprocess.run(
+        [python, "-c", "import warp; print(warp.__version__)"],
+        cwd=ROOT, env=env, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout.strip()
+
+
+def _check_certified_warp(python, env):
+    """Refuse to gate against anything but the certified Warp build."""
+    expected = _version_constant("CERTIFIED_WARP_VERSION")
+    found = _warp_version(python, env)
+    root = _warp_root(python, env)
+    print(f"warp: {found} from {root}")
+    if found != expected:
+        print(f"Gate requires certified Warp {expected}; {python} imports {found} "
+              f"from {root}. Put the certified Warp on PYTHONPATH.")
+        raise SystemExit(1)
+    return root
 
 
 def _env():
@@ -78,7 +104,14 @@ def _env():
     if extra:
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = extra if not existing else extra + os.pathsep + existing
+    # A user-site Warp must never shadow the certified one on PYTHONPATH.
+    env["PYTHONNOUSERSITE"] = "1"
     return env
+
+
+def _blender(blender_exe, *args):
+    """Blender command line that honours the gate's PYTHONPATH and PYTHON* env."""
+    return [blender_exe, "--python-use-system-env", *args]
 
 
 def _run(label, command, env=None, reject_output=False, expect_marker=None):
@@ -174,14 +207,18 @@ def _clear_gate_manifest():
         pass
 
 
-def _fluidsim_version():
+def _version_constant(name):
     namespace = {}
     source = ROOT / "fluidSim_warp_blender51" / "version.py"
     exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
-    return namespace["VERSION_STRING"]
+    return namespace[name]
 
 
-def _write_gate_manifest(blender_exe):
+def _fluidsim_version():
+    return _version_constant("VERSION_STRING")
+
+
+def _write_gate_manifest(blender_exe, warp_version=None):
     artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
@@ -191,6 +228,7 @@ def _write_gate_manifest(blender_exe):
         "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
         "git_head": _git_text("rev-parse", "HEAD"),
         "fluidsim_version": _fluidsim_version(),
+        "warp_version": warp_version,
         "blender_executable": str(blender_exe),
         "include_gui": True,
         "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
@@ -227,6 +265,7 @@ def main(argv=None):
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()
+    warp_root = _check_certified_warp(blender_py, env)
     _run("python syntax", [
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
@@ -251,7 +290,7 @@ def main(argv=None):
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_domain_migration_acceptance.py",
         "tests/blender_domain_migration_equivalence.py",
-    ])
+    ], env=env)
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
         "tests/test_pressure_projection_regressions.py",
@@ -266,7 +305,7 @@ def main(argv=None):
         "tests/test_validation.py",
         "tests/test_kernel_coverage.py",
     ):
-        _run(script, [blender_py, script])
+        _run(script, [blender_py, script], env=env)
     _run("GPU profiler smoke", [
         blender_py, "tools/profile_gpu_solver.py",
         "--device", "cuda:0",
@@ -277,9 +316,8 @@ def main(argv=None):
         "--max-particles", "100000",
         "--max-whitewater", "50000",
         "--no-surface",
-    ])
+    ], env=env)
     # Hosted CI runs these on Warp CPU; the release gate is where they run on CUDA.
-    warp_root = _warp_root(blender_py)
     for check in RELEASE_WARP_VALIDATORS:
         _run(f"{check} kernels on CUDA", [
             blender_py, f"tools/release/validate_{check}_warp.py",
@@ -287,7 +325,7 @@ def main(argv=None):
             "--device", "cuda:0",
             "--report-json",
             os.path.abspath(f"artifacts/release_validation/{check}-warp-cuda-validation.json"),
-        ])
+        ], env=env)
     for script, success_marker in (
         ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
         ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
@@ -306,24 +344,25 @@ def main(argv=None):
     ):
         _run(
             script,
-            [blender_exe, "--background", "--factory-startup", "--python", script],
+            _blender(blender_exe, "--background", "--factory-startup", "--python", script),
+            env=env,
             reject_output=True,
             expect_marker=success_marker,
         )
     _run(
         "Phase 3 source UI acceptance",
-        [blender_exe, "--background", "--factory-startup", "--python",
-         "tests/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
-         os.path.abspath("artifacts/phase3_source_ui_acceptance.json")],
-        reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
+        _blender(blender_exe, "--background", "--factory-startup", "--python",
+                 "tests/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
+                 os.path.abspath("artifacts/phase3_source_ui_acceptance.json")),
+        env=env, reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
     _run(
         "source capacity planner acceptance",
-        [blender_exe, "--background", "--factory-startup", "--python",
-         "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
-         os.path.abspath("artifacts/capacity_planner_acceptance.json")],
-        reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
+        _blender(blender_exe, "--background", "--factory-startup", "--python",
+                 "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
+                 os.path.abspath("artifacts/capacity_planner_acceptance.json")),
+        env=env, reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
     for scene_name in CANONICAL_DEMO_SCENES:
-        _run(f"demo cache build {scene_name}", [
+        _run(f"demo cache build {scene_name}", _blender(
             blender_exe,
             "--background",
             "--factory-startup",
@@ -331,24 +370,24 @@ def main(argv=None):
             "tools/build_demo_scenes.py",
             "--",
             scene_name,
-        ], reject_output=True, expect_marker="DEMO-BUILD-PASS")
+        ), env=env, reject_output=True, expect_marker="DEMO-BUILD-PASS")
     _run(
         "demo analysis", [blender_py, "tools/analyze_demos.py"], env=env,
         expect_marker="DEMO-ANALYSIS-PASS (18/18)")
-    _run("demo blend checks", [
+    _run("demo blend checks", _blender(
         blender_exe,
         "--background",
         "--factory-startup",
         "--python",
         "tools/check_demo_blends.py",
-    ], reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
+    ), env=env, reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
     if include_gui:
-        _run("interactive GUI acceptance", [
+        _run("interactive GUI acceptance", _blender(
             blender_exe,
             "--factory-startup",
             "--python",
             "tests/blender_gui_acceptance.py",
-        ], reject_output=True, expect_marker="GUI-ACCEPTANCE-PASS")
+        ), env=env, reject_output=True, expect_marker="GUI-ACCEPTANCE-PASS")
         playback_report = os.path.abspath("artifacts/gui_playback_probe.json")
         # A stale passing artifact must never validate a probe that exited 0
         # without writing a new report.
@@ -361,12 +400,12 @@ def main(argv=None):
             "FLUIDSIM_PLAYBACK_BLEND": os.path.abspath("demos/dam_break.blend"),
             "FLUIDSIM_PLAYBACK_REPORT": playback_report,
         })
-        _run("saved-demo GUI timeline playback", [
+        _run("saved-demo GUI timeline playback", _blender(
             blender_exe,
             "--factory-startup",
             "--python",
             "tests/blender_gui_playback_probe.py",
-        ], env=playback_env, reject_output=True,
+        ), env=playback_env, reject_output=True,
            expect_marker="GUI-PLAYBACK-PROBE-PASS")
         _run("saved-demo GUI playback report", [
             blender_py,
@@ -374,9 +413,9 @@ def main(argv=None):
             playback_report,
             "--expected-blend",
             playback_env["FLUIDSIM_PLAYBACK_BLEND"],
-        ], expect_marker="SAVED-DEMO-GUI-PLAYBACK-PASS")
+        ], env=env, expect_marker="SAVED-DEMO-GUI-PLAYBACK-PASS")
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
-        _run("interactive user-path profile", [
+        _run("interactive user-path profile", _blender(
             blender_exe,
             "--background",
             "--factory-startup",
@@ -397,9 +436,10 @@ def main(argv=None):
             "350",
             "--json-out",
             "artifacts/user_path_profile.json",
-        ])
+        ), env=env)
     if include_gui:
-        _write_gate_manifest(blender_exe)
+        _write_gate_manifest(
+            blender_exe, _version_constant("CERTIFIED_WARP_VERSION"))
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
         print("\nHEADLESS-GATE-PASS")
