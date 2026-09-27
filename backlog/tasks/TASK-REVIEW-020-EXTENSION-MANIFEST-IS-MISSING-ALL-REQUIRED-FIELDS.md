@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,24 @@ Users installing this extension receive no permission warnings. The extension sy
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/blender_manifest.toml:1` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Populate blender_manifest.toml with all required fields. Declare permissions for filesystem access (e.g., 'files' for cache/export), and document subprocess/native access. At minimum: id, version, name, tagline, maintainer, type='add-on', license=['SPDX:GPL-3.0-or-later'], and permissions = { files = 'Cache and export file access' }.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/blender_manifest.toml:1` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Populate blender_manifest.toml with all required fields. Declare permissions for filesystem access (e.g., 'files' for cache/export), and document subprocess/native access. At minimum: id, version, name, tagline, maintainer, type='add-on', license=['SPDX:GPL-3.0-or-later'], and permissions = { files = 'Cache and export file access' }.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `SEC-003` in `reviews/swarm-2026-08-08/findings/security.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Medium Findings section).
 - Identified by the Trust & Safety lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Fixed before 1.1.0. `fluidSim_warp_blender51/blender_manifest.toml` now declares `id`, `name`, `version`, `tagline`, `maintainer`, `type = "add-on"`, `blender_version_min`, `license = ["SPDX:GPL-3.0-or-later"]`, `platforms`, `tags`, and `[permissions] files`.
+
+Tests: `fluidSim_warp_blender51/tests/test_release_identity.py::test_manifest_matches_runtime_version_and_identity` (id, version, license, platforms, minimum Blender) and `tests/test_extension_manifest.py`. No test asserts the `[permissions]` entry on the real manifest.
+
+Manifest populated in commit `bb6d3fc`.
 
 ## Blocked by
 

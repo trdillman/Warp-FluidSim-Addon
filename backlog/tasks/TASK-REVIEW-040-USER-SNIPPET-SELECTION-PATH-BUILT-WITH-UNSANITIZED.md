@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+obsolete
 
 ## Severity
 
@@ -31,6 +31,12 @@ Currently mitigated by the found-list re-validation check, but the unsanitized p
 - Source finding: `SEC-007` in `reviews/swarm-2026-08-08/findings/security.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
 - Identified by the Trust & Safety lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Obsolete in 1.1.0. The `FLUIDSIM_OT_snippet_load_preset` operator that joined `user_snippet_dir()` with `selection[4:]` was deleted in commit `b34192e` ("refactor(effects): retire legacy snippet runtime").
+
+The only remaining `USR:` code is the enum item builder in `fluidSim_warp_blender51/properties.py`, which uses `os.path.basename`. No live operator turns that selection into a file path.
 
 ## Blocked by
 

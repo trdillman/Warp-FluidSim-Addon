@@ -155,3 +155,36 @@ def test_interrupted_first_transaction_is_recognized_as_managed_cache(tmp_path):
     frame.write_bytes(b"uncommitted")
 
     assert is_managed_cache_directory(partial) is True
+
+
+RESTART_ENTRIES = ("fluidsim_cache.json", "frames", "checkpoints", "logs")
+
+
+def test_restart_refuses_to_replace_user_folders_outside_a_cache(tmp_path):
+    from fluidsim_testpkg.blender.cache_manager import require_restartable_cache_directory
+
+    project = tmp_path / "project"
+    (project / "logs").mkdir(parents=True)
+    (project / "logs" / "notes.txt").write_bytes(b"user data")
+    (project / "frames").mkdir()
+
+    with pytest.raises(ValueError, match="not a FluidSim cache") as refused:
+        require_restartable_cache_directory(project, RESTART_ENTRIES)
+
+    assert "replace logs in" in str(refused.value)
+    assert (project / "logs" / "notes.txt").read_bytes() == b"user data"
+
+
+def test_restart_allows_new_empty_or_recognized_cache_directories(tmp_path):
+    from fluidsim_testpkg.blender.cache_manager import require_restartable_cache_directory
+
+    missing = tmp_path / "missing"
+    empty = tmp_path / "empty"
+    (empty / "frames").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    (cache / "logs").mkdir(parents=True)
+    (cache / "logs" / "bake.jsonl").write_bytes(b"old-log")
+    (cache / "fluidsim_cache.json").write_bytes(b"manifest")
+
+    for path in (missing, empty, cache):
+        assert require_restartable_cache_directory(path, RESTART_ENTRIES) == path.resolve()

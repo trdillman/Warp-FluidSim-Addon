@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 import time
@@ -59,13 +60,19 @@ def _import_generated(generated: GeneratedKernelSource, cache_dir: str | Path | 
         if Path(getattr(module, "__file__", "")) == path:
             return module, path
         del sys.modules[generated.module_name]
+    # Execute exactly the bytes whose digest matches the generated source, so
+    # a file swapped on disk after the write is rejected instead of run.
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != generated.source_digest:
+        raise RuntimeError(
+            f"generated effect module changed on disk before import: {path}")
     spec = importlib.util.spec_from_file_location(generated.module_name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not create import spec for {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[generated.module_name] = module
     try:
-        spec.loader.exec_module(module)
+        exec(compile(data, str(path), "exec"), module.__dict__)  # noqa: S102
     except Exception:
         sys.modules.pop(generated.module_name, None)
         raise

@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+obsolete
 
 ## Severity
 
@@ -31,6 +31,12 @@ After a crash, metadata reports a narrower or inconsistent range compared to wha
 - Source finding: `SERIO-004` in `reviews/swarm-2026-08-08/findings/io.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
 - Identified by the Serialization & IO lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Obsolete in 1.1.0. The live cache write in `Session.step` (`cache.write_frame` followed by `cache.write_sequence_metadata`) was removed in commit `bb6d3fc`. No add-on code calls either function any more.
+
+Cache frames are written only by Production Bake (`fluidSim_warp_blender51/blender/production_bake.py`, also used by `cache_bake.bake`). It writes each frame with `cache.write_frame_v2_atomic` and a checkpoint with `write_checkpoint_atomic`, then commits the manifest last (`with_committed_frame`). A crash leaves uncommitted files as orphans, which the manifest-authoritative cache inspection ignores and reports (`fluidSim_warp_blender51/tests/test_cache_manager.py::test_inspection_is_manifest_authoritative_and_reports_orphans`, `::test_interrupted_first_transaction_is_recognized_as_managed_cache`).
 
 ## Blocked by
 

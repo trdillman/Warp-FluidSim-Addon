@@ -59,9 +59,11 @@ non-authoritative review, not a production bake.
 **Production Bake** is a separate sequential, authoritative cache-writing
 workflow. Its range and storage controls live under **Cache & Production Bake**.
 Starting or restarting a bake may require confirmation when an existing managed
-cache would be replaced. FluidSim does not silently delete a cache. GPU atomic
-accumulation and derived surface ordering mean a production bake is not claimed
-to be bitwise CUDA-repeatable.
+cache would be replaced. FluidSim does not silently delete a cache. Baking the
+`dam_break` or `crown_splash` demo twice on the same GPU gives bit-identical
+frames. Other scenes may still differ slightly between bakes: mesh emitters and
+color mixing accumulate on the GPU in arrival order, and results change across
+GPUs and Warp versions.
 
 ## Basic, Advanced, and diagnostics
 

@@ -44,6 +44,10 @@ class _RestartCacheProtection:
         return self.backup_path is not None
 
     def stage(self) -> None:
+        from .cache_manager import require_restartable_cache_directory
+
+        require_restartable_cache_directory(
+            self.cache_path, _RESTART_MANAGED_ENTRIES)
         self._root_existed = self.cache_path.exists()
         existing = [
             name

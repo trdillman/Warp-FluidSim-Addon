@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+obsolete
 
 ## Severity
 
@@ -31,6 +31,12 @@ Users invoking these operators outside the panel context get no feedback about w
 - Source finding: `UIUX-005` in `reviews/swarm-2026-08-08/findings/ui.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
 - Identified by the UI/UX & Operators lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Obsolete in 1.1.0. `FLUIDSIM_OT_snippet_edit_line`, `FLUIDSIM_OT_snippet_line_add` and `FLUIDSIM_OT_snippet_line_delete` were deleted in commit `b34192e` ("refactor(effects): retire legacy snippet runtime").
+
+`fluidSim_warp_blender51/operator_domains/snippets.py` now holds only the `FLUIDSIM_OT_snippet_apply` compatibility forward to `fluidsim.effect_apply_stack`. Snippet editing is handled by Custom Effects v2.
 
 ## Blocked by
 

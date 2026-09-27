@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from dataclasses import replace
 
 import pytest
-from fluidsim_testpkg.sim.effects.compiler import build_candidate_effects, compile_effect
+from fluidsim_testpkg.sim.effects.compiler import (
+    _import_generated,
+    build_candidate_effects,
+    compile_effect,
+)
 from fluidsim_testpkg.sim.effects.enums import (
     EffectCadence,
     EffectDomain,
@@ -21,6 +26,7 @@ from fluidsim_testpkg.sim.effects.schema import (
     KernelDefinitionV2,
     ParameterDefinitionV2,
 )
+from fluidsim_testpkg.sim.effects.source import GeneratedKernelSource, generate_kernel_source
 from fluidsim_testpkg.sim.effects.trust import TrustStore, content_trust_digest
 
 REQUIRES_WARP = pytest.mark.skipif(
@@ -152,3 +158,30 @@ def test_candidate_failure_does_not_return_partial_compiled_stack(tmp_path):
     result = build_candidate_effects((valid, invalid), device="cpu", trust_store=store)
     assert result.success is False
     assert result.compiled_effects == ()
+
+
+def test_import_refuses_module_changed_on_disk(monkeypatch, tmp_path):
+    generated = generate_kernel_source(
+        _particle_instance("particle_velocity[particle_index] = velocity"), 0)
+    tampered = tmp_path / f"{generated.module_name}.py"
+
+    def swap_after_write(self, directory=None):
+        tampered.write_text("raise SystemExit('tampered')\n", encoding="utf-8")
+        return tampered
+
+    monkeypatch.setattr(GeneratedKernelSource, "write_cache_file", swap_after_write)
+    with pytest.raises(RuntimeError, match="changed on disk"):
+        _import_generated(generated, tmp_path)
+    assert generated.module_name not in sys.modules
+
+
+@REQUIRES_WARP
+def test_default_compile_writes_into_private_module_directory(
+        _private_effect_module_directory):
+    compiled = compile_effect(
+        _particle_instance("particle_velocity[particle_index] = velocity * 0.25"),
+        device="cpu",
+    )
+    assert compiled.success is True
+    module_file = compiled.kernels[0].compile_report.module_file
+    assert module_file.startswith(str(_private_effect_module_directory))

@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Goal
 
@@ -95,8 +95,36 @@ rmdir /s /q "C:\Users\Tyler\Downloads\liquid_warp_blender51_port\liquid_warp_ble
 
 ## Acceptance criteria
 
-- [ ] Phase-4 checkout is still clean and fully contained in current `master`.
-- [ ] Orphan directories are inventoried and archived before deletion.
-- [ ] Archive manifests/checksums are verified.
-- [ ] All four experiments and existing archives remain untouched.
-- [ ] Cleanup report records reclaimed paths, retained refs, and exact verification commands.
+- [x] Phase-4 checkout is still clean and fully contained in current `master`.
+- [x] Orphan directories are inventoried and archived before deletion.
+- [x] Archive manifests/checksums are verified.
+- [x] All four experiments and existing archives remain untouched.
+- [x] Cleanup report records reclaimed paths, retained refs, and exact verification commands.
+
+## Resolution
+
+Completed. Verified on 2026-09-27 from the live repository:
+
+- **Phase-4 checkout.** Removed on 2026-08-06 (above). Its payload `dcf4d27` is an
+  ancestor of `master` (`git merge-base --is-ancestor dcf4d27 master`). The branch ref
+  `phase4/live-interaction-merge-20260728` was later deleted by the 2026-09-11 repository
+  reconcile, which left only `master`; nothing was lost because the branch had no commits
+  outside `master`.
+- **Orphan directories.** `liquid_warp_blender51_port_first_checkout` and
+  `liquid_warp_blender51_port_viewport_viz` no longer exist. Before deletion, every file not
+  already reachable from a git ref was copied to
+  `artifacts/worktree-archive-20260911/orphans/` (main checkout) and listed in its
+  `MANIFEST.txt`. The manifest records git object ids (SHA-1), not SHA-256; all 25
+  entries re-hash to their recorded ids with `git hash-object`.
+- **Experiments.** Their worktrees and branches were removed in the 2026-09-11 reconcile,
+  and each tip is kept as an annotated tag. All four tags resolve to the commits recorded
+  in `artifacts/worktree-archive-20260911/recovery-refs.txt`:
+  `archive/codex/native-gpu-interop` (`0c266e1`),
+  `archive/codex/native-gpu-interop-main-20260715` (`73bfd8d`),
+  `archive/claude/particle-surface-rendering-apis-f62356` (`10ce794`),
+  `archive/worktree-stflip-implementation` (`4d81ca1`). They remain experiments, not merge
+  candidates (AGENTS.md).
+- **Existing archives.** `worktree_archives/2026-07-29` (next to the main checkout) is
+  intact.
+- **Known blocker.** `.claude/worktrees/addon-st-flip-review-717052` is gone.
+- `git worktree list` now shows only the main checkout and active session worktrees.

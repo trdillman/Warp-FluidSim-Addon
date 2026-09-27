@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -12,14 +13,16 @@ run_production_gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(run_production_gate)
 
 
-def _stub_gate(monkeypatch):
+def _stub_gate(monkeypatch, commands=None):
     labels = []
-    monkeypatch.setattr(
-        run_production_gate,
-        "_run",
-        lambda label, command, env=None, reject_output=False,
-        expect_marker=None: labels.append(label),
-    )
+
+    def run(label, command, env=None, reject_output=False, expect_marker=None):
+        labels.append(label)
+        if commands is not None:
+            commands[label] = [str(part) for part in command]
+
+    monkeypatch.setattr(run_production_gate, "_run", run)
+    monkeypatch.setattr(run_production_gate, "_warp_root", lambda _python: "warp-root")
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(
         run_production_gate,
@@ -27,7 +30,7 @@ def _stub_gate(monkeypatch):
         lambda: None,
     )
     monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
-    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda *_args: None)
     monkeypatch.setattr(run_production_gate, "_print_gate_metadata", lambda *_args: None)
     return labels
 
@@ -56,3 +59,42 @@ def test_gate_include_gui_runs_gui_acceptance(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "interactive GUI acceptance" in labels
     assert "FULL-PRODUCTION-GATE-PASS" in out
+
+
+def test_gate_validates_release_kernels_on_cuda(monkeypatch):
+    commands = {}
+    _stub_gate(monkeypatch, commands)
+
+    assert run_production_gate.main([]) == 0
+
+    for check in ("phase4", "phase5", "custom_effects"):
+        command = commands[f"{check} kernels on CUDA"]
+        assert command[1] == f"tools/release/validate_{check}_warp.py"
+        assert command[command.index("--device") + 1] == "cuda:0"
+        assert command[command.index("--expected-warp-root") + 1] == "warp-root"
+
+
+def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
+    artifact = tmp_path / "artifacts" / "demo_analysis" / "analysis_report.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("{}", encoding="utf-8")
+    manifest = tmp_path / "artifacts" / "production_gate_manifest.json"
+    monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
+    monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
+    monkeypatch.setattr(run_production_gate, "_git_text", lambda *_args: "abc123")
+    monkeypatch.setattr(run_production_gate, "_fluidsim_version", lambda: "9.9.9")
+
+    run_production_gate._write_gate_manifest("blender-exe")
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["fluidsim_version"] == "9.9.9"
+    assert data["blender_executable"] == "blender-exe"
+    assert data["git_head"] == "abc123"
+    assert data["gate_verdict"] == "FULL-PRODUCTION-GATE-PASS"
+
+
+def test_gate_reads_the_version_from_the_add_on():
+    namespace = {}
+    source = ROOT / "fluidSim_warp_blender51" / "version.py"
+    exec(source.read_text(encoding="utf-8"), namespace)
+    assert run_production_gate._fluidsim_version() == namespace["VERSION_STRING"]

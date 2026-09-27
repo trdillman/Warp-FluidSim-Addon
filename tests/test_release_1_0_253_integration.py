@@ -1,4 +1,4 @@
-"""Integration contract for the adapted 1.0.255 release surface."""
+"""Integration contract for the current release surface."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def test_release_identity_targets_blender_51_without_bundled_runtimes():
         (ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
 
     assert manifest["id"] == "fluidsim_warp"
-    assert manifest["version"] == "1.0.255"
+    assert manifest["version"] == "1.1.0"
     assert manifest["blender_version_min"] == "5.1.0"
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 1, 0)

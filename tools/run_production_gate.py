@@ -60,6 +60,16 @@ CANONICAL_DEMO_SCENES = (
     "crown_splash",
 )
 GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
+RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
+
+
+def _warp_root(python):
+    """Return the directory the given interpreter imports Warp from."""
+    return subprocess.run(
+        [python, "-c",
+         "import pathlib, warp; print(pathlib.Path(warp.__file__).parents[1])"],
+        cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout.strip()
 
 
 def _env():
@@ -164,7 +174,14 @@ def _clear_gate_manifest():
         pass
 
 
-def _write_gate_manifest():
+def _fluidsim_version():
+    namespace = {}
+    source = ROOT / "fluidSim_warp_blender51" / "version.py"
+    exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+    return namespace["VERSION_STRING"]
+
+
+def _write_gate_manifest(blender_exe):
     artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
@@ -173,6 +190,8 @@ def _write_gate_manifest():
         "gate_run_at": _dt.datetime.now(_dt.UTC).isoformat(),
         "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
         "git_head": _git_text("rev-parse", "HEAD"),
+        "fluidsim_version": _fluidsim_version(),
+        "blender_executable": str(blender_exe),
         "include_gui": True,
         "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
         "demo_artifact_sha256": digest,
@@ -259,6 +278,16 @@ def main(argv=None):
         "--max-whitewater", "50000",
         "--no-surface",
     ])
+    # Hosted CI runs these on Warp CPU; the release gate is where they run on CUDA.
+    warp_root = _warp_root(blender_py)
+    for check in RELEASE_WARP_VALIDATORS:
+        _run(f"{check} kernels on CUDA", [
+            blender_py, f"tools/release/validate_{check}_warp.py",
+            "--expected-warp-root", warp_root,
+            "--device", "cuda:0",
+            "--report-json",
+            os.path.abspath(f"artifacts/release_validation/{check}-warp-cuda-validation.json"),
+        ])
     for script, success_marker in (
         ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
         ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
@@ -370,7 +399,7 @@ def main(argv=None):
             "artifacts/user_path_profile.json",
         ])
     if include_gui:
-        _write_gate_manifest()
+        _write_gate_manifest(blender_exe)
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
         print("\nHEADLESS-GATE-PASS")

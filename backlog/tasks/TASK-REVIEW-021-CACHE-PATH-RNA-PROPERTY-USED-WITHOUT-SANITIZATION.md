@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,35 @@ Opening a malicious .blend file and running the simulation could write cache fil
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/io/cache.py:340` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: After resolving with bpy.path.abspath, normalize the path with os.path.normpath and validate it is within an expected root (e.g., the blend file directory or user home). Reject paths containing '..' after normalization, or confine writes to a sandboxed subdirectory.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/io/cache.py:340` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: After resolving with bpy.path.abspath, normalize the path with os.path.normpath and validate it is within an expected root (e.g., the blend file directory or user home). Reject paths containing '..' after normalization, or confine writes to a sandboxed subdirectory.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `SEC-004` in `reviews/swarm-2026-08-08/findings/security.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Medium Findings section).
 - Identified by the Trust & Safety lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Resolved in 1.1.0. The cache path is an artist-chosen folder by design (scratch disks,
+network shares), so confining it to the .blend directory would break real workflows;
+FluidSim only writes its own fixed names (`fluidsim_cache.json`, `frames/frame_*.npz`,
+`checkpoints/checkpoint_*.npz`). The real harm behind this finding was deletion:
+Restart removed any `frames`, `checkpoints` or `logs` folder under the chosen path even
+when the folder was not a FluidSim cache.
+
+- `blender/cache_manager.py`: new `require_restartable_cache_directory` refuses a
+  restart that would replace a non-empty `frames`/`checkpoints`/`logs` folder (or a
+  stray `fluidsim_cache.json`) in a folder that is not a recognized FluidSim cache.
+- Both restart paths call it before touching anything: `_RestartCacheProtection.stage`
+  (`blender/cache_bake.py`) and `ProductionBakeBackend._clear_for_restart`
+  (`blender/production_bake.py`). Free, move and rename were already guarded by
+  `_require_managed_cache_directory`.
+- Regression tests: `tests/test_artist_bake_safety.py::test_restart_never_stages_or_clears_user_folders_outside_a_cache`
+  and two unit tests in `fluidSim_warp_blender51/tests/test_cache_manager.py`.
 
 ## Blocked by
 

@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+wont-fix
 
 ## Severity
 
@@ -31,6 +31,14 @@ Minor: status text may become stale relative to actual solver state after undo o
 - Source finding: `UIUX-006` in `reviews/swarm-2026-08-08/findings/ui.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
 - Identified by the UI/UX & Operators lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Closed as won't-fix for 1.1.0. `FLUIDSIM_OT_step` and `FLUIDSIM_OT_release` now live in `fluidSim_warp_blender51/operator_domains/session.py` and still declare no `bl_options`.
+
+Both act on the external GPU solver session, which undo cannot reverse. The only RNA they write directly is transient status text (`release` sets `fluidsim.status`; `step` records failures on the session). An undo step here would only add noise.
+
+`tests/test_operator_panel_behavior.py::test_undo_metadata_is_limited_to_mutating_operators` pins `release` as not undoable.
 
 ## Blocked by
 

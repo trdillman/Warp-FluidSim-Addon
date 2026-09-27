@@ -470,9 +470,13 @@ class ProductionBakeBackend:
             self._original_session_signatures = signatures
 
     def _clear_for_restart(self, base: Path) -> None:
+        from .cache_manager import require_restartable_cache_directory
+
         if not base.exists():
             return
-        for name in ("fluidsim_cache.json", "frames", "checkpoints", "logs"):
+        entries = ("fluidsim_cache.json", "frames", "checkpoints", "logs")
+        require_restartable_cache_directory(base, entries)
+        for name in entries:
             path = base / name
             if path.is_dir():
                 shutil.rmtree(path)

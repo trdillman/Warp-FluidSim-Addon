@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,24 @@ A regression in _run (subprocess invocation, marker checking, output rejection) 
 
 ## Acceptance criteria
 
-- [ ] Root cause at `tests/test_production_gate_semantics.py:18` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: This is partially intentional (you cannot run Blender in unit tests). The gap is that there is no integration test layer that exercises _run with a real subprocess. Add at least one integration test that runs a trivial 'echo MARKER' command through _run and verifies marker enforcement and output rejection end-to-end.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `tests/test_production_gate_semantics.py:18` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: This is partially intentional (you cannot run Blender in unit tests). The gap is that there is no integration test layer that exercises _run with a real subprocess. Add at least one integration test that runs a trivial 'echo MARKER' command through _run and verifies marker enforcement and output rejection end-to-end.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `TEST-005` in `reviews/swarm-2026-08-08/findings/tests.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Medium Findings section).
 - Identified by the Test Coverage lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Fixed before 1.1.0. `_run` in `tools/run_production_gate.py` is now tested directly instead of only being stubbed.
+
+Tests: `tests/test_production_gate_truthfulness.py::test_gate_lane_tolerates_non_utf8_child_output` runs a real `sys.executable` subprocess through `_run` with marker enforcement; `::test_blender_lane_missing_positive_marker_fails_with_zero_exit` and `::test_blender_lane_traceback_fails_even_with_zero_exit` drive the real `_run` marker and output-rejection logic with a stubbed `subprocess.run`; `tests/test_gate_marker_and_playback_validation.py::test_run_rejects_zero_exit_without_expected_success_marker` and `::test_run_accepts_expected_success_marker` cover both marker outcomes.
+
+Real-subprocess test added in commit `2d5b850`.
 
 ## Blocked by
 
