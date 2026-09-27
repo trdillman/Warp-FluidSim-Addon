@@ -50,11 +50,18 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Clean-profile install on Windows: extension smoke + installed GPU regression (21/21 validations, 10 preview frames) on Blender 5.2.0 with no PYTHONPATH | done | `smoke-test-report.json`, `gpu-regression-report.json` in the build folder |
 | GPU self-validations leaked 3 native CUDA kernel leases, so disabling the add-on after Run Validations logged `unregister step 'native CUDA cache' failed` | fixed: 5 validations now release their solvers | `tests/test_validation_releases_native_leases.py` |
 | Clean-profile install on WSL2 (D4) | pending | |
-| GUI gate reproducible 3/3 on the new stack | pending (1/3) | |
+| GUI gate reproducible 3/3 on the new stack | 2/3: second FULL-PRODUCTION-GATE-PASS at `2a6eec0`, same demo artifact sha256 `a32872b8…0926` | `gate-52-20260927-164658.log` |
 
-## Phases 2–4
+## Phase 2: WS5 breaking cleanup
 
-Not started. Phase 2 (WS5 breaking cleanup) starts with an inventory of the removal targets.
+| Item | Status | Evidence |
+|---|---|---|
+| Retired snippet runtime (`CompiledSnippet`, `SnippetManager`, kernel templates), `blender/snippets.py` except the migration reader, the `_snippets()` shims, 13 unused enums | done (`d8f9d6e`, −583 lines) | presets now compile through the Custom Effects compiler in `tests/test_snippet_library.py` |
+| `k_ww_compact_scatter` unwritten `out_count` (REVIEW-036 closed) | done (`2a6eec0`) | `tests/test_whitewater_kernel_outputs.py`; gate demo hash unchanged |
+| Gate truthfulness tests missed the `0e01cdf` certified-Warp stub | fixed (`55a4c6b`) | root 1191 passed |
+| `write_sequence_metadata` | moved to the cache-v1 removal: `fluidsim_sequence.json` is the v1 sidecar that `read_sequence_metadata` still falls back to | `io/cache.py:521` |
+
+Phases 3–4: not started.
 
 ## Environment notes
 
@@ -65,4 +72,4 @@ Not started. Phase 2 (WS5 breaking cleanup) starts with an inventory of the remo
 
 ## Next action
 
-Build the real split packages with `tools/release/build_extension.py --blender <5.2.0>` and smoke-install them in a clean profile; then start Phase 2.
+Phase 2: delete the dead legacy snippet UI fields and library helpers (keep `snippets`, both snippet PropertyGroups and the migration reader), regenerate `docs/ownership-map.md`; then D6 and the can-only-fail UI.
