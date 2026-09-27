@@ -38,7 +38,7 @@ Not started.
 
 ## Environment notes
 
-- Blender 5.2.0 LTS (portable, Python 3.13) is at `C:	mplender-cu-vm\staginglender-5.2lender-5.2.0-windows-x64`. Its Python shares the user site-packages where Warp 1.16.0 is installed.
+- Blender 5.2.0 LTS (portable, Python 3.13) is at `C:\tmp\blender-cu-vm\staging\blender-5.2\blender-5.2.0-windows-x64`. Its Python shares the user site-packages where Warp 1.16.0 is installed.
 - WSL2 Ubuntu 24.04 has Python 3.12 and pytest, and the RTX 4080 SUPER is visible through `nvidia-smi` (driver 610.47).
 - Disk is tight: about 22 GB free.
 
