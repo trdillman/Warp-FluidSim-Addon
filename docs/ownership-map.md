@@ -31,10 +31,10 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
-| READ_ONLY | 29 | something reads it; nothing resolved writes it |
+| READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **226** | |
+| **total** | **225** | |
 
 ## Mirror redirection
 
@@ -76,7 +76,6 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bubble_material` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `spray_material` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `output_collection_name` | OUTPUT | scene | scene | scene | - | scene/scene | 1 | OK |
-| `snippets` | AUTHORED_NEXT_RUN | - | scene | - | - | scene/scene | 2 | READ_ONLY |
 | `setup_mode` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
 | `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
@@ -285,10 +284,10 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:789` |
-| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:448`, `fluidSim_warp_blender51/blender/scene_bridge.py:400` |
-| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:449`, `fluidSim_warp_blender51/blender/scene_bridge.py:402` |
-| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:450`, `fluidSim_warp_blender51/blender/scene_bridge.py:404` |
-| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:451`, `fluidSim_warp_blender51/blender/scene_bridge.py:406` |
-| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:452`, `fluidSim_warp_blender51/blender/scene_bridge.py:408` |
-| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:453`, `fluidSim_warp_blender51/blender/scene_bridge.py:410` |
+| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:448`, `fluidSim_warp_blender51/blender/scene_bridge.py:396` |
+| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:449`, `fluidSim_warp_blender51/blender/scene_bridge.py:398` |
+| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:450`, `fluidSim_warp_blender51/blender/scene_bridge.py:400` |
+| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:451`, `fluidSim_warp_blender51/blender/scene_bridge.py:402` |
+| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:452`, `fluidSim_warp_blender51/blender/scene_bridge.py:404` |
+| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:453`, `fluidSim_warp_blender51/blender/scene_bridge.py:406` |
 

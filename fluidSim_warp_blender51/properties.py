@@ -12,7 +12,6 @@ from __future__ import annotations
 import bpy
 from bpy.props import (
     BoolProperty,
-    CollectionProperty,
     EnumProperty,
     FloatProperty,
     FloatVectorProperty,
@@ -24,11 +23,6 @@ from bpy.props import (
 from .sim import constants as _C
 from .sim.enums import (
     BlendMode,
-    CustomKernelConstantType,
-    CustomKernelFieldPermission,
-    CustomKernelOrder,
-    CustomKernelRunOver,
-    CustomKernelType,
     LimitBehavior,
     MeshEvaluationMode,
     MeshSinkRegionMode,
@@ -323,90 +317,6 @@ def _product_preset_items(_self, _context):
         ("BUILTIN:preview_water", "Preview Water", "Fast live-preview defaults")
     ]
     return _PRODUCT_PRESET_ITEMS
-
-
-# Custom snippet argument / snippet property groups
-
-
-class FLUIDSIM_PG_snippet_argument(bpy.types.PropertyGroup):
-    mode: EnumProperty(
-        name="Mode",
-        items=[("FIELD", "Field", "Bind a live solver field so the kernel reads or writes field data"),
-               ("CONSTANT", "Constant", "Bind one fixed numeric value for every kernel invocation")],
-        default="FIELD",
-        description=(
-            "Select whether this argument binds changing solver data or a fixed value; "
-            "changing modes replaces the argument controls shown below"),
-    )
-    field: StringProperty(
-        name="Field",
-        description="Set the solver field this argument reads or writes (for example velocity_u, temperature, or pressure); changing it redirects the snippet to different simulation data",
-        default="temperature",
-    )
-    field_permission: EnumProperty(
-        name="Permission",
-        items=_items(CustomKernelFieldPermission),
-        default="READ_WRITE",
-        description=(
-            "Declare whether this snippet may read, write, or read and write "
-            "the bound field; invalid effects are rejected before compilation"),
-    )
-    constant_type: EnumProperty(
-        name="Type", items=_items(CustomKernelConstantType), default="FLOAT")
-    constant_name: StringProperty(
-        name="Name", default="value",
-        description="Set the identifier used for this constant in the snippet; changing it requires matching code references")
-    constant_value: FloatProperty(
-        name="Value", default=0.0,
-        description="Set the numeric value supplied to every kernel invocation; higher or lower values affect the snippet wherever this constant is used")
-
-
-class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
-    enabled: BoolProperty(
-        name="Enabled", default=True,
-        description="Enable to run this snippet in its selected solver phase; disable to keep it in the stack without executing it")
-    kernel_name: StringProperty(
-        name="Kernel Name", default="my_kernel",
-        description="Set the generated kernel identifier; changing it renames the compiled snippet entry point")
-    snippet_type: EnumProperty(
-        name="Type",
-        items=_items(CustomKernelType),
-        default="KERNEL",
-        description=(
-            "Persist the synthesized snippet kind; FUNCTION is retained but "
-            "rejected until helper linkage semantics are implemented"),
-    )
-    description: StringProperty(name="Description", default="")
-    order: EnumProperty(
-        name="Order", items=_items(CustomKernelOrder),
-        default="BEFORE_FORCES",
-        description="Choose the solver phase in which this snippet runs; changing it changes which simulation data the snippet sees and affects")
-    run_over: EnumProperty(
-        name="Run Over", items=_items(CustomKernelRunOver),
-        default="VOXEL_LINEAR",
-        description="Choose whether the kernel runs over sparse tiles, active voxels, or particles; changing it changes invocation count and available indexing")
-    text_block: PointerProperty(
-        name="Code", type=bpy.types.Text,
-        description="Select the Text datablock containing the Warp snippet body; changing it replaces the code compiled and run by this stack entry",
-    )
-    arguments: CollectionProperty(type=FLUIDSIM_PG_snippet_argument)
-    active_argument: IntProperty(default=0)
-    last_error: StringProperty(name="Last Error", default="")
-    # Validation gate: a snippet only reaches the solver when its current
-    # source passed static validation (is_valid + matching hash).
-    is_valid: BoolProperty(name="Valid", default=False)
-    validated_hash: StringProperty(default="")
-    validation_report: StringProperty(name="Validation Report", default="")
-    # Layering window: combine snippets at different times / frame strides.
-    frame_start: IntProperty(
-        name="Start Frame", default=0, min=0,
-        description="First frame this snippet runs on (0 = from the start)")
-    frame_end: IntProperty(
-        name="End Frame", default=0, min=0,
-        description="Last frame this snippet runs on (0 = never stops)")
-    frame_step: IntProperty(
-        name="Frame Step", default=1, min=1, max=250,
-        description="Run this snippet every Nth frame")
 
 
 # Object-level settings (sources / colliders / sinks)
@@ -879,9 +789,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Output Collection", default="FluidSim Output",
         update=_request_output_refresh,
         description="Set the Blender collection name that owns generated outputs; changing it moves or creates outputs under the new collection")
-
-    # Custom snippets
-    snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
 
     # Guided setup / product presets
     setup_mode: EnumProperty(
@@ -1692,8 +1599,6 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
 
 
 CLASSES = (
-    FLUIDSIM_PG_snippet_argument,
-    FLUIDSIM_PG_snippet,
     FLUIDSIM_PG_object,
     FLUIDSIM_PG_scene,
     FLUIDSIM_PG_domain,

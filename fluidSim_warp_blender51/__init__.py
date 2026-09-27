@@ -49,8 +49,6 @@ def register():
          sources.unregister_handlers),
         ("pre-1.1 file check", file_compat.register_handlers,
          file_compat.unregister_handlers),
-        ("legacy effect migration handlers", effects.register_handlers,
-         effects.unregister_handlers),
         ("playback handlers", playback.register_handlers,
          playback.unregister_handlers),
         ("pending handlers", pending_settings.register_handlers,

@@ -35,7 +35,7 @@ This glossary names the domain concepts used by architecture reviews and impleme
 - **Playback** (`blender/playback.py`) owns Preview/Cache Playback selection, timeline interpretation, catch-up/desynchronization, rewind delegation, render-restore and re-entry suppression, and playback handlers.
 - **Production Cache Bake** (`blender/cache_bake.py`) owns authoritative sequential cache generation and restoration of temporary Blender state. It does not call Preview Playback handlers or Output Publication.
 - **Pending Settings** (`blender/pending_settings.py`) owns the exhaustive lifecycle registry, applied snapshots, pending state/presentation, apply/revert/debounce policy, and depsgraph/undo/load handlers.
-- **Solver Settings** (`blender/solver_settings.py`) owns Blender-authored-value projection only; `blender/snippets.py` converts Blender snippet property groups into the lifecycle owned by `sim/custom.py`.
+- **Solver Settings** (`blender/solver_settings.py`) owns Blender-authored-value projection only.
 
 Dependency direction is one-way: Blender UI/handler adapters call these deep modules; deep modules call Solver Settings, Output Publication, the Solver Session, and `sim`/`io` owners through narrow seams. UI adapters do not reconstruct lifecycle or playback policy, and Output Publication never reacquires solver data while publishing.
 

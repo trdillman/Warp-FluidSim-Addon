@@ -380,7 +380,6 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
         monkeypatch, authored=8, runtime=8, demand=7, auto_grow=False)
     scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
     scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
-    scene.fluidsim.snippets = []
     blocker = SimpleNamespace(
         code="MEMORY_ESTIMATE", required=2048, available=1024,
         message="memory estimate")
@@ -665,7 +664,6 @@ def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypat
     )
     scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
     scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
-    scene.fluidsim.snippets = []
     from fluidSim_warp_blender51.sim import memory_safety
 
     monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {

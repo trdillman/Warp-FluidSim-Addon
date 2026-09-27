@@ -28,7 +28,6 @@ def test_operator_classes_are_owned_by_named_capability_modules():
         "presets.py",
         "rendering.py",
         "session.py",
-        "snippets.py",
         "source_roles.py",
     }
     actual_owners = set()

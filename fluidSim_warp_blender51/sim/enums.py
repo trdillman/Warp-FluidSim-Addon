@@ -77,47 +77,6 @@ class Completion(IntEnum):
     FINISH = 2
 
 
-class CustomKernelType(IntEnum):
-    """CORE::Solver::CustomOpenClType (ported to Warp snippets)"""
-    KERNEL = 0
-    FUNCTION = 1
-
-
-class CustomKernelOrder(IntEnum):
-    """CORE::Solver::CustomOpenClOrder"""
-    FIRST_STEP = 0
-    BEFORE_SOURCING = 1
-    BEFORE_FORCES = 2
-    BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION = 3
-    FINAL_STEP = 4
-
-
-class CustomKernelRunOver(IntEnum):
-    """CORE::Solver::CustomOpenClRunOver"""
-    VOXEL_TILE = 0
-    VOXEL_LINEAR = 1
-    PARTICLES = 2
-
-
-class CustomKernelArgumentMode(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentMode"""
-    FIELD = 0
-    CONSTANT = 1
-
-
-class CustomKernelFieldPermission(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentFieldPermissions"""
-    WRITE = 0
-    READ = 1
-    READ_WRITE = 2
-
-
-class CustomKernelConstantType(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentConstantType"""
-    FLOAT = 0
-    INT = 1
-
-
 class BlendMode(IntEnum):
     """Enum_Core_ParametersBlendMode"""
     ADD = 0
@@ -342,22 +301,6 @@ _ENUM_DESCRIPTIONS = {
         "MAINTAIN": "Hard-clamp velocity magnitude to Max Speed",
         "PERCENT": "Remove the Limit Percent fraction of speed above Max Speed each step",
         "ACCELERATION": "Limit how quickly velocity can be reduced toward Max Speed rather than clamping immediately",
-    },
-    CustomKernelConstantType: {
-        "FLOAT": "Pass the constant as a floating-point value so the snippet can use fractional values",
-        "INT": "Pass the constant as an integer value so fractional input is not available",
-    },
-    CustomKernelOrder: {
-        "FIRST_STEP": "Run at the start of each solver step before sourcing and forces",
-        "BEFORE_SOURCING": "Run immediately before liquid, sink, and field sources are applied",
-        "BEFORE_FORCES": "Run after sourcing and before gravity and other forces",
-        "BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION": "Run before pressure projection and particle advection",
-        "FINAL_STEP": "Run after the standard solver phases so changes become final step output",
-    },
-    CustomKernelRunOver: {
-        "VOXEL_TILE": "Invoke once per active 8x8x8 sparse tile for tile-level work",
-        "VOXEL_LINEAR": "Invoke across active voxel storage for per-voxel field work",
-        "PARTICLES": "Invoke once per live liquid particle for particle-attribute work",
     },
     BlendMode: {
         "ADD": "Add the source payload to the existing target value",

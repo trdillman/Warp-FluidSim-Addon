@@ -82,7 +82,7 @@ def test_user_guide_declares_certified_support_matrix():
         "Linux x64",
         "NVIDIA CUDA",
         "Bundled NVIDIA Warp 1.17.0",
-        "Cache v1",
+        "Cache v1 (1.0.x) is refused",
     ):
         assert text in guide
     assert "| Operating systems | Windows x64 and Linux x64 |" in guide

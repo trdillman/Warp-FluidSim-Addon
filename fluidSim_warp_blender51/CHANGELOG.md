@@ -4,6 +4,15 @@
 
 ### Upgrade notes
 
+- **Open 1.0.x files in 1.1 first.** 2.0 opens files saved by 1.1.0 or later.
+  A file saved by 1.0.x is flagged when it opens (a load message and an alert
+  on the Setup and Physics tabs): its domain settings were not carried over,
+  and a scene whose Custom Warp Snippets 1.1 never converted to Custom Effects
+  will not start a simulation. The stored data is kept, so opening and
+  re-saving the file in 1.1.0 recovers it.
+- **1.0.x caches must be baked again.** A cache written by 1.0.x
+  (`fluidsim_*.npz` frames with `fluidsim_sequence.json`) is recognized and
+  refused rather than played; free it and bake again.
 - **ST-FLIP is Experimental.** Its controls are labelled Experimental, and
   **Variable Projection** is now off by default. A saved ST-FLIP scene that
   never changed Variable Projection runs with it off; turn it back on in
@@ -13,8 +22,11 @@
 
 - The retired 1.x snippet runtime and its library: example and saved snippet
   presets, the snippet validator and auto-fix, shortcuts and the hidden
-  library/editor settings. Custom snippets in saved scenes still migrate to
-  Custom Effects when the file is opened.
+  library/editor settings.
+- The Custom Warp Snippet settings, the `fluidsim.snippet_apply` operator and
+  the snippet-to-Custom-Effects conversion. 1.1 already converted saved
+  snippets when it opened a file.
+- The 1.0.x settings migration and cache format 1 playback (see Upgrade notes).
 
 ## 1.1.0 — per-object domains, a Basic/Advanced interface and deterministic bakes
 

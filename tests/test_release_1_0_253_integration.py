@@ -70,7 +70,13 @@ def test_adjudicated_owners_cannot_revert_to_stale_candidate_payloads():
         "354d32b97bf952c5bf07b62543dda66ed39b7368f0b9d7b91ad83521ac2061e7"
     )
     assert len(stale_hashes) == 27
+    # 2.0 removed the legacy snippet runtime; a removed owner holds no payload.
+    retired = {"sim/custom.py"}
+    assert retired <= stale_hashes.keys()
     for relative, stale_hash in stale_hashes.items():
+        if relative in retired:
+            assert not (ROOT / relative).exists(), relative
+            continue
         payload = (ROOT / relative).read_bytes()
         assert hashlib.sha256(payload).hexdigest() != stale_hash, relative
 

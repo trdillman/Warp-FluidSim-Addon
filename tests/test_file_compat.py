@@ -11,10 +11,13 @@ from types import SimpleNamespace
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 
 
-def _scene(stored):
+def _scene(stored, effects=None):
+    groups = {"fluidsim": stored}
+    if effects is not None:
+        groups["fluidsim_effects"] = effects
     return SimpleNamespace(
         name="Scene",
-        bl_system_properties_get=lambda: None if stored is None else {"fluidsim": stored})
+        bl_system_properties_get=lambda: None if stored is None else groups)
 
 
 def _file_compat(monkeypatch):
@@ -39,6 +42,39 @@ def test_files_saved_by_1_1_or_later_are_not_flagged(monkeypatch):
     assert not file_compat.is_pre_bridge_scene(_scene({}))
     assert not file_compat.is_pre_bridge_scene(_scene(None))
     assert not file_compat.is_pre_bridge_scene(SimpleNamespace(name="no system props"))
+
+
+def test_snippets_1_1_never_copied_are_flagged(monkeypatch):
+    file_compat = _file_compat(monkeypatch)
+    snippets = [{"kernel_name": "legacy"}]
+    unmigrated = _scene({"schema_version": 1, "snippets": snippets})
+    assert file_compat.has_unmigrated_snippets(unmigrated)
+    assert file_compat.is_pre_bridge_scene(unmigrated)
+    assert file_compat.has_unmigrated_snippets(
+        _scene({"schema_version": 1, "snippets": snippets}, {"migration_complete": 0}))
+
+
+def test_snippets_1_1_copied_or_no_snippets_are_not_flagged(monkeypatch):
+    file_compat = _file_compat(monkeypatch)
+    migrated = _scene({"schema_version": 1, "snippets": [{"kernel_name": "legacy"}]},
+                      {"migration_complete": 1})
+    assert not file_compat.has_unmigrated_snippets(migrated)
+    assert not file_compat.is_pre_bridge_scene(migrated)
+    assert not file_compat.has_unmigrated_snippets(_scene({"snippets": []}))
+    assert not file_compat.has_unmigrated_snippets(_scene({"status": "Idle"}))
+    assert not file_compat.has_unmigrated_snippets(_scene(None))
+    assert not file_compat.has_unmigrated_snippets(SimpleNamespace(name="no system props"))
+
+
+def test_admission_refuses_unmigrated_snippets(monkeypatch):
+    import pytest
+
+    file_compat = _file_compat(monkeypatch)
+    effects = _reload_module("fluidSim_warp_blender51.blender.effects")
+    scene = _scene({"schema_version": 1, "snippets": [{"kernel_name": "legacy"}]})
+    with pytest.raises(RuntimeError, match="Custom Warp Snippets were not carried over"):
+        effects.build_effect_stack_for_admission(scene)
+    assert "re-save this file in FluidSim 1.1" in file_compat.UNMIGRATED_SNIPPETS_MESSAGE
 
 
 def test_detection_keys_are_exactly_the_domain_only_settings(monkeypatch):

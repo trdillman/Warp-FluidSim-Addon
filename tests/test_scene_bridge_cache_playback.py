@@ -1043,7 +1043,6 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     scene = _scene()
     scene.frame_start = 1
     scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
-    scene.fluidsim.snippets = []
     fake_solver_module = types.ModuleType("fluidSim_warp_blender51.sim.solver")
     fake_solver_module.FluidSolver = lambda *_args, **_kwargs: object()
     fake_profiler_module = types.ModuleType(
@@ -1090,7 +1089,6 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
     scene = _scene()
     scene.frame_start = 1
     scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
-    scene.fluidsim.snippets = []
     refs = []
 
     class BrokenSolver:

@@ -19,7 +19,7 @@ FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 | Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
 | Warp dependency | Bundled NVIDIA Warp 1.17.0 (CUDA 12 build), installed by Blender with the extension |
-| Cache compatibility | Cache v2 write/playback/resume; cache v1 playback only |
+| Cache compatibility | Cache v2 write/playback/resume; Cache v1 (1.0.x) is refused: bake again |
 
 Install the extension ZIP for your platform; there is nothing else to install.
 Blender installs the bundled, checksum-locked Warp wheel into its own
@@ -344,8 +344,7 @@ values assigned monotonically at committed emission transactions.
 New cache frames carry an ordered attribute-inventory schema and transfer-method
 identifier. Declared-but-missing, misaligned, wrong-type, non-finite, duplicate
 UID, or unsupported data fails closed. Phase-4 frames require one aligned int32
-whitewater type value per point. Legacy cache-v1 and Phase-3 cache-v2 frames
-remain readable, but whitewater with no recorded type is published as legacy
+whitewater type value per point. Phase-3 cache-v2 frames remain readable, but whitewater with no recorded type is published as legacy
 unclassified (`-1`) only on the combined output; FluidSim does not invent a
 physical classification.
 
@@ -588,9 +587,9 @@ time. Transient bins and scratch fields are rebuilt after restore.
 - **Rename** accepts only a leaf directory name.
 - **Open Folder** uses path APIs rather than shell-string interpolation.
 
-Cache v1 (`fluidsim_sequence.json` plus legacy NPZ frames) remains readable for
-playback but has no checkpoint contract and cannot resume. Rebake as v2 to gain
-transactional resume. **Export Current Frame** continues to write OBJ/PLY output.
+A cache written by FluidSim 1.0.x (`fluidsim_sequence.json` plus NPZ frames)
+is refused rather than played: free it and bake again. **Export Current Frame**
+continues to write OBJ/PLY output.
 
 Older cache-v2 frames remain playable under their recorded attribute/type
 schema. Production resume is deliberately stricter than playback: a Phase-4

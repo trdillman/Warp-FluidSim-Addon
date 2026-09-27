@@ -15,7 +15,6 @@ def test_blender_effect_adapter_exposes_strict_snapshot_and_identity_seams():
         "test_draft",
         "apply_stack",
         "revert_draft",
-        "migrate_legacy_snippets",
         "TrustStore",
         "content_trust_digest",
         "stack_fingerprint",
@@ -45,13 +44,6 @@ def test_controller_snapshot_uses_matrix_and_stable_object_name_not_pointer():
     assert "as_pointer" not in source
 
 
-def test_legacy_migration_disables_unknown_code_and_mentions_voxel_tile():
-    source = (ROOT / "blender" / "effects.py").read_text(encoding="utf-8")
-    assert "VOXEL_TILE" in source
-    assert "UNTRUSTED_IMPORTED" in source
-    assert "enabled=False" in source or '"enabled": False' in source
-
-
 def test_root_registration_includes_effect_scene_model():
     source = (ROOT / "__init__.py").read_text(encoding="utf-8")
     assert "effects.register" in source
@@ -74,7 +66,7 @@ def test_admission_uses_effect_stack_and_fails_closed_before_cutover():
     )[1]
 
 
-def test_legacy_snippets_are_migrated_before_v2_only_admission():
+def test_unmigrated_legacy_snippets_block_v2_only_admission():
     admission = (ROOT / "blender" / "simulation_admission.py").read_text(encoding="utf-8")
     bridge = (ROOT / "blender" / "scene_bridge.py").read_text(encoding="utf-8")
     effects_source = (ROOT / "blender" / "effects.py").read_text(encoding="utf-8")
@@ -86,17 +78,9 @@ def test_legacy_snippets_are_migrated_before_v2_only_admission():
     assert "SnippetManager" not in solver
     assert "set_legacy_snippets" not in frame_features
     assert "snippets.run" not in frame_features
-    assert "migrate_legacy_snippets(scene)" in bridge
-    assert "def _on_load_post" in effects_source
-    assert "@persistent" in effects_source
-    assert "register_handlers" in effects_source
+    assert "migrate_legacy_snippets" not in bridge + effects_source
     assert "effect_builder=build_effect_stack" in bridge
-    migration = effects_source.split("def migrate_legacy_snippets", 1)[1].split(
-        "def _migrate_loaded_scenes", 1
-    )[0]
-    assert "legacy_collection.clear" not in migration
-    assert "originals preserved for recovery" in migration
-    assert "migration_complete" in effects_source.split(
+    assert "has_unmigrated_snippets(scene)" in effects_source.split(
         "def build_effect_stack_for_admission", 1
     )[1].split("def trust_effect", 1)[0]
 

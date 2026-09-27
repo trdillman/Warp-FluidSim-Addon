@@ -81,11 +81,6 @@ def main():
         "compile and apply custom effect",
         bpy.ops.fluidsim.effect_apply_stack(device="cuda:0") == {"FINISHED"},
     )
-    legacy = fs.snippets.add()
-    legacy.kernel_name = "legacy_admission_probe"
-    legacy.run_over = "PARTICLES"
-    legacy.text_block = bpy.data.texts.new("Legacy Admission Probe.py")
-    legacy.text_block.write("probe = 1.0\n")
 
     from fluidSim_warp_blender51.blender import simulation_admission, sources
     from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -182,40 +177,6 @@ def main():
     check("seed committed", installed.get("seeds", 0) >= 1
           and sess.solver.particles.refresh_host_count() >= 1)
     check("custom effect captured", installed.get("effects", 0) >= 1)
-    migrated = [
-        item for item in scene.fluidsim_effects.items
-        if item.instance_id == "legacy-scene-0"
-    ]
-    check(
-        "legacy source preserved for recovery after migration",
-        len(fs.snippets) == 1
-        and fs.snippets[0].kernel_name == "legacy_admission_probe",
-    )
-    check(
-        "legacy effect disabled and untrusted",
-        len(migrated) == 1
-        and not migrated[0].enabled
-        and migrated[0].status == "DISABLED"
-        and migrated[0].trust_state == "UNTRUSTED_IMPORTED"
-        and bool(migrated[0].content_digest),
-    )
-    check("legacy migration marked complete", scene.fluidsim_effects.migration_complete)
-    from fluidSim_warp_blender51.blender.effects import migrate_legacy_snippets
-
-    repeat_migration = migrate_legacy_snippets(scene)
-    check(
-        "legacy migration is idempotent",
-        repeat_migration.migrated == 0
-        and len(fs.snippets) == 1
-        and len(
-            [
-                item
-                for item in scene.fluidsim_effects.items
-                if item.instance_id == "legacy-scene-0"
-            ]
-        )
-        == 1,
-    )
     check("outputs prepared", any(obj.type == "POINTCLOUD" for obj in scene.objects))
     check("CUDA meshes materialized only after preflight on candidate",
           materialized_meshes and materialized_meshes[-1] >= 1,

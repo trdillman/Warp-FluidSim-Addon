@@ -162,9 +162,6 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     assert not issubclass(
         operators.FLUIDSIM_OT_export_cache_sequence, operators._FLUIDSIM_OT_session_base
     )
-    assert not issubclass(
-        operators.FLUIDSIM_OT_snippet_apply, operators._FLUIDSIM_OT_session_base
-    )
 
 
 def test_clear_object_role_poll_explains_why_it_is_greyed_out(monkeypatch):

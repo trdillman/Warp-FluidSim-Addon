@@ -270,10 +270,6 @@ class Session:
     def initialize(self, scene, *, depsgraph=None,
                    ignore_memory_safeguard=False):
         """Admit one coherent Blender scene into a running Solver Session."""
-        if hasattr(bpy, "props"):
-            from .effects import migrate_legacy_snippets
-
-            migrate_legacy_snippets(scene)
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard)

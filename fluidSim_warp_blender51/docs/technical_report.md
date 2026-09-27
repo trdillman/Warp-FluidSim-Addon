@@ -285,8 +285,10 @@ resumable because deterministic type-transition state cannot be inferred.
 
 ## 7. Custom Effects v2 Contract
 
-`sim/effects/` is the authoritative custom-code product boundary. `sim/custom.py`
-remains a one-release legacy conversion adapter; it is not the public runtime.
+`sim/effects/` is the authoritative custom-code product boundary. 2.0 removed
+the 1.x snippet data and its conversion adapter: 1.1 converted saved snippets
+on load, and admission refuses a scene whose snippets were never converted
+(`blender/file_compat.py`).
 
 - `schema.py` defines strict effect, kernel, parameter, field-binding, instance,
   and diagnostic records with API 2 / ABI 1.

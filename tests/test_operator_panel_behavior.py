@@ -365,36 +365,6 @@ def test_liquid_view_hidden_state_round_trips_both_visibility_toggles(monkeypatc
     assert len(refreshes) == 2
 
 
-def test_legacy_snippet_rna_persists_permission_and_type_defaults(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    properties = _reload_module("fluidSim_warp_blender51.properties")
-
-    argument_schema = properties.FLUIDSIM_PG_snippet_argument.__annotations__
-    snippet_schema = properties.FLUIDSIM_PG_snippet.__annotations__
-    permission = argument_schema["field_permission"]
-    snippet_type = snippet_schema["snippet_type"]
-
-    assert "CustomKernelFieldPermission" in permission
-    assert "READ_WRITE" in permission
-    assert "CustomKernelType" in snippet_type
-    assert "KERNEL" in snippet_type
-
-
-def test_legacy_apply_forward_never_mutates_preserved_snippets(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    operators = _reload_module("fluidSim_warp_blender51.operators")
-    legacy = [SimpleNamespace(kernel_name="preserved")]
-    state = SimpleNamespace(snippets=legacy, active_snippet=0)
-    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=state))
-    operators.bpy.ops = SimpleNamespace(
-        fluidsim=SimpleNamespace(effect_apply_stack=lambda: {"FINISHED"})
-    )
-    before = (tuple(state.snippets), state.active_snippet)
-
-    assert operators.FLUIDSIM_OT_snippet_apply().execute(context) == {"FINISHED"}
-    assert (tuple(state.snippets), state.active_snippet) == before
-
-
 class _PermissiveSettings:
     """Settings stand-in that answers any property read.
 
@@ -3011,9 +2981,7 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
 def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     """§7 tooltip gate: every user-facing scene/domain settings property and
     the object ``role`` selector must define a non-empty ``description=`` so
-    Blender renders a hover tooltip.  ``snippets`` (the CollectionProperty
-    backing store drawn via a template list, not as a tooltip'd scalar) is
-    internal bookkeeping, never surfaced as a field, and is exempt.
+    Blender renders a hover tooltip.  No field is exempt.
 
     properties.py uses ``from __future__ import annotations``, so each entry in
     ``__annotations__`` is the prop-call *source string*; parse it and require a
@@ -3024,7 +2992,7 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
-    exempt = {"snippets"}
+    exempt = set()
 
     def _literal_description(annotation_src):
         node = ast.parse(annotation_src, mode="eval").body
