@@ -139,9 +139,8 @@ SETTINGS_CLASSES = ("FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain")
 def annotated_fields():
     """Unique annotated properties on both settings groups, in source order.
 
-    Migration metadata such as ``schema_version`` is intentionally declared on
-    both groups. The ownership map is keyed by setting name, so shared
-    declarations contribute one row whose access evidence is aggregated.
+    The ownership map is keyed by setting name; a name declared on both
+    groups would contribute one row whose access evidence is aggregated.
     """
     path = os.path.join(PKG_ROOT, "properties.py")
     with open(path, encoding="utf-8") as handle:

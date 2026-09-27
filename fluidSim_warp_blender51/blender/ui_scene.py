@@ -7,6 +7,7 @@ import textwrap
 
 import bpy
 
+from . import file_compat
 from .ui_common import (
     FluidSimScenePanel,
     activity_ui_state,
@@ -385,6 +386,7 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         fs = context.scene.fluidsim
+        file_compat.draw_pre_bridge_warning(layout, context.scene)
         # Front door of the two-tier disclosure (design D2): the Interface switch
         # and the Quality target sit at the top of the first panel so every user
         # meets them before any deep-config surface.

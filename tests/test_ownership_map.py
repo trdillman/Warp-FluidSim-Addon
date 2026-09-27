@@ -33,7 +33,7 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 
 # The full annotated surface of the shared PropertyGroup. 2.0 removed the six
 # dead snippet-library/shortcut UI fields (233 -> 227).
-EXPECTED_FIELD_COUNT = 227
+EXPECTED_FIELD_COUNT = 226
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

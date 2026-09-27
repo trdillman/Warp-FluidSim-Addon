@@ -21,10 +21,9 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
 # Active-domain accessors (Phase 3)
 #
-# Domain settings are migrating from ``scene.fluidsim`` onto the domain
-# object's ``fluidsim_domain`` group (see ``blender/migration.py``). The read
-# path funnels through these so it follows the settings to their new home
-# without every reader needing to know the migration state.
+# Domain settings live on the designated domain object's ``fluidsim_domain``
+# group; ``scene.fluidsim`` holds only scene-level state. The read path funnels
+# through these so no reader needs to know which object is the domain.
 
 
 def active_domain_object(scene):

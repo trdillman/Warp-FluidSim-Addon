@@ -8,7 +8,6 @@ pure enum and snippet metadata so registration never touches Warp/CUDA.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 
 import bpy
 from bpy.props import (
@@ -783,10 +782,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         update=_request_rebuild,
         description="Select the object whose bounding box defines the simulation domain; changing it rebuilds grid bounds and capacity requirements")
 
-    # Phase 3 migration guard: 0 = domain settings still live on Scene.fluidsim
-    # (pre-migration), 1 = migrated onto obj.fluidsim_domain. Stamped last by the
-    # load_post migration and never re-zeroed, so re-opens are no-ops.
-    schema_version: IntProperty(default=0, options={"HIDDEN"})
     capacity_show_alternatives: BoolProperty(
         name="Show Capacity Alternatives", default=False,
         options={"SKIP_SAVE"},
@@ -1091,10 +1086,6 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     the production attribute inventory. Read these through
     ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
     """
-
-    # Completion stamp for the object-owned domain schema. Version zero is the
-    # safe default for ordinary objects and for domains awaiting migration.
-    schema_version: IntProperty(default=0, options={"HIDDEN"})
 
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
@@ -1700,47 +1691,13 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Enable CUDA synchronization around each phase for accurate timings at higher profiling cost; disable for lower overhead but less precise asynchronous measurements")
 
 
-# Pre-split union of both groups, bound onto ``Scene.fluidsim`` only by
-# ``blender.migration`` for the length of one copy. A .blend saved before the
-# split stores its domain settings on the scene group; narrowing the pointer to
-# FLUIDSIM_PG_scene hides those IDProperties without deleting them, and binding
-# this union back exposes them so migration can move them to the domain object.
-FLUIDSIM_PG_legacy_settings = type(
-    "FLUIDSIM_PG_legacy_settings",
-    (bpy.types.PropertyGroup,),
-    {
-        "__module__": __name__,
-        "__annotations__": {
-            **FLUIDSIM_PG_scene.__annotations__,
-            **FLUIDSIM_PG_domain.__annotations__,
-        },
-    },
-)
-
-
 CLASSES = (
     FLUIDSIM_PG_snippet_argument,
     FLUIDSIM_PG_snippet,
     FLUIDSIM_PG_object,
     FLUIDSIM_PG_scene,
     FLUIDSIM_PG_domain,
-    FLUIDSIM_PG_legacy_settings,
 )
-
-
-@contextmanager
-def legacy_scene_settings():
-    """Expose a pre-split file's domain settings on ``scene.fluidsim``.
-
-    Rebinds ``Scene.fluidsim`` to the union class for the duration of the block
-    and always restores the narrow binding, so a failed migration cannot leave
-    the scene group wide.
-    """
-    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_legacy_settings)
-    try:
-        yield
-    finally:
-        bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_scene)
 
 
 def register():

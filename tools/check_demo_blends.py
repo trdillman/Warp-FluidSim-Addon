@@ -58,20 +58,22 @@ WHITEWATER_ACTIVATION_FRAMES = {
 
 
 def open_demo_blend(path):
-    """Open ``path`` as an add-on session loads it, load migration included.
+    """Open ``path`` as an add-on session loads it, and refuse a pre-1.1 file.
 
-    The add-on is enabled only after the file is open, so its ``load_post``
-    domain migration never fires here. A pre-split .blend (``schema_version``
-    0) keeps its authored domain settings on the legacy scene group until that
-    migration moves them onto the domain object, so run it explicitly. The
-    checker never saves, so the demo on disk is untouched.
+    A demo saved before FluidSim 1.1 would open with default domain settings,
+    so the check would measure the wrong scene. The checker never saves, so
+    the demo on disk is untouched.
     """
     bpy.ops.wm.open_mainfile(filepath=path)
     enable_repo_addon(REPO, default_set=False, persistent=False)
     # Import only after enable_repo_addon, which re-imports the add-on.
-    from fluidSim_warp_blender51.blender import migration
+    from fluidSim_warp_blender51.blender import file_compat
 
-    migration._on_load_post(None)
+    stale = [scene.name for scene in bpy.data.scenes
+             if file_compat.is_pre_bridge_scene(scene)]
+    if stale:
+        raise RuntimeError(f"{path}: saved before FluidSim 1.1 (scenes {stale}); "
+                           "rebuild it with tools/build_demo_scenes.py")
 
 
 def effect_precondition_failures(settings):

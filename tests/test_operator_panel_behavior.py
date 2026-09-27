@@ -2235,21 +2235,15 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     """Executing the operator creates a domain object and makes it the active one.
 
     Multiple domain objects may coexist; the designated ``fluidsim.domain_object``
-    is the active one. Adding a domain therefore creates a fresh object, migrates
-    the scene settings onto it, and selects/activates it.
+    is the active one. Adding a domain therefore creates a fresh object and
+    selects/activates it.
     """
     _install_bpy_stub(monkeypatch)
     menus = _reload_module("fluidSim_warp_blender51.blender.menus")
 
     created = SimpleNamespace(name="FluidSim Domain", selected=False)
     created.select_set = lambda value: setattr(created, "selected", value)
-    monkeypatch.setattr(menus.migration, "create_domain_object", lambda scene: created)
-    migrated = []
-    monkeypatch.setattr(
-        menus.migration,
-        "migrate_domain_settings_schema",
-        lambda scene, obj: migrated.append(obj) or True,
-    )
+    monkeypatch.setattr(menus, "create_domain_object", lambda scene: created)
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
     active_holder = SimpleNamespace(active=None)
@@ -2260,7 +2254,6 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
 
     result = menus.FLUIDSIM_OT_add_domain().execute(context)
     assert result == {"FINISHED"}
-    assert migrated == [created], "the new domain's settings must be migrated onto it"
     assert created.selected is True
     assert active_holder.active is created, "the new domain becomes the active object"
 
@@ -3018,11 +3011,9 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
 def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     """§7 tooltip gate: every user-facing scene/domain settings property and
     the object ``role`` selector must define a non-empty ``description=`` so
-    Blender renders a hover tooltip.  ``schema_version`` (internal version
-    stamp) and ``snippets`` (the
-    CollectionProperty backing store drawn via a template list, not as a
-    tooltip'd scalar) are internal bookkeeping, never surfaced as a field, and
-    are exempt.
+    Blender renders a hover tooltip.  ``snippets`` (the CollectionProperty
+    backing store drawn via a template list, not as a tooltip'd scalar) is
+    internal bookkeeping, never surfaced as a field, and is exempt.
 
     properties.py uses ``from __future__ import annotations``, so each entry in
     ``__annotations__`` is the prop-call *source string*; parse it and require a
@@ -3033,7 +3024,7 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
-    exempt = {"schema_version", "snippets"}
+    exempt = {"snippets"}
 
     def _literal_description(annotation_src):
         node = ast.parse(annotation_src, mode="eval").body

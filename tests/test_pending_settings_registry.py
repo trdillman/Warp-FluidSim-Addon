@@ -229,18 +229,14 @@ def test_adapters_delegate_pending_policy_to_deep_owner(monkeypatch):
 
 
 def _migrated_scene():
-    """A post-migration scene, the only state in which the split is observable.
+    """A scene with a designated domain, where the two owners are distinct.
 
-    ``active_domain_settings`` returns ``obj.fluidsim_domain`` only when
-    ``schema_version == 1`` and a domain object is designated; before that both
-    owners are the same datablock and every ownership question is trivially
-    satisfied.
+    ``active_domain_settings`` returns ``obj.fluidsim_domain`` only when a
+    domain object is designated.
     """
     domain_group = SimpleNamespace(_label="domain")
     domain_object = SimpleNamespace(fluidsim_domain=domain_group)
-    scene_group = SimpleNamespace(
-        _label="scene", schema_version=1, domain_object=domain_object
-    )
+    scene_group = SimpleNamespace(_label="scene", domain_object=domain_object)
     return SimpleNamespace(fluidsim=scene_group), scene_group, domain_group
 
 
@@ -318,9 +314,8 @@ def test_setting_owner_routes_scene_read_fields_to_the_scene_group(monkeypatch):
 
     * ``solver_settings.scene_quality_fidelity()`` reads ``scene.fluidsim.quality``
       deliberately (see its docstring) to keep the read owner and the UI write
-      owner identical on migrated and pre-migration scenes alike.
-    * ``migration._MIGRATION_SKIP`` never copies ``domain_object`` onto the
-      domain group at all, so that copy is permanently unset; ``domain_bounds``
+      owner identical.
+    * ``domain_object`` is declared only on the scene group; ``domain_bounds``
       / ``domain_transform`` and the rendering and session operators all read it
       from ``scene.fluidsim``.
 
@@ -460,7 +455,7 @@ def test_preset_scene_owned_settings_agree_with_setting_owner(monkeypatch):
 def test_settings_groups_are_setting_owner_made_structural(monkeypatch):
     """Every registered field is declared on the group setting_owner names.
 
-    The split leaves only the hidden migration marker on both classes. A field
+    No field is declared on both classes. A field
     declared on the wrong class would raise on every read the declaration routes
     to it, so pinning the two against each other keeps them from drifting.
     """
@@ -469,7 +464,7 @@ def test_settings_groups_are_setting_owner_made_structural(monkeypatch):
     scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
     domain_fields = _declared_fields(properties.FLUIDSIM_PG_domain)
 
-    assert scene_fields & domain_fields == {"schema_version"}
+    assert scene_fields & domain_fields == set()
     assert "domain_object" in scene_fields
     assert "domain_object" not in domain_fields
     for name in pending.SETTING_TRANSITION_REGISTRY:
