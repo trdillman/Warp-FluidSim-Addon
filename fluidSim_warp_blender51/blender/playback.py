@@ -371,14 +371,11 @@ def _check_cache_scene_key(scene, base, frame_data):
                  if "scene_key" in frame_data else "")
     if not (metadata_key or frame_key):
         return
-    if int(metadata.get("format_version", 1)) >= 2:
-        try:
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-        except (AttributeError, RuntimeError):
-            depsgraph = None
-        current = cache_identity.signature_bundle(scene, depsgraph)["scene_key"]
-    else:
-        current = cache_identity.scene_key(scene)
+    try:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+    except (AttributeError, RuntimeError):
+        depsgraph = None
+    current = cache_identity.signature_bundle(scene, depsgraph)["scene_key"]
     for candidate in (metadata_key, frame_key):
         if candidate and candidate != current:
             raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(

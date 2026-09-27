@@ -293,7 +293,8 @@ def validate(module_name: str, work_dir: Path) -> dict:
         motion = _read_attribute(surface.data, ATTRIBUTE_SPECS["motion"], 4)
         np.testing.assert_allclose(motion, surface_velocity / 24.0, rtol=0.0, atol=1.0e-7)
 
-        # Cache-v1 remains readable while Phase-3 inventory/arrays round-trip.
+        # Phase-3 inventory/arrays survive an NPZ round trip and the cache
+        # reader's attribute validation.
         cache_dir = work_dir / "cache_roundtrip"
         cache_dir.mkdir(parents=True, exist_ok=True)
         frame_payload = {
@@ -306,8 +307,8 @@ def validate(module_name: str, work_dir: Path) -> dict:
             "whitewater_velocities": whitewater_velocity,
             "surface_verts": surface_verts,
             "surface_tris": surface_tris,
-            # This validator deliberately writes a Phase-3 schema-v1 frame
-            # to prove backward-compatible playback under the current release.
+            # A Phase-3 attribute-schema-v1 frame: the oldest attribute
+            # layout a cache-v2 frame can carry.
             "attribute_schema_version": np.array(1, dtype=np.int32),
             "attribute_inventory_json": np.array(json.dumps(
                 {
@@ -326,10 +327,11 @@ def validate(module_name: str, work_dir: Path) -> dict:
         ):
             for key, values in attributes.items():
                 frame_payload[cache_attribute_name(kind, key)] = values
-        np.savez(cache_dir / "fluidsim_00001.npz", **frame_payload)
-        restored = cache.read_frame(str(cache_dir), 1)
-        if restored is None:
-            raise AssertionError("Phase-3 cache frame did not round-trip")
+        frame_file = cache_dir / "frame_000001.npz"
+        np.savez(frame_file, **frame_payload)
+        with np.load(frame_file, allow_pickle=False) as data:
+            restored = {name: data[name] for name in data.files}
+        cache.validate_optional_attributes(restored)
         output_publication.update_outputs_from_cache_frame(scene, restored)
         for obj, count, expected in expected_by_kind.values():
             for key, values in expected.items():

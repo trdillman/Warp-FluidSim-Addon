@@ -12,6 +12,7 @@ import sys
 import tempfile
 import uuid
 
+from ..io.cache import LEGACY_CACHE_MESSAGE, detect_cache_format
 from ..io.cache_schema import (
     CacheManifestV2,
     load_manifest,
@@ -58,16 +59,15 @@ def assert_cache_path_mutable(path: Path | str) -> Path:
 def is_managed_cache_directory(path: Path | str) -> bool:
     """Return whether ``path`` contains only recognizable FluidSim cache state.
 
-    A manifest/legacy metadata file is authoritative.  The limited partial
-    patterns cover a first-frame transaction interrupted before manifest
-    commit without treating an arbitrary existing directory as a cache.
+    A manifest is authoritative.  A FluidSim 1.0 cache is recognized too, so
+    it can be freed before re-baking.  The limited partial patterns cover a
+    first-frame transaction interrupted before manifest commit without
+    treating an arbitrary existing directory as a cache.
     """
     base = Path(path).expanduser().resolve()
     if not base.is_dir():
         return False
-    if (base / "fluidsim_cache.json").is_file() or (base / "fluidsim_sequence.json").is_file():
-        return True
-    if any(base.glob("fluidsim_*.npz")):
+    if detect_cache_format(base):
         return True
     patterns = (
         ("frames", "frame_*.npz"),
@@ -223,22 +223,10 @@ def inspect_cache(path: Path | str) -> CacheInspection:
             effect_inventory=tuple(dict(item) for item in manifest.effect_inventory),
         )
 
-    legacy_metadata = path / "fluidsim_sequence.json"
-    legacy_frames = tuple(sorted(
-        int(item.stem[9:])
-        for item in path.glob("fluidsim_*.npz")
-        if item.stem[9:].isdigit()
-    ))
-    if legacy_metadata.is_file() or legacy_frames:
+    if detect_cache_format(path) == 1:
         return CacheInspection(
-            str(path), 1,
-            legacy_frames[0] if legacy_frames else None,
-            legacy_frames[-1] if legacy_frames else None,
-            legacy_frames,
-            legacy_frames[-1] if legacy_frames else None,
-            None,
-            _disk_size(path), (), (), (), True,
-            "Legacy cache v1 — playback only; rebake to enable resume",
+            str(path), 1, None, None, (), None, None, _disk_size(path),
+            (), (), (), False, LEGACY_CACHE_MESSAGE,
         )
     return CacheInspection(
         str(path), 0, None, None, (), None, None, _disk_size(path), (), (), (),
@@ -292,9 +280,9 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
             destination,
             load_manifest(manifest_path(destination)),  # type: ignore[arg-type]
         )
-    elif source_inspection.format_version == 0:
-        if _file_snapshot(source) != _file_snapshot(destination):
-            raise RuntimeError("copied partial cache failed byte-for-byte verification")
+    elif _file_snapshot(source) != _file_snapshot(destination):
+        # No manifest to verify against: a partial or FluidSim 1.0 cache.
+        raise RuntimeError("copied cache failed byte-for-byte verification")
 
 
 def move_cache(source: Path | str, destination: Path | str) -> Path:

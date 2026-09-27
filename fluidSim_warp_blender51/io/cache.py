@@ -32,8 +32,14 @@ from ..sim.attributes import (
 )
 from ..sim.whitewater_types import validate_type_values
 
-CACHE_FORMAT_VERSION = 1
-CACHE_SEQUENCE_METADATA = "fluidsim_sequence.json"
+CACHE_FORMAT_VERSION = 2
+# Markers of a cache written by FluidSim 1.0 (format 1). 2.0 recognizes them
+# only to refuse the directory with a clear message; it reads format 2 only.
+LEGACY_SEQUENCE_METADATA = "fluidsim_sequence.json"
+LEGACY_FRAME_GLOB = "fluidsim_*.npz"
+LEGACY_CACHE_MESSAGE = (
+    "This cache was written by FluidSim 1.0, which 2.0 cannot read. "
+    "Free the cache and bake again.")
 
 SCENE_KEY_VERSION = "v1"
 # Settings that say where the solve runs, not what it computes: a cache baked
@@ -138,14 +144,6 @@ def _savez_fast_compressed(path, payload):
             archive.writestr(f"{name}.npy", buffer.getvalue())
 
 
-def _frame_path(base_dir: str, frame: int) -> str:
-    return os.path.join(base_dir, f"fluidsim_{frame:05d}.npz")
-
-
-def _metadata_path(base_dir: str) -> str:
-    return os.path.join(base_dir, CACHE_SEQUENCE_METADATA)
-
-
 def _jsonable_setting(value):
     if isinstance(value, float) and not math.isfinite(value):
         # Preserve a deterministic diagnostic signature without emitting
@@ -185,32 +183,6 @@ def settings_record(settings) -> dict:
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return {"signature": hashlib.sha256(encoded).hexdigest(), "settings": values}
-
-
-def compact_settings_segments(settings_records: dict) -> list[dict]:
-    """Compact frame->record data into contiguous signature boundaries."""
-    # Metadata loaded from JSON has string keys, while records assembled during
-    # a bake use integer keys. Normalize once before indexing; converting only
-    # in the sorted expression leaves string-keyed mappings inaccessible.
-    normalized = {}
-    for raw_frame, record in settings_records.items():
-        frame = int(raw_frame)
-        if frame in normalized:
-            raise ValueError(
-                f"Duplicate settings record for frame {frame} after key normalization"
-            )
-        normalized[frame] = record
-
-    segments = []
-    for frame in sorted(normalized):
-        signature = normalized[frame]["signature"]
-        if (segments and segments[-1]["signature"] == signature
-                and segments[-1]["frame_end"] + 1 == frame):
-            segments[-1]["frame_end"] = frame
-        else:
-            segments.append({"frame_start": frame, "frame_end": frame,
-                             "signature": signature})
-    return segments
 
 
 _ATTRIBUTE_KEYS_BY_SCHEMA: dict[int, dict[str, tuple[str, ...]]] = {
@@ -275,7 +247,7 @@ def validate_optional_attributes(
         surface_count: int | None = None) -> dict[str, tuple[str, ...]]:
     """Validate Phase-3 attribute inventory, dtypes, shapes and alignment.
 
-    Legacy cache-v1/v2 frames without an attribute schema remain readable and
+    Cache frames without an attribute schema remain readable and
     return an empty inventory. New frames fail closed on any declared channel
     that is missing, malformed, non-finite, or misaligned.
     """
@@ -441,87 +413,10 @@ def resolve_frame_range(
     return start, end
 
 
-def write_sequence_metadata(
-        base_dir: str,
-        frame_start: int,
-        frame_end: int,
-        *,
-        source: str = "simulation",
-        settings_records: dict | None = None,
-        scene_key_value: str = "") -> str:
-    """Write sequence-level cache metadata next to per-frame .npz files."""
-    os.makedirs(base_dir, exist_ok=True)
-    start = int(frame_start)
-    end = int(frame_end)
-    if end < start:
-        raise ValueError(f"Cache end frame {end} is before start frame {start}")
-    metadata = {
-        "format_version": CACHE_FORMAT_VERSION,
-        "frame_start": start,
-        "frame_end": end,
-        "frame_count": end - start + 1,
-        "source": str(source),
-        "scene_key": str(scene_key_value),
-    }
-    if settings_records:
-        # Keep raw keys until compact_settings_segments normalizes them so a
-        # JSON key such as "1" cannot silently overwrite integer key 1.
-        filtered_records = {
-            frame: record for frame, record in settings_records.items()
-            if start <= int(frame) <= end
-        }
-        segments = compact_settings_segments(filtered_records)
-        records_by_signature = {
-            record["signature"]: record["settings"]
-            for record in filtered_records.values()
-        }
-        signatures = list(records_by_signature)
-        baseline_signature = segments[0]["signature"] if segments else None
-        baseline = records_by_signature.get(baseline_signature, {})
-        changes = {}
-        for signature, values in records_by_signature.items():
-            if signature == baseline_signature:
-                continue
-            delta = {
-                name: value for name, value in values.items()
-                if baseline.get(name) != value
-            }
-            removed = sorted(set(baseline) - set(values))
-            changes[signature] = {"changed": delta, "removed": removed}
-        metadata.update({
-            "settings_segments": segments,
-            "settings_baseline": {
-                "signature": baseline_signature,
-                "settings": baseline,
-            },
-            # Store only deltas after the baseline. Long keyframed sequences no
-            # longer repeat the entire settings object for every signature.
-            "settings_changes": changes,
-            "mixed_settings": len(signatures) > 1,
-            "settings_signature": signatures[0] if len(signatures) == 1 else None,
-        })
-    path = _metadata_path(base_dir)
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=f"{CACHE_SEQUENCE_METADATA}.",
-        suffix=".tmp",
-        dir=base_dir,
-    )
-    os.close(fd)
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(metadata, handle, sort_keys=True)
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
-    return path
-
-
 def read_sequence_metadata(base_dir: str) -> dict | None:
     # Cache-v2 keeps sequence metadata in its strict manifest. Present a small
-    # compatibility view for existing playback/UI callers while preserving
-    # manifest-authoritative frame discovery.
+    # view for playback/UI callers while preserving manifest-authoritative
+    # frame discovery. Any other directory has no sequence metadata.
     from .cache_schema import load_manifest, manifest_path
 
     v2 = load_manifest(manifest_path(base_dir))
@@ -537,65 +432,7 @@ def read_sequence_metadata(base_dir: str) -> dict | None:
             "source_signature": v2.source_signature,
             "last_committed_frame": v2.last_committed_frame,
         }
-    path = _metadata_path(base_dir)
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        # Valid JSON can still be corrupt sequence metadata. Treat it like a
-        # truncated/unparseable supplemental cache rather than leaking an
-        # AttributeError from the playback handler.
-        return None
-    if data.get("format_version") != CACHE_FORMAT_VERSION:
-        raise ValueError(
-            f"Unsupported cache metadata format_version "
-            f"{data.get('format_version')} in {path}; "
-            f"expected {CACHE_FORMAT_VERSION}."
-        )
-    return data
-
-
-def write_frame(
-    scene,
-    frame_payload,
-    frame=None,
-    *,
-    scene_key_value: str = "",
-) -> str:
-    """Atomically write one cache frame at an explicit timeline index.
-
-    The caller owns solver readback and passes a materialized
-    ``CacheFramePayload`` value from the simulation/output boundary.
-    Live/timeline callers may override its frame with ``scene.frame_current``
-    so cache names and playback use the same indexing basis.
-    """
-    import bpy
-
-    fs = scene.fluidsim
-    base = bpy.path.abspath(fs.cache_path)
-    os.makedirs(base, exist_ok=True)
-    frame = int(frame_payload.frame if frame is None else frame)
-    path = _frame_path(base, frame)
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=f"{os.path.basename(path)}.",
-        suffix=".tmp.npz",
-        dir=base,
-    )
-    os.close(fd)
-    try:
-        _savez_fast_compressed(
-            tmp_path,
-            _frame_payload(frame_payload, scene_key_value))
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
-    return path
+    return None
 
 
 def _v2_frame_path(base_dir: str | os.PathLike[str], frame: int) -> Path:
@@ -652,7 +489,6 @@ def write_frame_v2_atomic(
         )
     payload = _frame_payload(frame_payload, scene_key_value)
     payload.update({
-        "format_version": np.array(2, dtype=np.int32),
         "frame": np.array(frame, dtype=np.int32),
         "solver_frame": np.array(frame_payload.frame, dtype=np.int32),
         "simulation_time": np.array(float(simulation_time), dtype=np.float64),
@@ -701,7 +537,7 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
         missing = required - set(data.files)
         if missing:
             raise ValueError(f"cache-v2 frame {frame} is missing {sorted(missing)}")
-        if int(np.asarray(data["format_version"]).item()) != 2:
+        if int(np.asarray(data["format_version"]).item()) != CACHE_FORMAT_VERSION:
             raise ValueError(f"cache-v2 frame {frame} has the wrong format version")
         if int(np.asarray(data["frame"]).item()) != int(frame):
             raise ValueError(f"cache-v2 frame {frame} has inconsistent frame metadata")
@@ -734,72 +570,39 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
 
 
 def read_frame(base_dir: str, frame: int) -> dict | None:
-    if detect_cache_format(base_dir) == 2:
-        return _read_v2_frame(base_dir, frame)
-    path = _frame_path(base_dir, frame)
-    if not os.path.exists(path):
-        return None
-    try:
-        loaded = np.load(path, allow_pickle=False)
-    except (EOFError, OSError, ValueError, pickle.UnpicklingError, zipfile.BadZipFile):
-        return None
+    """Read one committed cache-v2 frame; None when no cache holds it.
 
-    with loaded as data:
-        if "format_version" not in data.files:
-            raise ValueError(
-                f"Cache file {path} is missing format_version; regenerate the cache."
-            )
-        version = int(np.asarray(data["format_version"]).item())
-        if version != CACHE_FORMAT_VERSION:
-            raise ValueError(
-                f"Unsupported cache format_version {version} in {path}; "
-                f"expected {CACHE_FORMAT_VERSION}. Regenerate the cache."
-            )
-        try:
-            result = {k: data[k] for k in data.files}
-            validate_optional_attributes(result)
-            return result
-        except (ValueError, pickle.UnpicklingError):
-            return None
+    A FluidSim 1.0 cache raises rather than reading as empty, so playback
+    tells the user to re-bake instead of reporting missing frames.
+    """
+    version = detect_cache_format(base_dir)
+    if version == 1:
+        raise ValueError(f"{LEGACY_CACHE_MESSAGE} ({base_dir})")
+    if version == 2:
+        return _read_v2_frame(base_dir, frame)
+    return None
 
 
 def available_frames(base_dir: str) -> list:
-    if detect_cache_format(base_dir) == 2:
-        from .cache_schema import load_manifest, manifest_path
-
-        manifest = load_manifest(manifest_path(base_dir))
-        return list(manifest.committed_frames) if manifest is not None else []
-    if not os.path.isdir(base_dir):
+    """Committed cache-v2 frames; empty for any other directory."""
+    if detect_cache_format(base_dir) != 2:
         return []
-    frames = []
-    for name in os.listdir(base_dir):
-        if name.startswith("fluidsim_") and name.endswith(".npz"):
-            try:
-                frames.append(int(name[9:-4]))
-            except ValueError:
-                pass
-    return sorted(frames)
+    from .cache_schema import load_manifest, manifest_path
 
-
-def validate_contiguous_frames(
-        base_dir: str,
-        frame_start: int,
-        frame_end: int) -> list[int]:
-    """Return cache frames missing from the inclusive requested range."""
-    start = int(frame_start)
-    end = int(frame_end)
-    if end < start:
-        raise ValueError(f"Cache end frame {end} is before start frame {start}")
-    present = set(available_frames(base_dir))
-    return [frame for frame in range(start, end + 1) if frame not in present]
+    manifest = load_manifest(manifest_path(base_dir))
+    return list(manifest.committed_frames) if manifest is not None else []
 
 
 def detect_cache_format(base_dir: str | os.PathLike[str]) -> int:
-    """Detect cache v2 first, then legacy cache v1."""
+    """Return 2 for a cache-v2 directory, 1 for a FluidSim 1.0 cache, else 0.
+
+    Format 1 is detected only so callers can refuse it with
+    ``LEGACY_CACHE_MESSAGE``; nothing reads it.
+    """
     base = Path(base_dir)
     if (base / "fluidsim_cache.json").is_file():
         return 2
-    if (base / CACHE_SEQUENCE_METADATA).is_file() or any(
-            base.glob("fluidsim_*.npz")):
+    if (base / LEGACY_SEQUENCE_METADATA).is_file() or any(
+            base.glob(LEGACY_FRAME_GLOB)):
         return 1
     return 0

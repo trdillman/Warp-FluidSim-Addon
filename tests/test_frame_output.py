@@ -842,8 +842,11 @@ def test_cache_payload_uses_same_canonical_attribute_keys(monkeypatch):
     np.testing.assert_array_equal(payload.surface_attributes["speed"], expected)
 
 
-def test_viewport_cache_and_export_share_one_frame(tmp_path):
+def test_viewport_cache_and_export_share_one_frame(tmp_path, monkeypatch):
     import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))
     from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache, export
 

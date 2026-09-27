@@ -59,7 +59,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Retired snippet runtime (`CompiledSnippet`, `SnippetManager`, kernel templates), `blender/snippets.py` except the migration reader, the `_snippets()` shims, 13 unused enums | done (`d8f9d6e`, −583 lines) | presets now compile through the Custom Effects compiler in `tests/test_snippet_library.py` |
 | `k_ww_compact_scatter` unwritten `out_count` (REVIEW-036 closed) | done (`2a6eec0`) | `tests/test_whitewater_kernel_outputs.py`; gate demo hash unchanged |
 | Gate truthfulness tests missed the `0e01cdf` certified-Warp stub | fixed (`55a4c6b`) | root 1191 passed |
-| `write_sequence_metadata` | moved to the cache-v1 removal: `fluidsim_sequence.json` is the v1 sidecar that `read_sequence_metadata` still falls back to | `io/cache.py:521` |
+| `write_sequence_metadata` | removed with cache v1 (slice C below) | |
 | Dead snippet library UI (6 scene fields, enum builders, `user_snippet_dir`); `sim/custom.py` cut to the migration records + `legacy_snippet_to_effect` | done (`de038e7`, −1448 lines) | ownership map 233 → 227 fields; Blender 5.2 background acceptance pass |
 | D6: ST-FLIP labelled Experimental; Variable Projection default off (property + `SolverSettings`) | done (`3ba90d5`) | `tests/test_stflip_experimental_defaults.py`; no demo enables ST-FLIP |
 | Version 2.0.0 (manifest, `version.py`, docs); 2.0.0 CHANGELOG section opened | done (`3ba90d5`); `BUILD_CHANNEL` stays `beta` until owner review | `test_release_identity.py` |
@@ -69,6 +69,10 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Can-only-fail UI: height-field `INFINITE` removed from the dropdown (FLAT/PROFILE keep stored 1/2; a saved Infinite reads back as "" and gets an actionable error) | done (`8b5c067`) | `test_height_back_mode_offers_only_runnable_modes_with_stable_numbers`, `test_height_source_rejects_removed_infinite_back_mode` |
 | FIELD source mode | not a can-only-fail choice: hidden, and runs as a compiled field plan (pressure by default). Stale "not exposed" text corrected | `8b5c067` |
 | Compiled FORCE plans | internal only: no UI path reaches them, and FORCE-role objects work through the analytic path. Left unchanged | `sim/source_regions.py:669` |
+| D5 slice A: pre-1.1 settings migration removed (legacy union PropertyGroup, both `schema_version` stamps). A file that skipped 1.1 is recognized and flagged (load message + Setup/Physics alert: re-save in 1.1 first). `chromatic_vortex.blend` was pre-1.1 and was re-saved through 1.1's own migration code | done (`625b937`) | `tests/test_file_compat.py`, `tests/blender_pre_bridge_file_acceptance.py`; `check_demo_blends` refuses a flagged demo |
+| D5 slice B: source schema < 4 compatibility (`source_compat.py`, `LEGACY_ABSOLUTE`) and legacy output adoption (`output_publication.py`) | **kept**. 1.1 itself still saves sources below schema 4 and adopts legacy outputs, so removing them would break files 1.1 saved. Owner-review deviation; 2.1 handoff: stamp the source schema on save | |
+| D5 slice C: cache format 1 (`fluidsim_*.npz` + `fluidsim_sequence.json`) removed. 1.1 never writes it (tag `c5919d6`). A 1.0 cache is still detected, refused with "written by FluidSim 1.0 … Free the cache and bake again", and can be freed | done | `tests/test_cache_io.py`, `fluidSim_warp_blender51/tests/test_cache_manager.py`; root 1158 + add-on 458 passed |
+| `tools/release/validate_phase3_blender.py` | fails at the attribute-publication check (`missing Blender attribute fluidsim_velocity`), identically at `v1.1.0`, HEAD and slice C: a stale validator, not a regression. Its cache round trip (the part slice C changed) passes. Goes with REVIEW-009 | |
 
 Phases 3–4: not started.
 
@@ -81,4 +85,4 @@ Phases 3–4: not started.
 
 ## Next action
 
-Phase 2: the D5 saved-file compatibility removals (re-save demos first without touching the user's uncommitted `demos/*` edits), then REVIEW-009 validators and card 044, then GUI gate 3/3.
+Phase 2: D5 slice D (snippet RNA: `FLUIDSIM_PG_snippet*`, `snippets`, `fluidsim.snippet_apply`, `migrate_legacy_snippets`, `blender/snippets.py`, `legacy_snippet_to_effect`) once confirmed that 1.1 files hold no snippets; then REVIEW-009 validators (including `validate_phase3_blender.py`), card 044, then GUI gate 3/3.
