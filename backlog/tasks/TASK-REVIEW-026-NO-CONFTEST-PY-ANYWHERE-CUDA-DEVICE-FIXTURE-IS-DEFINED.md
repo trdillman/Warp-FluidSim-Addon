@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,35 @@ Device initialization is duplicated and inconsistent across files (some use wp.i
 
 ## Acceptance criteria
 
-- [ ] Root cause at `tests/:1` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Create a tests/conftest.py with a session-scoped cuda_device fixture, standardize Warp initialization, and add pytest markers for CUDA-required vs CPU-only tests.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `tests/:1` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Create a tests/conftest.py with a session-scoped cuda_device fixture, standardize Warp initialization, and add pytest markers for CUDA-required vs CPU-only tests.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
+
+## Resolution
+
+Fixed in `16e5090` on `claude/2.0-phase1-testinfra`.
+
+- `tests/conftest.py` defines a session-scoped `cuda_device` fixture
+  (`select_test_device`): `FLUIDSIM_TEST_DEVICE` overrides the device and fails
+  loudly if unusable; otherwise `cuda:0`, skipping cleanly without CUDA. The
+  same fixture is duplicated in `fluidSim_warp_blender51/tests/conftest.py`
+  because the add-on suite also runs standalone.
+- `cuda`, `blender` and `slow` markers are registered in `pytest.ini` and the
+  add-on `pyproject.toml` with `--strict-markers`; tests requesting
+  `cuda_device` are auto-marked `cuda` by `pytest_collection_modifyitems`.
+- Local fixtures and inline `is_cuda_available` skips migrated in 12 test
+  files. Left as-is: `test_source_emission_lifecycle.py` (preferred-device
+  helper with ~20 callers) and `test_surface_attribute_transfer.py`
+  (deliberate cpu + optional cuda parametrization).
+
+Regression gate: `tests/test_cuda_device_fixture.py` (default, no-CUDA skip,
+override, invalid override, marker hook, parity of both conftest copies, and
+no local `cuda_device` fixture that bypasses the shared one).
+
+Verification: `CUDA_VISIBLE_DEVICES=-1 python -m pytest -q -p no:cacheprovider`
+1477 passed, 136 skipped (baseline 1456 passed, 121 skipped); ruff findings
+unchanged from baseline (407).
 
 ## Evidence
 
