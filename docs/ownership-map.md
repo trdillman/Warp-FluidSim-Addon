@@ -33,8 +33,8 @@ Two directions of flow exist, and a field uses one or the other:
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 29 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
-| UNOBSERVED | 9 | no access of any kind resolved -- a dead property |
-| **total** | **233** | |
+| UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
+| **total** | **227** | |
 
 ## Mirror redirection
 
@@ -78,12 +78,6 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `spray_material` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `output_collection_name` | OUTPUT | scene | scene | scene | - | scene/scene | 1 | OK |
 | `snippets` | AUTHORED_NEXT_RUN | - | scene | - | - | scene/scene | 2 | READ_ONLY |
-| `active_snippet` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `snippet_library_selection` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `snippet_editor_lines` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `shortcut_field` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `shortcut_constant_name` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
-| `shortcut_constant_value` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `setup_mode` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
 | `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
@@ -290,12 +284,6 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 |---|---|---|
 | `playback_advanced_expanded` | UNOBSERVED | (never written either) |
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
-| `active_snippet` | UNOBSERVED | (never written either) |
-| `snippet_library_selection` | UNOBSERVED | (never written either) |
-| `snippet_editor_lines` | UNOBSERVED | (never written either) |
-| `shortcut_field` | UNOBSERVED | (never written either) |
-| `shortcut_constant_name` | UNOBSERVED | (never written either) |
-| `shortcut_constant_value` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:789` |
 | `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:451`, `fluidSim_warp_blender51/blender/scene_bridge.py:401` |

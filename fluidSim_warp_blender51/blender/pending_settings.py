@@ -160,9 +160,7 @@ _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "quality",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
-    "snippets", "active_snippet", "snippet_library_selection",
-    "snippet_editor_lines", "shortcut_field", "shortcut_constant_name",
-    "shortcut_constant_value", "report_path", "benchmark_frames",
+    "snippets", "report_path", "benchmark_frames",
     "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",

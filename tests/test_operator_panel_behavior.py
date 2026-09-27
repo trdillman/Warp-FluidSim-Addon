@@ -3019,7 +3019,7 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     """§7 tooltip gate: every user-facing scene/domain settings property and
     the object ``role`` selector must define a non-empty ``description=`` so
     Blender renders a hover tooltip.  ``schema_version`` (internal version
-    stamp), ``active_snippet`` (internal index), and ``snippets`` (the
+    stamp) and ``snippets`` (the
     CollectionProperty backing store drawn via a template list, not as a
     tooltip'd scalar) are internal bookkeeping, never surfaced as a field, and
     are exempt.
@@ -3033,7 +3033,7 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
-    exempt = {"schema_version", "active_snippet", "snippets"}
+    exempt = {"schema_version", "snippets"}
 
     def _literal_description(annotation_src):
         node = ast.parse(annotation_src, mode="eval").body

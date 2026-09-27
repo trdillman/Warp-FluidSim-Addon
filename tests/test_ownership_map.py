@@ -31,8 +31,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MAP_PATH = REPO_ROOT / "docs" / "ownership-map.md"
 GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 
-# The full annotated surface of the shared PropertyGroup.
-EXPECTED_FIELD_COUNT = 233
+# The full annotated surface of the shared PropertyGroup. 2.0 removed the six
+# dead snippet-library/shortcut UI fields (233 -> 227).
+EXPECTED_FIELD_COUNT = 227
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

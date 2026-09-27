@@ -23,7 +23,6 @@ from bpy.props import (
 )
 
 from .sim import constants as _C
-from .sim import custom
 from .sim.enums import (
     BlendMode,
     CustomKernelConstantType,
@@ -289,68 +288,8 @@ def _on_cache_playback_changed(self, context):
         self.status = f"Cache playback toggle failed: {exc}"
 
 
-# Snippet library dropdown (examples + user-saved presets)
-
-
-def user_snippet_dir(create=False) -> str:
-    """Directory where user snippet presets are saved as JSON."""
-    import os
-
-    try:
-        base = bpy.utils.extension_path_user(__package__, path="snippets", create=create)
-    except Exception:  # headless/stub environments
-        base = os.path.join(os.path.expanduser("~"), ".fluidsim_snippets")
-        if create:
-            os.makedirs(base, exist_ok=True)
-    return base
-
-
-# Blender requires enum item strings to stay referenced from Python.
-_SNIPPET_LIBRARY_ITEMS = []
-
-_LIBRARY_CATEGORY_ORDER = ("Impressive", "Creative", "Learning", "Utility")
-
-
-def _snippet_library_items(self, context):
-    global _SNIPPET_LIBRARY_ITEMS
-    import os
-
-    # Dynamic EnumProperty defaults to item index 0. A separator/header cannot
-    # occupy that slot: Blender then resolves the fresh-scene value to "" and
-    # logs an RNA warning. Keep an explicit non-action item first.
-    items = [("NONE", "Select a snippet...", "Choose a snippet to load")]
-    by_cat = {}
-    for preset in custom.EXAMPLE_PRESETS:
-        by_cat.setdefault(preset.category, []).append(preset)
-    for cat in _LIBRARY_CATEGORY_ORDER:
-        presets = by_cat.pop(cat, None)
-        if not presets:
-            continue
-        items.append(("", cat, ""))
-        for p in presets:
-            items.append((f"EX:{p.preset_id}", p.label, p.description))
-    for cat in sorted(by_cat):  # any future categories
-        items.append(("", cat, ""))
-        for p in by_cat[cat]:
-            items.append((f"EX:{p.preset_id}", p.label, p.description))
-    user_presets = custom.load_user_presets(user_snippet_dir())
-    if user_presets:
-        items.append(("", "My Snippets", ""))
-        for data in user_presets:
-            ident = "USR:" + os.path.basename(data["_path"])
-            items.append((ident, data["label"],
-                          data.get("description", "User snippet")))
-    _SNIPPET_LIBRARY_ITEMS = items
-    return items
-
-
-_SHORTCUT_FIELD_ITEMS = [
-    (name, name, f"Solver field '{name}'") for name in custom.KNOWN_FIELDS
-]
-
-
 # Blender retains pointers to dynamic EnumProperty strings; keep one module
-# cache just as the snippet library does.
+# cache so the returned items stay alive.
 _PRODUCT_PRESET_ITEMS = []
 
 
@@ -938,26 +877,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 
     # Custom snippets
     snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
-    active_snippet: IntProperty(default=0)
-    snippet_library_selection: EnumProperty(
-        name="Library",
-        description="Select an example or saved snippet to load into the stack; changing the selection changes which preset the load action will insert",
-        items=_snippet_library_items,
-    )
-    snippet_editor_lines: IntProperty(
-        name="Editor Lines", default=24, min=4, max=200,
-        description="Set the maximum source lines shown in the inline snippet editor; higher values show more code but make the panel taller, while lower values keep it compact")
-
-    # Shortcut inputs (Houdini-wrangle-style quick insertion).
-    shortcut_field: EnumProperty(
-        name="Field", items=_SHORTCUT_FIELD_ITEMS, default="temperature",
-        description="Choose the solver field that the shortcut action binds and references in code; changing it redirects the inserted snippet line")
-    shortcut_constant_name: StringProperty(
-        name="Name", default="strength",
-        description="Set the identifier for the constant inserted into the snippet; changing it changes the generated argument and code reference")
-    shortcut_constant_value: FloatProperty(
-        name="Value", default=1.0,
-        description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
 
     # Guided setup / product presets
     setup_mode: EnumProperty(

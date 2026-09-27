@@ -56,11 +56,6 @@ def main():
           hasattr(bpy.data.objects.new("probe", None), "fluidsim"))
 
     fs = scene.fluidsim
-    check(
-        "snippet library fresh-scene default is valid",
-        fs.snippet_library_selection == "NONE",
-        repr(fs.snippet_library_selection),
-    )
     fs.liquid_view_mode = "PARTICLES"
     check("liquid view mode sets particles",
           (fs.show_surface, fs.show_particles) == (False, True),
