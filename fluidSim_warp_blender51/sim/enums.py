@@ -367,7 +367,7 @@ _ENUM_DESCRIPTIONS = {
         "BLEND": "Interpolate the existing target and source payload using Blend Amount",
     },
     SourceShapeSourceMode: {
-        "FIELD": "Use the legacy field representation, which does not create liquid particles in this port",
+        "FIELD": "Apply the Field Operation (pressure by default) inside the region without creating liquid",
         "PARTICLES": "Emit liquid particles into the selected source region",
     },
     SourceEmissionMode: {

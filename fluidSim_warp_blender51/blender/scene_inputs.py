@@ -1011,9 +1011,9 @@ class SceneInputs:
                 pass
             return None
         mode = getattr(fs, "height_back_mode", "FLAT")
-        if mode == SourceHeightBackMode.INFINITE.name:
-            fs.height_error = (
-                "Infinite height behavior is unsupported; choose Flat or provide a Profile image")
+        if mode not in (SourceHeightBackMode.FLAT.name, SourceHeightBackMode.PROFILE.name):
+            # A 1.x file that saved the removed Infinite mode reads back as "".
+            fs.height_error = "Choose a Back Mode: Flat, or Profile with an image"
             return None
         profile = None
         if mode == SourceHeightBackMode.PROFILE.name:

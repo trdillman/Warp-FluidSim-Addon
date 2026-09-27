@@ -39,7 +39,6 @@ from .sim.enums import (
     SdfFilterType,
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
-    SourceHeightBackMode,
     SourceGeometryMode,
     SourceShapeForceType,
     SourceShapeShape,
@@ -104,6 +103,15 @@ WHITEWATER_OUTPUT_ITEMS = (
 SURFACE_SMOOTH_ITEMS = (
     ("BOX", "Box", "Average nearby SDF samples for broad, inexpensive smoothing that can soften volume", 0),
     ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Move the SDF along estimated curvature for rounder features with better shape preservation", 1),
+)
+
+# SourceHeightBackMode without INFINITE, which the solver cannot run. The
+# numbers are SourceHeightBackMode values and are stored in saved files; a
+# 1.x file that saved INFINITE (0) reads back as "" and is rejected with a
+# message by the height-source gather.
+HEIGHT_BACK_MODE_ITEMS = (
+    ("FLAT", "Flat", "Close the height region with a flat back surface at Base Height", 1),
+    ("PROFILE", "Profile", "Shape the back surface from the selected grayscale Height Profile", 2),
 )
 
 
@@ -627,8 +635,8 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         update=_request_sync,
         description=(
             "Compatibility solver representation. PARTICLES emits liquid; "
-            "FIELD is the original pressure-influence mode and does not "
-            "create liquid (pressure sourcing is not yet exposed in this port)"))
+            "FIELD creates no liquid and instead applies the Field Operation "
+            "(pressure by default) inside the region"))
     emit_rate: FloatProperty(
         name="Legacy Target Particles / Voxel", default=8.0, min=0.0,
         max=64.0, soft_max=32.0,
@@ -1578,9 +1586,9 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Set the world-space base fill level; higher values fill more of the domain vertically, while lower values fill less")
     height_back_mode: EnumProperty(
-        name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT",
+        name="Back Mode", items=HEIGHT_BACK_MODE_ITEMS, default="FLAT",
         update=_request_reset,
-        description="Choose how the height source continues behind its profile; changing it switches between infinite, flat, and image-profiled back surfaces")
+        description="Choose how the height source closes behind its profile; changing it switches between a flat and an image-profiled back surface")
     height_profile_image: PointerProperty(
         name="Height Profile", type=bpy.types.Image, update=_request_reset,
         description="Select a grayscale image sampled across the domain as a height offset; changing it replaces the fill profile, while an empty image produces no image variation")
