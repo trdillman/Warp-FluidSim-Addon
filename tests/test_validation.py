@@ -1,21 +1,36 @@
 """Headless CUDA validation suite runner (no Blender required).
 
 Runs all synthesized validation targets on the real Warp/CUDA device and
-exits non-zero on any failure.
+exits non-zero on any failure. Under pytest the same suite runs as one
+``slow`` test on the shared ``cuda_device`` fixture.
 """
 
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import warp as wp
+from _subset_runner import script_device
+
+
+@pytest.mark.slow
+def test_validation_suite_passes(cuda_device):
+    from fluidSim_warp_blender51.diagnostics import validation
+
+    results = validation.run_all(device=cuda_device)
+    assert results, "validation suite ran no targets"
+    failed = [f"{r.name}: {r.detail}" for r in results if not r.passed]
+    assert not failed, "validation failures:\n" + "\n".join(failed)
 
 
 def main():
+    import warp as wp
+
     wp.init()
-    device = "cuda:0"
-    if not wp.is_cuda_available():
+    device = script_device()
+    if device.startswith("cuda") and not wp.is_cuda_available():
         print("FATAL: CUDA not available")
         return 2
 

@@ -1,6 +1,11 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--rootdir=tests --import-mode=importlib -ra"
+addopts = "--rootdir=tests --import-mode=importlib -ra --strict-markers"
+markers = [
+  "cuda: needs a Warp CUDA device (auto-applied to tests using the cuda_device fixture; select with FLUIDSIM_TEST_DEVICE)",
+  "blender: needs Blender's bpy module",
+  "slow: long-running; deselect with -m \"not slow\"",
+]
 
 [tool.ruff]
 target-version = "py311"

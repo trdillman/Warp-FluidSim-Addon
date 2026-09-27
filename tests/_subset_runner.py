@@ -1,16 +1,44 @@
-"""Shared runner for focused validation-subset test scripts."""
+"""Shared runner for focused validation-subset test modules.
+
+Each subset module is collected by pytest (one case per validation target on
+the shared ``cuda_device`` fixture) and remains runnable as a gate script.
+"""
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+TEST_DEVICE_ENV = "FLUIDSIM_TEST_DEVICE"
+DEFAULT_DEVICE = "cuda:0"
+
+
+def script_device():
+    """Device for script runs; honours the same override as the pytest fixture."""
+    return os.environ.get(TEST_DEVICE_ENV, "").strip() or DEFAULT_DEVICE
+
+
+def validation_id(index):
+    """Stable pytest id for a ``sim.validation`` target index."""
+    return f"v{index + 1:02d}"
+
+
+def check_validation(index, device):
+    """Run one ``sim.validation`` target and assert it passed."""
+    from fluidSim_warp_blender51.sim import validation
+
+    fn = validation._TESTS[index]
+    passed, detail = fn(device)
+    assert passed, f"{fn.validation_name}: {detail}"
 
 
 def run_subset(indices, label):
     import warp as wp
 
     wp.init()
-    if not wp.is_cuda_available():
+    device = script_device()
+    if device.startswith("cuda") and not wp.is_cuda_available():
         print("FATAL: CUDA not available")
         return 2
 
@@ -19,11 +47,9 @@ def run_subset(indices, label):
     tests = [validation._TESTS[i] for i in indices]
     failures = 0
     for fn in tests:
-        import time
-
         t0 = time.perf_counter()
         try:
-            passed, detail = fn("cuda:0")
+            passed, detail = fn(device)
         except Exception as exc:  # noqa: BLE001
             passed, detail = False, f"exception: {exc!r}"
         status = "PASS" if passed else "FAIL"

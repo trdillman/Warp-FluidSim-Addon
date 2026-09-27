@@ -6,9 +6,7 @@ from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 warp = pytest.importorskip("warp")
 
 
-def _settings(**overrides):
-    if not warp.is_cuda_available():
-        pytest.skip("CUDA not available")
+def _settings(device, **overrides):
     values = dict(
         domain_min=(0.0, 0.0, 0.0),
         domain_max=(1.0, 1.0, 1.0),
@@ -18,14 +16,15 @@ def _settings(**overrides):
         max_whitewater=1,
         surface_enabled=False,
         whitewater_enabled=False,
-        device="cuda:0",
+        device=device,
     )
     values.update(overrides)
     return SolverSettings(**values)
 
 
-def test_mixing_blends_existing_particle_colors_in_one_neighborhood():
+def test_mixing_blends_existing_particle_colors_in_one_neighborhood(cuda_device):
     solver = FluidSolver(_settings(
+        cuda_device,
         species_enabled=True,
         species_mixing_rate=20.0,
     ))
@@ -52,8 +51,8 @@ def test_mixing_blends_existing_particle_colors_in_one_neighborhood():
         solver.release()
 
 
-def test_reset_can_disable_and_reenable_mixing_without_stale_color_storage():
-    solver = FluidSolver(_settings(species_enabled=True))
+def test_reset_can_disable_and_reenable_mixing_without_stale_color_storage(cuda_device):
+    solver = FluidSolver(_settings(cuda_device, species_enabled=True))
     try:
         assert solver.particles.has_optional_channel("color")
         assert solver.color_mixing is not None

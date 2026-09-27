@@ -1,6 +1,4 @@
 import numpy as np
-import pytest
-import warp as wp
 
 from fluidSim_warp_blender51.sim.enums import (
     SourceEvaluationCadence, SourceLifecycle, SourceOperation,
@@ -94,10 +92,7 @@ def test_realistic_dynamic_mesh_work_is_bounded_before_distance_evaluation(monke
     assert any(d.code == "SOURCE_DYNAMIC_MESH_BUDGET" for d in batch.diagnostics)
 
 
-def test_cuda_bvh_shell_matches_cpu_compiler_coverage_and_distance():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA device unavailable")
+def test_cuda_bvh_shell_matches_cpu_compiler_coverage_and_distance(cuda_device):
     vertices, triangles = cube()
     cpu_source = plan(MeshRegionPlan(
         vertices, triangles, solid=False, shell_half_width=.2), key="cpu")
@@ -108,7 +103,7 @@ def test_cuda_bvh_shell_matches_cpu_compiler_coverage_and_distance():
         vertices, gpu_triangles, solid=False, shell_half_width=.2), key="gpu")
     cpu_region = SourceCompiler().compile((cpu_source,), context()).sources[0].region
     gpu_context = CompileContext(
-        1, 0, 1, "cuda:0", (0,0,0), .25, (0,0,0), (2,2,2), upload=False)
+        1, 0, 1, cuda_device, (0,0,0), .25, (0,0,0), (2,2,2), upload=False)
     gpu_region = SourceCompiler().compile((gpu_source,), gpu_context).sources[0].region
     assert not any(d.severity == "ERROR" for d in gpu_region.diagnostics)
     assert np.array_equal(gpu_region.leaf_coords, cpu_region.leaf_coords)

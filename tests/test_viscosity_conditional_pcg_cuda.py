@@ -27,13 +27,11 @@ from fluidSim_warp_blender51.sim.viscosity import ViscositySolver
 
 
 @pytest.fixture(scope="module")
-def cuda_device():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
+def cuda_device(cuda_device):
+    """Narrow the shared conftest device to one with conditional graphs."""
     if not wp.is_conditional_graph_supported():
         pytest.skip("CUDA conditional graphs not supported")
-    return "cuda:0"
+    return cuda_device
 
 
 def _one_leaf_grid(device):

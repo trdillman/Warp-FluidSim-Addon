@@ -15,14 +15,6 @@ from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 
 
-@pytest.fixture(scope="module")
-def cuda_device():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
-    return "cuda:0"
-
-
 def _one_leaf_grid(device, mark=True):
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0),

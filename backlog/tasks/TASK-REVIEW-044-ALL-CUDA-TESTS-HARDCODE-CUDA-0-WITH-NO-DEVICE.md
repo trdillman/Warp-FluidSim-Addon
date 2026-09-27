@@ -26,6 +26,20 @@ Tests cannot run on multi-GPU systems targeting a specific device, and cannot ad
 - [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
 - [ ] No existing test suite regresses as a result of the fix.
 
+## Progress
+
+Partially addressed in `16e5090` on `claude/2.0-phase1-testinfra`: pytest
+tests now take the shared `cuda_device` fixture, which honours
+`FLUIDSIM_TEST_DEVICE` (default `cuda:0`), including
+`test_compiled_source_operations.py` and `_subset_runner.py`; guarded by
+`tests/test_cuda_device_fixture.py`.
+
+Still open: the Blender/headless scripts listed above (`smoke_*`,
+`_phase2_source_acceptance_common.py`, `blender_*_acceptance.py`,
+`blender_memory_safety_gate.py`, `headless_*`) still hardcode or default to
+`cuda:0`; they need Blender to verify. `test_device_preference_routing.py`
+uses `cuda:0` as routing data, which is intended.
+
 ## Evidence
 
 - Source finding: `TEST-010` in `reviews/swarm-2026-08-08/findings/tests.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
