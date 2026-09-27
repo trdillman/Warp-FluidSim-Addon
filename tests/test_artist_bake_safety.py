@@ -227,6 +227,25 @@ def test_partial_restart_staging_failure_preserves_unstaged_originals(
     assert not tuple(cache_dir.glob(".fluidsim-restart-*"))
 
 
+def test_restart_never_stages_or_clears_user_folders_outside_a_cache(tmp_path):
+    from fluidSim_warp_blender51.blender import cache_bake, production_bake
+
+    project = tmp_path / "project"
+    (project / "frames").mkdir(parents=True)
+    (project / "frames" / "render_0001.png").write_bytes(b"artist render")
+    (project / "logs").mkdir()
+    (project / "logs" / "notes.txt").write_bytes(b"artist notes")
+    before = _cache_bytes(project)
+
+    with pytest.raises(ValueError, match="not a FluidSim cache"):
+        cache_bake._protect_restart_cache(project)
+    with pytest.raises(ValueError, match="not a FluidSim cache"):
+        production_bake.ProductionBakeBackend()._clear_for_restart(project)
+
+    assert _cache_bytes(project) == before
+    assert not tuple(project.glob(".fluidsim-restart-*"))
+
+
 def test_restore_failure_still_releases_synchronous_cache_reservation(
     monkeypatch, tmp_path
 ):

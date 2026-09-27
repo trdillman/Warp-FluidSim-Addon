@@ -35,3 +35,17 @@ def _writable_warp_kernel_cache(tmp_path_factory):
         yield
     finally:
         wp.config.kernel_cache_dir = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _private_effect_module_directory(tmp_path_factory):
+    """Keep generated Custom Effects modules out of the real per-user cache."""
+    from fluidsim_testpkg.sim.effects import source
+
+    directory = tmp_path_factory.mktemp("effect-modules")
+    previous = source.default_module_directory
+    source.default_module_directory = lambda: directory
+    try:
+        yield directory
+    finally:
+        source.default_module_directory = previous

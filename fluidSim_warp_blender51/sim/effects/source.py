@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
+import stat
 import tempfile
 import textwrap
 from dataclasses import dataclass
@@ -43,23 +45,59 @@ class GeneratedKernelSource:
         return offset + 1 if 0 <= offset < self.user_line_count else 0
 
     def cache_path(self, directory: str | Path | None = None) -> Path:
-        base = Path(directory) if directory is not None else Path(
-            tempfile.gettempdir(), "fluidsim_warp_effects_v2"
-        )
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"{self.module_name}.py"
+        base = Path(directory) if directory is not None else default_module_directory()
+        return ensure_private_directory(base) / f"{self.module_name}.py"
 
     def write_cache_file(self, directory: str | Path | None = None) -> Path:
         path = self.cache_path(directory)
-        if path.is_file() and path.read_text(encoding="utf-8") == self.source:
+        if (not path.is_symlink() and path.is_file()
+                and path.read_text(encoding="utf-8") == self.source):
             return path
-        temp = path.with_name(path.name + ".tmp")
-        with temp.open("w", encoding="utf-8", newline="\n") as handle:
-            handle.write(self.source)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp, path)
+        # mkstemp creates a fresh owner-only file (O_CREAT|O_EXCL), so a
+        # pre-planted name or symlink can never redirect this write.
+        handle, temp = tempfile.mkstemp(
+            prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(self.source)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, path)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp)
+            raise
         return path
+
+
+def default_module_directory() -> Path:
+    """Return the per-user directory for generated effect modules.
+
+    Generated modules are imported and executed, so they must never live in a
+    directory another account can write, such as the shared system temp dir.
+    """
+    if os.name == "nt":
+        root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    else:
+        root = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(root, "fluidsim_warp", "effects_v2")
+
+
+def ensure_private_directory(path: str | Path) -> Path:
+    """Create ``path`` owner-only and refuse one another account could modify."""
+    path = Path(path)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise PermissionError(
+            f"generated effect directory is not a real directory: {path}")
+    if os.name == "posix":
+        info = path.stat()
+        if info.st_uid != os.getuid():
+            raise PermissionError(
+                f"generated effect directory is owned by another user: {path}")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            path.chmod(0o700)
+    return path
 
 
 _DTYPE_DECL = {

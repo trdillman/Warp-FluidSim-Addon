@@ -90,6 +90,31 @@ def _require_managed_cache_directory(path: Path | str) -> Path:
     return base
 
 
+def require_restartable_cache_directory(
+        path: Path | str, entries: tuple[str, ...]) -> Path:
+    """Refuse a restart that would replace data FluidSim did not write.
+
+    Restart replaces ``entries`` (``frames``, ``logs``...).  Those names are
+    generic, so they may only be replaced inside a recognized FluidSim cache;
+    empty directories are safe because replacing them loses nothing.
+    """
+    base = Path(path).expanduser().resolve()
+    if not base.is_dir() or is_managed_cache_directory(base):
+        return base
+    occupied = []
+    for name in entries:
+        entry = base / name
+        if entry.is_symlink() or entry.is_file() or (
+                entry.is_dir() and any(entry.iterdir())):
+            occupied.append(name)
+    if occupied:
+        raise ValueError(
+            f"Restart would replace {', '.join(occupied)} in {base}, but that "
+            "folder is not a FluidSim cache. Choose an empty folder or an "
+            "existing FluidSim cache folder.")
+    return base
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
