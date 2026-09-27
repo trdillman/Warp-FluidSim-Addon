@@ -88,7 +88,7 @@ class AuthoredQualitySettings:
     voxel_size: float
     liquid_sampling: float = 8.0
     surface_resolution_mode: int = 0
-    surface_resolution_multiplier: float = 1.0
+    surface_resolution_multiplier: float = 2.0
     surface_voxel_size: float = 0.0
 
 
@@ -188,7 +188,7 @@ def resolve_quality(authored_quality: AuthoredQualitySettings | Any,
             surface_resolution_mode=_surface_resolution_mode(_value(
                 authored_quality, "surface_resolution_mode", 0)),
             surface_resolution_multiplier=float(_value(
-                authored_quality, "surface_resolution_multiplier", 1.0)),
+                authored_quality, "surface_resolution_multiplier", 2.0)),
             surface_voxel_size=float(_value(
                 authored_quality, "surface_voxel_size", 0.0)),
         )

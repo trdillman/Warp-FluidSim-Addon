@@ -99,9 +99,11 @@ WHITEWATER_OUTPUT_ITEMS = (
 )
 
 
+# Saved files store the item number (0, 1), not SdfFilterType's value; the
+# solver converts by identifier, so these numbers must never change.
 SURFACE_SMOOTH_ITEMS = (
-    ("BOX", "Box", "Average nearby SDF samples for broad, inexpensive smoothing that can soften volume"),
-    ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Move the SDF along estimated curvature for rounder features with better shape preservation"),
+    ("BOX", "Box", "Average nearby SDF samples for broad, inexpensive smoothing that can soften volume", 0),
+    ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Move the SDF along estimated curvature for rounder features with better shape preservation", 1),
 )
 
 
@@ -659,7 +661,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         update=_request_sync,
         description="Choose how source values combine with existing solver values; changing the mode can add, replace, clamp, pull toward, or blend the target")
     feather: FloatProperty(name="Feather", default=0.0, min=0.0,
-                           update=_request_sync)
+                           subtype="DISTANCE", update=_request_sync)
     temperature: FloatProperty(
         name="Temperature", default=0.0, update=_request_sync,
         description="Set the temperature attribute on emitted particles; higher or lower values change attribute-driven visualization and field operations")
@@ -1113,6 +1115,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     # Domain / sparse grid
     voxel_size: FloatProperty(
         name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
+        subtype="DISTANCE",
         update=_request_rebuild,
         description="Set simulation-grid cell size in world units; smaller values capture finer detail but allocate more leaves, particles, VRAM, and compute, while larger values simulate more coarsely and cheaply")
     leaf_capacity: IntProperty(
@@ -1189,7 +1192,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="LOCAL_VOXEL", update=_request_live,
         description="Choose whether relaxation compares particles only in their voxel or also in neighboring voxels; neighbor search is smoother but costs more")
     max_speed: FloatProperty(
-        name="Max Speed", default=0.0, min=0.0,
+        name="Max Speed", default=0.0, min=0.0, unit="VELOCITY",
         update=_request_live,
         description="Set the particle speed limit in meters per second; lower positive values clamp motion more strongly, higher values allow faster motion, and zero disables limiting")
     limit_behavior: EnumProperty(
@@ -1235,7 +1238,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="temperature", update=_request_live,
         description="Choose which particle attribute Rate moves toward Target; changing it leaves the other attributes unaffected")
     dissipation_rate: FloatProperty(
-        name="Rate", default=0.0, min=0.0, subtype="FACTOR",
+        name="Rate", default=0.0, min=0.0,
         update=_request_live,
         description="Set exponential attribute decay per second; higher values approach Target faster, while zero prevents decay")
     dissipation_target: FloatProperty(
@@ -1412,7 +1415,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Scale surface-grid density relative to the simulation grid; higher values use smaller surface voxels for finer detail with more VRAM and extraction cost, while lower values are coarser and cheaper; 2 means half-size voxels")
     surface_voxel_size: FloatProperty(
         name="Surface Voxel Size", default=0.0, min=0.0, soft_max=1.0,
-        precision=5, update=_request_surface_refresh,
+        precision=5, subtype="DISTANCE", update=_request_surface_refresh,
         description="Set explicit surface-grid cell size in Custom mode; smaller values produce finer meshes with more VRAM and extraction work, while larger values are coarser and cheaper; zero falls back to simulation voxel size")
     surface_leaf_capacity_scale: FloatProperty(
         name="Leaf Capacity Scale", default=8.0, min=1.0, soft_max=16.0, max=128.0,
@@ -1571,7 +1574,8 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Enable to fill the domain below the configured height when the solver resets; disable to omit this height source")
     height_base: FloatProperty(
-        name="Base Height", default=0.3, update=_request_reset,
+        name="Base Height", default=0.3, subtype="DISTANCE",
+        update=_request_reset,
         description="Set the world-space base fill level; higher values fill more of the domain vertically, while lower values fill less")
     height_back_mode: EnumProperty(
         name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT",
@@ -1592,7 +1596,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Height Fill Error", default="",
         description="Most recent error reported while filling the height source, if any")
     height_velocity: FloatVectorProperty(
-        name="Velocity", size=3, default=(0.0, 0.0, 0.0),
+        name="Velocity", size=3, default=(0.0, 0.0, 0.0), subtype="VELOCITY",
         update=_request_reset,
         description="Set initial velocity for height-fill particles; changing components changes their starting speed and direction")
     height_emit_particles: BoolProperty(
