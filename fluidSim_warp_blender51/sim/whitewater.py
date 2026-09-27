@@ -1030,7 +1030,7 @@ class WhitewaterSystem:
             ],
             outputs=[
                 self._position2, self._velocity2, self._age2, self._life2,
-                self._type2, self._count2,
+                self._type2,
             ],
             device=self.device,
         )
@@ -1074,7 +1074,6 @@ def k_ww_compact_scatter(
     out_age: wp.array(dtype=float),
     out_life: wp.array(dtype=float),
     out_type: wp.array(dtype=wp.int32),
-    out_count: wp.array(dtype=wp.int32),
 ):
     tid = wp.tid()
     if alive[tid] == 0:
