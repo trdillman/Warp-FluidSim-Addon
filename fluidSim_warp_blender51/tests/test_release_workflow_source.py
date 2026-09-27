@@ -1,100 +1,133 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from fluidsim_testpkg import version
+
 ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY = ROOT.parent
+WORKFLOW = REPOSITORY / ".github" / "workflows" / "ci.yml"
 
 
 def _workflow() -> str:
-    return (ROOT / ".github" / "workflows" / "release-checks.yml").read_text(
-        encoding="utf-8"
-    )
+    return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_release_workflow_has_static_dual_package_and_gpu_gates():
+def _job(name: str) -> str:
     source = _workflow()
-    assert "static:" in source
-    assert "blender-package:" in source
-    assert "gpu-regression:" in source
-    assert "ubuntu-latest" in source
-    assert "self-hosted" in source and "nvidia" in source
-    assert "BLENDER_5_1_EXECUTABLE" in source
-    assert "WARP_1_16_WHEEL_SOURCE" in source
-    assert "../tools/release/fetch_warp_wheels.py" in source
-    assert "--source" in source
-    assert "../tools/release/build_extension.py" in source
-    assert "../tools/release/gpu_regression_blender.py" in source
-    assert "windows-latest" not in source
-    assert "windows_x64" in source
+    start = source.index(f"\n  {name}:\n")
+    following = re.search(r"\n  [a-z][a-z0-9_-]*:\n", source[start + 1:])
+    end = start + 1 + following.start() if following else len(source)
+    return source[start:end]
 
 
-def test_workflow_uploads_both_platform_packages_checksums_and_reports():
+def test_ci_workflow_lives_where_github_reads_it():
+    assert WORKFLOW.is_file()
+    # GitHub only reads workflows at the repository root; a copy inside the
+    # add-on folder silently never runs.
+    assert not (ROOT / ".github").exists()
+
+
+def test_ci_runs_on_pull_requests_and_master():
     source = _workflow()
-    assert "SHA256SUMS.txt" in source
-    assert "fluidsim_warp-1.0.255-linux_x64.zip" in source
-    assert "fluidsim_warp-1.0.255-windows_x64.zip" in source
-    assert "smoke-test-report.json" in source
-    assert "gpu-regression-report.json" in source
-    assert "custom-effects-warp-cpu-validation.json" in source
-    assert "custom-effects-blender-validation.json" in source
+    assert "\n  pull_request:\n" in source
+    assert "branches: [master]" in source
+    assert "main" not in re.findall(r"branches: \[([^\]]*)\]", source)[0]
+    assert "permissions:\n  contents: read" in source
 
 
-def test_installed_release_oracles_match_the_1_0_255_identity():
+def test_ci_uses_hosted_runners_without_a_gpu():
+    source = _workflow()
+    assert "self-hosted" not in source
+    assert source.count("runs-on: ubuntu-latest") == 2
+    assert 'CUDA_VISIBLE_DEVICES: "-1"' in source
+
+
+def test_checks_job_lints_verifies_compiles_and_tests():
+    job = _job("checks")
+    assert "working-directory: fluidSim_warp_blender51" in job
+    assert "python -m ruff check ." in job
+    assert "python tools/release/build_extension.py --verify-only" in job
+    assert "python -m compileall" in job
+    assert "python -m pytest -q" in job
+
+
+def test_checks_job_validates_release_kernels_on_warp_cpu():
+    job = _job("checks")
+    for check in ("phase4", "phase5", "custom_effects"):
+        step = f"python tools/release/validate_{check}_warp.py"
+        assert job.count(step) == 1
+        tail = job[job.index(step):].split("\n      - ", 1)[0]
+        assert "--device cpu" in tail
+
+
+def test_package_job_builds_installs_and_smoke_tests_on_blender():
+    job = _job("package")
+    assert "needs: checks" in job
+    assert "python tools/release/build_extension.py" in job
+    assert '--blender "$BLENDER"' in job
+    assert "--smoke-platform linux-x64" in job
+    assert "sha256sum -c -" in job
+    assert "FLUIDSIM_EXTERNAL_WARP_ROOT" in job
+
+
+def test_package_job_pins_the_certified_blender_by_checksum():
+    job = _job("package")
+    blender = re.search(r'BLENDER_VERSION: "([0-9.]+)"', job).group(1)
+    assert blender == ".".join(str(part) for part in version.CERTIFIED_BLENDER_VERSION)
+    assert re.search(r"BLENDER_SHA256: [0-9a-f]{64}\n", job)
+
+
+def test_ci_derives_versions_instead_of_hardcoding_them():
+    source = _workflow()
+    assert "fluidsim_warp-" not in source
+    assert version.VERSION_STRING not in source
+    assert "warp-lang==" not in source.replace("warp-lang==${warp_version}", "")
+    assert "version.CERTIFIED_WARP_VERSION" in _job("package")
+
+
+def test_ci_uses_current_actions():
+    source = _workflow()
+    for action in re.findall(r"uses: (actions/[a-z-]+)@", source):
+        assert action in {
+            "actions/checkout",
+            "actions/setup-python",
+            "actions/cache",
+            "actions/upload-artifact",
+        }
+    assert "actions/checkout@v7" in source
+    assert "actions/setup-python@v7" in source
+    assert "actions/upload-artifact@v7" in source
+    assert "actions/cache@v6" in source
+
+
+def test_ci_installs_the_pinned_requirements_file():
+    requirements = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+    assert requirements == [
+        "pytest==9.1.1",
+        "ruff==0.16.2",
+        "numpy==2.3.4",
+        f"warp-lang=={version.CERTIFIED_WARP_VERSION}",
+    ]
+    source = _workflow()
+    assert source.count(
+        "cache-dependency-path: fluidSim_warp_blender51/requirements-dev.txt"
+    ) == 2
+    assert source.count(
+        "python -m pip install --disable-pip-version-check "
+        "-r fluidSim_warp_blender51/requirements-dev.txt"
+    ) == 2
+
+
+def test_installed_release_oracles_match_the_current_identity():
     for relative in (
         "../tools/release/smoke_test_blender.py",
         "../tools/release/validate_phase5_blender.py",
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
-        assert "1.0.252" not in source
-        assert "1.0.255" in source or "(1, 0, 255)" in source
-
-
-def test_workflow_uses_current_actions_and_pinned_dev_tools():
-    source = _workflow()
-    assert "actions/checkout@v6" in source
-    assert "actions/setup-python@v6" in source
-    assert "actions/upload-artifact@v7" in source
-    requirements = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
-    assert "pytest==9.1.1" in requirements
-    assert "ruff==0.16.2" in requirements
-
-
-def test_workflow_installs_pinned_requirements_file():
-    requirements = ROOT / "requirements-dev.txt"
-    assert requirements.is_file()
-    assert requirements.read_text(encoding="utf-8").splitlines() == [
-        "pytest==9.1.1",
-        "ruff==0.16.2",
-    ]
-    source = _workflow()
-    assert "cache-dependency-path: requirements-dev.txt" in source
-    assert "python -m pip install --disable-pip-version-check -r requirements-dev.txt" in source
-
-
-def test_workflow_uses_warp_only_as_external_validation_input():
-    source = _workflow()
-    assert "--allow-missing-wheels" not in source
-    assert "FLUIDSIM_REQUIRE_WHEELS" not in source
-    assert 'test -x "$BLENDER"' in source
-    assert 'test -e "$WARP_WHEEL_SOURCE"' in source
-    assert "--wheel-dir" in source
-    assert "external-warp-wheel" in source
-    assert "external-warp-site" in source
-    assert "PYTHONPATH" in source
-
-
-def test_workflow_has_custom_effect_cpu_blender_and_required_cuda_gates():
-    source = _workflow()
-    assert "../tools/release/validate_custom_effects_warp.py" in source
-    assert "--device cpu" in source
-    assert "../tools/release/validate_custom_effects_blender.py" in source
-    assert "--device cuda:0" in source
-    assert "custom-effects-warp-cuda-validation.json" in source
-
-
-def test_workflow_runs_and_uploads_native_properties_ui_blender_gate():
-    source = _workflow()
-    assert source.count("../tools/release/validate_properties_ui_blender.py") == 1
-    assert "properties-ui-blender-validation.json" in source
-    assert "--module fluidsim_ci_source" in source
-    assert "--expected-warp-root \"$RUNNER_TEMP/external-warp-site\"" in source
+        assert (
+            version.VERSION_STRING in source
+            or repr(version.VERSION) in source
+            or "version.py" in source
+        ), relative

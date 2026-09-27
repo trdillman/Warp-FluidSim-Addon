@@ -4,6 +4,15 @@ This repository should stay clean enough to distribute as a Blender add-on and
 review as source code. Generated simulation caches, reports, exports, and local
 scratch work do not belong in Git.
 
+## Continuous integration
+
+Every pull request runs `.github/workflows/ci.yml` on GitHub-hosted runners.
+The workflow lints, runs the tests, validates the kernels on Warp CPU, then
+builds, installs and smoke-tests the extension in Blender. The runners have no
+GPU, so CUDA-only tests skip there. A green CI run is required before merging,
+but it is not GPU proof. See `docs/RELEASING.md` for the release procedure and
+the manual GPU gate.
+
 ## Before touching `master`
 
 Run the production gate from the repository root:

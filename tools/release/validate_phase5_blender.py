@@ -19,9 +19,18 @@ from pathlib import Path
 import bpy
 import warp as wp
 
-EXPECTED_BLENDER_VERSION = (5, 1, 0)
-EXPECTED_WARP_VERSION = "1.16.0"
-EXPECTED_FLUIDSIM_VERSION = "1.0.255"
+def _source_release_identity() -> dict:
+    """Read version.py from the source tree the tested package was built from."""
+    path = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "version.py"
+    namespace: dict = {}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace)
+    return namespace
+
+
+_IDENTITY = _source_release_identity()
+EXPECTED_BLENDER_VERSION = tuple(_IDENTITY["CERTIFIED_BLENDER_VERSION"])
+EXPECTED_WARP_VERSION = _IDENTITY["CERTIFIED_WARP_VERSION"]
+EXPECTED_FLUIDSIM_VERSION = _IDENTITY["VERSION_STRING"]
 
 
 def _write_json(path: Path, payload: dict) -> None:
