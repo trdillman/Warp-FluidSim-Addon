@@ -321,26 +321,29 @@ def test_source_shapes(device):
     src.viscosity = 3.5
 
     solver = FluidSolver(settings)
-    solver.set_sources([src])
-    solver.step_frame()
-    n = solver.particles.refresh_host_count()
-    if n == 0:
-        return False, "no particles emitted"
-    pos = solver.particles.position.numpy()[:n]
-    center = np.array([0.0, 0.0, 0.6])
-    # Particles were emitted inside the sphere; after one frame of gravity
-    # they may drift slightly, allow a small tolerance band.
-    dist = np.linalg.norm(pos - center, axis=1)
-    frac_inside = float((dist < 0.25 + 3 * settings.voxel_size).mean())
-    temp = solver.particles.attr("temperature").numpy()[:n]
-    visc = solver.particles.attr("viscosity").numpy()[:n]
-    temp_ok = bool(np.all(np.abs(temp - 42.0) < 1.0e-3))
-    visc_ok = bool(np.all(np.abs(visc - 3.5) < 1.0e-3))
-    ok = n > 100 and frac_inside > 0.95 and temp_ok and visc_ok
-    return ok, (
-        f"{n} particles, {frac_inside * 100:.1f}% within source bounds, "
-        f"temperature transfer={temp_ok}, viscosity transfer={visc_ok}"
-    )
+    try:
+        solver.set_sources([src])
+        solver.step_frame()
+        n = solver.particles.refresh_host_count()
+        if n == 0:
+            return False, "no particles emitted"
+        pos = solver.particles.position.numpy()[:n]
+        center = np.array([0.0, 0.0, 0.6])
+        # Particles were emitted inside the sphere; after one frame of gravity
+        # they may drift slightly, allow a small tolerance band.
+        dist = np.linalg.norm(pos - center, axis=1)
+        frac_inside = float((dist < 0.25 + 3 * settings.voxel_size).mean())
+        temp = solver.particles.attr("temperature").numpy()[:n]
+        visc = solver.particles.attr("viscosity").numpy()[:n]
+        temp_ok = bool(np.all(np.abs(temp - 42.0) < 1.0e-3))
+        visc_ok = bool(np.all(np.abs(visc - 3.5) < 1.0e-3))
+        ok = n > 100 and frac_inside > 0.95 and temp_ok and visc_ok
+        return ok, (
+            f"{n} particles, {frac_inside * 100:.1f}% within source bounds, "
+            f"temperature transfer={temp_ok}, viscosity transfer={visc_ok}"
+        )
+    finally:
+        solver.release()
 
 
 # 7. height-field sourcing flat/profile behavior
@@ -713,22 +716,25 @@ def test_collision_sink_bits(device):
     sink.radius = 0.12
 
     solver = FluidSolver(settings)
-    solver.set_sources([box, sink])
-    solver.step_frame()
+    try:
+        solver.set_sources([box, sink])
+        solver.step_frame()
 
-    types = solver.voxel_type.data.numpy()
-    n_col = int(((types & VOXEL_COLLISION) != 0).sum())
-    n_sink = int(((types & VOXEL_SINK) != 0).sum())
-    overlap = int((((types & VOXEL_COLLISION) != 0) & ((types & VOXEL_SINK) != 0)).sum())
-    exp_col = (0.4 * 0.4 * 0.3) / settings.voxel_size**3
-    exp_sink = (4.0 / 3.0 * np.pi * 0.12**3) / settings.voxel_size**3
-    col_ok = 0.5 * exp_col < n_col < 2.0 * exp_col
-    sink_ok = 0.5 * exp_sink < n_sink < 2.0 * exp_sink
-    ok = col_ok and sink_ok and overlap == 0
-    return ok, (
-        f"collision voxels {n_col} (expect ~{exp_col:.0f}), "
-        f"sink voxels {n_sink} (expect ~{exp_sink:.0f}), overlap {overlap}"
-    )
+        types = solver.voxel_type.data.numpy()
+        n_col = int(((types & VOXEL_COLLISION) != 0).sum())
+        n_sink = int(((types & VOXEL_SINK) != 0).sum())
+        overlap = int((((types & VOXEL_COLLISION) != 0) & ((types & VOXEL_SINK) != 0)).sum())
+        exp_col = (0.4 * 0.4 * 0.3) / settings.voxel_size**3
+        exp_sink = (4.0 / 3.0 * np.pi * 0.12**3) / settings.voxel_size**3
+        col_ok = 0.5 * exp_col < n_col < 2.0 * exp_col
+        sink_ok = 0.5 * exp_sink < n_sink < 2.0 * exp_sink
+        ok = col_ok and sink_ok and overlap == 0
+        return ok, (
+            f"collision voxels {n_col} (expect ~{exp_col:.0f}), "
+            f"sink voxels {n_sink} (expect ~{exp_sink:.0f}), overlap {overlap}"
+        )
+    finally:
+        solver.release()
 
 
 # 10. pressure projection divergence reduction
@@ -945,19 +951,22 @@ def test_viscosity_stability(device):
     visc_field = ScalarField(grid)
     visc_field.data.fill_(5.0)  # strong viscosity
     vsolver = ViscositySolver(grid, device)
-    vsolver.solve(
-        vel, visc_field.data, voxel_type.data, dt=1.0 / 24.0,
-        use_pcg=True, iterations=100, tolerance=1.0e-6,
-    )
-    u_after = vel.u.numpy()
-    max_after = float(np.abs(u_after).max())
-    finite = bool(np.isfinite(u_after).all())
-    # Implicit viscosity must damp, never amplify; strong viscosity should
-    # smooth the random field significantly.
-    ok = finite and max_after <= max_before * 1.001 and max_after < max_before * 0.9
-    return ok, (
-        f"max |u| {max_before:.3f} -> {max_after:.3f}, finite={finite}"
-    )
+    try:
+        vsolver.solve(
+            vel, visc_field.data, voxel_type.data, dt=1.0 / 24.0,
+            use_pcg=True, iterations=100, tolerance=1.0e-6,
+        )
+        u_after = vel.u.numpy()
+        max_after = float(np.abs(u_after).max())
+        finite = bool(np.isfinite(u_after).all())
+        # Implicit viscosity must damp, never amplify; strong viscosity should
+        # smooth the random field significantly.
+        ok = finite and max_after <= max_before * 1.001 and max_after < max_before * 0.9
+        return ok, (
+            f"max |u| {max_before:.3f} -> {max_after:.3f}, finite={finite}"
+        )
+    finally:
+        vsolver.release()
 
 
 # 14. whitewater churn/emission/advection
@@ -991,36 +1000,39 @@ def test_whitewater(device):
     src.velocity = (2.5, 0.0, -1.5)
 
     solver = FluidSolver(settings)
-    solver.set_sources([src])
-    for _ in range(3):
-        solver.step_frame()
-    solver.set_sources([])
+    try:
+        solver.set_sources([src])
+        for _ in range(3):
+            solver.step_frame()
+        solver.set_sources([])
 
-    churn_max = 0.0
-    ww_count = 0
-    for _ in range(6):
-        solver.step_frame()
-        churn_max = max(churn_max, float(solver.churn.data.numpy().max()))
-        ww_count = max(ww_count, solver.whitewater.refresh_host_count())
+        churn_max = 0.0
+        ww_count = 0
+        for _ in range(6):
+            solver.step_frame()
+            churn_max = max(churn_max, float(solver.churn.data.numpy().max()))
+            ww_count = max(ww_count, solver.whitewater.refresh_host_count())
 
-    if churn_max <= 0.0:
-        return False, "no churn accumulated"
-    if ww_count == 0:
-        return False, f"churn {churn_max:.4f} but no whitewater emitted"
+        if churn_max <= 0.0:
+            return False, "no churn accumulated"
+        if ww_count == 0:
+            return False, f"churn {churn_max:.4f} but no whitewater emitted"
 
-    # Advection sanity: whitewater particles must remain inside the domain.
-    pos = solver.whitewater_positions()
-    if len(pos):
-        in_dom = (
-            (pos >= np.array(settings.domain_min) - 1.0e-3)
-            & (pos <= np.array(settings.domain_max) + 1.0e-3)
-        ).all()
-    else:
-        in_dom = True
-    return bool(in_dom), (
-        f"peak churn {churn_max:.4f}, peak whitewater {ww_count}, "
-        f"all inside domain={bool(in_dom)}"
-    )
+        # Advection sanity: whitewater particles must remain inside the domain.
+        pos = solver.whitewater_positions()
+        if len(pos):
+            in_dom = (
+                (pos >= np.array(settings.domain_min) - 1.0e-3)
+                & (pos <= np.array(settings.domain_max) + 1.0e-3)
+            ).all()
+        else:
+            in_dom = True
+        return bool(in_dom), (
+            f"peak churn {churn_max:.4f}, peak whitewater {ww_count}, "
+            f"all inside domain={bool(in_dom)}"
+        )
+    finally:
+        solver.release()
 
 
 # 15. spatiotemporal FLIP jitter/phase/projection smoke test
@@ -1059,49 +1071,52 @@ def test_spatiotemporal_flip(device):
     settings.device = device
 
     solver = FluidSolver(settings)
-    ref_mass = float(solver._st_reference_mass())
-    ref_expected = float(settings.particles_per_voxel)
-    ref_ok = bool(
-        np.isfinite(ref_mass)
-        and ref_mass > 0.0
-        and 0.5 * ref_expected <= ref_mass <= 1.5 * ref_expected
-    )
-    xs = np.linspace(-0.35, -0.05, 7, dtype=np.float32)
-    ys = np.linspace(-0.18, 0.18, 5, dtype=np.float32)
-    zs = np.linspace(0.18, 0.58, 6, dtype=np.float32)
-    pts = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
-    vels = np.tile(np.array((0.35, 0.0, 0.0), dtype=np.float32), (len(pts), 1))
-    solver.inject_particles(pts, velocities=vels)
+    try:
+        ref_mass = float(solver._st_reference_mass())
+        ref_expected = float(settings.particles_per_voxel)
+        ref_ok = bool(
+            np.isfinite(ref_mass)
+            and ref_mass > 0.0
+            and 0.5 * ref_expected <= ref_mass <= 1.5 * ref_expected
+        )
+        xs = np.linspace(-0.35, -0.05, 7, dtype=np.float32)
+        ys = np.linspace(-0.18, 0.18, 5, dtype=np.float32)
+        zs = np.linspace(0.18, 0.58, 6, dtype=np.float32)
+        pts = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
+        vels = np.tile(np.array((0.35, 0.0, 0.0), dtype=np.float32), (len(pts), 1))
+        solver.inject_particles(pts, velocities=vels)
 
-    for _ in range(4):
-        solver.step_frame()
+        for _ in range(4):
+            solver.step_frame()
 
-    n = solver.particles.refresh_host_count()
-    if n <= 0:
-        return False, "all particles were lost"
-    offsets = solver.particles.time_offset.numpy()[:n]
-    frame_dt = settings.time_scale / settings.frame_rate
-    max_abs = float(np.max(np.abs(offsets))) if len(offsets) else 0.0
-    bound_ok = max_abs <= 0.5 * frame_dt + 2.0e-5
-    pos = solver.particle_positions()
-    finite_pos = bool(np.isfinite(pos).all())
-    weights = solver.vel.wu.numpy()[: solver._nvox]
-    phase = solver.density.data.numpy()[: solver._nvox]
-    weights_ok = bool(np.isfinite(weights).all() and float(weights.max()) > 0.0)
-    phase_ok = bool(
-        np.isfinite(phase).all()
-        and float(phase.max()) > 0.0
-        and float(phase.min()) >= -1.0e-6
-        and float(phase.max()) <= 1.0001
-    )
-    status_ok = bool(np.isfinite(solver.pressure_solver.last_residual))
-    ok = ref_ok and bound_ok and finite_pos and weights_ok and phase_ok and status_ok
-    return ok, (
-        f"particles={n}, m0={ref_mass:.4f} (target ppc={ref_expected:.4f}), "
-        f"max |delta_t|={max_abs:.6f} <= {0.5 * frame_dt:.6f}, "
-        f"max weight={float(weights.max()):.4f}, max phase={float(phase.max()):.4f}, "
-        f"pressure={solver.pressure_solver.last_pressure_status}"
-    )
+        n = solver.particles.refresh_host_count()
+        if n <= 0:
+            return False, "all particles were lost"
+        offsets = solver.particles.time_offset.numpy()[:n]
+        frame_dt = settings.time_scale / settings.frame_rate
+        max_abs = float(np.max(np.abs(offsets))) if len(offsets) else 0.0
+        bound_ok = max_abs <= 0.5 * frame_dt + 2.0e-5
+        pos = solver.particle_positions()
+        finite_pos = bool(np.isfinite(pos).all())
+        weights = solver.vel.wu.numpy()[: solver._nvox]
+        phase = solver.density.data.numpy()[: solver._nvox]
+        weights_ok = bool(np.isfinite(weights).all() and float(weights.max()) > 0.0)
+        phase_ok = bool(
+            np.isfinite(phase).all()
+            and float(phase.max()) > 0.0
+            and float(phase.min()) >= -1.0e-6
+            and float(phase.max()) <= 1.0001
+        )
+        status_ok = bool(np.isfinite(solver.pressure_solver.last_residual))
+        ok = ref_ok and bound_ok and finite_pos and weights_ok and phase_ok and status_ok
+        return ok, (
+            f"particles={n}, m0={ref_mass:.4f} (target ppc={ref_expected:.4f}), "
+            f"max |delta_t|={max_abs:.6f} <= {0.5 * frame_dt:.6f}, "
+            f"max weight={float(weights.max()):.4f}, max phase={float(phase.max()):.4f}, "
+            f"pressure={solver.pressure_solver.last_pressure_status}"
+        )
+    finally:
+        solver.release()
 
 
 # 17-21. surface-tension physics and capillary stability

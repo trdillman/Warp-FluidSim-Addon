@@ -46,7 +46,10 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Gate runs every lane on the certified Warp under Blender 5.2 (`PYTHONNOUSERSITE=1`, `--python-use-system-env`, refuses an uncertified Warp) | done (`0e01cdf`) | `tests/test_production_gate_semantics.py` |
 | Full GUI gate, Blender 5.2.0 × Warp 1.17.0 × Windows 11, RTX 4080 SUPER | **FULL-PRODUCTION-GATE-PASS** at `0e01cdf`; demo analysis 18/18, blend checks, GUI acceptance 53/53, saved-demo playback | demo artifact sha256 `a32872b8…0926`, identical to the 1.x reference: the platform move changed no simulation output. Log `C:\Users\Tyler\fluidsim-gate-logs\gate-52-20260927-160102.log` |
 | Ruff target py313 (Blender 5.2 bundles Python 3.13.13) | done | add-on ruff clean |
-| Build and install the real split packages; clean-profile install on Windows and WSL2 (D4) | pending | |
+| Build the real split packages with the bundled Warp 1.17.0 wheels (D3) | done: `release_ready: true`; `windows_x64` 146.6 MB, `linux_x64` 159.1 MB | `C:\Users\Tyler\fluidsim-gate-logs\build-52-20260927-161112\` (`windows-build-report.json`, `SHA256SUMS.txt`) |
+| Clean-profile install on Windows: extension smoke + installed GPU regression (21/21 validations, 10 preview frames) on Blender 5.2.0 with no PYTHONPATH | done | `smoke-test-report.json`, `gpu-regression-report.json` in the build folder |
+| GPU self-validations leaked 3 native CUDA kernel leases, so disabling the add-on after Run Validations logged `unregister step 'native CUDA cache' failed` | fixed: 5 validations now release their solvers | `tests/test_validation_releases_native_leases.py` |
+| Clean-profile install on WSL2 (D4) | pending | |
 | GUI gate reproducible 3/3 on the new stack | pending (1/3) | |
 
 ## Phases 2–4
