@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+obsolete
 
 ## Severity
 
@@ -31,6 +31,12 @@ Defense-in-depth gap. Currently mitigated by template indentation keeping user c
 - Source finding: `SEC-006` in `reviews/swarm-2026-08-08/findings/security.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Low Findings section).
 - Identified by the Trust & Safety lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Obsolete in 1.1.0. The legacy snippet runtime was retired in commit `b34192e` ("refactor(effects): retire legacy snippet runtime"). `CompiledSnippet` and `SnippetManager` remain in `fluidSim_warp_blender51/sim/custom.py` but have no callers in add-on runtime code (only `tests/test_snippet_library.py`). Even there, `SnippetManager.set_snippets` runs `validate_snippet` and drops ERROR-level snippets before building a `CompiledSnippet`.
+
+User code now goes through Custom Effects v2: `compile_effect` in `sim/effects/compiler.py` calls `validate_effect` and refuses to compile invalid effects, with trust and sandbox checks in `sim/effects/trust.py` and `sim/effects/sandbox.py`.
 
 ## Blocked by
 

@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,26 @@ If the same particles_per_voxel setting drives both compiled and legacy sources,
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/sim/source_regions.py:465` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Either clamp emit_rate in to_struct() to match normalized_liquid_target (both paths capped at 64), or document that legacy sources intentionally have no cap and remove the misleading min(64) from _legacy_liquid_target, making it a simple max(0, int(...)) zero-check.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/sim/source_regions.py:465` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Either clamp emit_rate in to_struct() to match normalized_liquid_target (both paths capped at 64), or document that legacy sources intentionally have no cap and remove the misleading min(64) from _legacy_liquid_target, making it a simple max(0, int(...)) zero-check.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `PIPE-005` in `reviews/swarm-2026-08-08/findings/pipeline.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Medium Findings section).
 - Identified by the Particle Pipeline lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Fixed before 1.1.0. Compiled and legacy sources now take their occupancy from one shared 0..64 contract: `resolve_source_sampling` in `fluidSim_warp_blender51/sim/quality_contract.py` (`MAX_LIQUID_SAMPLING = 64.0`), reached through `_effective_source_target` in `fluidSim_warp_blender51/blender/scene_inputs.py`, which writes the clamped value to `desc.emit_rate`. The height source uses `scale_quality_value`, which clamps to the same bound, and the `emit_rate` property itself is bounded `max=64.0`. `_legacy_liquid_target` (now in `sim/source_execution.py`) and `normalized_liquid_target` (`sim/source_regions.py`) keep the same 64 bound.
+
+Residual: `SourceShapeDesc.to_struct` (`sim/source_contracts.py`) still copies `emit_rate` without clamping, so only direct API callers that bypass the Blender gather path could exceed 64.
+
+Test: `tests/test_quality_contract.py::test_source_sampling_modes_share_one_zero_to_64_contract` (a legacy absolute target of 100 resolves to 64).
+
+Contract introduced in commits `5b97afd` and `edcd026`.
 
 ## Blocked by
 

@@ -28,8 +28,8 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Defect #5 regression: 35 fields read from the wrong settings group | done: detection, capture and revert read each field from its declaring group; the per-attribute export toggles (hidden since the split) draw again | `tests/test_pending_settings_registry.py`, `tests/test_operator_panel_behavior.py`; Blender 5.1 `PHASE4-LIVE-INTERACTION-PASS` |
 | Root CI workflow (CPU, PRs + master) | done (`e6983d1`): `checks` job (ruff, pytest, Warp-CPU validators) and `package` job (build, install and smoke in Blender 5.1.0 Linux) | local WSL2 emulation of both jobs green; first hosted run is the 1.1.0 PR |
 | Version 1.1.0, CHANGELOG catch-up | done (`cc68193`); determinism wording narrowed to what `d2a6b6d` proves | `test_release_identity.py` (changelog leads with the version; user guide agrees) |
-| Close the 14 fixed + 7 obsolete cards; PRUNE-001 | PRUNE-001 done (archive re-hashed 25/25); cards in progress | `backlog/tasks/` |
-| Full pytest, GUI gate, demo analysis | pending | |
+| Close the 14 fixed + 7 obsolete cards; PRUNE-001 | done: 10 completed, 5 obsolete, 2 won't-fix (032, 050), PRUNE-001 closed. Kept open after re-verification: 005 (Fill Multiplier still silently clamped at 64, Phase 3) and 034 (Warp not declared in manifest, Phase 1 D3) | each card's `## Resolution` |
+| Full pytest, GUI gate, demo analysis | pytest + hosted CI green on PR #10; GUI gate + demo analysis run on the merged commit | |
 | PR, merge, tag v1.1.0, GitHub release | pending | |
 
 ## Phases 1–4
@@ -38,7 +38,7 @@ Not started.
 
 ## Environment notes
 
-- Blender 5.2 is not installed yet (needed for Phase 1).
+- Blender 5.2.0 LTS (portable, Python 3.13) is at `C:	mplender-cu-vm\staginglender-5.2lender-5.2.0-windows-x64`. Its Python shares the user site-packages where Warp 1.16.0 is installed.
 - WSL2 Ubuntu 24.04 has Python 3.12 and pytest, and the RTX 4080 SUPER is visible through `nvidia-smi` (driver 610.47).
 - Disk is tight: about 22 GB free.
 

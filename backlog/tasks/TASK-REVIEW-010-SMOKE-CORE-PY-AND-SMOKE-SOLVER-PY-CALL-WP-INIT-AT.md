@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+obsolete
 
 ## Severity
 
@@ -31,6 +31,12 @@ Running 'pytest tests/' on any CI machine or developer workstation without CUDA 
 - Source finding: `TEST-004` in `reviews/swarm-2026-08-08/findings/tests.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (High Findings section).
 - Identified by the Test Coverage lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Obsolete in 1.1.0. The claim does not apply to the live tree. `tests/smoke_core.py` and `tests/smoke_solver.py` still call `wp.init()` at import time, but `pytest.ini` sets only `testpaths` and not `python_files`, so pytest's default `test_*.py` / `*_test.py` pattern never imports them. Verified: `python -m pytest --collect-only -q tests` collects 1143 tests and none from either file.
+
+They are standalone CUDA scripts, run explicitly by `tools/run_production_gate.py` (it lists `tests/smoke_core.py` and `tests/smoke_solver.py`).
 
 ## Blocked by
 
