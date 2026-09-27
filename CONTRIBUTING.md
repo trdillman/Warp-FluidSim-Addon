@@ -22,8 +22,16 @@ python3 tools/run_production_gate.py
 ```
 
 The gate checks repository hygiene, runs the CUDA/Warp solver tests through
-Blender 5.1's bundled Python, proves the Blender viewport/live handler runs the
-simulation in background mode, and runs the foreground GUI acceptance lane.
+Blender 5.2's bundled Python, proves the Blender viewport/live handler runs the
+simulation in background mode, and, with `--include-gui`, runs the foreground
+GUI acceptance lane and writes `artifacts/production_gate_manifest.json`.
+
+The gate takes Warp from `PYTHONPATH` and refuses to start unless Blender's
+Python imports the certified version (`CERTIFIED_WARP_VERSION` in
+`fluidSim_warp_blender51/version.py`). It sets `PYTHONNOUSERSITE=1` and passes
+`--python-use-system-env` to Blender, so a Warp in your Python user site is
+never used. Point `PYTHONPATH` at a directory holding the certified Warp wheel
+installed with `pip install --target`, plus pytest.
 
 For solver, scene-bridge, viewport, or cache changes that could affect
 interactive playback cost, also run the user-path regression profile. It
@@ -54,9 +62,10 @@ view/cache timings, viewport output counts, and final scene statistics.
 If Blender is installed in a non-default location, override these paths:
 
 ```bash
-BLENDER_EXE="/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe" \
-BLENDER_PY="/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe" \
-python3 tools/run_production_gate.py
+BLENDER_EXE="/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
+BLENDER_PY="/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe" \
+PYTHONPATH="/path/to/warp-1.17.0-site" \
+python3 tools/run_production_gate.py --include-gui
 ```
 
 ## Artifact policy
