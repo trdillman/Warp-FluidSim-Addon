@@ -1,5 +1,99 @@
 # Changelog
 
+## 1.1.0 — per-object domains, a Basic/Advanced interface and deterministic bakes
+
+This is the bridge release to 2.0. Open and re-save your 1.0.x files in 1.1.0:
+2.0 will only open files saved by 1.1.0 or later.
+
+### Upgrade notes
+
+- Domain settings now live on the Domain object (`obj.fluidsim_domain`) rather
+  than on the scene. Files from 1.0.x migrate automatically when they are
+  opened; save them afterwards to keep the migrated form.
+- Simulation results differ from 1.0.255. Bakes are now deterministic (see
+  Changed), the viscosity solver now reaches its tolerance, and several demo
+  scenes were recalibrated. Re-bake caches you want to compare.
+- Blender 5.1, external Warp 1.16.0, Windows x64 and Linux x64 remain the
+  supported contract.
+
+### Added
+
+- **Liquid color mixing** on the GPU, shown in the new `chromatic_vortex` demo.
+- **Per-object domains.** Each Domain object carries its own settings, the
+  **Add → Fluid Domain** menu creates one, and a scene can hold several. The
+  **Physics Properties** tab is the home for domain settings; the Scene
+  panels edit the active domain.
+- **Basic and Advanced modes.** Basic, the default, shows the settings most
+  scenes need; Advanced adds the solver panels.
+- **Quality tiers** (Draft, Preview, Final) now scale voxel size, substeps,
+  pressure iterations and particles per voxel. In 1.0.x the setting had no
+  effect.
+- **Transport and Lifecycle panels.** Playback controls and destructive actions
+  have their own panels; destructive actions are styled as alerts.
+- **Viewport HUD toggle** in the Display panel, and a compact **Live Tuning**
+  shelf in the 3D View sidebar that replaces the full settings mirror.
+- **Diagnostics** gathers the solver telemetry in one place.
+- **Whitewater display fraction** thins the whitewater points drawn in the
+  viewport without changing the simulation.
+- **Custom Effects** parameters marked runtime-bindable update live, without a
+  rebuild. Writing Warp code for an effect is now a developer preference
+  (**Enable Effect Authoring**), and trust granted while editing lasts for the
+  session only.
+- **Artist preview.** One preview path for the viewport, and scene actions that
+  roll back cleanly if setup fails.
+- **Demo scene contract.** The four shipped demos (`dam_break`, `paddle_stir`,
+  `crown_splash`, `chromatic_vortex`) must reopen, initialise and play from
+  their own sources, and a check proves each one.
+
+### Changed
+
+- **Deterministic bakes.** Four order-dependent GPU steps (the pressure solver's
+  dot product, particle-to-grid binning, shape emission and whitewater
+  recycling) now run in a fixed order, so baking a demo twice gives
+  bit-identical results.
+- The viscosity solver's iteration ceiling rose from 40 to 64 so it can reach
+  its tolerance, and its convergence is now reported in the frame statistics.
+- Surface-tension band propagation is the default SDF band mode.
+- The legacy snippet runtime was removed. Custom Effects use the v2 pipeline.
+- Developer tooling moved out of the add-on package into `tools/`.
+
+### Performance
+
+- Viscosity runs its solver loop inside a CUDA conditional graph. With
+  viscosity on, a frame costs 1.55x the baseline instead of 7.80x.
+- Surface attributes are gathered on the GPU: a surface frame fell from 175.5 ms
+  to 20.7 ms in the benchmark scene.
+- Live output copies only the used part of each device buffer (p95 −10%).
+- Smaller wins: fused particle compaction counts, no duplicate whitewater
+  reduction, and less per-substep launch overhead.
+
+### Fixed
+
+- Presets, live settings and quality tiers now apply to the domain after
+  migration. Previously they wrote to the old scene settings.
+- Edits to domain settings now show as pending and apply on reset. The export
+  attribute toggles are visible again.
+- Baking from the command line no longer crashes on exit.
+- `crown_splash` whitewater now emits foam; the old threshold was unreachable.
+- Emitters keep emitting after the particle capacity grows.
+- The surface SDF band is wide enough for smoothing and filtering.
+- Malformed user snippet presets are skipped with a message instead of failing.
+- Errors now always outrank warnings in status displays.
+
+### Security
+
+- Custom Effects modules are written to a private per-user directory and are
+  executed only when their digest matches.
+- **Restart** refuses to delete a folder that is not a FluidSim cache.
+- Closed a legacy path that could bypass Custom Effects trust.
+
+### Release process
+
+- Every pull request now runs hosted CI: lint, tests, CPU kernel validation, and
+  a Blender build, install and smoke test. See `docs/RELEASING.md`.
+- The GPU production gate validates the release kernels on CUDA and records the
+  FluidSim version in its manifest.
+
 ## 1.0.255 — contextual Physics Properties and full viewport workflow
 
 ### Added

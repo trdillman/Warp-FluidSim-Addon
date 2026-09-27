@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fluidsim_testpkg import version
 from fluidsim_testpkg.diagnostics import report
 from fluidsim_testpkg.runtime.warp_runtime import DeviceRecord, RuntimeProbe
 
@@ -39,7 +40,7 @@ def test_support_report_contains_release_runtime_and_scene_fields(monkeypatch, t
         scene_signature="scene-abc",
         settings_signature="settings-def",
     )
-    assert payload["fluidsim"]["version"] == "1.0.255"
+    assert payload["fluidsim"]["version"] == version.VERSION_STRING
     assert payload["fluidsim"]["package"] == "bl_ext.local.fluidsim_warp"
     assert payload["host"]["blender"] == "5.1.2"
     assert payload["runtime"]["warp_version"] == "1.15.0"

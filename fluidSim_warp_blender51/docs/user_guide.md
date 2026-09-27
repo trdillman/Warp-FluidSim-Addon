@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 1.0.255 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.1.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 1.0.255 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Validated target |
 |---|---|
-| FluidSim | 1.0.255 |
+| FluidSim | 1.1.0 |
 | Blender | Blender 5.1.0 or newer |
 | Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
