@@ -10,9 +10,9 @@ This is the bridge release to 2.0. Open and re-save your 1.0.x files in 1.1.0:
 - Domain settings now live on the Domain object (`obj.fluidsim_domain`) rather
   than on the scene. Files from 1.0.x migrate automatically when they are
   opened; save them afterwards to keep the migrated form.
-- Simulation results differ from 1.0.255. Bakes are now deterministic (see
-  Changed), the viscosity solver now reaches its tolerance, and several demo
-  scenes were recalibrated. Re-bake caches you want to compare.
+- Simulation results differ from 1.0.255. Several GPU steps now run in a fixed
+  order (see Changed), the viscosity solver now reaches its tolerance, and
+  several demo scenes were recalibrated. Re-bake caches you want to compare.
 - Blender 5.1, external Warp 1.16.0, Windows x64 and Linux x64 remain the
   supported contract.
 
@@ -49,8 +49,10 @@ This is the bridge release to 2.0. Open and re-save your 1.0.x files in 1.1.0:
 
 - **Deterministic bakes.** Four order-dependent GPU steps (the pressure solver's
   dot product, particle-to-grid binning, shape emission and whitewater
-  recycling) now run in a fixed order, so baking a demo twice gives
-  bit-identical results.
+  recycling) now run in a fixed order. Baking `dam_break` or `crown_splash`
+  twice on the same GPU gives bit-identical frames. Mesh emitters and color
+  mixing still accumulate in arrival order, so other scenes can differ
+  slightly between bakes.
 - The viscosity solver's iteration ceiling rose from 40 to 64 so it can reach
   its tolerance, and its convergence is now reported in the frame statistics.
 - Surface-tension band propagation is the default SDF band mode.
