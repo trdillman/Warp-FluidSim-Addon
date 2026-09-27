@@ -98,14 +98,6 @@ def test_propagate_is_the_default():
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def cuda_device():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
-    return "cuda:0"
-
-
 def _scene(device, blob=True, n=60_000):
     """A cloud with a real free surface, not a filled box.
 

@@ -65,10 +65,8 @@ def test_user_path_profile_resolves_surface_attribute_modes(monkeypatch):
     assert profile_user_path.parse_args().surface_attributes == "off"
 
 
-def test_particle_emission_saturates_device_and_host_counts():
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
-    device = "cuda:0"
+def test_particle_emission_saturates_device_and_host_counts(cuda_device):
+    device = cuda_device
     particles = ParticleSystem(capacity=64, device=device)
     wp.copy(particles.count, wp.array([60], dtype=wp.int32, device=device))
     shape = SourceShapeDesc(
@@ -326,10 +324,8 @@ def test_whitewater_topology_budget_covers_ballistic_motion():
     assert "self._whitewater_topology_expand(frame_dt)" in frame_source
 
 
-def test_whitewater_emission_reuses_dead_slot_at_capacity():
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
-    device = "cuda:0"
+def test_whitewater_emission_reuses_dead_slot_at_capacity(cuda_device):
+    device = cuda_device
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0), size=(0.8, 0.8, 0.8),
         voxel_size=0.1, leaf_capacity=4, device=device)
@@ -382,18 +378,16 @@ def test_whitewater_emission_reuses_dead_slot_at_capacity():
 @pytest.mark.parametrize("single_block_max", [None, -1])
 @pytest.mark.parametrize("prior, dead_fraction", [(2, 0.3), (4000, 0.5)])
 def test_whitewater_recycled_slots_stack_in_ascending_slot_order(
-        monkeypatch, single_block_max, prior, dead_fraction):
+        monkeypatch, single_block_max, prior, dead_fraction, cuda_device):
     """Both recycle paths (one-launch block scan, device scan) push dead slots
     above the existing stack in ascending slot order and clamp at capacity.
     As in the solver, the launch bound exceeds the live count and advection
     has flagged deaths only inside the live prefix."""
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
     from fluidSim_warp_blender51.sim import whitewater as ww_mod
 
     if single_block_max is not None:
         monkeypatch.setattr(ww_mod, "WW_RECYCLE_SINGLE_BLOCK_MAX", single_block_max)
-    device = "cuda:0"
+    device = cuda_device
     ww = WhitewaterSystem(capacity=4096, device=device)
     rng = np.random.default_rng(7)
     live = ww.capacity - 96
@@ -418,12 +412,10 @@ def test_whitewater_recycled_slots_stack_in_ascending_slot_order(
     np.testing.assert_array_equal(free_slots[prior:], expected)
 
 
-def test_particle_bins_hold_ascending_particle_indices_per_voxel():
+def test_particle_bins_hold_ascending_particle_indices_per_voxel(cuda_device):
     """Binning must equal a stable sort by voxel: the P2G gather and relaxation
     read bins positionally, so any arrival-order dependence breaks bitwise
     reproducible bakes."""
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
     from fluidSim_warp_blender51.sim.kernels_fluid import (
         k_particle_to_voxel_count_and_update_index,
         scatter_particles_to_bins,
@@ -431,7 +423,7 @@ def test_particle_bins_hold_ascending_particle_indices_per_voxel():
     )
     from fluidSim_warp_blender51.sim.particles import ParticleBins
 
-    device = "cuda:0"
+    device = cuda_device
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0), size=(1.6, 0.8, 0.8),
         voxel_size=0.1, leaf_capacity=4, device=device)
@@ -472,10 +464,8 @@ def test_particle_bins_hold_ascending_particle_indices_per_voxel():
     np.testing.assert_array_equal(results[0], results[1])
 
 
-def test_pressure_index_contains_only_fluid_non_collision_voxels():
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
-    device = "cuda:0"
+def test_pressure_index_contains_only_fluid_non_collision_voxels(cuda_device):
+    device = cuda_device
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0), size=(0.8, 0.8, 0.8),
         voxel_size=0.1, leaf_capacity=4, device=device)

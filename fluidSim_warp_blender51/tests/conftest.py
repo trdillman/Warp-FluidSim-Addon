@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -19,6 +20,50 @@ if PACKAGE_NAME not in sys.modules:
     package.__package__ = PACKAGE_NAME
     package.__path__ = [str(ROOT)]
     sys.modules[PACKAGE_NAME] = package
+
+# Keep in sync with the repository tests/conftest.py; this suite also runs
+# standalone from the add-on folder, so it cannot import that copy.
+TEST_DEVICE_ENV = "FLUIDSIM_TEST_DEVICE"
+DEFAULT_CUDA_DEVICE = "cuda:0"
+
+
+def select_test_device(wp, environ=os.environ) -> str:
+    """Return the Warp device GPU tests should use.
+
+    ``FLUIDSIM_TEST_DEVICE`` (e.g. ``cuda:1`` or ``cpu``) wins and must name a
+    usable device, otherwise the test fails loudly.  Without an override the
+    default CUDA device is used, and the test is skipped when CUDA is absent.
+    """
+    wp.init()
+    override = str(environ.get(TEST_DEVICE_ENV, "")).strip()
+    if override:
+        try:
+            wp.get_device(override)
+        except Exception as exc:  # noqa: BLE001 - reported as a test failure
+            pytest.fail(
+                f"{TEST_DEVICE_ENV}={override!r} is not a usable Warp device: {exc}",
+                pytrace=False,
+            )
+        return override
+    if not wp.is_cuda_available():
+        pytest.skip(f"CUDA not available (set {TEST_DEVICE_ENV} to choose a device)")
+    return DEFAULT_CUDA_DEVICE
+
+
+@pytest.fixture(scope="session")
+def cuda_device():
+    """Shared Warp device for GPU tests; see :func:`select_test_device`."""
+    wp = pytest.importorskip("warp")
+    return select_test_device(wp)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Every test that requests ``cuda_device`` carries the ``cuda`` marker."""
+    for item in items:
+        if "cuda_device" in getattr(item, "fixturenames", ()) and (
+            item.get_closest_marker("cuda") is None
+        ):
+            item.add_marker(pytest.mark.cuda)
 
 
 @pytest.fixture(scope="session", autouse=True)

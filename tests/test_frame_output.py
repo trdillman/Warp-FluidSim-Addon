@@ -248,9 +248,7 @@ def test_surface_velocity_speed_and_motion_share_two_device_readbacks():
     }
 
 
-def test_surface_velocity_samples_mac_grid_with_one_device_readback():
-    import pytest
-    import warp as wp
+def test_surface_velocity_samples_mac_grid_with_one_device_readback(cuda_device):
 
     from fluidSim_warp_blender51.sim.fields import (
         MacVelocityField,
@@ -260,9 +258,7 @@ def test_surface_velocity_samples_mac_grid_with_one_device_readback():
         host_output_operation_counts,
     )
 
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA required")
-    device = "cuda:0"
+    device = cuda_device
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0), size=(0.8, 0.8, 0.8),
         voxel_size=0.1, leaf_capacity=4, device=device)
@@ -636,6 +632,7 @@ def test_live_payload_schema_comes_from_domain_when_scene_mirror_is_poisoned():
     assert payload.surface_attributes == {}
 
 
+@pytest.mark.blender
 def test_output_preparation_uses_domain_owned_point_attribute_inventory(
         monkeypatch):
     pytest.importorskip("bpy")
