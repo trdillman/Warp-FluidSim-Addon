@@ -292,7 +292,8 @@ class FLUIDSIM_PT_physics_surface_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "surface_material")
         layout.prop(fs, "surface_attribute_mode")
         if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(layout, fs, "surface")
+            ui_scene._draw_attribute_group(
+                layout, ui_scene._domain_owner(context), "surface")
 
 
 class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
@@ -310,7 +311,8 @@ class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "particle_attribute_mode")
         layout.prop(fs, "particle_material")
         if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(layout, fs, "particles")
+            ui_scene._draw_attribute_group(
+                layout, ui_scene._domain_owner(context), "particles")
 
 
 class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
@@ -329,7 +331,8 @@ class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_attribute_mode")
         layout.prop(fs, "whitewater_material")
         if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(layout, fs, "whitewater")
+            ui_scene._draw_attribute_group(
+                layout, ui_scene._domain_owner(context), "whitewater")
 
 
 class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):

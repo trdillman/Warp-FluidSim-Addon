@@ -25,7 +25,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | REVIEW-006 (P0): private per-user effect module directory plus digest-verified exec | done | `tests/test_effect_source.py`, `tests/test_effect_compiler.py`; POSIX cases pass on WSL2 |
 | REVIEW-021: Restart refuses to replace folders outside a FluidSim cache | done | `tests/test_artist_bake_safety.py`, `tests/test_cache_manager.py` |
 | REVIEW-019: cubin integrity | won't-fix (same trust boundary as Warp's own cache) | card |
-| Defect #5 regression: 35 fields read from the wrong settings group | pending | |
+| Defect #5 regression: 35 fields read from the wrong settings group | done: detection, capture and revert read each field from its declaring group; the per-attribute export toggles (hidden since the split) draw again | `tests/test_pending_settings_registry.py`, `tests/test_operator_panel_behavior.py`; Blender 5.1 `PHASE4-LIVE-INTERACTION-PASS` |
 | Root CI workflow (CPU, PRs + master) | pending | |
 | Version 1.1.0, CHANGELOG catch-up | pending | |
 | Close the 14 fixed + 7 obsolete cards; PRUNE-001 | pending | |
@@ -44,4 +44,4 @@ Not started.
 
 ## Next action
 
-Defect #5: route pending-change detection by the class that declares each field.
+Root CI workflow at `.github/workflows/ci.yml`; retire the nested, never-run `release-checks.yml`.

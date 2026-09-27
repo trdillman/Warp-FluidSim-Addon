@@ -258,6 +258,15 @@ _SCENE_OWNED_FIELDS = frozenset({"quality", "domain_object"})
 _DOMAIN_OWNED_FIELDS = frozenset({"height_error", "spacetime_resync_surface"})
 
 
+def _scene_owned(name):
+    """True when ``name`` lives on ``scene.fluidsim`` rather than the domain group."""
+    if name in _SCENE_OWNED_FIELDS:
+        return True
+    if name in _DOMAIN_OWNED_FIELDS:
+        return False
+    return SETTING_TRANSITION_REGISTRY.get(name) in _SCENE_OWNED_TIERS
+
+
 def setting_owner(scene, name):
     """The settings group a value for ``name`` must LAND on to take effect.
 
@@ -269,20 +278,14 @@ def setting_owner(scene, name):
     partition themselves, or a preset write lands on the frozen ghost and
     silently no-ops (see AGENTS.md:L21).
 
-    This is NOT the same question as "where does the UI write this field?".
-    See ``_authoring_owner`` below for that one, and for the list of fields
-    where the two answers legitimately differ. ``presets/schema.py`` restates
-    the scene-owned subset for the bpy-free preset layer; a test in
+    Since the settings split this is also where the UI writes the field (see
+    ``_authoring_owner``). ``presets/schema.py`` restates the scene-owned subset
+    for the bpy-free preset layer; a test in
     ``tests/test_pending_settings_registry.py`` pins the two in agreement.
     """
-    scene_fs = getattr(scene, "fluidsim", None)
-    domain_fs = _active_settings(scene)
-    if name in _SCENE_OWNED_FIELDS:
-        return scene_fs
-    if name in _DOMAIN_OWNED_FIELDS:
-        return domain_fs
-    tier = SETTING_TRANSITION_REGISTRY.get(name)
-    return scene_fs if tier in _SCENE_OWNED_TIERS else domain_fs
+    if _scene_owned(name):
+        return getattr(scene, "fluidsim", None)
+    return _active_settings(scene)
 
 
 def validate_transition_registry(declared_fields=None):
@@ -377,9 +380,8 @@ _SURFACE_SETTING_FIELDS = frozenset({
 _REINIT_SETTING_FIELDS = frozenset({
     "domain_object", "voxel_size", "leaf_capacity", "max_particles",
     "max_whitewater", "profiling_enabled", "profiling_sync",
-    # Scene-level Quality tier; the reinit signature reads scene.fluidsim, which
-    # is exactly where quality is authored, so editing it flags a pending
-    # rebuild on both migrated and pre-migration scenes.
+    # Scene-level Quality tier, authored and read on scene.fluidsim, so editing
+    # it flags a pending rebuild.
     "quality",
 })
 _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
@@ -392,34 +394,6 @@ _RESET_OBJECT_FIELDS = frozenset({
     "emission_mode", "auto_inject_seed",
 })
 
-# Signature fields the UI WRITES to the DOMAIN settings block (drawn via
-# ui_scene._domain_owner == active_domain_settings, e.g. FLUIDSIM_PT_scene_domain
-# and its Physics-tab mirror). They exist only on obj.fluidsim_domain --
-# scene.fluidsim (FLUIDSIM_PG_scene) does not declare them -- so pending
-# detection must resolve them through _active_settings(scene). Before the split,
-# reading raw scene.fluidsim compared a stale copy against itself and never saw
-# the edit (defect #5).
-# Every OTHER signature field is written to context.scene.fluidsim by its panel
-# (domain_object identity, quality, profiling_*, height_*, *_attribute_*), so it
-# is read from scene.fluidsim below. domain_sdf_walls has no UI control; it is
-# grouped with the domain block for intent and is harmless either way.
-#
-# NOTE: this is the WRITE owner, which is not always the same datablock as the
-# effective owner returned by setting_owner() above. height_*, *_attribute_* and
-# profiling_* are drawn on scene.fluidsim but consumed from the domain group
-# (scene_inputs.gather_height_source, solver_settings.build_settings,
-# simulation_admission), so the two answers diverge there by design: detection
-# must watch where the user types, application must write where the solver
-# reads. The exact divergence set is pinned by
-# tests/test_pending_settings_registry.py so it cannot grow unreviewed.
-_DOMAIN_AUTHORED_SIGNATURE_FIELDS = frozenset({
-    "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
-    "particles_per_voxel", "topology_expand", "open_boundaries",
-    "domain_sdf_walls", "spacetime_enabled", "spacetime_reference_mass",
-    "spacetime_seed",
-})
-
-
 def _signature_owners(scene):
     """Return ``(scene_fs, domain_fs)`` — the two datablocks signature fields
     resolve to. ``domain_fs`` is ``active_domain_settings``: the designated
@@ -430,14 +404,17 @@ def _signature_owners(scene):
 def _authoring_owner(scene_fs, domain_fs, name):
     """The datablock the UI WRITES ``name`` to -- the *authoring* owner.
 
-    Pending detection reads through this, not through ``setting_owner``:
-    a signature must sample the datablock the user's edit actually landed on,
-    or the comparison is the frozen ghost against itself and no pending change
-    is ever reported (defect #5). ``setting_owner`` answers the other question
-    -- where a value must land to take effect -- and the two deliberately
-    disagree for the fields listed above ``_DOMAIN_AUTHORED_SIGNATURE_FIELDS``.
+    Pending detection, applied-state capture and revert read through this: a
+    signature must sample the datablock the user's edit actually landed on, or
+    it reads a group that lacks the field, gets ``None`` on both sides, and no
+    pending change is ever reported (defect #5).
+
+    Since the settings split each field exists only on the class that declares
+    it, so a panel can only write it there and this is the same partition as
+    ``setting_owner``. It takes the two groups already resolved so a signature
+    resolves them once rather than once per field.
     """
-    return domain_fs if name in _DOMAIN_AUTHORED_SIGNATURE_FIELDS else scene_fs
+    return scene_fs if _scene_owned(name) else domain_fs
 
 
 @dataclass

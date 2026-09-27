@@ -2565,6 +2565,49 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     assert "show_overlay" in panel.layout.props
 
 
+def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
+    """The per-attribute export toggles exist only on ``FLUIDSIM_PG_domain``.
+
+    ``draw_property`` skips a field the data lacks, so drawing them on
+    ``scene.fluidsim`` after the settings split drew nothing: every Scene and
+    Physics attribute panel came up empty with no error.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+
+    toggles = {
+        kind: {name for key, name in names.items()
+               if not (kind == "whitewater" and key == "type")}
+        for kind, names in OUTPUT_TOGGLE_NAMES.items()
+    }
+    domain_group = SimpleNamespace(**{
+        name: False for names in toggles.values() for name in names})
+    scene_group = SimpleNamespace(
+        ui_mode="ADVANCED",
+        liquid_view_mode="SURFACE_PARTICLES",
+        domain_object=SimpleNamespace(fluidsim_domain=domain_group),
+    )
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=scene_group))
+    panels = {
+        "surface": (ui_scene.FLUIDSIM_PT_attrs_surface,
+                    ui_physics.FLUIDSIM_PT_physics_surface_output),
+        "particles": (ui_scene.FLUIDSIM_PT_attrs_particles,
+                      ui_physics.FLUIDSIM_PT_physics_particles_output),
+        "whitewater": (ui_scene.FLUIDSIM_PT_attrs_whitewater,
+                       ui_physics.FLUIDSIM_PT_physics_whitewater_output),
+    }
+    for kind, classes in panels.items():
+        for cls in classes:
+            panel = cls()
+            panel.layout = _Layout()
+            panel.draw(context)
+            drawn = {call["name"] for call in panel.layout.prop_calls
+                     if call["data"] is domain_group}
+            assert drawn == toggles[kind], cls.__name__
+
+
 def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")

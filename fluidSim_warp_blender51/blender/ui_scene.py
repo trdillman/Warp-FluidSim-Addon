@@ -1073,7 +1073,7 @@ class FLUIDSIM_PT_attrs_surface(FluidSimScenePanel, bpy.types.Panel):
         return FluidSimScenePanel.poll(context) and _surface_enabled(context)
 
     def draw(self, context):
-        _draw_attribute_group(_layout(self), context.scene.fluidsim, "surface")
+        _draw_attribute_group(_layout(self), _domain_owner(context), "surface")
 
 
 class FLUIDSIM_PT_attrs_particles(FluidSimScenePanel, bpy.types.Panel):
@@ -1083,7 +1083,7 @@ class FLUIDSIM_PT_attrs_particles(FluidSimScenePanel, bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        _draw_attribute_group(_layout(self), context.scene.fluidsim, "particles")
+        _draw_attribute_group(_layout(self), _domain_owner(context), "particles")
 
 
 class FLUIDSIM_PT_attrs_whitewater(FluidSimScenePanel, bpy.types.Panel):
@@ -1097,7 +1097,7 @@ class FLUIDSIM_PT_attrs_whitewater(FluidSimScenePanel, bpy.types.Panel):
         return FluidSimScenePanel.poll(context) and _whitewater_enabled(context)
 
     def draw(self, context):
-        _draw_attribute_group(_layout(self), context.scene.fluidsim, "whitewater")
+        _draw_attribute_group(_layout(self), _domain_owner(context), "whitewater")
 
 
 class FLUIDSIM_PT_scene_cache(FluidSimScenePanel, bpy.types.Panel):

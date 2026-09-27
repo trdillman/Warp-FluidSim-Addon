@@ -366,66 +366,71 @@ def test_setting_owner_routes_domain_read_fields_to_the_domain_group(monkeypatch
         assert pending.setting_owner(scene, name) is domain_group, name
 
 
-def test_authoring_owner_answers_a_different_question_than_setting_owner(monkeypatch):
-    """The two owner functions are not redundant, and their divergence is pinned.
+def test_authoring_owner_is_the_declaring_group_for_every_field(monkeypatch):
+    """Since the split, the UI can only write a field on the class declaring it.
 
-    ``_authoring_owner`` resolves where the *UI writes* a signature field, so a
-    user edit is detectable as pending. ``setting_owner`` resolves where a value
-    must *land to take effect*, so a preset write is not swallowed. They agree
-    for most fields and legitimately diverge wherever the panel writes
-    ``scene.fluidsim`` while the solver builds from the active domain settings.
-    Pinning that divergence keeps it a reviewed list rather than an accident.
+    ``_authoring_owner`` resolves where the *UI writes* a field, so an edit is
+    detectable as pending; ``setting_owner`` resolves where a value must *land*
+    to take effect. Before the split the panels wrote some fields on
+    ``scene.fluidsim`` and the two answers diverged. The split removed that
+    freedom: a panel drawing a field on the wrong group draws nothing, so both
+    questions now have one answer, the declaring class. A divergence here is the
+    defect #5 failure mode again: detection samples a group without the field,
+    reads ``None`` twice, and an edit never shows as pending.
     """
-    _properties, pending, _bridge = _modules(monkeypatch)
+    properties, pending, _bridge = _modules(monkeypatch)
     scene, scene_group, domain_group = _migrated_scene()
+    scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
 
-    signature_fields = set(pending._RESET_SCENE_FIELDS) | set(
-        pending._REINIT_SETTING_FIELDS
+    for name in pending.SETTING_TRANSITION_REGISTRY:
+        authoring = pending._authoring_owner(scene_group, domain_group, name)
+        assert authoring is pending.setting_owner(scene, name), name
+        assert (authoring is scene_group) == (name in scene_fields), name
+
+
+def test_pending_detection_reads_every_signature_field_from_its_declaring_group(
+        monkeypatch):
+    """Defect #5 regression: a domain-group edit of any signature field is seen.
+
+    height_*, *_attribute_* and profiling_* are declared only on
+    ``FLUIDSIM_PG_domain``. Detection used to sample them on ``scene.fluidsim``,
+    which lacks them, so the reset and reinitialize signatures held ``None`` and
+    editing any of those 35 fields never flagged a pending Reset.
+    """
+    properties, pending, _bridge = _modules(monkeypatch)
+    monkeypatch.setattr(pending, "_configured_device", lambda: "cuda:0")
+    scene, scene_group, domain_group = _migrated_scene()
+    # An ID signs by name; a nameless double would sign by repr and drag every
+    # domain-group edit into the domain_object entry.
+    scene_group.domain_object.name = "Domain"
+    scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
+    domain_fields = _declared_fields(properties.FLUIDSIM_PG_domain)
+    signature_fields = sorted(
+        (set(pending._RESET_SCENE_FIELDS) | set(pending._REINIT_SETTING_FIELDS))
+        - {"domain_object"}
     )
-    diverging = {
-        name
-        for name in signature_fields
-        if (pending.setting_owner(scene, name) is scene_group)
-        != (pending._authoring_owner(scene_group, domain_group, name) is scene_group)
-    }
+    # Model the split: each group carries only the fields its class declares.
+    for index, name in enumerate(signature_fields):
+        assert (name in scene_fields) != (name in domain_fields), name
+        group = scene_group if name in scene_fields else domain_group
+        setattr(group, name, f"applied-{index}")
 
-    # Every diverging field is authored by its panel on scene.fluidsim but read
-    # by its consumer from the domain group: height_* via
-    # scene_inputs.gather_height_source, *_attribute_* via
-    # solver_settings.build_settings, profiling_* via simulation_admission.
-    expected = (
-        {
-            "height_enabled", "height_base", "height_back_mode",
-            "height_profile_image", "height_profile_scale",
-            "height_emission_mode", "height_velocity", "height_emit_particles",
-        }
-        | {"profiling_enabled", "profiling_sync"}
-        | {
-            f"surface_attribute_{suffix}"
-            for suffix in (
-                "velocity", "speed", "vorticity", "age", "lifetime", "color",
-                "source_id", "viscosity", "density", "motion",
-            )
-        }
-        | {
-            f"particles_attribute_{suffix}"
-            for suffix in (
-                "velocity", "speed", "vorticity", "age", "lifetime", "color",
-                "source_id", "uid", "viscosity", "density",
-            )
-        }
-        | {
-            f"whitewater_attribute_{suffix}"
-            for suffix in ("velocity", "speed", "age", "lifetime", "type")
-        }
-    )
-    assert diverging == expected
+    reset, reinit = pending.current_interaction_signatures(scene)
+    unread = sorted(name for name, value in reset + reinit
+                    if name in signature_fields and value is None)
+    assert unread == []
 
-    # quality and domain_object are NOT in that list: their consumer reads the
-    # scene too, so the field-level override makes both functions agree.
-    for name in ("quality", "domain_object"):
-        assert pending.setting_owner(scene, name) is scene_group
-        assert pending._authoring_owner(scene_group, domain_group, name) is scene_group
+    for name in signature_fields:
+        group = scene_group if name in scene_fields else domain_group
+        previous = getattr(group, name)
+        setattr(group, name, "edited")
+        try:
+            new_reset, new_reinit = pending.current_interaction_signatures(scene)
+        finally:
+            setattr(group, name, previous)
+        changed = (set(pending._signature_changes(reset, new_reset))
+                   | set(pending._signature_changes(reinit, new_reinit)))
+        assert changed == {name}, name
 
 
 def test_preset_scene_owned_settings_agree_with_setting_owner(monkeypatch):
