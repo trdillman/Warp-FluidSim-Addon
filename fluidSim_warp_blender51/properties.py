@@ -78,7 +78,7 @@ LIQUID_ATTR_ITEMS = (
 PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
     ("AGE", "Age", "Color by particle age"),
     ("LIFE", "Life", "Color by particle life span"),
-    ("TIME_OFFSET", "ST Time Offset", "Color by beta ST-FLIP time residual"),
+    ("TIME_OFFSET", "ST Time Offset", "Color by experimental ST-FLIP time residual"),
 )
 
 
@@ -1257,9 +1257,9 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_live,
         description="Scale anti-clumping pressure derived from particle counts; higher values separate crowded particles more strongly, while zero disables this correction")
 
-    # Spatiotemporal FLIP (beta)
+    # Spatiotemporal FLIP (experimental)
     spacetime_enabled: BoolProperty(
-        name="Enable ST-FLIP (Beta)", default=False, update=_request_reset,
+        name="Enable ST-FLIP (Experimental)", default=False, update=_request_reset,
         description="Enable the experimental spatiotemporal FLIP path for large time steps; disable to use the standard FLIP path; changing this resets the solver")
     spacetime_jitter_strength: FloatProperty(
         name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_live,
@@ -1279,7 +1279,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Override the ST-FLIP reference particle mass; higher values make each reference sample heavier, while zero derives mass from liquid density and voxel sampling")
     spacetime_variable_projection: BoolProperty(
-        name="Variable Projection (Beta)", default=True, update=_request_live,
+        name="Variable Projection (Experimental)", default=False, update=_request_live,
         description="Enable density-weighted variable-coefficient pressure projection for ST-FLIP; disable to use the standard constant-coefficient projection")
     spacetime_liquid_density: FloatProperty(
         name="Liquid Density", default=1.0, min=1.0e-6, soft_max=10.0,

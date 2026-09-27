@@ -477,7 +477,7 @@ class SolverSettings:
     spacetime_phase_eta: float = 0.5
     spacetime_phase_threshold: float = 0.5
     spacetime_reference_mass: float = 0.0  # <=0 derives from particles_per_voxel
-    spacetime_variable_projection: bool = True
+    spacetime_variable_projection: bool = False
     spacetime_liquid_density: float = 1.0
     spacetime_gas_density: float = 0.0
     spacetime_min_density: float = 0.05

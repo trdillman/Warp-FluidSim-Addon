@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Validated target |
 |---|---|
-| FluidSim | 1.1.0 |
+| FluidSim | 2.0.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
@@ -685,15 +685,16 @@ Frame cadence builds once after simulation substeps; Manual builds lazily when
 the mesh is requested. Keep the simulation surface field enabled when using
 whitewater or snippets that consume `surface_sdf`.
 
-## ST-FLIP beta
+## ST-FLIP (Experimental)
 
-Enable **Particles > ST-FLIP (Beta)** to test spatiotemporal sampling at large
-time steps. The implementation includes temporal residuals, space-time P2G,
-phase-field activation, optional variable pressure, local trajectory
-substepping, and render-surface re-synchronization. It is beta because phase
-three still needs multi-scene reference-error and long-run conservation work.
-Keep the default feature disabled for production scenes until those results
-are acceptable for the scene type. With automatic reference mass, the solver
+Enable **Simulation > Spatiotemporal Processing > Enable ST-FLIP
+(Experimental)** to test spatiotemporal sampling at large time steps. The
+implementation includes temporal residuals, space-time P2G, phase-field
+activation, optional variable pressure, local trajectory substepping, and
+render-surface re-synchronization. It is experimental because it has not yet
+passed multi-scene reference-error and long-run conservation gates; keep it
+off for production scenes. **Variable Projection (Experimental)** is off by
+default since 2.0; turn it on only to evaluate density-weighted pressure. With automatic reference mass, the solver
 runs the Monte Carlo calibration for the current ST seed. Liquid Sampling is a
 Reset-tier rest-density contract, so changing it stages Reset rather than
 rescaling the active ST-FLIP reference mass in place.

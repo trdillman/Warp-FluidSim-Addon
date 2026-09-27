@@ -1,6 +1,7 @@
-# Spatiotemporal FLIP (ST-FLIP) beta
+# Spatiotemporal FLIP (ST-FLIP), experimental
 
-This add-on includes an opt-in beta ST-FLIP path based on Braun, Winchenbach, Bender, and Thuerey, *Spatiotemporal FLIP for Fast Free-Surface and Two-Phase Simulation With Very Large Time Steps*. Phase three will extend reference-error, conservation, and multi-scene validation; default FLIP remains the production path.
+This add-on includes an opt-in experimental ST-FLIP path based on Braun, Winchenbach, Bender, and Thuerey, *Spatiotemporal FLIP for Fast Free-Surface and Two-Phase Simulation With Very Large Time Steps*. Phase three will extend reference-error, conservation, and multi-scene validation; default FLIP remains the production path. Since 2.0, Variable Projection is
+off by default even when ST-FLIP is enabled.
 
 ## What is implemented
 

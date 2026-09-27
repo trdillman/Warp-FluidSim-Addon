@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0 — unreleased
+
+### Upgrade notes
+
+- **ST-FLIP is Experimental.** Its controls are labelled Experimental, and
+  **Variable Projection** is now off by default. A saved ST-FLIP scene that
+  never changed Variable Projection runs with it off; turn it back on in
+  **Spatiotemporal Processing** to keep the 1.x result.
+
+### Removed
+
+- The retired 1.x snippet runtime and its library: example and saved snippet
+  presets, the snippet validator and auto-fix, shortcuts and the hidden
+  library/editor settings. Custom snippets in saved scenes still migrate to
+  Custom Effects when the file is opened.
+
 ## 1.1.0 — per-object domains, a Basic/Advanced interface and deterministic bakes
 
 This is the bridge release to 2.0. Open and re-save your 1.0.x files in 1.1.0:

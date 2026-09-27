@@ -1,13 +1,13 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 1.1.0 targets Blender 5.1.0 or newer around the existing
+FluidSim Warp 2.0.0 targets Blender 5.2.0 or newer around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `1.1.0`
+- Extension ID: `fluidsim_warp` · manifest/runtime version `2.0.0`
 - Product platforms: Windows x64 and Linux x64
-- Current validation host: Blender `5.1.0` on Windows x64 with an NVIDIA
+- Current validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
   GeForce RTX 4080 SUPER
 - Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
@@ -556,7 +556,7 @@ CPU-only.
   outputs are filtered publication views; `BOTH` duplicates host/render views,
   not the device simulation pool.
 
-## Decoupled render surfacing and ST-FLIP beta
+## Decoupled render surfacing and experimental ST-FLIP
 
 Historical feature note: version 1.0.235 added a separate sparse render-surface grid with multiplier or
 custom voxel sizing, frame/manual rebuild cadence, filtering, bounded dense
@@ -564,7 +564,7 @@ extraction, and shared viewport/cache/export mesh ownership. The simulation
 grid remains authoritative for physics and optional low-resolution surface
 fields.
 
-The beta ST-FLIP lane adds a device-resident particle time residual,
+The experimental ST-FLIP lane adds a device-resident particle time residual,
 spatiotemporal P2G deposition, phase-field activation, optional
 variable-coefficient pressure projection, local particle CFL substeps, and
 temporary render-surface re-synchronization. Default FLIP remains unchanged
