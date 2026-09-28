@@ -28,5 +28,8 @@
     "sim/quality_contract.py": "092d4fe0d0f6cec0c921ff06f258cd53165fef5bb86b0267f7134bf943a91371",
     "sim/registry.py": "0ba6e4263cbe55e24ea5c90707f08a94ea2fbd3520d50b0622837ba8070d4ed3",
     "sim/solver.py": "afeabe53dc8a7bd95e92a03f3a734c61696de51f859fb47459c982686b96ba8f"
-  }
+  },
+  "retired_owners": [
+    "sim/custom.py"
+  ]
 }

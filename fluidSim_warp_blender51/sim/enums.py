@@ -1,7 +1,8 @@
 """Solver enums ported from the synthesized FluidSim enum tables.
 
-Python IntEnum mirrors of the reference `REQUIRED_ENUMS`. Values must stay
-identical to the synthesized tables for fidelity. No bpy imports here.
+Python IntEnum mirrors of the reference `REQUIRED_ENUMS` that the port
+uses. Values must stay identical to the synthesized tables for fidelity.
+No bpy imports here.
 """
 
 from enum import IntEnum
@@ -25,20 +26,6 @@ class ProjectNonDivergentSolver(IntEnum):
     PCG = 1
 
 
-class MultiGrid(IntEnum):
-    """FLUIDSIM::Parameters::MultiGrid"""
-    OFF = 0
-    V_CYCLE = 1
-    HALF_V_CYCLE = 2
-
-
-class MultiGridResolutionDecomposition(IntEnum):
-    """FLUIDSIM::Parameters::MultiGridResolutionDecomposition"""
-    FULL = 0
-    HALF = 1
-    SINGLE = 2
-
-
 class TraceMode(IntEnum):
     """FLUIDSIM::Parameters::TraceMode / Enum_FluidSim_ParametersTraceMode"""
     NONE = 0
@@ -52,13 +39,6 @@ class RelaxMode(IntEnum):
     """FLUIDSIM::Parameters::RelaxMode"""
     LOCAL_VOXEL = 0
     NEIGHBOR_VOXELS = 1
-
-
-class PressureDownloadProperty(IntEnum):
-    """FLUIDSIM::Parameters::PressureDownloadProperty"""
-    PRESSURE = 0
-    PRESSURE_GRADIENT = 1
-    DIVERGENCE = 2
 
 
 class SdfFilterType(IntEnum):
@@ -83,20 +63,6 @@ class SurfaceUpdateCadence(IntEnum):
     MANUAL = 2          # no automatic rebuild; surface_mesh() can force one
 
 
-class ParticleAttributeDataType(IntEnum):
-    """FLUIDSIM::Parameters::ParticleAttributeDataType"""
-    INT = 0
-    FLOAT = 1
-    HALF = 2
-
-
-class FieldPrecision(IntEnum):
-    """CORE::Parameters::FieldPrecision"""
-    NONE = -1
-    BIT16 = 0
-    BIT32 = 1
-
-
 class LimitBehavior(IntEnum):
     """CORE::Parameters::LimitBehavior"""
     MAINTAIN = 0
@@ -109,80 +75,6 @@ class Completion(IntEnum):
     PASS = 0
     COMMIT = 1
     FINISH = 2
-
-
-class ComputeAPI(IntEnum):
-    """COMPUTE::API"""
-    NONE = -2
-    AUTO = -1
-    OPENCL = 0
-    METAL = 1
-    CUDA = 2
-
-
-class DeviceType(IntEnum):
-    """COMPUTE::Device::Type"""
-    NONE = -1
-    CPU = 0
-    GPU = 1
-    UNKNOWN = 2
-
-
-class CustomKernelType(IntEnum):
-    """CORE::Solver::CustomOpenClType (ported to Warp snippets)"""
-    KERNEL = 0
-    FUNCTION = 1
-
-
-class CustomKernelOrder(IntEnum):
-    """CORE::Solver::CustomOpenClOrder"""
-    FIRST_STEP = 0
-    BEFORE_SOURCING = 1
-    BEFORE_FORCES = 2
-    BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION = 3
-    FINAL_STEP = 4
-
-
-class CustomKernelRunOver(IntEnum):
-    """CORE::Solver::CustomOpenClRunOver"""
-    VOXEL_TILE = 0
-    VOXEL_LINEAR = 1
-    PARTICLES = 2
-
-
-class CustomKernelArgumentMode(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentMode"""
-    FIELD = 0
-    CONSTANT = 1
-
-
-class CustomKernelFieldPermission(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentFieldPermissions"""
-    WRITE = 0
-    READ = 1
-    READ_WRITE = 2
-
-
-class CustomKernelConstantType(IntEnum):
-    """CORE::Solver::CustomOpenClArgumentConstantType"""
-    FLOAT = 0
-    INT = 1
-
-
-class TimeStepType(IntEnum):
-    """Enum_Core_ParametersTimeStepType"""
-    OFF = 0
-    FRAME_STEP = 1
-    TIME_STEP = 2
-    SOLVER_FRAME_STEP = 3
-    SOLVER_TIME_STEP = 4
-
-
-class SourceVolumeType(IntEnum):
-    """Enum_Core_ParametersSourceVolumeType"""
-    NORMAL = 0
-    COLLISION = 1
-    SINK = 2
 
 
 class BlendMode(IntEnum):
@@ -346,12 +238,6 @@ class BlenderTextureForceMode(IntEnum):
     CURL = 2
 
 
-class SourceShapeNoiseSpace(IntEnum):
-    """Enum_Core_SourceShape_NoiseSpace"""
-    WORLD = 0
-    OBJECT = 1
-
-
 class SourceHeightBackMode(IntEnum):
     """Enum_Core_ParametersSourceHeight_BackMode"""
     INFINITE = 0
@@ -359,37 +245,11 @@ class SourceHeightBackMode(IntEnum):
     PROFILE = 2
 
 
-class RampToScaleFieldType(IntEnum):
-    """Enum_Core_ParametersRampToScaleFieldType"""
-    OFF = 0
-    PARTICLE_ATTRIBUTE = 1
-    FIELD = 2
-    SOURCE_VOLUME_MASK = 3
-    SPEED = 4
-    X_AXIS = 5
-    Y_AXIS = 6
-    Z_AXIS = 7
-
-
 class RampToScaleFieldCombine(IntEnum):
     """Enum_Core_ParametersRampToScaleFieldCombine"""
     MULTIPLY = 0
     MAX = 1
     MIN = 2
-
-
-class GravityFieldsCombine(IntEnum):
-    """Enum_Core_ParametersForcesGravityFieldsCombine"""
-    ADD = 0
-    MINIMUM = 1
-    MAXIMUM = 2
-    AVERAGE = 3
-
-
-class TurbulenceType(IntEnum):
-    """Enum_FluidSim_Parameters_ForcesTurbulenceType"""
-    FAST_PERLIN = 0
-    PERLIN = 1
 
 
 # Blender EnumProperty item helpers
@@ -442,22 +302,6 @@ _ENUM_DESCRIPTIONS = {
         "PERCENT": "Remove the Limit Percent fraction of speed above Max Speed each step",
         "ACCELERATION": "Limit how quickly velocity can be reduced toward Max Speed rather than clamping immediately",
     },
-    CustomKernelConstantType: {
-        "FLOAT": "Pass the constant as a floating-point value so the snippet can use fractional values",
-        "INT": "Pass the constant as an integer value so fractional input is not available",
-    },
-    CustomKernelOrder: {
-        "FIRST_STEP": "Run at the start of each solver step before sourcing and forces",
-        "BEFORE_SOURCING": "Run immediately before liquid, sink, and field sources are applied",
-        "BEFORE_FORCES": "Run after sourcing and before gravity and other forces",
-        "BEFORE_PROJECT_NON_DIVERGENT_AND_ADVECTION": "Run before pressure projection and particle advection",
-        "FINAL_STEP": "Run after the standard solver phases so changes become final step output",
-    },
-    CustomKernelRunOver: {
-        "VOXEL_TILE": "Invoke once per active 8x8x8 sparse tile for tile-level work",
-        "VOXEL_LINEAR": "Invoke across active voxel storage for per-voxel field work",
-        "PARTICLES": "Invoke once per live liquid particle for particle-attribute work",
-    },
     BlendMode: {
         "ADD": "Add the source payload to the existing target value",
         "REPLACE": "Overwrite the target with the source payload",
@@ -466,7 +310,7 @@ _ENUM_DESCRIPTIONS = {
         "BLEND": "Interpolate the existing target and source payload using Blend Amount",
     },
     SourceShapeSourceMode: {
-        "FIELD": "Use the legacy field representation, which does not create liquid particles in this port",
+        "FIELD": "Apply the Field Operation (pressure by default) inside the region without creating liquid",
         "PARTICLES": "Emit liquid particles into the selected source region",
     },
     SourceEmissionMode: {

@@ -257,7 +257,7 @@ def prepare_cache_preview(scene):
     data = cache.read_frame(base, frame)
     if data is None:
         raise FileNotFoundError(f"Cache frame {frame} is missing or corrupt in {base}")
-    _check_cache_scene_key(scene, base, data)
+    _check_cache_scene_key(scene, data)
     if not set_cache_playback_enabled(scene, True):
         raise RuntimeError(scene.fluidsim.status)
     with suppress_mode_transitions():
@@ -357,32 +357,29 @@ def clear_cache_cursors():
     _CACHE_CURSORS.clear()
 
 
-def _check_cache_scene_key(scene, base, frame_data):
-    """Refuse cache data stamped for materially different scene settings."""
+def _check_cache_scene_key(scene, frame_data):
+    """Refuse cache data stamped for materially different scene settings.
+
+    Compares the settings signature, not the full scene key: the scene key
+    also hashes source transforms and evaluated geometry at the bake's
+    reference frame, so an animated collider or emitter made every other
+    frame of its own bake look foreign. ``read_frame`` has already checked
+    the frame's stamp against the manifest, so no second metadata read is
+    needed per frame (REVIEW-022).
+    """
     import numpy as np
 
-    from ..io import cache
     from . import cache_identity
 
     frame = int(frame_data.get("frame", -1))
-    metadata = cache.read_sequence_metadata(base) or {}
-    metadata_key = str(metadata.get("scene_key", ""))
-    frame_key = (str(np.asarray(frame_data["scene_key"]).item())
-                 if "scene_key" in frame_data else "")
-    if not (metadata_key or frame_key):
+    baked = (str(np.asarray(frame_data["settings_signature"]).item())
+             if "settings_signature" in frame_data else "")
+    if not baked:
         return
-    if int(metadata.get("format_version", 1)) >= 2:
-        try:
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-        except (AttributeError, RuntimeError):
-            depsgraph = None
-        current = cache_identity.signature_bundle(scene, depsgraph)["scene_key"]
-    else:
-        current = cache_identity.scene_key(scene)
-    for candidate in (metadata_key, frame_key):
-        if candidate and candidate != current:
-            raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
-                frame=frame, baked=candidate[:12], current=current[:12]))
+    current = cache_identity.settings_signature(scene)
+    if baked != current:
+        raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
+            frame=frame, baked=baked[:12], current=current[:12]))
 
 
 def play_cache_frame(sess, scene, frame=None):
@@ -409,7 +406,7 @@ def play_cache_frame(sess, scene, frame=None):
     if frame_data is None:
         raise FileNotFoundError(
             f"Cache frame {frame} is missing or corrupt in {base}")
-    _check_cache_scene_key(scene, base, frame_data)
+    _check_cache_scene_key(scene, frame_data)
     publication = output_publication.update_outputs_from_cache_frame(
         scene, frame_data
     )
@@ -455,6 +452,7 @@ def play_cache_frame(sess, scene, frame=None):
     fs.stat_surface_tension_submission_ms = 0.0
     fs.stat_surface_tension_status = "CACHE_PLAYBACK"
     fs.stat_surface_tension_message = ""
+    fs.stat_native_solver_message = ""
     fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
     warning = str(getattr(publication, "warning", "") or "")
     if warning:

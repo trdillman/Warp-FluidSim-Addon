@@ -41,6 +41,9 @@ MODIFIER_BY_OUTPUT = {
 }
 MATERIAL_SOCKET = "Material"
 RADIUS_SOCKET = "Radius Scale"
+# The Surface group is a mesh render path and intentionally has no radius
+# input; every point-cloud group must declare it.
+_OUTPUTS_WITHOUT_RADIUS = frozenset({"FluidSim Surface"})
 
 _OWNER_TAG = "fluidsim_owned"
 _ASSET_KEY_TAG = "fluidsim_asset_key"
@@ -134,10 +137,39 @@ def _interface_input_identifier(group, name: str) -> str | None:
     return None
 
 
-def _set_modifier_input(modifier, group, socket_name: str, value) -> None:
+class GeometryNodesInputError(RuntimeError):
+    """A bundled render group input could not be assigned on its modifier."""
+
+
+def _input_failure(modifier, group, socket_name: str, detail: str) -> GeometryNodesInputError:
+    message = (
+        f"cannot set Geometry Nodes input {socket_name!r} on modifier "
+        f"{getattr(modifier, 'name', '?')!r} (group {getattr(group, 'name', '?')!r}): "
+        f"{detail}"
+    )
+    # Package logging idiom: Blender surfaces stdout in its system console.
+    print(f"FluidSim: {message}")
+    return GeometryNodesInputError(message)
+
+
+def _set_modifier_input(
+    modifier, group, socket_name: str, value, *, required: bool = True
+) -> None:
+    """Assign one group-interface input, raising when it cannot be applied.
+
+    ``required=False`` only tolerates a socket the group intentionally does not
+    declare (the Surface group has no ``Radius Scale``).  A declared socket
+    that neither Blender API path accepts is always a defect and is raised as
+    :class:`GeometryNodesInputError` so callers report it instead of silently
+    rendering with a stale material or radius.
+    """
     identifier = _interface_input_identifier(group, socket_name)
     if not identifier:
-        return
+        if not required:
+            return
+        raise _input_failure(
+            modifier, group, socket_name, "the node group does not declare this input"
+        )
     # Blender 5.2 exposes Geometry Nodes modifier values through a typed
     # ``modifier.properties.inputs.<identifier>.value`` interface.  Older
     # supported builds used ID properties keyed by the interface identifier.
@@ -148,14 +180,22 @@ def _set_modifier_input(modifier, group, socket_name: str, value) -> None:
         socket = getattr(inputs, identifier)
         socket.value = value
         return
-    except (AttributeError, KeyError, TypeError, ValueError):
-        pass
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        typed_error = exc
     try:
         modifier[identifier] = value
-    except (KeyError, TypeError, ValueError):
-        # A missing optional socket in a future asset revision must not make
-        # the entire installation transaction fail.
-        return
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise _input_failure(
+            modifier,
+            group,
+            socket_name,
+            f"typed inputs API failed ({type(typed_error).__name__}: {typed_error}); "
+            f"ID-property fallback failed ({type(exc).__name__}: {exc})",
+        ) from exc
+
+
+def _radius_required(output_name: str) -> bool:
+    return output_name not in _OUTPUTS_WITHOUT_RADIUS
 
 
 def _modifier_input_value(modifier, group, socket_name: str):
@@ -209,7 +249,13 @@ def _attach_group(
     owned.node_group = group
     obj[_MODIFIER_OWNER_KEYS[output_name]] = owned.name
     _set_modifier_input(owned, group, MATERIAL_SOCKET, _object_material(obj))
-    _set_modifier_input(owned, group, RADIUS_SOCKET, float(radius_scale))
+    _set_modifier_input(
+        owned,
+        group,
+        RADIUS_SOCKET,
+        float(radius_scale),
+        required=_radius_required(output_name),
+    )
     return True, ""
 
 
@@ -298,7 +344,13 @@ def sync_render_inputs(scene) -> None:
         if group is None or group.get(_REVISION_TAG) != ASSET_REVISION:
             continue
         _set_modifier_input(modifier, group, MATERIAL_SOCKET, _object_material(obj))
-        _set_modifier_input(modifier, group, RADIUS_SOCKET, radius_scales[output_name])
+        _set_modifier_input(
+            modifier,
+            group,
+            RADIUS_SOCKET,
+            radius_scales[output_name],
+            required=_radius_required(output_name),
+        )
 
 
 def installed_state(scene) -> dict[str, str]:

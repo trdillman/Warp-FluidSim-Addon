@@ -405,7 +405,7 @@ def _write_readme(output: Path, warp_version: str) -> None:
         """# FluidSim Custom Effects demos
 
 These scenes are generated from real Custom Effects v2 kernel executions using the
-supplied Warp 1.16.0 package on the CPU validation backend.
+certified Warp package on the CPU validation backend.
 
 - **05 — Vortex Force:** compares the initial particle fixture with the validated
   Vortex Force result and trajectory lines.

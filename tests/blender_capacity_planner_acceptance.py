@@ -14,6 +14,8 @@ import warp as wp
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 
 from fluidSim_warp_blender51.sim.capacity_planner import (  # noqa: E402
     CapacityVerdict, DemandQuality, plan_initialization,
@@ -45,7 +47,7 @@ def settings(max_particles):
     value.surface_enabled = False
     value.min_substeps = 1
     value.max_substeps = 1
-    value.device = "cuda:0"
+    value.device = script_device()
     return value
 
 
@@ -67,9 +69,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    device = wp.get_device("cuda:0")
+    device = wp.get_device(script_device())
     if not device.is_cuda:
-        raise RuntimeError("capacity acceptance requires cuda:0")
+        raise RuntimeError("capacity acceptance requires a CUDA device")
 
     cases = []
 

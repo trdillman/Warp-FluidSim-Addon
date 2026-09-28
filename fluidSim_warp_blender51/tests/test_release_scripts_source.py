@@ -81,10 +81,9 @@ def test_gpu_regression_targets_certified_runtime_and_full_suite():
     assert "bpy.app.version[:3]" in source
     assert "expected_validation_count = len(validation.VALIDATION_TESTS)" in source
     assert "EXPECTED_VALIDATION_COUNT = 16" not in source
-    assert "FLUIDSIM_EXTERNAL_WARP_ROOT" in source
-    assert "Warp loaded outside the configured external runtime root" in source
-    assert "Warp unexpectedly loaded from the isolated extension directory" in source
-    assert "Warp loaded outside Blender's isolated extension wheel directory" not in source
+    assert "FLUIDSIM_EXTERNAL_WARP_ROOT" not in source
+    assert "Warp loaded outside Blender's isolated extension wheel directory" in source
+    assert '/ ".local"' in source
     assert "BLENDER_USER_EXTENSIONS" in source
     assert "--python-use-system-env" not in source
     assert "probe.module_file" in source

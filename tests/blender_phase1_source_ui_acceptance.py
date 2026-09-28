@@ -7,6 +7,7 @@ does not load the checkout, enable an add-on, or persist Blender preferences.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import traceback
@@ -247,7 +248,7 @@ def run():
     RESULT["module"] = {
         "name": addon.__name__,
         "path": str(Path(addon.__file__).resolve()),
-        "version": list(addon.bl_info.get("version", ())),
+        "version": list(importlib.import_module(addon.__name__ + ".version").VERSION),
     }
     check("temporary add-on already loaded", addon.__name__ == "fluidSim_warp_blender51",
           RESULT["module"])
@@ -259,15 +260,17 @@ def run():
         if pg is not None and pg.role in {"SOURCE", "SINK", "FORCE"}:
             pg.enabled = False
 
-    fs.voxel_size = 0.1
-    fs.max_particles = 120_000
-    fs.min_substeps = 1
-    fs.max_substeps = 2
-    fs.use_scene_gravity = False
-    fs.gravity = (0.0, 0.0, -9.81)
-    fs.height_enabled = False
+    ds = scene_bridge.active_domain_settings(scene)
+    check("designated domain present", ds is not None)
+    ds.voxel_size = 0.1
+    ds.max_particles = 120_000
+    ds.min_substeps = 1
+    ds.max_substeps = 2
+    ds.use_scene_gravity = False
+    ds.gravity = (0.0, 0.0, -9.81)
+    ds.height_enabled = False
     fs.cache_enabled = False
-    fs.whitewater_enabled = False
+    ds.whitewater_enabled = False
     fs.show_whitewater = False
     fs.show_surface = False
     fs.show_particles = False

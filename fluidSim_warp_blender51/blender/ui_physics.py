@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import output_publication, ui_object, ui_scene
+from . import file_compat, output_publication, ui_object, ui_scene
 from .scene_bridge import active_domain_settings
 from .ui_common import FluidSimObjectPanel, active_object_role
 
@@ -147,6 +147,7 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
         scene = context.scene
         obj = context.object
         kind = physics_object_kind(context)
+        file_compat.draw_pre_bridge_warning(layout, scene)
         labels = {
             "NONE": "No FluidSim role assigned",
             "INPUT": active_object_role(context).replace("_", " ").title(),

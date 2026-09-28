@@ -15,14 +15,6 @@ from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 
 
-@pytest.fixture(scope="module")
-def cuda_device():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
-    return "cuda:0"
-
-
 def _one_leaf_grid(device, mark=True):
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0),
@@ -64,6 +56,38 @@ def test_solve_pcg_st_zeroes_working_vectors_before_iterating(cuda_device):
     assert status["converged"], status
     assert solver.last_residual == 0.0
     assert float(solver.pressure.numpy()[0]) == 0.0
+
+
+def test_solve_jacobi_st_reports_its_real_residual(cuda_device):
+    """REVIEW-004: ST Jacobi reported last_residual = -1.0 whatever happened.
+
+    Zero iterations leave pressure at 0, so the residual is exactly |rhs|;
+    iterating must then shrink it. Alternate cells are air (Dirichlet), so
+    every fluid cell has an air neighbour and the system is non-singular.
+    """
+    import numpy as np
+
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    vel = MacVelocityField(grid)
+    for weights in (vel.wu, vel.wv, vel.ww):
+        weights.fill_(1.0)
+    fluid = np.arange(grid.voxel_capacity) % 2 == 1
+    voxel_type = wp.array(
+        np.where(fluid, VOXEL_FLUID, 0).astype(np.int32), device=cuda_device)
+    rhs = wp.array(fluid.astype(np.float32), device=cuda_device)
+    solver.build_preconditioner_st(voxel_type, vel)
+
+    residuals = []
+    for iterations in (0, 20):
+        wp.copy(solver.rhs, rhs)
+        solver.solve_jacobi_st(voxel_type, iterations, vel)
+        assert solver.should_project_pressure()
+        residuals.append(solver.last_residual)
+
+    assert residuals[0] == pytest.approx(fluid.sum() ** 0.5, rel=1.0e-6)
+    assert 0.0 <= residuals[1] < 0.5 * residuals[0]
+    assert solver.last_residual_squared == pytest.approx(residuals[1] ** 2)
 
 
 def _prepared_solver(device):
@@ -112,6 +136,38 @@ def test_pcg_graph_cache_evicts_lru_instead_of_flushing(cuda_device):
         f"got {captures} in {elapsed:.3f}s")
     # a cold key evicts one entry, so the cache stays full instead of resetting
     assert len(solver._pcg_graphs) == 8
+
+
+def test_native_pcg_capture_failure_is_reported_in_frame_stats(cuda_device):
+    """REVIEW-016: a failed graph capture degraded silently to host batches."""
+    from types import SimpleNamespace
+
+    from fluidSim_warp_blender51.sim.frame_runtime import FrameStats
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    if not wp.is_conditional_graph_supported():
+        pytest.skip("conditional CUDA graphs unsupported")
+    solver = _prepared_solver(cuda_device)
+    voxel_type = wp.full(
+        solver.grid.voxel_capacity, VOXEL_FLUID, dtype=wp.int32,
+        device=cuda_device)
+
+    def refuse_capture(*_args):
+        raise RuntimeError("capture refused")
+
+    solver._get_pcg_conditional_graphs = refuse_capture
+    solver.rhs.fill_(1.0)
+    solver.solve_pcg(voxel_type, 25, 1.0e-8)
+
+    assert solver.last_pcg_execution_mode == "host_batched"
+    assert solver.last_pcg_native_error == "RuntimeError: capture refused"
+    owner = SimpleNamespace(pressure_solver=solver, viscosity_solver=None)
+    message = FluidSolver._native_solver_message(owner)
+    assert message.startswith("Pressure solve fell back from CUDA graphs")
+    assert message.endswith("RuntimeError: capture refused")
+    stats = FrameStats(native_solver_message=message)
+    assert stats.as_dict()["nativeSolverMessage"] == message
+    solver.release()
 
 
 def test_native_pcg_module_unloads_on_pressure_solver_release(cuda_device):

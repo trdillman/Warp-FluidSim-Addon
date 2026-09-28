@@ -97,9 +97,7 @@ def test_point_region_accepts_exact_vector_and_scalar_ranks():
     assert populated.temperature.shape == (2,)
 
 
-def test_direct_point_arrays_reach_live_particles_without_constant_substitution():
-    if not warp.is_cuda_available():
-        pytest.skip("CUDA not available")
+def test_direct_point_arrays_reach_live_particles_without_constant_substitution(cuda_device):
     settings = SolverSettings()
     settings.domain_min = (0.0, 0.0, 0.0)
     settings.domain_max = (2.0, 2.0, 2.0)
@@ -107,7 +105,7 @@ def test_direct_point_arrays_reach_live_particles_without_constant_substitution(
     settings.max_particles = 32
     settings.surface_enabled = False
     settings.whitewater_enabled = False
-    settings.device = "cuda:0"
+    settings.device = cuda_device
     solver = FluidSolver(settings)
     region = PointRegionPlan(
         [[0.5, 0.5, 0.5], [1.0, 1.0, 1.0]],

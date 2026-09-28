@@ -212,7 +212,7 @@ def run(options: CliOptions) -> int:
             report["message"] = f"{policy_decision.code}: {policy_decision.message}"
             return code
 
-        from ..runtime.warp_runtime import EXPECTED_WARP_VERSION, probe_runtime
+        from ..runtime.warp_runtime import probe_runtime, warp_version_support
         from .production_bake import (
             BakeController,
             BakeStatus,
@@ -234,7 +234,8 @@ def run(options: CliOptions) -> int:
             "cuda_devices": [asdict(item) for item in probe.cuda_devices],
             "message": probe.message,
         }
-        if not probe.warp_version or probe.warp_version != EXPECTED_WARP_VERSION:
+        report["runtime"]["warp_support"] = warp_version_support(probe.warp_version)[0]
+        if report["runtime"]["warp_support"] == "unsupported":
             code = EXIT_RUNTIME_IMPORT
             report["message"] = probe.message
             return code

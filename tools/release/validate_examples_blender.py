@@ -50,11 +50,20 @@ def _owned_child(parent, kind: str):
     return matches[0]
 
 
-def _validate(path: Path, module_name: str) -> dict[str, object]:
+def _open(path: Path, module_name: str):
     result = bpy.ops.wm.open_mainfile(filepath=str(path.resolve()))
     if "FINISHED" not in result:
         raise AssertionError(f"could not open {path.name}: {result}")
     scene = bpy.context.scene
+    # A shipped example must not trip the 2.0 "saved before 1.1" warning.
+    file_compat = importlib.import_module(f"{module_name}.blender.file_compat")
+    if file_compat.is_pre_bridge_scene(scene):
+        raise AssertionError(f"{path.name}: stores pre-1.1 settings; regenerate it")
+    return scene
+
+
+def _validate(path: Path, module_name: str) -> dict[str, object]:
+    scene = _open(path, module_name)
     fs = scene.fluidsim
     preset, expected_roles = EXPECTED[path.name]
     if fs.active_preset_id != preset:
@@ -99,11 +108,18 @@ def _validate(path: Path, module_name: str) -> dict[str, object]:
         if paddle is None or action is None:
             raise AssertionError("moving-collider example lost its animation")
     if path.name == "04_whitewater_bake_resume.blend":
-        if not fs.whitewater_enabled or fs.cache_format != "V2":
+        ds = fs.domain_object.fluidsim_domain
+
+        def setting(name):
+            # Domain physics lives on the domain object, display/cache on the scene.
+            return getattr(ds if name in ds.bl_rna.properties else fs, name)
+
+        if not setting("whitewater_enabled") or setting("cache_format") != "V2":
             raise AssertionError("whitewater resume example lost whitewater/cache-v2 settings")
-        if not fs.whitewater_attribute_type or fs.whitewater_output_mode != "BOTH":
+        if (not setting("whitewater_attribute_type")
+                or setting("whitewater_output_mode") != "BOTH"):
             raise AssertionError("whitewater example lost typed combined/separate output settings")
-        if (fs.bake_start, fs.bake_end, fs.checkpoint_interval) != (1, 48, 1):
+        if tuple(setting(name) for name in ("bake_start", "bake_end", "checkpoint_interval")) != (1, 48, 1):
             raise AssertionError("whitewater resume example lost its bake range")
     return {
         "file": path.name,
@@ -121,10 +137,7 @@ def _validate(path: Path, module_name: str) -> dict[str, object]:
 
 
 def _validate_custom_effect(path: Path, module_name: str) -> dict[str, object]:
-    result = bpy.ops.wm.open_mainfile(filepath=str(path.resolve()))
-    if "FINISHED" not in result:
-        raise AssertionError(f"could not open {path.name}: {result}")
-    scene = bpy.context.scene
+    scene = _open(path, module_name)
     effects = importlib.import_module(f"{module_name}.blender.effects")
     expected_ids = CUSTOM_EFFECT_EXPECTED[path.name]
     actual_ids = tuple(item.effect_id for item in scene.fluidsim_effects.items)

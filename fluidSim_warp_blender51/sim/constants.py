@@ -51,6 +51,9 @@ DEFAULT_MAX_PARTICLES = 2_000_000
 DEFAULT_MAX_WHITEWATER = 1_000_000
 DEFAULT_LEAF_CAPACITY = 8192          # 8192 leaves * 512 voxels = 4.19M voxels
 DEFAULT_PARTICLES_PER_VOXEL = 8
+# Hard ceiling on liquid occupancy: the RNA max of both authored density
+# settings, every host-side clamp, and the emission kernel's per-voxel loop.
+MAX_PARTICLES_PER_VOXEL = 64
 DEFAULT_RELAX_BIN_SAMPLE_LIMIT = 32
 
 # Numerical defaults

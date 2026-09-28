@@ -140,10 +140,17 @@ def validate(module_name: str, work_dir: Path) -> dict:
 
         scene = bpy.context.scene
         fs = scene.fluidsim
+        # Domain settings live only on the designated domain object; writing
+        # them to scene.fluidsim does not reach the cache publication path.
+        domain = bpy.data.objects.new(
+            "P3 Domain", bpy.data.meshes.new("P3 Domain"))
+        scene.collection.objects.link(domain)
+        fs.domain_object = domain
+        ds = domain.fluidsim_domain
         fs.show_surface = True
-        fs.surface_enabled = True
+        ds.surface_enabled = True
         fs.show_particles = True
-        fs.whitewater_enabled = True
+        ds.whitewater_enabled = True
         fs.show_whitewater = True
         fs.particle_display_fraction = 1.0
         fs.surface_attribute_mode = "NONE"
@@ -151,7 +158,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
         fs.whitewater_attribute_mode = "NONE"
         for output_kind, keys in OUTPUT_ATTRIBUTE_KEYS.items():
             for key in keys:
-                setattr(fs, OUTPUT_TOGGLE_NAMES[output_kind][key], True)
+                setattr(ds, OUTPUT_TOGGLE_NAMES[output_kind][key], True)
 
         surface_material = _simple_material("P3 Surface Test", (0.8, 0.1, 0.05, 1.0))
         particle_material = _simple_material("P3 Particle Test", (0.05, 0.25, 1.0, 1.0))
@@ -293,7 +300,8 @@ def validate(module_name: str, work_dir: Path) -> dict:
         motion = _read_attribute(surface.data, ATTRIBUTE_SPECS["motion"], 4)
         np.testing.assert_allclose(motion, surface_velocity / 24.0, rtol=0.0, atol=1.0e-7)
 
-        # Cache-v1 remains readable while Phase-3 inventory/arrays round-trip.
+        # Phase-3 inventory/arrays survive an NPZ round trip and the cache
+        # reader's attribute validation.
         cache_dir = work_dir / "cache_roundtrip"
         cache_dir.mkdir(parents=True, exist_ok=True)
         frame_payload = {
@@ -306,8 +314,8 @@ def validate(module_name: str, work_dir: Path) -> dict:
             "whitewater_velocities": whitewater_velocity,
             "surface_verts": surface_verts,
             "surface_tris": surface_tris,
-            # This validator deliberately writes a Phase-3 schema-v1 frame
-            # to prove backward-compatible playback under the current release.
+            # A Phase-3 attribute-schema-v1 frame: the oldest attribute
+            # layout a cache-v2 frame can carry.
             "attribute_schema_version": np.array(1, dtype=np.int32),
             "attribute_inventory_json": np.array(json.dumps(
                 {
@@ -326,10 +334,11 @@ def validate(module_name: str, work_dir: Path) -> dict:
         ):
             for key, values in attributes.items():
                 frame_payload[cache_attribute_name(kind, key)] = values
-        np.savez(cache_dir / "fluidsim_00001.npz", **frame_payload)
-        restored = cache.read_frame(str(cache_dir), 1)
-        if restored is None:
-            raise AssertionError("Phase-3 cache frame did not round-trip")
+        frame_file = cache_dir / "frame_000001.npz"
+        np.savez(frame_file, **frame_payload)
+        with np.load(frame_file, allow_pickle=False) as data:
+            restored = {name: data[name] for name in data.files}
+        cache.validate_optional_attributes(restored)
         output_publication.update_outputs_from_cache_frame(scene, restored)
         for obj, count, expected in expected_by_kind.values():
             for key, values in expected.items():

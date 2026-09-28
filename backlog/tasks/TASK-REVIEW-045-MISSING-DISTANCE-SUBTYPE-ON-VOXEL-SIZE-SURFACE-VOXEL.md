@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ Blender's UI will not display unit suffixes or apply scene-unit scaling for thes
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/properties.py:725` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Add subtype="DISTANCE" to voxel_size, surface_voxel_size, height_base, and feather.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/properties.py:725` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Add subtype="DISTANCE" to voxel_size, surface_voxel_size, height_base, and feather.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ Blender's UI will not display unit suffixes or apply scene-unit scaling for thes
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+`voxel_size`, `surface_voxel_size`, `height_base` and `feather` use `subtype="DISTANCE"`.
+
+Regression guard: `tests/test_settings_default_agreement.py`.

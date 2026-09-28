@@ -25,8 +25,11 @@ def _ensure_package_on_path() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _ensure_package_on_path()
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from _test_device import script_device
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--device", default=script_device())
     args, _ = parser.parse_known_args(argv)
 
     from fluidSim_warp_blender51.sim import validation

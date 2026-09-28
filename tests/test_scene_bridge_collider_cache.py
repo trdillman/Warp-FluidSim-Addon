@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from settings_doubles import split_settings
+from settings_doubles import setting, split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -850,6 +850,31 @@ def test_height_source_translation_preserves_scene_settings(monkeypatch):
     assert desc.velocity == (1.0, 2.0, 3.0)
     assert desc.emit_particles is True
     assert desc.emit_rate == 8.0
+
+
+@pytest.mark.parametrize("saved_mode", ["INFINITE", ""])
+def test_height_source_rejects_removed_infinite_back_mode(monkeypatch, saved_mode):
+    """A 1.x file that saved Infinite gets a clear message, not a fill.
+
+    Blender reads the removed item back as ""; either spelling must stop the
+    height source with an actionable ``height_error``.
+    """
+    _install_scene_bridge_stubs(monkeypatch)
+    sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")
+    fs = SimpleNamespace(
+        height_enabled=True,
+        height_base=1.25,
+        height_back_mode=saved_mode,
+        height_velocity=(0.0, 0.0, 0.0),
+        height_emit_particles=True,
+        particles_per_voxel=8.0,
+        height_error="",
+    )
+    scene = SimpleNamespace(fluidsim=split_settings(fs))
+
+    assert sources.gather_height_source(scene) is None
+    assert setting(scene.fluidsim, "height_error") == (
+        "Choose a Back Mode: Flat, or Profile with an image")
 
 
 def test_height_source_reads_from_migrated_domain_object(monkeypatch):

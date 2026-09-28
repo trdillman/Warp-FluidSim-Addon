@@ -9,6 +9,8 @@ import warp as wp
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 
 from fluidSim_warp_blender51.sim.fields import (  # noqa: E402
     SparseGrid,
@@ -18,7 +20,7 @@ from fluidSim_warp_blender51.sim.fields import (  # noqa: E402
 
 def main():
     wp.init()
-    device = "cuda:0"
+    device = script_device()
     if not wp.get_device(device).is_cuda:
         raise RuntimeError("CUDA device required")
     grid = SparseGrid(

@@ -764,11 +764,34 @@ def collision_sdf_gradient(
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
 ) -> wp.vec3:
+    """Collider SDF change across one voxel, per axis.
+
+    Central differences at +/-0.5 voxel. A sample with no allocated voxel
+    under it returns the 1e9 fallback; using it would swamp that component
+    and point the normal at a fixed diagonal (REVIEW-017). Such a sample is
+    replaced by a one-sided difference against the centre over the same
+    one-voxel scale, and an axis with no valid sample on either side
+    contributes nothing.
+    """
     eps = 0.5
-    gx = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(eps, 0.0, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(eps, 0.0, 0.0), 1.0e9)
-    gy = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, eps, 0.0), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, eps, 0.0), 1.0e9)
-    gz = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + wp.vec3(0.0, 0.0, eps), 1.0e9) - sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - wp.vec3(0.0, 0.0, eps), 1.0e9)
-    return wp.vec3(gx, gy, gz)
+    g = wp.vec3(0.0, 0.0, 0.0)
+    for axis in range(3):
+        offset = wp.vec3(0.0, 0.0, 0.0)
+        offset[axis] = eps
+        hi = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp + offset, 1.0e9)
+        lo = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp - offset, 1.0e9)
+        hi_ok = hi < 5.0e8
+        lo_ok = lo < 5.0e8
+        if hi_ok and lo_ok:
+            g[axis] = hi - lo
+        elif hi_ok or lo_ok:
+            centre = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp, 1.0e9)
+            if centre < 5.0e8:
+                if hi_ok:
+                    g[axis] = 2.0 * (hi - centre)
+                else:
+                    g[axis] = 2.0 * (centre - lo)
+    return g
 
 
 @wp.func

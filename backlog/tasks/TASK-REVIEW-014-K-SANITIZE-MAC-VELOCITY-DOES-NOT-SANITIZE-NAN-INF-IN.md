@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,22 @@ A single NaN face weight persists through sanitization and propagates NaN into t
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/sim/solver.py:268` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Add explicit NaN/Inf checks for the weight arrays in the kernel. When `wu[tid]` is NaN or Inf, set it to 0.0 (or a small epsilon). Apply the same check to `wv[tid]` and `ww[tid]`.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/sim/solver.py:268` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Add explicit NaN/Inf checks for the weight arrays in the kernel. When `wu[tid]` is NaN or Inf, set it to 0.0 (or a small epsilon). Apply the same check to `wv[tid]` and `ww[tid]`.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `EXEC-003` in `reviews/swarm-2026-08-08/findings/exec.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (Medium Findings section).
 - Identified by the Execution Engine lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Fixed for 2.0 (2026-09-27). `k_sanitize_mac_velocity` in `fluidSim_warp_blender51/sim/solver.py` now calls one shared `@wp.func _sanitize_mac_face` for u, v and w. The three copies of the same logic are gone. The new function checks the weight first: if it is NaN or Inf, both the weight and the velocity are set to 0, because a face with a non-finite weight has no trustworthy velocity. The rest is unchanged: a non-finite velocity is zeroed and its weight reduced to 1e-6, and a finite velocity is clamped to the maximum speed.
+
+Test: `tests/test_pressure_projection_regressions.py::test_sanitize_mac_velocity_zeroes_faces_with_non_finite_weights` (CUDA). It covers NaN and Inf weights on every axis, a NaN velocity with a finite weight, and clamping.
 
 ## Blocked by
 

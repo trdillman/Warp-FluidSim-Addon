@@ -12,7 +12,7 @@ against pure solver cost:
 - ``sync``: ``sync_scene_to_solver`` (sources + collider gather)
 - ``solve``: ``FluidSolver.step_frame``
 - ``view``: ``output_publication.update_outputs`` (readback + datablock update)
-- ``cache``: ``io.cache.write_frame`` (only when ``--cache``)
+- ``cache``: ``io.cache.write_frame_v2_atomic`` (only when ``--cache``)
 
 Run:
     blender --background --python tools/profile_user_path.py -- \
@@ -1410,15 +1410,16 @@ def _measure_profile_frames(args, bpy, run):
         cache_ms = 0.0
         if args.cache:
             tc = time.perf_counter()
-            cache_io.write_frame(
-                scene,
-                CacheFramePayload.capture(
-                    sess.solver,
-                    settings_signature=cache_io.settings_record(
-                        sess.solver.settings
-                    )["signature"],
-                ),
+            signature = cache_io.settings_record(sess.solver.settings)["signature"]
+            # Frame file only, as a production bake writes it; no manifest.
+            cache_io.write_frame_v2_atomic(
+                bpy.path.abspath(scene.fluidsim.cache_path),
+                CacheFramePayload.capture(sess.solver, settings_signature=signature),
+                int(sess.solver.frame),
                 scene_key_value=sess.scene_key,
+                settings_signature=signature,
+                source_signature="",
+                compressed=True,
             )
             cache_ms = (time.perf_counter() - tc) * 1000.0
         row = {

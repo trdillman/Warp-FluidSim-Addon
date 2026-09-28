@@ -165,13 +165,15 @@ def object_points_world(obj, depsgraph=None):
 
     if obj.type == "MESH":
         mesh = eval_obj.to_mesh()
-        n = len(mesh.vertices)
-        pts = np.empty(n * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", pts)
-        pts = pts.reshape(n, 3)
-        out = pts @ mw[:3, :3].T + mw[:3, 3]
-        eval_obj.to_mesh_clear()
-        return out
+        try:
+            n = len(mesh.vertices)
+            pts = np.empty(n * 3, dtype=np.float32)
+            mesh.vertices.foreach_get("co", pts)
+        finally:
+            # A raise between to_mesh and here would otherwise leak the
+            # evaluated mesh until the object is freed (REVIEW-041).
+            eval_obj.to_mesh_clear()
+        return pts.reshape(n, 3) @ mw[:3, :3].T + mw[:3, 3]
 
     return np.zeros((0, 3), dtype=np.float32)
 

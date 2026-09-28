@@ -8,12 +8,10 @@ pure enum and snippet metadata so registration never touches Warp/CUDA.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 
 import bpy
 from bpy.props import (
     BoolProperty,
-    CollectionProperty,
     EnumProperty,
     FloatProperty,
     FloatVectorProperty,
@@ -23,14 +21,8 @@ from bpy.props import (
 )
 
 from .sim import constants as _C
-from .sim import custom
 from .sim.enums import (
     BlendMode,
-    CustomKernelConstantType,
-    CustomKernelFieldPermission,
-    CustomKernelOrder,
-    CustomKernelRunOver,
-    CustomKernelType,
     LimitBehavior,
     MeshEvaluationMode,
     MeshSinkRegionMode,
@@ -40,7 +32,6 @@ from .sim.enums import (
     SdfFilterType,
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
-    SourceHeightBackMode,
     SourceGeometryMode,
     SourceShapeForceType,
     SourceShapeShape,
@@ -79,7 +70,7 @@ LIQUID_ATTR_ITEMS = (
 PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
     ("AGE", "Age", "Color by particle age"),
     ("LIFE", "Life", "Color by particle life span"),
-    ("TIME_OFFSET", "ST Time Offset", "Color by beta ST-FLIP time residual"),
+    ("TIME_OFFSET", "ST Time Offset", "Color by experimental ST-FLIP time residual"),
 )
 
 
@@ -100,9 +91,20 @@ WHITEWATER_OUTPUT_ITEMS = (
 )
 
 
+# Saved files store the item number (0, 1), not SdfFilterType's value; the
+# solver converts by identifier, so these numbers must never change.
 SURFACE_SMOOTH_ITEMS = (
-    ("BOX", "Box", "Average nearby SDF samples for broad, inexpensive smoothing that can soften volume"),
-    ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Move the SDF along estimated curvature for rounder features with better shape preservation"),
+    ("BOX", "Box", "Average nearby SDF samples for broad, inexpensive smoothing that can soften volume", 0),
+    ("MEAN_CURVATURE_FLOW", "Mean Curvature", "Move the SDF along estimated curvature for rounder features with better shape preservation", 1),
+)
+
+# SourceHeightBackMode without INFINITE, which the solver cannot run. The
+# numbers are SourceHeightBackMode values and are stored in saved files; a
+# 1.x file that saved INFINITE (0) reads back as "" and is rejected with a
+# message by the height-source gather.
+HEIGHT_BACK_MODE_ITEMS = (
+    ("FLAT", "Flat", "Close the height region with a flat back surface at Base Height", 1),
+    ("PROFILE", "Profile", "Shape the back surface from the selected grayscale Height Profile", 2),
 )
 
 
@@ -289,68 +291,8 @@ def _on_cache_playback_changed(self, context):
         self.status = f"Cache playback toggle failed: {exc}"
 
 
-# Snippet library dropdown (examples + user-saved presets)
-
-
-def user_snippet_dir(create=False) -> str:
-    """Directory where user snippet presets are saved as JSON."""
-    import os
-
-    try:
-        base = bpy.utils.extension_path_user(__package__, path="snippets", create=create)
-    except Exception:  # headless/stub environments
-        base = os.path.join(os.path.expanduser("~"), ".fluidsim_snippets")
-        if create:
-            os.makedirs(base, exist_ok=True)
-    return base
-
-
-# Blender requires enum item strings to stay referenced from Python.
-_SNIPPET_LIBRARY_ITEMS = []
-
-_LIBRARY_CATEGORY_ORDER = ("Impressive", "Creative", "Learning", "Utility")
-
-
-def _snippet_library_items(self, context):
-    global _SNIPPET_LIBRARY_ITEMS
-    import os
-
-    # Dynamic EnumProperty defaults to item index 0. A separator/header cannot
-    # occupy that slot: Blender then resolves the fresh-scene value to "" and
-    # logs an RNA warning. Keep an explicit non-action item first.
-    items = [("NONE", "Select a snippet...", "Choose a snippet to load")]
-    by_cat = {}
-    for preset in custom.EXAMPLE_PRESETS:
-        by_cat.setdefault(preset.category, []).append(preset)
-    for cat in _LIBRARY_CATEGORY_ORDER:
-        presets = by_cat.pop(cat, None)
-        if not presets:
-            continue
-        items.append(("", cat, ""))
-        for p in presets:
-            items.append((f"EX:{p.preset_id}", p.label, p.description))
-    for cat in sorted(by_cat):  # any future categories
-        items.append(("", cat, ""))
-        for p in by_cat[cat]:
-            items.append((f"EX:{p.preset_id}", p.label, p.description))
-    user_presets = custom.load_user_presets(user_snippet_dir())
-    if user_presets:
-        items.append(("", "My Snippets", ""))
-        for data in user_presets:
-            ident = "USR:" + os.path.basename(data["_path"])
-            items.append((ident, data["label"],
-                          data.get("description", "User snippet")))
-    _SNIPPET_LIBRARY_ITEMS = items
-    return items
-
-
-_SHORTCUT_FIELD_ITEMS = [
-    (name, name, f"Solver field '{name}'") for name in custom.KNOWN_FIELDS
-]
-
-
 # Blender retains pointers to dynamic EnumProperty strings; keep one module
-# cache just as the snippet library does.
+# cache so the returned items stay alive.
 _PRODUCT_PRESET_ITEMS = []
 
 
@@ -375,90 +317,6 @@ def _product_preset_items(_self, _context):
         ("BUILTIN:preview_water", "Preview Water", "Fast live-preview defaults")
     ]
     return _PRODUCT_PRESET_ITEMS
-
-
-# Custom snippet argument / snippet property groups
-
-
-class FLUIDSIM_PG_snippet_argument(bpy.types.PropertyGroup):
-    mode: EnumProperty(
-        name="Mode",
-        items=[("FIELD", "Field", "Bind a live solver field so the kernel reads or writes field data"),
-               ("CONSTANT", "Constant", "Bind one fixed numeric value for every kernel invocation")],
-        default="FIELD",
-        description=(
-            "Select whether this argument binds changing solver data or a fixed value; "
-            "changing modes replaces the argument controls shown below"),
-    )
-    field: StringProperty(
-        name="Field",
-        description="Set the solver field this argument reads or writes (for example velocity_u, temperature, or pressure); changing it redirects the snippet to different simulation data",
-        default="temperature",
-    )
-    field_permission: EnumProperty(
-        name="Permission",
-        items=_items(CustomKernelFieldPermission),
-        default="READ_WRITE",
-        description=(
-            "Declare whether this snippet may read, write, or read and write "
-            "the bound field; invalid effects are rejected before compilation"),
-    )
-    constant_type: EnumProperty(
-        name="Type", items=_items(CustomKernelConstantType), default="FLOAT")
-    constant_name: StringProperty(
-        name="Name", default="value",
-        description="Set the identifier used for this constant in the snippet; changing it requires matching code references")
-    constant_value: FloatProperty(
-        name="Value", default=0.0,
-        description="Set the numeric value supplied to every kernel invocation; higher or lower values affect the snippet wherever this constant is used")
-
-
-class FLUIDSIM_PG_snippet(bpy.types.PropertyGroup):
-    enabled: BoolProperty(
-        name="Enabled", default=True,
-        description="Enable to run this snippet in its selected solver phase; disable to keep it in the stack without executing it")
-    kernel_name: StringProperty(
-        name="Kernel Name", default="my_kernel",
-        description="Set the generated kernel identifier; changing it renames the compiled snippet entry point")
-    snippet_type: EnumProperty(
-        name="Type",
-        items=_items(CustomKernelType),
-        default="KERNEL",
-        description=(
-            "Persist the synthesized snippet kind; FUNCTION is retained but "
-            "rejected until helper linkage semantics are implemented"),
-    )
-    description: StringProperty(name="Description", default="")
-    order: EnumProperty(
-        name="Order", items=_items(CustomKernelOrder),
-        default="BEFORE_FORCES",
-        description="Choose the solver phase in which this snippet runs; changing it changes which simulation data the snippet sees and affects")
-    run_over: EnumProperty(
-        name="Run Over", items=_items(CustomKernelRunOver),
-        default="VOXEL_LINEAR",
-        description="Choose whether the kernel runs over sparse tiles, active voxels, or particles; changing it changes invocation count and available indexing")
-    text_block: PointerProperty(
-        name="Code", type=bpy.types.Text,
-        description="Select the Text datablock containing the Warp snippet body; changing it replaces the code compiled and run by this stack entry",
-    )
-    arguments: CollectionProperty(type=FLUIDSIM_PG_snippet_argument)
-    active_argument: IntProperty(default=0)
-    last_error: StringProperty(name="Last Error", default="")
-    # Validation gate: a snippet only reaches the solver when its current
-    # source passed static validation (is_valid + matching hash).
-    is_valid: BoolProperty(name="Valid", default=False)
-    validated_hash: StringProperty(default="")
-    validation_report: StringProperty(name="Validation Report", default="")
-    # Layering window: combine snippets at different times / frame strides.
-    frame_start: IntProperty(
-        name="Start Frame", default=0, min=0,
-        description="First frame this snippet runs on (0 = from the start)")
-    frame_end: IntProperty(
-        name="End Frame", default=0, min=0,
-        description="Last frame this snippet runs on (0 = never stops)")
-    frame_step: IntProperty(
-        name="Frame Step", default=1, min=1, max=250,
-        description="Run this snippet every Nth frame")
 
 
 # Object-level settings (sources / colliders / sinks)
@@ -686,11 +544,11 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         update=_request_sync,
         description=(
             "Compatibility solver representation. PARTICLES emits liquid; "
-            "FIELD is the original pressure-influence mode and does not "
-            "create liquid (pressure sourcing is not yet exposed in this port)"))
+            "FIELD creates no liquid and instead applies the Field Operation "
+            "(pressure by default) inside the region"))
     emit_rate: FloatProperty(
         name="Legacy Target Particles / Voxel", default=8.0, min=0.0,
-        max=64.0, soft_max=32.0,
+        max=float(_C.MAX_PARTICLES_PER_VOXEL), soft_max=32.0,
         update=_request_reset,
         description=(
             "Set target particle occupancy in each source voxel, not volume per second. "
@@ -720,7 +578,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         update=_request_sync,
         description="Choose how source values combine with existing solver values; changing the mode can add, replace, clamp, pull toward, or blend the target")
     feather: FloatProperty(name="Feather", default=0.0, min=0.0,
-                           update=_request_sync)
+                           subtype="DISTANCE", update=_request_sync)
     temperature: FloatProperty(
         name="Temperature", default=0.0, update=_request_sync,
         description="Set the temperature attribute on emitted particles; higher or lower values change attribute-driven visualization and field operations")
@@ -791,6 +649,26 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
 # Scene-level settings
 
 
+_OTHER_GROUP_FIELDS = {}
+
+
+def _reject_other_group_write(own, other, name, where):
+    """Raise when ``name`` is declared only on the other half of the split.
+
+    Blender lets Python set any attribute on a PropertyGroup instance, so a
+    1.x-style ``scene.fluidsim.voxel_size = 0.05`` would otherwise land on the
+    Python wrapper, read back as if it worked, and never reach the solver.
+    """
+    fields = _OTHER_GROUP_FIELDS.get(own)
+    if fields is None:
+        fields = _OTHER_GROUP_FIELDS[own] = frozenset(
+            set(getattr(other, "__annotations__", {}))
+            - set(getattr(own, "__annotations__", {})))
+    if name in fields:
+        raise AttributeError(
+            f"{name!r} is not a {own.__name__} setting; set it on {where}")
+
+
 class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     """Scene-scoped FluidSim state, bound to ``Scene.fluidsim``.
 
@@ -801,8 +679,15 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     setting off ``scene.fluidsim`` raises instead of returning a stale value.
     The partition follows
     ``pending_settings.setting_owner`` and is pinned by
-    tests/test_pending_settings_registry.py.
+    tests/test_pending_settings_registry.py. Writing a domain setting here
+    raises too (see ``_reject_other_group_write``).
     """
+
+    def __setattr__(self, name, value):
+        _reject_other_group_write(
+            FLUIDSIM_PG_scene, FLUIDSIM_PG_domain, name,
+            "scene.fluidsim.domain_object.fluidsim_domain")
+        super().__setattr__(name, value)
 
     # UI disclosure (presentation-only; never touches solver state)
     ui_mode: EnumProperty(
@@ -834,10 +719,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         update=_request_rebuild,
         description="Select the object whose bounding box defines the simulation domain; changing it rebuilds grid bounds and capacity requirements")
 
-    # Phase 3 migration guard: 0 = domain settings still live on Scene.fluidsim
-    # (pre-migration), 1 = migrated onto obj.fluidsim_domain. Stamped last by the
-    # load_post migration and never re-zeroed, so re-opens are no-ops.
-    schema_version: IntProperty(default=0, options={"HIDDEN"})
     capacity_show_alternatives: BoolProperty(
         name="Show Capacity Alternatives", default=False,
         options={"SKIP_SAVE"},
@@ -935,29 +816,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Output Collection", default="FluidSim Output",
         update=_request_output_refresh,
         description="Set the Blender collection name that owns generated outputs; changing it moves or creates outputs under the new collection")
-
-    # Custom snippets
-    snippets: CollectionProperty(type=FLUIDSIM_PG_snippet)
-    active_snippet: IntProperty(default=0)
-    snippet_library_selection: EnumProperty(
-        name="Library",
-        description="Select an example or saved snippet to load into the stack; changing the selection changes which preset the load action will insert",
-        items=_snippet_library_items,
-    )
-    snippet_editor_lines: IntProperty(
-        name="Editor Lines", default=24, min=4, max=200,
-        description="Set the maximum source lines shown in the inline snippet editor; higher values show more code but make the panel taller, while lower values keep it compact")
-
-    # Shortcut inputs (Houdini-wrangle-style quick insertion).
-    shortcut_field: EnumProperty(
-        name="Field", items=_SHORTCUT_FIELD_ITEMS, default="temperature",
-        description="Choose the solver field that the shortcut action binds and references in code; changing it redirects the inserted snippet line")
-    shortcut_constant_name: StringProperty(
-        name="Name", default="strength",
-        description="Set the identifier for the constant inserted into the snippet; changing it changes the generated argument and code reference")
-    shortcut_constant_value: FloatProperty(
-        name="Value", default=1.0,
-        description="Set the numeric value for the inserted constant; higher or lower values affect the generated snippet wherever that argument is used")
 
     # Guided setup / product presets
     setup_mode: EnumProperty(
@@ -1149,6 +1007,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     stat_surface_tension_message: StringProperty(
         default="",
         description="Most recent status or error message reported by surface-tension computation")
+    stat_native_solver_message: StringProperty(
+        default="",
+        description="Why a pressure or viscosity solve fell back from CUDA graphs to a slower host loop, if it did")
 
 
 # Domain-level settings
@@ -1163,9 +1024,10 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
     """
 
-    # Completion stamp for the object-owned domain schema. Version zero is the
-    # safe default for ordinary objects and for domains awaiting migration.
-    schema_version: IntProperty(default=0, options={"HIDDEN"})
+    def __setattr__(self, name, value):
+        _reject_other_group_write(
+            FLUIDSIM_PG_domain, FLUIDSIM_PG_scene, name, "scene.fluidsim")
+        super().__setattr__(name, value)
 
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,
@@ -1194,6 +1056,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     # Domain / sparse grid
     voxel_size: FloatProperty(
         name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
+        subtype="DISTANCE",
         update=_request_rebuild,
         description="Set simulation-grid cell size in world units; smaller values capture finer detail but allocate more leaves, particles, VRAM, and compute, while larger values simulate more coarsely and cheaply")
     leaf_capacity: IntProperty(
@@ -1243,7 +1106,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="DEFER", update=_request_particle_capacity,
         description="Choose how a source behaves when guarded particle growth cannot allocate safely")
     particles_per_voxel: IntProperty(
-        name="Liquid Sampling", default=8, min=0, max=64,
+        name="Liquid Sampling", default=8, min=0, max=_C.MAX_PARTICLES_PER_VOXEL,
         update=_request_reset,
         description="Set authoritative liquid rest density and inherited source occupancy; changing it requires Reset, while zero disables inherited liquid emission")
     sample_type: EnumProperty(
@@ -1270,7 +1133,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="LOCAL_VOXEL", update=_request_live,
         description="Choose whether relaxation compares particles only in their voxel or also in neighboring voxels; neighbor search is smoother but costs more")
     max_speed: FloatProperty(
-        name="Max Speed", default=0.0, min=0.0,
+        name="Max Speed", default=0.0, min=0.0, unit="VELOCITY",
         update=_request_live,
         description="Set the particle speed limit in meters per second; lower positive values clamp motion more strongly, higher values allow faster motion, and zero disables limiting")
     limit_behavior: EnumProperty(
@@ -1316,7 +1179,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="temperature", update=_request_live,
         description="Choose which particle attribute Rate moves toward Target; changing it leaves the other attributes unaffected")
     dissipation_rate: FloatProperty(
-        name="Rate", default=0.0, min=0.0, subtype="FACTOR",
+        name="Rate", default=0.0, min=0.0,
         update=_request_live,
         description="Set exponential attribute decay per second; higher values approach Target faster, while zero prevents decay")
     dissipation_target: FloatProperty(
@@ -1338,9 +1201,9 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_live,
         description="Scale anti-clumping pressure derived from particle counts; higher values separate crowded particles more strongly, while zero disables this correction")
 
-    # Spatiotemporal FLIP (beta)
+    # Spatiotemporal FLIP (experimental)
     spacetime_enabled: BoolProperty(
-        name="Enable ST-FLIP (Beta)", default=False, update=_request_reset,
+        name="Enable ST-FLIP (Experimental)", default=False, update=_request_reset,
         description="Enable the experimental spatiotemporal FLIP path for large time steps; disable to use the standard FLIP path; changing this resets the solver")
     spacetime_jitter_strength: FloatProperty(
         name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_live,
@@ -1360,7 +1223,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Override the ST-FLIP reference particle mass; higher values make each reference sample heavier, while zero derives mass from liquid density and voxel sampling")
     spacetime_variable_projection: BoolProperty(
-        name="Variable Projection (Beta)", default=True, update=_request_live,
+        name="Variable Projection (Experimental)", default=False, update=_request_live,
         description="Enable density-weighted variable-coefficient pressure projection for ST-FLIP; disable to use the standard constant-coefficient projection")
     spacetime_liquid_density: FloatProperty(
         name="Liquid Density", default=1.0, min=1.0e-6, soft_max=10.0,
@@ -1493,7 +1356,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Scale surface-grid density relative to the simulation grid; higher values use smaller surface voxels for finer detail with more VRAM and extraction cost, while lower values are coarser and cheaper; 2 means half-size voxels")
     surface_voxel_size: FloatProperty(
         name="Surface Voxel Size", default=0.0, min=0.0, soft_max=1.0,
-        precision=5, update=_request_surface_refresh,
+        precision=5, subtype="DISTANCE", update=_request_surface_refresh,
         description="Set explicit surface-grid cell size in Custom mode; smaller values produce finer meshes with more VRAM and extraction work, while larger values are coarser and cheaper; zero falls back to simulation voxel size")
     surface_leaf_capacity_scale: FloatProperty(
         name="Leaf Capacity Scale", default=8.0, min=1.0, soft_max=16.0, max=128.0,
@@ -1652,12 +1515,13 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Enable to fill the domain below the configured height when the solver resets; disable to omit this height source")
     height_base: FloatProperty(
-        name="Base Height", default=0.3, update=_request_reset,
+        name="Base Height", default=0.3, subtype="DISTANCE",
+        update=_request_reset,
         description="Set the world-space base fill level; higher values fill more of the domain vertically, while lower values fill less")
     height_back_mode: EnumProperty(
-        name="Back Mode", items=_items(SourceHeightBackMode), default="FLAT",
+        name="Back Mode", items=HEIGHT_BACK_MODE_ITEMS, default="FLAT",
         update=_request_reset,
-        description="Choose how the height source continues behind its profile; changing it switches between infinite, flat, and image-profiled back surfaces")
+        description="Choose how the height source closes behind its profile; changing it switches between a flat and an image-profiled back surface")
     height_profile_image: PointerProperty(
         name="Height Profile", type=bpy.types.Image, update=_request_reset,
         description="Select a grayscale image sampled across the domain as a height offset; changing it replaces the fill profile, while an empty image produces no image variation")
@@ -1673,7 +1537,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Height Fill Error", default="",
         description="Most recent error reported while filling the height source, if any")
     height_velocity: FloatVectorProperty(
-        name="Velocity", size=3, default=(0.0, 0.0, 0.0),
+        name="Velocity", size=3, default=(0.0, 0.0, 0.0), subtype="VELOCITY",
         update=_request_reset,
         description="Set initial velocity for height-fill particles; changing components changes their starting speed and direction")
     height_emit_particles: BoolProperty(
@@ -1769,47 +1633,11 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Enable CUDA synchronization around each phase for accurate timings at higher profiling cost; disable for lower overhead but less precise asynchronous measurements")
 
 
-# Pre-split union of both groups, bound onto ``Scene.fluidsim`` only by
-# ``blender.migration`` for the length of one copy. A .blend saved before the
-# split stores its domain settings on the scene group; narrowing the pointer to
-# FLUIDSIM_PG_scene hides those IDProperties without deleting them, and binding
-# this union back exposes them so migration can move them to the domain object.
-FLUIDSIM_PG_legacy_settings = type(
-    "FLUIDSIM_PG_legacy_settings",
-    (bpy.types.PropertyGroup,),
-    {
-        "__module__": __name__,
-        "__annotations__": {
-            **FLUIDSIM_PG_scene.__annotations__,
-            **FLUIDSIM_PG_domain.__annotations__,
-        },
-    },
-)
-
-
 CLASSES = (
-    FLUIDSIM_PG_snippet_argument,
-    FLUIDSIM_PG_snippet,
     FLUIDSIM_PG_object,
     FLUIDSIM_PG_scene,
     FLUIDSIM_PG_domain,
-    FLUIDSIM_PG_legacy_settings,
 )
-
-
-@contextmanager
-def legacy_scene_settings():
-    """Expose a pre-split file's domain settings on ``scene.fluidsim``.
-
-    Rebinds ``Scene.fluidsim`` to the union class for the duration of the block
-    and always restores the narrow binding, so a failed migration cannot leave
-    the scene group wide.
-    """
-    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_legacy_settings)
-    try:
-        yield
-    finally:
-        bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_scene)
 
 
 def register():

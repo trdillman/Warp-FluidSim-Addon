@@ -82,23 +82,26 @@ def main(argv: list[str] | None = None) -> int:
 
     scene = bpy.context.scene
     fs = scene.fluidsim
+    ds = scene_bridge.active_domain_settings(scene)
+    if ds is None:
+        raise RuntimeError(f"Timeline acceptance scene has no designated domain: {scene_path}")
     fs.live = True
-    fs.spacetime_enabled = True
+    ds.spacetime_enabled = True
     fs.cache_playback_enabled = False
     playback.register_handlers()
 
     handlers = [getattr(h, "__name__", "") for h in bpy.app.handlers.frame_change_post]
     frames = max(24, int(args.frames))
     particles = max(500_000, int(args.particles))
-    fs.max_particles = max(int(fs.max_particles), particles + 16_384)
-    fs.surface_enabled = True
-    fs.surface_resolution_mode = "MULTIPLIER"
-    fs.surface_resolution_multiplier = 2.0
-    fs.surface_leaf_capacity_scale = 8.0
-    fs.surface_max_dense_dim = 512
-    fs.surface_update_cadence = "FRAME"
-    fs.surface_build_lowres_sdf = True
-    fs.surface_filter_iterations = 0
+    ds.max_particles = max(int(ds.max_particles), particles + 16_384)
+    ds.surface_enabled = True
+    ds.surface_resolution_mode = "MULTIPLIER"
+    ds.surface_resolution_multiplier = 2.0
+    ds.surface_leaf_capacity_scale = 8.0
+    ds.surface_max_dense_dim = 512
+    ds.surface_update_cadence = "FRAME"
+    ds.surface_build_lowres_sdf = True
+    ds.surface_filter_iterations = 0
     fs.show_surface = True
     fs.show_particles = True
     fs.particle_display_fraction = 1.0
@@ -134,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         "scene": str(scene_path),
         "handler_present": "_on_frame_change" in handlers or any("_on_frame_change" == h for h in handlers),
         "live": bool(fs.live),
-        "spacetime_enabled": bool(fs.spacetime_enabled),
+        "spacetime_enabled": bool(ds.spacetime_enabled),
         "requested_frames": int(frames),
         "requested_particles": int(particles),
         "solver_frame": int(solver.frame),
@@ -161,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         ("solver advanced from timeline", payload["solver_frame"] >= frames),
         ("visible particle object populated", payload["viewport_particle_object_count_frame2"] > 0),
         ("visible surface object populated", payload["viewport_surface_object_count_frame2"] > 0 and payload["surface_vertices_frame2"] > 0),
-        ("high resolution surface grid active", payload["surface_voxel_size"] < fs.voxel_size and not payload["surface_grid_is_sim_grid"]),
+        ("high resolution surface grid active", payload["surface_voxel_size"] < ds.voxel_size and not payload["surface_grid_is_sim_grid"]),
         ("particles moved", payload["max_particle_motion"] > 1.0e-4),
         ("ST residual active", payload["time_offset_std"] > 1.0e-5),
         ("particle count requirement met", payload["particles_frame1"] >= 500_000 and payload["particles_frame2"] >= 500_000),

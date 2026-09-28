@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -67,7 +68,8 @@ def _solver(log, count, ww_count=0):
     return solver
 
 
-def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
+def test_display_fraction_strides_the_readback_but_not_the_cache_frame(monkeypatch):
+    monkeypatch.setitem(sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))
     from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache
     from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload, HostFrame
@@ -106,7 +108,9 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame():
     assert reads() == [16, count]
 
 
-def test_whitewater_display_fraction_strides_the_readback_but_not_the_cache_frame():
+def test_whitewater_display_fraction_strides_the_readback_but_not_the_cache_frame(
+        monkeypatch):
+    monkeypatch.setitem(sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))
     from fluidSim_warp_blender51.blender import output_publication
     from fluidSim_warp_blender51.io import cache
     from fluidSim_warp_blender51.sim.frame_output import CacheFramePayload, HostFrame

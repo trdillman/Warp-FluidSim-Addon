@@ -709,13 +709,13 @@ class CacheFramePayload:
             voxel_size=float(getattr(settings, "voxel_size", 0.05)),
             surface_voxel_size=float(surface_metadata["voxel_size"]),
             surface_resolution_multiplier=float(getattr(
-                settings, "surface_resolution_multiplier", 1.0)),
+                settings, "surface_resolution_multiplier", 2.0)),
             surface_resolution_mode=int(getattr(
                 settings, "surface_resolution_mode", 0)),
             surface_update_cadence=int(getattr(
                 settings, "surface_update_cadence", 1)),
             surface_smooth_iterations=int(getattr(
-                settings, "surface_smooth_iterations", 0)),
+                settings, "surface_smooth_iterations", 1)),
             particle_attributes=MappingProxyType({
                 name: host.particle_attr(name)
                 for name in (

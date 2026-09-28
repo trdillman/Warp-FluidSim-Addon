@@ -64,7 +64,7 @@ def _installed_module() -> str:
     return matches[0]
 
 
-def _assert_external_warp(module: str) -> tuple[Path, Path]:
+def _assert_bundled_warp(module: str) -> tuple[Path, Path]:
     extension = importlib.import_module(module)
     extension_root = Path(extension.__file__).resolve().parent
     repository_value = os.environ.get("FLUIDSIM_CI_REPOSITORY", "")
@@ -72,11 +72,8 @@ def _assert_external_warp(module: str) -> tuple[Path, Path]:
     if not repository_value or not user_extensions_value:
         raise AssertionError("release smoke environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    user_extensions_root = Path(user_extensions_value).resolve()
-    external_root_value = os.environ.get("FLUIDSIM_EXTERNAL_WARP_ROOT", "")
-    if not external_root_value:
-        raise AssertionError("external Warp validation root was not supplied")
-    external_root = Path(external_root_value).resolve()
+    # Blender installs extension wheels into <extensions>/.local site-packages.
+    wheel_root = Path(user_extensions_value).resolve() / ".local"
     warp_path = Path(wp.__file__).resolve()
     if wp.__version__ != EXPECTED_WARP_VERSION:
         raise AssertionError(
@@ -89,22 +86,11 @@ def _assert_external_warp(module: str) -> tuple[Path, Path]:
             f"FluidSim loaded outside the isolated installed repository: {extension_root}"
         ) from exc
     try:
-        warp_path.relative_to(external_root)
+        warp_path.relative_to(wheel_root)
     except ValueError as exc:
         raise AssertionError(
-            f"Warp did not load from the external validation runtime: {warp_path}"
+            f"Warp did not load from the extension's bundled wheel: {warp_path}"
         ) from exc
-    forbidden = (
-        (extension_root, "FluidSim extension"),
-        (repository_root, "extension repository"),
-        (user_extensions_root, "Blender extension directory"),
-    )
-    for forbidden_root, label in forbidden:
-        try:
-            warp_path.relative_to(forbidden_root)
-        except ValueError:
-            continue
-        raise AssertionError(f"Warp was bundled inside the {label}: {warp_path}")
     return extension_root, warp_path
 
 
@@ -611,7 +597,7 @@ def main() -> None:
             f"running {bpy.app.version_string}"
         )
     module = _installed_module()
-    extension_root, warp_path = _assert_external_warp(module)
+    extension_root, warp_path = _assert_bundled_warp(module)
     _assert_packaged_entry_points(extension_root)
     extension_version = importlib.import_module(f"{module}.version")
     if extension_version.VERSION != EXPECTED_FLUIDSIM_VERSION:

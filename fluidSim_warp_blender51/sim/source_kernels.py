@@ -387,10 +387,10 @@ def k_source_shapes(
 ):
     """Apply source-shape grid roles other than liquid emission.
 
-    The original FIELD branch blends source pressure only; this port does not
-    yet expose/source that pressure field. Therefore FIELD sources are a
-    compatibility no-op here: they do not create liquid, set tracking bits, or
-    write MAC velocity/temperature/viscosity. Analytic FORCE objects use
+    FIELD sources are skipped here: they are gathered as compiled field plans
+    (pressure by default) and applied by ``source_execution``, so this kernel
+    never creates liquid, sets tracking bits, or writes MAC
+    velocity/temperature/viscosity for them. Analytic FORCE objects use
     ``k_source_shape_forces`` later in the forces phase.
 
     Collision: min into collision SDF + write collider velocity.
@@ -427,9 +427,8 @@ def k_source_shapes(
         if d > s.feather:
             continue
         if s.stype == 0 and s.mode == 0:
-            # Original semantics: FIELD mode does not create liquid. The only
-            # original grid write is source pressure, which is not exposed by
-            # this port yet (docs/source_shape_spec.md). FORCE-role velocity
+            # FIELD mode creates no liquid; its pressure/field write is a
+            # compiled plan applied by source_execution. FORCE-role velocity
             # influence is applied after P2G by k_source_shape_forces.
             continue
         elif s.stype == 2:
@@ -1831,7 +1830,7 @@ def k_emit_compiled_source_particles(
     desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
     missing = wp.max(0, desired - voxel_counts[flat])
     center = voxel_center_world(ijk, origin, voxel_size)
-    for sample in range(64):
+    for sample in range(C.MAX_PARTICLES_PER_VOXEL):
         if sample >= missing:
             break
         slot = wp.atomic_add(count, 0, 1)

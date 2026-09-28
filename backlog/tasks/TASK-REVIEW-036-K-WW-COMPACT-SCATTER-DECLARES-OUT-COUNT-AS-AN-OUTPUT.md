@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,20 @@ No runtime impact currently because k_ww_final_count always runs after the scatt
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/sim/whitewater.py:692` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Remove the out_count parameter from k_ww_compact_scatter and remove self._count2 from its outputs list. The count is solely owned by k_ww_final_count.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/sim/whitewater.py:692` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Remove the out_count parameter from k_ww_compact_scatter and remove self._count2 from its outputs list. The count is solely owned by k_ww_final_count.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
+
+## Resolution
+
+Fixed in `2a6eec0` on `claude/2.0-phase1-platform` (2.0 Phase 2, WS5 cleanup).
+
+- `k_ww_compact_scatter` no longer declares `out_count`, and `compact()` no longer
+  passes `self._count2` to it; `k_ww_final_count` alone writes the compacted count.
+
+Regression gate: `tests/test_whitewater_kernel_outputs.py` parses `sim/whitewater.py`
+and fails if any `@wp.kernel` declares an `out_*` array it never writes.
 
 ## Evidence
 

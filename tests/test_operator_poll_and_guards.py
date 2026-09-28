@@ -157,13 +157,10 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     assert missing == []
 
     # Legacy export initializes the solver itself but still requires a ready
-    # external Warp runtime.
+    # Warp runtime.
     assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
     assert not issubclass(
         operators.FLUIDSIM_OT_export_cache_sequence, operators._FLUIDSIM_OT_session_base
-    )
-    assert not issubclass(
-        operators.FLUIDSIM_OT_snippet_apply, operators._FLUIDSIM_OT_session_base
     )
 
 

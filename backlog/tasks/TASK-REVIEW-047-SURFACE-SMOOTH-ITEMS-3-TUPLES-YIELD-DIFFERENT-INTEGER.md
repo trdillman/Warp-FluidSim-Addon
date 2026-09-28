@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ No active bug confirmed because Python-level Blender property access returns str
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/properties.py:87` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Define SURFACE_SMOOTH_ITEMS as 4-tuples with explicit SdfFilterType values: ("BOX", "Box", "...", SdfFilterType.BOX.value) and ("MEAN_CURVATURE_FLOW", "Mean Curvature", "...", SdfFilterType.MEAN_CURVATURE_FLOW.value).
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/properties.py:87` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Define SURFACE_SMOOTH_ITEMS as 4-tuples with explicit SdfFilterType values: ("BOX", "Box", "...", SdfFilterType.BOX.value) and ("MEAN_CURVATURE_FLOW", "Mean Curvature", "...", SdfFilterType.MEAN_CURVATURE_FLOW.value).
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ No active bug confirmed because Python-level Blender property access returns str
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+Equivalent approach, not the literal remediation. `SURFACE_SMOOTH_ITEMS` is now 4-tuples that pin the existing saved numbers 0/1 explicitly. Renumbering to the `SdfFilterType` values 2/3 would flip the smoothing type in every saved file, because Blender stores the item number. The solver converts by identifier (`enum_type[identifier]` in `blender/solver_settings.py`), so no code maps the number. The guard pins the 0/1 numbers and requires the identifiers to be `SdfFilterType` members.
+
+Regression guard: `tests/test_settings_default_agreement.py`.

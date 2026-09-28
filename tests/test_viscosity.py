@@ -1,7 +1,7 @@
 """Viscosity solve stability validation (test 11)."""
 import sys
 from collections import OrderedDict
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -390,6 +390,8 @@ def test_solver_records_viscosity_convergence_the_way_it_records_pressure():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 
     class _StubSolver:
+        last_pcg_native_error = "RuntimeError: capture refused"
+
         def solve(self, *_args, **_kwargs):
             return {
                 "converged": False,
@@ -413,8 +415,16 @@ def test_solver_records_viscosity_convergence_the_way_it_records_pressure():
         vel=object(),
         stats=FrameStats(),
         device="cpu",
+        pressure_solver=None,
     )
+    stub._native_solver_message = MethodType(
+        FluidSolver._native_solver_message, stub)
     FluidSolver._viscosity(stub, 0.01)
+
+    # REVIEW-016: a lost CUDA-graph path is reported, not silent
+    assert stub.stats.native_solver_message == (
+        "Viscosity solve fell back from CUDA graphs to a slower host loop: "
+        "RuntimeError: capture refused")
 
     assert stub.stats.viscosity_status == (
         viscosity.VISCOSITY_STATUS_MAX_ITERATIONS)

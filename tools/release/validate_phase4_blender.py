@@ -188,10 +188,15 @@ def validate(module_name: str, work_dir: Path) -> dict:
 
         scene = bpy.context.scene
         fs = scene.fluidsim
+        # Domain settings live only on the designated domain object.
+        domain = bpy.data.objects.new("P4 Domain", bpy.data.meshes.new("P4 Domain"))
+        scene.collection.objects.link(domain)
+        fs.domain_object = domain
+        ds = domain.fluidsim_domain
         fs.show_surface = False
-        fs.surface_enabled = False
+        ds.surface_enabled = False
         fs.show_particles = False
-        fs.whitewater_enabled = True
+        ds.whitewater_enabled = True
         fs.show_whitewater = True
         fs.whitewater_output_mode = "BOTH"
         fs.whitewater_attribute_mode = "TYPE"

@@ -283,8 +283,8 @@ class SurfacePipeline:
 
     def settings_signature(self):
         s = self.solver.settings
-        return (int(getattr(s, "surface_resolution_mode", 0)), round(float(getattr(s, "surface_resolution_multiplier", 1.0)), 6),
-                round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 1.0)), 6),
+        return (int(getattr(s, "surface_resolution_mode", 0)), round(float(getattr(s, "surface_resolution_multiplier", 2.0)), 6),
+                round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 8.0)), 6),
                 int(getattr(s, "surface_max_dense_dim", 512)), int(getattr(s, "surface_update_cadence", 1)),
                 bool(getattr(s, "surface_build_lowres_sdf", False)), round(float(s.particle_radius_scale), 6), int(s.surface_splat_radius),
                 int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
@@ -1247,7 +1247,7 @@ class SurfaceExtractor:
 
     _PAD = 32
 
-    def __init__(self, grid, device, max_dense_dim=256):
+    def __init__(self, grid, device, max_dense_dim=512):
         self.grid = grid
         self.device = device
         self.max_dense_dim = int(max_dense_dim)

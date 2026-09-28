@@ -96,16 +96,21 @@ def test_integrity_failure_fails_closed(tmp_path):
     assert "frames/frame_000002.npz" in inspection.corrupt_files
 
 
-def test_legacy_cache_is_playback_only(tmp_path):
+def test_fluidsim_1_0_cache_is_refused_but_can_be_freed(tmp_path):
+    """2.0 reads cache format 2 only; a 1.0 cache must say to re-bake."""
     (tmp_path / "fluidsim_sequence.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "fluidsim_000001.npz").write_bytes(b"legacy")
+    (tmp_path / "fluidsim_00001.npz").write_bytes(b"legacy")
 
     inspection = inspect_cache(tmp_path)
 
     assert inspection.format_version == 1
-    assert inspection.last_complete_frame == 1
+    assert inspection.compatible is False
+    assert inspection.committed_frames == ()
+    assert inspection.last_complete_frame is None
     assert inspection.last_resumable_frame is None
-    assert "playback only" in inspection.message
+    assert "FluidSim 1.0" in inspection.message and "bake again" in inspection.message
+    assert free_cache(tmp_path) is None
+    assert not tmp_path.exists()
 
 
 def test_move_rename_and_free_preserve_verified_cache(tmp_path):

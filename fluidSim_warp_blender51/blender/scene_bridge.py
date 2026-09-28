@@ -21,10 +21,9 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
 # Active-domain accessors (Phase 3)
 #
-# Domain settings are migrating from ``scene.fluidsim`` onto the domain
-# object's ``fluidsim_domain`` group (see ``blender/migration.py``). The read
-# path funnels through these so it follows the settings to their new home
-# without every reader needing to know the migration state.
+# Domain settings live on the designated domain object's ``fluidsim_domain``
+# group; ``scene.fluidsim`` holds only scene-level state. The read path funnels
+# through these so no reader needs to know which object is the domain.
 
 
 def active_domain_object(scene):
@@ -271,10 +270,6 @@ class Session:
     def initialize(self, scene, *, depsgraph=None,
                    ignore_memory_safeguard=False):
         """Admit one coherent Blender scene into a running Solver Session."""
-        if hasattr(bpy, "props"):
-            from .effects import migrate_legacy_snippets
-
-            migrate_legacy_snippets(scene)
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard)
@@ -412,6 +407,8 @@ class Session:
             getattr(stats, "surface_tension_status", "DISABLED"))
         fs.stat_surface_tension_message = str(
             getattr(stats, "surface_tension_message", ""))
+        fs.stat_native_solver_message = str(
+            getattr(stats, "native_solver_message", ""))
         growth = getattr(self.solver, "last_particle_growth", None)
         if (growth is not None and getattr(growth, "grew", False)
                 and int(growth.current) != self.last_reported_growth_capacity):

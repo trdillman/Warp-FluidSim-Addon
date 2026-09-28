@@ -2,7 +2,9 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import warp as wp
 wp.init()
-dev = "cuda:0"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _test_device import script_device
+dev = script_device()
 from fluidSim_warp_blender51.sim.fields import SparseGrid, MacVelocityField
 from fluidSim_warp_blender51.sim import kernels_core, kernels_fluid, pressure
 from fluidSim_warp_blender51.sim.registry import KERNEL_REGISTRY

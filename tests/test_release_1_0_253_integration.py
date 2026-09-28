@@ -25,25 +25,29 @@ def _assigned(path: Path, name: str):
     raise AssertionError(f"{name} is not assigned in {path}")
 
 
-def test_release_identity_targets_blender_51_without_bundled_runtimes():
+def test_release_identity_targets_blender_52_with_only_locked_warp_wheels():
     manifest = tomllib.loads(
         (ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
 
     assert manifest["id"] == "fluidsim_warp"
-    assert manifest["version"] == "1.1.0"
-    assert manifest["blender_version_min"] == "5.1.0"
+    assert manifest["version"] == "2.0.0"
+    assert manifest["blender_version_min"] == "5.2.0"
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
-    assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 1, 0)
+    assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 2, 0)
     assert _assigned(ROOT / "version.py", "SUPPORTED_PLATFORMS") == (
         "windows-x64",
         "linux-x64",
     )
     assert _assigned(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS") == (
         "windows-x64",
-        "linux-x64",
     )
-    for forbidden in ("wheels", "runtimes", "vendor", "python"):
+    for forbidden in ("runtimes", "vendor", "python"):
         assert not (ROOT / forbidden).exists()
+    # wheels/ holds only the fetched, checksum-locked Warp wheels (git-ignored).
+    locked = set(json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(
+        encoding="utf-8"))["files"])
+    fetched = {path.name for path in (ROOT / "wheels").glob("*")}
+    assert fetched <= locked
 
 
 def test_viewport_panel_remains_a_compact_properties_launcher():
@@ -65,7 +69,15 @@ def test_adjudicated_owners_cannot_revert_to_stale_candidate_payloads():
         "354d32b97bf952c5bf07b62543dda66ed39b7368f0b9d7b91ad83521ac2061e7"
     )
     assert len(stale_hashes) == 27
+    # 2.0 removed the legacy snippet runtime; a removed owner holds no payload.
+    # The release build reads the same list (tools/release/build_extension.py).
+    retired = set(guard["retired_owners"])
+    assert retired == {"sim/custom.py"}
+    assert retired <= stale_hashes.keys()
     for relative, stale_hash in stale_hashes.items():
+        if relative in retired:
+            assert not (ROOT / relative).exists(), relative
+            continue
         payload = (ROOT / relative).read_bytes()
         assert hashlib.sha256(payload).hexdigest() != stale_hash, relative
 

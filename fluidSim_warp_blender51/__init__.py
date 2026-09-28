@@ -2,8 +2,8 @@
 
 Release metadata is owned by ``blender_manifest.toml`` and runtime identity by
 ``version.py``. Import-time registration neither probes nor installs runtime
-dependencies. The certified external Warp runtime is validated lazily through
-``runtime/warp_runtime.py``.
+dependencies: Blender installs the bundled, hash-locked NVIDIA Warp wheel with
+the extension, and ``runtime/warp_runtime.py`` validates it lazily.
 """
 
 
@@ -13,8 +13,8 @@ def register():
         effect_ui,
         effect_workspace,
         effects,
+        file_compat,
         menus,
-        migration,
         pending_settings,
         playback,
         render,
@@ -47,10 +47,8 @@ def register():
         ("Add-menu domain entry", menus.register, menus.unregister),
         ("source migration handlers", sources.register_handlers,
          sources.unregister_handlers),
-        ("domain migration handlers", migration.register_handlers,
-         migration.unregister_handlers),
-        ("legacy effect migration handlers", effects.register_handlers,
-         effects.unregister_handlers),
+        ("pre-1.1 file check", file_compat.register_handlers,
+         file_compat.unregister_handlers),
         ("playback handlers", playback.register_handlers,
          playback.unregister_handlers),
         ("pending handlers", pending_settings.register_handlers,
@@ -89,7 +87,7 @@ def unregister():
         ("playback handlers", "blender.playback", "unregister_handlers"),
         ("native CUDA cache", "sim.cuda_reduction", "reset_cuda_module_cache"),
         ("legacy effect migration handlers", "blender.effects", "unregister_handlers"),
-        ("domain migration handlers", "blender.migration", "unregister_handlers"),
+        ("pre-1.1 file check", "blender.file_compat", "unregister_handlers"),
         ("source migration handlers", "blender.sources", "unregister_handlers"),
         ("Add-menu domain entry", "blender.menus", "unregister"),
         ("viewport Live Tuning shelf", "blender.ui_view3d", "unregister"),

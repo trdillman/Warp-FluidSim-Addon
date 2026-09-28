@@ -130,6 +130,18 @@ def source_signature(scene, depsgraph=None) -> str:
     return source_signature_from_records(_source_records(scene, depsgraph))
 
 
+def settings_signature(scene) -> str:
+    """Return the cache-v2 settings signature alone.
+
+    Unlike the source signature it does not depend on the current frame:
+    source records hash transforms and evaluated geometry, which an animated
+    collider or emitter changes every frame.
+    """
+    from ..io.cache import settings_record
+
+    return settings_record(_settings_record(scene))["signature"]
+
+
 def signature_bundle(scene, depsgraph=None) -> dict[str, str]:
     """Return the cache-v2 settings/source identity bundle for a scene."""
     from ..io.cache import signature_bundle_from_records

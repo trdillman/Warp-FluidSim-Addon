@@ -26,8 +26,9 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["id"] == extension_id == "fluidsim_warp"
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
-    assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.1.0"
-    assert version == (1, 1, 0)
+    assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.2.0"
+    assert version == (2, 0, 0)
+    assert _assigned_value(ROOT / "version.py", "BUILD_CHANNEL") == "stable"
 
 
 def test_supported_platforms_are_independent_of_current_runtime_evidence():
@@ -35,7 +36,8 @@ def test_supported_platforms_are_independent_of_current_runtime_evidence():
     validated = _assigned_value(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS")
 
     assert supported == ("windows-x64", "linux-x64")
-    assert validated == ("windows-x64", "linux-x64")
+    # Only Windows has a recorded GPU gate run; Linux ships uncertified (D4).
+    assert validated == ("windows-x64",)
     assert set(validated).issubset(supported)
 
 
@@ -51,7 +53,8 @@ def test_distribution_contains_license_notices_and_changelog():
     assert "Version 3" in license_text
     notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     assert "NVIDIA Warp" in notices
-    assert "1.16.0+cu12" in notices
+    assert "warp-lang 1.17.0" in notices
+    assert "CUDA 12" in notices
     assert "Apache License, Version 2.0" in notices
     assert "libmathdx-LICENSE.txt" in notices
     assert "nvrtc-LICENSE.txt" in notices
@@ -76,12 +79,12 @@ def test_changelog_leads_with_the_current_version():
 def test_user_guide_declares_certified_support_matrix():
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
     for text in (
-        "Blender 5.1.0",
+        "Blender 5.2.0",
         "Windows x64",
         "Linux x64",
         "NVIDIA CUDA",
-        "External NVIDIA Warp 1.16.0+cu12",
-        "Cache v1",
+        "Bundled NVIDIA Warp 1.17.0",
+        "Cache v1 (1.0.x) is refused",
     ):
         assert text in guide
     assert "| Operating systems | Windows x64 and Linux x64 |" in guide

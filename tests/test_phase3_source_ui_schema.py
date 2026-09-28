@@ -87,6 +87,21 @@ def test_ui_never_presents_height_infinite_or_legacy_source_mode_as_liquid():
         assert f'("{region}",' in properties
 
 
+def test_height_back_mode_offers_only_runnable_modes_with_stable_numbers():
+    from fluidSim_warp_blender51.sim.enums import SourceHeightBackMode
+
+    tree = ast.parse(_source(PROPERTIES))
+    assign = next(node for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name)
+                          and target.id == "HEIGHT_BACK_MODE_ITEMS"
+                          for target in node.targets))
+    items = ast.literal_eval(assign.value)
+    assert [(item[0], item[3]) for item in items] == [
+        (member.name, int(member)) for member in SourceHeightBackMode
+        if member is not SourceHeightBackMode.INFINITE]
+    assert "items=HEIGHT_BACK_MODE_ITEMS" in _source(PROPERTIES)
+
+
 def test_role_specific_operators_and_plan_translator_are_real_entry_points():
     operators = _source(OPERATORS)
     for class_name in (

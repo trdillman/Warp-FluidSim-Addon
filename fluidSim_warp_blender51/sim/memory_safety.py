@@ -252,7 +252,7 @@ def estimate_solver_bytes(settings) -> int:
     if surface_enabled:
         estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL
     if surface_enabled and abs(surface_h - sim_h) > 1.0e-8:
-        scale = max(1.0, float(_value(settings, "surface_leaf_capacity_scale", 1.0)))
+        scale = max(1.0, float(_value(settings, "surface_leaf_capacity_scale", 8.0)))
         render_leaf_cells = _domain_leaf_cells({
             "domain_min": _value(settings, "domain_min", (-2.0, -2.0, 0.0)),
             "domain_max": _value(settings, "domain_max", (2.0, 2.0, 4.0)),
@@ -279,8 +279,8 @@ def recommend_safe_settings(
         "topology_expand": max(0, int(_value(settings, "topology_expand", 1))),
         "surface_resolution_mode": int(_value(settings, "surface_resolution_mode", 0)),
         "surface_resolution_multiplier": float(_value(settings, "surface_resolution_multiplier", 2.0)),
-        "surface_leaf_capacity_scale": float(_value(settings, "surface_leaf_capacity_scale", 1.0)),
-        "surface_max_dense_dim": int(_value(settings, "surface_max_dense_dim", 256)),
+        "surface_leaf_capacity_scale": float(_value(settings, "surface_leaf_capacity_scale", 8.0)),
+        "surface_max_dense_dim": int(_value(settings, "surface_max_dense_dim", 512)),
         "surface_enabled": bool(_value(settings, "surface_enabled", True)),
         # Preserve optional P5 allocation state while evaluating candidates.
         # Dropping these fields would make subsequent estimates silently fall

@@ -59,7 +59,7 @@ def test_generated_demo_assets_and_documentation_are_packaged():
         "Vortex Force",
         "Stack Order",
         "Warp Code",
-        "supplied Warp 1.16.0",
+        "certified Warp package",
         "CPU validation",
         "CUDA",
     ):

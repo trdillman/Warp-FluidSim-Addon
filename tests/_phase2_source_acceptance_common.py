@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import statistics
 import sys
@@ -11,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 for _name in list(sys.modules):
     if _name == "fluidSim_warp_blender51" or _name.startswith("fluidSim_warp_blender51."):
         del sys.modules[_name]
@@ -50,7 +53,7 @@ def cube(open_top=False):
 
 
 def context(frame=1):
-    return CompileContext(frame, 0, 1, "cuda:0", (0, 0, 0), .25,
+    return CompileContext(frame, 0, 1, script_device(), (0, 0, 0), .25,
                           (0, 0, 0), (2, 2, 2), upload=True)
 
 
@@ -84,7 +87,7 @@ def settings(substeps=1, max_particles=20_000):
     value.max_substeps = substeps
     value.pressure_iterations = 30
     value.gravity = (0.0, 0.0, 0.0)
-    value.device = "cuda:0"
+    value.device = script_device()
     return value
 
 
@@ -559,9 +562,10 @@ def main(capability):
         "blender_hash": (bpy.app.build_hash.decode() if isinstance(
             bpy.app.build_hash, bytes) else str(bpy.app.build_hash)),
         "addon_module": addon.__name__,
-        "addon_version": [int(v) for v in addon.bl_info["version"]],
+        "addon_version": [int(v) for v in importlib.import_module(
+            addon.__name__ + ".version").VERSION],
         "addon_path": str(Path(addon.__file__).resolve()),
-        "device": "cuda:0", "device_name": wp.get_device("cuda:0").name,
+        "device": script_device(), "device_name": wp.get_device(script_device()).name,
     }
     runtime_errors = [d.message for d in batch.diagnostics if d.severity == "ERROR"]
     report = {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
 import os
@@ -13,7 +14,9 @@ from types import SimpleNamespace
 import bpy
 
 EXPECTED_SCENE_ROOTS = {
-    "FLUIDSIM_PT_scene_control": (0, False),
+    "FLUIDSIM_PT_scene_transport": (0, False),
+    "FLUIDSIM_PT_scene_lifecycle": (1, True),
+    "FLUIDSIM_PT_scene_control": (2, False),
     "FLUIDSIM_PT_scene_setup": (10, False),
     "FLUIDSIM_PT_scene_domain": (20, False),
     "FLUIDSIM_PT_scene_height": (30, True),
@@ -41,6 +44,8 @@ EXPECTED_EFFECT_CHILDREN = {
 }
 
 ALL_AUTHORED_SCENE_PANELS = (
+    "FLUIDSIM_PT_scene_transport",
+    "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control",
     "FLUIDSIM_PT_scene_live_timeline",
     "FLUIDSIM_PT_scene_setup",
@@ -88,6 +93,7 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_diagnostics_report",
     "FLUIDSIM_PT_custom_effects",
     "FLUIDSIM_PT_effect_packages",
+    "FLUIDSIM_PT_effect_engineering",
     "FLUIDSIM_PT_effect_warp_code",
     "FLUIDSIM_PT_viewport_status",
 )
@@ -117,6 +123,30 @@ OBJECT_PANEL_IDS = (
     "FLUIDSIM_PT_object_field",
     "FLUIDSIM_PT_object_volume",
 )
+
+
+def _certified(name: str):
+    """Read one certified release constant from the source tree's version.py."""
+    path = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "version.py"
+    import ast
+
+    values: dict = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in values:
+            value = values[node.value.id]  # e.g. CERTIFIED_X = VALIDATION_HOST_X
+        else:
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                values[target.id] = value
+    if name not in values:
+        raise RuntimeError(f"{name} is not a literal constant in {path}")
+    return values[name]
 
 
 def _args() -> argparse.Namespace:
@@ -249,6 +279,18 @@ def _panel_metadata(panel_id: str) -> dict[str, object]:
     }
 
 
+@contextlib.contextmanager
+def _effect_authoring_enabled(module_name: str):
+    """Open the D9 developer gate (normally the add-on preference) for a draw."""
+    preferences = importlib.import_module(f"{module_name}.preferences")
+    gate = preferences.effect_authoring_enabled
+    preferences.effect_authoring_enabled = lambda context=None: True
+    try:
+        yield
+    finally:
+        preferences.effect_authoring_enabled = gate
+
+
 def _draw(panel_id: str, context) -> list[dict[str, object]]:
     panel = _panel(panel_id)
     poll = getattr(panel, "poll", None)
@@ -340,12 +382,26 @@ def _ensure_cube():
     return cube
 
 
+def _ensure_domain():
+    """Designate the validation domain; domain settings live only on it."""
+    scene = bpy.context.scene
+    name = "FluidSim UI Validation Domain"
+    domain = bpy.data.objects.get(name)
+    if domain is None:
+        domain = bpy.data.objects.new(name, bpy.data.meshes.new(name))
+        scene.collection.objects.link(domain)
+    scene.fluidsim.domain_object = domain
+    return domain.fluidsim_domain
+
+
 def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
     scene = bpy.context.scene
-    fs = scene.fluidsim
-    fs.surface_enabled = True
-    fs.whitewater_enabled = True
-    fs.surface_tension_enabled = True
+    ds = _ensure_domain()
+    # Representative draws cover the Advanced panels; Basic (the default) hides them.
+    scene.fluidsim.ui_mode = "ADVANCED"
+    ds.surface_enabled = True
+    ds.whitewater_enabled = True
+    ds.surface_tension_enabled = True
     cube = _ensure_cube()
     cube.fluidsim.role = "SOURCE"
     cube.fluidsim.enabled = True
@@ -371,7 +427,16 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
     effects_module.add_builtin_effect(scene, "fluidsim.velocity_damping")
     draws["FLUIDSIM_PT_custom_effects"] = _draw("FLUIDSIM_PT_custom_effects", bpy.context)
     draws["FLUIDSIM_PT_effect_packages"] = _draw("FLUIDSIM_PT_effect_packages", bpy.context)
-    draws["FLUIDSIM_PT_effect_warp_code"] = _draw("FLUIDSIM_PT_effect_warp_code", bpy.context)
+    draws["FLUIDSIM_PT_effect_engineering"] = _draw(
+        "FLUIDSIM_PT_effect_engineering", bpy.context)
+    # D9: Warp Code is a developer surface, hidden until the add-on preference
+    # opts in. Prove the default hides it, then draw it with the gate open.
+    warp_code = getattr(bpy.types, "FLUIDSIM_PT_effect_warp_code")
+    if warp_code.poll(bpy.context):
+        raise AssertionError("Warp Code panel is visible without the developer preference")
+    with _effect_authoring_enabled(module_name):
+        draws["FLUIDSIM_PT_effect_warp_code"] = _draw(
+            "FLUIDSIM_PT_effect_warp_code", bpy.context)
 
     scene_props = {
         event["property"]
@@ -380,18 +445,24 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
     }
     if not {"voxel_size", "particles_per_voxel", "max_particles"}.issubset(scene_props):
         raise AssertionError(f"Domain panel omitted primary controls: {sorted(scene_props)}")
-    effect_ops = {
-        event["operator"]
-        for event in draws["FLUIDSIM_PT_custom_effects"]
-        if event["kind"] == "operator"
-    }
+    def _operators(panel_id):
+        return {
+            event["operator"]
+            for event in draws[panel_id]
+            if event["kind"] == "operator"
+        }
+
+    artist_ops = _operators("FLUIDSIM_PT_custom_effects")
+    if not {"fluidsim.preview_start", "fluidsim.apply_changes"}.issubset(artist_ops):
+        raise AssertionError(f"Custom Effects artist actions are incomplete: {sorted(artist_ops)}")
+    effect_ops = _operators("FLUIDSIM_PT_effect_engineering")
     if not {
         "fluidsim.effect_test_draft",
         "fluidsim.effect_apply_stack",
         "fluidsim.effect_revert_draft",
         "fluidsim.effect_preview_one_frame",
     }.issubset(effect_ops):
-        raise AssertionError(f"Custom Effects workflow is incomplete: {sorted(effect_ops)}")
+        raise AssertionError(f"Effect Engineering workflow is incomplete: {sorted(effect_ops)}")
     return {
         "draw_event_counts": {key: len(value) for key, value in draws.items()},
         "source_role": cube.fluidsim.role,
@@ -433,8 +504,9 @@ def _configure_all_authored_scene_states(work_dir: Path) -> None:
         "cache_use_custom_range": True,
         "profiling_enabled": True,
     }
+    ds = _ensure_domain()
     for name, value in values.items():
-        setattr(fs, name, value)
+        setattr(ds if name in ds.bl_rna.properties else fs, name, value)
     cache_dir = work_dir / "ui-cache"
     frames_dir = cache_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -442,12 +514,13 @@ def _configure_all_authored_scene_states(work_dir: Path) -> None:
     fs.cache_path = str(cache_dir)
 
 
-def _assert_all_authored_draws(work_dir: Path) -> dict[str, int]:
+def _assert_all_authored_draws(module_name: str, work_dir: Path) -> dict[str, int]:
     _configure_all_authored_scene_states(work_dir)
     result: dict[str, int] = {}
-    for panel_id in ALL_AUTHORED_SCENE_PANELS:
-        events = _draw(panel_id, bpy.context)
-        result[panel_id] = len(events)
+    with _effect_authoring_enabled(module_name):
+        for panel_id in ALL_AUTHORED_SCENE_PANELS:
+            events = _draw(panel_id, bpy.context)
+            result[panel_id] = len(events)
     return result
 
 
@@ -698,7 +771,7 @@ def _assert_warp_root(expected_root: Path) -> dict[str, object]:
     expected = expected_root.resolve()
     if actual != expected and expected not in actual.parents:
         raise AssertionError(f"Warp imported from {actual}, expected beneath {expected}")
-    if str(getattr(wp, "__version__", "")) != "1.16.0":
+    if str(getattr(wp, "__version__", "")) != _certified("CERTIFIED_WARP_VERSION"):
         raise AssertionError(f"unexpected Warp version {getattr(wp, '__version__', None)!r}")
     wp.init()
     return {
@@ -719,14 +792,18 @@ def main() -> None:
     }
     extension = None
     try:
-        if bpy.app.version[:3] != (5, 1, 0):
-            raise AssertionError(f"expected Blender 5.1.0, running {bpy.app.version_string}")
+        expected_blender = tuple(_certified("CERTIFIED_BLENDER_VERSION"))
+        if bpy.app.version[:3] != expected_blender:
+            raise AssertionError(
+                f"expected Blender {'.'.join(map(str, expected_blender))}, "
+                f"running {bpy.app.version_string}")
         runtime = _assert_warp_root(options.expected_warp_root)
         extension = importlib.import_module(options.module)
         extension.register()
         report["panel_metadata"] = _assert_metadata()
         report["draws"] = _assert_scene_and_object_draws(options.module)
-        report["all_authored_draws"] = _assert_all_authored_draws(options.work_dir)
+        report["all_authored_draws"] = _assert_all_authored_draws(
+            options.module, options.work_dir)
         report["viewport_live_tuning"] = _assert_view3d_live_tuning(options.module)
         report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()

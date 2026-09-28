@@ -1,5 +1,101 @@
 # Changelog
 
+## 2.0.0 — Blender 5.2 LTS, bundled Warp 1.17 and the end of 1.0.x compatibility
+
+### Upgrade notes
+
+- **Open 1.0.x files in 1.1 first.** 2.0 opens files saved by 1.1.0 or later.
+  A file saved by 1.0.x is flagged when it opens (a load message and an alert
+  on the Setup and Physics tabs): its domain settings were not carried over,
+  and a scene whose Custom Warp Snippets 1.1 never converted to Custom Effects
+  will not start a simulation. The stored data is kept, so opening and
+  re-saving the file in 1.1.0 recovers it.
+- **1.0.x caches must be baked again.** A cache written by 1.0.x
+  (`fluidsim_*.npz` frames with `fluidsim_sequence.json`) is recognized and
+  refused rather than played; free it and bake again.
+- **ST-FLIP is Experimental.** Its controls are labelled Experimental, and
+  **Variable Projection** is now off by default. A saved ST-FLIP scene that
+  never changed Variable Projection runs with it off; turn it back on in
+  **Spatiotemporal Processing** to keep the 1.x result.
+- **Scripts that write a setting to the wrong group now fail.** Writing a
+  domain setting to `scene.fluidsim` (or a scene setting to
+  `obj.fluidsim_domain`) used to create a plain Python attribute that the
+  solver never read. It now raises `AttributeError` naming the right group.
+
+See `docs/migrating_to_2_0.md` for the full upgrade path.
+
+### Platform
+
+- Blender 5.2 LTS only; Blender 5.1 is no longer supported.
+- NVIDIA Warp 1.17.0 is bundled as checksum-locked wheels and installed with
+  the extension. An external Warp install is neither used nor needed.
+- Every gate lane (pytest, CUDA regressions, Blender background acceptance,
+  release validators, the demo bake and the GUI production gate) runs against
+  Blender 5.2 and Warp 1.17.
+### Fixed
+
+- A production bake with an animated source or collider (such as the
+  paddle_stir demo) played back frame 1 and then refused every later frame as
+  baked from different scene settings, and resuming it depended on the
+  playhead. Playback now compares only the frame's settings signature, and
+  bake and resume signatures are pinned to the bake start frame.
+- NaN or infinite face weights no longer reach the pressure solve.
+- Whitewater collision normals near the edge of a sparse collider now use the
+  same gradient helper as the liquid instead of an out-of-range fallback.
+- The ST-FLIP Jacobi solve reports its real residual instead of a constant.
+- The particles-per-voxel ceiling (64) is one constant instead of six copies.
+- **Apply capacity suggestion** can be undone with Ctrl+Z.
+- The capacity dialog and its status lines no longer show garbled characters.
+- Live Tuning knobs bind to the group that declares each setting, so changes
+  made there reach the solver.
+- One default per setting: RNA defaults, solver defaults and fallbacks agree,
+  and length and speed settings carry Blender units.
+- The height-field *Infinite* back mode, which the solver could not run, is
+  removed. A file that saved it reports an actionable error.
+- GPU self-validations release their solvers.
+- An evaluated mesh used for point sourcing is released even if reading its
+  vertices fails.
+
+### Changed
+
+- A failed CUDA-graph capture in the pressure or viscosity solve is shown as
+  an error (`stat_native_solver_message`) instead of silently running slower.
+- Examples 01–04 were regenerated with 1.1 so 2.0 opens them without flagging
+  them as pre-1.1 files.
+- Demo bakes are bitwise reproducible on the same GPU, driver and Warp build.
+  The whitewater collision fix changes the demo reference hash.
+
+### Known limitations
+
+- Only Windows 11 x64 on a single GPU model (RTX 4080 SUPER) has a recorded
+  GPU gate run. Linux x64 is packaged from the same source but not certified:
+  on Ubuntu 24.04 under WSL2 it installs cleanly and passes every headless
+  gate lane and 52 of 53 GUI checks. The viewport screenshot reads back black
+  under WSLg, which stopped the gate before its last GUI lane. On WSL2, an NVIDIA Linux driver package installed alongside the
+  WSL driver can hide the GPU from Warp; see the user guide.
+- A cache frame records the simulation settings, not source or collider
+  animation. Changing an animation after a bake does not invalidate the
+  cache; bake again yourself.
+- If an older Warp in Blender's user site-packages is loaded ahead of the
+  bundled one, FluidSim refuses to run and names the Warp version it found.
+  Remove the old Warp from the user site-packages.
+- Speed matches 1.1.0. Against 1.0.x, scenes dominated by particle-to-grid
+  transfer run about 4% slower (paddle_stir demo), which is the cost of the
+  deterministic transfer 1.1.0 introduced. The other demos run at the same
+  speed or faster.
+- The reported slowdown after repeated resets with viscosity and surface
+  tension on has not been reproduced outside the viewport.
+
+### Removed
+
+- The retired 1.x snippet runtime and its library: example and saved snippet
+  presets, the snippet validator and auto-fix, shortcuts and the hidden
+  library/editor settings.
+- The Custom Warp Snippet settings, the `fluidsim.snippet_apply` operator and
+  the snippet-to-Custom-Effects conversion. 1.1 already converted saved
+  snippets when it opened a file.
+- The 1.0.x settings migration and cache format 1 playback (see Upgrade notes).
+
 ## 1.1.0 — per-object domains, a Basic/Advanced interface and deterministic bakes
 
 This is the bridge release to 2.0. Open and re-save your 1.0.x files in 1.1.0:

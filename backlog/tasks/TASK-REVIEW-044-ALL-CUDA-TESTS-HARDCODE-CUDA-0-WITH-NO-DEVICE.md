@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -25,6 +25,34 @@ Tests cannot run on multi-GPU systems targeting a specific device, and cannot ad
 - [ ] Fix: Use a shared fixture or environment variable (e.g., FLUIDSIM_TEST_DEVICE) that defaults to cuda:0 but can be overridden. Parameterize the device in tests that use it.
 - [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
 - [ ] No existing test suite regresses as a result of the fix.
+
+## Progress
+
+Partially addressed in `16e5090` on `claude/2.0-phase1-testinfra`: pytest
+tests now take the shared `cuda_device` fixture, which honours
+`FLUIDSIM_TEST_DEVICE` (default `cuda:0`), including
+`test_compiled_source_operations.py` and `_subset_runner.py`; guarded by
+`tests/test_cuda_device_fixture.py`.
+
+Still open: the Blender/headless scripts listed above (`smoke_*`,
+`_phase2_source_acceptance_common.py`, `blender_*_acceptance.py`,
+`blender_memory_safety_gate.py`, `headless_*`) still hardcode or default to
+`cuda:0`; they need Blender to verify. `test_device_preference_routing.py`
+uses `cuda:0` as routing data, which is intended.
+
+## Resolution
+
+Completed on `claude/2.0-phase1-platform` (2.0 Phase 2). `tests/_test_device.py`
+(pytest-free) holds `script_device()`: `FLUIDSIM_TEST_DEVICE` when set, else
+`cuda:0`. The pytest `cuda_device` fixture and every Blender/headless script
+listed above now use it (`smoke_core.py`, `_phase2_source_acceptance_common.py`,
+the `blender_*` acceptance and gate scripts, `headless_*` defaults).
+`test_device_preference_routing.py` keeps `cuda:0` as routing data, as intended.
+
+Regression gate: `tests/test_cuda_device_fixture.py` fails if any non-pytest
+script under `tests/` contains a `"cuda:0"` literal (`test_*` modules are
+exempt: there it is fake routing data; pytest device choice goes through the
+`cuda_device` fixture).
 
 ## Evidence
 

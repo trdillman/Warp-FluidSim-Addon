@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,10 @@ Blender's UI will not display velocity unit suffixes for these properties. Minor
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/properties.py:806` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Add subtype="VELOCITY" to max_speed and subtype="VELOCITY" to height_velocity.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/properties.py:806` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Add subtype="VELOCITY" to max_speed and subtype="VELOCITY" to height_velocity.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
@@ -35,3 +35,11 @@ Blender's UI will not display velocity unit suffixes for these properties. Minor
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed in `427a42f` on `claude/2.0-phase1-platform` (2.0 Phase 2, settings-drift pass).
+
+`height_velocity` uses `subtype="VELOCITY"`. A scalar `FloatProperty` has no VELOCITY subtype, so `max_speed` uses `unit="VELOCITY"`, which gives the same display. Blender 5.2 registration was verified by the background acceptance run.
+
+Regression guard: `tests/test_settings_default_agreement.py`.

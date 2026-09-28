@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import bpy
 
+from .pending_settings import setting_owner
 from .scene_bridge import active_domain_settings
 from .ui_common import FluidSimView3DPanel, draw_property
 
@@ -40,7 +41,11 @@ class FLUIDSIM_VIEW3D_PT_live_tuning(FluidSimView3DPanel, bpy.types.Panel):
         if owner is not None:
             column = layout.column(align=True)
             for name in LIVE_TUNING_PROPS:
-                draw_property(column, owner, name)
+                # Bind each knob to the group that declares it: flip_ratio is
+                # domain physics, particle_display_fraction is scene display.
+                # draw_property skips a name the group lacks, so drawing both
+                # from the domain silently dropped the display knob.
+                draw_property(column, setting_owner(scene, name), name)
         layout.separator()
         layout.operator(
             "fluidsim.open_scene_properties",

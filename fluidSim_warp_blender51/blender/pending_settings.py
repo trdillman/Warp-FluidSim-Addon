@@ -160,9 +160,7 @@ _REINITIALIZE_REGISTRY_FIELDS = frozenset({
     "quality",
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
-    "snippets", "active_snippet", "snippet_library_selection",
-    "snippet_editor_lines", "shortcut_field", "shortcut_constant_name",
-    "shortcut_constant_value", "report_path", "benchmark_frames",
+    "report_path", "benchmark_frames",
     "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",
@@ -173,7 +171,7 @@ _ADAPTER_FIELDS = frozenset({
     "live", "cache_playback_enabled", "max_frame_catchup",
 })
 _PRESENTATION_FIELDS = frozenset({
-    "ui_mode", "export_attributes", "schema_version",
+    "ui_mode", "export_attributes",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
@@ -189,7 +187,8 @@ _PRESENTATION_FIELDS = frozenset({
     "stat_surface_tension_max_acceleration",
     "stat_surface_tension_temporary_bytes",
     "stat_surface_tension_submission_ms", "stat_surface_tension_status",
-    "stat_surface_tension_message", "bake_status", "bake_progress",
+    "stat_surface_tension_message", "stat_native_solver_message",
+    "bake_status", "bake_progress",
     "bake_message",
 })
 
@@ -209,13 +208,12 @@ SETTING_TRANSITION_REGISTRY = {
     name: tier for tier, names in _TIER_FIELDS.items() for name in names
 }
 
-# Tiers whose fields must LAND on scene.fluidsim to take effect, even on a
-# migrated scene: display/output, cache/bake authoring, UI-only adapter and
-# presentation state, and SYNC (no direct field). Their consumers -- the output
-# publication and cache-bake paths, the UI itself -- read scene.fluidsim
-# unconditionally. Every other tier is solver-relevant: build_settings() and
-# friends read the active domain settings, so a value only takes effect there
-# post-migration.
+# Tiers whose fields must LAND on scene.fluidsim to take effect: display/output,
+# cache/bake authoring, UI-only adapter and presentation state, and SYNC (no
+# direct field). Their consumers -- the output publication and cache-bake
+# paths, the UI itself -- read scene.fluidsim unconditionally. Every other tier
+# is solver-relevant: build_settings() and friends read the active domain
+# settings, so a value only takes effect there.
 _SCENE_OWNED_TIERS = frozenset({
     SettingTier.OUTPUT, SettingTier.AUTHORED_NEXT_RUN,
     SettingTier.ADAPTER, SettingTier.PRESENTATION, SettingTier.SYNC,
@@ -226,11 +224,10 @@ _SCENE_OWNED_TIERS = frozenset({
 # these two would be silently dropped without the override:
 #   quality        -- REINITIALIZE, but solver_settings.scene_quality_fidelity()
 #                     deliberately reads scene.fluidsim.quality (see its
-#                     docstring) so the read owner matches the UI write owner on
-#                     migrated and pre-migration scenes alike.
-#   domain_object  -- REINITIALIZE, but migration._MIGRATION_SKIP never copies it
-#                     onto the domain group, so obj.fluidsim_domain.domain_object
-#                     is permanently unset. scene_bridge.active_domain_settings()
+#                     docstring) so the read owner matches the UI write owner.
+#   domain_object  -- REINITIALIZE, but it is declared only on the scene group:
+#                     it names which object is the domain.
+#                     scene_bridge.active_domain_settings()
 #                     itself, solver_settings.domain_bounds/domain_transform, and
 #                     the rendering and session operators all read it from
 #                     scene.fluidsim.

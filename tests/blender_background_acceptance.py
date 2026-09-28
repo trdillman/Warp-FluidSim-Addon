@@ -18,6 +18,8 @@ import bpy
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _test_device import script_device  # noqa: E402
 
 from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
 
@@ -56,11 +58,6 @@ def main():
           hasattr(bpy.data.objects.new("probe", None), "fluidsim"))
 
     fs = scene.fluidsim
-    check(
-        "snippet library fresh-scene default is valid",
-        fs.snippet_library_selection == "NONE",
-        repr(fs.snippet_library_selection),
-    )
     fs.liquid_view_mode = "PARTICLES"
     check("liquid view mode sets particles",
           (fs.show_surface, fs.show_particles) == (False, True),
@@ -284,7 +281,7 @@ def main():
     check("v2 effect added", len(effect_stack.items) == 1
           and effect_stack.items[0].effect_id == "fluidsim.vortex_force")
 
-    result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+    result = bpy.ops.fluidsim.effect_apply_stack(device=script_device())
     check("v2 effect compile and apply", result == {"FINISHED"},
           effect_stack.blocking_reason)
     result = bpy.ops.fluidsim.step(frames=1)
@@ -301,7 +298,7 @@ def main():
     kernel_text.clear()
     kernel_text.write("import os\nx = os.getcwd()\n")
     try:
-        result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+        result = bpy.ops.fluidsim.effect_apply_stack(device=script_device())
         rejection = effect_stack.blocking_reason
     except RuntimeError as exc:
         result = {"CANCELLED"}
@@ -315,7 +312,7 @@ def main():
 
     # Layering is owned by the ordered v2 stack and must hot-swap atomically.
     add_builtin_effect(scene, "fluidsim.curl_turbulence")
-    result = bpy.ops.fluidsim.effect_apply_stack(device="cuda:0")
+    result = bpy.ops.fluidsim.effect_apply_stack(device=script_device())
     check("layered v2 effects apply", result == {"FINISHED"},
           effect_stack.blocking_reason)
     result = bpy.ops.fluidsim.step(frames=1)

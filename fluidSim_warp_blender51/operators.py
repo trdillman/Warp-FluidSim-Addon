@@ -42,7 +42,6 @@ from .operator_domains.diagnostics import (
     FLUIDSIM_OT_run_benchmark,
     FLUIDSIM_OT_write_report,
 )
-from .operator_domains.snippets import FLUIDSIM_OT_snippet_apply
 from .operator_domains.export import (
     FLUIDSIM_OT_export_frame,
     FLUIDSIM_OT_export_cache_sequence,
@@ -91,7 +90,6 @@ CLASSES = (
     FLUIDSIM_OT_cache_playback_start,
     FLUIDSIM_OT_cache_playback_stop,
     FLUIDSIM_OT_setup_scene,
-    FLUIDSIM_OT_snippet_apply,
     FLUIDSIM_OT_apply_product_preset,
     FLUIDSIM_OT_save_product_preset,
     FLUIDSIM_OT_bake_start,

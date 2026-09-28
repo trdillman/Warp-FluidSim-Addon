@@ -9,6 +9,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 
 from tools.repo_addon_loader import enable_repo_addon
 
@@ -54,7 +56,7 @@ def main():
         whitewater_enabled=False,
         species_enabled=True,
         species_mixing_rate=20.0,
-        device="cuda:0",
+        device=script_device(),
     )
     solver = FluidSolver(settings)
     try:

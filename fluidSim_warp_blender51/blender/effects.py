@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
 import bpy
@@ -22,12 +22,6 @@ from bpy.props import (
     PointerProperty,
     StringProperty,
 )
-
-try:
-    from bpy.app.handlers import persistent
-except (ImportError, ModuleNotFoundError):
-    def persistent(function):
-        return function
 
 from ..sim.effects.builtins import builtin_effect_definitions
 from ..sim.effects.compiler import CandidateBuildResult, build_candidate_effects
@@ -201,8 +195,6 @@ class FLUIDSIM_PG_effect_stack(bpy.types.PropertyGroup):
     applied_snapshot_json: StringProperty(default="[]")
     status: EnumProperty(items=_STATUS_ITEMS, default="DRAFT")
     blocking_reason: StringProperty()
-    migration_report: StringProperty()
-    migration_complete: BoolProperty(default=False)
     custom_code_policy: EnumProperty(items=_POLICY_ITEMS, default="BUILTINS_ONLY")
     artist_mode: BoolProperty(default=True)
     expert_acknowledged: BoolProperty(default=False)
@@ -790,13 +782,10 @@ def build_effect_stack_for_admission(scene) -> tuple[EffectInstanceV2, ...]:
     Keep disabled instances so successful admission can publish full evidence.
     """
 
-    legacy = tuple(getattr(getattr(scene, "fluidsim", None), "snippets", ()))
-    stack = scene.fluidsim_effects
-    if legacy and not stack.migration_complete:
-        raise RuntimeError(
-            "Legacy Custom Warp Snippets must be copied to disabled, untrusted "
-            "Custom Effects before admission"
-        )
+    from .file_compat import UNMIGRATED_SNIPPETS_MESSAGE, has_unmigrated_snippets
+
+    if has_unmigrated_snippets(scene):
+        raise RuntimeError(UNMIGRATED_SNIPPETS_MESSAGE)
     instances = scene_effect_instances(scene)
     store = trust_store_for_scene(scene)
     for instance in effective_stack_instances(instances):
@@ -833,91 +822,6 @@ def untrust_effect(scene, index: int) -> None:
     digest = content_trust_digest(instance.definition)
     trust_store_for_scene(scene).revoke(digest)
     refresh_stack_state(scene)
-
-
-@dataclass(frozen=True)
-class MigrationReport:
-    migrated: int
-    warnings: tuple[str, ...]
-
-
-def migrate_legacy_snippets(scene) -> MigrationReport:
-    """Migrate legacy snippets without rewriting source or trusting content.
-
-    Legacy VOXEL_TILE entries are explicitly reported and mapped by the v1
-    compatibility converter. Every unknown scene-code effect is created with
-    enabled=False and UNTRUSTED_IMPORTED until the exact digest is reviewed.
-    """
-
-    stack = scene.fluidsim_effects
-    if stack.migration_complete:
-        return MigrationReport(0, ())
-    legacy = tuple(getattr(getattr(scene, "fluidsim", None), "snippets", ()))
-    if not legacy:
-        stack.migration_complete = True
-        return MigrationReport(0, ())
-    from .snippets import snippet_from_pg
-    from ..sim.custom import legacy_snippet_to_effect
-
-    existing_ids = {str(item.instance_id) for item in stack.items}
-    warnings = []
-    migrated = 0
-    for index, legacy_pg in enumerate(legacy):
-        instance_id = f"legacy-scene-{index}"
-        if instance_id in existing_ids:
-            continue
-        legacy_instance, item_warnings = legacy_snippet_to_effect(
-            snippet_from_pg(legacy_pg), instance_id=instance_id
-        )
-        migrated_instance = replace(legacy_instance, enabled=False)
-        pg = add_instance_to_scene(scene, migrated_instance, select=False)
-        pg.trust_state = TrustState.UNTRUSTED_IMPORTED.value
-        pg.status = "UNTRUSTED"
-        warnings.extend(item_warnings)
-        migrated += 1
-    stack.migration_complete = True
-    stack.migration_report = (
-        f"Copied {migrated} legacy snippet(s); originals preserved for recovery, "
-        "and v2 copies disabled until reviewed and trusted. "
-        + " ".join(warnings)
-    )
-    refresh_stack_state(scene)
-    return MigrationReport(migrated, tuple(warnings))
-
-
-def _migrate_loaded_scenes() -> None:
-    for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
-        if not hasattr(scene, "fluidsim") or not hasattr(scene, "fluidsim_effects"):
-            continue
-        try:
-            migrate_legacy_snippets(scene)
-        except Exception as exc:  # noqa: BLE001
-            scene.fluidsim_effects.migration_report = (
-                f"Legacy snippet migration failed closed: {exc}"
-            )
-
-
-@persistent
-def _on_load_post(_filepath):
-    """Convert loaded legacy code to disabled, untrusted v2 effects."""
-    _migrate_loaded_scenes()
-
-
-def register_handlers() -> None:
-    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
-    load_post = getattr(handlers, "load_post", None)
-    if load_post is not None and _on_load_post not in load_post:
-        load_post.append(_on_load_post)
-    _migrate_loaded_scenes()
-
-
-def unregister_handlers() -> None:
-    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
-    load_post = getattr(handlers, "load_post", None)
-    if load_post is None:
-        return
-    while _on_load_post in load_post:
-        load_post.remove(_on_load_post)
 
 
 def register():

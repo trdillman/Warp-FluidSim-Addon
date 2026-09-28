@@ -324,6 +324,7 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
         operators.FLUIDSIM_OT_setup_scene,
         operators.FLUIDSIM_OT_tag_object,
         operators.FLUIDSIM_OT_clear_error,
+        operators.FLUIDSIM_OT_apply_capacity_suggestion,  # REVIEW-011
     }
     not_undoable = {
         operators.FLUIDSIM_OT_initialize,
@@ -363,36 +364,6 @@ def test_liquid_view_hidden_state_round_trips_both_visibility_toggles(monkeypatc
     properties._apply_liquid_view_mode(state, None)
     assert (state.show_surface, state.show_particles) == (False, False)
     assert len(refreshes) == 2
-
-
-def test_legacy_snippet_rna_persists_permission_and_type_defaults(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    properties = _reload_module("fluidSim_warp_blender51.properties")
-
-    argument_schema = properties.FLUIDSIM_PG_snippet_argument.__annotations__
-    snippet_schema = properties.FLUIDSIM_PG_snippet.__annotations__
-    permission = argument_schema["field_permission"]
-    snippet_type = snippet_schema["snippet_type"]
-
-    assert "CustomKernelFieldPermission" in permission
-    assert "READ_WRITE" in permission
-    assert "CustomKernelType" in snippet_type
-    assert "KERNEL" in snippet_type
-
-
-def test_legacy_apply_forward_never_mutates_preserved_snippets(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    operators = _reload_module("fluidSim_warp_blender51.operators")
-    legacy = [SimpleNamespace(kernel_name="preserved")]
-    state = SimpleNamespace(snippets=legacy, active_snippet=0)
-    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=state))
-    operators.bpy.ops = SimpleNamespace(
-        fluidsim=SimpleNamespace(effect_apply_stack=lambda: {"FINISHED"})
-    )
-    before = (tuple(state.snippets), state.active_snippet)
-
-    assert operators.FLUIDSIM_OT_snippet_apply().execute(context) == {"FINISHED"}
-    assert (tuple(state.snippets), state.active_snippet) == before
 
 
 class _PermissiveSettings:
@@ -1288,7 +1259,7 @@ def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
                 is_cuda=True,
             )
         ],
-        __version__="1.16.0",
+        __version__="1.17.0",
         __file__="warp/__init__.py",
     )
     monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
@@ -1305,7 +1276,7 @@ def test_runtime_warp_probe_is_cached_until_explicit_refresh(monkeypatch):
     assert calls == ["init", "init"]
 
 
-def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
+def test_runtime_warp_probe_accepts_certified_bundled_runtime(monkeypatch):
     _install_bpy_stub(monkeypatch)
     runtime = _reload_module("fluidSim_warp_blender51.runtime.warp_runtime")
     fake_warp = SimpleNamespace(
@@ -1318,7 +1289,7 @@ def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
                 is_cuda=True,
             )
         ],
-        __version__="1.16.0",
+        __version__="1.17.0",
         __file__="warp/__init__.py",
     )
     monkeypatch.setattr(runtime, "_import_warp", lambda: fake_warp)
@@ -1327,12 +1298,12 @@ def test_runtime_warp_probe_accepts_certified_external_runtime(monkeypatch):
     probe = runtime.probe_runtime()
 
     assert probe.available
-    assert probe.warp_version == "1.16.0"
+    assert probe.warp_version == "1.17.0"
     assert "Detected" in probe.message
 
 
-@pytest.mark.parametrize("version", ["1.12.1", "1.16.1", "1.17.0", "unknown"])
-def test_runtime_warp_probe_rejects_noncertified_versions(
+@pytest.mark.parametrize("version", ["1.12.1", "1.16.1", "2.0.0", "unknown"])
+def test_runtime_warp_probe_rejects_unsupported_versions(
     monkeypatch,
     version,
 ):
@@ -1357,7 +1328,7 @@ def test_runtime_warp_probe_rejects_noncertified_versions(
     probe = runtime.probe_runtime()
 
     assert not probe.available
-    assert "requires external Warp 1.16.0" in probe.message
+    assert "requires NVIDIA Warp 1.17.0 or newer 1.x" in probe.message
 
 
 def test_addon_unregister_releases_runtime_handlers(monkeypatch):
@@ -2018,15 +1989,18 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
 
     assert max(depth(pid) for pid in parents) <= 3
 
-    # The shelf edits the solver's owner and offers the jump-back operator.
+    # Each knob binds to the group that declares it, and the shelf offers the
+    # jump-back operator. The doubles carry only their own group's fields: a
+    # domain double holding particle_display_fraction once hid that the real
+    # shelf drew it from the domain group and silently dropped it.
     domain_settings = SimpleNamespace(
         domain_object=None,
         voxel_size=0.037,
         particles_per_voxel=12,
         flip_ratio=0.97,
-        particle_display_fraction=0.5,
     )
-    scene_settings = SimpleNamespace(domain_object=None, schema_version=1)
+    scene_settings = SimpleNamespace(
+        domain_object=None, schema_version=1, particle_display_fraction=0.5)
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
@@ -2045,10 +2019,8 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
         "flip_ratio",
         "particle_display_fraction",
     }, "Live Tuning must exclude structural quality and sampling settings"
-    for name, call in drawn.items():
-        assert call["data"] is domain_settings, (
-            f"{name} must bind to active_domain_settings (the owner the solver reads)"
-        )
+    assert drawn["flip_ratio"]["data"] is domain_settings
+    assert drawn["particle_display_fraction"]["data"] is scene_settings
     assert any(
         op["id"] == "fluidsim.open_scene_properties"
         for op in panel.layout.operators
@@ -2235,21 +2207,15 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     """Executing the operator creates a domain object and makes it the active one.
 
     Multiple domain objects may coexist; the designated ``fluidsim.domain_object``
-    is the active one. Adding a domain therefore creates a fresh object, migrates
-    the scene settings onto it, and selects/activates it.
+    is the active one. Adding a domain therefore creates a fresh object and
+    selects/activates it.
     """
     _install_bpy_stub(monkeypatch)
     menus = _reload_module("fluidSim_warp_blender51.blender.menus")
 
     created = SimpleNamespace(name="FluidSim Domain", selected=False)
     created.select_set = lambda value: setattr(created, "selected", value)
-    monkeypatch.setattr(menus.migration, "create_domain_object", lambda scene: created)
-    migrated = []
-    monkeypatch.setattr(
-        menus.migration,
-        "migrate_domain_settings_schema",
-        lambda scene, obj: migrated.append(obj) or True,
-    )
+    monkeypatch.setattr(menus, "create_domain_object", lambda scene: created)
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
     active_holder = SimpleNamespace(active=None)
@@ -2260,7 +2226,6 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
 
     result = menus.FLUIDSIM_OT_add_domain().execute(context)
     assert result == {"FINISHED"}
-    assert migrated == [created], "the new domain's settings must be migrated onto it"
     assert created.selected is True
     assert active_holder.active is created, "the new domain becomes the active object"
 
@@ -3018,11 +2983,7 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
 def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     """§7 tooltip gate: every user-facing scene/domain settings property and
     the object ``role`` selector must define a non-empty ``description=`` so
-    Blender renders a hover tooltip.  ``schema_version`` (internal version
-    stamp), ``active_snippet`` (internal index), and ``snippets`` (the
-    CollectionProperty backing store drawn via a template list, not as a
-    tooltip'd scalar) are internal bookkeeping, never surfaced as a field, and
-    are exempt.
+    Blender renders a hover tooltip.  No field is exempt.
 
     properties.py uses ``from __future__ import annotations``, so each entry in
     ``__annotations__`` is the prop-call *source string*; parse it and require a
@@ -3033,7 +2994,7 @@ def test_settings_and_role_fields_declare_descriptions(monkeypatch):
     _install_bpy_stub(monkeypatch)
     properties = _reload_module("fluidSim_warp_blender51.properties")
 
-    exempt = {"schema_version", "active_snippet", "snippets"}
+    exempt = set()
 
     def _literal_description(annotation_src):
         node = ast.parse(annotation_src, mode="eval").body

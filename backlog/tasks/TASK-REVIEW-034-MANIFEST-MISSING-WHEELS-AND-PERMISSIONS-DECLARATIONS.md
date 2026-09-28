@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,10 +21,28 @@ Users installing from the extensions platform get no dependency resolution for W
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/blender_manifest.toml:18` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Add a [wheels] section bundling or referencing the Warp wheel for target platforms, or document the external dependency in the manifest. Add appropriate permissions declarations if the extensions platform supports them for filesystem/subprocess access.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/blender_manifest.toml:18` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Add a [wheels] section bundling or referencing the Warp wheel for target platforms, or document the external dependency in the manifest. Add appropriate permissions declarations if the extensions platform supports them for filesystem/subprocess access.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
+
+## Resolution
+
+Fixed in `13929b3` on `claude/2.0-phase1-platform` (2.0 decision D3).
+
+- `blender_manifest.toml` now lists the two checksum-locked NVIDIA Warp 1.17.0
+  wheels (Windows x64, Linux x64). Blender installs the platform wheel into its
+  extension site-packages, so artists get Warp with the extension.
+- No `[permissions]` entry is needed: the release runtime makes no network
+  request or subprocess call, and file access is limited to user-chosen cache
+  paths. Runtime discovery through `warp_discovery.py` remains a developer-only
+  override behind `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`.
+
+Regression gates: `tests/test_manifest_wheels.py` (manifest == lock, lock ==
+version.py identity, one wheel per platform) and `tools/release/build_extension.py`
+(`verify_source_tree` + `_validate_bundled_wheel`: each split package must carry
+exactly its platform wheel with the locked SHA-256), covered by
+`tests/test_build_extension.py`.
 
 ## Evidence
 

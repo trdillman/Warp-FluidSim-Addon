@@ -73,14 +73,6 @@ def k_reference_full_cube_splat(
                 wp.atomic_min(sdf, flat, d)
 
 
-@pytest.fixture(scope="module")
-def cuda_device():
-    wp.init()
-    if not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
-    return "cuda:0"
-
-
 def _grid(device, voxel_size=0.05):
     grid = SparseGrid(
         origin=(0.0, 0.0, 0.0),

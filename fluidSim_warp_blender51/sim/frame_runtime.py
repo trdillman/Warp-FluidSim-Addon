@@ -171,6 +171,9 @@ class FrameStats:
     viscosity_converged: bool = True
     viscosity_iterations: int = 0
     viscosity_residual: float = 0.0
+    #: Set once a CUDA-graph PCG path has fallen back to the slower
+    #: host-driven loop for the rest of the run (REVIEW-016).
+    native_solver_message: str = ""
     timers: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
@@ -219,6 +222,7 @@ class FrameStats:
             "viscosityConverged": self.viscosity_converged,
             "viscosityIterations": self.viscosity_iterations,
             "viscosityResidual": self.viscosity_residual,
+            "nativeSolverMessage": self.native_solver_message,
             "voxelsPerSecond": vps,
             "voxelsPerFrame": self.active_voxels,
             "particlesPerSecond": pps,

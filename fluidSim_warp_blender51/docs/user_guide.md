@@ -1,7 +1,7 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
-5.1.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
+FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
   and look development. It is responsive but not an authoritative production
@@ -12,24 +12,40 @@ FluidSim Warp 1.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 ## Validated support matrix
 
-| Area | Validated target |
+| Area | Target |
 |---|---|
-| FluidSim | 1.1.0 |
-| Blender | Blender 5.1.0 or newer |
+| FluidSim | 2.0.0 |
+| Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
+| GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | External NVIDIA Warp 1.16.0+cu12; FluidSim does not package, download, or install Warp |
-| Cache compatibility | Cache v2 write/playback/resume; cache v1 playback only |
+| Warp dependency | Bundled NVIDIA Warp 1.17.0 (CUDA 12 build), installed by Blender with the extension |
+| Cache compatibility | Cache v2 write/playback/resume; Cache v1 (1.0.x) is refused: bake again |
 
-Provision NVIDIA Warp `1.16.0+cu12` so Blender's Python environment can
-import `warp`. The current extension never searches arbitrary Python
-installations, invokes `pip`, downloads dependencies, or bundles Blender/Warp
-runtimes.
+Install the extension ZIP for your platform; there is nothing else to install.
+Blender installs the bundled, checksum-locked Warp wheel into its own
+extension site-packages. FluidSim never invokes `pip` or downloads anything at
+run time. It needs an NVIDIA driver that supports CUDA 12 (R525 or newer).
 
-The extension is packaged for both Windows x64 and Linux x64. The attached
-runtime evidence was executed on Linux because the supplied Blender and Warp
-validation packages are Linux builds; validation-host availability must never
-remove Windows from the product manifest or release artifacts.
+If a newer 1.x Warp is ever loaded instead (for example through a developer
+override), FluidSim still runs but marks the runtime status as
+"untested Warp version"; Warp older than 1.17.0 or a 2.x Warp is refused.
+
+The extension is packaged for both Windows x64 and Linux x64. Only Windows has
+a full recorded GPU gate run. On Linux (Ubuntu 24.04 under WSL2) the package
+installs cleanly and passes every headless gate lane and 52 of 53 GUI checks.
+Blender's viewport screenshot reads back black under WSLg, which stopped the
+gate before its last GUI lane, so treat Linux as uncertified.
+
+On WSL2, CUDA must come from the Windows driver (`/usr/lib/wsl/lib`). If an
+NVIDIA Linux driver package (for example `libnvidia-compute-*`, pulled in by
+Ubuntu's `nvidia-cuda-toolkit`) is also installed, Warp can load it instead and
+report no CUDA device. Put `/usr/lib/wsl/lib` first on `LD_LIBRARY_PATH` or
+remove that package. If Blender's window crashes under WSLg, start it with
+`WAYLAND_DISPLAY=` and `GALLIUM_DRIVER=d3d12` set.
+
+Upgrading from 1.x? Read the [1.x → 2.0 migration guide](migrating_to_2_0.md)
+first: 2.0 opens only files saved by 1.1.0 or later.
 
 ---
 
@@ -342,8 +358,7 @@ values assigned monotonically at committed emission transactions.
 New cache frames carry an ordered attribute-inventory schema and transfer-method
 identifier. Declared-but-missing, misaligned, wrong-type, non-finite, duplicate
 UID, or unsupported data fails closed. Phase-4 frames require one aligned int32
-whitewater type value per point. Legacy cache-v1 and Phase-3 cache-v2 frames
-remain readable, but whitewater with no recorded type is published as legacy
+whitewater type value per point. Phase-3 cache-v2 frames remain readable, but whitewater with no recorded type is published as legacy
 unclassified (`-1`) only on the combined output; FluidSim does not invent a
 physical classification.
 
@@ -586,9 +601,9 @@ time. Transient bins and scratch fields are rebuilt after restore.
 - **Rename** accepts only a leaf directory name.
 - **Open Folder** uses path APIs rather than shell-string interpolation.
 
-Cache v1 (`fluidsim_sequence.json` plus legacy NPZ frames) remains readable for
-playback but has no checkpoint contract and cannot resume. Rebake as v2 to gain
-transactional resume. **Export Current Frame** continues to write OBJ/PLY output.
+A cache written by FluidSim 1.0.x (`fluidsim_sequence.json` plus NPZ frames)
+is refused rather than played: free it and bake again. **Export Current Frame**
+continues to write OBJ/PLY output.
 
 Older cache-v2 frames remain playable under their recorded attribute/type
 schema. Production resume is deliberately stricter than playback: a Phase-4
@@ -683,15 +698,16 @@ Frame cadence builds once after simulation substeps; Manual builds lazily when
 the mesh is requested. Keep the simulation surface field enabled when using
 whitewater or snippets that consume `surface_sdf`.
 
-## ST-FLIP beta
+## ST-FLIP (Experimental)
 
-Enable **Particles > ST-FLIP (Beta)** to test spatiotemporal sampling at large
-time steps. The implementation includes temporal residuals, space-time P2G,
-phase-field activation, optional variable pressure, local trajectory
-substepping, and render-surface re-synchronization. It is beta because phase
-three still needs multi-scene reference-error and long-run conservation work.
-Keep the default feature disabled for production scenes until those results
-are acceptable for the scene type. With automatic reference mass, the solver
+Enable **Simulation > Spatiotemporal Processing > Enable ST-FLIP
+(Experimental)** to test spatiotemporal sampling at large time steps. The
+implementation includes temporal residuals, space-time P2G, phase-field
+activation, optional variable pressure, local trajectory substepping, and
+render-surface re-synchronization. It is experimental because it has not yet
+passed multi-scene reference-error and long-run conservation gates; keep it
+off for production scenes. **Variable Projection (Experimental)** is off by
+default since 2.0; turn it on only to evaluate density-weighted pressure. With automatic reference mass, the solver
 runs the Monte Carlo calibration for the current ST seed. Liquid Sampling is a
 Reset-tier rest-density contract, so changing it stages Reset rather than
 rescaling the active ST-FLIP reference mass in place.
@@ -719,22 +735,19 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 ## 12. Validation limits for this build
 
-Release 1.0.255 passed the current Windows Blender 5.1 GUI-inclusive production
-gate with external Warp 1.16.0 on an NVIDIA GeForce RTX 4080 SUPER. Evidence
-includes **1,033 Python tests**, **21/21 CUDA validations**, **40/40 GUI checks**,
-saved-demo timeline playback, cache-v2 production/export, handler save/reopen,
-and all 18 bounded demo-analysis checks.
+Release 2.0.0 passed the GUI-inclusive production gate on Windows 11 with
+Blender 5.2.0 LTS and the bundled Warp 1.17.0 on an NVIDIA GeForce RTX 4080
+SUPER. The gate runs the CUDA pytest regressions, the CUDA self-validations, the GUI
+acceptance checks, saved-demo timeline playback, cache-v2 production bake,
+export and resume, handler save/reopen, the release validators and the bounded
+demo-analysis checks for all four demos. A clean-profile install of the
+Windows package passed its smoke test and the installed GPU regression.
 
-The native UI gate drew 49 authored surfaces, validated 51 delegated View3D
-mirrors beneath one collapsed root, exercised domain/input and all six output
-Physics contexts, revalidated guarded add/remove actions, covered ten canonical
-role/geometry cases, saved/reopened a `.blend`, and completed an unregister/
-re-register cycle. The interactive user path averaged 6.116 ms for viewport
-publication and 16.336 ms total without added output-path readbacks,
-synchronization, Blender ID churn, depsgraph updates, or structural replacement.
+The four demos bake to bitwise-identical results on the same GPU, driver and
+Warp build; the gate checks this by hashing the demo analysis across repeated
+runs. That claim does not extend to a different GPU, driver or Warp version,
+where GPU floating-point results can differ. The solver and cache checks
+otherwise assert physical, schema, ownership and bounded-error invariants.
 
-The solver and cache checks assert physical, schema, ownership, and bounded-error
-invariants. They do not claim bitwise repeatability across GPU atomic accumulation,
-particle compaction/emission ordering, or derived marching-cubes output. Native
-Linux execution and renderer-specific visual certification remain separate host
-gates; Linux x64 packaging continues from the same binary-free source.
+Linux x64 is packaged from the same source but has no recorded Linux CUDA run,
+and renderer-specific visual certification is not part of the gate.

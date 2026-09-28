@@ -22,7 +22,9 @@ def prepare_review():
     from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
 
     scene = bpy.context.scene
-    fs = scene.fluidsim
+    fs = scene_bridge.active_domain_settings(scene)
+    if fs is None:
+        raise RuntimeError("live review needs a designated FluidSim domain")
     fs.auto_grow_particles = True
     before = {
         "initial_reserve": int(fs.max_particles),
@@ -76,7 +78,7 @@ def prepare_review():
         "required_particles": getattr(plan.particle_demand, "value", None),
         "runtime_capacity": runtime_capacity,
         "growth_failure_policy": fs.particle_growth_failure_policy,
-        "status": fs.status,
+        "status": scene.fluidsim.status,
         "pending": pending,
         "errors": errors,
         "instructions": [

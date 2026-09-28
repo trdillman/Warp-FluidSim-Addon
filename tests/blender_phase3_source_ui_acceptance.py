@@ -51,7 +51,7 @@ def main():
     enable_repo_addon(str(ROOT), default_set=True, persistent=True)
     import fluidSim_warp_blender51 as addon
     from fluidSim_warp_blender51.blender import scene_bridge
-    from fluidSim_warp_blender51.blender.migration import create_domain_object
+    from fluidSim_warp_blender51.blender.menus import create_domain_object
     from fluidSim_warp_blender51.blender.scene_inputs import (
         SceneInputs,
         persistent_source_key,
