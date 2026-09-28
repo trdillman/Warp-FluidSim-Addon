@@ -15,6 +15,7 @@ WHEELS = {
     "windows-x64": (WINDOWS_WHEEL, b"windows-wheel-payload"),
 }
 STALE_OWNER_PAYLOAD = b"stale candidate owner\n"
+RETIRED_OWNER = "sim/custom.py"
 VERSION = "1.0.255"
 
 
@@ -125,7 +126,9 @@ def _write_project(root: Path) -> None:
                     "sim/surface_tension.py": hashlib.sha256(
                         STALE_OWNER_PAYLOAD
                     ).hexdigest(),
+                    RETIRED_OWNER: hashlib.sha256(STALE_OWNER_PAYLOAD).hexdigest(),
                 },
+                "retired_owners": [RETIRED_OWNER],
             }
         ),
         encoding="utf-8",
@@ -280,6 +283,25 @@ def test_verify_source_tree_rejects_stale_candidate_owner_payload(tmp_path: Path
         build_extension.verify_source_tree(tmp_path)
 
 
+def test_verify_source_tree_rejects_a_retired_owner_that_reappears(tmp_path: Path):
+    _write_project(tmp_path)
+    (tmp_path / RETIRED_OWNER).write_bytes(b"# any payload\n")
+
+    with pytest.raises(RuntimeError, match="retired integration owner reappeared"):
+        build_extension.verify_source_tree(tmp_path)
+
+
+def test_collision_guard_retired_owners_must_be_protected(tmp_path: Path):
+    _write_project(tmp_path)
+    guard_path = tmp_path.parent / "tools" / "release" / "candidate_collision_guard_1_0_253.json"
+    guard = json.loads(guard_path.read_text(encoding="utf-8"))
+    guard["retired_owners"] = ["sim/unknown.py"]
+    guard_path.write_text(json.dumps(guard), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="retired_owners"):
+        build_extension.verify_source_tree(tmp_path)
+
+
 @pytest.mark.parametrize(
     "replacement",
     ["", f'  "./wheels/{LINUX_WHEEL}",\n  "./wheels/numpy-2.0-py3-none-any.whl",\n'],
@@ -375,6 +397,16 @@ def test_inspect_packages_rejects_stale_candidate_owner_payload(tmp_path: Path):
     )
 
     with pytest.raises(RuntimeError, match="stale candidate implementation"):
+        build_extension.inspect_packages(tmp_path, [package])
+
+
+def test_inspect_packages_rejects_a_retired_owner(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-windows_x64.zip"
+    _write_package(
+        package, platform="windows-x64", extra={RETIRED_OWNER: b"# any payload\n"})
+
+    with pytest.raises(RuntimeError, match="contains retired integration owner"):
         build_extension.inspect_packages(tmp_path, [package])
 
 

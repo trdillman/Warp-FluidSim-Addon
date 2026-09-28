@@ -179,7 +179,12 @@ def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _collision_guard(root: Path) -> dict[str, str]:
+def _collision_guard(root: Path) -> dict[str, str | None]:
+    """Map each protected owner to its stale digest; ``None`` marks a retired owner.
+
+    A retired owner was deleted on purpose, so it must stay absent: the stale
+    candidate would otherwise bring it back.
+    """
     guard_path = _tool_root_for(root) / "candidate_collision_guard_1_0_253.json"
     guard = _read_json(guard_path)
     candidate_sha256 = guard.get("candidate_sha256")
@@ -192,7 +197,10 @@ def _collision_guard(root: Path) -> dict[str, str]:
     forbidden = guard.get("forbidden_sha256")
     if not isinstance(forbidden, dict) or not forbidden:
         raise RuntimeError("candidate collision guard must protect at least one owner")
-    result: dict[str, str] = {}
+    retired = guard.get("retired_owners", [])
+    if not isinstance(retired, list) or not set(retired) <= forbidden.keys():
+        raise RuntimeError("candidate collision guard retired_owners must list protected owners")
+    result: dict[str, str | None] = {}
     for relative, digest in forbidden.items():
         if not isinstance(relative, str):
             raise TypeError("candidate collision guard paths must be strings")
@@ -205,13 +213,17 @@ def _collision_guard(root: Path) -> dict[str, str]:
             or any(char not in "0123456789abcdef" for char in digest)
         ):
             raise RuntimeError(f"invalid stale candidate SHA-256 for {relative}")
-        result[relative] = digest
+        result[relative] = None if relative in retired else digest
     return result
 
 
-def _verify_source_collision_guard(root: Path, forbidden: Mapping[str, str]) -> None:
+def _verify_source_collision_guard(root: Path, forbidden: Mapping[str, str | None]) -> None:
     for relative, stale_sha256 in forbidden.items():
         path = root / PurePosixPath(relative)
+        if stale_sha256 is None:
+            if path.exists():
+                raise RuntimeError(f"retired integration owner reappeared: {relative}")
+            continue
         if not path.is_file():
             raise RuntimeError(f"protected integration owner is missing: {relative}")
         if _sha256_path(path) == stale_sha256:
@@ -472,7 +484,7 @@ def _validate_required_package_content(
     package: Path,
     archive: zipfile.ZipFile,
     names: Mapping[str, str],
-    collision_guard: Mapping[str, str],
+    collision_guard: Mapping[str, str | None],
 ) -> None:
     required = {
         "blender_manifest.toml",
@@ -511,6 +523,12 @@ def _validate_required_package_content(
         raise RuntimeError(f"package {package.name} is missing files: {missing}")
     for relative, stale_sha256 in collision_guard.items():
         archive_name = names.get(relative)
+        if stale_sha256 is None:
+            if archive_name is not None:
+                raise RuntimeError(
+                    f"package {package.name} contains retired integration owner: {relative}"
+                )
+            continue
         if archive_name is None:
             raise RuntimeError(
                 f"package {package.name} is missing protected integration owner: {relative}"

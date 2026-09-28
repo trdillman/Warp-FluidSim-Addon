@@ -70,7 +70,9 @@ def test_adjudicated_owners_cannot_revert_to_stale_candidate_payloads():
     )
     assert len(stale_hashes) == 27
     # 2.0 removed the legacy snippet runtime; a removed owner holds no payload.
-    retired = {"sim/custom.py"}
+    # The release build reads the same list (tools/release/build_extension.py).
+    retired = set(guard["retired_owners"])
+    assert retired == {"sim/custom.py"}
     assert retired <= stale_hashes.keys()
     for relative, stale_hash in stale_hashes.items():
         if relative in retired:
