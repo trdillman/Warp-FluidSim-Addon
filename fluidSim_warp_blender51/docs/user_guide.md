@@ -12,11 +12,12 @@ FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 ## Validated support matrix
 
-| Area | Validated target |
+| Area | Target |
 |---|---|
 | FluidSim | 2.0.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
+| GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
 | Warp dependency | Bundled NVIDIA Warp 1.17.0 (CUDA 12 build), installed by Blender with the extension |
 | Cache compatibility | Cache v2 write/playback/resume; Cache v1 (1.0.x) is refused: bake again |
@@ -30,8 +31,12 @@ If a newer 1.x Warp is ever loaded instead (for example through a developer
 override), FluidSim still runs but marks the runtime status as
 "untested Warp version"; Warp older than 1.17.0 or a 2.x Warp is refused.
 
-The extension is packaged for both Windows x64 and Linux x64 (Linux is
-certified on WSL2 and native Linux with the same package).
+The extension is packaged for both Windows x64 and Linux x64. Only Windows has
+a recorded GPU gate run; Linux uses the same package but no Linux CUDA run has
+been recorded yet, so treat it as uncertified.
+
+Upgrading from 1.x? Read the [1.x → 2.0 migration guide](migrating_to_2_0.md)
+first: 2.0 opens only files saved by 1.1.0 or later.
 
 ---
 
@@ -721,22 +726,19 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 ## 12. Validation limits for this build
 
-Release 1.0.255 passed the current Windows Blender 5.1 GUI-inclusive production
-gate with external Warp 1.16.0 on an NVIDIA GeForce RTX 4080 SUPER. Evidence
-includes **1,033 Python tests**, **21/21 CUDA validations**, **40/40 GUI checks**,
-saved-demo timeline playback, cache-v2 production/export, handler save/reopen,
-and all 18 bounded demo-analysis checks.
+Release 2.0.0 passed the GUI-inclusive production gate on Windows 11 with
+Blender 5.2.0 LTS and the bundled Warp 1.17.0 on an NVIDIA GeForce RTX 4080
+SUPER. The gate runs the CUDA pytest regressions, the CUDA self-validations, the GUI
+acceptance checks, saved-demo timeline playback, cache-v2 production bake,
+export and resume, handler save/reopen, the release validators and the bounded
+demo-analysis checks for all four demos. A clean-profile install of the
+Windows package passed its smoke test and the installed GPU regression.
 
-The native UI gate drew 49 authored surfaces, validated 51 delegated View3D
-mirrors beneath one collapsed root, exercised domain/input and all six output
-Physics contexts, revalidated guarded add/remove actions, covered ten canonical
-role/geometry cases, saved/reopened a `.blend`, and completed an unregister/
-re-register cycle. The interactive user path averaged 6.116 ms for viewport
-publication and 16.336 ms total without added output-path readbacks,
-synchronization, Blender ID churn, depsgraph updates, or structural replacement.
+The four demos bake to bitwise-identical results on the same GPU, driver and
+Warp build; the gate checks this by hashing the demo analysis across repeated
+runs. That claim does not extend to a different GPU, driver or Warp version,
+where GPU floating-point results can differ. The solver and cache checks
+otherwise assert physical, schema, ownership and bounded-error invariants.
 
-The solver and cache checks assert physical, schema, ownership, and bounded-error
-invariants. They do not claim bitwise repeatability across GPU atomic accumulation,
-particle compaction/emission ordering, or derived marching-cubes output. Native
-Linux execution and renderer-specific visual certification remain separate host
-gates; Linux x64 packaging continues from the same binary-free source.
+Linux x64 is packaged from the same source but has no recorded Linux CUDA run,
+and renderer-specific visual certification is not part of the gate.

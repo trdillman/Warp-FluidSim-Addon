@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -35,3 +35,7 @@ Leaked mesh data accumulates in Blender memory. The trigger is low probability s
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Fixed for 2.0 (2026-09-27). `object_points_world` (`fluidSim_warp_blender51/blender/sources.py`) now reads the vertices inside `try` and calls `eval_obj.to_mesh_clear()` in `finally`, so a failed read no longer leaks the evaluated mesh. Regression: `tests/test_sources_object_points_release.py` (world-space result plus release on success, and release when the vertex read raises).

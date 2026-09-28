@@ -40,7 +40,6 @@ def test_release_identity_targets_blender_52_with_only_locked_warp_wheels():
     )
     assert _assigned(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS") == (
         "windows-x64",
-        "linux-x64",
     )
     for forbidden in ("runtimes", "vendor", "python"):
         assert not (ROOT / forbidden).exists()

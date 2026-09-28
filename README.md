@@ -1,6 +1,6 @@
-# FluidSim Warp for Blender 5.1
+# FluidSim Warp for Blender 5.2
 
-This repository implements an interactive, GPU-resident liquid simulation add-on for Blender 5.1 using NVIDIA Warp/CUDA. The production add-on lives in `fluidSim_warp_blender51/`; the similarly named `fluidSim_synth/` package is reference material, not runtime code.
+This repository implements an interactive, GPU-resident liquid simulation add-on for Blender 5.2 LTS using NVIDIA Warp/CUDA (Warp 1.17.0 is bundled with the extension). The production add-on lives in `fluidSim_warp_blender51/`; the similarly named `fluidSim_synth/` package is reference material, not runtime code.
 
 ## Repository map
 

@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -35,3 +35,7 @@ The live simulation toggle is non-undoable, so users cannot revert it through st
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Closed as won't-fix for 2.0 (2026-09-27), following the REVIEW-032 and REVIEW-050 precedent. `FLUIDSIM_OT_toggle_live` now lives in `fluidSim_warp_blender51/operator_domains/session.py` and still declares no `bl_options`. Turning Live on can initialize the GPU solver, which Blender undo cannot reverse, so an undo step would flip `fluidsim.live` back while the solver stays initialized. The toggle itself is the supported way back. The operator now has a `poll()` (it refuses while a Production Bake owns the scene), which covers the second half of the finding.

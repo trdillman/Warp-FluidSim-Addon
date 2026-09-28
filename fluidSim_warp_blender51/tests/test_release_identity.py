@@ -35,7 +35,8 @@ def test_supported_platforms_are_independent_of_current_runtime_evidence():
     validated = _assigned_value(ROOT / "version.py", "VALIDATED_RUNTIME_PLATFORMS")
 
     assert supported == ("windows-x64", "linux-x64")
-    assert validated == ("windows-x64", "linux-x64")
+    # Only Windows has a recorded GPU gate run; Linux ships uncertified (D4).
+    assert validated == ("windows-x64",)
     assert set(validated).issubset(supported)
 
 

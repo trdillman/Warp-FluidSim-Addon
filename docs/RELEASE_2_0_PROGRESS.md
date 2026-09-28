@@ -50,7 +50,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Clean-profile install on Windows: extension smoke + installed GPU regression (21/21 validations, 10 preview frames) on Blender 5.2.0 with no PYTHONPATH | done | `smoke-test-report.json`, `gpu-regression-report.json` in the build folder |
 | GPU self-validations leaked 3 native CUDA kernel leases, so disabling the add-on after Run Validations logged `unregister step 'native CUDA cache' failed` | fixed: 5 validations now release their solvers | `tests/test_validation_releases_native_leases.py` |
 | Clean-profile install on WSL2 (D4) | pending | |
-| GUI gate reproducible 3/3 on the new stack | 2/3: second FULL-PRODUCTION-GATE-PASS at `2a6eec0`, same demo artifact sha256 `a32872b8…0926` | `gate-52-20260927-164658.log` |
+| GUI gate reproducible 3/3 on the new stack | 3/3 on `a32872b8…0926`: passes at `0e01cdf`, `2a6eec0` and `bd67291`. Superseded by the Phase 3 rebind below | `gate-52-20260927-164658.log`, `gate-52-20260927-200134.log` |
 
 ## Phase 2: WS5 breaking cleanup
 
@@ -78,7 +78,54 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Found by the validators: the Live Tuning shelf lost its Particle Display Fraction knob at the split (drawn from the domain, which lacks it); examples 01–04 shipped with pre-1.1 settings, so 2.0 flagged its own examples. **Owner review: both are user-visible fixes** | done: knob bound to its declaring group; examples regenerated with `generate_examples.py` | `test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror`; `validate_examples_blender.py` now refuses a pre-1.1 example |
 | REVIEW-044 (closed): one device switch, `FLUIDSIM_TEST_DEVICE` (default `cuda:0`), for pytest and every Blender/headless script | done | `tests/test_cuda_device_fixture.py` |
 
-Phases 3–4: not started.
+## Phase 3: harden
+
+| Item | State | Evidence |
+|---|---|---|
+| REVIEW-004: ST Jacobi reported residual `-1.0` | done (`45c1cec`): measured against the variable-coefficient operator the solve used | card; `tests/` residual tests |
+| REVIEW-005: six copies of the 64 particles-per-voxel cap | done (`45c1cec`): one shared constant, cap kept at 64 (RNA already limited authoring to 64). **Owner review:** cap not raised | card |
+| REVIEW-008: module-import assertions | already fixed in `16e5090`; verified | card |
+| REVIEW-011: capacity apply had no undo step | done (`45c1cec`): `{"REGISTER", "UNDO"}`; differs from the 032/050 won't-fix because it only writes RNA and the transform, which undo restores. **Owner review** | card |
+| REVIEW-014: NaN/Inf MAC weights | done (`97eb132`): one `_sanitize_mac_face`; a non-finite weight zeroes weight and velocity | card; no demo output change |
+| REVIEW-016: CUDA-graph fallback was silent | done (`97eb132`): new `stat_native_solver_message` readout (ownership map 225 → 226). **Owner review:** new user-visible field | card |
+| REVIEW-017: collision SDF gradient read the 1e9 fallback on sparse edges | done (`97eb132`): central differences where both samples exist, one-sided otherwise | card; see the gate rebind below |
+| REVIEW-022 and the **P1 it exposed**: a bake with an animated source could not play itself back (paddle_stir refused frames 2–5) or resume | done (`97eb132`): playback compares only the frame's `settings_signature`; bake signatures pinned to the start frame. **Owner review:** a moved source no longer invalidates a cache per frame; a per-frame source stamp is a 2.1 item | `tests/blender_animated_cache_playback_acceptance.py` (gated) |
+| GUI gate on `97eb132` | **FULL-PRODUCTION-GATE-PASS**, new demo artifact sha256 `e49d23ef…e1ae` (1/3 on the new hash). **Owner review: hash rebind.** Cause isolated by rebuilding dam_break with only the REVIEW-017 files reverted to `45c1cec`: the old metrics came back. The change is dam_break whitewater ±2 particles of ~10k; no liquid metric moved, crown_splash is identical, REVIEW-014 has no demo effect | `gate-52-20260927-210531.log`; isolation logs in the session scratchpad (`build_revert017.log`, `analyze_revert017.log`) |
+| REVIEW-041: an evaluated mesh leaked if reading its vertices raised | done: `to_mesh_clear()` in a `finally` | `tests/test_sources_object_points_release.py` |
+| REVIEW-031: Live toggle has no undo | won't-fix, same policy as 032/050: Live can initialize the GPU solver, which undo cannot reverse; the operator already has a `poll()` | card |
+| REVIEW-042: `read_sequence_metadata` swallows corrupt metadata | obsolete: no production caller since REVIEW-022 (playback reads the frame's `settings_signature`) | card |
+| Linux relabelled uncertified (D4): `VALIDATED_RUNTIME_PLATFORMS` is now `("windows-x64",)`; the user guide, migration guide and CHANGELOG say Linux is packaged but not certified. **Owner review** | done | `test_release_identity.py`, `tests/test_release_1_0_253_integration.py` |
+| Open cards | no P0/P1 open. 6 medium/low remain (013, 015, 024, 025, 027, 038), each with a suggested fix in the 2.1 handoff | `backlog/tasks/`, `docs/RELEASE_2_1_HANDOFF.md` |
+| Performance budget (≤5% vs 1.0.255, D7) | measured. crown_splash −2.7%, dam_break +0.4%, chromatic_vortex −2.2% (vs 1.1.0; 1.0.255 cannot open the file). paddle_stir **+4.0%** on absolute medians, paired median +5.5% (n=8), so it sits on the line. The stage profiler puts the gap in P2G: 1.78 ms in 1.0.255, 3.42 ms in 1.1.0 (the deterministic gather, `d2a6b6d`), 3.50 ms in 2.0. 2.0 adds no measurable solver cost over 1.1.0, and Warp 1.17 is neutral or faster. **Owner review:** accept the 1.1.0 determinism cost against the 1.0.255 budget; a faster deterministic P2G is the first 2.1 perf item | `C:\Users\Tyler\fluidsim-gate-logs\perf-2.0-20260927\` (ABBA pairs, 4-way Warp/code split, stage profiles) |
+| Defect #2 (compounding slowdown with viscosity + surface tension) | not reproduced on 2.0: 10 UI resets × 24 frames on dam_break with both enabled; median 106 → 96 ms, GPU memory fixed at 408 MB, datablocks and particles constant. Carried to 2.1 pending a GUI repro | `defect2.json` in the perf evidence folder |
+
+## Phase 4: release
+
+| Item | State | Evidence |
+|---|---|---|
+| Migration guide `fluidSim_warp_blender51/docs/migrating_to_2_0.md` (install, 1.0.x files, caches, snippets, scripts, ST-FLIP, results); linked from the user guide and CHANGELOG | done | |
+| CHANGELOG 2.0.0: upgrade notes, Platform, Fixed, Changed, Known limitations (including perf and defect #2), Removed | done | `test_release_identity.py` |
+| README, AGENTS.md, user guide say Blender 5.2 LTS / bundled Warp 1.17.0; support matrix shows Linux uncertified | done | |
+| 2.1 handoff `docs/RELEASE_2_1_HANDOFF.md` | done | |
+| Full pytest on Blender 5.2's Python + Warp 1.17.0 | root 1176 passed, 1 skipped; add-on 455 passed, 2 skipped (POSIX-only) | |
+| GUI gate 3/3 on `e49d23ef…e1ae` | 1/3 (`97eb132`) | |
+| Clean install on Linux (WSL2) | not run: needs owner approval (D4). Linux ships labelled uncertified | |
+
+## Owner review (before tagging 2.0.0)
+
+Decisions this work made that the owner should confirm, most consequential first:
+
+1. **Performance budget:** paddle_stir is +4% vs 1.0.255, from 1.1.0's deterministic P2G (Phase 3 row). Accept, or hold 2.0 for a faster gather.
+2. **Demo hash rebind** to `e49d23ef…e1ae` (REVIEW-017 whitewater normal; dam_break whitewater ±2 of ~10k).
+3. **Script behaviour change:** writing a setting to the wrong group raises `AttributeError`.
+4. **Cache policy:** playback compares only the settings signature; bake signatures are pinned to the start frame; a moved source no longer invalidates a cache (per-frame source stamp is a 2.1 item).
+5. **Linux uncertified:** `VALIDATED_RUNTIME_PLATFORMS = ("windows-x64",)`; WSL2 install and gate need approval to run.
+6. **`BUILD_CHANNEL`** is still `beta`; flip to `stable` when releasing.
+7. User-visible fixes: Live Tuning knob rebound; examples 01–04 regenerated; new `stat_native_solver_message`; garbled UI text corrected.
+8. Plan deviations: 139 settings `getattr`s kept (guarded, not removed); D5 slice B (source schema < 4, legacy output adoption) kept because 1.1 still writes it; sink schema-0 `geometry_mode` kept.
+9. Kept as-is: ppv cap stays 64 (REVIEW-005); RNA/solver default divergences for `viscosity_constant`, `ww_bubble_drag`, `ww_spray_drag` (2.1 item).
+10. Capacity apply is now undoable (REVIEW-011); REVIEW-031 Live toggle stays non-undoable (won't-fix).
+11. chromatic_vortex's perf baseline is 1.1.0 on the 1.1-re-saved file.
 
 ## Environment notes
 
@@ -86,7 +133,9 @@ Phases 3–4: not started.
 - Certified Warp 1.17.0 plus pytest live outside the user site: `PYTHONPATH=C:\Users\Tyler\fluidsim-warp\site-1.17.0;C:\Users\Tyler\fluidsim-warp\devsite`. The gate needs `BLENDER_EXE`/`BLENDER_PY` pointed at the portable 5.2.0 build.
 - WSL2 Ubuntu 24.04 has Python 3.12 and pytest, and the RTX 4080 SUPER is visible through `nvidia-smi` (driver 610.47).
 - Disk is tight: about 22 GB free.
+- 1.x needs Warp 1.16 (user site, `PYTHONNOUSERSITE` unset, empty `PYTHONPATH`); 2.0 needs 1.17. Blender-loaded worktrees must sit on short paths (`C:\Users\Tyler\...`) because of the 260-character limit.
+- Whole-frame timing on this workstation varies 5–30% run to run; use ABBA pairs and the stage profiler (`profiling_enabled`/`profiling_sync` on the domain) for perf questions.
 
 ## Next action
 
-GUI gate 3/3 on the REVIEW-009 tree (demo sha256 must stay `a32872b8…0926`), then Phase 3 (hardening, card 005, defect #2, perf budget).
+Commit the Phase 3/4 docs and fixes, run the GUI gate twice more for 3/3 on `e49d23ef…e1ae` (restore `demos/*` after each run), then stop for the owner review above. Do not tag or push 2.0.0.

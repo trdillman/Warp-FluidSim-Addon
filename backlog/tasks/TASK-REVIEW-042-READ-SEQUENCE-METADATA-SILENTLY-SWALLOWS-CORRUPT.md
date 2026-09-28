@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -35,3 +35,7 @@ A corrupt metadata file silently disables cache integrity validation instead of 
 ## Blocked by
 
 None - can start immediately
+
+## Resolution
+
+Obsolete for 2.0 (2026-09-27), closed without a code change. REVIEW-022 removed the only production caller: playback's `_check_cache_scene_key` (`blender/playback.py`) now compares the frame's own `settings_signature` and no longer reads the sequence metadata, and `read_frame` verifies each frame against the cache manifest. `io/cache.py::read_sequence_metadata` is now called only by tests and acceptance scripts, so a corrupt metadata file can no longer weaken playback validation.
