@@ -154,4 +154,4 @@ Decisions this work made that the owner should confirm, most consequential first
 
 ## Next action
 
-Rebuild the release packages at the final commit, push the branch, open the PR to master, merge once CI is green, then tag `v2.0.0` and publish the GitHub release (both zips, `SHA256SUMS.txt`, `artifacts/production_gate_manifest.json`). 2.1 starts from `docs/RELEASE_2_1_HANDOFF.md`.
+**2.0.0 released.** PR #11 merged to master as `ad769d2` after hosted CI passed (lint/tests/Warp CPU validation and the Blender 5.2 build/install/smoke job); the merge tree is identical to the tested branch head. Tag `v2.0.0` on `ad769d2`; GitHub release carries both zips, `SHA256SUMS.txt` and the gate manifest. 2.1 starts from `docs/RELEASE_2_1_HANDOFF.md`.
