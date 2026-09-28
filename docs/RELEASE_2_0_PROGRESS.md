@@ -108,7 +108,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | README, AGENTS.md, user guide say Blender 5.2 LTS / bundled Warp 1.17.0; support matrix shows Linux uncertified | done | |
 | 2.1 handoff `docs/RELEASE_2_1_HANDOFF.md` | done | |
 | Full pytest on Blender 5.2's Python + Warp 1.17.0 | root 1176 passed, 1 skipped; add-on 455 passed, 2 skipped (POSIX-only) | |
-| GUI gate 3/3 on `e49d23ef…e1ae` | 1/3 (`97eb132`) | |
+| GUI gate 3/3 on `e49d23ef…e1ae` | **3/3**: FULL-PRODUCTION-GATE-PASS at `97eb132` and twice at `1bbe907`; the logs differ only in timestamps and timings | `gate-52-20260927-225858.log`, `gate-52-20260927-230604.log` |
 | Clean install on Linux (WSL2) | not run: needs owner approval (D4). Linux ships labelled uncertified | |
 
 ## Owner review (before tagging 2.0.0)
@@ -138,4 +138,4 @@ Decisions this work made that the owner should confirm, most consequential first
 
 ## Next action
 
-Commit the Phase 3/4 docs and fixes, run the GUI gate twice more for 3/3 on `e49d23ef…e1ae` (restore `demos/*` after each run), then stop for the owner review above. Do not tag or push 2.0.0.
+Owner review (list above). After approval: flip `BUILD_CHANNEL` to `stable`, rebuild the packages, push the branch, open the PR, and tag 2.0.0 once CI is green. If Linux certification is approved, run the WSL2 clean install and gate first. Nothing has been pushed or tagged.
