@@ -13,6 +13,8 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _test_device import script_device  # noqa: E402
 
 import warp as wp
 
@@ -175,7 +177,7 @@ def main():
     wp.init()
     if not wp.is_cuda_available():
         raise RuntimeError("WHITEWATER-TRUTH-ACCEPTANCE requires CUDA")
-    device = "cuda:0"
+    device = script_device()
     grid = _grid(device)
     _render_disabled_sdf_acceptance(device, grid)
     _capacity_acceptance(device, grid)

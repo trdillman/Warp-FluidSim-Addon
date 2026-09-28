@@ -138,8 +138,11 @@ def _run_case(device: str, multiplier: float, frames: int, particles: int):
 
 def main(argv: list[str] | None = None) -> int:
     package_dir = _ensure_package_on_path()
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from _test_device import script_device
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--device", default=script_device())
     parser.add_argument("--particles", type=int, default=500_000)
     parser.add_argument("--frames", type=int, default=24)
     parser.add_argument("--output", default=str(package_dir / "demo_outputs" / "surface_resolution_pipeline.json"))

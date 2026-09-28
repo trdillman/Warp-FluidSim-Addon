@@ -649,6 +649,26 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
 # Scene-level settings
 
 
+_OTHER_GROUP_FIELDS = {}
+
+
+def _reject_other_group_write(own, other, name, where):
+    """Raise when ``name`` is declared only on the other half of the split.
+
+    Blender lets Python set any attribute on a PropertyGroup instance, so a
+    1.x-style ``scene.fluidsim.voxel_size = 0.05`` would otherwise land on the
+    Python wrapper, read back as if it worked, and never reach the solver.
+    """
+    fields = _OTHER_GROUP_FIELDS.get(own)
+    if fields is None:
+        fields = _OTHER_GROUP_FIELDS[own] = frozenset(
+            set(getattr(other, "__annotations__", {}))
+            - set(getattr(own, "__annotations__", {})))
+    if name in fields:
+        raise AttributeError(
+            f"{name!r} is not a {own.__name__} setting; set it on {where}")
+
+
 class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     """Scene-scoped FluidSim state, bound to ``Scene.fluidsim``.
 
@@ -659,8 +679,15 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     setting off ``scene.fluidsim`` raises instead of returning a stale value.
     The partition follows
     ``pending_settings.setting_owner`` and is pinned by
-    tests/test_pending_settings_registry.py.
+    tests/test_pending_settings_registry.py. Writing a domain setting here
+    raises too (see ``_reject_other_group_write``).
     """
+
+    def __setattr__(self, name, value):
+        _reject_other_group_write(
+            FLUIDSIM_PG_scene, FLUIDSIM_PG_domain, name,
+            "scene.fluidsim.domain_object.fluidsim_domain")
+        super().__setattr__(name, value)
 
     # UI disclosure (presentation-only; never touches solver state)
     ui_mode: EnumProperty(
@@ -993,6 +1020,11 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     the production attribute inventory. Read these through
     ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
     """
+
+    def __setattr__(self, name, value):
+        _reject_other_group_write(
+            FLUIDSIM_PG_domain, FLUIDSIM_PG_scene, name, "scene.fluidsim")
+        super().__setattr__(name, value)
 
     time_scale: FloatProperty(
         name="Time Scale", default=1.0, min=0.0, soft_max=4.0,

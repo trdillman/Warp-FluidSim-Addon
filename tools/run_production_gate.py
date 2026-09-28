@@ -65,7 +65,77 @@ CANONICAL_DEMO_SCENES = (
     "crown_splash",
 )
 GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
+# Background Blender acceptance scripts that take no arguments: (script, marker).
+BACKGROUND_ACCEPTANCE = (
+    ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
+    ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
+    ("tests/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
+    ("tests/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
+    ("tests/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
+    ("tests/blender_pre_bridge_file_acceptance.py", "PRE-BRIDGE-FILE-ACCEPTANCE-PASS"),
+    ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
+    ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
+    ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
+    ("tests/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
+    ("tests/blender_simulation_admission_acceptance.py", "SIMULATION-ADMISSION-ACCEPTANCE-PASS"),
+    ("tests/blender_closed_domain_stability_acceptance.py", "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"),
+    ("tests/blender_custom_effects_acceptance.py", "CUSTOM-EFFECTS-ACCEPTANCE-PASS"),
+    ("tests/blender_chromatic_vortex_containment_acceptance.py",
+     "CHROMATIC-VORTEX-CONTAINMENT-ACCEPTANCE-PASS"),
+    ("tests/blender_color_mixing_runtime_acceptance.py", "COLOR-MIXING-RUNTIME-ACCEPTANCE-PASS"),
+    ("tests/blender_color_mixing_ui_acceptance.py", "COLOR-MIXING-UI-ACCEPTANCE-PASS"),
+    ("tests/blender_mixed_source_batch_acceptance.py", "MIXED-SOURCE-BATCH-ACCEPTANCE-PASS"),
+    ("tests/blender_quick_setup_idempotence.py", "QUICK-SETUP-IDEMPOTENCE-PASS"),
+    ("tests/blender_source_sampling_acceptance.py", "SOURCE-SAMPLING-ACCEPTANCE-PASS"),
+    ("tests/blender_tooltip_acceptance.py", "TOOLTIP-ACCEPTANCE-PASS"),
+    ("tests/blender_topology_transaction_acceptance.py", "TOPOLOGY-TRANSACTION-ACCEPTANCE-PASS"),
+    ("tests/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
+)
+# Source acceptance scripts that write a JSON report: (capability, marker).
+SOURCE_REPORT_ACCEPTANCE = (
+    ("source_region", "SOURCE-REGION-ACCEPTANCE-PASS"),
+    ("point_source", "POINT-SOURCE-ACCEPTANCE-PASS"),
+    ("source_lifecycle", "SOURCE-LIFECYCLE-ACCEPTANCE-PASS"),
+    ("animated_source", "ANIMATED-SOURCE-ACCEPTANCE-PASS"),
+    ("volume_source", "VOLUME-SOURCE-ACCEPTANCE-PASS"),
+)
+# tests/blender_*.py scripts this gate deliberately does not run, with why.
+# tests/test_production_gate_coverage.py requires every script to be run here
+# or listed here, so a new acceptance script cannot silently go unrun.
+MANUAL_BLENDER_PROBES = {
+    "tests/blender_artist_bake_deleted_scene_acceptance.py":
+        "needs a real GUI modal bake; exits silently in --background",
+    "tests/blender_artist_bake_gui_acceptance.py":
+        "timer-driven GUI probe: call start(report_path) in a GUI session",
+    "tests/blender_artist_context_consent_acceptance.py":
+        "needs real editor contexts and simulated ESC/RET events in a GUI session",
+    "tests/blender_artist_workflow_acceptance.py":
+        "GUI timeline probe: call start(report_path) in a GUI session",
+    "tests/blender_effect_add_invoke_acceptance.py":
+        "needs the interactive Add Effect search popup",
+    "tests/blender_particle_autogrowth_live_review.py":
+        "profile-safe live review via tools/launch_profile_safe_addon_review.py; leaves the GUI open",
+    "tests/blender_phase1_source_ui_acceptance.py":
+        "profile-safe interactive review via tools/launch_profile_safe_addon_review.py",
+    "tests/blender_phase3_profile_safe_review.py":
+        "profile-safe visible review via tools/launch_profile_safe_addon_review.py",
+    "tests/blender_performance_playback_benchmark.py":
+        "benchmark driven by its own harness (--owned-process-pid); not a pass/fail gate",
+}
 RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
+# tools/release/validate_{check}_blender.py: (check, inputs, success marker).
+# Inputs name the optional arguments a validator takes. Before 2.0 nothing ran
+# these, and five of six had silently broken against the 1.1 settings split.
+RELEASE_PASSED = '"status": "passed"'
+RELEASE_BLENDER_VALIDATORS = (
+    ("phase3", ("work_dir",), RELEASE_PASSED),
+    ("phase4", ("work_dir",), RELEASE_PASSED),
+    ("phase5", ("work_dir", "warp_root"), RELEASE_PASSED),
+    ("properties_ui", ("work_dir", "warp_root"), "FLUIDSIM_PROPERTIES_UI_VALIDATION_OK"),
+    ("custom_effects", ("work_dir", "warp_root", "examples", "cuda"),
+     "FLUIDSIM_CUSTOM_EFFECTS_BLENDER_VALIDATED"),
+    ("examples", ("examples",), "FLUIDSIM_EXAMPLES_VALIDATED"),
+)
 
 
 def _warp_root(python, env=None):
@@ -112,6 +182,32 @@ def _env():
 def _blender(blender_exe, *args):
     """Blender command line that honours the gate's PYTHONPATH and PYTHON* env."""
     return [blender_exe, "--python-use-system-env", *args]
+
+
+def _release_blender_validator_command(blender_exe, check, inputs, warp_root):
+    """Blender command line for one tools/release/validate_{check}_blender.py."""
+    out = ROOT / "artifacts" / "release_validation"
+    optional = {
+        "work_dir": ("--work-dir", str(out / f"{check}-blender-work")),
+        "warp_root": ("--expected-warp-root", str(warp_root)),
+        "examples": ("--examples", str(ROOT / "fluidSim_warp_blender51" / "resources" / "examples")),
+        "cuda": ("--device", "cuda:0"),
+    }
+    return _blender(
+        blender_exe, "--background", "--factory-startup", "--python-exit-code", "1",
+        "--python", f"tools/release/validate_{check}_blender.py", "--",
+        "--module", "fluidSim_warp_blender51",
+        "--report-json", str(out / f"{check}-blender-validation.json"),
+        *(arg for name in inputs for arg in optional[name]),
+    )
+
+
+def _release_env(env):
+    """The validators import the add-on by name, so the repo root must be importable."""
+    release_env = env.copy()
+    existing = release_env.get("PYTHONPATH", "")
+    release_env["PYTHONPATH"] = str(ROOT) if not existing else existing + os.pathsep + str(ROOT)
+    return release_env
 
 
 def _run(label, command, env=None, reject_output=False, expect_marker=None):
@@ -287,8 +383,15 @@ def main(argv=None):
         "tests/blender_phase3_profile_safe_review.py",
         "tests/blender_phase4_live_interaction_acceptance.py",
         "tests/blender_gui_acceptance.py",
+        "tests/blender_gui_playback_probe.py",
         "tests/blender_viewport_2frame_gate.py",
         "tests/blender_pre_bridge_file_acceptance.py",
+        "tests/_phase2_source_acceptance_common.py",
+        *(script for script, _ in BACKGROUND_ACCEPTANCE),
+        *(f"tests/blender_{capability}_acceptance.py"
+          for capability, _ in SOURCE_REPORT_ACCEPTANCE),
+        *(f"tools/release/validate_{check}_blender.py"
+          for check, _, _ in RELEASE_BLENDER_VALIDATORS),
     ], env=env)
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
@@ -325,21 +428,15 @@ def main(argv=None):
             "--report-json",
             os.path.abspath(f"artifacts/release_validation/{check}-warp-cuda-validation.json"),
         ], env=env)
-    for script, success_marker in (
-        ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
-        ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
-        ("tests/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
-        ("tests/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
-        ("tests/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
-        ("tests/blender_pre_bridge_file_acceptance.py", "PRE-BRIDGE-FILE-ACCEPTANCE-PASS"),
-        ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
-        ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
-        ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
-        ("tests/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
-        ("tests/blender_simulation_admission_acceptance.py", "SIMULATION-ADMISSION-ACCEPTANCE-PASS"),
-        ("tests/blender_closed_domain_stability_acceptance.py", "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"),
-        ("tests/blender_custom_effects_acceptance.py", "CUSTOM-EFFECTS-ACCEPTANCE-PASS"),
-    ):
+    for check, inputs, success_marker in RELEASE_BLENDER_VALIDATORS:
+        _run(
+            f"{check} release validation in Blender",
+            _release_blender_validator_command(blender_exe, check, inputs, warp_root),
+            env=_release_env(env),
+            reject_output=True,
+            expect_marker=success_marker,
+        )
+    for script, success_marker in BACKGROUND_ACCEPTANCE:
         _run(
             script,
             _blender(blender_exe, "--background", "--factory-startup", "--python", script),
@@ -359,6 +456,13 @@ def main(argv=None):
                  "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
                  os.path.abspath("artifacts/capacity_planner_acceptance.json")),
         env=env, reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
+    for capability, success_marker in SOURCE_REPORT_ACCEPTANCE:
+        _run(
+            f"{capability} acceptance",
+            _blender(blender_exe, "--background", "--factory-startup", "--python",
+                     f"tests/blender_{capability}_acceptance.py", "--", "--json-out",
+                     os.path.abspath(f"artifacts/phase2_source_acceptance/{capability}.json")),
+            env=env, reject_output=True, expect_marker=success_marker)
     for scene_name in CANONICAL_DEMO_SCENES:
         _run(f"demo cache build {scene_name}", _blender(
             blender_exe,

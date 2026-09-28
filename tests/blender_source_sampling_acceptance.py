@@ -28,8 +28,11 @@ def cube(name):
 def main():
     addon.register()
     scene = bpy.context.scene
-    fs = scene.fluidsim
-    fs.particles_per_voxel = 12
+    # Domain settings live only on the designated domain object.
+    domain = scene.objects.get("Cube")
+    assert domain is not None, "factory-startup Cube is missing"
+    scene.fluidsim.domain_object = domain
+    domain.fluidsim_domain.particles_per_voxel = 12
 
     new = cube("New Inherited Emitter")
     bpy.context.view_layer.objects.active = new

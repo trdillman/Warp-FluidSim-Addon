@@ -129,6 +129,40 @@ def test_both_conftest_copies_are_identical():
     assert repo == addon
 
 
+def _script_device_module():
+    spec = importlib.util.spec_from_file_location(
+        "_fluidsim_test_device_under_test", REPO_ROOT / "tests" / "_test_device.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_script_device_honours_the_fixture_override(conftest_module):
+    script = _script_device_module()
+    assert script.TEST_DEVICE_ENV == conftest_module.TEST_DEVICE_ENV
+    assert script.DEFAULT_CUDA_DEVICE == conftest_module.DEFAULT_CUDA_DEVICE
+    assert script.script_device({}) == "cuda:0"
+    assert script.script_device({"FLUIDSIM_TEST_DEVICE": " cuda:1 "}) == "cuda:1"
+    assert script.script_device({"FLUIDSIM_TEST_DEVICE": "  "}) == "cuda:0"
+
+
+# Scripts run outside pytest (Blender acceptance, headless benchmarks, smoke
+# runs) must take their device from ``_test_device.script_device``. Test
+# modules are exempt: there ``"cuda:0"`` is fake routing data, not a device.
+_DEVICE_LITERAL = re.compile(r"""["']cuda:0["']""")
+
+
+def test_scripts_do_not_hardcode_a_cuda_device():
+    offenders = []
+    for path in sorted((REPO_ROOT / "tests").glob("*.py")):
+        if path.name.startswith("test_") or path.name in {"conftest.py", "_test_device.py"}:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _DEVICE_LITERAL.search(line):
+                offenders.append(f"{path.name}:{number}")
+    assert not offenders, f"use _test_device.script_device(): {offenders}"
+
+
 _LOCAL_FIXTURE = re.compile(r"^\s*def cuda_device\(([^)]*)\)", re.MULTILINE)
 
 

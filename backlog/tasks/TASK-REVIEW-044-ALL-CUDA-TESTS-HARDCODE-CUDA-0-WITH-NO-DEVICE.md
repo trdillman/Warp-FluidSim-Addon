@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -39,6 +39,20 @@ Still open: the Blender/headless scripts listed above (`smoke_*`,
 `blender_memory_safety_gate.py`, `headless_*`) still hardcode or default to
 `cuda:0`; they need Blender to verify. `test_device_preference_routing.py`
 uses `cuda:0` as routing data, which is intended.
+
+## Resolution
+
+Completed on `claude/2.0-phase1-platform` (2.0 Phase 2). `tests/_test_device.py`
+(pytest-free) holds `script_device()`: `FLUIDSIM_TEST_DEVICE` when set, else
+`cuda:0`. The pytest `cuda_device` fixture and every Blender/headless script
+listed above now use it (`smoke_core.py`, `_phase2_source_acceptance_common.py`,
+the `blender_*` acceptance and gate scripts, `headless_*` defaults).
+`test_device_preference_routing.py` keeps `cuda:0` as routing data, as intended.
+
+Regression gate: `tests/test_cuda_device_fixture.py` fails if any non-pytest
+script under `tests/` contains a `"cuda:0"` literal (`test_*` modules are
+exempt: there it is fake routing data; pytest device choice goes through the
+`cuda_device` fixture).
 
 ## Evidence
 

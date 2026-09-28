@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -18,6 +18,42 @@ Systematic analysis shows 41 of 104 test files in tests/ contain zero 'def test_
 ## Impact
 
 A 'pytest tests/' run skips the entire acceptance/gate suite silently. Coverage reports will show these files as untested. Developers may believe they have 104 test files when pytest only discovers ~63. The memory safety gate, capacity planner acceptance, and whitewater truth acceptance tests are effectively invisible to standard Python test tooling.
+
+## Resolution
+
+Fixed on `claude/2.0-phase1-platform` (2.0 Phase 2) with remediation (b): the
+Blender scripts keep their `blender --python` form, and their runner is
+`tools/run_production_gate.py`, not pytest. Pytest never collects
+`blender_*.py`, so the module-scope `main()` stubs have no collection side
+effect.
+
+The real gap was that nothing ran most of them:
+
+- Thirteen `tests/blender_*.py` acceptance scripts were outside the gate, and
+  five had been broken since 1.0.255 (they read the removed `bl_info`, or wrote
+  domain settings to `scene.fluidsim` after the 1.1 split). All are fixed and
+  now run in `BACKGROUND_ACCEPTANCE`/`SOURCE_REPORT_ACCEPTANCE`. GUI-only
+  probes are listed in `MANUAL_BLENDER_PROBES` with a reason.
+- None of the six `tools/release/validate_*_blender.py` release validators was
+  run by anything; five of the six had broken against the split. All six are
+  fixed and pass on Blender 5.2, and they now run as the gate's
+  `RELEASE_BLENDER_VALIDATORS` lane.
+- Root cause of the silent breakage: Blender accepts any Python attribute on a
+  PropertyGroup, so `scene.fluidsim.voxel_size = x` "worked" and never reached
+  the solver. `FLUIDSIM_PG_scene`/`FLUIDSIM_PG_domain` now raise
+  `AttributeError` naming the right group.
+- Found along the way: the Live Tuning shelf had dropped its display-fraction
+  knob since the split, and examples 01-04 shipped with pre-1.1 settings (2.0
+  flagged its own examples). Both fixed; the examples were regenerated.
+
+Regression gates:
+
+- `tests/test_production_gate_coverage.py` fails if any `tests/blender_*.py`
+  or `tools/release/validate_*_blender.py` is neither gated nor excused, or if
+  a gate marker or argument does not exist in its script.
+- `tests/test_file_compat.py::test_writing_a_setting_to_the_wrong_group_raises`
+  covers the guard.
+- `validate_examples_blender.py` refuses an example that 2.0 flags as pre-1.1.
 
 ## Acceptance criteria
 

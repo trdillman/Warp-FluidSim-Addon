@@ -56,7 +56,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 
 | Item | Status | Evidence |
 |---|---|---|
-| Retired snippet runtime (`CompiledSnippet`, `SnippetManager`, kernel templates), `blender/snippets.py` except the migration reader, the `_snippets()` shims, 13 unused enums | done (`d8f9d6e`, −583 lines) | presets now compile through the Custom Effects compiler in `tests/test_snippet_library.py` |
+| Retired snippet runtime (`CompiledSnippet`, `SnippetManager`, kernel templates), `blender/snippets.py` except the migration reader, the `_snippets()` shims, 13 unused enums | done (`d8f9d6e`, −583 lines) | presets compiled through the Custom Effects compiler (`tests/test_snippet_library.py`, deleted with the rest of the snippet code in slice D, `956c468`) |
 | `k_ww_compact_scatter` unwritten `out_count` (REVIEW-036 closed) | done (`2a6eec0`) | `tests/test_whitewater_kernel_outputs.py`; gate demo hash unchanged |
 | Gate truthfulness tests missed the `0e01cdf` certified-Warp stub | fixed (`55a4c6b`) | root 1191 passed |
 | `write_sequence_metadata` | removed with cache v1 (slice C below) | |
@@ -73,7 +73,10 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | D5 slice B: source schema < 4 compatibility (`source_compat.py`, `LEGACY_ABSOLUTE`) and legacy output adoption (`output_publication.py`) | **kept**. 1.1 itself still saves sources below schema 4 and adopts legacy outputs, so removing them would break files 1.1 saved. Owner-review deviation; 2.1 handoff: stamp the source schema on save | |
 | D5 slice C: cache format 1 (`fluidsim_*.npz` + `fluidsim_sequence.json`) removed. 1.1 never writes it (tag `c5919d6`). A 1.0 cache is still detected, refused with "written by FluidSim 1.0 … Free the cache and bake again", and can be freed | done (`af42f80`) | `tests/test_cache_io.py`, `fluidSim_warp_blender51/tests/test_cache_manager.py`; root 1158 + add-on 458 passed |
 | D5 slice D: Custom Warp Snippet RNA (`FLUIDSIM_PG_snippet*`, the `snippets` store), `fluidsim.snippet_apply`, `migrate_legacy_snippets` and its load handler, `blender/snippets.py`, `sim/custom.py` removed. 1.1 cannot create snippets and converts 1.0 snippets on load (marking the effect stack `migration_complete`, originals kept), so every 1.1-saved file already holds the Custom Effects copies. A stored snippet list without that mark is flagged as pre-1.1 and refused at admission; the raw list survives a 2.0 save so 1.1 can still recover it. Also fixed stale docs: user guide still called cache v1 readable (slice C), and CHANGELOG now carries the 1.0.x file/cache upgrade notes | done | `tests/test_file_compat.py`, `tests/blender_pre_bridge_file_acceptance.py` (1.0/1.1 snippet fixtures), admission acceptance and `check_demo_blends` pass on Blender 5.2; ownership map 226 → 225 fields; root 1155 + add-on 455 passed |
-| `tools/release/validate_phase3_blender.py` | fails at the attribute-publication check (`missing Blender attribute fluidsim_velocity`), identically at `v1.1.0`, HEAD and slice C: a stale validator, not a regression. Its cache round trip (the part slice C changed) passes. Goes with REVIEW-009 | |
+| REVIEW-009 (closed): Blender scripts that nothing ran. 13 `tests/blender_*.py` acceptance scripts were outside the gate (5 broken since 1.0.255); none of the 6 `tools/release/validate_*_blender.py` validators was run, and 5 of the 6 had broken against the 1.1 split (including `validate_phase3_blender.py`'s `missing Blender attribute fluidsim_velocity`). All fixed and gated (`RELEASE_BLENDER_VALIDATORS` lane); GUI-only probes are excused with a reason | done | `tests/test_production_gate_coverage.py`; all 6 release validators pass on Blender 5.2 through the gate's own `_run`; background acceptance batch green |
+| Root cause of the silent breakage: `scene.fluidsim.voxel_size = x` set a plain Python attribute and never reached the solver. Both settings groups now raise `AttributeError` naming the right group. **Owner review: behaviour change for user scripts** | done | `tests/test_file_compat.py::test_writing_a_setting_to_the_wrong_group_raises` |
+| Found by the validators: the Live Tuning shelf lost its Particle Display Fraction knob at the split (drawn from the domain, which lacks it); examples 01–04 shipped with pre-1.1 settings, so 2.0 flagged its own examples. **Owner review: both are user-visible fixes** | done: knob bound to its declaring group; examples regenerated with `generate_examples.py` | `test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror`; `validate_examples_blender.py` now refuses a pre-1.1 example |
+| REVIEW-044 (closed): one device switch, `FLUIDSIM_TEST_DEVICE` (default `cuda:0`), for pytest and every Blender/headless script | done | `tests/test_cuda_device_fixture.py` |
 
 Phases 3–4: not started.
 
@@ -86,4 +89,4 @@ Phases 3–4: not started.
 
 ## Next action
 
-Phase 2: REVIEW-009 validators (including `validate_phase3_blender.py`), card 044, then GUI gate 3/3.
+GUI gate 3/3 on the REVIEW-009 tree (demo sha256 must stay `a32872b8…0926`), then Phase 3 (hardening, card 005, defect #2, perf budget).

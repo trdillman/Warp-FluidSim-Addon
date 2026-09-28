@@ -13,6 +13,8 @@ import warp as wp
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 
 from fluidSim_warp_blender51.sim.enums import (  # noqa: E402
     SourceEmissionMode, SourceEvaluationCadence, SourceLifecycle,
@@ -40,7 +42,7 @@ def settings(max_particles=2_000):
     value.min_substeps = 1
     value.max_substeps = 1
     value.auto_grow_particles = False
-    value.device = "cuda:0"
+    value.device = script_device()
     return value
 
 
@@ -62,8 +64,8 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if not wp.get_device("cuda:0").is_cuda:
-        raise RuntimeError("mixed source-batch acceptance requires cuda:0")
+    if not wp.get_device(script_device()).is_cuda:
+        raise RuntimeError("mixed source-batch acceptance requires a CUDA device")
     cases = []
 
     solver = FluidSolver(settings())

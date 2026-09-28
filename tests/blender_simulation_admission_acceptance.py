@@ -11,6 +11,8 @@ import warp as wp
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
 
 from tools.build_demo_scenes import fresh_scene, make_particle_seed
 
@@ -79,7 +81,7 @@ def main():
               effect_id="fluidsim.vortex_force") == {"FINISHED"})
     check(
         "compile and apply custom effect",
-        bpy.ops.fluidsim.effect_apply_stack(device="cuda:0") == {"FINISHED"},
+        bpy.ops.fluidsim.effect_apply_stack(device=script_device()) == {"FINISHED"},
     )
 
     from fluidSim_warp_blender51.blender import simulation_admission, sources

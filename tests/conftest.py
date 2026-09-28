@@ -9,7 +9,8 @@ import pytest
 
 # Keep in sync with fluidSim_warp_blender51/tests/conftest.py (that suite also
 # runs standalone from the add-on folder).  tests/test_cuda_device_fixture.py
-# asserts both copies resolve devices identically.
+# asserts both copies resolve devices identically, and that the scripts'
+# ``_test_device.script_device`` honours the same override.
 TEST_DEVICE_ENV = "FLUIDSIM_TEST_DEVICE"
 DEFAULT_CUDA_DEVICE = "cuda:0"
 

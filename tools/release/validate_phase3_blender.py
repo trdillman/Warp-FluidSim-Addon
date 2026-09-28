@@ -140,10 +140,17 @@ def validate(module_name: str, work_dir: Path) -> dict:
 
         scene = bpy.context.scene
         fs = scene.fluidsim
+        # Domain settings live only on the designated domain object; writing
+        # them to scene.fluidsim does not reach the cache publication path.
+        domain = bpy.data.objects.new(
+            "P3 Domain", bpy.data.meshes.new("P3 Domain"))
+        scene.collection.objects.link(domain)
+        fs.domain_object = domain
+        ds = domain.fluidsim_domain
         fs.show_surface = True
-        fs.surface_enabled = True
+        ds.surface_enabled = True
         fs.show_particles = True
-        fs.whitewater_enabled = True
+        ds.whitewater_enabled = True
         fs.show_whitewater = True
         fs.particle_display_fraction = 1.0
         fs.surface_attribute_mode = "NONE"
@@ -151,7 +158,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
         fs.whitewater_attribute_mode = "NONE"
         for output_kind, keys in OUTPUT_ATTRIBUTE_KEYS.items():
             for key in keys:
-                setattr(fs, OUTPUT_TOGGLE_NAMES[output_kind][key], True)
+                setattr(ds, OUTPUT_TOGGLE_NAMES[output_kind][key], True)
 
         surface_material = _simple_material("P3 Surface Test", (0.8, 0.1, 0.05, 1.0))
         particle_material = _simple_material("P3 Particle Test", (0.05, 0.25, 1.0, 1.0))

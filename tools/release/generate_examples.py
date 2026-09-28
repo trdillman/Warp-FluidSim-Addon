@@ -202,7 +202,7 @@ def _whitewater_resume(output: Path) -> dict[str, object]:
     fs.checkpoint_interval = 1
     fs.cache_format = "V2"
     fs.whitewater_output_mode = "BOTH"
-    fs.whitewater_attribute_type = True
+    fs.domain_object.fluidsim_domain.whitewater_attribute_type = True
     scene.frame_end = 48
     return _save(
         scene,

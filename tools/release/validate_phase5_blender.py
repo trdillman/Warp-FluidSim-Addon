@@ -74,12 +74,25 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
         pending_settings = importlib.import_module(
             f"{module_name}.blender.pending_settings")
         tension = importlib.import_module(f"{module_name}.sim.surface_tension")
+        preset_operators = importlib.import_module(
+            f"{module_name}.operator_domains.presets")
+
+        def apply(preset):
+            # Route each key to its owner the way the Apply Preset operator does.
+            current = bpy.context.scene
+            return library.apply_preset(
+                current, preset,
+                target=current.fluidsim.domain_object.fluidsim_domain,
+                field_target=preset_operators._preset_field_owner(current))
 
         pending_settings.validate_transition_registry()
         scene = bpy.context.scene
-        fs = scene.fluidsim
+        domain = bpy.data.objects.new("P5 Domain", bpy.data.meshes.new("P5 Domain"))
+        scene.collection.objects.link(domain)
+        scene.fluidsim.domain_object = domain
+        fs = domain.fluidsim_domain
         physical = library.load_preset("BUILTIN:water_surface_tension")
-        result = library.apply_preset(scene, physical)
+        result = apply(physical)
         if result.preset_id != "water_surface_tension" or not result.requires_reset:
             raise AssertionError(f"physical preset result is invalid: {result}")
         if not fs.surface_tension_enabled:
@@ -129,8 +142,8 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
         blend_path = work_dir / "phase5_surface_tension_settings.blend"
         bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=False)
         bpy.ops.wm.open_mainfile(filepath=str(blend_path), load_ui=False)
-        reopened = bpy.context.scene.fluidsim
-        if reopened.active_preset_id != "water_surface_tension":
+        reopened = bpy.context.scene.fluidsim.domain_object.fluidsim_domain
+        if bpy.context.scene.fluidsim.active_preset_id != "water_surface_tension":
             raise AssertionError("active Phase-5 preset did not survive save/reopen")
         if not reopened.surface_tension_enabled:
             raise AssertionError("surface-tension enable state did not survive save/reopen")
@@ -139,8 +152,8 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
             "reopened physical coefficient")
 
         stylized = library.load_preset("BUILTIN:stylized_high_tension")
-        stylized_result = library.apply_preset(bpy.context.scene, stylized)
-        reopened = bpy.context.scene.fluidsim
+        stylized_result = apply(stylized)
+        reopened = bpy.context.scene.fluidsim.domain_object.fluidsim_domain
         if stylized_result.preset_id != "stylized_high_tension":
             raise AssertionError("stylized preset did not apply")
         _assert_close(reopened.surface_tension_coefficient, 0.25, "stylized coefficient")
@@ -148,9 +161,8 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
         if reopened.max_substeps != 16:
             raise AssertionError("stylized preset did not increase max substeps")
 
-        library.apply_preset(
-            bpy.context.scene, library.load_preset("BUILTIN:preview_water"))
-        if bpy.context.scene.fluidsim.surface_tension_enabled:
+        apply(library.load_preset("BUILTIN:preview_water"))
+        if bpy.context.scene.fluidsim.domain_object.fluidsim_domain.surface_tension_enabled:
             raise AssertionError(
                 "pre-Phase-5 preset retained hidden surface-tension state")
 

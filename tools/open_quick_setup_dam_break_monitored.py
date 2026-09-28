@@ -109,19 +109,19 @@ def main():
     scene = bpy.context.scene
     assert bpy.ops.fluidsim.setup_scene() == {"FINISHED"}
     fs = scene.fluidsim
+    domain = fs.domain_object
+    if domain is None:
+        raise RuntimeError("Quick Setup did not create a domain object")
+    ds = domain.fluidsim_domain
     fs.live = True
-    fs.surface_enabled = True
-    fs.whitewater_enabled = True
+    ds.surface_enabled = True
+    ds.whitewater_enabled = True
     fs.show_surface = True
     fs.show_particles = True
     fs.show_whitewater = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
-    fs.profiling_enabled = True
-
-    domain = fs.domain_object
-    if domain is None:
-        raise RuntimeError("Quick Setup did not create a domain object")
+    ds.profiling_enabled = True
     domain_bounds = tuple(round(float(v), 4) for v in (*domain.location, *domain.scale))
 
     _write_header()

@@ -10,13 +10,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TEST_DEVICE_ENV = "FLUIDSIM_TEST_DEVICE"
-DEFAULT_DEVICE = "cuda:0"
-
-
-def script_device():
-    """Device for script runs; honours the same override as the pytest fixture."""
-    return os.environ.get(TEST_DEVICE_ENV, "").strip() or DEFAULT_DEVICE
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _test_device import script_device  # noqa: E402,F401 - re-exported for scripts
 
 
 def validation_id(index):

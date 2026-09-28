@@ -8,6 +8,8 @@ with default settings.
 
 from types import SimpleNamespace
 
+import pytest
+
 from test_operator_panel_behavior import _install_bpy_stub, _reload_module
 
 
@@ -85,6 +87,27 @@ def test_detection_keys_are_exactly_the_domain_only_settings(monkeypatch):
     assert "domain_object" not in domain_only
     assert domain_only == (set(properties.FLUIDSIM_PG_domain.__annotations__)
                            - set(properties.FLUIDSIM_PG_scene.__annotations__))
+
+
+def test_writing_a_setting_to_the_wrong_group_raises(monkeypatch):
+    """A 1.x-style ``scene.fluidsim.voxel_size = x`` must not silently no-op.
+
+    Blender accepts any Python attribute on a PropertyGroup instance, so
+    without the guard the write reads back as if it worked and never reaches
+    the solver (validate_phase3_blender.py did exactly this).
+    """
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    scene = properties.FLUIDSIM_PG_scene()
+    domain = properties.FLUIDSIM_PG_domain()
+    for name in ("voxel_size", "surface_enabled", "surface_attribute_velocity"):
+        with pytest.raises(AttributeError, match=f"'{name}'.*domain_object.fluidsim_domain"):
+            setattr(scene, name, 1)
+    with pytest.raises(AttributeError, match="'show_surface'.*scene.fluidsim"):
+        domain.show_surface = True
+    scene.show_surface = True
+    domain.voxel_size = 0.1
+    assert (scene.show_surface, domain.voxel_size) == (True, 0.1)
 
 
 def test_load_handler_registers_once_and_unregisters(monkeypatch):
