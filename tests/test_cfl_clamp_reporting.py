@@ -172,7 +172,7 @@ def test_cache_playback_clears_the_clamp_flag(monkeypatch):
     monkeypatch.setattr(io_pkg, "cache", fake_cache, raising=False)
     monkeypatch.setattr(
         scene_bridge.playback, "_check_cache_scene_key",
-        lambda scene, base, data: None)
+        lambda scene, data: None)
 
     sess = scene_bridge.Session()
     scene = _scene()

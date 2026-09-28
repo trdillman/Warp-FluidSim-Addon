@@ -138,6 +138,38 @@ def test_pcg_graph_cache_evicts_lru_instead_of_flushing(cuda_device):
     assert len(solver._pcg_graphs) == 8
 
 
+def test_native_pcg_capture_failure_is_reported_in_frame_stats(cuda_device):
+    """REVIEW-016: a failed graph capture degraded silently to host batches."""
+    from types import SimpleNamespace
+
+    from fluidSim_warp_blender51.sim.frame_runtime import FrameStats
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
+    if not wp.is_conditional_graph_supported():
+        pytest.skip("conditional CUDA graphs unsupported")
+    solver = _prepared_solver(cuda_device)
+    voxel_type = wp.full(
+        solver.grid.voxel_capacity, VOXEL_FLUID, dtype=wp.int32,
+        device=cuda_device)
+
+    def refuse_capture(*_args):
+        raise RuntimeError("capture refused")
+
+    solver._get_pcg_conditional_graphs = refuse_capture
+    solver.rhs.fill_(1.0)
+    solver.solve_pcg(voxel_type, 25, 1.0e-8)
+
+    assert solver.last_pcg_execution_mode == "host_batched"
+    assert solver.last_pcg_native_error == "RuntimeError: capture refused"
+    owner = SimpleNamespace(pressure_solver=solver, viscosity_solver=None)
+    message = FluidSolver._native_solver_message(owner)
+    assert message.startswith("Pressure solve fell back from CUDA graphs")
+    assert message.endswith("RuntimeError: capture refused")
+    stats = FrameStats(native_solver_message=message)
+    assert stats.as_dict()["nativeSolverMessage"] == message
+    solver.release()
+
+
 def test_native_pcg_module_unloads_on_pressure_solver_release(cuda_device):
     from fluidSim_warp_blender51.sim import cuda_reduction
 

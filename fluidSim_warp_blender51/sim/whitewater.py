@@ -13,6 +13,7 @@ import warp as wp
 wp.set_module_options({"enable_backward": False})
 
 from . import constants as C
+from .kernels_fluid import collision_sdf_gradient
 from .fields import (
     voxel_coord_of_flat,
     voxel_flat_index,
@@ -514,16 +515,10 @@ def k_advect_whitewater(
         collision_sdf, leaf_table, voxels_dim, leaves_dim, cvp, 1.0e6
     )
     if csdf < 0.0:
-        gx = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            cvp + wp.vec3(0.5, 0.0, 0.0), 1.0e6) - csdf
-        gy = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            cvp + wp.vec3(0.0, 0.5, 0.0), 1.0e6) - csdf
-        gz = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            cvp + wp.vec3(0.0, 0.0, 0.5), 1.0e6) - csdf
-        n = wp.vec3(gx, gy, gz)
+        # REVIEW-017: shared central-difference gradient that ignores samples
+        # outside the sparse topology instead of reading their 1e6 fallback.
+        n = collision_sdf_gradient(
+            cvp, collision_sdf, leaf_table, voxels_dim, leaves_dim)
         if wp.length(n) > 1.0e-8:
             n = wp.normalize(n)
             p = p - n * csdf

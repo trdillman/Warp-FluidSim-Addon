@@ -1307,6 +1307,8 @@ class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
         )
         if getattr(fs, "stat_surface_tension_message", ""):
             _draw_wrapped(layout, fs.stat_surface_tension_message, icon="INFO")
+        if getattr(fs, "stat_native_solver_message", ""):
+            _draw_wrapped(layout, fs.stat_native_solver_message, icon="ERROR")
         draw_readout_grid(
             layout,
             fs,

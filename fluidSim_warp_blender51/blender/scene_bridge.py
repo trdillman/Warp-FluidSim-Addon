@@ -407,6 +407,8 @@ class Session:
             getattr(stats, "surface_tension_status", "DISABLED"))
         fs.stat_surface_tension_message = str(
             getattr(stats, "surface_tension_message", ""))
+        fs.stat_native_solver_message = str(
+            getattr(stats, "native_solver_message", ""))
         growth = getattr(self.solver, "last_particle_growth", None)
         if (growth is not None and getattr(growth, "grew", False)
                 and int(growth.current) != self.last_reported_growth_capacity):

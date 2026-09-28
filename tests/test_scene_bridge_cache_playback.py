@@ -405,34 +405,45 @@ def test_active_production_bake_rejects_live_and_cache_playback(monkeypatch):
         production_bake.clear_active_bake(scene, controller)
 
 
-def test_cache_v2_playback_uses_the_v2_signature_bundle(monkeypatch):
+def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
+    """REVIEW-022: the per-frame check must not depend on the playhead.
+
+    The full scene key also hashes source transforms and evaluated geometry,
+    so an animated collider made every frame after the first look foreign.
+    ``read_frame`` has already matched the frame against the manifest, so the
+    check neither re-reads the metadata nor evaluates the source signature.
+    """
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
-    fake_cache.read_sequence_metadata = lambda _base: {
-        "format_version": 2,
-        "scene_key": "v2-scene-key",
-    }
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("per-frame check did frame-dependent or disk work")
+
+    fake_cache.read_sequence_metadata = must_not_run
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
-        "scene_key": "v2-scene-key",
-    }
-
-    def legacy_key_must_not_run(_scene):
-        raise AssertionError("cache playback used the 1.0 scene key")
-
-    fake_identity.scene_key = legacy_key_must_not_run
+    fake_identity.signature_bundle = must_not_run
+    fake_identity.scene_key = must_not_run
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
     _install_cache_playback_modules(
         monkeypatch, fake_cache, fake_viewport, fake_identity)
 
-    scene_bridge.playback._check_cache_scene_key(
-        scene,
-        "//cache",
-        {"frame": np.array(1), "scene_key": np.array("v2-scene-key")},
-    )
+    # the scene key differs (source moved) but the settings match
+    scene_bridge.playback._check_cache_scene_key(scene, {
+        "frame": np.array(3),
+        "scene_key": np.array("key-at-frame-1"),
+        "settings_signature": np.array("settings-sig"),
+    })
+    # a frame without a settings stamp has nothing to compare
+    scene_bridge.playback._check_cache_scene_key(scene, {"frame": np.array(3)})
+    with pytest.raises(ValueError, match="different scene settings"):
+        scene_bridge.playback._check_cache_scene_key(scene, {
+            "frame": np.array(3),
+            "settings_signature": np.array("other-sig"),
+        })
 
 
 def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
@@ -441,20 +452,14 @@ def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
     frame_data = {
         "frame": np.array(2),
-        "scene_key": np.array("v2-scene-key"),
+        "settings_signature": np.array("settings-sig"),
         "positions": np.zeros((3, 3), dtype=np.float32),
         "whitewater": np.zeros((4, 3), dtype=np.float32),
         "whitewater_type": np.array([0, 1, 2, 9], dtype=np.int32),
     }
-    fake_cache.read_sequence_metadata = lambda _base: {
-        "format_version": 2,
-        "scene_key": "v2-scene-key",
-    }
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
-        "scene_key": "v2-scene-key",
-    }
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     fake_cache.read_frame = lambda _base, _frame: frame_data
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
@@ -479,22 +484,16 @@ def test_cache_playback_reports_recoverable_render_sync_warning(monkeypatch):
     scene = _scene(frame=2)
     frame_data = {
         "frame": np.array(2),
-        "scene_key": np.array("v2-scene-key"),
+        "settings_signature": np.array("settings-sig"),
         "positions": np.zeros((3, 3), dtype=np.float32),
         "whitewater": np.zeros((0, 3), dtype=np.float32),
     }
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
-    fake_cache.read_sequence_metadata = lambda _base: {
-        "format_version": 2,
-        "scene_key": "v2-scene-key",
-    }
     fake_cache.read_frame = lambda _base, _frame: frame_data
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity"
     )
-    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
-        "scene_key": "v2-scene-key",
-    }
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     warning = "Render input synchronization failed: RuntimeError: offline"
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication"
@@ -526,19 +525,16 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     scene = _scene()
     scene.fluidsim.cache_path = str(tmp_path)
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
-    fake_cache.read_sequence_metadata = lambda _base: {
-        "format_version": 2, "scene_key": "baked-scene-key"}
     fake_cache.read_frame = lambda _base, frame: {
         "frame": np.array(frame, dtype=np.int32),
-        "scene_key": np.array("baked-scene-key"),
+        "settings_signature": np.array("baked-settings"),
         "positions": np.zeros((2, 3), dtype=np.float32),
         "whitewater": np.zeros((1, 3), dtype=np.float32),
     }
-    current = ["baked-scene-key"]
+    current = ["baked-settings"]
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.signature_bundle = lambda _scene, depsgraph=None: {
-        "scene_key": current[0]}
+    fake_identity.settings_signature = lambda _scene: current[0]
 
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     drawn = []
@@ -550,7 +546,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]
 
-    current[0] = "edited-scene-key"
+    current[0] = "edited-settings"
     with pytest.raises(ValueError, match="different scene settings"):
         scene_bridge.playback.play_cache_frame(scene_bridge.session(), scene, 7)
     assert drawn == [7]

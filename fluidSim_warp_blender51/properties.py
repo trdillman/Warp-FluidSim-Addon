@@ -1007,6 +1007,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     stat_surface_tension_message: StringProperty(
         default="",
         description="Most recent status or error message reported by surface-tension computation")
+    stat_native_solver_message: StringProperty(
+        default="",
+        description="Why a pressure or viscosity solve fell back from CUDA graphs to a slower host loop, if it did")
 
 
 # Domain-level settings

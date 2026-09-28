@@ -669,6 +669,36 @@ def test_sanitize_mac_velocity_zeroes_non_finite_faces_and_clamps_speed(cuda_dev
     assert out_wu[4] == pytest.approx(0.0)
 
 
+def test_sanitize_mac_velocity_zeroes_faces_with_non_finite_weights(cuda_device):
+    """REVIEW-014: a NaN weight failed every comparison and survived."""
+    grid = _one_leaf_grid(cuda_device)
+    vel = MacVelocityField(grid)
+    vel.zero()
+
+    u = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    u[:4] = [9.0, math.nan, -9.0, 1.5]
+    weights = np.ones(grid.voxel_capacity, dtype=np.float32)
+    weights[:4] = [math.nan, math.nan, math.inf, 1.0]
+    _copy_float(vel.u, u, cuda_device)
+    _copy_float(vel.wu, weights, cuda_device)
+
+    wp.launch(
+        k_sanitize_mac_velocity,
+        dim=grid.voxel_capacity,
+        inputs=[vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww,
+                grid.num_leaves, 2.0],
+        device=cuda_device,
+    )
+
+    out_u = vel.u.numpy()[:4]
+    out_wu = vel.wu.numpy()[:4]
+    assert np.all(np.isfinite(out_u)) and np.all(np.isfinite(out_wu))
+    np.testing.assert_array_equal(out_wu[:3], [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(out_u[:3], [0.0, 0.0, 0.0])
+    assert out_u[3] == pytest.approx(1.5)
+    assert out_wu[3] == pytest.approx(1.0)
+
+
 def test_sanitize_particles_kills_non_finite_state_and_clamps_finite_speed(cuda_device):
     positions = wp.array(
         [

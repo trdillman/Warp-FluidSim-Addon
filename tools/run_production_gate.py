@@ -90,6 +90,8 @@ BACKGROUND_ACCEPTANCE = (
     ("tests/blender_tooltip_acceptance.py", "TOOLTIP-ACCEPTANCE-PASS"),
     ("tests/blender_topology_transaction_acceptance.py", "TOPOLOGY-TRANSACTION-ACCEPTANCE-PASS"),
     ("tests/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
+    ("tests/blender_animated_cache_playback_acceptance.py",
+     "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
 )
 # Source acceptance scripts that write a JSON report: (capability, marker).
 SOURCE_REPORT_ACCEPTANCE = (

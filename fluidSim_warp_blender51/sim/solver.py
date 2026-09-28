@@ -271,6 +271,26 @@ def k_copy_float(src: wp.array(dtype=float), dst: wp.array(dtype=float)):
     dst[tid] = src[tid]
 
 
+@wp.func
+def _sanitize_mac_face(vel: wp.array(dtype=float), weight: wp.array(dtype=float),
+                       tid: int, max_speed: float):
+    wt = weight[tid]
+    # REVIEW-014: every comparison with a NaN weight is False, so a NaN
+    # weight used to skip both branches below and poison the next normalize.
+    # A face whose weight is not finite carries no trustworthy velocity.
+    if wp.isnan(wt) or wp.isinf(wt):
+        weight[tid] = 0.0
+        vel[tid] = 0.0
+        return
+    val = vel[tid]
+    if wp.isnan(val) or wp.isinf(val):
+        vel[tid] = 0.0
+        if wt > 1.0e-8:
+            weight[tid] = 1.0e-6
+    elif wt > 1.0e-8:
+        vel[tid] = wp.clamp(val, -max_speed, max_speed)
+
+
 @wp.kernel
 def k_sanitize_mac_velocity(
     u: wp.array(dtype=float),
@@ -291,30 +311,9 @@ def k_sanitize_mac_velocity(
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
-
-    val = u[tid]
-    if wp.isnan(val) or wp.isinf(val):
-        u[tid] = 0.0
-        if wu[tid] > 1.0e-8:
-            wu[tid] = 1.0e-6
-    elif wu[tid] > 1.0e-8:
-        u[tid] = wp.clamp(val, -max_speed, max_speed)
-
-    val = v[tid]
-    if wp.isnan(val) or wp.isinf(val):
-        v[tid] = 0.0
-        if wv[tid] > 1.0e-8:
-            wv[tid] = 1.0e-6
-    elif wv[tid] > 1.0e-8:
-        v[tid] = wp.clamp(val, -max_speed, max_speed)
-
-    val = w[tid]
-    if wp.isnan(val) or wp.isinf(val):
-        w[tid] = 0.0
-        if ww[tid] > 1.0e-8:
-            ww[tid] = 1.0e-6
-    elif ww[tid] > 1.0e-8:
-        w[tid] = wp.clamp(val, -max_speed, max_speed)
+    _sanitize_mac_face(u, wu, tid, max_speed)
+    _sanitize_mac_face(v, wv, tid, max_speed)
+    _sanitize_mac_face(w, ww, tid, max_speed)
 
 
 @wp.kernel
@@ -1689,6 +1688,7 @@ class FluidSolver:
         self.stats.viscosity_converged = bool(status["converged"])
         self.stats.viscosity_iterations = int(status["iterations"])
         self.stats.viscosity_residual = float(status["residual"])
+        self.stats.native_solver_message = self._native_solver_message()
 
     def _collision_faces(self):
         g = self.grid
@@ -1730,7 +1730,20 @@ class FluidSolver:
         )
         self.stats.pressure_iterations = status["iterations"]
         self.stats.pressure_residual = status["residual"]
+        self.stats.native_solver_message = self._native_solver_message()
         return bool(status["project_velocity"])
+
+    def _native_solver_message(self):
+        """Say which solves lost their CUDA-graph path, and why."""
+        parts = []
+        for label, owner in (
+                ("Pressure", self.pressure_solver),
+                ("Viscosity", getattr(self, "viscosity_solver", None))):
+            error = str(getattr(owner, "last_pcg_native_error", "") or "")
+            if error:
+                parts.append(f"{label} solve fell back from CUDA graphs "
+                             f"to a slower host loop: {error}")
+        return "; ".join(parts)
 
     def _collider_material_response(self):
         g = self.grid

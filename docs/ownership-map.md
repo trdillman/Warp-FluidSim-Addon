@@ -26,7 +26,7 @@ Two directions of flow exist, and a field uses one or the other:
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 28 | the runtime publishes it where its reader looks |
+| PUBLISHED | 29 | the runtime publishes it where its reader looks |
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **225** | |
+| **total** | **226** | |
 
 ## Mirror redirection
 
@@ -124,6 +124,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `stat_surface_tension_submission_ms` | PRESENTATION | - | - | scene | - | scene/scene | 0 | INTERNAL |
 | `stat_surface_tension_status` | PRESENTATION | - | - | scene | - | scene/scene | 0 | INTERNAL |
 | `stat_surface_tension_message` | PRESENTATION | - | - | scene | scene | scene/scene | 0 | PUBLISHED |
+| `stat_native_solver_message` | PRESENTATION | - | - | scene | scene | scene/scene | 0 | PUBLISHED |
 | `time_scale` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `cfl` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `min_substeps` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |

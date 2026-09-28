@@ -187,7 +187,8 @@ _PRESENTATION_FIELDS = frozenset({
     "stat_surface_tension_max_acceleration",
     "stat_surface_tension_temporary_bytes",
     "stat_surface_tension_submission_ms", "stat_surface_tension_status",
-    "stat_surface_tension_message", "bake_status", "bake_progress",
+    "stat_surface_tension_message", "stat_native_solver_message",
+    "bake_status", "bake_progress",
     "bake_message",
 })
 

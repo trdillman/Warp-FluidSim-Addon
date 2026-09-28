@@ -348,8 +348,6 @@ class ProductionBakeBackend:
         return cached_parts[:2] == current_parts[:2]
 
     def resume_decision(self, scene) -> ResumeDecision:
-        from . import cache_identity
-
         base = self.cache_path(scene)
         try:
             manifest = load_manifest(manifest_path(base))
@@ -387,9 +385,7 @@ class ProductionBakeBackend:
                 "EFFECT_SIGNATURE_MISMATCH",
                 "Current applied Custom Effects inventory does not match the cache",
             )
-        signatures = cache_identity.signature_bundle(
-            scene, self._bpy().context.evaluated_depsgraph_get()
-        )
+        signatures = self._signatures_at(scene, manifest.frame_start)
         for key, code in (
             ("scene_key", "SCENE_KEY_MISMATCH"),
             ("settings_signature", "SETTINGS_SIGNATURE_MISMATCH"),
@@ -447,6 +443,29 @@ class ProductionBakeBackend:
             f"Resume from verified checkpoint {last}; next frame is {last + 1}",
         )
 
+    def _signatures_at(self, scene, frame: int) -> dict[str, str]:
+        """Scene identity evaluated at the bake's reference frame.
+
+        The source signature hashes transforms and evaluated geometry, so an
+        animated collider or emitter gives a different identity on every
+        frame. Pinning it to the bake start frame makes the stamp written at
+        initialize and the one checked on resume agree wherever the playhead
+        happens to be.
+        """
+        from . import cache_identity, playback
+
+        bpy = self._bpy()
+        current = int(scene.frame_current)
+        with playback.suppress_frame_handlers():
+            try:
+                if current != int(frame):
+                    scene.frame_set(int(frame))
+                return cache_identity.signature_bundle(
+                    scene, bpy.context.evaluated_depsgraph_get())
+            finally:
+                if int(scene.frame_current) != current:
+                    scene.frame_set(current)
+
     def _snapshot_live_state(self, scene) -> None:
         from . import cache_identity, scene_bridge
 
@@ -492,7 +511,7 @@ class ProductionBakeBackend:
         resume: bool = False,
         restart: bool = False,
     ) -> int | None:
-        from . import cache_identity, playback, scene_bridge
+        from . import playback, scene_bridge
 
         if self._initialized:
             raise RuntimeError("production bake backend is already initialized")
@@ -500,8 +519,8 @@ class ProductionBakeBackend:
         scene.fluidsim.live = False
         self.base_dir = self.cache_path(scene)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.signatures = self._signatures_at(scene, int(start))
         depsgraph = self._bpy().context.evaluated_depsgraph_get()
-        self.signatures = cache_identity.signature_bundle(scene, depsgraph)
         from .effects import effect_identity
         self.effect_signature, self.effect_inventory = effect_identity(scene)
 
