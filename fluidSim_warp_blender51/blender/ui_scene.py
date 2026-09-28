@@ -7,6 +7,7 @@ import textwrap
 
 import bpy
 
+from ..version import VERSION_STRING
 from . import file_compat
 from .ui_common import (
     FluidSimScenePanel,
@@ -56,6 +57,13 @@ def _runtime_ui_state():
     selected = configured_device()
     ready, message = runtime_status_for_device(selected, probe=probe)
     return probe, selected, bool(ready), str(message)
+
+
+def _build_identity():
+    """Name the loaded build, so a stale install or a dev checkout is visible."""
+    if (__package__ or "").startswith("bl_ext."):
+        return f"FluidSim {VERSION_STRING} · installed extension"
+    return f"FluidSim {VERSION_STRING} · loaded from {Path(__file__).resolve().parents[1]}"
 
 
 def _draw_wrapped(layout, text, *, icon="NONE", width=72):
@@ -315,6 +323,7 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
             icon="CHECKMARK" if runtime_ready else "ERROR",
         )
         runtime.operator("fluidsim.refresh_runtime_probe", text="Re-detect GPU" if not runtime_ready else "Re-detect", icon="FILE_REFRESH")
+        _draw_wrapped(layout, _build_identity(), icon="INFO")
 
         # Compact one-line live telemetry: last step cost, substep count, and
         # whether the CFL condition forced a clamp. Read-only status only —

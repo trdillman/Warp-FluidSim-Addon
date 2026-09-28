@@ -71,6 +71,14 @@ expected; otherwise, a changed hash needs an explanation before release.
    - `production_gate_manifest.json` from step 4.
 
    Paste the changelog section into the release notes.
+7. **Update your own Blender.** Blender never updates an installed add-on
+   from this repository, so a stale copy can keep loading unnoticed. Run
+   `python tools/release/install_local.py --blender <blender> --zip <package>`.
+   It installs the package, warns about legacy `fluidSim_warp_blender51`
+   add-on folders, and prints the FluidSim version, the Warp build that
+   actually loaded, and whether CUDA is usable. It fails when any of them is
+   wrong. `--probe-only` checks without installing. The Status & Runtime
+   panel also names the loaded build.
 
 ## Changing a pinned dependency
 

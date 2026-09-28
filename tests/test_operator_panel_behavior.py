@@ -2610,6 +2610,28 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     assert long_status[-20:] in joined
 
 
+def test_status_panel_names_the_loaded_build(monkeypatch):
+    """A stale install or a dev checkout must be identifiable from the UI."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    from fluidSim_warp_blender51.version import VERSION_STRING
+
+    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
+                        lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
+    monkeypatch.setattr(ui_scene, "activity_ui_state",
+                        lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"})
+    fs = SimpleNamespace(status="", height_error="")
+    panel = ui_scene.FLUIDSIM_PT_scene_control()
+    panel.layout = _Layout()
+    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+    joined = " ".join(l["text"] for l in panel.layout.labels)
+    assert f"FluidSim {VERSION_STRING}" in joined
+    assert "loaded from" in joined
+
+    monkeypatch.setattr(ui_scene, "__package__", "bl_ext.user_default.fluidsim_warp.blender")
+    assert ui_scene._build_identity() == f"FluidSim {VERSION_STRING} · installed extension"
+
+
 def test_transport_keeps_complete_preview_action_present_when_not_ready(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
