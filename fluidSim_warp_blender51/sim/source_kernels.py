@@ -1830,7 +1830,7 @@ def k_emit_compiled_source_particles(
     desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
     missing = wp.max(0, desired - voxel_counts[flat])
     center = voxel_center_world(ijk, origin, voxel_size)
-    for sample in range(64):
+    for sample in range(C.MAX_PARTICLES_PER_VOXEL):
         if sample >= missing:
             break
         slot = wp.atomic_add(count, 0, 1)

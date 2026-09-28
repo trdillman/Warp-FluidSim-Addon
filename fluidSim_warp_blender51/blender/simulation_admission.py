@@ -15,6 +15,7 @@ import math
 from types import SimpleNamespace
 import traceback
 
+from ..sim import constants as C
 from .scene_inputs import SceneInputs
 from .solver_settings import build_settings, domain_transform
 
@@ -164,7 +165,7 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
     coords = (leaf_coords_for_world_bounds(settings, *bounds())
               if bounds is not None else ())
     if legacy_plan.operation == SourceOperation.LIQUID:
-        target = max(0, min(64, int(math.ceil(
+        target = max(0, min(C.MAX_PARTICLES_PER_VOXEL, int(math.ceil(
             float(legacy_plan.payload.target_particles_per_voxel)))))
         particle_demand = len(coords) * 512 * target
         quality = DemandQuality.UPPER_BOUND

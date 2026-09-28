@@ -1837,11 +1837,39 @@ class PressureSolver:
         if src is not self.pressure:
             wp.copy(self.pressure, src, count=n)
         self.last_iterations = iterations
-        self.last_residual = -1.0
-        self.last_residual_squared = -1.0
+        # Same fix as solve_jacobi: report the real residual instead of a
+        # -1.0 placeholder, measured against the ST variable-coefficient
+        # operator this solve actually used (measure_residual() applies the
+        # constant-coefficient one).
+        residual = self._measure_residual_st(
+            voxel_type, vel, reference_mass, eta_phi, rho_liquid, rho_gas,
+            eps_rho)
+        self.last_residual = residual if math.isfinite(residual) else math.inf
+        self.last_residual_squared = (
+            residual * residual if math.isfinite(residual) else math.inf)
         self._set_pressure_status(
             PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
         return self.last_status
+
+    def _measure_residual_st(self, voxel_type, vel, reference_mass, eta_phi,
+                             rho_liquid, rho_gas, eps_rho):
+        """L2 norm of (rhs - A_st*pressure); one readback, like measure_residual()."""
+        import numpy as _np
+
+        g = self.grid
+        n = self._dim()
+        self.ap[:n].zero_()
+        wp.launch(
+            k_apply_matrix_st, dim=n,
+            inputs=[self.pressure, voxel_type, self.inv_diag,
+                    vel.wu, vel.wv, vel.ww,
+                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                    g.num_leaves, reference_mass, eta_phi,
+                    rho_liquid, rho_gas, eps_rho, self.ap],
+            device=self.device,
+        )
+        r = self.rhs[:n].numpy() - self.ap[:n].numpy()
+        return float(_np.linalg.norm(r))
 
     def solve_pcg_st(self, voxel_type, max_iterations, tolerance, vel,
                      reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,

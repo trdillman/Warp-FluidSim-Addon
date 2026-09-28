@@ -548,7 +548,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
             "(pressure by default) inside the region"))
     emit_rate: FloatProperty(
         name="Legacy Target Particles / Voxel", default=8.0, min=0.0,
-        max=64.0, soft_max=32.0,
+        max=float(_C.MAX_PARTICLES_PER_VOXEL), soft_max=32.0,
         update=_request_reset,
         description=(
             "Set target particle occupancy in each source voxel, not volume per second. "
@@ -1103,7 +1103,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         default="DEFER", update=_request_particle_capacity,
         description="Choose how a source behaves when guarded particle growth cannot allocate safely")
     particles_per_voxel: IntProperty(
-        name="Liquid Sampling", default=8, min=0, max=64,
+        name="Liquid Sampling", default=8, min=0, max=_C.MAX_PARTICLES_PER_VOXEL,
         update=_request_reset,
         description="Set authoritative liquid rest density and inherited source occupancy; changing it requires Reset, while zero disables inherited liquid emission")
     sample_type: EnumProperty(

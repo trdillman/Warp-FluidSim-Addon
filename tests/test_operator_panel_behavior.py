@@ -324,6 +324,7 @@ def test_undo_metadata_is_limited_to_mutating_operators(monkeypatch):
         operators.FLUIDSIM_OT_setup_scene,
         operators.FLUIDSIM_OT_tag_object,
         operators.FLUIDSIM_OT_clear_error,
+        operators.FLUIDSIM_OT_apply_capacity_suggestion,  # REVIEW-011
     }
     not_undoable = {
         operators.FLUIDSIM_OT_initialize,

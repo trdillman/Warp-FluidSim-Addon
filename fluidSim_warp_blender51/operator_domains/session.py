@@ -98,7 +98,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
                     {"WARNING"},
                     "Capacity adjustment required; review the FluidSim panel",
                 )
-                scene.fluidsim.status = "Capacity warning â€” approve a safe option below to run"
+                scene.fluidsim.status = "Capacity warning — approve a safe option below to run"
             else:
                 self.report({"ERROR"}, f"Solver initialization failed: {exc}")
                 scene.fluidsim.status = f"Init failed: {exc}"
@@ -207,7 +207,12 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     bl_idname = "fluidsim.apply_capacity_suggestion"
     bl_label = "Approve Capacity Changes & Run"
-    bl_options = {"REGISTER"}
+    # UNDO (REVIEW-011): this writes domain settings and the domain transform.
+    # Without an undo step, Ctrl+Z still reverts those writes, folded into the
+    # previous step. With one, it reverts exactly this approval, and the
+    # reinit signature (voxel_size, capacities, domain bounds) flags that the
+    # live solver needs reinitializing.
+    bl_options = {"REGISTER", "UNDO"}
 
     suggestion_key: StringProperty(default="", options={"SKIP_SAVE"})
     expected_scene_signature: StringProperty(default="", options={"SKIP_SAVE"})
@@ -251,7 +256,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             old_value = getattr(domain_settings, name, None)
             layout.label(
                 text=(
-                    f"{name}: {_format_capacity_value(old_value)} â†’ "
+                    f"{name}: {_format_capacity_value(old_value)} → "
                     f"{_format_capacity_value(value)}"
                 )
             )
@@ -301,7 +306,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "Scene changed after the warning; initialize again for new options",
             )
-            scene_fs.status = "Capacity options changed â€” review the refreshed warning"
+            scene_fs.status = "Capacity options changed — review the refreshed warning"
             return {"CANCELLED"}
         suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
         if suggestion is None:
@@ -309,7 +314,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
                 {"WARNING"},
                 "This option is no longer inside the live safety budget",
             )
-            scene_fs.status = "Capacity option is no longer safe â€” review alternatives"
+            scene_fs.status = "Capacity option is no longer safe — review alternatives"
             return {"CANCELLED"}
 
         from ..blender.scene_bridge import active_domain_settings
@@ -418,7 +423,7 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
         # Never mutate semantic quality/capacity from a one-click retry. The
         # existing plan panel and apply_capacity_suggestion dialog own the one
         # exact-values confirmation and stale-signature revalidation flow.
-        fs.status = "Capacity options ready â€” review and confirm one option"
+        fs.status = "Capacity options ready — review and confirm one option"
         self.report({"WARNING"}, fs.status)
         return {"CANCELLED"}
 

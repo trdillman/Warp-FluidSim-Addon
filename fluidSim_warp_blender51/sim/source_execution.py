@@ -556,7 +556,8 @@ class CompiledSourceExecution:
     def _legacy_liquid_target(source):
         # Legacy kernels historically truncate emit_rate; preserve that
         # behavior while making the zero predicate explicit and shared.
-        return max(0, min(64, int(float(getattr(source, "emit_rate", 0.0)))))
+        return max(0, min(C.MAX_PARTICLES_PER_VOXEL,
+                          int(float(getattr(source, "emit_rate", 0.0)))))
 
     @classmethod
     def legacy_descriptor_requires_topology(cls, source):

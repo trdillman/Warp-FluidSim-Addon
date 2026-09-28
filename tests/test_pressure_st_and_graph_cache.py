@@ -58,6 +58,38 @@ def test_solve_pcg_st_zeroes_working_vectors_before_iterating(cuda_device):
     assert float(solver.pressure.numpy()[0]) == 0.0
 
 
+def test_solve_jacobi_st_reports_its_real_residual(cuda_device):
+    """REVIEW-004: ST Jacobi reported last_residual = -1.0 whatever happened.
+
+    Zero iterations leave pressure at 0, so the residual is exactly |rhs|;
+    iterating must then shrink it. Alternate cells are air (Dirichlet), so
+    every fluid cell has an air neighbour and the system is non-singular.
+    """
+    import numpy as np
+
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    vel = MacVelocityField(grid)
+    for weights in (vel.wu, vel.wv, vel.ww):
+        weights.fill_(1.0)
+    fluid = np.arange(grid.voxel_capacity) % 2 == 1
+    voxel_type = wp.array(
+        np.where(fluid, VOXEL_FLUID, 0).astype(np.int32), device=cuda_device)
+    rhs = wp.array(fluid.astype(np.float32), device=cuda_device)
+    solver.build_preconditioner_st(voxel_type, vel)
+
+    residuals = []
+    for iterations in (0, 20):
+        wp.copy(solver.rhs, rhs)
+        solver.solve_jacobi_st(voxel_type, iterations, vel)
+        assert solver.should_project_pressure()
+        residuals.append(solver.last_residual)
+
+    assert residuals[0] == pytest.approx(fluid.sum() ** 0.5, rel=1.0e-6)
+    assert 0.0 <= residuals[1] < 0.5 * residuals[0]
+    assert solver.last_residual_squared == pytest.approx(residuals[1] ** 2)
+
+
 def _prepared_solver(device):
     grid = _one_leaf_grid(device)
     solver = PressureSolver(grid, device)

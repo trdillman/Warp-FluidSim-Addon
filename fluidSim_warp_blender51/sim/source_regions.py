@@ -472,7 +472,7 @@ class CompiledRegion:
 
 def normalized_liquid_target(plan: SourcePlan) -> int:
     """Return the canonical bounded liquid occupancy target."""
-    return max(0, min(64, int(round(
+    return max(0, min(C.MAX_PARTICLES_PER_VOXEL, int(round(
         float(plan.payload.target_particles_per_voxel)))))
 
 

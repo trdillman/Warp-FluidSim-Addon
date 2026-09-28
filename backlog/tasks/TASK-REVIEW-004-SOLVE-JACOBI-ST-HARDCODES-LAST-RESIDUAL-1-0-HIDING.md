@@ -2,7 +2,7 @@
 
 ## State
 
-ready-for-agent
+completed
 
 ## Severity
 
@@ -21,16 +21,22 @@ In spacetime mode, the UI/diagnostics show a meaningless -1.0 residual for ST Ja
 
 ## Acceptance criteria
 
-- [ ] Root cause at `fluidSim_warp_blender51/sim/pressure.py:1827` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
-- [ ] Fix: Port the residual computation from `solve_jacobi` into `solve_jacobi_st`: replace lines 1827-1828 with `residual = self.measure_residual(voxel_type); self.last_residual = residual if math.isfinite(residual) else math.inf; self.last_residual_squared = (residual * residual if math.isfinite(residual) else math.inf)`.
-- [ ] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
-- [ ] No existing test suite regresses as a result of the fix.
+- [x] Root cause at `fluidSim_warp_blender51/sim/pressure.py:1827` is fixed per the recommended remediation (or an equivalent approach with the same safety guarantee).
+- [x] Fix: Port the residual computation from `solve_jacobi` into `solve_jacobi_st`: replace lines 1827-1828 with `residual = self.measure_residual(voxel_type); self.last_residual = residual if math.isfinite(residual) else math.inf; self.last_residual_squared = (residual * residual if math.isfinite(residual) else math.inf)`.
+- [x] A regression test/gate proves the defect cannot recur (unit test for logic bugs; gate/acceptance script for runtime/UI/registration issues).
+- [x] No existing test suite regresses as a result of the fix.
 
 ## Evidence
 
 - Source finding: `EXEC-002` in `reviews/swarm-2026-08-08/findings/exec.json`, cross-referenced in `reviews/swarm-2026-08-08/CONSOLIDATED_CODEBASE_REVIEW.md` (High Findings section).
 - Identified by the Execution Engine lane of the 2026-08-08 swarm codebase review (8-lane read-only static review, ~56K LOC).
 - Citation manually re-verified against source during /double-check on 2026-08-08 (see session record); this finding survived verification.
+
+## Resolution
+
+Fixed for 2.0 (2026-09-27). `solve_jacobi_st` in `fluidSim_warp_blender51/sim/pressure.py` now reports the real residual instead of `-1.0`. The card's suggested `measure_residual()` was not used as-is: it applies the constant-coefficient operator, while the ST solve uses the variable-coefficient `k_apply_matrix_st`. A new `_measure_residual_st()` measures `|rhs - A_st * p|` against the operator the solve actually used, with the same single readback and the same non-finite -> `inf` mapping as `solve_jacobi`.
+
+Test: `tests/test_pressure_st_and_graph_cache.py::test_solve_jacobi_st_reports_its_real_residual` (CUDA). Zero iterations give exactly `|rhs|`, 20 iterations must more than halve it, and `last_residual_squared` must match.
 
 ## Blocked by
 
