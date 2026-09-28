@@ -9,7 +9,7 @@ evidence behind each item, and a suggested order. The 2.0 record is
 
 | Item | State at handoff |
 |---|---|
-| Platform | Blender 5.2 LTS, bundled Warp 1.17.0 (cu12), Windows 11 x64 certified on one RTX 4080 SUPER |
+| Platform | Blender 5.2 LTS, bundled Warp 1.17.0 (cu12), Windows 11 x64 certified on one RTX 4080 SUPER; Linux x64 packaged, gate 52/53 GUI on WSL2, uncertified |
 | Demo reference hash | `e49d23ef…e1ae` (demo bakes are bitwise reproducible on the same GPU, driver and Warp build) |
 | Tests | see the final row of the progress record |
 | Performance | vs 1.0.255: crown_splash −2.7%, dam_break +0.4%, paddle_stir +4.0% (absolute medians; paired median +5.5%). chromatic_vortex vs 1.1.0: −2.2%. 2.0 adds no measurable solver cost over 1.1.0; paddle_stir's gap is 1.1.0's deterministic P2G gather (section 3) |
@@ -17,9 +17,23 @@ evidence behind each item, and a suggested order. The 2.0 record is
 
 ## 1. Carry-over work (must do)
 
-1. **Certify Linux.** 2.0 ships Linux x64 packaged but uncertified. Run the
-   clean install and the GPU gate on a Linux + NVIDIA machine (WSL2 is the
-   planned route, pending owner approval) and flip the user-guide matrix row.
+1. **Certify Linux.** 2.0 ships Linux x64 packaged but uncertified. On WSL2
+   (Ubuntu 24.04) the package build, clean install, smoke and installed GPU
+   regression pass, and the full gate passes every headless lane and 52/53
+   GUI checks. The one failure is `viewport screenshot ... 0/4000 visible
+   samples`: Blender's `screen.screenshot_area` reads back black under Mesa
+   (WSLg or Xvfb, d3d12 or llvmpipe), with or without the add-on. Options:
+   (a) run the gate on native Linux with the NVIDIA driver, where readback
+   should work; (b) with owner approval, prove viewport visibility with an
+   offscreen `gpu.offscreen` view3d draw instead of a front-buffer read.
+   Environment traps found on the way (both in the user guide): WSLg's
+   Wayland EGL path crashes Blender's GUI (Mesa zink, `EGL_BAD_MATCH`; use
+   `WAYLAND_DISPLAY=` and `GALLIUM_DRIVER=d3d12`), and Ubuntu's
+   `libnvidia-compute-*` (pulled in by `nvidia-cuda-toolkit`) shadows the WSL
+   `libcuda.so` so Warp sees no GPU (`LD_LIBRARY_PATH=/usr/lib/wsl/lib`).
+   Consider having the add-on name that fix instead of "no CUDA device". Also
+   check why the Linux `crown_splash`/`dam_break` `.blend` bytes differed
+   between two gate runs (progress record, "Release").
 2. **Cache frames should stamp source animation.** A cache frame records the
    settings signature only (REVIEW-022). Changing a keyframed source or
    collider after a bake does not invalidate the cache. Add a per-frame

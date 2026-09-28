@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 — unreleased
+## 2.0.0 — Blender 5.2 LTS, bundled Warp 1.17 and the end of 1.0.x compatibility
 
 ### Upgrade notes
 
@@ -32,7 +32,6 @@ See `docs/migrating_to_2_0.md` for the full upgrade path.
 - Every gate lane (pytest, CUDA regressions, Blender background acceptance,
   release validators, the demo bake and the GUI production gate) runs against
   Blender 5.2 and Warp 1.17.
-
 ### Fixed
 
 - A production bake with an animated source or collider (such as the
@@ -69,7 +68,11 @@ See `docs/migrating_to_2_0.md` for the full upgrade path.
 ### Known limitations
 
 - Only Windows 11 x64 on a single GPU model (RTX 4080 SUPER) has a recorded
-  GPU gate run. Linux x64 is packaged from the same source but not certified.
+  GPU gate run. Linux x64 is packaged from the same source but not certified:
+  on Ubuntu 24.04 under WSL2 it installs cleanly and passes every headless
+  gate lane and 52 of 53 GUI checks. The viewport screenshot reads back black
+  under WSLg, which stopped the gate before its last GUI lane. On WSL2, an NVIDIA Linux driver package installed alongside the
+  WSL driver can hide the GPU from Warp; see the user guide.
 - A cache frame records the simulation settings, not source or collider
   animation. Changing an animation after a bake does not invalidate the
   cache; bake again yourself.

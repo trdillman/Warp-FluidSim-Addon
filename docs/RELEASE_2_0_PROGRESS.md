@@ -49,7 +49,7 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 | Build the real split packages with the bundled Warp 1.17.0 wheels (D3) | done: `release_ready: true`; `windows_x64` 146.6 MB, `linux_x64` 159.1 MB | `C:\Users\Tyler\fluidsim-gate-logs\build-52-20260927-161112\` (`windows-build-report.json`, `SHA256SUMS.txt`) |
 | Clean-profile install on Windows: extension smoke + installed GPU regression (21/21 validations, 10 preview frames) on Blender 5.2.0 with no PYTHONPATH | done | `smoke-test-report.json`, `gpu-regression-report.json` in the build folder |
 | GPU self-validations leaked 3 native CUDA kernel leases, so disabling the add-on after Run Validations logged `unregister step 'native CUDA cache' failed` | fixed: 5 validations now release their solvers | `tests/test_validation_releases_native_leases.py` |
-| Clean-profile install on WSL2 (D4) | pending | |
+| Clean-profile install on WSL2 (D4) | done at release (see "Release" below) | |
 | GUI gate reproducible 3/3 on the new stack | 3/3 on `a32872b8…0926`: passes at `0e01cdf`, `2a6eec0` and `bd67291`. Superseded by the Phase 3 rebind below | `gate-52-20260927-164658.log`, `gate-52-20260927-200134.log` |
 
 ## Phase 2: WS5 breaking cleanup
@@ -105,13 +105,27 @@ Stop for **one owner review before tagging or releasing 2.0.0**, with a 2.1 hand
 |---|---|---|
 | Migration guide `fluidSim_warp_blender51/docs/migrating_to_2_0.md` (install, 1.0.x files, caches, snippets, scripts, ST-FLIP, results); linked from the user guide and CHANGELOG | done | |
 | CHANGELOG 2.0.0: upgrade notes, Platform, Fixed, Changed, Known limitations (including perf and defect #2), Removed | done | `test_release_identity.py` |
-| README, AGENTS.md, user guide say Blender 5.2 LTS / bundled Warp 1.17.0; support matrix shows Linux uncertified | done | |
+| README, AGENTS.md, user guide say Blender 5.2 LTS / bundled Warp 1.17.0; support matrix shows Linux uncertified (certified at release, below) | done | |
 | 2.1 handoff `docs/RELEASE_2_1_HANDOFF.md` | done | |
 | Full pytest on Blender 5.2's Python + Warp 1.17.0 | root 1176 passed, 1 skipped; add-on 455 passed, 2 skipped (POSIX-only) | |
 | GUI gate 3/3 on `e49d23ef…e1ae` | **3/3**: FULL-PRODUCTION-GATE-PASS at `97eb132` and twice at `1bbe907`; the logs differ only in timestamps and timings | `gate-52-20260927-225858.log`, `gate-52-20260927-230604.log` |
-| Clean install on Linux (WSL2) | not run: needs owner approval (D4). Linux ships labelled uncertified | |
+| Clean install on Linux (WSL2) | not run: needs owner approval (D4). Linux ships labelled uncertified | superseded by the release rows below |
+
+## Release (owner approved 2026-09-28)
+
+| Item | State | Evidence |
+|---|---|---|
+| Release build refused the retired `sim/custom.py` (collision guard wanted every stale owner present) | fixed (`5a70656`): the guard lists `retired_owners`; a retired owner that reappears fails the build | `tests/test_release_1_0_253_integration.py`, `test_build_extension.py` |
+| `BUILD_CHANNEL` → `stable` | done (`7a27aab`); no consumer feeds cache identity, so the gate hash cannot move | `test_release_identity.py` |
+| Linux package on WSL2 Ubuntu 24.04 + Blender 5.2.0 Linux: build, clean-profile install, smoke, installed GPU regression | pass (`release_ready: true`, `FLUIDSIM_GPU_REGRESSION_OK`). Needs `LD_LIBRARY_PATH=/usr/lib/wsl/lib`: Ubuntu's `libnvidia-compute-580` (from `nvidia-cuda-toolkit`) otherwise shadows the WSL driver and Warp finds no CUDA device | `~/fluidsim-2.0-dist` in WSL |
+| Full production gate on WSL2 (`--include-gui`) | run 1: every headless lane passed (CUDA regressions, acceptance lanes, demo analysis 18/18, blend checks); GUI lane crashed in WSLg's Wayland EGL (Mesa zink, `EGL_BAD_MATCH`). Run 2 under X11 with `GALLIUM_DRIVER=d3d12` (renderer `D3D12 (NVIDIA GeForce RTX 4080 SUPER)`): every headless lane passed again, GUI acceptance **52/53**, `PRODUCTION-GATE-FAIL`. The failure: `viewport screenshot 2090x1201, 0/4000 visible samples`. The saved-demo GUI playback lane after it did not run | `C:\Users\Tyler\fluidsim-gate-logs\linux-wsl2-20260928\` |
+| Screenshot failure isolated to Blender's window readback on Linux Mesa, not the add-on: a bare `screen.screenshot_area` probe (factory startup, no add-on) is all black on WSLg + d3d12, WSLg + llvmpipe, Xvfb + llvmpipe and Xvfb + d3d12 (backend OpenGL in each; the PNG RGB is truly zero, not a zero alpha). The same probe on Windows Blender 5.2 sees 3997/4000 visible samples. The gate check was not weakened | Linux not certified | probe `shot_probe.py`, `pngstat.py` in the evidence folder |
+| D4 rule applied: Linux ships "packaged, not certified"; `VALIDATED_RUNTIME_PLATFORMS` stays `("windows-x64",)`. User guide and CHANGELOG state the WSL2 result and carry the WSL2 driver/display notes | done | `test_release_identity.py` |
+| Observation: on Linux, `crown_splash.blend` and `dam_break.blend` bytes differed between the two gate runs (`chromatic_vortex` and `paddle_stir` matched). Not investigated; no Linux manifest exists to compare the demo report hash. 2.1 item | open | sha256s in the evidence folder |
 
 ## Owner review (before tagging 2.0.0)
+
+**Approved by the owner on 2026-09-28** ("approved, release 2.0 and run the WSL2 Linux test"). Item 6 was resolved (`BUILD_CHANNEL` flipped to `stable`). Item 5: the WSL2 test ran but the gate did not pass there (see "Release"), so Linux stays uncertified.
 
 Decisions this work made that the owner should confirm, most consequential first:
 
@@ -131,11 +145,11 @@ Decisions this work made that the owner should confirm, most consequential first
 
 - Blender 5.2.0 LTS (portable, Python 3.13) is at `C:\tmp\blender-cu-vm\staging\blender-5.2\blender-5.2.0-windows-x64`. Its Python shares the user site-packages where Warp 1.16.0 is installed, so every run sets `PYTHONNOUSERSITE=1`.
 - Certified Warp 1.17.0 plus pytest live outside the user site: `PYTHONPATH=C:\Users\Tyler\fluidsim-warp\site-1.17.0;C:\Users\Tyler\fluidsim-warp\devsite`. The gate needs `BLENDER_EXE`/`BLENDER_PY` pointed at the portable 5.2.0 build.
-- WSL2 Ubuntu 24.04 has Python 3.12 and pytest, and the RTX 4080 SUPER is visible through `nvidia-smi` (driver 610.47).
+- WSL2 Ubuntu 24.04 has Python 3.12 and pytest, and the RTX 4080 SUPER is visible through `nvidia-smi` (driver 610.47). Blender 5.2.0 Linux is at `~/fluidsim-ci-tools/blender-5.2.0-linux-x64`, a clean clone at `~/fluidsim-2.0`, Warp 1.17.0 in `~/fluidsim-2.0-site`, pytest in `~/fluidsim-2.0-devsite`. Every GPU run needs `LD_LIBRARY_PATH=/usr/lib/wsl/lib`; GUI runs also need `WAYLAND_DISPLAY=` and `GALLIUM_DRIVER=d3d12`. The Ubuntu CUDA 12.0 packages were left installed.
 - Disk is tight: about 22 GB free.
 - 1.x needs Warp 1.16 (user site, `PYTHONNOUSERSITE` unset, empty `PYTHONPATH`); 2.0 needs 1.17. Blender-loaded worktrees must sit on short paths (`C:\Users\Tyler\...`) because of the 260-character limit.
 - Whole-frame timing on this workstation varies 5–30% run to run; use ABBA pairs and the stage profiler (`profiling_enabled`/`profiling_sync` on the domain) for perf questions.
 
 ## Next action
 
-Owner review (list above). After approval: flip `BUILD_CHANNEL` to `stable`, rebuild the packages, push the branch, open the PR, and tag 2.0.0 once CI is green. If Linux certification is approved, run the WSL2 clean install and gate first. Nothing has been pushed or tagged.
+Rebuild the release packages at the final commit, push the branch, open the PR to master, merge once CI is green, then tag `v2.0.0` and publish the GitHub release (both zips, `SHA256SUMS.txt`, `artifacts/production_gate_manifest.json`). 2.1 starts from `docs/RELEASE_2_1_HANDOFF.md`.

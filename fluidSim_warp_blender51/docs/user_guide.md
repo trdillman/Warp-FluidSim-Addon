@@ -32,8 +32,17 @@ override), FluidSim still runs but marks the runtime status as
 "untested Warp version"; Warp older than 1.17.0 or a 2.x Warp is refused.
 
 The extension is packaged for both Windows x64 and Linux x64. Only Windows has
-a recorded GPU gate run; Linux uses the same package but no Linux CUDA run has
-been recorded yet, so treat it as uncertified.
+a full recorded GPU gate run. On Linux (Ubuntu 24.04 under WSL2) the package
+installs cleanly and passes every headless gate lane and 52 of 53 GUI checks.
+Blender's viewport screenshot reads back black under WSLg, which stopped the
+gate before its last GUI lane, so treat Linux as uncertified.
+
+On WSL2, CUDA must come from the Windows driver (`/usr/lib/wsl/lib`). If an
+NVIDIA Linux driver package (for example `libnvidia-compute-*`, pulled in by
+Ubuntu's `nvidia-cuda-toolkit`) is also installed, Warp can load it instead and
+report no CUDA device. Put `/usr/lib/wsl/lib` first on `LD_LIBRARY_PATH` or
+remove that package. If Blender's window crashes under WSLg, start it with
+`WAYLAND_DISPLAY=` and `GALLIUM_DRIVER=d3d12` set.
 
 Upgrading from 1.x? Read the [1.x → 2.0 migration guide](migrating_to_2_0.md)
 first: 2.0 opens only files saved by 1.1.0 or later.
