@@ -1988,15 +1988,18 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
 
     assert max(depth(pid) for pid in parents) <= 3
 
-    # The shelf edits the solver's owner and offers the jump-back operator.
+    # Each knob binds to the group that declares it, and the shelf offers the
+    # jump-back operator. The doubles carry only their own group's fields: a
+    # domain double holding particle_display_fraction once hid that the real
+    # shelf drew it from the domain group and silently dropped it.
     domain_settings = SimpleNamespace(
         domain_object=None,
         voxel_size=0.037,
         particles_per_voxel=12,
         flip_ratio=0.97,
-        particle_display_fraction=0.5,
     )
-    scene_settings = SimpleNamespace(domain_object=None, schema_version=1)
+    scene_settings = SimpleNamespace(
+        domain_object=None, schema_version=1, particle_display_fraction=0.5)
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
@@ -2015,10 +2018,8 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
         "flip_ratio",
         "particle_display_fraction",
     }, "Live Tuning must exclude structural quality and sampling settings"
-    for name, call in drawn.items():
-        assert call["data"] is domain_settings, (
-            f"{name} must bind to active_domain_settings (the owner the solver reads)"
-        )
+    assert drawn["flip_ratio"]["data"] is domain_settings
+    assert drawn["particle_display_fraction"]["data"] is scene_settings
     assert any(
         op["id"] == "fluidsim.open_scene_properties"
         for op in panel.layout.operators
