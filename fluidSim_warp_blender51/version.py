@@ -3,7 +3,7 @@
 VERSION = (2, 0, 0)
 VERSION_STRING = ".".join(str(part) for part in VERSION)
 EXTENSION_ID = "fluidsim_warp"
-BUILD_CHANNEL = "beta"
+BUILD_CHANNEL = "stable"
 BUILD_LABEL = f"FluidSim Warp {VERSION_STRING}-{BUILD_CHANNEL}"
 BLENDER_MIN_VERSION = (5, 2, 0)
 VALIDATION_HOST_BLENDER_VERSION = (5, 2, 0)
