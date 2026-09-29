@@ -107,6 +107,17 @@ bakes bitwise reproducible. Warp 1.17 against 1.16 is neutral on paddle_stir
 and about 4% faster on chromatic_vortex. Evidence:
 `C:\Users\Tyler\fluidsim-gate-logs\perf-2.0-20260927\`.
 
+**Solver-only follow-up (2026-09-29).**
+`docs/PERFORMANCE_2_0_BENCHMARK_20260929.md` runs one dam_break workload on the
+pre-optimization code, 1.1.0, 2.0 and master, all on Warp 1.17. Against the
+pre-optimization code, 2.0 is:
+- about 5.6× faster with viscosity
+- about 4.5× faster with viscosity and surface tension
+- 6% faster with surface tension
+- 2.4% slower per substep with neither (the P2G gather)
+
+Against 1.1.0 it shows no regression.
+
 **Work, in order of expected return** (see `docs/` performance results):
 
 1. **Faster deterministic P2G.** It is the only measured regression against
@@ -117,6 +128,10 @@ and about 4% faster on chromatic_vortex. Evidence:
 3. Pressure follow-on (5 tasks). The REVIEW-015 cache is done.
 4. Device-resident surface work and cache-cursor integration.
 5. Viscosity SDF reuse.
+6. **Viscosity graph-key churn.** The viscosity conditional-graph key holds
+   the solve size, `dt` and the tolerance. On the dam_break viscosity
+   benchmark, 435 solves made 213 captures (about 10 ms per frame). The fix is
+   the same as REVIEW-015: move those values into device arrays.
 
 Add the 2.0 comparison to the gate, so the budget is enforced on every run
 rather than measured once. Use ABBA pairs, at least 8 per demo, median
