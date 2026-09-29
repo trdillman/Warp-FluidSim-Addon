@@ -989,6 +989,22 @@ def k_sample_down_residual(
 # Projection + post ops
 
 
+@wp.func
+def solid_face_weight(weight: float, here_solid: bool, n_solid: wp.int32) -> float:
+    """Sampling weight for a face that touches solid.
+
+    A face with solid on exactly one side is a wall: it keeps the collider
+    velocity and a valid weight, so fluid cannot flow through it. A face with
+    solid on both sides lies inside the collider. It is not a fluid face, so
+    it gets weight 0 and interpolation skips it; otherwise fluid beside a
+    wall samples those pinned tangential faces and is held against the wall
+    (no-slip) instead of sliding along it (free-slip).
+    """
+    if here_solid and n_solid != 0:
+        return 0.0
+    return wp.max(weight, 1.0e-6)
+
+
 @wp.kernel
 def k_project(
     x: wp.array(dtype=float),
@@ -1005,7 +1021,8 @@ def k_project(
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
 ):
     """fluidSimProjectNonDivergentProject: subtract the pressure gradient on
-    faces between (fluid|air) voxels; solid faces take collider velocity."""
+    faces between (fluid|air) voxels; solid faces take collider velocity, and
+    faces inside a collider are invalidated (see solid_face_weight)."""
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
@@ -1041,13 +1058,13 @@ def k_project(
                 vel_c = collision_vel[n]
             if axis == 0:
                 u[tid] = vel_c[0]
-                wu[tid] = wp.max(wu[tid], 1.0e-6)
+                wu[tid] = solid_face_weight(wu[tid], here_solid, n_solid)
             elif axis == 1:
                 v[tid] = vel_c[1]
-                wv[tid] = wp.max(wv[tid], 1.0e-6)
+                wv[tid] = solid_face_weight(wv[tid], here_solid, n_solid)
             else:
                 w[tid] = vel_c[2]
-                ww[tid] = wp.max(ww[tid], 1.0e-6)
+                ww[tid] = solid_face_weight(ww[tid], here_solid, n_solid)
         elif here_fluid or n_fluid != 0:
             g = bounded_pressure_gradient(x_here, x_n, inv_h, limit)
             if axis == 0:
@@ -1123,13 +1140,13 @@ def k_project_st(
                 vel_c = collision_vel[n]
             if axis == 0:
                 u[tid] = vel_c[0]
-                wu[tid] = wp.max(wu[tid], 1.0e-6)
+                wu[tid] = solid_face_weight(wu[tid], here_solid, n_solid)
             elif axis == 1:
                 v[tid] = vel_c[1]
-                wv[tid] = wp.max(wv[tid], 1.0e-6)
+                wv[tid] = solid_face_weight(wv[tid], here_solid, n_solid)
             else:
                 w[tid] = vel_c[2]
-                ww[tid] = wp.max(ww[tid], 1.0e-6)
+                ww[tid] = solid_face_weight(ww[tid], here_solid, n_solid)
         elif here_fluid or n_fluid != 0:
             beta = st_face_beta(axis, tid, wu_mass, wv_mass, ww_mass,
                                 reference_mass, eta_phi,

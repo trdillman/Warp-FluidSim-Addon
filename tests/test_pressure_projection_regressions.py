@@ -561,6 +561,108 @@ def test_pressure_project_does_not_spread_non_finite_pressure_to_mac_velocity(cu
         assert np.max(np.abs(component.numpy())) <= 2.0
 
 
+@pytest.mark.parametrize("variant", ["project", "project_st"])
+def test_projection_pins_wall_faces_but_not_faces_inside_the_collider(
+        cuda_device, variant):
+    """Only faces with solid on exactly one side are boundary faces.
+
+    A face with solid on both sides lies inside the collider. Pinning it to
+    the collider velocity with a valid weight let fluid beside a wall sample
+    it, which held a film of particles on vertical collider faces.
+    """
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    vel = MacVelocityField(grid)
+    n = grid.voxel_capacity
+    i, j, k = np.unravel_index(np.arange(n), (8, 8, 8), order="F")
+    flat = lambda a, b, c: a + 8 * b + 64 * c  # noqa: E731
+    solid = j >= 5
+    voxel_type = np.where(solid, VOXEL_COLLISION, VOXEL_FLUID).astype(np.int32)
+    collider = np.zeros((n, 3), dtype=np.float32)
+    collider[solid] = (0.3, -0.2, 0.1)
+    # Particles splat into the solid voxels too, so their P2G weights are set.
+    for comp in (vel.u, vel.v, vel.w):
+        comp.fill_(1.0)
+    for weight in (vel.wu, vel.wv, vel.ww):
+        weight.fill_(0.5)
+    voxel_type_wp = wp.zeros(n, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    collision_vel = wp.array(collider, dtype=wp.vec3, device=cuda_device)
+    solver.pressure.zero_()
+
+    getattr(solver, variant)(vel, voxel_type_wp, collision_vel)
+
+    u, v, w = (c.numpy() for c in (vel.u, vel.v, vel.w))
+    wu, wv, ww = (c.numpy() for c in (vel.wu, vel.wv, vel.ww))
+    # Wall face between fluid j=4 and solid j=5: no penetration.
+    wall = flat(3, 5, 3)
+    assert v[wall] == pytest.approx(-0.2)
+    assert wv[wall] > 0.0
+    # Faces inside the collider are not fluid faces.
+    inside = solid & (i >= 1) & (k >= 1)
+    assert np.all(wu[inside] == 0.0)
+    assert np.all(ww[inside] == 0.0)
+    assert np.all(wv[solid & (j >= 6)] == 0.0)
+    # A fluid face on the grid edge is still a closed wall.
+    edge = flat(0, 2, 3)
+    assert u[edge] == pytest.approx(0.0)
+    assert wu[edge] > 0.0
+    # Fluid faces keep their particle weight and (zero-pressure) velocity.
+    interior = flat(3, 2, 3)
+    assert u[interior] == pytest.approx(1.0)
+    assert wu[interior] == pytest.approx(0.5)
+
+
+def _wall_film(voxel_size=0.05, frames=12):
+    """Collapse a column that starts flush against two box colliders.
+
+    Returns (film, past_wall): particles still hanging within one voxel of a
+    wall more than 0.1 m above the column centre, and particles that ended
+    up inside a wall.
+    """
+    half, top = 0.25, 0.75
+    spacing = voxel_size / 2
+    device = "cuda:0"
+    settings = SolverSettings(
+        domain_min=(0.0, -0.5, 0.0), domain_max=(1.0, 0.5, 1.0),
+        voxel_size=voxel_size, max_particles=20_000, max_whitewater=8,
+        device=device)
+    settings.surface_enabled = False
+    settings.whitewater_enabled = False
+    solver = FluidSolver(settings)
+    # Walls fill half < |y| out past the domain sides, faces on voxel
+    # boundaries, running from behind the column to x = 0.55.
+    solver.set_colliders([
+        _box_collider((0.25, sign * 0.4, 0.5), (0.3, 0.15, 0.6),
+                      0.0, 0.0, device)
+        for sign in (1.0, -1.0)])
+    axis = lambda lo, hi: np.arange(lo + spacing / 2, hi, spacing)  # noqa: E731
+    pts = np.stack(np.meshgrid(axis(0.0, 0.25), axis(-half, half),
+                               axis(0.0, top), indexing="ij"),
+                   -1).reshape(-1, 3).astype(np.float32)
+    solver.inject_particles(pts)
+    for _ in range(frames):
+        solver.step_frame()
+    p = solver.particle_positions()
+    solver.release()
+    footprint = p[:, 0] < 0.25
+    centre = footprint & (np.abs(p[:, 1]) < 0.1)
+    near = footprint & (half - np.abs(p[:, 1]) < voxel_size)
+    ref = np.percentile(p[centre, 2], 99)
+    film = int(np.count_nonzero(near & (p[:, 2] > ref + 0.1)))
+    past_wall = int(np.count_nonzero(
+        (np.abs(p[:, 1]) > half + 0.25 * voxel_size)
+        & (p[:, 0] < 0.55 - voxel_size)))
+    return film, past_wall
+
+
+def test_column_against_collider_face_falls_freely(cuda_device):
+    """Free slip on a vertical collider face: no film, no penetration."""
+    film, past_wall = _wall_film()
+    assert film == 0
+    assert past_wall == 0
+
+
 def test_pcg_reports_failure_status_when_system_cannot_converge(cuda_device):
     grid = _one_leaf_grid(cuda_device)
     solver = PressureSolver(grid, cuda_device)
