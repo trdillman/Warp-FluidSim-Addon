@@ -80,6 +80,26 @@ expected; otherwise, a changed hash needs an explanation before release.
    wrong. `--probe-only` checks without installing. The Status & Runtime
    panel also names the loaded build.
 
+## Sharing Warp with other extensions
+
+Blender installs extension wheels into its Python environment. A bundled
+`warp_lang` wheel supplies the top-level `warp` package; it does not give
+each extension a private `warp` module. Python imports an existing
+`sys.modules["warp"]` before consulting `sys.path`, so changing path order
+after Warp Foundry or another extension imported Warp does not switch versions.
+FluidSim's development override only changes `sys.path` after explicit opt-in
+and is not a fix for an already imported Warp module.
+
+FluidSim 2.0 bundles and certifies Warp 1.17.0. Its runtime rejects Warp
+older than 1.17.0 or a different major version before initializing it;
+newer 1.x versions remain untested and show a warning. To use FluidSim and
+Warp Foundry in the same Blender process, align their bundled Warp versions
+on a version tested by both projects, then restart Blender. Until that is
+validated, use separate Blender processes/profiles for the extensions.
+Reinstalling FluidSim alone cannot replace a `warp` module another
+extension already loaded. Do not delete `sys.modules` entries, shadow the
+package with a private path, or swap Warp's native libraries in process.
+
 ## Changing a pinned dependency
 
 - **Blender.** In `ci.yml`, update `BLENDER_VERSION` and `BLENDER_SHA256`
