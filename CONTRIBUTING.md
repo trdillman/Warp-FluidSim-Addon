@@ -44,9 +44,11 @@ small:
 FLUIDSIM_USER_PATH_PROFILE=1 python tools/run_production_gate.py
 ```
 
-Or run it directly with a focused report:
+Or run it directly with a focused report. Keep the private extensions directory:
+`--factory-startup` alone deletes your installed extensions' wheels (Warp).
 
 ```bash
+BLENDER_USER_EXTENSIONS="$PWD/artifacts/gate_blender_user_extensions" \
 blender --background --factory-startup --python tools/profile_user_path.py -- \
   --frames 6 --voxel-size 0.08 --max-particles 200000 \
   --collider-subdiv 2 --json-out artifacts/user_path_profile.json
