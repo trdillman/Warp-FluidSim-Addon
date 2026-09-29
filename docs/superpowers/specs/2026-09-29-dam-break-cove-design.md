@@ -23,7 +23,7 @@ x runs downstream. The domain is unchanged:
 | Part | Object | Geometry |
 |---|---|---|
 | Reservoir | `DamBreak Source Column` (source, INITIAL_FILL, ANALYTIC, 8 ppv) | x 0-0.6, y -0.6-0.6, z 0-1.2. About 256k particles (the old column was 0.6 m wide, 128k). |
-| Dam | `DamBreak Dam` (collider) | Two abutment boxes, x 0-0.75, \|y\| 0.66-1.00146 (flush with the domain wall), z -0.1-1.4. Two disjoint shells in one mesh. The inner faces stand two voxels clear of the column (see Collider rules). |
+| Dam | `DamBreak Dam` (collider) | Two abutment boxes, x 0-0.75, \|y\| 0.6-1.00146 (flush with the column and the domain wall), z -0.1-1.4. Two disjoint shells in one mesh. |
 | Walls | `DamBreak Walls` (visual only, not a collider) | 0.15 m concrete walls just outside the domain, which is the real wall: one behind the reservoir and training walls along both sides out to where the headlands reach full height. All stand at the dam top (1.4 m) except the near (camera, -y) wall past the dam, which drops to the headland height so the camera sees over it. |
 | Apron | `DamBreak Apron` (visual only, not a collider) | Concrete slab x 0-2.4, full width, z -0.04-0. The fluid runs on the domain floor. |
 | Cove | `DamBreak Cove` (collider) | Closed heightfield solid over x 2.4-5.6, full width, bottom z -0.1. Top surface described below. Rock and sand material slots. |
@@ -49,14 +49,11 @@ Collider rules, from the solver's SDF path (`k_rasterize_collider_material`):
 - Every solid part is at least 3 voxels (0.09 m) thick.
 - Each collider costs one BVH query per active voxel per substep, so the scene
   has four colliders, not one per rock.
-- No initial fill starts within two voxels of a collider face. The pressure
-  solve pins grid faces next to solid cells to the collider's velocity, and
-  the FLIP update drags fluid that samples them to rest: with the abutments
-  flush against the column, about 1,600 particles hung on their inner faces
-  as a visible film for two seconds. Two voxels keep the outer particle row
-  out of that stencil (film 0-6 particles). The solver-side fix is tracked
-  separately. Grid-aligning the faces (worse) and zero friction (no change)
-  did not help.
+- Initial fills may start flush against a collider face. Before the
+  collider wall-film fix, the pressure solve pinned grid faces inside solid
+  cells to the collider's velocity, so walls were no-slip and about 1,600
+  particles hung on the abutments' inner faces as a film for two seconds.
+  The abutments stood two voxels clear of the column until that fix landed.
 
 Frictions (restitution 0): dam 0.2, cove 0.4, sea stack 0.5, jetty 0.3.
 

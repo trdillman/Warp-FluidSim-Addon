@@ -10,7 +10,7 @@ evidence behind each item, and a suggested order. The 2.0 record is
 | Item | State at handoff |
 |---|---|
 | Platform | Blender 5.2 LTS, bundled Warp 1.17.0 (cu12), Windows 11 x64 certified on one RTX 4080 SUPER; Linux x64 packaged, gate 52/53 GUI on WSL2, uncertified |
-| Demo reference hash | `e49d23ef…e1ae` (demo bakes are bitwise reproducible on the same GPU, driver and Warp build). Since the rocky-cove dam_break rebuild: `e35970b1…7a65` (see `demos/ANALYSIS.md`) |
+| Demo reference hash | `e49d23ef…e1ae` (demo bakes are bitwise reproducible on the same GPU, driver and Warp build). Since the collider wall-film fix: `ffd50faa…2873`. Since the rocky-cove dam_break rebuild: `aa18eb4b…d9ba` (see `demos/ANALYSIS.md`) |
 | Tests | see the final row of the progress record |
 | Performance | vs 1.0.255: crown_splash −2.7%, dam_break +0.4%, paddle_stir +4.0% (absolute medians; paired median +5.5%). chromatic_vortex vs 1.1.0: −2.2%. 2.0 adds no measurable solver cost over 1.1.0; paddle_stir's gap is 1.1.0's deterministic P2G gather (section 3) |
 | Open P0/P1 | none |

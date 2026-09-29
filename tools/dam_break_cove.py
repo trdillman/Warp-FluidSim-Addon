@@ -30,10 +30,8 @@ BASE_Z = -0.1  # every collider reaches below the floor
 
 RESERVOIR_LO = (0.0, -0.6, 0.0)
 RESERVOIR_HI = (0.6, 0.6, 1.2)
-# The abutments stand two voxels clear of the column. Grid velocities inside
-# a collider are pinned to the collider's, so fluid that starts within a
-# voxel of a face is dragged to rest and hangs on it as a film.
-DAM_HALF_OPENING = RESERVOIR_HI[1] + 2 * VOXEL
+# The abutments' inner faces are flush with the column: the dam holds it.
+DAM_HALF_OPENING = RESERVOIR_HI[1]
 DAM_X = 0.75
 DAM_TOP = 1.4
 APRON_END_X = 2.4

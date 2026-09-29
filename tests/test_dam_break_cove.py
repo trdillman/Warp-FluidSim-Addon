@@ -127,13 +127,13 @@ def test_reservoir_starts_clear_of_every_collider():
     assert (cove.solid_depth(grid) < 0.0).all()
 
 
-def test_abutments_stand_two_voxels_clear_of_the_column():
-    """Fluid seeded within a voxel of a collider face hangs on it as a film."""
+def test_abutments_are_flush_with_the_column():
+    """The dam holds the reservoir: its inner faces touch the column."""
     faces = [hi[1] for _lo, hi in cove.dam_boxes() if hi[1] < 0.0]
     faces += [lo[1] for lo, _hi in cove.dam_boxes() if lo[1] > 0.0]
+    assert len(faces) == 2
     for face in faces:
-        gap = abs(face) - cove.RESERVOIR_HI[1]
-        assert gap == pytest.approx(2 * cove.VOXEL)
+        assert abs(face) == pytest.approx(cove.RESERVOIR_HI[1])
     assert cove.RESERVOIR_LO[1] == -cove.RESERVOIR_HI[1]
 
 
