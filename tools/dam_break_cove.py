@@ -15,6 +15,7 @@ objects may, because their SDFs combine by min.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -29,10 +30,15 @@ BASE_Z = -0.1  # every collider reaches below the floor
 
 RESERVOIR_LO = (0.0, -0.6, 0.0)
 RESERVOIR_HI = (0.6, 0.6, 1.2)
+# The abutments stand two voxels clear of the column. Grid velocities inside
+# a collider are pinned to the collider's, so fluid that starts within a
+# voxel of a face is dragged to rest and hangs on it as a film.
+DAM_HALF_OPENING = RESERVOIR_HI[1] + 2 * VOXEL
 DAM_X = 0.75
 DAM_TOP = 1.4
 APRON_END_X = 2.4
 APRON_THICKNESS = 0.04
+WALL_THICKNESS = 0.15
 
 # Cove heightfield.
 GRID = 0.04
@@ -50,6 +56,9 @@ HEADLAND_REAR_SLOPE = 0.45
 HEADLAND_WOBBLE = (0.10, 0.06, 0.20)  # front x, gap edge y, rear x (m)
 ROCK_NOISE = 0.04
 ROCK_BLEND = 0.15
+
+NEAR_WALL_TOP = HEADLAND_HEIGHT
+WALL_END_X = HEADLAND_FRONT_X[1] + HEADLAND_WOBBLE[0]  # headlands at full height
 
 STACK_CENTER = (3.87, 0.13)
 STACK_AXES = (0.225, 0.20)
@@ -184,8 +193,8 @@ def _boxes(name, boxes, materials, friction):
 def dam_boxes():
     """The two abutments, flush with the domain side walls."""
     return [((0.0, side_lo, BASE_Z), (DAM_X, side_hi, DAM_TOP))
-            for side_lo, side_hi in ((-HALF_WIDTH, RESERVOIR_LO[1]),
-                                     (RESERVOIR_HI[1], HALF_WIDTH))]
+            for side_lo, side_hi in ((-HALF_WIDTH, -DAM_HALF_OPENING),
+                                     (DAM_HALF_OPENING, HALF_WIDTH))]
 
 
 def jetty_boxes():
@@ -212,6 +221,29 @@ def apron_mesh():
     return _boxes("DamBreak Apron",
                   [((0.0, -HALF_WIDTH, -APRON_THICKNESS), (APRON_END_X, HALF_WIDTH, 0.0))],
                   ("DamBreak Concrete",), 0.0)
+
+
+def wall_boxes():
+    """Visual training walls just outside the domain; not colliders.
+
+    The domain boundary already holds the water, so these only show it. They
+    run past the apron to where the headlands stand at full height. The near
+    (camera, -y) wall drops to headland height along the apron so the camera
+    sees over it; water there peaks near 0.8 m, while on the far side it
+    climbs about 1.5 m where the flow turns off the headland.
+    """
+    t, z0 = WALL_THICKNESS, -APRON_THICKNESS
+    w, end = HALF_WIDTH, WALL_END_X
+    return [
+        ((-t, -w, z0), (0.0, w, DAM_TOP)),                                  # back
+        ((-t, w, z0), (end, w + t, DAM_TOP)),                               # far
+        ((-t, -w - t, z0), (DAM_X, -w, DAM_TOP)),                           # near, dam
+        ((DAM_X, -w - t, z0), (end, -w, NEAR_WALL_TOP)),                    # near, apron
+    ]
+
+
+def wall_mesh():
+    return _boxes("DamBreak Walls", wall_boxes(), ("DamBreak Concrete",), 0.0)
 
 
 def cove_grid():
@@ -318,16 +350,45 @@ def _box_depth(p, lo, hi):
     return np.minimum(p - lo, hi - p).min(axis=1)
 
 
+@lru_cache(maxsize=1)
+def _cove_top():
+    xs, ys = cove_grid()
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")
+    return xs, ys, cove_height(gx, gy)
+
+
+def cove_surface(x, y):
+    """Height and slope of the meshed cove top, triangle for triangle.
+
+    The solver collides with the triangulated grid from cove_mesh(), so this
+    interpolates the same triangles instead of the analytic height.
+    """
+    xs, ys, top = _cove_top()
+    i = np.clip(np.searchsorted(xs, x, side="right") - 1, 0, len(xs) - 2)
+    j = np.clip(np.searchsorted(ys, y, side="right") - 1, 0, len(ys) - 2)
+    dx, dy = xs[1] - xs[0], ys[1] - ys[0]
+    u = np.clip((x - xs[i]) / dx, 0.0, 1.0)
+    v = np.clip((y - ys[j]) / dy, 0.0, 1.0)
+    h00, h10 = top[i, j], top[i + 1, j]
+    h01, h11 = top[i, j + 1], top[i + 1, j + 1]
+    # cove_mesh() splits each quad along the (i, j)-(i+1, j+1) diagonal.
+    lower = u >= v
+    hx = np.where(lower, h10 - h00, h11 - h01) / dx
+    hy = np.where(lower, h11 - h10, h01 - h00) / dy
+    h = h00 + np.where(lower, u * (h10 - h00) + v * (h11 - h10),
+                       v * (h01 - h00) + u * (h11 - h01))
+    return h, hx, hy
+
+
 def _cove_depth(p):
-    x, y, z = p[:, 0], p[:, 1], p[:, 2]
-    h = cove_height(x, y)
-    eps = 0.005
-    gx = (cove_height(x + eps, y) - cove_height(x - eps, y)) / (2 * eps)
-    gy = (cove_height(x, y + eps) - cove_height(x, y - eps)) / (2 * eps)
+    depth = np.full(len(p), -np.inf)
+    over = p[:, 0] >= APRON_END_X
+    x, y, z = p[over, 0], p[over, 1], p[over, 2]
+    h, hx, hy = cove_surface(x, y)
     # First-order distance to a heightfield: vertical depth times cos(slope).
-    vertical = (h - z) / np.sqrt(1.0 + gx * gx + gy * gy)
-    depth = np.minimum(vertical, np.minimum(z - BASE_Z, x - APRON_END_X))
-    return np.where(x >= APRON_END_X, depth, -np.inf)
+    vertical = (h - z) / np.sqrt(1.0 + hx * hx + hy * hy)
+    depth[over] = np.minimum(vertical, np.minimum(z - BASE_Z, x - APRON_END_X))
+    return depth
 
 
 def _stack_depth(p):

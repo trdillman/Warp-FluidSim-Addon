@@ -51,7 +51,7 @@ EFFECT_PRECONDITIONS = {
 # frame_start) within which live whitewater must appear on a fresh reopen.
 # Each value is the measured first-emission frame plus margin.
 WHITEWATER_ACTIVATION_FRAMES = {
-    "dam_break": 32,          # first live whitewater at frame 16
+    "dam_break": 24,          # frame 11 on reopen
     "paddle_stir": 32,        # frame 15 (needs the keyframed paddle moving)
     "crown_splash": 12,       # frame 3 on reopen (4-5 in the build run)
 }
@@ -298,31 +298,45 @@ def check_scene(name):
     if playback.get("error"):
         result["playback_contract_error"] = playback["error"]
     if name == "dam_break":
+        from tools import dam_break_cove as cove
+
         domain = bpy.data.objects.get("DamBreak Domain")
         source = bpy.data.objects.get("DamBreak Source Column")
-        collider = bpy.data.objects.get("Sphere")
         near = lambda actual, expected: all(
             abs(float(a) - float(e)) < 1.0e-4
             for a, e in zip(actual, expected)
         )
+        reservoir_lo = np.asarray(cove.RESERVOIR_LO)
+        reservoir_hi = np.asarray(cove.RESERVOIR_HI)
+        # The apron slab and training walls only show the domain boundary; a
+        # collider role on either would change the solve.
+        expected_frictions = {m.name: m.friction for m in cove.collider_meshes()}
+        colliders = {obj.name: obj for obj in scene.objects
+                     if getattr(obj, "fluidsim", None) is not None
+                     and obj.fluidsim.role == "COLLIDER"}
         checks.update({
             "canonical_domain_scale": bool(
-                domain and near(domain.dimensions, (5.6, 2.00292993, 1.6))),
+                domain and near(domain.dimensions,
+                                np.subtract(cove.DOMAIN_HI, cove.DOMAIN_LO))),
             "canonical_source_transform": bool(
                 source
-                and near(source.location, (0.3, 0.3, 0.6))
-                and near(source.dimensions, (0.6, 0.6, 1.2))
+                and near(source.location, 0.5 * (reservoir_lo + reservoir_hi))
+                and near(source.dimensions, reservoir_hi - reservoir_lo)
                 and source.fluidsim.emission_mode == "INITIAL_FILL"
                 and source.fluidsim.source_region_kind == "ANALYTIC"),
-            "sphere_collider": bool(
-                collider and collider.fluidsim.role == "COLLIDER"
-                and near(collider.location, (2.41923952, 0.0, 0.0))),
-            "canonical_friction": bool(
-                collider
-                and abs(float(collider.fluidsim.collider_friction) - 1.0) < 1.0e-6),
+            "cove_colliders": bool(
+                set(colliders) == set(expected_frictions)
+                and all(obj.fluidsim.enabled
+                        and abs(float(obj.fluidsim.collider_friction)
+                                - expected_frictions[obj_name]) < 1.0e-6
+                        for obj_name, obj in colliders.items())),
             "no_redundant_empties": not any(
                 obj.type == "EMPTY" for obj in scene.objects),
         })
+        if not checks["cove_colliders"]:
+            result["actual_colliders"] = {
+                obj_name: float(obj.fluidsim.collider_friction)
+                for obj_name, obj in colliders.items()}
     elif name == "crown_splash":
         pool_seed = bpy.data.objects.get("Crown Pool Seed")
         drop_seed = bpy.data.objects.get("Crown Droplet Seed")

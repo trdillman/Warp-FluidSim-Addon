@@ -3,6 +3,8 @@
   "gravity": 9.81,
   "column_height": 1.2,
   "column_width": 0.6,
+  "reservoir_width": 1.2,
+  "apron_end_x": 2.4,
   "domain": [
     [
       0.0,
@@ -18,27 +20,28 @@
   "voxel_size": 0.03,
   "fps": 24,
   "spacing": 0.015,
-  "source_emitted_particles": 128000,
+  "source_emitted_particles": 256000,
   "source_emission_mode": "INITIAL_FILL",
   "source_region_kind": "ANALYTIC",
   "source_target_particles_per_voxel": 8.0,
-  "release_velocity": [
-    0.7,
-    0.0,
-    0.0
-  ],
   "whitewater_churn_gain": 2.0,
   "source_object": "DamBreak Source Column",
   "source_location": [
     0.30000001192092896,
-    0.30000001192092896,
+    0.0,
     0.6000000238418579
   ],
   "source_scale": [
     0.6000000238418579,
-    0.6000000238418579,
+    1.2000000476837158,
     1.2000000476837158
   ],
-  "collider_object": "Sphere",
+  "collider_objects": [
+    "DamBreak Dam",
+    "DamBreak Cove",
+    "DamBreak Sea Stack",
+    "DamBreak Jetty"
+  ],
+  "preview_frame": 24,
   "playable_live_setup": true
 }

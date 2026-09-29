@@ -10,7 +10,8 @@ Scenes are saved as demos/<name>.blend. Large per-frame particle exports and
 aggregate metrics are generated under artifacts/demo_cache/<name>/ so they do
 not become source-control assets.
 
-1. dam_break       - classic Martin & Moses dam-break column collapse.
+1. dam_break       - a reservoir held by dam walls releases at once onto a
+                     rocky cove (Martin & Moses front benchmark on the apron).
 2. crown_splash    - droplet impact into a shallow pool (Worthington crown).
 3. paddle_stir     - keyframed rotating paddle in a cylindrical tank; the only
                      scene exercising the moving-collider velocity-coupling path
@@ -39,7 +40,6 @@ CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 FPS = 24
 STANDARD_CACHE_SCENES = ("dam_break", "crown_splash")
 DEFAULT_SCENES = ("dam_break", "crown_splash")
-DAM_BREAK_RELEASE_VELOCITY = (0.7, 0.0, 0.0)
 DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
 CROWN_SPLASH_WW_CHURN_THRESHOLD = 0.05
 CROWN_SPLASH_WW_EMISSION_RATE = 200.0
@@ -187,7 +187,8 @@ def add_camera_light(scene, cam_loc, cam_rot):
     sun.rotation_euler = (0.7, 0.15, 0.4)
 
 
-def run_scene(name, frames, dump_velocities=True, advance_timeline=False):
+def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
+              on_frame=None):
     """Step the live session; export per-frame particle data + aggregates.
 
     ``advance_timeline`` moves ``scene.frame_current`` in lockstep with the
@@ -196,6 +197,8 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False):
     collider sits frozen, and ``object_angular_velocity`` (scene_inputs.py)
     returns zero every step because of its ``frame <= previous`` guard. Left
     off by default so the static-collider scenes stay byte-identical.
+
+    ``on_frame(f)`` runs after frame ``f`` is stepped and exported.
     """
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
@@ -238,6 +241,8 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False):
         if f % 12 == 0 or f == 1:
             log(f"{name} frame {f}/{frames}: {len(pos):,} particles, "
                 f"{len(ww):,} ww, {series['step_ms'][-1]:.0f} ms")
+        if on_frame is not None:
+            on_frame(f)
     series["wall_time_s"] = time.perf_counter() - t0
     with open(os.path.join(out_dir, "series.json"), "w",
               encoding="utf-8") as fh:
@@ -262,19 +267,122 @@ def save_scene(name, preview=True):
     log(f"saved {path}")
 
 
+DAM_BREAK_PREVIEW_FRAME = 24
+DAM_BREAK_MATERIAL_COLORS = {
+    "DamBreak Concrete": (0.55, 0.55, 0.53, 1.0),
+    "DamBreak Sand": (0.76, 0.66, 0.47, 1.0),
+    "DamBreak Rock": (0.33, 0.31, 0.29, 1.0),
+    "DamBreak Timber": (0.45, 0.30, 0.18, 1.0),
+}
+DAM_BREAK_WATER_COLOR = (0.04, 0.24, 0.50, 1.0)
+DAM_BREAK_SPRAY_COLOR = (0.18, 0.45, 0.75, 1.0)
+DAM_BREAK_FOAM_COLOR = (0.95, 0.97, 1.0, 1.0)
+DAM_BREAK_CAMERA = ((7.4, -3.1, 3.0), (2.5, 0.0, 0.3), 40.0)
+# Share of preview pixels that must read as water (blue well above red).
+DAM_BREAK_PREVIEW_MIN_WATER = 0.02
+
+
+def demo_material(name, color, *, roughness, transmission=0.0):
+    """A node material whose viewport color matches its render base color."""
+    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = color
+        bsdf.inputs["Roughness"].default_value = roughness
+        if transmission and "Transmission Weight" in bsdf.inputs:
+            bsdf.inputs["Transmission Weight"].default_value = transmission
+            bsdf.inputs["IOR"].default_value = 1.33
+    mat.diffuse_color = color
+    mat.roughness = roughness
+    return mat
+
+
+def make_mesh_object(scene, data, materials):
+    """Link a closed mesh built by tools/dam_break_cove.py."""
+    mesh = bpy.data.meshes.new(data.name)
+    mesh.from_pydata(data.verts.tolist(), [], [list(f) for f in data.faces])
+    if mesh.validate(verbose=True):
+        raise RuntimeError(f"{data.name}: generated mesh needed repair")
+    for mat_name in data.materials:
+        mesh.materials.append(materials[mat_name])
+    mesh.polygons.foreach_set("material_index", data.face_materials)
+    mesh.update()
+    obj = bpy.data.objects.new(data.name, mesh)
+    scene.collection.objects.link(obj)
+    return obj
+
+
+def look_at(obj, target):
+    from mathutils import Vector
+
+    direction = Vector(target) - obj.location
+    obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+
+
+def use_material_shading(scene):
+    """Solid/Workbench shading by material color, saved in every 3D view."""
+    spaces = [space
+              for screen in bpy.data.screens for area in screen.areas
+              if area.type == "VIEW_3D" for space in area.spaces
+              if space.type == "VIEW_3D"]
+    for shading in [scene.display.shading] + [s.shading for s in spaces]:
+        shading.light = "STUDIO"
+        shading.color_type = "MATERIAL"
+        shading.show_shadows = True
+        shading.show_cavity = True
+    for space in spaces:
+        space.shading.type = "SOLID"
+        space.region_3d.view_perspective = "CAMERA"
+    scene.render.engine = "BLENDER_WORKBENCH"
+    if scene.world is not None:
+        scene.world.color = (0.66, 0.70, 0.73)
+
+
+def render_preview(name, *, min_water_fraction):
+    """Render the current solver state and require visible water in it."""
+    from fluidSim_warp_blender51.blender import playback
+
+    scene = bpy.context.scene
+    scene.render.resolution_x = 640
+    scene.render.resolution_y = 420
+    path = os.path.join(DEMOS, f"{name}_preview.png")
+    scene.render.filepath = path
+    # A still render re-sends the current frame; while live that would reset
+    # the running simulation back to frame 1.
+    with playback.suppress_frame_handlers():
+        bpy.ops.render.render(write_still=True)
+    image = bpy.data.images.load(path, check_existing=False)
+    try:
+        px = np.empty(len(image.pixels), dtype=np.float32)
+        image.pixels.foreach_get(px)
+    finally:
+        bpy.data.images.remove(image)
+    rgb = px.reshape(-1, 4)[:, :3]
+    water = float(np.mean((rgb[:, 2] - rgb[:, 0] > 0.2) & (rgb[:, 2] > rgb[:, 1])))
+    log(f"{name} preview rendered: {water:.1%} water pixels")
+    if water < min_water_fraction:
+        raise RuntimeError(
+            f"{name} preview shows {water:.2%} water pixels, "
+            f"need {min_water_fraction:.0%}")
+    return water
+
+
 # ---------------------------------------------------------------------------
 # Scene 1: dam break
 # ---------------------------------------------------------------------------
 
 def build_dam_break():
     scene = fresh_scene()
+    from fluidSim_warp_blender51.blender import colliders as _colliders
     from fluidSim_warp_blender51.blender.scene_bridge import session
+    from tools import dam_break_cove as cove
 
     fs = scene.fluidsim
-    lo, hi = (0.0, -1.00146496, 0.0), (5.6, 1.00146496, 1.6)
+    lo, hi = cove.DOMAIN_LO, cove.DOMAIN_HI
     make_domain(scene, lo, hi, "DamBreak Domain")
     ds = domain_settings(scene)
-    ds.voxel_size = 0.03
+    ds.voxel_size = cove.VOXEL
     ds.max_particles = 600_000
     ds.min_substeps = 1
     ds.max_substeps = 16
@@ -285,69 +393,92 @@ def build_dam_break():
     fs.show_surface = True
     fs.liquid_view_mode = "SURFACE_PARTICLES"
     fs.particle_display_fraction = 1.0
+    fs.surface_material = demo_material(
+        "DamBreak Water", DAM_BREAK_WATER_COLOR, roughness=0.05, transmission=0.6)
+    fs.particle_material = demo_material(
+        "DamBreak Spray", DAM_BREAK_SPRAY_COLOR, roughness=0.2)
+    fs.whitewater_material = demo_material(
+        "DamBreak Foam", DAM_BREAK_FOAM_COLOR, roughness=0.6)
     fs.live = True
     scene.frame_start = 1
     scene.frame_end = 120
     scene.frame_set(1)
     src = make_source_box(
         scene,
-        (0.0, 0.0, 0.0),
-        (0.6, 0.6, 1.2),
+        cove.RESERVOIR_LO,
+        cove.RESERVOIR_HI,
         "DamBreak Source Column",
         emit_rate=8.0,
         emission_mode="INITIAL_FILL",
     )
-    src.fluidsim.initial_velocity = DAM_BREAK_RELEASE_VELOCITY
     src.display_type = "WIRE"
     src.hide_render = True
-    bpy.ops.mesh.primitive_uv_sphere_add(
-        location=(2.41923952, 0.0, 0.0), radius=0.39267302)
-    collider = bpy.context.active_object
-    collider.name = "Sphere"
-    from fluidSim_warp_blender51.blender import colliders as _colliders
-    _colliders.tag_collider(collider, friction=1.0, restitution=0.0)
+    materials = {name: demo_material(name, color, roughness=0.85)
+                 for name, color in DAM_BREAK_MATERIAL_COLORS.items()}
+    colliders = []
+    for data in cove.collider_meshes():
+        obj = make_mesh_object(scene, data, materials)
+        _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
+        colliders.append(obj)
+        if data.name in ("DamBreak Cove", "DamBreak Sea Stack"):
+            # Natural rock reads smooth; the box sides and base stay sharp.
+            obj.data.shade_smooth()
+            obj.data.set_sharp_from_angle(angle=math.radians(40.0))
+    make_mesh_object(scene, cove.apron_mesh(), materials)
+    make_mesh_object(scene, cove.wall_mesh(), materials)
     src.fluidsim.enabled = True
     bpy.ops.fluidsim.initialize()
     sess = session()
     log("dam_break: Initial Fill will create liquid through the visible source region")
-    add_camera_light(scene, (1.6, -4.4, 1.9), (1.30, 0.0, 0.0))
-    series = run_scene("dam_break", 72)
+    cam_loc, cam_target, cam_lens = DAM_BREAK_CAMERA
+    add_camera_light(scene, cam_loc, (0.0, 0.0, 0.0))
+    look_at(scene.camera, cam_target)
+    scene.camera.data.lens = cam_lens
+    use_material_shading(scene)
+
+    def preview(frame):
+        if frame == DAM_BREAK_PREVIEW_FRAME:
+            render_preview("dam_break",
+                           min_water_fraction=DAM_BREAK_PREVIEW_MIN_WATER)
+
+    series = run_scene("dam_break", 72, on_frame=preview)
     n = int(series["particle_count"][0]) if series["particle_count"] else 0
     src.fluidsim.enabled = True
     add_text_block(
         "README_Dam_Break_Playable",
         "Dam Break live playback notes\n"
         "=============================\n\n"
-        "This file contains Tyler's canonical wide-domain dam-break setup: "
-        "a raised source column and a spherical flow collider.\n\n"
-        "Best path: open with blender/open_dam_break_playable.py. The script enables "
-        "the FluidSim add-on, initializes the CUDA solver, advances to frame 2 "
-        "using the 'DamBreak Source Column', enables Live Simulation, "
-        "and starts playback.\n\n"
-        "Manual path: press Initialize Solver, enable Live Simulation, then "
-        "press Play. The 'DamBreak Source Column' stays enabled so Reset or "
-        "Reinitialize can create visible fluid from any timeline frame.\n",
+        "A reservoir held by two concrete dam walls releases at once. The "
+        "water runs across the apron into a rocky cove: a sand beach between "
+        "two headlands, a sea stack and a timber jetty. Each of those is a "
+        "mesh collider; the concrete training walls and apron slab only show "
+        "the domain boundary.\n\n"
+        "Press Play: Live Simulation is on and frame 1 holds the full "
+        "reservoir. The 'DamBreak Source Column' stays enabled, so Reset or "
+        "Reinitialize refills the reservoir from any timeline frame.\n",
     )
-    save_scene("dam_break")
+    save_scene("dam_break", preview=False)
     meta = {
         "scene": "dam_break",
         "gravity": 9.81,
-        "column_height": 1.2,
-        "column_width": 0.6,
+        "column_height": cove.RESERVOIR_HI[2] - cove.RESERVOIR_LO[2],
+        "column_width": cove.RESERVOIR_HI[0] - cove.RESERVOIR_LO[0],
+        "reservoir_width": cove.RESERVOIR_HI[1] - cove.RESERVOIR_LO[1],
+        "apron_end_x": cove.APRON_END_X,
         "domain": [list(lo), list(hi)],
-        "voxel_size": 0.03,
+        "voxel_size": cove.VOXEL,
         "fps": FPS,
-        "spacing": 0.015,
+        "spacing": cove.SPACING,
         "source_emitted_particles": int(n),
         "source_emission_mode": "INITIAL_FILL",
         "source_region_kind": "ANALYTIC",
         "source_target_particles_per_voxel": 8.0,
-        "release_velocity": list(DAM_BREAK_RELEASE_VELOCITY),
         "whitewater_churn_gain": DAM_BREAK_WHITEWATER_CHURN_GAIN,
         "source_object": src.name,
         "source_location": list(src.location),
         "source_scale": list(src.scale),
-        "collider_object": collider.name,
+        "collider_objects": [obj.name for obj in colliders],
+        "preview_frame": DAM_BREAK_PREVIEW_FRAME,
         "playable_live_setup": True,
     }
     with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",

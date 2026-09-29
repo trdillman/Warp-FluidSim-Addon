@@ -23,7 +23,8 @@ x runs downstream. The domain is unchanged:
 | Part | Object | Geometry |
 |---|---|---|
 | Reservoir | `DamBreak Source Column` (source, INITIAL_FILL, ANALYTIC, 8 ppv) | x 0-0.6, y -0.6-0.6, z 0-1.2. About 256k particles (the old column was 0.6 m wide, 128k). |
-| Dam | `DamBreak Dam` (collider) | Two abutment boxes, x 0-0.75, \|y\| 0.6-1.00146 (flush with the domain wall), z -0.1-1.4. Two disjoint shells in one mesh. |
+| Dam | `DamBreak Dam` (collider) | Two abutment boxes, x 0-0.75, \|y\| 0.66-1.00146 (flush with the domain wall), z -0.1-1.4. Two disjoint shells in one mesh. The inner faces stand two voxels clear of the column (see Collider rules). |
+| Walls | `DamBreak Walls` (visual only, not a collider) | 0.15 m concrete walls just outside the domain, which is the real wall: one behind the reservoir and training walls along both sides out to where the headlands reach full height. All stand at the dam top (1.4 m) except the near (camera, -y) wall past the dam, which drops to the headland height so the camera sees over it. |
 | Apron | `DamBreak Apron` (visual only, not a collider) | Concrete slab x 0-2.4, full width, z -0.04-0. The fluid runs on the domain floor. |
 | Cove | `DamBreak Cove` (collider) | Closed heightfield solid over x 2.4-5.6, full width, bottom z -0.1. Top surface described below. Rock and sand material slots. |
 | Sea stack | `DamBreak Sea Stack` (collider) | Noisy tapered elliptical prism, semi-axes 0.225 x 0.20 m, centre (3.87, 0.13), 14 sides, rings every 0.1 m, base z -0.1, top about 0.82 m. |
@@ -48,6 +49,14 @@ Collider rules, from the solver's SDF path (`k_rasterize_collider_material`):
 - Every solid part is at least 3 voxels (0.09 m) thick.
 - Each collider costs one BVH query per active voxel per substep, so the scene
   has four colliders, not one per rock.
+- No initial fill starts within two voxels of a collider face. The pressure
+  solve pins grid faces next to solid cells to the collider's velocity, and
+  the FLIP update drags fluid that samples them to rest: with the abutments
+  flush against the column, about 1,600 particles hung on their inner faces
+  as a visible film for two seconds. Two voxels keep the outer particle row
+  out of that stencil (film 0-6 particles). The solver-side fix is tracked
+  separately. Grid-aligning the faces (worse) and zero friction (no change)
+  did not help.
 
 Frictions (restitution 0): dam 0.2, cove 0.4, sea stack 0.5, jetty 0.3.
 
@@ -65,12 +74,15 @@ Frictions (restitution 0): dam 0.2, cove 0.4, sea stack 0.5, jetty 0.3.
   `scene.fluidsim.surface_material` and `particle_material`, and white foam
   through `whitewater_material`.
 - Saved viewport: solid shading with color type MATERIAL. A raised
-  three-quarter camera from the far corner looks back at the dam.
-- Preview: Workbench render of a mid-run frame (about frame 24), 640 x 420.
+  three-quarter camera at (7.4, -3.1, 3.0), 40 mm lens, looks from the beach
+  corner back at the dam, aimed at (2.5, 0, 0.3).
+- Preview: Workbench render of frame 24, 640 x 420.
   The build fails if the preview has no water-colored pixels. The old preview
   showed only the sphere, with no water visible.
 - Speed: record old and new ms/frame. If the new median step is above 2.5x the
-  old median (99.5 ms), narrow the reservoir to 0.9 m.
+  old median (99.5 ms), narrow the reservoir to 0.9 m. Measured on the
+  final build: 70.3 ms median (25.7 s for 72 frames), against 99.5 ms (18.9 s)
+  for the old demo with half the particles, so the full 1.2 m reservoir stays.
 
 ## 3. Checks and dependents
 
@@ -83,15 +95,17 @@ Analyzer (`tools/analyze_demos.py`, dam_break):
 
 - The front-tracking window ends at `apron_end_x` (2.4, from meta), not at the
   far wall. It covers the monotonic-advance check and the front-speed fit.
-- Column collapse keeps its pre-reflection rule. The window closes when a wave
-  reflected at the cove could first return to the left wall: the time the
-  front reaches `apron_end_x`, plus (apron_end_x - 0.2) / (2 c0).
+- Column collapse keeps its pre-reflection rule. The window is the same
+  prefix of frames: it closes at the first frame whose front reaches
+  `apron_end_x`. A later frame never re-enters it, since water climbing the
+  sand leaves the low band and the front can appear to retreat.
 - New checks, with thresholds set from the measured bake with margin:
-  - no terrain penetration: particles deeper than 1.5 voxels inside any
-    collider stay within a small fraction in every frame;
-  - flow passes through the cove gap: enough of the water is past the
-    headlands (x > 3.6) by the last frame;
-  - beach run-up: the wetted beach reaches a minimum sand height.
+  - no collider penetration: no particle in any frame is more than 1.5
+    voxels (45 mm) inside a collider (measured 15 mm);
+  - flow passes the headland gap: at least 10% of the water is past the
+    headlands (x > 3.6) at the last frame (measured 24.7%);
+  - beach run-up: the wetted sand reaches 0.25 m (measured 0.50, the dune
+    top).
 - dam_break goes from 9 to 12 checks, and the report from 18/18 to 21/21.
 
 Dependents that change:
@@ -102,14 +116,15 @@ Dependents that change:
 - `tools/run_production_gate.py`: expected marker `DEMO-ANALYSIS-PASS (21/21)`.
 - `tests/test_demo_analysis_contract.py`: synthetic meta gains
   `apron_end_x`, and the collapse-window rule is covered.
-- `tests/blender_phase3_profile_safe_review.py`: re-check that its probe cubes
-  still behave with the new colliders.
-- `tests/blender_gui_playback_probe.py`: `domain_sdf_walls` stays true.
-- `tools/profile_gpu_solver.py`, `profile_viscosity_surface_tension.py`,
-  `diagnose_viscosity_pcg_convergence.py`: keep the frozen column preset and
-  relabel it "classic dam-break benchmark", so the recorded viscosity numbers
-  stay comparable.
-- Docs: AGENTS.md demo notes, demos/ANALYSIS.md (regenerated), CHANGELOG. The
+- `tests/blender_phase3_profile_safe_review.py` and
+  `tests/blender_gui_playback_probe.py` need no change: the review adds its own
+  probe objects, and `domain_sdf_walls` stays true.
+- `tools/profile_gpu_solver.py`: keeps the frozen column preset and relabels
+  it "classic dam-break benchmark", so the recorded viscosity numbers stay
+  comparable. The two viscosity tools only select it by name.
+- Docs: AGENTS.md demo notes and demos/ANALYSIS.md (regenerated). The
+  CHANGELOG entry waits for the next version, since the release-identity test
+  requires the changelog to lead with the current release. The
   README text block drops its reference to `blender/open_dam_break_playable.py`,
   which does not exist.
 - meta.json gains `collider_objects`, `apron_end_x`, `reservoir_width`, and

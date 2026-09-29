@@ -10,8 +10,10 @@ Checks per scene
 dam_break     - mass conservation, containment, floor penetration, monotonic
                 front advance, front speed vs shallow-water theory
                 (<= 2*sqrt(g*H), experimental range ~1.5-2), Martin & Moses
-                dimensionless front position at T=2, column collapse,
-                velocity boundedness, whitewater emission.
+                dimensionless front position at T=2 (front measured on the
+                flat apron only), column collapse, velocity boundedness,
+                whitewater emission, no penetration of the cove colliders,
+                flow through the headland gap, run-up on the beach.
 crown_splash  - mass conservation, containment, impact detection, crown rise
                 above the pool, azimuthal crown symmetry (CV over 12
                 sectors), sqrt(t) crown-radius growth correlation
@@ -38,6 +40,10 @@ import numpy as np
 DEMOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      "demos")
 REPO = os.path.dirname(DEMOS)
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from tools import dam_break_cove as cove  # noqa: E402
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
 ANALYSIS_OUT = os.path.join(REPO, "artifacts", "demo_analysis")
 
@@ -173,14 +179,24 @@ def analyze_dam_break():
             ts.append(f / fps)
             fronts.append(float(low[:, 0].max()))
     ts, fronts = np.array(ts), np.array(fronts)
+    # The bore runs on a flat floor only until the apron ends; past that the
+    # cove terrain, not the dam break, sets where the front is (water climbing
+    # the sand leaves the low band, so the front can appear to retreat).
     wall_x = meta["domain"][1][0] - 2 * meta["voxel_size"]
-    pre_wall = fronts < wall_x
+    pre_wall = np.logical_and.accumulate(
+        fronts < min(wall_x, meta.get("apron_end_x", wall_x)))
 
-    # Monotonic advance until the wall (1-voxel noise tolerance).
+    # Monotonic advance across the apron (1-voxel noise tolerance). Fewer
+    # than three fronts there proves nothing, so a short window fails.
     adv = np.diff(fronts[pre_wall])
-    check(name, "front advances monotonically",
-          bool((adv > -meta["voxel_size"]).all()),
-          f"min frame-to-frame delta {adv.min() * 1000:.1f} mm")
+    if len(adv) >= 2:
+        check(name, "front advances monotonically",
+              bool((adv > -meta["voxel_size"]).all()),
+              f"min frame-to-frame delta {adv.min() * 1000:.1f} mm")
+    else:
+        check(name, "front advances monotonically", False,
+              f"only {int(pre_wall.sum())} front(s) before the apron ends "
+              f"(need 3)")
 
     # Early-phase front speed vs sqrt(g*H): Ritter analytical bound is
     # 2.0; experiments (Koshizuka, Martin-Moses) show 0.6-1.2 with wall
@@ -220,9 +236,31 @@ def analyze_dam_break():
     ww = np.array(series["whitewater_count"])
     check(name, "whitewater emitted by turbulent bore", ww.max() > 100,
           f"peak whitewater {ww.max():,}")
+
+    # The cove: measured against the same solids the builder hands the solver.
+    # A particle inside a collider by more than the floor check's 1.5 voxels
+    # has tunnelled through the SDF, not merely touched it.
+    last = frames[max(frames)]["positions"]
+    penetration = max(float(cove.solid_depth(d["positions"]).max())
+                      for d in frames.values())
+    limit = 1.5 * meta["voxel_size"]
+    check(name, "no collider penetration", penetration <= limit,
+          f"deepest particle {penetration * 1000:.1f} mm inside a collider "
+          f"(limit {limit * 1000:.0f} mm)")
+    downstream = cove.downstream_fraction(last)
+    check(name, "flow passes the headland gap", downstream >= 0.1,
+          f"{downstream:.1%} of the water beyond x = "
+          f"{cove.HEADLAND_END_X[1]:.1f} m at the last frame (need 10%)")
+    runup = max(cove.beach_runup(d["positions"]) for d in frames.values())
+    check(name, "wave runs up the beach", runup >= 0.25,
+          f"highest wetted sand {runup:.2f} m (need 0.25; dune top "
+          f"{cove.DUNE_HEIGHT:.2f})")
     return {"front_speed_over_c0": speed / c0,
             "z_at_T2": z_at_2 if (T >= 2).any() else None,
-            "column_height_end": h_end}
+            "column_height_end": h_end,
+            "collider_penetration_m": penetration,
+            "downstream_fraction": downstream,
+            "beach_runup_m": runup}
 
 
 # ---------------------------------------------------------------------------
