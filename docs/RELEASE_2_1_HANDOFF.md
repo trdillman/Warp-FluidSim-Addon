@@ -66,7 +66,6 @@ None block a release. Each has a card in `backlog/tasks/`.
 | Card | Severity | Summary | Suggested fix |
 |---|---|---|---|
 | REVIEW-013 | medium | `operators.py` / `panels.py` unregister stops at the first failure | Wrap each class in `try` and continue; test with a class that fails to unregister |
-| REVIEW-015 | medium | PCG conditional-graph cache clears the whole dict at 8 entries (`sim/pressure.py`) | Use the LRU the viscosity cache already has |
 | REVIEW-024 | medium | `test_memory_safety_recovery.py` checks source text for substrings instead of behaviour | Replace the substring asserts with a registration or poll check |
 | REVIEW-025 | medium | `_phase2_source_acceptance_common` deletes every add-on module from `sys.modules` at import time | Move the purge into an explicit setup call |
 | REVIEW-027 | medium | No tests for the solver's error paths (bad device string, non-CUDA device, reduction launch failure, sourcing count mismatch) | One test per path, asserting the actionable message |
@@ -74,6 +73,9 @@ None block a release. Each has a card in `backlog/tasks/`.
 
 Closed in 2.0: REVIEW-041 (fixed), REVIEW-031 (won't fix, undo policy) and
 REVIEW-042 (no production caller after REVIEW-022).
+
+Closed in 2.1: REVIEW-015 (fixed; the cache key no longer holds the
+tolerance, and a miss evicts one entry instead of all eight).
 
 ## 3. Performance (plan D7)
 
@@ -112,7 +114,7 @@ and about 4% faster on chromatic_vortex. Evidence:
    or per-leaf shared-memory accumulation. Accept a change only if the
    GUI-gate hash is unchanged.
 2. Topology frontier (6 tasks).
-3. Pressure follow-on (5 tasks), including the REVIEW-015 cache.
+3. Pressure follow-on (5 tasks). The REVIEW-015 cache is done.
 4. Device-resident surface work and cache-cursor integration.
 5. Viscosity SDF reuse.
 
