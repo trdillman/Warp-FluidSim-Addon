@@ -2887,15 +2887,15 @@ def test_basic_front_door_and_surrogates_are_present(monkeypatch):
     assert "whitewater_enabled" in whitewater.props
     assert "ww_emission_rate" in whitewater.props
 
-    # Outputs: the 33 per-attribute toggles are Advanced, but Basic keeps the
-    # Export Attributes headline enum.
+    # Outputs: the per-attribute toggles are Advanced, but Basic keeps the
+    # Export Attributes master switch (domain-owned).
     outputs = _draw(
         ui_scene.FLUIDSIM_PT_scene_outputs,
         SimpleNamespace(
             liquid_view_mode="SURFACE",
             whitewater_enabled=False,
             show_whitewater=False,
-            export_attributes="STANDARD",
+            export_attributes=False,
         ),
     )
     assert "export_attributes" in outputs.props

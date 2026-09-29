@@ -55,6 +55,8 @@ USER_PATH_CONTRACT = {
         "--cache",
         "--collider-subdiv",
         "--surface-attributes",
+        "--output-attributes",
+        "--export-attributes",
         "--surface-attribution",
         "--max-mean-view-ms",
         "--max-mean-total-ms",
@@ -835,6 +837,28 @@ def configure_surface_attribute_profile(settings, mode):
     return enabled_attribute_keys(settings, "surface")
 
 
+def configure_output_attribute_profile(settings, mode):
+    """Apply one inventory profile to the particle and whitewater outputs.
+
+    ``default`` leaves the add-on's shipped toggles untouched.
+    """
+    from fluidSim_warp_blender51.sim.attributes import (
+        OUTPUT_ATTRIBUTE_KEYS,
+        OUTPUT_TOGGLE_NAMES,
+    )
+
+    mode = str(mode).lower()
+    if mode not in ("off", "default", "all"):
+        raise ValueError(f"unknown output attribute profile {mode!r}")
+    if mode == "default":
+        return
+    for output_kind in ("particles", "whitewater"):
+        for key, property_name in OUTPUT_TOGGLE_NAMES[output_kind].items():
+            if key in OUTPUT_ATTRIBUTE_KEYS[output_kind] and property_name != (
+                    "whitewater_attribute_type"):
+                setattr(settings, property_name, mode == "all")
+
+
 def expected_surface_attribute_readbacks(mode):
     try:
         return SURFACE_ATTRIBUTE_READBACKS_PER_PUBLICATION[str(mode).lower()]
@@ -875,6 +899,15 @@ def parse_args():
         "--surface-attributes", choices=("off", "default", "all"),
         default="default",
         help="surface attribute inventory used by the viewport profile",
+    )
+    ap.add_argument(
+        "--output-attributes", choices=("off", "default", "all"),
+        default="default",
+        help="particle and whitewater attribute inventory used by the profile",
+    )
+    ap.add_argument(
+        "--export-attributes", choices=("on", "off"), default="on",
+        help="domain Export Attributes master switch (off publishes/caches none)",
     )
     ap.add_argument(
         "--surface-attribution", action="store_true",
@@ -1208,8 +1241,10 @@ def _prepare_profile_run(args, addon_utils, bmesh, bpy):
     ds.surface_enabled = True
     ds.profiling_enabled = bool(args.profile_phases)
     ds.profiling_sync = bool(args.profile_sync)
+    ds.export_attributes = args.export_attributes == "on"
     enabled_surface_attributes = configure_surface_attribute_profile(
         ds, args.surface_attributes)
+    configure_output_attribute_profile(ds, args.output_attributes)
 
     if args.particles:
         fs.liquid_view_mode = "PARTICLES"

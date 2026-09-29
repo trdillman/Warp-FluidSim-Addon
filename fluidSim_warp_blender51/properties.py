@@ -124,13 +124,6 @@ QUALITY_ITEMS = (
 # Presentation-only for now: the per-attribute inventory in Advanced remains the
 # source of truth; wiring this preset to those toggles is deferred to the Chunk 3+
 # data-model work (it affects cache identity, so it must land with the migration).
-EXPORT_ATTRIBUTES_ITEMS = (
-    ("MINIMAL", "Minimal", "Export only the attributes required to render the liquid; smallest caches"),
-    ("STANDARD", "Standard", "Export the attributes most shots need (velocity, age, and per-stream basics)"),
-    ("EVERYTHING", "Everything", "Export every available per-point attribute for maximum downstream flexibility"),
-)
-
-
 _LIQUID_VIEW_SYNCING = False
 
 
@@ -697,9 +690,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Quality", items=QUALITY_ITEMS, default="PREVIEW",
         update=_request_rebuild,
         description="Select a fidelity target; Draft/Preview/Final trade speed against accuracy, and Custom defers entirely to the individual solver settings")
-    export_attributes: EnumProperty(
-        name="Export Attributes", items=EXPORT_ATTRIBUTES_ITEMS, default="STANDARD",
-        description="Basic headline for how many per-point attributes are exported; the per-attribute inventory in Advanced overrides this")
 
     # Simulation
     live: BoolProperty(
@@ -1547,6 +1537,14 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     # Production render attributes
     # Inventory changes are reset-tier because color/source/UID channels are
     # allocated only when selected and cache signatures include every toggle.
+    # The master switch gates the whole inventory; off skips the per-frame
+    # attribute readback, transfer, publication and cache bytes.
+    export_attributes: BoolProperty(
+        name="Export Attributes", default=False, update=_request_reset,
+        description=(
+            "Enable to publish and cache the per-point attributes selected in Advanced "
+            "(velocity, age, motion blur and so on); disable for faster playback and "
+            "baking and smaller caches. Whitewater type is always kept"))
     surface_attribute_velocity: BoolProperty(
         name="Velocity", default=True, update=_request_reset,
         description="Publish world-units-per-second liquid velocity on surface vertices")

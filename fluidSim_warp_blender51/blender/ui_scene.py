@@ -142,6 +142,7 @@ def _draw_attribute_group(layout, fs, output_kind):
         even_rows=False,
         align=True,
     )
+    grid.active = bool(getattr(fs, "export_attributes", True))
     for key in OUTPUT_ATTRIBUTE_KEYS[output_kind]:
         if output_kind == "whitewater" and key == "type":
             grid.label(text="Type (always published)", icon="CHECKMARK")
@@ -995,9 +996,9 @@ class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
         if _whitewater_enabled(context) and fs.show_whitewater:
             active.append("Whitewater")
         layout.label(text="Visible: " + (", ".join(active) if active else "None"), icon="HIDE_OFF")
-        # Basic headline for the export inventory (spec §8); the 33 per-attribute
-        # toggles live in the Advanced-only Persistent Attributes children.
-        layout.prop(fs, "export_attributes")
+        # Basic master switch for the export inventory (spec §8); the
+        # per-attribute toggles live in the Advanced-only children.
+        draw_property(layout, _domain_owner(context), "export_attributes")
 
 
 class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):

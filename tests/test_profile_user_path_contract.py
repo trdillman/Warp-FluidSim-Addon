@@ -343,6 +343,8 @@ def _profile_contract_case(*, whitewater_counts, whitewater_keys,
         particles=False,
         surface_attribution=False,
         surface_attributes="default",
+        output_attributes="default",
+        export_attributes="on",
     )
     zero_costs = {
         name: 0 for name in (
@@ -728,6 +730,8 @@ def test_main_runs_profile_workflow_and_restores_instrumentation(
         profile_sync=False,
         particles=False,
         surface_attributes="default",
+        output_attributes="default",
+        export_attributes="on",
         domain_scale_x=0.0,
         domain_location_x=0.0,
         collider_subdiv=0,
@@ -837,6 +841,8 @@ def test_profile_report_uses_authoritative_domain_settings(monkeypatch):
         no_validate=False,
         surface_attribution=False,
         surface_attributes="default",
+        output_attributes="default",
+        export_attributes="on",
         voxel_size=0.08,
         max_particles=200_000,
     )

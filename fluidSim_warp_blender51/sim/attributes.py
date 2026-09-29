@@ -150,17 +150,21 @@ def cache_attribute_name(output_kind: str, key: str) -> str:
 def enabled_attribute_keys(settings, output_kind: str) -> tuple[str, ...]:
     """Return enabled keys in authoritative schema order.
 
-    Missing settings are treated as disabled.  This keeps old cache/playback
+    Missing toggles are treated as disabled.  This keeps old cache/playback
     objects readable while new solver instances receive an explicit inventory.
+    ``export_attributes`` off leaves only mandatory simulation state; objects
+    that predate the switch keep their toggles authoritative.
     """
     output_kind = str(output_kind).lower()
     if output_kind not in OUTPUT_ATTRIBUTE_KEYS:
         raise ValueError(f"unknown output kind {output_kind!r}")
     toggles = OUTPUT_TOGGLE_NAMES[output_kind]
     mandatory = frozenset(MANDATORY_OUTPUT_ATTRIBUTE_KEYS.get(output_kind, ()))
+    exporting = bool(getattr(settings, "export_attributes", True))
     return tuple(
         key for key in OUTPUT_ATTRIBUTE_KEYS[output_kind]
-        if key in mandatory or bool(getattr(settings, toggles[key], False))
+        if key in mandatory
+        or (exporting and bool(getattr(settings, toggles[key], False)))
     )
 
 

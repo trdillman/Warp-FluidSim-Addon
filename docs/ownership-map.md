@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 155 | UI writes exactly where the consumer reads |
+| OK | 156 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -30,7 +30,7 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
-| WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
+| WRITE_ONLY | 0 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
@@ -50,7 +50,6 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 |---|---|---|---|---|---|---|---:|---|
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene/scene | 0 | UI_STATE |
 | `quality` | REINITIALIZE | scene | scene | - | - | scene/scene | 1 | OK |
-| `export_attributes` | PRESENTATION | scene | - | - | - | scene/scene | 0 | WRITE_ONLY |
 | `live` | ADAPTER | - | scene | scene | scene | scene/scene | 6 | PUBLISHED |
 | `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene/scene | 1 | OK |
@@ -247,6 +246,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `height_error` | PRESENTATION | - | - | domain | domain | domain/domain | 0 | PUBLISHED |
 | `height_velocity` | RESET | domain | domain | - | - | domain/domain | 0 | OK |
 | `height_emit_particles` | RESET | domain | domain | - | - | domain/domain | 0 | OK |
+| `export_attributes` | RESET | domain | domain | - | domain | domain/domain | 0 | OK |
 | `surface_attribute_velocity` | RESET | - | domain | - | - | domain/domain | 0 | READ_ONLY |
 | `surface_attribute_speed` | RESET | - | domain | - | - | domain/domain | 0 | READ_ONLY |
 | `surface_attribute_vorticity` | RESET | - | domain | - | - | domain/domain | 0 | READ_ONLY |

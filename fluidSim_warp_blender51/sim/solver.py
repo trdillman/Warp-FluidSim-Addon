@@ -546,6 +546,7 @@ class SolverSettings:
 
     # Artist-ready output inventory.  These fields are signature-bound and
     # selected before initialization so optional particle channels stay opt-in.
+    export_attributes: bool = False
     surface_attribute_velocity: bool = True
     surface_attribute_speed: bool = False
     surface_attribute_vorticity: bool = False

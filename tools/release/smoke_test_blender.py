@@ -296,6 +296,8 @@ def _assert_phase2_scene_state(module: str) -> dict[str, object]:
         raise AssertionError(f"guided setup did not attach current render nodes: {node_state}")
     if any(len(obj.modifiers) != 1 for obj in output_objects):
         raise AssertionError("guided setup did not attach exactly one render modifier per output")
+    if domain_fs.export_attributes:
+        raise AssertionError("attribute export must default to off")
     if (
         not domain_fs.surface_attribute_velocity
         or not domain_fs.surface_attribute_motion

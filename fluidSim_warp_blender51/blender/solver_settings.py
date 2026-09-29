@@ -61,6 +61,7 @@ DIRECT_SETTING_FIELDS = (
     "ww_foam_density_influence", "ww_foam_life_multiplier",
     "ww_bubble_drag", "ww_bubble_buoyancy", "ww_bubble_life_multiplier",
     "ww_spray_drag", "ww_spray_gravity_scale", "ww_spray_life_multiplier",
+    "export_attributes",
     "surface_attribute_velocity", "surface_attribute_speed",
     "surface_attribute_vorticity", "surface_attribute_age",
     "surface_attribute_lifetime", "surface_attribute_color",

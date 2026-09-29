@@ -38,6 +38,28 @@ def test_enabled_inventory_is_ordered_and_optional_channels_are_union():
     assert persistent_particle_channels(settings) == ("color", "uid")
 
 
+def test_export_switch_off_keeps_only_mandatory_simulation_state():
+    settings = SimpleNamespace(
+        export_attributes=False,
+        surface_attribute_velocity=True,
+        surface_attribute_motion=True,
+        particles_attribute_age=True,
+        particles_attribute_uid=True,
+        whitewater_attribute_age=True,
+        species_enabled=True,
+    )
+    assert enabled_attribute_keys(settings, "surface") == ()
+    assert enabled_attribute_keys(settings, "particles") == ()
+    assert enabled_attribute_keys(settings, "whitewater") == ("type",)
+    # Species color is simulation state, not an export, so it stays allocated.
+    assert persistent_particle_channels(settings) == ("color",)
+
+    settings.export_attributes = True
+    assert enabled_attribute_keys(settings, "surface") == ("velocity", "motion")
+    assert enabled_attribute_keys(settings, "particles") == ("age", "uid")
+    assert persistent_particle_channels(settings) == ("color", "uid")
+
+
 def test_whitewater_type_is_stable_int_checkpointed_state():
     spec = ATTRIBUTE_SPECS["type"]
     assert spec.blender_name == "fluidsim_whitewater_type"
