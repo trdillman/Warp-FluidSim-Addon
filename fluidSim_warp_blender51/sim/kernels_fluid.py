@@ -582,6 +582,7 @@ def k_apply_collider_material_to_grid(
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
     voxel_size: float,
+    friction_time_ratio: float,
     impact_u: wp.array(dtype=float),
     impact_v: wp.array(dtype=float),
     impact_w: wp.array(dtype=float),
@@ -589,70 +590,114 @@ def k_apply_collider_material_to_grid(
     v: wp.array(dtype=float),
     w: wp.array(dtype=float),
 ):
-    """Apply collider slip and bounce to fluid cells beside solid voxels."""
+    """Apply collider bounce and friction to faces beside solid voxels.
+
+    Restitution acts on the normal face between a fluid voxel and a solid
+    neighbour. Friction acts on the tangential faces of a non-solid voxel
+    with a solid neighbour along another axis: it blends the face velocity
+    toward the collider velocity (0 keeps free slip, 1 gives no-slip).
+    friction_time_ratio is dt / COLLIDER_FRICTION_REFERENCE_TIME, so the
+    slip kept per substep is (1 - friction) ** friction_time_ratio.
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
+    if (vt & VOXEL_COLLISION) != 0:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
+    lo_idx = wp.vec3i(-1, -1, -1)
+    hi_idx = wp.vec3i(-1, -1, -1)
+    lo_solid = wp.vec3i(0, 0, 0)
+    hi_solid = wp.vec3i(0, 0, 0)
     for axis in range(3):
-        lo_offset = wp.vec3i(0, 0, 0)
-        hi_offset = wp.vec3i(0, 0, 0)
+        offset = wp.vec3i(0, 0, 0)
         if axis == 0:
-            lo_offset = wp.vec3i(-1, 0, 0)
-            hi_offset = wp.vec3i(1, 0, 0)
+            offset = wp.vec3i(1, 0, 0)
         elif axis == 1:
-            lo_offset = wp.vec3i(0, -1, 0)
-            hi_offset = wp.vec3i(0, 1, 0)
+            offset = wp.vec3i(0, 1, 0)
         else:
-            lo_offset = wp.vec3i(0, 0, -1)
-            hi_offset = wp.vec3i(0, 0, 1)
-        lo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + lo_offset)
-        hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + hi_offset)
-        lo_solid = False
-        hi_solid = False
+            offset = wp.vec3i(0, 0, 1)
+        lo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk - offset)
+        hi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk + offset)
+        lo_idx[axis] = lo
+        hi_idx[axis] = hi
         if lo >= 0:
-            lo_solid = collision_sdf[lo] < 0.0
+            if collision_sdf[lo] < 0.0:
+                lo_solid[axis] = 1
         if hi >= 0:
-            hi_solid = collision_sdf[hi] < 0.0
-        if lo_solid == hi_solid:
-            continue
+            if collision_sdf[hi] < 0.0:
+                hi_solid[axis] = 1
 
-        # MAC components live on lower-axis faces. A solid lower neighbor
-        # contacts this voxel's face; a solid upper neighbor contacts the
-        # upper voxel's lower face. Only modify that normal face component.
-        face = tid
-        normal_sign = float(1.0)
-        if hi_solid:
-            face = hi
-            normal_sign = -1.0
-        vcol_axis = collision_vel[face][axis]
-        restitution = wp.clamp(collision_restitution[face], 0.0, 1.0)
-        current_axis = float(0.0)
-        impact_axis = float(0.0)
-        if axis == 0:
-            current_axis = u[face]
-            impact_axis = impact_u[face]
-        elif axis == 1:
-            current_axis = v[face]
-            impact_axis = impact_v[face]
-        else:
-            current_axis = w[face]
-            impact_axis = impact_w[face]
-        current_n = (current_axis - vcol_axis) * normal_sign
-        impact_n = (impact_axis - vcol_axis) * normal_sign
-        if impact_n < 0.0:
-            result_n = wp.max(current_n, -impact_n * restitution)
-            result_axis = vcol_axis + normal_sign * result_n
+    if (vt & VOXEL_FLUID) != 0:
+        for axis in range(3):
+            if lo_solid[axis] == hi_solid[axis]:
+                continue
+
+            # MAC components live on lower-axis faces. A solid lower neighbor
+            # contacts this voxel's face; a solid upper neighbor contacts the
+            # upper voxel's lower face. Only modify that normal face component.
+            face = tid
+            normal_sign = float(1.0)
+            if hi_solid[axis] != 0:
+                face = hi_idx[axis]
+                normal_sign = -1.0
+            vcol_axis = collision_vel[face][axis]
+            restitution = wp.clamp(collision_restitution[face], 0.0, 1.0)
+            current_axis = float(0.0)
+            impact_axis = float(0.0)
             if axis == 0:
-                u[face] = result_axis
+                current_axis = u[face]
+                impact_axis = impact_u[face]
             elif axis == 1:
-                v[face] = result_axis
+                current_axis = v[face]
+                impact_axis = impact_v[face]
             else:
-                w[face] = result_axis
+                current_axis = w[face]
+                impact_axis = impact_w[face]
+            current_n = (current_axis - vcol_axis) * normal_sign
+            impact_n = (impact_axis - vcol_axis) * normal_sign
+            if impact_n < 0.0:
+                result_n = wp.max(current_n, -impact_n * restitution)
+                result_axis = vcol_axis + normal_sign * result_n
+                if axis == 0:
+                    u[face] = result_axis
+                elif axis == 1:
+                    v[face] = result_axis
+                else:
+                    w[face] = result_axis
 
+    # Friction on this voxel's own lower faces. Skip normal contact faces
+    # (solid lower neighbour; the projection pins those) and faces on the
+    # grid edge. A face is tangential to a wall when this voxel has a solid
+    # neighbour along another axis; the most frictional such neighbour sets
+    # the blend. Friction 0 writes nothing, so free-slip stays bit-exact.
+    for b in range(3):
+        if lo_idx[b] < 0 or lo_solid[b] != 0:
+            continue
+        friction = float(0.0)
+        vcol = float(0.0)
+        for a in range(3):
+            if a == b:
+                continue
+            if lo_solid[a] != 0:
+                f_lo = collision_friction[lo_idx[a]]
+                if f_lo > friction:
+                    friction = f_lo
+                    vcol = collision_vel[lo_idx[a]][b]
+            if hi_solid[a] != 0:
+                f_hi = collision_friction[hi_idx[a]]
+                if f_hi > friction:
+                    friction = f_hi
+                    vcol = collision_vel[hi_idx[a]][b]
+        if friction > 0.0:
+            keep = wp.pow(1.0 - wp.min(friction, 1.0), friction_time_ratio)
+            if b == 0:
+                u[tid] = vcol + (u[tid] - vcol) * keep
+            elif b == 1:
+                v[tid] = vcol + (v[tid] - vcol) * keep
+            else:
+                w[tid] = vcol + (w[tid] - vcol) * keep
 
 register_fn(k_apply_collider_material_to_grid,
             "fluidSimApplyColliderMaterialToGrid")

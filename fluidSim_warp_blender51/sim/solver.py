@@ -1746,7 +1746,7 @@ class FluidSolver:
                              f"to a slower host loop: {error}")
         return "; ".join(parts)
 
-    def _collider_material_response(self):
+    def _collider_material_response(self, dt):
         g = self.grid
         wp.launch(
             k_apply_collider_material_to_grid, dim=self._nvox,
@@ -1754,6 +1754,7 @@ class FluidSolver:
                     self.collision_vel, self.collision_friction,
                     self.collision_restitution, g.leaf_table, g.leaf_coords,
                     g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                    float(dt) / C.COLLIDER_FRICTION_REFERENCE_TIME,
                     self.collision_impact_u, self.collision_impact_v,
                     self.collision_impact_w,
                     self.vel.u, self.vel.v, self.vel.w],
@@ -2193,7 +2194,7 @@ class FluidSolver:
                 FrameFeaturePhase.BEFORE_PRESSURE, self, time_ctx)
             with self._phase("pressure"):
                 self._pressure(dt)
-                self._collider_material_response()
+                self._collider_material_response(dt)
             self._sanitize(dt)
             with self._phase("g2p"):
                 self._g2p_advect(dt)
