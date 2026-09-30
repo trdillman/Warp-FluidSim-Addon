@@ -68,6 +68,8 @@ def install_probe(records, max_iterations_override, record_limit, skip_solves=0)
 
         stencil = [g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
                    g.num_leaves]
+        # the solve kernels read dt from device
+        self._record_solve_scalars(dt, tolerance * tolerance * max(1, n))
         wp.launch(V.k_viscosity_counter_increment, dim=1, inputs=[self.counter],
                   device=self.device)
         wp.launch(V.k_viscosity_build_rhs, dim=n,
@@ -75,11 +77,11 @@ def install_probe(records, max_iterations_override, record_limit, skip_solves=0)
                   device=self.device)
         wp.launch(V.k_viscosity_compute_inverse_diagonal, dim=n,
                   inputs=[viscosity_field, weight, voxel_type, *stencil,
-                          g.voxel_size, dt, self.inv_diag],
+                          g.voxel_size, self._solve_dt, self.inv_diag],
                   device=self.device)
         wp.launch(V.k_viscosity_apply_matrix, dim=n,
                   inputs=[self.x, viscosity_field, weight, voxel_type,
-                          *stencil, g.voxel_size, dt, self.ap],
+                          *stencil, g.voxel_size, self._solve_dt, self.ap],
                   device=self.device)
         wp.launch(V.k_viscosity_initialize_pcg, dim=n,
                   inputs=[self.rhs, self.ap, self.inv_diag, g.num_leaves, self.r],
@@ -127,7 +129,7 @@ def install_probe(records, max_iterations_override, record_limit, skip_solves=0)
         while it < budget:
             wp.launch(V.k_viscosity_apply_matrix, dim=n,
                       inputs=[self.p_dir, viscosity_field, weight, voxel_type,
-                              *stencil, g.voxel_size, dt, self.ap],
+                              *stencil, g.voxel_size, self._solve_dt, self.ap],
                       device=self.device)
             wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
             wp.launch(k_compute_alpha, dim=1,

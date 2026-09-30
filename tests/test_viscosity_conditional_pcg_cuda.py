@@ -177,3 +177,67 @@ def test_conditional_graphs_are_reused_across_identical_solves(cuda_device):
     assert solver._graph_captures == after_first
     solver.release()
     assert not solver._pcg_conditional_graphs
+
+
+def _strip_grid(device, leaves):
+    """A row of ``leaves`` active leaves in a 16-leaf allocation."""
+    grid = SparseGrid(
+        origin=(0.0, 0.0, 0.0), size=(6.4, 0.4, 0.4), voxel_size=0.05,
+        leaf_capacity=16, device=device)
+    _set_strip(grid, leaves)
+    return grid
+
+
+def _set_strip(grid, leaves):
+    grid.begin_topology()
+    grid.mark_world_box((0.0, 0.0, 0.0), (0.4 * leaves - 0.001, 0.399, 0.399))
+    assert grid.finalize_topology() == leaves
+
+
+def _strip_solve(solver, grid, vel, device, *, dt, tolerance):
+    n = grid.voxel_capacity
+    _seed_velocity(vel, n)
+    voxel_type = wp.full(n, VOXEL_FLUID, dtype=wp.int32, device=device)
+    viscosity_field = wp.full(n, 1.0, dtype=float, device=device)
+    solver.solve(vel, viscosity_field, voxel_type, dt, iterations=40,
+                 tolerance=tolerance, check_every=1)
+    active = grid.active_voxel_count
+    return ([dict(s) for s in solver.last_component_statuses],
+            [c.numpy()[:active].copy() for c in (vel.u, vel.v, vel.w)])
+
+
+def test_conditional_graphs_are_reused_across_dt_tolerance_and_active_count(
+        cuda_device):
+    """dt, tolerance and the active count are read at launch, not baked in.
+
+    The second solve changes all three (9 -> 10 leaves stays inside one
+    launch bucket) and must neither recapture nor differ by a single bit from
+    a fresh solver that captured with those exact values.
+    """
+    grid = _strip_grid(cuda_device, 9)
+    solver = ViscositySolver(grid, cuda_device)
+    vel = MacVelocityField(grid)
+    # a loose tolerance first, so a baked-in threshold would stop the second
+    # solve early
+    first, _ = _strip_solve(solver, grid, vel, cuda_device,
+                            dt=1.0 / 120.0, tolerance=1.0e-2)
+    assert solver._graph_captures == 3
+    assert solver.last_pcg_execution_mode == "cuda_conditional"
+
+    _set_strip(grid, 10)
+    reused, reused_fields = _strip_solve(solver, grid, vel, cuda_device,
+                                         dt=1.0 / 48.0, tolerance=1.0e-5)
+    assert solver._graph_captures == 3, "a per-solve scalar forced a recapture"
+    solver.release()
+
+    fresh_solver = ViscositySolver(grid, cuda_device)
+    fresh, fresh_fields = _strip_solve(fresh_solver, grid, vel, cuda_device,
+                                       dt=1.0 / 48.0, tolerance=1.0e-5)
+    fresh_solver.release()
+
+    assert [c["iterations"] for c in reused] == [
+        c["iterations"] for c in fresh]
+    assert [c["iterations"] for c in reused] != [
+        c["iterations"] for c in first]
+    for got, expected in zip(reused_fields, fresh_fields):
+        assert got.tobytes() == expected.tobytes()

@@ -128,10 +128,25 @@ Against 1.1.0 it shows no regression.
 3. Pressure follow-on (5 tasks). The REVIEW-015 cache is done.
 4. Device-resident surface work and cache-cursor integration.
 5. Viscosity SDF reuse.
-6. **Viscosity graph-key churn.** The viscosity conditional-graph key holds
-   the solve size, `dt` and the tolerance. On the dam_break viscosity
-   benchmark, 435 solves made 213 captures (about 10 ms per frame). The fix is
-   the same as REVIEW-015: move those values into device arrays.
+6. **Viscosity graph-key churn — DONE** (branch `perf/visc-graph-key-churn`).
+   The key held the solve size, `dt` and the tolerance, so on the dam_break
+   viscosity benchmark 435 solves made 213 captures. Now `dt` and the
+   tolerance live in device arrays that one kernel stages each solve, and the
+   captured launches and dot products read the active voxel count from
+   `num_leaves` on device (`CudaDotProduct.launch_active`, bitwise equal to the
+   host-counted dot). Launches are rounded up to 4 buckets per octave. The key
+   holds only shape and array pointers.
+   - Captures 213 → 30, capture time 380 → 100 ms (visc; visc_st 362 → 107 ms)
+     over 40 frames. The floor of 30 is 5 buckets × 6 component buffers, since
+     the velocity components alternate between two buffer sets. 2 buckets per
+     octave gives 18 captures and 8 gives 54, with no measurable host-time
+     difference.
+   - Per-frame particle and velocity hashes are bitwise identical to REVIEW-015
+     on visc and visc_st, and the GUI gate hash is unchanged (`ffd50faa…`).
+   - `tools/benchmark_versions.py`, 5 paired trials against REVIEW-015:
+     visc 0.81× (range 0.77–0.88, 48.8 → 38.9 ms/frame), visc_st 0.86×
+     (0.82–1.32, 63.6 → 54.5 ms/frame). Evidence:
+     `C:\Users\Tyler\wt\bench_viscgraph\`, probe in `C:\Users\Tyler\wt\probe\`.
 
 Add the 2.0 comparison to the gate, so the budget is enforced on every run
 rather than measured once. Use ABBA pairs, at least 8 per demo, median
