@@ -17,6 +17,10 @@ Control surface
   and the user site otherwise), so a stray user-site Warp can never shadow the
   certified one. The gate refuses to start unless Blender's Python imports
   exactly version.py's CERTIFIED_WARP_VERSION.
+- Blender lanes run with BLENDER_USER_EXTENSIONS set to
+  artifacts/gate_blender_user_extensions, so --factory-startup never syncs
+  (deletes) the wheels of the user's installed extensions. A caller-set
+  BLENDER_USER_EXTENSIONS or BLENDER_USER_RESOURCES is kept instead.
 
 Debug surface
 -------------
@@ -65,6 +69,10 @@ CANONICAL_DEMO_SCENES = (
     "crown_splash",
 )
 GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
+# --factory-startup Blender treats every installed extension as disabled, and its
+# wheel sync deletes their wheels (Warp included) from the user profile's
+# extensions/.local. Blender lanes therefore get this private extensions dir.
+GATE_BLENDER_USER_EXTENSIONS = ROOT / "artifacts" / "gate_blender_user_extensions"
 # Background Blender acceptance scripts that take no arguments: (script, marker).
 BACKGROUND_ACCEPTANCE = (
     ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
@@ -178,6 +186,10 @@ def _env():
         env["PYTHONPATH"] = extra if not existing else extra + os.pathsep + existing
     # A user-site Warp must never shadow the certified one on PYTHONPATH.
     env["PYTHONNOUSERSITE"] = "1"
+    # Keep a caller's own profile: BLENDER_USER_EXTENSIONS would override the
+    # extensions dir of a BLENDER_USER_RESOURCES clean profile.
+    if not (env.get("BLENDER_USER_EXTENSIONS") or env.get("BLENDER_USER_RESOURCES")):
+        env["BLENDER_USER_EXTENSIONS"] = str(GATE_BLENDER_USER_EXTENSIONS)
     return env
 
 
@@ -285,7 +297,7 @@ def _git_text(*args):
         return f"unavailable: {exc}"
 
 
-def _print_gate_metadata(blender_exe, blender_py, include_gui):
+def _print_gate_metadata(blender_exe, blender_py, include_gui, env):
     status = _git_text("status", "--porcelain")
     ignored = _git_text("ls-files", "-ci", "--exclude-standard")
     print("\n== gate metadata ==")
@@ -295,6 +307,8 @@ def _print_gate_metadata(blender_exe, blender_py, include_gui):
     print(f"tracked_ignored_files: {bool(ignored)}")
     print(f"blender_exe: {blender_exe}")
     print(f"blender_py: {blender_py}")
+    print("blender_user_extensions: "
+          + (env.get("BLENDER_USER_EXTENSIONS") or "BLENDER_USER_RESOURCES/extensions"))
     print(f"gui_acceptance: {'included' if include_gui else 'not-run-headless-gate'}")
 
 
@@ -359,7 +373,7 @@ def main(argv=None):
     env = _env()
 
     _clear_gate_manifest()
-    _print_gate_metadata(blender_exe, blender_py, include_gui)
+    _print_gate_metadata(blender_exe, blender_py, include_gui, env)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()

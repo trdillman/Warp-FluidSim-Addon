@@ -128,6 +128,48 @@ def test_gate_blender_lanes_use_the_gate_python_environment(monkeypatch):
         assert env is not None and env["PYTHONNOUSERSITE"] == "1", label
 
 
+def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
+    # --factory-startup Blender sees every installed extension as disabled and
+    # its wheel sync deletes their wheels (Warp) from the real profile's
+    # extensions/.local, so no Blender lane may use the real extensions dir.
+    commands = {}
+    envs = {}
+    labels = _stub_gate(monkeypatch, commands)
+
+    def run(label, command, env=None, reject_output=False, expect_marker=None):
+        labels.append(label)
+        commands[label] = [str(part) for part in command]
+        envs[label] = env
+
+    monkeypatch.setattr(run_production_gate, "_run", run)
+    monkeypatch.setenv("BLENDER_EXE", "blender-exe")
+    monkeypatch.setenv("FLUIDSIM_USER_PATH_PROFILE", "1")
+    monkeypatch.delenv("BLENDER_USER_EXTENSIONS", raising=False)
+    monkeypatch.delenv("BLENDER_USER_RESOURCES", raising=False)
+
+    assert run_production_gate.main(["--include-gui"]) == 0
+
+    private = run_production_gate.GATE_BLENDER_USER_EXTENSIONS
+    assert private.is_relative_to(ROOT / "artifacts")
+    blender_lanes = [label for label, cmd in commands.items() if cmd[0] == "blender-exe"]
+    assert len(blender_lanes) >= 20
+    assert any("--factory-startup" in commands[label] for label in blender_lanes)
+    for label in blender_lanes:
+        assert envs[label]["BLENDER_USER_EXTENSIONS"] == str(private), label
+
+
+def test_gate_keeps_a_caller_blender_profile(monkeypatch):
+    # Any BLENDER_USER_* variable overrides BLENDER_USER_RESOURCES, so the gate
+    # must not point extensions away from a caller's own clean profile.
+    monkeypatch.delenv("BLENDER_USER_EXTENSIONS", raising=False)
+    monkeypatch.setenv("BLENDER_USER_RESOURCES", "clean-profile")
+    assert "BLENDER_USER_EXTENSIONS" not in run_production_gate._env()
+
+    monkeypatch.delenv("BLENDER_USER_RESOURCES")
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", "caller-extensions")
+    assert run_production_gate._env()["BLENDER_USER_EXTENSIONS"] == "caller-extensions"
+
+
 def test_gate_refuses_an_uncertified_warp(monkeypatch, capsys):
     monkeypatch.setattr(run_production_gate, "_warp_version", lambda *_args: "1.16.1")
     monkeypatch.setattr(run_production_gate, "_warp_root", lambda *_args: "user-site")

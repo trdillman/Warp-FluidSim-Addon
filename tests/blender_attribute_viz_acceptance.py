@@ -98,6 +98,9 @@ def main():
     domain.voxel_size = 0.08
     domain.max_particles = 500_000
     domain.whitewater_enabled = True
+    # The per-attribute toggles only apply with Export Attributes on (off by
+    # default), and this gate checks the exported attributes.
+    domain.export_attributes = True
     domain.surface_attribute_velocity = True
     domain.surface_attribute_speed = True
     domain.surface_attribute_motion = True
