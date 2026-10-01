@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 from .constants import LEAF_VOLUME
 
@@ -219,7 +220,7 @@ class ParticleSystem:
         raise KeyError(name)
 
     def clamp_count(self):
-        wp.launch(k_clamp_count, dim=1, inputs=[self.count, self.capacity],
+        fast_launch(k_clamp_count, dim=1, inputs=[self.count, self.capacity],
                   device=self.device)
 
     def refresh_host_count(self) -> int:
@@ -361,12 +362,12 @@ class ParticleSystem:
         count_in = self.count
         count_out = self._count2
         if count_hint is not None:
-            wp.launch(k_set_count, dim=1, inputs=[self._count2, n],
+            fast_launch(k_set_count, dim=1, inputs=[self._count2, n],
                       device=self.device)
             count_in = self._count2
             count_out = self.count
         wp.utils.array_scan(alive, scan_tmp, inclusive=False)
-        wp.launch(k_compact_alive_scatter, dim=n, inputs=[
+        fast_launch(k_compact_alive_scatter, dim=n, inputs=[
             self.alive, self.scan_tmp, count_in,
             self.position, self.velocity,
             self.attrs["age"], self.attrs["life"], self.attrs["temperature"],
@@ -377,12 +378,12 @@ class ParticleSystem:
             self._attrs2["density"], self._time_offset2, count_out,
         ], device=self.device)
         for name in self.vec4_attrs:
-            wp.launch(k_compact_vec4_scatter, dim=n, inputs=[
+            fast_launch(k_compact_vec4_scatter, dim=n, inputs=[
                 self.alive, self.scan_tmp, count_in,
                 self.vec4_attrs[name], self._vec4_attrs2[name],
             ], device=self.device)
         for name in self.int_attrs:
-            wp.launch(k_compact_int_scatter, dim=n, inputs=[
+            fast_launch(k_compact_int_scatter, dim=n, inputs=[
                 self.alive, self.scan_tmp, count_in,
                 self.int_attrs[name], self._int_attrs2[name],
             ], device=self.device)
@@ -399,7 +400,7 @@ class ParticleSystem:
                 self._int_attrs2[name], self.int_attrs[name])
         if count_out is self._count2:
             wp.copy(self.count, self._count2)
-        wp.launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
+        fast_launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
                   device=self.device)
 
 

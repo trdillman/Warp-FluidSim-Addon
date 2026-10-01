@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -811,7 +812,7 @@ class WhitewaterSystem:
         """Run device-only candidate/scan/admit/commit emission."""
         life_min, life_max = normalized_life_range(life_min, life_max)
         n = max(1, min(int(candidate_count), self.candidate_capacity))
-        wp.launch(
+        fast_launch(
             k_mark_whitewater_candidates, dim=n,
             inputs=[
                 liquid_positions, liquid_velocities, liquid_count, churn,
@@ -823,7 +824,7 @@ class WhitewaterSystem:
         )
         wp.utils.array_scan(
             self.candidates[:n], self.candidate_offsets[:n], inclusive=False)
-        wp.launch(
+        fast_launch(
             k_prepare_whitewater_admission, dim=1,
             inputs=[
                 self.candidates, self.candidate_offsets, n, self.count,
@@ -831,7 +832,7 @@ class WhitewaterSystem:
             ],
             outputs=[self.admission_plan, self.diagnostics], device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_commit_whitewater_candidates, dim=n,
             inputs=[
                 liquid_positions, liquid_velocities, self.candidates,
@@ -845,7 +846,7 @@ class WhitewaterSystem:
                 self.type,
             ], device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_finalize_whitewater_admission, dim=1,
             inputs=[self.admission_plan],
             outputs=[self.count, self.free_count], device=self.device,
@@ -874,20 +875,20 @@ class WhitewaterSystem:
             return
         wp.utils.array_scan(
             self.dead[:n], self.dead_offsets[:n], inclusive=False)
-        wp.launch(
+        fast_launch(
             k_push_whitewater_free_slots, dim=n,
             inputs=[self.dead, self.dead_offsets, self.free_count,
                     self.capacity],
             outputs=[self.free_slots], device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_publish_whitewater_free_count, dim=1,
             inputs=[self.dead, self.dead_offsets, n, self.capacity],
             outputs=[self.free_count], device=self.device,
         )
 
     def clamp_count(self):
-        wp.launch(
+        fast_launch(
             k_clamp_count, dim=1, inputs=[self.count, self.capacity],
             device=self.device,
         )
@@ -903,7 +904,7 @@ class WhitewaterSystem:
             0, min(int(count_hint), self.capacity))
         self.type_counts.zero_()
         if bound:
-            wp.launch(
+            fast_launch(
                 k_count_whitewater_types,
                 dim=bound,
                 inputs=[self.type, self.alive, self.count],
@@ -1016,7 +1017,7 @@ class WhitewaterSystem:
         alive = self.alive if count_hint is None else self.alive[:cap]
         scan = self._scan if count_hint is None else self._scan[:cap]
         wp.utils.array_scan(alive, scan, inclusive=False)
-        wp.launch(
+        fast_launch(
             k_ww_compact_scatter,
             dim=cap,
             inputs=[
@@ -1029,7 +1030,7 @@ class WhitewaterSystem:
             ],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_ww_final_count,
             dim=1,
             inputs=[self.alive, self._scan, cap],
@@ -1046,7 +1047,7 @@ class WhitewaterSystem:
             self.alive.zero_()
         else:
             self.alive[:cap].zero_()
-        wp.launch(
+        fast_launch(
             k_ww_mark_alive, dim=cap, inputs=[self.count],
             outputs=[self.alive],
             device=self.device,

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -506,7 +507,7 @@ class SparseGrid:
     # -- topology lifecycle ---------------------------------------------------
     def begin_topology(self):
         self._candidate_pending = False
-        wp.launch(
+        fast_launch(
             k_clear_leaf_topology,
             dim=self.num_leaf_cells,
             inputs=[self._candidate_leaf_table, self.leaf_flags],
@@ -516,7 +517,7 @@ class SparseGrid:
         self._candidate_overflow.zero_()
 
     def mark_points(self, points: wp.array, count: wp.array, max_points: int):
-        wp.launch(
+        fast_launch(
             k_mark_leaves_from_points,
             dim=max_points,
             inputs=[
@@ -543,7 +544,7 @@ class SparseGrid:
         n_leaves = 1
         for i in range(3):
             n_leaves *= (hi[i] >> LEAF_SHIFT) - (lo[i] >> LEAF_SHIFT) + 1
-        wp.launch(
+        fast_launch(
             k_mark_leaves_box,
             dim=n_leaves,
             inputs=[
@@ -555,7 +556,7 @@ class SparseGrid:
     def expand(self, iterations=1):
         for _ in range(iterations):
             wp.copy(self.leaf_flags_tmp, self.leaf_flags)
-            wp.launch(
+            fast_launch(
                 k_expand_leaf_flags,
                 dim=self.num_leaf_cells,
                 inputs=[self.leaf_flags_tmp, self.leaves_dim, self.leaf_flags],
@@ -568,7 +569,7 @@ class SparseGrid:
         # already-admitted count, captured before the allocation kernel raises
         # it, which keeps the incremental (non-cleared candidate table) path
         # behaving exactly as the atomic cursor did.
-        wp.launch(
+        fast_launch(
             k_mark_unallocated_leaves,
             dim=self.num_leaf_cells,
             inputs=[self.leaf_flags, self._candidate_leaf_table],
@@ -578,7 +579,7 @@ class SparseGrid:
         wp.utils.array_scan(
             self._leaf_pending, self._leaf_pending_rank, inclusive=False)
         wp.copy(self._leaf_slot_base, self._candidate_num_leaves)
-        wp.launch(
+        fast_launch(
             k_allocate_leaves,
             dim=self.num_leaf_cells,
             inputs=[

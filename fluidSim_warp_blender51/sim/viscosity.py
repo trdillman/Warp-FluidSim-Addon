@@ -18,6 +18,7 @@ import math
 from collections import OrderedDict
 
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -642,33 +643,33 @@ class ViscositySolver:
         """Record ``check_every`` PCG iterations plus one device-side check."""
         g = self.grid
         for _ in range(check_every):
-            wp.launch(
+            fast_launch(
                 k_viscosity_apply_matrix, dim=n,
                 inputs=[self.p_dir, viscosity_field, weight, voxel_type,
                         *stencil, g.voxel_size, dt, self.ap],
                 device=self.device,
             )
             self._pcg_dot.launch(self.p_dir, self.ap, self._pcg_p_ap_accum, n)
-            wp.launch(k_compute_alpha_and_reset, dim=1,
+            fast_launch(k_compute_alpha_and_reset, dim=1,
                       inputs=[self.rz, self._pcg_p_ap_accum, self.p_ap,
                               self.alpha],
                       device=self.device)
-            wp.launch(k_update_xr, dim=n,
+            fast_launch(k_update_xr, dim=n,
                       inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
                               self.x, self.r],
                       device=self.device)
-            wp.launch(k_apply_preconditioner, dim=n,
+            fast_launch(k_apply_preconditioner, dim=n,
                       inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
                       device=self.device)
             self._pcg_dot.launch(self.r, self.z, self.rz_new, n)
-            wp.launch(k_viscosity_pcg_beta_and_roll, dim=1,
+            fast_launch(k_viscosity_pcg_beta_and_roll, dim=1,
                       inputs=[self.rz_new, self.rz, self.beta],
                       device=self.device)
-            wp.launch(k_update_p, dim=n,
+            fast_launch(k_update_p, dim=n,
                       inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
                       device=self.device)
         self._pcg_dot.launch(self.r, self.r, self.residual, n)
-        wp.launch(
+        fast_launch(
             k_viscosity_finish_pcg_conditional_batch, dim=1,
             inputs=[self.residual, self.rz, self.p_ap, self._pcg_condition,
                     self._pcg_iterations, self._pcg_history,
@@ -736,7 +737,7 @@ class ViscositySolver:
             return self._set_viscosity_status(
                 VISCOSITY_STATUS_SKIPPED, 0.0, 0)
         for _ in range(iterations):
-            wp.launch(
+            fast_launch(
                 k_viscosity_smooth, dim=n,
                 inputs=[vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww,
                         viscosity_field, voxel_type,
@@ -764,14 +765,14 @@ class ViscositySolver:
                       stencil):
         """Build the right-hand side, the initial guess and the preconditioner."""
         g = self.grid
-        wp.launch(k_viscosity_counter_increment, dim=1, inputs=[self.counter],
+        fast_launch(k_viscosity_counter_increment, dim=1, inputs=[self.counter],
                   device=self.device)
-        wp.launch(
+        fast_launch(
             k_viscosity_build_rhs, dim=n,
             inputs=[comp, weight, voxel_type, g.num_leaves, self.rhs, self.x],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_viscosity_compute_inverse_diagonal, dim=n,
             inputs=[viscosity_field, weight, voxel_type, *stencil,
                     g.voxel_size, dt, self.inv_diag],
@@ -782,23 +783,23 @@ class ViscositySolver:
                                    dt, n, stencil):
         """r0 from the initial residual, z0 = Minv r0, p0 = z0."""
         g = self.grid
-        wp.launch(
+        fast_launch(
             k_viscosity_apply_matrix, dim=n,
             inputs=[self.x, viscosity_field, weight, voxel_type,
                     *stencil, g.voxel_size, dt, self.ap],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_viscosity_initialize_pcg, dim=n,
             inputs=[self.rhs, self.ap, self.inv_diag, g.num_leaves, self.r],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_viscosity_finalize_initial_residual, dim=n,
             inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_viscosity_initialize_direction, dim=n,
             inputs=[self.z, g.num_leaves, self.p_dir],
             device=self.device,
@@ -813,7 +814,7 @@ class ViscositySolver:
         self.rz.zero_()
         self.residual.zero_()
         self._pcg_dot.launch(self.r, self.z, self.rz, n)
-        wp.launch(
+        fast_launch(
             k_viscosity_prepare_pcg_conditional_loop, dim=1,
             inputs=[self._pcg_condition, self._pcg_iterations,
                     self._pcg_history, self._pcg_history_pos, self.residual,
@@ -825,7 +826,7 @@ class ViscositySolver:
         """Write the solution back into the velocity component."""
         g = self.grid
         # write back with collision guard
-        wp.launch(
+        fast_launch(
             k_viscosity_apply_collision, dim=n,
             inputs=[self.x, comp, weight, voxel_type, g.num_leaves,
                     self.tmp_u],
@@ -880,24 +881,24 @@ class ViscositySolver:
             # Jacobi: x_{k+1} = Minv * (b + (Minv^-1 - A) x_k) implemented via
             # residual form x += Minv*(b - A x)
             for _ in range(iterations):
-                wp.launch(
+                fast_launch(
                     k_viscosity_apply_matrix, dim=n,
                     inputs=[self.x, viscosity_field, weight, voxel_type,
                             *stencil, g.voxel_size, dt, self.ap],
                     device=self.device,
                 )
-                wp.launch(
+                fast_launch(
                     k_viscosity_initialize_pcg, dim=n,
                     inputs=[self.rhs, self.ap, self.inv_diag, g.num_leaves, self.r],
                     device=self.device,
                 )
-                wp.launch(
+                fast_launch(
                     k_viscosity_finalize_initial_residual, dim=n,
                     inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
                     device=self.device,
                 )
                 # x += z (damped Jacobi via preconditioned residual)
-                wp.launch(
+                fast_launch(
                     k_axpy_inplace, dim=n,
                     inputs=[self.z, 1.0, g.num_leaves, self.x],
                     device=self.device,
@@ -973,33 +974,33 @@ class ViscositySolver:
         res_sq = 0.0
         it = 0
         while it < iterations:
-            wp.launch(
+            fast_launch(
                 k_viscosity_apply_matrix, dim=n,
                 inputs=[self.p_dir, viscosity_field, weight, voxel_type,
                         *stencil, g.voxel_size, dt, self.ap],
                 device=self.device,
             )
             wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
-            wp.launch(k_compute_alpha, dim=1,
+            fast_launch(k_compute_alpha, dim=1,
                       inputs=[self.rz, self.p_ap, self.alpha], device=self.device)
-            wp.launch(k_update_xr, dim=n,
+            fast_launch(k_update_xr, dim=n,
                       inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
                               self.x, self.r],
                       device=self.device)
-            wp.launch(k_apply_preconditioner, dim=n,
+            fast_launch(k_apply_preconditioner, dim=n,
                       inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
                       device=self.device)
             wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
-            wp.launch(k_compute_beta, dim=1,
+            fast_launch(k_compute_beta, dim=1,
                       inputs=[self.rz_new, self.rz, self.beta], device=self.device)
-            wp.launch(k_update_p, dim=n,
+            fast_launch(k_update_p, dim=n,
                       inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
                       device=self.device)
             wp.copy(self.rz, self.rz_new, count=1)
             it += 1
             if it % check_every == 0 or it == iterations:
                 wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-                wp.launch(k_pack_pcg_stats, dim=1,
+                fast_launch(k_pack_pcg_stats, dim=1,
                           inputs=[self.residual, self.rz, self.p_ap,
                                   self.pcg_stats],
                           device=self.device)

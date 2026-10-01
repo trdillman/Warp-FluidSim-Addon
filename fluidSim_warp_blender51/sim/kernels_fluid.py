@@ -7,6 +7,7 @@ No bpy imports allowed here.
 from __future__ import annotations
 
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -1924,12 +1925,12 @@ def scatter_particles_to_bins(particle_voxel, particle_arrival, count, np_dim,
     twice the host launch overhead per call, which dominates at bake sizes.
     """
     device = indices.device
-    wp.launch(
+    fast_launch(
         k_scatter_particles_to_arrival_slots, dim=np_dim,
         inputs=[particle_voxel, particle_arrival, count, starts],
         outputs=[unordered], device=device,
     )
-    wp.launch(
+    fast_launch(
         k_rank_bin_particles, dim=np_dim,
         inputs=[particle_voxel, count, voxel_counts, starts, unordered],
         outputs=[indices], device=device,
