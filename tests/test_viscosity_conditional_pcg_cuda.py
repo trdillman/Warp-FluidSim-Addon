@@ -194,11 +194,25 @@ def _set_strip(grid, leaves):
     assert grid.finalize_topology() == leaves
 
 
+_STRIP_INPUTS = {}
+
+
+def _strip_inputs(device, n):
+    key = (str(device), n)
+    if key not in _STRIP_INPUTS:
+        _STRIP_INPUTS[key] = (
+            wp.full(n, VOXEL_FLUID, dtype=wp.int32, device=device),
+            wp.full(n, 1.0, dtype=float, device=device))
+    return _STRIP_INPUTS[key]
+
+
 def _strip_solve(solver, grid, vel, device, *, dt, tolerance):
     n = grid.voxel_capacity
     _seed_velocity(vel, n)
-    voxel_type = wp.full(n, VOXEL_FLUID, dtype=wp.int32, device=device)
-    viscosity_field = wp.full(n, 1.0, dtype=float, device=device)
+    # The graph key holds the input arrays' pointers, so a caller that solves
+    # again with "the same" inputs must hand over the same arrays rather than
+    # lean on the allocator handing back a freed address.
+    voxel_type, viscosity_field = _strip_inputs(device, n)
     solver.solve(vel, viscosity_field, voxel_type, dt, iterations=40,
                  tolerance=tolerance, check_every=1)
     active = grid.active_voxel_count
