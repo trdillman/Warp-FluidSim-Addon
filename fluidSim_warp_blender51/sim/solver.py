@@ -154,6 +154,42 @@ def k_fill_float(data: wp.array(dtype=float), value: float):
 
 
 @wp.kernel
+def k_zero_fluid_grid(
+    u: wp.array(dtype=float), v: wp.array(dtype=float),
+    w: wp.array(dtype=float), wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    temperature: wp.array(dtype=float), viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float), voxel_type: wp.array(dtype=wp.int32),
+    voxel_counts: wp.array(dtype=wp.int32),
+):
+    i = wp.tid()
+    u[i] = 0.0
+    v[i] = 0.0
+    w[i] = 0.0
+    wu[i] = 0.0
+    wv[i] = 0.0
+    ww[i] = 0.0
+    temperature[i] = 0.0
+    viscosity[i] = 0.0
+    density[i] = 0.0
+    voxel_type[i] = 0
+    voxel_counts[i] = 0
+
+
+@wp.kernel
+def k_reset_collision_grid(
+    velocity: wp.array(dtype=wp.vec3), friction: wp.array(dtype=float),
+    restitution: wp.array(dtype=float), sdf: wp.array(dtype=float),
+    far: float,
+):
+    i = wp.tid()
+    velocity[i] = wp.vec3(0.0, 0.0, 0.0)
+    friction[i] = 0.0
+    restitution[i] = 0.0
+    sdf[i] = far
+
+
+@wp.kernel
 def k_mark_domain_walls(
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
@@ -1313,18 +1349,24 @@ class FluidSolver:
         # reads or writes this substep (all launches are bounded by nvox and
         # guarded by num_leaves on device).
         nv = self._nvox
-        arrays = (*self.vel.arrays(), self.voxel_type.data,
-                  self.voxel_counts.data, self.temperature.data,
-                  self.viscosity_field.data, self.density.data)
-        if clear_collision:
-            arrays += (self.collision_vel, self.collision_friction,
-                       self.collision_restitution)
-        for a in arrays:
-            a[:nv].zero_()
+        # Two fused kernels replace twelve memsets and a fill: one launch
+        # per group instead of 13 slice + memset pairs.
+        fast_launch(
+            k_zero_fluid_grid, dim=nv,
+            inputs=[*self.vel.arrays(), self.temperature.data,
+                    self.viscosity_field.data, self.density.data,
+                    self.voxel_type.data, self.voxel_counts.data],
+            device=self.device,
+        )
         if not clear_collision:
             return
-        fast_launch(k_fill_float, dim=nv,
-                  inputs=[self.collision_sdf.data, 1.0e6], device=self.device)
+        fast_launch(
+            k_reset_collision_grid, dim=nv,
+            inputs=[self.collision_vel, self.collision_friction,
+                    self.collision_restitution, self.collision_sdf.data,
+                    1.0e6],
+            device=self.device,
+        )
         s = self.settings
         if s.domain_sdf_walls and not s.open_boundaries:
             g = self.grid
