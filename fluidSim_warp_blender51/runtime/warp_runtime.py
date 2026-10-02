@@ -75,9 +75,12 @@ def warp_version_support(version: str) -> tuple[str, str]:
             "unsupported",
             f"FluidSim requires NVIDIA Warp {MIN_WARP_VERSION} or newer "
             f"{certified[0]}.x (certified: {CERTIFIED_WARP_VERSION}), but loaded "
-            f"{version or 'an unknown version'}. Reinstall the FluidSim extension "
-            "so Blender installs its bundled Warp, and remove any older Warp "
-            "from Blender's Python user site-packages.",
+            f"{version or 'an unknown version'}. Blender extensions share the "
+            "top-level warp module in one Python process. Align enabled "
+            "extensions on a compatible Warp version or run them in separate "
+            "Blender processes; restart Blender after changing the installed "
+            "extensions. Reinstalling FluidSim alone cannot replace a Warp "
+            "module already imported by another extension.",
         )
     if loaded > certified:
         return (
@@ -154,9 +157,18 @@ def _device_record(device: Any) -> DeviceRecord:
 def _cached_probe() -> RuntimeProbe:
     try:
         wp = _import_warp()
-        wp.init()
         version = _version_of(wp)
         module_file = str(getattr(wp, "__file__", ""))
+        support, support_message = warp_version_support(version)
+        if support == "unsupported":
+            return RuntimeProbe(
+                available=False,
+                message=f"{support_message} Loaded from {module_file or 'unknown location'}.",
+                warp_version=version,
+                module_file=module_file,
+                last_error=f"unsupported Warp version: {version}",
+            )
+        wp.init()
         devices = tuple(
             _device_record(device)
             for device in wp.get_devices()
@@ -164,18 +176,6 @@ def _cached_probe() -> RuntimeProbe:
         )
         driver = _safe_int_call(wp, "get_cuda_driver_version")
         toolkit = _safe_int_call(wp, "get_cuda_toolkit_version")
-        support, support_message = warp_version_support(version)
-        if support == "unsupported":
-            return RuntimeProbe(
-                available=False,
-                message=support_message,
-                warp_version=version,
-                module_file=module_file,
-                cuda_driver_version=driver,
-                cuda_toolkit_version=toolkit,
-                cuda_devices=devices,
-                last_error=f"unsupported Warp version: {version}",
-            )
         if not devices:
             return RuntimeProbe(
                 available=False,
