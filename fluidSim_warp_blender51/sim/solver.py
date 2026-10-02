@@ -309,6 +309,18 @@ def k_copy_float(src: wp.array(dtype=float), dst: wp.array(dtype=float)):
     dst[tid] = src[tid]
 
 
+@wp.kernel
+def k_copy3_float(
+    src_a: wp.array(dtype=float), src_b: wp.array(dtype=float),
+    src_c: wp.array(dtype=float), dst_a: wp.array(dtype=float),
+    dst_b: wp.array(dtype=float), dst_c: wp.array(dtype=float),
+):
+    tid = wp.tid()
+    dst_a[tid] = src_a[tid]
+    dst_b[tid] = src_b[tid]
+    dst_c[tid] = src_c[tid]
+
+
 @wp.func
 def _sanitize_mac_face(vel: wp.array(dtype=float), weight: wp.array(dtype=float),
                        tid: int, max_speed: float):
@@ -1600,10 +1612,12 @@ class FluidSolver:
             )
 
     def _save_velocities(self):
-        nv = self._nvox
-        wp.copy(self.vel_saved_u, self.vel.u, count=nv)
-        wp.copy(self.vel_saved_v, self.vel.v, count=nv)
-        wp.copy(self.vel_saved_w, self.vel.w, count=nv)
+        fast_launch(
+            k_copy3_float, dim=self._nvox,
+            inputs=[self.vel.u, self.vel.v, self.vel.w,
+                    self.vel_saved_u, self.vel_saved_v, self.vel_saved_w],
+            device=self.device,
+        )
 
     def _forces(self, dt):
         g = self.grid
@@ -2230,9 +2244,13 @@ class FluidSolver:
                 self._forces(dt)
             with self._phase("viscosity"):
                 self._viscosity(dt)
-            wp.copy(self.collision_impact_u, self.vel.u, count=self._nvox)
-            wp.copy(self.collision_impact_v, self.vel.v, count=self._nvox)
-            wp.copy(self.collision_impact_w, self.vel.w, count=self._nvox)
+            fast_launch(
+                k_copy3_float, dim=self._nvox,
+                inputs=[self.vel.u, self.vel.v, self.vel.w,
+                        self.collision_impact_u, self.collision_impact_v,
+                        self.collision_impact_w],
+                device=self.device,
+            )
             with self._phase("collision"):
                 self._collision_faces()
             self.features.run(

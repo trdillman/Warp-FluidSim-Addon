@@ -566,6 +566,23 @@ def k_jacobi_iteration_st(
 
 
 @wp.kernel
+def k_zero_pcg_vectors(
+    x: wp.array(dtype=float), r: wp.array(dtype=float),
+    z: wp.array(dtype=float), p: wp.array(dtype=float),
+    ap: wp.array(dtype=float), x0: wp.array(dtype=float),
+    zero_x0: int,
+):
+    i = wp.tid()
+    x[i] = 0.0
+    r[i] = 0.0
+    z[i] = 0.0
+    p[i] = 0.0
+    ap[i] = 0.0
+    if zero_x0 != 0:
+        x0[i] = 0.0
+
+
+@wp.kernel
 def k_initialize_pcg(
     rhs: wp.array(dtype=float),
     x0: wp.array(dtype=float),
@@ -1470,7 +1487,7 @@ class PressureSolver:
         self.pressure_count = int(self._pressure_count.numpy()[0])
         return self.pressure_count
 
-    def _zero_pcg_vectors(self, n, x):
+    def _zero_pcg_vectors(self, n, x, zero_x0=False):
         """Clear the PCG working set over the launch range [0, n).
 
         Both PCG solvers launch and reduce over ``n`` derived from the host
@@ -1479,8 +1496,12 @@ class PressureSolver:
         written by the initializer, so without this it would carry the
         previous frame's values straight into the r.z / p.Ap reductions.
         """
-        for array in (x, self.r, self.z, self.p_dir, self.ap):
-            array[:n].zero_()
+        fast_launch(
+            k_zero_pcg_vectors, dim=n,
+            inputs=[x, self.r, self.z, self.p_dir, self.ap, self.x0,
+                    1 if zero_x0 else 0],
+            device=self.device,
+        )
 
     def _persistent_inner_product(self, a, b, out, count):
         out.zero_()
@@ -1896,8 +1917,7 @@ class PressureSolver:
         g = self.grid
         n = self._dim()
         x = self.pressure
-        self.x0[:n].zero_()
-        self._zero_pcg_vectors(n, x)
+        self._zero_pcg_vectors(n, x, zero_x0=True)
         fast_launch(
             k_initialize_pcg, dim=n,
             inputs=[self.rhs, self.x0, self.inv_diag,
@@ -2102,9 +2122,7 @@ class PressureSolver:
         self._prepare_pcg_commands(work_n, voxel_type, x)
         if use_coarse_guess:
             self.coarse_initial_guess(voxel_type)
-        else:
-            self.x0[:full_n].zero_()
-        self._zero_pcg_vectors(full_n, x)
+        self._zero_pcg_vectors(full_n, x, zero_x0=not use_coarse_guess)
         fast_launch(
             k_initialize_pcg, dim=work_n,
             inputs=[self.rhs, self.x0, self.inv_diag, self.pressure_indices,
