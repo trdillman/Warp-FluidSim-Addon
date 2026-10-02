@@ -108,7 +108,12 @@ def _is_advanced(scene) -> bool:
     return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
 
 
-def _guided_setup_buttons(layout, *, primary_scale: float = 1.3):
+def draw_quality(layout, scene):
+    """The Quality tier, drawn on the group that owns it."""
+    return _prop(layout, scene, "quality")
+
+
+def draw_guided_setup_buttons(layout, *, primary_scale: float = 1.3):
     row = layout.row(align=True)
     row.scale_y = primary_scale
     preview = row.operator("fluidsim.setup_scene", text="Set Up & Preview…", icon="PLAY")
@@ -135,10 +140,10 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
             # The one obvious first move for an empty scene.
             box = layout.box()
             box.label(text="Start here: no liquid domain yet", icon="INFO")
-            _guided_setup_buttons(box)
+            draw_guided_setup_buttons(box)
 
         layout.prop(fs, "ui_mode", expand=True)
-        _prop(layout, scene, "quality")
+        draw_quality(layout, scene)
 
         preset = layout.row(align=True)
         _prop(preset, scene, "product_preset", text="")
@@ -178,12 +183,37 @@ class FLUIDSIM_STAGE_PT_setup_advanced(FluidSimStagePanel, bpy.types.Panel):
             ):
                 _prop(column, scene, name)
             layout.separator()
-            _guided_setup_buttons(layout, primary_scale=1.0)
+            draw_guided_setup_buttons(layout, primary_scale=1.0)
         layout.operator(
             "fluidsim.open_scene_properties",
             text="All Domain Settings…",
             icon="PROPERTIES",
         )
+
+
+def draw_simulate_controls(layout, scene, domain):
+    """The physics an artist tunes while watching the preview.
+
+    One drawing shared by the Simulate stage and the viewport-header popover, so
+    both surfaces bind the same properties to the same owner.
+    """
+    if getattr(domain, "sample_type", "FLIP") == "FLIP":
+        _prop(layout, scene, "flip_ratio")
+
+    viscosity = layout.column(align=True)
+    _prop(viscosity, scene, "viscosity_enabled")
+    if domain.viscosity_enabled and not getattr(domain, "viscosity_from_particles", False):
+        _prop(viscosity, scene, "viscosity_constant")
+
+    tension = layout.column(align=True)
+    _prop(tension, scene, "surface_tension_enabled")
+    if domain.surface_tension_enabled:
+        _prop(tension, scene, "surface_tension_coefficient")
+
+    gravity = layout.column(align=True)
+    _prop(gravity, scene, "use_scene_gravity")
+    if not domain.use_scene_gravity:
+        _prop(gravity, scene, "gravity")
 
 
 class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
@@ -201,23 +231,7 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first.", icon="INFO")
             return
 
-        if getattr(domain, "sample_type", "FLIP") == "FLIP":
-            _prop(layout, scene, "flip_ratio")
-
-        viscosity = layout.column(align=True)
-        _prop(viscosity, scene, "viscosity_enabled")
-        if domain.viscosity_enabled and not getattr(domain, "viscosity_from_particles", False):
-            _prop(viscosity, scene, "viscosity_constant")
-
-        tension = layout.column(align=True)
-        _prop(tension, scene, "surface_tension_enabled")
-        if domain.surface_tension_enabled:
-            _prop(tension, scene, "surface_tension_coefficient")
-
-        gravity = layout.column(align=True)
-        _prop(gravity, scene, "use_scene_gravity")
-        if not domain.use_scene_gravity:
-            _prop(gravity, scene, "gravity")
+        draw_simulate_controls(layout, scene, domain)
 
         layout.separator()
         draw_readout_grid(

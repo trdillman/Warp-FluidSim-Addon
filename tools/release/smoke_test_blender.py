@@ -113,6 +113,7 @@ def _assert_packaged_entry_points(extension_root: Path) -> None:
         extension_root / "blender" / "ui_object.py",
         extension_root / "blender" / "ui_physics.py",
         extension_root / "blender" / "ui_stages.py",
+        extension_root / "blender" / "ui_header.py",
         extension_root / "presets" / "schema.py",
         extension_root / "resources" / "presets" / "preview_water.json",
         extension_root / "resources" / "presets" / "water_surface_tension.json",
@@ -464,6 +465,7 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_STAGE_PT_bake": ("VIEW_3D", ""),
         "FLUIDSIM_STAGE_PT_bake_storage": ("VIEW_3D", ""),
         "FLUIDSIM_STAGE_PT_bake_manage": ("VIEW_3D", ""),
+        "FLUIDSIM_PT_header_popover": ("VIEW_3D", ""),
         "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }
@@ -506,6 +508,7 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_OT_use_active_as_domain",
         "FLUIDSIM_OT_clear_domain_assignment",
         "FLUIDSIM_OT_remove_selected_output",
+        "FLUIDSIM_OT_open_workspace",
     ):
         if not hasattr(bpy.types, operator_id):
             raise AssertionError(

@@ -88,6 +88,7 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_effect_engineering",
     "FLUIDSIM_PT_effect_warp_code",
     "FLUIDSIM_PT_viewport_status",
+    "FLUIDSIM_PT_header_popover",
 )
 
 # Panels the sidebar redesign deleted outright: transport and cache now live
@@ -576,6 +577,125 @@ def _assert_launcher_strip(module_name: str) -> dict[str, object]:
     return {"operators": sorted(operators), "events": len(events)}
 
 
+def _assert_header_popover(module_name: str) -> dict[str, object]:
+    """The header popover draws the sidebar's own controls; its workspace button works.
+
+    The popover shares ``draw_transport`` / ``draw_quality`` /
+    ``draw_simulate_controls`` with the stages, so every live-tunable control must
+    appear with a domain, only guided setup without one, and the Open FluidSim
+    Workspace operator must build a viewport + sidebar + timeline layout once and
+    only switch to it afterwards.
+    """
+    ui_stages = importlib.import_module(f"{module_name}.blender.ui_stages")
+    ui_header = importlib.import_module(f"{module_name}.blender.ui_header")
+    metadata = _panel_metadata("FLUIDSIM_PT_header_popover")
+    if (metadata["space"], metadata["region"]) != ("VIEW_3D", "HEADER"):
+        raise AssertionError(f"header popover metadata is incorrect: {metadata}")
+    if not hasattr(bpy.types, "FLUIDSIM_OT_open_workspace"):
+        raise AssertionError("FLUIDSIM_OT_open_workspace is not registered")
+
+    fs = bpy.context.scene.fluidsim
+    ds = _ensure_domain()
+    saved = {
+        name: getattr(ds, name)
+        for name in ("sample_type", "viscosity_enabled", "viscosity_from_particles",
+                     "surface_tension_enabled", "use_scene_gravity")
+    }
+
+    def props(events):
+        return [e["property"] for e in events if e["kind"] == "prop"]
+
+    def operators(events):
+        return {e["operator"] for e in events if e["kind"] == "operator"}
+
+    try:
+        # Every conditional control open, so the whole live-tunable set is drawn.
+        ds.sample_type = "FLIP"
+        ds.viscosity_enabled = True
+        ds.viscosity_from_particles = False
+        ds.surface_tension_enabled = True
+        ds.use_scene_gravity = False
+        domain_events = _draw("FLUIDSIM_PT_header_popover", bpy.context)
+        domain_props = props(domain_events)
+        missing = [
+            name for name in ("quality", *ui_stages.SIMULATE_PROPS)
+            if name not in domain_props
+        ]
+        if missing:
+            raise AssertionError(f"header popover omitted {missing}: {domain_props}")
+        domain_ops = operators(domain_events)
+        if not domain_ops & {
+            "fluidsim.preview_start", "fluidsim.preview_pause",
+            "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
+        }:
+            raise AssertionError(f"header popover has no transport action: {domain_ops}")
+        if "fluidsim.open_workspace" not in domain_ops:
+            raise AssertionError(f"header popover has no workspace button: {domain_ops}")
+    finally:
+        for name, value in saved.items():
+            setattr(ds, name, value)
+
+    domain_object = fs.domain_object
+    fs.domain_object = None
+    try:
+        empty_events = _draw("FLUIDSIM_PT_header_popover", bpy.context)
+    finally:
+        fs.domain_object = domain_object
+    if "fluidsim.setup_scene" not in operators(empty_events) or props(empty_events):
+        raise AssertionError(
+            "header popover without a domain must offer guided setup only: "
+            f"{props(empty_events)} {operators(empty_events)}")
+
+    window = bpy.context.window
+    if window is None:
+        raise AssertionError("no window available to validate the workspace button")
+    name = ui_header.WORKSPACE_NAME
+    if bpy.data.workspaces.get(name) is not None:
+        raise AssertionError(f"validation expected no preexisting {name!r} workspace")
+    result = bpy.ops.fluidsim.open_workspace()
+    if "FINISHED" not in result:
+        raise AssertionError(f"Open FluidSim Workspace failed: {result}")
+    workspace = bpy.data.workspaces.get(name)
+    if workspace is None:
+        raise AssertionError("Open FluidSim Workspace created no workspace")
+    try:
+        if workspace.object_mode != "OBJECT":
+            raise AssertionError(f"workspace mode is {workspace.object_mode}, not OBJECT")
+        areas = [area for screen in workspace.screens for area in screen.areas]
+        viewports = [area for area in areas if area.type == "VIEW_3D"]
+        sidebars = [
+            space.show_region_ui
+            for area in viewports for space in area.spaces if space.type == "VIEW_3D"
+        ]
+        timelines = [
+            area for area in areas
+            if area.type == "DOPESHEET_EDITOR" and area.ui_type == "TIMELINE"
+        ]
+        if not viewports or not sidebars or not all(sidebars) or not timelines:
+            raise AssertionError(
+                "FluidSim workspace needs a viewport with its sidebar open and a "
+                f"timeline: {[(a.type, a.ui_type) for a in areas]} {sidebars}")
+        count = len(bpy.data.workspaces)
+        again = bpy.ops.fluidsim.open_workspace()
+        if "FINISHED" not in again or len(bpy.data.workspaces) != count:
+            raise AssertionError(
+                f"second Open FluidSim Workspace must only switch: {again} "
+                f"{count} -> {len(bpy.data.workspaces)}")
+        summary = {
+            "workspace": name,
+            "areas": sorted((area.type, area.ui_type) for area in areas),
+            "popover_props": domain_props,
+            "empty_operators": sorted(operators(empty_events)),
+        }
+    finally:
+        # Leave the validation scene as found (the window switch is deferred, so
+        # the workspace is never the active one here). bpy.data.workspaces has no
+        # remove(); batch_remove is the only data-API route.
+        if window.workspace.name != name:
+            bpy.data.batch_remove({workspace})
+    return summary
+
+
 def _assert_workflow_stages(module_name: str) -> dict[str, object]:
     """The staged sidebar draws its pinned controls with and without a domain."""
     ui_stages = importlib.import_module(f"{module_name}.blender.ui_stages")
@@ -913,11 +1033,14 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_PT_header_popover",
         *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
         if hasattr(bpy.types, panel_id):
             raise AssertionError(f"panel survived unregister: {panel_id}")
+    if hasattr(bpy.types, "FLUIDSIM_OT_open_workspace"):
+        raise AssertionError("workspace operator survived unregister")
     if hasattr(bpy.types.Scene, "fluidsim") or hasattr(bpy.types.Object, "fluidsim"):
         raise AssertionError("FluidSim RNA survived unregister")
     extension.register()
@@ -926,10 +1049,13 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
+        "FLUIDSIM_PT_header_popover",
         *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
         _panel(panel_id)
+    if not hasattr(bpy.types, "FLUIDSIM_OT_open_workspace"):
+        raise AssertionError("workspace operator missing after re-register")
     for removed in REMOVED_PANEL_IDS:
         if hasattr(bpy.types, removed):
             raise AssertionError(f"deleted panel came back after re-register: {removed}")
@@ -978,6 +1104,7 @@ def main() -> None:
             options.module, options.work_dir)
         report["viewport_launcher"] = _assert_launcher_strip(options.module)
         report["workflow_stages"] = _assert_workflow_stages(options.module)
+        report["header_popover"] = _assert_header_popover(options.module)
         report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()
         report["field_payload_coherence"] = _assert_field_payload_coherence()

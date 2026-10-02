@@ -375,3 +375,9 @@ This addendum **overrides** the 3D-View and Scene-tab parts of §5.3, §5.4 and 
 **§5.5 — Live Tuning removed.** There is no Live Tuning shelf and no "Open FluidSim Scene Properties" jump; `ui_view3d.py` is gone. Its knobs are ordinary stage controls (`flip_ratio` in Simulate, `particle_display_fraction` in Look, voxel size in Setup), each drawn through the setting's effective owner. The strip binds no properties.
 
 **Consequences.** Users with no 3D View open lose in-tab transport and cache controls; the sidebar is the single path to them. Storage & Range is visible in Basic mode (it was Advanced-only) because cache storage settings are scene-level. Cache Playback is hidden until a domain exists; Storage and Manage stay reachable so an existing cache can still be freed.
+
+**Header popover and workspace (2026-10-02, approved).** `blender/ui_header.py` adds the §5 header entry points to the staged sidebar:
+
+- A **FluidSim** popover in the 3D View header (`layout.popover`) holding the status line, transport (Preview / Pause / Resume / Restart), Apply Changes, Quality and the Simulate controls. It calls the same `draw_transport`, `draw_pending_apply`, `draw_quality` and `draw_simulate_controls` as the strip and stages — no second drawing. With no domain it shows guided setup only.
+- **FluidSim Workspace** (`fluidsim.open_workspace`): duplicates the current workspace once, names it `FluidSim`, opens the viewport sidebar, guarantees a Timeline and leaves Object mode; later presses only switch to it. The sidebar tab cannot be selected by an add-on (Blender 5.2 `Region.active_panel_category` is read-only), so the tab is whichever one the copied viewport showed. The add-on never deletes the workspace.
+- Not built: the `area_dupli` pop-out window for the strip. It needs a separate decision.

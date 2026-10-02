@@ -3904,3 +3904,385 @@ def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     effect_workspace.set_session_trust("effect-1", False)
     assert effect_workspace.session_trust_enabled("effect-1") is False
     assert effect_workspace.reprompt_trust_required(untrusted) is True
+
+
+
+# ---------------------------------------------------------------------------
+# Viewport header surfaces: the FluidSim popover and the workspace button.
+# ---------------------------------------------------------------------------
+
+
+class _FakeArea:
+    """An editor area whose ``type`` assignment rebuilds its space, like Blender."""
+
+    def __init__(self, kind, width, height):
+        self.width = width
+        self.height = height
+        self.ui_type = kind
+        self.type_changes = []
+        self._type = kind
+        self.spaces = [SimpleNamespace(type=kind, show_region_ui=False)]
+
+    @property
+    def type(self):
+        return self._type
+
+    @type.setter
+    def type(self, value):
+        self._type = value
+        self.type_changes.append(value)
+        self.spaces = [SimpleNamespace(type=value, show_region_ui=False)]
+
+
+class _FakeWorkspaces(list):
+    def get(self, name):
+        return next((item for item in self if item.name == name), None)
+
+
+class _FakeHeader:
+    def __init__(self):
+        self.funcs = []
+
+    def append(self, func):
+        self.funcs.append(func)
+
+    def remove(self, func):
+        self.funcs.remove(func)  # ValueError when absent, as an over-eager caller sees
+
+
+_DEFAULT_LAYOUT_AREAS = (
+    ("VIEW_3D", 1500, 900),
+    ("OUTLINER", 300, 200),
+    ("PROPERTIES", 300, 600),
+)
+
+
+def _fake_workspace(name, specs):
+    return SimpleNamespace(
+        name=name,
+        object_mode="SCULPT",
+        screens=[SimpleNamespace(areas=[_FakeArea(*spec) for spec in specs])],
+    )
+
+
+def _header_env(
+    monkeypatch, *, header=True, area_specs=_DEFAULT_LAYOUT_AREAS, duplicate="ok"
+):
+    """bpy doubles + freshly imported panels/stages/header modules."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    registered = []
+    fake_bpy.utils = SimpleNamespace(
+        register_class=registered.append,
+        unregister_class=lambda cls: registered.remove(cls),
+    )
+    header_type = _FakeHeader() if header else None
+    if header_type is not None:
+        fake_bpy.types.VIEW3D_HT_header = header_type
+    layout = _fake_workspace("Layout", area_specs)
+    workspaces = _FakeWorkspaces([layout])
+    calls = []
+
+    def _duplicate():
+        calls.append("duplicate")
+        if duplicate == "cancel":
+            return {"CANCELLED"}
+        if duplicate == "ok":
+            workspaces.append(_fake_workspace("Layout.001", area_specs))
+        return {"FINISHED"}
+
+    fake_bpy.ops = SimpleNamespace(workspace=SimpleNamespace(duplicate=_duplicate))
+    fake_bpy.data = SimpleNamespace(workspaces=workspaces)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    ui_header = _reload_module("fluidSim_warp_blender51.blender.ui_header")
+    return SimpleNamespace(
+        bpy=fake_bpy,
+        panels=panels,
+        ui_stages=ui_stages,
+        ui_header=ui_header,
+        header=header_type,
+        registered=registered,
+        layout=layout,
+        workspaces=workspaces,
+        window=SimpleNamespace(workspace=layout),
+        calls=calls,
+    )
+
+
+def _draw_header_popover(
+    monkeypatch,
+    *,
+    with_domain=True,
+    runtime_ready=True,
+    state_id="IDLE",
+    owns_scene=False,
+    pending_action="NONE",
+    workspace_name="Layout",
+    **domain_overrides,
+):
+    env = _header_env(monkeypatch)
+    monkeypatch.setattr(
+        env.ui_header,
+        "activity_ui_state",
+        lambda _scene: {
+            "id": state_id,
+            "label": "Idle",
+            "icon": "INFO",
+            "owns_scene": owns_scene,
+        },
+    )
+    monkeypatch.setattr(
+        env.ui_header,
+        "runtime_ui_state",
+        lambda: (runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"),
+    )
+    monkeypatch.setattr(
+        env.panels,
+        "pending_ui_state",
+        lambda _scene: {"action": pending_action, "summary": "Edits pending"},
+    )
+    context, scene_settings, domain_settings = _stage_context(
+        with_domain=with_domain, **domain_overrides
+    )
+    context.workspace = SimpleNamespace(name=workspace_name)
+    context.screen = SimpleNamespace(is_animation_playing=False)
+    panel = env.ui_header.FLUIDSIM_PT_header_popover()
+    panel.layout = _Layout()
+    panel.draw(context)
+    return env, panel.layout, scene_settings, domain_settings
+
+
+def test_header_popover_is_a_viewport_header_popover_and_registers_with_its_button(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    ui_header = env.ui_header
+    popover = ui_header.FLUIDSIM_PT_header_popover
+    assert popover.bl_space_type == "VIEW_3D"
+    assert popover.bl_region_type == "HEADER"
+    assert popover.bl_idname == "FLUIDSIM_PT_header_popover"
+    assert ui_header.CLASSES == (ui_header.FLUIDSIM_OT_open_workspace, popover)
+
+    context, _scene, _domain = _stage_context()
+    assert popover.poll(context)
+    assert not popover.poll(SimpleNamespace(scene=SimpleNamespace()))
+    assert not popover.poll(SimpleNamespace(scene=None))
+
+    layout = _Layout()
+    ui_header.draw_header_button(SimpleNamespace(layout=layout), context)
+    assert layout.popovers == [
+        {"panel": popover.bl_idname, "text": "FluidSim", "icon": "MOD_FLUIDSIM"}
+    ]
+
+    ui_header.register()
+    assert env.header.funcs == [ui_header.draw_header_button]
+    assert env.registered == list(ui_header.CLASSES)
+    ui_header.unregister()
+    assert env.header.funcs == []
+    assert env.registered == []
+    ui_header.unregister()  # a second unregister must be harmless
+
+
+def test_header_button_register_tolerates_a_build_without_the_header_type(monkeypatch):
+    env = _header_env(monkeypatch, header=False)
+    env.ui_header.register()
+    assert env.registered == list(env.ui_header.CLASSES)
+    env.ui_header.unregister()
+    assert env.registered == []
+
+
+def test_header_popover_draws_the_stage_controls_bound_to_their_owners(monkeypatch):
+    """Same drawings as the sidebar: quality + every Simulate control, same owners."""
+    env, layout, scene_settings, domain_settings = _draw_header_popover(
+        monkeypatch,
+        viscosity_enabled=True,
+        surface_tension_enabled=True,
+        use_scene_gravity=False,
+    )
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == {"quality", *env.ui_stages.SIMULATE_PROPS}
+    assert drawn["quality"] is scene_settings
+    for name in env.ui_stages.SIMULATE_PROPS:
+        assert drawn[name] is domain_settings, name
+
+    context, *_ = _stage_context(
+        viscosity_enabled=True, surface_tension_enabled=True, use_scene_gravity=False
+    )
+    simulate = _draw_stage(env.ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    for name, call_data in {c["name"]: c["data"] for c in simulate.prop_calls}.items():
+        assert type(call_data) is type(drawn[name]), name
+
+    operators = {op["id"] for op in layout.operators}
+    assert {"fluidsim.preview_start", "fluidsim.open_workspace"} <= operators
+    assert "fluidsim.apply_changes" not in operators
+    assert any(label["text"] == "Idle" for label in layout.labels)
+
+
+def test_header_popover_hides_inactive_simulate_controls(monkeypatch):
+    _env, layout, _scene, _domain = _draw_header_popover(monkeypatch, sample_type="PIC")
+    assert set(layout.props) == {
+        "quality",
+        "viscosity_enabled",
+        "surface_tension_enabled",
+        "use_scene_gravity",
+    }
+
+
+def test_header_popover_without_a_domain_offers_guided_setup_only(monkeypatch):
+    _env, layout, _scene, _domain = _draw_header_popover(monkeypatch, with_domain=False)
+    assert not layout.props
+    ids = [op["id"] for op in layout.operators]
+    assert ids.count("fluidsim.setup_scene") == 2
+    assert not {"fluidsim.preview_start", "fluidsim.apply_changes"} & set(ids)
+    assert any("domain" in label["text"].lower() for label in layout.labels)
+
+
+def test_header_popover_follows_the_activity_and_the_runtime(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch, runtime_ready=False)
+    assert any("no CUDA" in label["text"] for label in layout.labels)
+    assert _operator(layout, "fluidsim.preview_start")["enabled"] is False
+
+    _env, layout, *_ = _draw_header_popover(
+        monkeypatch, state_id="PRODUCTION_BAKE", owns_scene=True
+    )
+    assert _operator(layout, "fluidsim.bake_cancel")["text"] == "Cancel Production Bake"
+    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, owns_scene=True)
+    assert _operator(layout, "fluidsim.preview_start")["text"] == "Resume Preview"
+    assert "fluidsim.restart_simulation" in {op["id"] for op in layout.operators}
+
+
+def test_header_popover_offers_apply_changes_only_when_something_is_pending(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="REINIT")
+    assert "fluidsim.apply_changes" in {op["id"] for op in layout.operators}
+    assert any(label["text"] == "Edits pending" for label in layout.labels)
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="NONE")
+    assert "fluidsim.apply_changes" not in {op["id"] for op in layout.operators}
+
+
+def test_header_popover_hides_the_workspace_button_inside_the_workspace(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch)
+    button = _operator(layout, "fluidsim.open_workspace")
+    assert button["text"] == "FluidSim Workspace"
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, workspace_name="FluidSim")
+    assert "fluidsim.open_workspace" not in {op["id"] for op in layout.operators}
+    assert "fluidsim.preview_start" in {op["id"] for op in layout.operators}
+
+
+def _run_open_workspace(env):
+    reports = []
+    operator = env.ui_header.FLUIDSIM_OT_open_workspace()
+    operator.report = lambda levels, message: reports.append((set(levels), message))
+    result = operator.execute(SimpleNamespace(window=env.window))
+    return result, reports
+
+
+def test_open_workspace_creates_a_prepared_copy_of_the_layout_once(monkeypatch):
+    env = _header_env(
+        monkeypatch,
+        area_specs=(("VIEW_3D", 1500, 900), ("OUTLINER", 300, 200), ("PROPERTIES", 300, 600)),
+    )
+    result, reports = _run_open_workspace(env)
+    assert result == {"FINISHED"}
+    assert env.calls == ["duplicate"]
+    assert [w.name for w in env.workspaces] == ["Layout", "FluidSim"]
+    created = env.workspaces.get("FluidSim")
+    assert env.window.workspace is created
+    assert created.object_mode == "OBJECT"
+    areas = created.screens[0].areas
+    assert [a.type for a in areas] == ["VIEW_3D", "DOPESHEET_EDITOR", "PROPERTIES"]
+    assert areas[0].spaces[0].show_region_ui is True
+    assert areas[1].ui_type == "TIMELINE"
+    assert env.layout.object_mode == "SCULPT", "the user's own workspace is untouched"
+    assert reports and "INFO" in next(iter(reports[0][0]))
+
+    # The second press only switches back; it never duplicates again.
+    env.window.workspace = env.layout
+    result, _reports = _run_open_workspace(env)
+    assert result == {"FINISHED"}
+    assert env.calls == ["duplicate"]
+    assert env.window.workspace is created
+    assert len(env.workspaces) == 2
+
+
+@pytest.mark.parametrize("duplicate", ["cancel", "silent"])
+def test_open_workspace_reports_instead_of_switching_when_duplicate_fails(
+    monkeypatch, duplicate
+):
+    env = _header_env(monkeypatch, duplicate=duplicate)
+    result, reports = _run_open_workspace(env)
+    assert result == {"CANCELLED"}
+    assert env.window.workspace is env.layout
+    assert [w.name for w in env.workspaces] == ["Layout"]
+    assert reports and "WARNING" in next(iter(reports[0][0]))
+
+
+def test_open_workspace_needs_a_window(monkeypatch):
+    env = _header_env(monkeypatch)
+    operator = env.ui_header.FLUIDSIM_OT_open_workspace
+    assert operator.poll(SimpleNamespace(window=object()))
+    assert not operator.poll(SimpleNamespace(window=None))
+    assert not operator.poll(SimpleNamespace())
+
+
+def test_prepare_workspace_makes_a_viewport_with_sidebar_and_a_timeline(monkeypatch):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W", (("OUTLINER", 800, 600), ("PROPERTIES", 300, 600), ("FILE_BROWSER", 800, 100))
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert workspace.object_mode == "OBJECT"
+    assert [a.type for a in areas] == ["VIEW_3D", "PROPERTIES", "DOPESHEET_EDITOR"]
+    assert areas[0].spaces[0].show_region_ui is True
+    assert areas[2].ui_type == "TIMELINE"
+    assert areas[1].type_changes == [], "Properties is never repurposed"
+
+
+def test_prepare_workspace_leaves_a_ready_layout_alone_but_opens_the_sidebar(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W",
+        (("VIEW_3D", 1000, 800), ("DOPESHEET_EDITOR", 1000, 80), ("OUTLINER", 200, 400)),
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert all(a.type_changes == [] for a in areas)
+    assert areas[0].spaces[0].show_region_ui is True
+
+
+def test_prepare_workspace_converts_only_the_smallest_spare_area_to_a_timeline(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W",
+        (
+            ("VIEW_3D", 1000, 800),
+            ("OUTLINER", 200, 400),
+            ("FILE_BROWSER", 600, 60),
+            ("PROPERTIES", 300, 400),
+        ),
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert [a.type for a in areas] == [
+        "VIEW_3D",
+        "OUTLINER",
+        "DOPESHEET_EDITOR",
+        "PROPERTIES",
+    ]
+
+
+def test_prepare_workspace_without_a_spare_area_adds_no_timeline(monkeypatch):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace("W", (("VIEW_3D", 1000, 800), ("PROPERTIES", 300, 400)))
+    env.ui_header.prepare_workspace(workspace)
+    assert [a.type for a in workspace.screens[0].areas] == ["VIEW_3D", "PROPERTIES"]
+    # A workspace object that lists no screens is tolerated too.
+    env.ui_header.prepare_workspace(SimpleNamespace(object_mode="EDIT"))

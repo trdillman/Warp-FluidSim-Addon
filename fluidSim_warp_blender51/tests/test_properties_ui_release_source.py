@@ -23,6 +23,9 @@ def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():
         "FLUIDSIM_STAGE_PT_bake",
         "FLUIDSIM_STAGE_PT_bake_storage",
         "FLUIDSIM_STAGE_PT_bake_manage",
+        "FLUIDSIM_PT_header_popover",
+        "FLUIDSIM_OT_open_workspace",
+        "_assert_header_popover",
         "REMOVED_PANEL_IDS",
         "_assert_launcher_strip",
         "EXPECTED_STAGE_PANELS",
@@ -49,6 +52,7 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         'extension_root / "blender" / "ui_object.py"',
         'extension_root / "blender" / "ui_physics.py"',
         'extension_root / "blender" / "ui_stages.py"',
+        'extension_root / "blender" / "ui_header.py"',
     ):
         assert path in source
     for panel_id in (
@@ -67,6 +71,8 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         "FLUIDSIM_STAGE_PT_bake",
         "FLUIDSIM_STAGE_PT_bake_storage",
         "FLUIDSIM_STAGE_PT_bake_manage",
+        "FLUIDSIM_PT_header_popover",
+        "FLUIDSIM_OT_open_workspace",
         "FLUIDSIM_PT_physics_root",
         "FLUIDSIM_PT_physics_surface_output",
     ):

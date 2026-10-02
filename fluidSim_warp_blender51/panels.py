@@ -48,6 +48,63 @@ def _status_note(state) -> str:
     return "No simulation loaded; Preview starts one."
 
 
+def runtime_ui_state():
+    """``(ready, message)`` for the configured CUDA device."""
+    probe = probe_runtime()
+    return runtime_status_for_device(configured_device(), probe=probe)
+
+
+def draw_transport(layout, context, state, runtime_ready):
+    """Preview / Pause / Resume / Cancel for the current activity, plus Restart.
+
+    Shared by the sidebar strip and the viewport-header popover so both surfaces
+    follow the same activity state machine.
+    """
+    scene = context.scene
+    controls = layout.column(align=True)
+    activity = state["id"]
+    screen = getattr(context, "screen", None)
+    playing = bool(
+        getattr(scene.fluidsim, "live", False)
+        and screen is not None
+        and getattr(screen, "is_animation_playing", False)
+    )
+    if activity == "PRODUCTION_BAKE":
+        controls.operator("fluidsim.bake_cancel", text="Cancel Production Bake", icon="CANCEL")
+    elif activity == "CACHE_PLAYBACK":
+        controls.operator(
+            "fluidsim.preview_pause" if playing else "fluidsim.cache_preview_start",
+            text="Pause Cache Preview" if playing else "Resume Cache Preview",
+            icon="PAUSE" if playing else "PLAY",
+        )
+    elif playing:
+        controls.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
+    else:
+        live = controls.column(align=True)
+        live.enabled = runtime_ready
+        live.operator(
+            "fluidsim.preview_start",
+            text="Resume Preview" if state["owns_scene"] else "Preview",
+            icon="PLAY",
+        )
+
+    if state["owns_scene"] and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
+        controls.operator(
+            "fluidsim.restart_simulation",
+            text="Restart Simulation",
+            icon="FILE_REFRESH",
+        )
+
+
+def draw_pending_apply(layout, scene):
+    """Offer Apply Changes only while an edit is waiting for a reset or re-init."""
+    pending = pending_ui_state(scene)
+    if pending["action"] != "NONE":
+        box = layout.box()
+        box.label(text=pending["summary"], icon="INFO")
+        box.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
+
+
 class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
     """Pinned status and transport strip above the workflow stages."""
 
@@ -65,53 +122,14 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
         if note:
             status.label(text=note)
 
-        probe = probe_runtime()
-        selected = configured_device()
-        runtime_ready, runtime_message = runtime_status_for_device(selected, probe=probe)
+        runtime_ready, runtime_message = runtime_ui_state()
         runtime = layout.box()
         row = runtime.row(align=True)
         row.label(text=runtime_message, icon="CHECKMARK" if runtime_ready else "ERROR")
         row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
 
-        controls = layout.column(align=True)
-        activity = state["id"]
-        screen = getattr(context, "screen", None)
-        playing = bool(
-            getattr(scene.fluidsim, "live", False)
-            and screen is not None
-            and getattr(screen, "is_animation_playing", False)
-        )
-        if activity == "PRODUCTION_BAKE":
-            controls.operator("fluidsim.bake_cancel", text="Cancel Production Bake", icon="CANCEL")
-        elif activity == "CACHE_PLAYBACK":
-            controls.operator(
-                "fluidsim.preview_pause" if playing else "fluidsim.cache_preview_start",
-                text="Pause Cache Preview" if playing else "Resume Cache Preview",
-                icon="PAUSE" if playing else "PLAY",
-            )
-        elif playing:
-            controls.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
-        else:
-            live = controls.column(align=True)
-            live.enabled = runtime_ready
-            live.operator(
-                "fluidsim.preview_start",
-                text="Resume Preview" if state["owns_scene"] else "Preview",
-                icon="PLAY",
-            )
-
-        if state["owns_scene"] and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
-            controls.operator(
-                "fluidsim.restart_simulation",
-                text="Restart Simulation",
-                icon="FILE_REFRESH",
-            )
-
-        pending = pending_ui_state(scene)
-        if pending["action"] != "NONE":
-            box = layout.box()
-            box.label(text=pending["summary"], icon="INFO")
-            box.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
+        draw_transport(layout, context, state, runtime_ready)
+        draw_pending_apply(layout, scene)
 
 
 CLASSES = (

@@ -380,6 +380,21 @@ and controller snapshots instead of trusting stored update-callback state.
   model. The former `ui_view3d.py` Live Tuning / Full Settings mirrors and the
   Scene-tab Transport and Cache panels were removed because a stage now owns
   each control.
+- **`blender/ui_header.py`** appends a **FluidSim** popover
+  (`FLUIDSIM_PT_header_popover`, `VIEW_3D`/`HEADER`) to `VIEW3D_HT_header` and
+  registers `fluidsim.open_workspace`. The popover draws `panels.draw_transport`,
+  `panels.draw_pending_apply`, `ui_stages.draw_quality` and
+  `ui_stages.draw_simulate_controls`, the same module-level functions the strip
+  and stages call, so the surfaces share one implementation and one set of
+  `setting_owner` bindings. The operator switches to an existing workspace named
+  `FluidSim`, or runs `bpy.ops.workspace.duplicate()`, finds the new workspace by
+  name difference, renames it, and `prepare_workspace` guarantees a 3D Viewport
+  with `show_region_ui`, a Timeline (`DOPESHEET_EDITOR`, `ui_type` TIMELINE, taken
+  from the smallest area that is not a Viewport or Properties editor) and Object
+  mode. Blender 5.2 gives an add-on no way to select the sidebar tab
+  (`Region.active_panel_category` is read-only) or to delete a workspace
+  through the data API except `bpy.data.batch_remove`; the add-on never deletes
+  the workspace, and the validator removes its own copy that way.
 - **`blender/ui_physics.py`** recognizes the domain by exact scene pointer,
   outputs by stable tags, and inputs by canonical object role. It reuses existing
   Scene/Object panels and routes single-output deletion through identity-checked

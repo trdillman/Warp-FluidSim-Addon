@@ -32,12 +32,21 @@ def test_viewport_contains_only_a_compact_status_launcher():
 
 def test_viewport_status_uses_derived_activity_and_artist_actions():
     source = PANELS.read_text(encoding="utf-8")
-    block = _block(source, "FLUIDSIM_PT_viewport_status")
-    assert "FluidSimView3DPanel" in block.splitlines()[0]
-    assert "activity_ui_state" in block
-    assert "runtime_status_for_device" in block
-    assert 'pending["action"] != "NONE"' in block
-    assert 'pending["visible"]' not in block
+    strip = _block(source, "FLUIDSIM_PT_viewport_status")
+    assert "FluidSimView3DPanel" in strip.splitlines()[0]
+    assert "activity_ui_state" in strip
+    # Transport and the pending-edit prompt are shared functions, drawn by the
+    # strip and by the header popover alike.
+    assert "draw_transport(layout, context, state, runtime_ready)" in strip
+    assert "draw_pending_apply(layout, scene)" in strip
+    assert "runtime_ui_state()" in strip
+    runtime = source.split("def runtime_ui_state", 1)[1].split("def draw_transport", 1)[0]
+    assert "runtime_status_for_device" in runtime
+    transport = source.split("def draw_transport", 1)[1].split("def draw_pending_apply", 1)[0]
+    pending_apply = source.split("def draw_pending_apply", 1)[1].split("class FLUIDSIM_PT_viewport_status", 1)[0]
+    assert 'pending["action"] != "NONE"' in pending_apply
+    assert 'pending["visible"]' not in pending_apply
+    block = strip + transport + pending_apply
     for operator_id in (
         "fluidsim.preview_start",
         "fluidsim.preview_pause",
@@ -108,3 +117,40 @@ def test_viewport_moves_manual_step_to_advanced_lifecycle():
     assert 'bl_options = {"DEFAULT_CLOSED"}' in lifecycle
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in lifecycle
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in lifecycle
+
+
+def test_header_popover_shares_the_stage_drawings_and_the_add_on_registers_it():
+    header = (ROOT / "blender" / "ui_header.py").read_text(encoding="utf-8")
+    popover = _block(header, "FLUIDSIM_PT_header_popover")
+    assert 'bl_space_type = "VIEW_3D"' in popover
+    assert 'bl_region_type = "HEADER"' in popover
+    # One drawing per control: the popover calls the shared stage/strip functions
+    # and never authors a property itself, so it cannot drift from the sidebar.
+    for shared in (
+        "draw_transport(layout, context, state, runtime_ready)",
+        "draw_pending_apply(layout, scene)",
+        "draw_quality(layout, scene)",
+        "draw_simulate_controls(layout, scene, domain)",
+        "draw_guided_setup_buttons(box)",
+    ):
+        assert shared in popover, shared
+    assert ".prop(" not in popover
+    assert "VIEW3D_HT_header" in header
+    assert "header.append(draw_header_button)" in header
+    assert "header.remove(draw_header_button)" in header
+    workspace = _block(header, "FLUIDSIM_OT_open_workspace")
+    assert 'bl_idname = "fluidsim.open_workspace"' in workspace
+    # The workspace is the user's own saved layout: never deleted, never created
+    # by hand-built screens, and the area_dupli pop-out window stays out.
+    assert "workspaces.remove" not in header
+    assert "area_dupli" not in header
+    assert "bpy.ops.workspace.duplicate()" in workspace
+
+    init = (ROOT / "__init__.py").read_text(encoding="utf-8")
+    register = init.split("def register()", 1)[1].split("def unregister()", 1)[0]
+    unregister = init.split("def unregister()", 1)[1]
+    assert '"viewport header popover", ui_header.register, ui_header.unregister' in register
+    assert '"viewport header popover", "blender.ui_header", "unregister"' in unregister
+    # Registered after the stages it draws, torn down before them.
+    assert register.index("ui_stages.register") < register.index("ui_header.register")
+    assert unregister.index("blender.ui_header") < unregister.index("blender.ui_stages")

@@ -236,10 +236,13 @@ def test_root_registration_includes_scene_and_object_properties_modules():
 
 
 def test_transport_exposes_complete_state_dependent_artist_actions():
-    # Transport has one home: the activity-aware control in the pinned launcher
-    # strip. The Scene tab no longer repeats it.
+    # Transport has one drawing (``draw_transport``), shared by the pinned launcher
+    # strip and the header popover. The Scene tab no longer repeats it.
     source = (ROOT / "panels.py").read_text(encoding="utf-8")
-    block = _class_block(source, "FLUIDSIM_PT_viewport_status")
+    assert "draw_transport(layout, context, state, runtime_ready)" in _class_block(
+        source, "FLUIDSIM_PT_viewport_status"
+    )
+    block = source.split("def draw_transport", 1)[1].split("def draw_pending_apply", 1)[0]
     assert 'activity == "CACHE_PLAYBACK"' in block
     assert 'activity == "PRODUCTION_BAKE"' in block
     assert 'getattr(scene.fluidsim, "live", False)' in block
