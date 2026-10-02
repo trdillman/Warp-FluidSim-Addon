@@ -66,7 +66,6 @@ None block a release. Each has a card in `backlog/tasks/`.
 | Card | Severity | Summary | Suggested fix |
 |---|---|---|---|
 | REVIEW-013 | medium | `operators.py` / `panels.py` unregister stops at the first failure | Wrap each class in `try` and continue; test with a class that fails to unregister |
-| REVIEW-015 | medium | PCG conditional-graph cache clears the whole dict at 8 entries (`sim/pressure.py`) | Use the LRU the viscosity cache already has |
 | REVIEW-024 | medium | `test_memory_safety_recovery.py` checks source text for substrings instead of behaviour | Replace the substring asserts with a registration or poll check |
 | REVIEW-025 | medium | `_phase2_source_acceptance_common` deletes every add-on module from `sys.modules` at import time | Move the purge into an explicit setup call |
 | REVIEW-027 | medium | No tests for the solver's error paths (bad device string, non-CUDA device, reduction launch failure, sourcing count mismatch) | One test per path, asserting the actionable message |
@@ -74,6 +73,9 @@ None block a release. Each has a card in `backlog/tasks/`.
 
 Closed in 2.0: REVIEW-041 (fixed), REVIEW-031 (won't fix, undo policy) and
 REVIEW-042 (no production caller after REVIEW-022).
+
+Closed in 2.1: REVIEW-015 (fixed; the cache key no longer holds the
+tolerance, and a miss evicts one entry instead of all eight).
 
 ## 3. Performance (plan D7)
 
@@ -105,6 +107,17 @@ bakes bitwise reproducible. Warp 1.17 against 1.16 is neutral on paddle_stir
 and about 4% faster on chromatic_vortex. Evidence:
 `C:\Users\Tyler\fluidsim-gate-logs\perf-2.0-20260927\`.
 
+**Solver-only follow-up (2026-09-29).**
+`docs/PERFORMANCE_2_0_BENCHMARK_20260929.md` runs one dam_break workload on the
+pre-optimization code, 1.1.0, 2.0 and master, all on Warp 1.17. Against the
+pre-optimization code, 2.0 is:
+- about 5.6× faster with viscosity
+- about 4.5× faster with viscosity and surface tension
+- 6% faster with surface tension
+- 2.4% slower per substep with neither (the P2G gather)
+
+Against 1.1.0 it shows no regression.
+
 **Work, in order of expected return** (see `docs/` performance results):
 
 1. **Faster deterministic P2G.** It is the only measured regression against
@@ -112,9 +125,28 @@ and about 4% faster on chromatic_vortex. Evidence:
    or per-leaf shared-memory accumulation. Accept a change only if the
    GUI-gate hash is unchanged.
 2. Topology frontier (6 tasks).
-3. Pressure follow-on (5 tasks), including the REVIEW-015 cache.
+3. Pressure follow-on (5 tasks). The REVIEW-015 cache is done.
 4. Device-resident surface work and cache-cursor integration.
 5. Viscosity SDF reuse.
+6. **Viscosity graph-key churn — DONE** (branch `perf/visc-graph-key-churn`).
+   The key held the solve size, `dt` and the tolerance, so on the dam_break
+   viscosity benchmark 435 solves made 213 captures. Now `dt` and the
+   tolerance live in device arrays that one kernel stages each solve, and the
+   captured launches and dot products read the active voxel count from
+   `num_leaves` on device (`CudaDotProduct.launch_active`, bitwise equal to the
+   host-counted dot). Launches are rounded up to 4 buckets per octave. The key
+   holds only shape and array pointers.
+   - Captures 213 → 30, capture time 380 → 100 ms (visc; visc_st 362 → 107 ms)
+     over 40 frames. The floor of 30 is 5 buckets × 6 component buffers, since
+     the velocity components alternate between two buffer sets. 2 buckets per
+     octave gives 18 captures and 8 gives 54, with no measurable host-time
+     difference.
+   - Per-frame particle and velocity hashes are bitwise identical to REVIEW-015
+     on visc and visc_st, and the GUI gate hash is unchanged (`ffd50faa…`).
+   - `tools/benchmark_versions.py`, 5 paired trials against REVIEW-015:
+     visc 0.81× (range 0.77–0.88, 48.8 → 38.9 ms/frame), visc_st 0.86×
+     (0.82–1.32, 63.6 → 54.5 ms/frame). Evidence:
+     `C:\Users\Tyler\wt\bench_viscgraph\`, probe in `C:\Users\Tyler\wt\probe\`.
 
 Add the 2.0 comparison to the gate, so the budget is enforced on every run
 rather than measured once. Use ABBA pairs, at least 8 per demo, median

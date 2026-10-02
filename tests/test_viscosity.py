@@ -32,6 +32,7 @@ def _fake_viscosity_solver(active_voxels=LEAF_VOLUME, capacity=LEAF_VOLUME * 8):
         "tmp_w", "counter", "rz", "rz_new", "p_ap", "alpha", "beta",
         "residual", "pcg_stats", "_pcg_p_ap_accum", "_pcg_condition",
         "_pcg_iterations", "_pcg_history", "_pcg_history_pos",
+        "_solve_dt", "_pcg_tol_sq",
     ):
         setattr(solver, name, object())
     solver._pcg_conditional_graphs = OrderedDict()
@@ -80,7 +81,7 @@ def test_viscosity_smooth_scales_with_active_voxel_prefix(monkeypatch):
     assert copy_counts == [solver.grid.active_voxel_count] * 3
 
 
-def test_viscosity_pcg_uses_active_prefix_for_launches_reductions_and_copy(monkeypatch):
+def test_viscosity_pcg_uses_active_prefix_for_launches_and_reductions(monkeypatch):
     solver = _fake_viscosity_solver()
     launch_dims = []
     reduction_counts = []
@@ -117,7 +118,8 @@ def test_viscosity_pcg_uses_active_prefix_for_launches_reductions_and_copy(monke
     assert solver.grid.voxel_capacity not in launch_dims
     assert set(launch_dims) == {1, active}
     assert reduction_counts == [active]
-    assert copy_counts == [active]
+    # the solution is written back in place, with no full-array copy
+    assert copy_counts == []
 
 
 class _FakeScalarArray:
@@ -174,7 +176,7 @@ def _install_host_loop_stubs(monkeypatch, solver):
 def _run_host_loop(solver, *, iterations=40, tolerance=1.0e-4, check_every=1):
     n = solver.grid.active_voxel_count
     solver._solve_pcg_host(
-        n, [object()] * 5, object(), object(), object(), 0.01,
+        n, [object()] * 5, object(), object(), object(),
         check_every, iterations, tolerance * tolerance * max(1, n))
     return solver.last_status
 
@@ -592,7 +594,9 @@ def _scope_solver(recorder, scope):
     solver._conditional_available = True
     solver._pcg_native_available = True
     solver._pcg_dot = SimpleNamespace(
-        launch=lambda _a, _b, _out, n: recorder.op("dot", n))
+        launch=lambda _a, _b, _out, n: recorder.op("dot", n),
+        launch_active=lambda _a, _b, _out, _leaves, dim, _volume=None:
+            recorder.op("dot", dim))
     for name in ("rz", "rz_new", "residual", "_pcg_p_ap_accum"):
         setattr(solver, name, _RecordingScalarArray(recorder, name))
     solver.pcg_stats = _FakeScalarArray(5)
@@ -662,11 +666,14 @@ def test_viscosity_graph_scopes_enqueue_the_same_device_work(monkeypatch):
 
 
 def test_viscosity_component_scope_issues_one_host_call(monkeypatch):
-    """The point of the change: one enqueue per solve instead of sixteen."""
+    """The point of the change: one graph launch per solve instead of fifteen
+    host calls, after staging the solve's dt and tolerance on device."""
     _, loop, _ = _scope_trace(monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_LOOP)
     _, component, _ = _scope_trace(
         monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
-    assert [op[0] for op in component.trace] == ["capture_launch"]
+    assert component.trace[0][:2] == (
+        "launch", "k_viscosity_set_solve_scalars")
+    assert [op[0] for op in component.trace[1:]] == ["capture_launch"]
     assert len(loop.trace) == 16
     # the work itself did not shrink; it moved into the graph
     assert len(component.expand()) == len(loop.expand()) == 16
@@ -677,15 +684,14 @@ def test_viscosity_component_scope_writes_back_inside_the_graph(monkeypatch):
     _, component, _ = _scope_trace(
         monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
     ops = component.expand()
-    assert ops[-1] == ("copy", LEAF_VOLUME)
-    assert ops[-2][:2] == ("launch", "k_viscosity_apply_collision")
+    assert ops[-1] == ("launch", "k_viscosity_apply_collision", LEAF_VOLUME)
 
 
 def test_viscosity_component_scope_graph_key_separates_components(monkeypatch):
     """The captured body now reads and writes ``comp``, so it must be keyed."""
     solver, _, _ = _scope_trace(
         monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
-    args = (12, _PtrArray(), _PtrArray(), _PtrArray(), 0.01, 1, 40, 1.0e-8)
+    args = (LEAF_VOLUME, _PtrArray(), _PtrArray(), _PtrArray(), 1, 40)
     comp_u, comp_v = _PtrArray(), _PtrArray()
     key_u = solver._graph_key(
         viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT, *args, comp=comp_u)
@@ -708,3 +714,48 @@ def test_viscosity_component_scope_caches_its_graph(monkeypatch):
     # a different component is a different shape, and must not reuse it
     solver._solve_component(_PtrArray(), *fields[1:], 0.01, True, 2, 1.0e-4, 1)
     assert solver._graph_captures == 2
+
+
+def test_viscosity_graph_key_holds_only_shape_and_topology(monkeypatch):
+    """dt, the tolerance and the exact active count are read at launch.
+
+    Two solves inside one launch bucket must share a key whatever their
+    per-solve scalars; a solve in another bucket must not.
+    """
+    solver, _, _ = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    solver.grid.voxel_capacity = LEAF_VOLUME * 64
+    fields = (_PtrArray(), _PtrArray(), _PtrArray())
+    comp = _PtrArray()
+    scope = viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT
+
+    def key(n):
+        return solver._graph_key(scope, solver._launch_dim(n), *fields, 1, 40,
+                                 comp=comp)
+
+    assert solver._launch_dim(LEAF_VOLUME * 9) == solver._launch_dim(
+        LEAF_VOLUME * 10)
+    assert key(LEAF_VOLUME * 9) == key(LEAF_VOLUME * 10)
+    assert key(LEAF_VOLUME * 9) != key(LEAF_VOLUME * 17)
+
+
+def test_viscosity_launch_dim_covers_the_active_prefix():
+    """The bucket is never short of the active count nor past the allocation,
+    and stays within a quarter octave of it."""
+    solver = _fake_viscosity_solver(capacity=LEAF_VOLUME * 64)
+    for leaves in range(1, 65):
+        n = leaves * LEAF_VOLUME
+        dim = solver._launch_dim(n)
+        assert n <= dim <= solver.grid.voxel_capacity
+        assert dim <= n * 1.25 + LEAF_VOLUME
+    assert solver._launch_dim(LEAF_VOLUME) == LEAF_VOLUME
+
+
+def test_viscosity_component_scope_reuses_its_graph_across_dt_and_tolerance(
+        monkeypatch):
+    solver, _, fields = _scope_trace(
+        monkeypatch, viscosity.VISCOSITY_GRAPH_SCOPE_COMPONENT)
+    assert solver._graph_captures == 1
+    solver._solve_component(*fields, 1.0 / 48.0, True, 2, 3.0e-5, 1)
+    solver._solve_component(*fields, 1.0 / 120.0, True, 2, 1.0e-2, 1)
+    assert solver._graph_captures == 1
