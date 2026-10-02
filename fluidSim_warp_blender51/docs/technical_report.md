@@ -371,10 +371,15 @@ and controller snapshots instead of trusting stored update-callback state.
   reconstruction/whitewater → outputs → cache → diagnostics. Object panels
   poll canonical SOURCE/SINK/COLLIDER/FORCE/FIELD roles and hide inapplicable
   analytic, mesh, point, constant, and volume payloads.
-- **`panels.py`** retains the compact View3D status/lifecycle surface.
-  **`blender/ui_view3d.py`** mirrors the authoritative Scene and Custom Effects
-  panels beneath one collapsed Full Settings parent by delegating to their draw
-  and poll functions; it introduces no second settings model.
+- **`panels.py`** draws the pinned View3D status/transport strip: activity,
+  runtime, Preview / Pause / Resume / Restart, and Apply Changes. It binds no
+  settings. **`blender/ui_stages.py`** hosts the staged sidebar (Setup, Simulate,
+  Look, Bake & Export) and reuses the authoritative Scene draw functions
+  (`draw_cache_playback`, `draw_cache_bake`, `draw_cache_manage`) and
+  `pending_settings.setting_owner` ownership; it introduces no second settings
+  model. The former `ui_view3d.py` Live Tuning / Full Settings mirrors and the
+  Scene-tab Transport and Cache panels were removed because a stage now owns
+  each control.
 - **`blender/ui_physics.py`** recognizes the domain by exact scene pointer,
   outputs by stable tags, and inputs by canonical object role. It reuses existing
   Scene/Object panels and routes single-output deletion through identity-checked

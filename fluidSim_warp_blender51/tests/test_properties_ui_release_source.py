@@ -17,11 +17,14 @@ def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():
         "FLUIDSIM_PT_effect_packages",
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_live_tuning",
         "FLUIDSIM_STAGE_PT_setup",
         "FLUIDSIM_STAGE_PT_simulate",
         "FLUIDSIM_STAGE_PT_look",
         "FLUIDSIM_STAGE_PT_bake",
+        "FLUIDSIM_STAGE_PT_bake_storage",
+        "FLUIDSIM_STAGE_PT_bake_manage",
+        "REMOVED_PANEL_IDS",
+        "_assert_launcher_strip",
         "EXPECTED_STAGE_PANELS",
         "_assert_workflow_stages",
         "FLUIDSIM_PT_physics_root",
@@ -45,7 +48,6 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         'extension_root / "blender" / "ui_scene.py"',
         'extension_root / "blender" / "ui_object.py"',
         'extension_root / "blender" / "ui_physics.py"',
-        'extension_root / "blender" / "ui_view3d.py"',
         'extension_root / "blender" / "ui_stages.py"',
     ):
         assert path in source
@@ -57,18 +59,20 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         "FLUIDSIM_PT_effect_packages",
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_live_tuning",
         "FLUIDSIM_STAGE_PT_setup",
         "FLUIDSIM_STAGE_PT_setup_advanced",
         "FLUIDSIM_STAGE_PT_simulate",
         "FLUIDSIM_STAGE_PT_look",
         "FLUIDSIM_STAGE_PT_look_materials",
         "FLUIDSIM_STAGE_PT_bake",
-        "FLUIDSIM_STAGE_PT_bake_advanced",
+        "FLUIDSIM_STAGE_PT_bake_storage",
+        "FLUIDSIM_STAGE_PT_bake_manage",
         "FLUIDSIM_PT_physics_root",
         "FLUIDSIM_PT_physics_surface_output",
     ):
         assert panel_id in source
+    # The deleted Live Tuning module must not be required of an installed package.
+    assert "ui_view3d.py" not in source
 
 
 def test_properties_validator_is_tools_owned_and_not_packaged():
@@ -89,7 +93,7 @@ def test_properties_validator_exercises_all_authored_panels_and_object_role_matr
         "FIELD",
         "VOLUME_GRID",
         "all_authored_draws",
-        "viewport_live_tuning",
+        "viewport_launcher",
         "physics_context",
         "role_matrix",
     ):

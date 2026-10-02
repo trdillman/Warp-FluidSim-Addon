@@ -45,9 +45,13 @@ def test_viewport_status_uses_derived_activity_and_artist_actions():
         "fluidsim.apply_changes",
         "fluidsim.restart_simulation",
         "fluidsim.bake_cancel",
-        "fluidsim.open_scene_properties",
     ):
         assert operator_id in block
+    # Status and transport only: settings live in the stages, and the old
+    # "Open FluidSim Scene Properties" jump is gone from the strip.
+    assert "fluidsim.open_scene_properties" not in block
+    assert ".prop(" not in block
+    assert "Solver not owned by this scene" not in block
     for legacy_manual in (
         "fluidsim.toggle_live",
         "fluidsim.initialize",

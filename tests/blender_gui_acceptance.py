@@ -50,14 +50,14 @@ PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
 
 PANEL_IDS = [
     "FLUIDSIM_PT_viewport_status",
-    "FLUIDSIM_VIEW3D_PT_live_tuning",
     "FLUIDSIM_STAGE_PT_setup", "FLUIDSIM_STAGE_PT_setup_advanced",
     "FLUIDSIM_STAGE_PT_simulate",
     "FLUIDSIM_STAGE_PT_look", "FLUIDSIM_STAGE_PT_look_materials",
-    "FLUIDSIM_STAGE_PT_bake", "FLUIDSIM_STAGE_PT_bake_advanced",
+    "FLUIDSIM_STAGE_PT_bake", "FLUIDSIM_STAGE_PT_bake_storage",
+    "FLUIDSIM_STAGE_PT_bake_manage",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
-    "FLUIDSIM_PT_scene_transport", "FLUIDSIM_PT_scene_lifecycle",
+    "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
     "FLUIDSIM_PT_scene_setup",
     "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
@@ -69,8 +69,7 @@ PANEL_IDS = [
     "FLUIDSIM_PT_sim_dissipation", "FLUIDSIM_PT_sim_attraction",
     "FLUIDSIM_PT_sim_spacetime", "FLUIDSIM_PT_scene_surface",
     "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
-    "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
-    "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
+    "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
     "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
     "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_engineering",
@@ -487,7 +486,7 @@ def _run_phase(phase, scene):
         scene.fluidsim.ui_mode = "BASIC"
         _draw_all_panels_smoke("addon enabled, solver inactive")
         _assert_panel_state(
-            "FLUIDSIM_PT_scene_transport",
+            "FLUIDSIM_PT_viewport_status",
             "Basic Preview action",
             operator_id="fluidsim.preview_start",
         )

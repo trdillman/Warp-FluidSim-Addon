@@ -1,19 +1,20 @@
 """Staged workflow shelves for the 3D View sidebar: Setup, Simulate, Look, Bake.
 
-The compact status launcher (``FLUIDSIM_PT_viewport_status``) stays pinned at
-the top of the FluidSim tab with Preview/Pause and Apply Changes. Below it, one
+The status/transport strip (``FLUIDSIM_PT_viewport_status``) stays pinned at the
+top of the FluidSim tab with Preview/Pause and Apply Changes. Below it, one
 top-level panel per stage holds the handful of controls an artist reaches for at
 that point in the work, so the common loop happens beside the viewport instead of
 in the Scene Properties tree. Everything else stays one click away through the
 existing Scene Properties panels; nothing is duplicated into a deep sidebar tree.
 
 Every control is bound to the group that actually owns it
-(:func:`~.pending_settings.setting_owner`), the same rule the Live Tuning shelf
-follows, so an edit made here is the value the solver reads.
+(:func:`~.pending_settings.setting_owner`), so an edit made here is the value the
+solver reads.
 
-The Bake stage draws the Scene tab's own Playback and Production Bake panels
-through their ``draw`` methods instead of restating the bake state machine
-(start / resume / restart / cancel), so the two surfaces cannot drift apart.
+The Bake stage is the only home of Cache & Production Bake: the Scene tab no
+longer carries those panels. It draws the shared cache functions from
+``ui_scene`` (the bake start / resume / restart / cancel state machine), plus
+Storage & Range and Manage Cache shelves, so every cache control stays reachable.
 """
 
 from __future__ import annotations
@@ -28,7 +29,12 @@ from .ui_common import (
     draw_property,
     draw_readout_grid,
 )
-from .ui_scene import FLUIDSIM_PT_cache_bake, FLUIDSIM_PT_cache_playback
+from .ui_scene import (
+    cache_manage_available,
+    draw_cache_bake,
+    draw_cache_manage,
+    draw_cache_playback,
+)
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
@@ -62,9 +68,9 @@ LOOK_PROPS = (
 )
 LOOK_MATERIAL_PROPS = ("surface_material", "particle_material", "whitewater_material")
 BAKE_PROPS = ("cache_path", "export_attributes")
-# Drawn by the delegated Production Bake panel; pinned so a rename there is caught.
+# Drawn by the shared Production Bake draw; pinned so a rename there is caught.
 BAKE_DELEGATED_PROPS = ("bake_start", "bake_end")
-BAKE_ADVANCED_PROPS = (
+BAKE_STORAGE_PROPS = (
     "cache_compress",
     "checkpoint_interval",
     "cache_use_custom_range",
@@ -304,19 +310,21 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         scene = context.scene
+        # The cache location is scene-level, so it stays editable (and an existing
+        # cache stays manageable below) even before a domain exists.
+        _prop(layout, scene, "cache_path")
         if active_domain_settings(scene) is None:
-            layout.label(text="Set up a liquid domain first.", icon="INFO")
+            layout.label(text="Set up a liquid domain first to bake.", icon="INFO")
             return
 
-        _prop(layout, scene, "cache_path")
         _prop(layout, scene, "export_attributes")
 
-        # The Scene tab's own drawing: the bake state machine (start / resume /
-        # restart / cancel, progress, runtime readiness) lives in one place.
+        # One shared drawing of the bake state machine (start / resume / restart /
+        # cancel, progress, runtime readiness).
         layout.separator()
-        FLUIDSIM_PT_cache_playback.draw(self, context)
+        draw_cache_playback(layout, context)
         layout.separator()
-        FLUIDSIM_PT_cache_bake.draw(self, context)
+        draw_cache_bake(layout, context)
 
         layout.separator()
         layout.operator(
@@ -324,21 +332,14 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
-class FLUIDSIM_STAGE_PT_bake_advanced(FluidSimStagePanel, bpy.types.Panel):
-    """Storage and frame-range controls, shown only in the Advanced interface."""
+class FLUIDSIM_STAGE_PT_bake_storage(FluidSimStagePanel, bpy.types.Panel):
+    """Cache compression, checkpoint spacing and the shared playback/export range."""
 
     bl_label = "Storage & Range"
-    bl_idname = "FLUIDSIM_STAGE_PT_bake_advanced"
+    bl_idname = "FLUIDSIM_STAGE_PT_bake_storage"
     bl_parent_id = "FLUIDSIM_STAGE_PT_bake"
+    bl_order = 1
     bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return (
-            FluidSimStagePanel.poll(context)
-            and _is_advanced(context.scene)
-            and active_domain_settings(context.scene) is not None
-        )
 
     def draw(self, context):
         layout = _layout(self)
@@ -351,11 +352,23 @@ class FLUIDSIM_STAGE_PT_bake_advanced(FluidSimStagePanel, bpy.types.Panel):
             row = layout.row(align=True)
             _prop(row, scene, "cache_frame_start")
             _prop(row, scene, "cache_frame_end")
-        layout.operator(
-            "fluidsim.open_scene_properties",
-            text="All Cache Settings…",
-            icon="PROPERTIES",
-        )
+
+
+class FLUIDSIM_STAGE_PT_bake_manage(FluidSimStagePanel, bpy.types.Panel):
+    """Integrity scan, move, rename and free, for a recognized FluidSim cache."""
+
+    bl_label = "Manage Cache"
+    bl_idname = "FLUIDSIM_STAGE_PT_bake_manage"
+    bl_parent_id = "FLUIDSIM_STAGE_PT_bake"
+    bl_order = 2
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return FluidSimStagePanel.poll(context) and cache_manage_available(context)
+
+    def draw(self, context):
+        draw_cache_manage(_layout(self), context)
 
 
 STAGE_PANEL_CLASSES = (
@@ -365,7 +378,8 @@ STAGE_PANEL_CLASSES = (
     FLUIDSIM_STAGE_PT_look,
     FLUIDSIM_STAGE_PT_look_materials,
     FLUIDSIM_STAGE_PT_bake,
-    FLUIDSIM_STAGE_PT_bake_advanced,
+    FLUIDSIM_STAGE_PT_bake_storage,
+    FLUIDSIM_STAGE_PT_bake_manage,
 )
 
 

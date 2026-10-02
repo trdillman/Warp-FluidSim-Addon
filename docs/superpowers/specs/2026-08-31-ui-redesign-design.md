@@ -348,3 +348,30 @@ Each phase must pass `python -m pytest -q`, `python tools/run_production_gate.py
 - `blender/playback.py` — activity_snapshot 71-142.
 - `properties.py` — role enum 438; show_overlay def 1541; domain 764.
 - `preferences.py` — device/runtime 103-149.
+
+---
+
+## Addendum — Staged 3D View sidebar (2026-10-02)
+
+This addendum **overrides** the 3D-View and Scene-tab parts of §5.3, §5.4 and §5.5. Everything else in this spec stands.
+
+**What replaced them.** The `FluidSim` sidebar is now a task-ordered stack (`blender/ui_stages.py`):
+
+```
+3D-VIEW N-PANEL ("FluidSim")
+  FluidSim (pinned)        status, runtime, Preview / Pause / Resume / Restart, Apply Changes
+  1 · Setup                Interface, Quality, preset, Domain, voxel size, liquid sampling
+  2 · Simulate             flip_ratio, viscosity, surface tension, scene gravity, live readout
+  3 · Look                 view mode, surface, whitewater, display fraction / scale, Materials shelf
+  4 · Bake & Export        cache_path, Preview Cache, Production Bake, Export Current Frame
+      Storage & Range      compression, checkpoints, custom frame range (closed)
+      Manage Cache         integrity scan, move, rename, free (closed; only for a recognized cache)
+```
+
+**§5.3 — Scene tab trimmed.** The Properties-editor Scene tab no longer carries *Transport* or *Cache & Bake* (`FLUIDSIM_PT_scene_transport` and the five `cache_*` panels were deleted). Each control has one home: transport in the pinned strip, cache and bake in stage 4. Mixed Scene panels (domain, simulation, surface, whitewater, outputs) still repeat some stage controls, deliberately: they are the "All … Settings…" destinations and the Physics-tab mirror sources.
+
+**§5.4 — Transport.** The Start/Stop action and its state note live in the pinned strip. The note says what Preview will do ("Simulation loaded; Resume Preview continues it.", "No simulation loaded; Preview starts one.", "Another scene is using the solver.") instead of "Solver not owned by this scene". Lifecycle and Status & Runtime stay in the Scene tab as specified.
+
+**§5.5 — Live Tuning removed.** There is no Live Tuning shelf and no "Open FluidSim Scene Properties" jump; `ui_view3d.py` is gone. Its knobs are ordinary stage controls (`flip_ratio` in Simulate, `particle_display_fraction` in Look, voxel size in Setup), each drawn through the setting's effective owner. The strip binds no properties.
+
+**Consequences.** Users with no 3D View open lose in-tab transport and cache controls; the sidebar is the single path to them. Storage & Range is visible in Basic mode (it was Advanced-only) because cache storage settings are scene-level. Cache Playback is hidden until a domain exists; Storage and Manage stay reachable so an existing cache can still be freed.

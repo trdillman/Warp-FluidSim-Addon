@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib
+import importlib.util
 import json
 import os
 import sys
@@ -14,7 +15,6 @@ from types import SimpleNamespace
 import bpy
 
 EXPECTED_SCENE_ROOTS = {
-    "FLUIDSIM_PT_scene_transport": (0, False),
     "FLUIDSIM_PT_scene_lifecycle": (1, True),
     "FLUIDSIM_PT_scene_control": (2, False),
     "FLUIDSIM_PT_scene_setup": (10, False),
@@ -25,7 +25,6 @@ EXPECTED_SCENE_ROOTS = {
     "FLUIDSIM_PT_scene_surface": (60, True),
     "FLUIDSIM_PT_scene_whitewater": (70, True),
     "FLUIDSIM_PT_scene_outputs": (80, False),
-    "FLUIDSIM_PT_scene_cache": (90, True),
     "FLUIDSIM_PT_scene_diagnostics": (100, True),
 }
 EXPECTED_OBJECT_ROOTS = {
@@ -44,7 +43,6 @@ EXPECTED_EFFECT_CHILDREN = {
 }
 
 ALL_AUTHORED_SCENE_PANELS = (
-    "FLUIDSIM_PT_scene_transport",
     "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control",
     "FLUIDSIM_PT_scene_live_timeline",
@@ -81,12 +79,6 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_attrs_surface",
     "FLUIDSIM_PT_attrs_particles",
     "FLUIDSIM_PT_attrs_whitewater",
-    "FLUIDSIM_PT_scene_cache",
-    "FLUIDSIM_PT_cache_playback",
-    "FLUIDSIM_PT_cache_range",
-    "FLUIDSIM_PT_cache_storage",
-    "FLUIDSIM_PT_cache_bake",
-    "FLUIDSIM_PT_cache_manage",
     "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_diagnostics_profiling",
     "FLUIDSIM_PT_diagnostics_benchmark",
@@ -98,6 +90,22 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_viewport_status",
 )
 
+# Panels the sidebar redesign deleted outright: transport and cache now live
+# only in the pinned launcher strip and the Bake & Export stage, and the
+# Live Tuning shelf's knobs are Simulate / Look stage controls.
+REMOVED_PANEL_IDS = (
+    "FLUIDSIM_VIEW3D_PT_live_tuning",
+    "FLUIDSIM_VIEW3D_PT_full_settings",
+    "FLUIDSIM_PT_scene_transport",
+    "FLUIDSIM_PT_scene_cache",
+    "FLUIDSIM_PT_cache_playback",
+    "FLUIDSIM_PT_cache_range",
+    "FLUIDSIM_PT_cache_storage",
+    "FLUIDSIM_PT_cache_bake",
+    "FLUIDSIM_PT_cache_manage",
+    "FLUIDSIM_STAGE_PT_bake_advanced",
+)
+
 # Staged-workflow sidebar shelves: panel id -> (bl_order, bl_parent_id, closed).
 EXPECTED_STAGE_PANELS = {
     "FLUIDSIM_STAGE_PT_setup": (10, "", False),
@@ -106,7 +114,8 @@ EXPECTED_STAGE_PANELS = {
     "FLUIDSIM_STAGE_PT_look": (30, "", False),
     "FLUIDSIM_STAGE_PT_look_materials": (0, "FLUIDSIM_STAGE_PT_look", True),
     "FLUIDSIM_STAGE_PT_bake": (40, "", False),
-    "FLUIDSIM_STAGE_PT_bake_advanced": (0, "FLUIDSIM_STAGE_PT_bake", True),
+    "FLUIDSIM_STAGE_PT_bake_storage": (1, "FLUIDSIM_STAGE_PT_bake", True),
+    "FLUIDSIM_STAGE_PT_bake_manage": (2, "FLUIDSIM_STAGE_PT_bake", True),
 }
 
 OBJECT_ROLE_CASES = (
@@ -347,16 +356,11 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
     if (viewport["space"], viewport["region"]) != ("VIEW_3D", "UI"):
         raise AssertionError(f"compact viewport launcher metadata is incorrect: {viewport}")
     records["FLUIDSIM_PT_viewport_status"] = viewport
-    live_tuning = _panel_metadata("FLUIDSIM_VIEW3D_PT_live_tuning")
-    if (
-        (live_tuning["space"], live_tuning["region"])
-        != ("VIEW_3D", "UI")
-        or live_tuning["parent"] != "FLUIDSIM_PT_viewport_status"
-        or not live_tuning["closed"]
-    ):
-        raise AssertionError(
-            f"lean viewport Live Tuning shelf is incorrect: {live_tuning}")
-    records["FLUIDSIM_VIEW3D_PT_live_tuning"] = live_tuning
+    if viewport["parent"]:
+        raise AssertionError(f"viewport launcher must be a root strip: {viewport}")
+    for removed in REMOVED_PANEL_IDS:
+        if hasattr(bpy.types, removed):
+            raise AssertionError(f"deleted panel is still registered: {removed}")
     for panel_id, (order, parent, closed) in EXPECTED_STAGE_PANELS.items():
         stage = _panel_metadata(panel_id)
         if (stage["space"], stage["region"]) != ("VIEW_3D", "UI"):
@@ -436,7 +440,7 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
         "FLUIDSIM_PT_sim_surface_tension",
         "FLUIDSIM_PT_whitewater_classification",
         "FLUIDSIM_PT_output_display",
-        "FLUIDSIM_PT_cache_bake",
+        "FLUIDSIM_STAGE_PT_bake",
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_object_region",
         "FLUIDSIM_PT_object_source",
@@ -546,32 +550,30 @@ def _assert_all_authored_draws(module_name: str, work_dir: Path) -> dict[str, in
     return result
 
 
-def _assert_view3d_live_tuning(module_name: str) -> dict[str, object]:
-    """The sidebar is a lean Live Tuning shelf, not a full mirror tree (D1/D5).
+def _assert_launcher_strip(module_name: str) -> dict[str, object]:
+    """The sidebar top is a pinned status/transport strip and nothing else.
 
-    Assert the shelf draws exactly the per-iteration knobs plus the jump back to
-    the authoritative Properties workflow, and that the deleted full-mirror
-    scaffold no longer exists on the module.
+    No settings are drawn there (every knob is a stage control), the Live Tuning
+    shelf module is gone, and the status note never says "not owned".
     """
-    ui_view3d = importlib.import_module(f"{module_name}.blender.ui_view3d")
-    for removed in ("VIEW3D_SOURCE_PANELS", "_make_panel_mirror", "_mirror_id"):
-        if hasattr(ui_view3d, removed):
-            raise AssertionError(
-                f"full-mirror scaffold survived on ui_view3d: {removed}")
-    if hasattr(bpy.types, "FLUIDSIM_VIEW3D_PT_full_settings"):
-        raise AssertionError("collapsed full-settings mirror is still registered")
-
-    events = _draw("FLUIDSIM_VIEW3D_PT_live_tuning", bpy.context)
-    props = tuple(e["property"] for e in events if e["kind"] == "prop")
-    expected = tuple(ui_view3d.LIVE_TUNING_PROPS)
-    if props != expected:
-        raise AssertionError(
-            f"Live Tuning shelf knobs drifted: {props} != {expected}")
+    if importlib.util.find_spec(f"{module_name}.blender.ui_view3d") is not None:
+        raise AssertionError("the Live Tuning module blender.ui_view3d came back")
+    events = _draw("FLUIDSIM_PT_viewport_status", bpy.context)
+    props = [e["property"] for e in events if e["kind"] == "prop"]
+    if props:
+        raise AssertionError(f"launcher strip must not bind properties: {props}")
     operators = {e["operator"] for e in events if e["kind"] == "operator"}
-    if "fluidsim.open_scene_properties" not in operators:
-        raise AssertionError(
-            "Live Tuning shelf is missing the Scene Properties jump-back")
-    return {"knobs": list(props), "events": len(events)}
+    if "fluidsim.open_scene_properties" in operators:
+        raise AssertionError("launcher strip still offers the Scene Properties jump")
+    if not operators & {
+        "fluidsim.preview_start", "fluidsim.preview_pause",
+        "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
+    }:
+        raise AssertionError(f"launcher strip has no transport action: {operators}")
+    jargon = [e["text"] for e in events if e["kind"] == "label" and "not owned" in e["text"]]
+    if jargon:
+        raise AssertionError(f"launcher status note regressed to jargon: {jargon}")
+    return {"operators": sorted(operators), "events": len(events)}
 
 
 def _assert_workflow_stages(module_name: str) -> dict[str, object]:
@@ -654,21 +656,29 @@ def _assert_workflow_stages(module_name: str) -> dict[str, object]:
         if not bake_ops & {"fluidsim.bake_start", "fluidsim.bake_resume",
                            "fluidsim.bake_cancel"}:
             raise AssertionError(f"Bake stage offers no bake action: {bake_ops}")
-        bake_more = props(_draw("FLUIDSIM_STAGE_PT_bake_advanced", bpy.context))
-        missing = [n for n in ui_stages.BAKE_ADVANCED_PROPS if n not in bake_more]
+        storage = props(_draw("FLUIDSIM_STAGE_PT_bake_storage", bpy.context))
+        missing = [n for n in ui_stages.BAKE_STORAGE_PROPS if n not in storage]
         if missing:
-            raise AssertionError(f"Bake advanced shelf omitted {missing}: {bake_more}")
+            raise AssertionError(f"Bake storage shelf omitted {missing}: {storage}")
+        # Manage Cache only exists once cache_path holds a FluidSim cache; the
+        # authored-draws pass above wrote one, so the shelf must offer its actions.
+        manage_ops = operators(_draw("FLUIDSIM_STAGE_PT_bake_manage", bpy.context))
+        if not {"fluidsim.cache_integrity_scan", "fluidsim.cache_free"} <= manage_ops:
+            raise AssertionError(f"Manage Cache shelf is incomplete: {manage_ops}")
     finally:
         for name, value in saved["fs"].items():
             setattr(fs, name, value)
         for name, value in saved["ds"].items():
             setattr(ds, name, value)
 
-    # Basic mode hides the advanced shelves; no domain offers guided setup first.
+    # Basic mode hides the advanced shelf but keeps the scene-level cache shelves
+    # reachable; no domain offers guided setup first.
     fs.ui_mode = "BASIC"
-    for shelf in ("FLUIDSIM_STAGE_PT_setup_advanced", "FLUIDSIM_STAGE_PT_bake_advanced"):
-        if _panel(shelf).poll(bpy.context):
-            raise AssertionError(f"{shelf} is visible in Basic mode")
+    if _panel("FLUIDSIM_STAGE_PT_setup_advanced").poll(bpy.context):
+        raise AssertionError("FLUIDSIM_STAGE_PT_setup_advanced is visible in Basic mode")
+    for shelf in ("FLUIDSIM_STAGE_PT_bake_storage", "FLUIDSIM_STAGE_PT_bake_manage"):
+        if not _panel(shelf).poll(bpy.context):
+            raise AssertionError(f"{shelf} is hidden in Basic mode")
     fs.ui_mode = "ADVANCED"
     domain_object = fs.domain_object
     fs.domain_object = None
@@ -681,18 +691,25 @@ def _assert_workflow_stages(module_name: str) -> dict[str, object]:
         }
         empty_polls = {
             panel_id: bool(_panel(panel_id).poll(bpy.context))
-            for panel_id in (
-                "FLUIDSIM_STAGE_PT_look_materials",
-                "FLUIDSIM_STAGE_PT_bake_advanced",
-            )
+            for panel_id in ("FLUIDSIM_STAGE_PT_look_materials",)
         }
+        # An existing cache stays storable and manageable without a domain.
+        for shelf in ("FLUIDSIM_STAGE_PT_bake_storage", "FLUIDSIM_STAGE_PT_bake_manage"):
+            if not _panel(shelf).poll(bpy.context):
+                raise AssertionError(f"{shelf} is hidden without a domain")
     finally:
         fs.domain_object = domain_object
     if "fluidsim.setup_scene" not in operators(empty_setup):
         raise AssertionError("Setup stage offers no guided setup without a domain")
-    for panel_id, events in empty_staged.items():
-        if props(events) or operators(events):
-            raise AssertionError(f"{panel_id} drew controls without a domain")
+    look_events = empty_staged["FLUIDSIM_STAGE_PT_look"]
+    if props(look_events) or operators(look_events):
+        raise AssertionError("Look stage drew controls without a domain")
+    # Bake offers only the scene-level cache location (nothing can be baked yet).
+    bake_events = empty_staged["FLUIDSIM_STAGE_PT_bake"]
+    if list(props(bake_events)) != ["cache_path"] or operators(bake_events):
+        raise AssertionError(
+            "Bake stage must offer only cache_path without a domain: "
+            f"{props(bake_events)} {operators(bake_events)}")
     if any(empty_polls.values()):
         raise AssertionError(f"domain-only shelves are visible without one: {empty_polls}")
     return {
@@ -896,7 +913,6 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_live_tuning",
         *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
@@ -910,11 +926,13 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
-        "FLUIDSIM_VIEW3D_PT_live_tuning",
         *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
         _panel(panel_id)
+    for removed in REMOVED_PANEL_IDS:
+        if hasattr(bpy.types, removed):
+            raise AssertionError(f"deleted panel came back after re-register: {removed}")
     return {"unregister": "passed", "reregister": "passed"}
 
 
@@ -958,7 +976,7 @@ def main() -> None:
         report["draws"] = _assert_scene_and_object_draws(options.module)
         report["all_authored_draws"] = _assert_all_authored_draws(
             options.module, options.work_dir)
-        report["viewport_live_tuning"] = _assert_view3d_live_tuning(options.module)
+        report["viewport_launcher"] = _assert_launcher_strip(options.module)
         report["workflow_stages"] = _assert_workflow_stages(options.module)
         report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()

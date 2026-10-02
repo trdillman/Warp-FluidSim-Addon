@@ -108,10 +108,24 @@ def _class_block(source: str, class_name: str) -> str:
     return source[start:] if next_class < 0 else source[start:next_class]
 
 
+def _def_block(source: str, function_name: str) -> str:
+    """Source of one top-level function, up to the next top-level def/class."""
+    marker = f"def {function_name}("
+    start = source.index(marker)
+    ends = [
+        index
+        for index in (
+            source.find("\ndef ", start + len(marker)),
+            source.find("\nclass ", start + len(marker)),
+        )
+        if index >= 0
+    ]
+    return source[start : min(ends)] if ends else source[start:]
+
+
 def test_scene_properties_root_order_and_context_are_stable():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     roots = (
-        ("FLUIDSIM_PT_scene_transport", 0, False),
         ("FLUIDSIM_PT_scene_lifecycle", 1, True),
         ("FLUIDSIM_PT_scene_control", 2, False),
         ("FLUIDSIM_PT_scene_setup", 10, False),
@@ -121,7 +135,6 @@ def test_scene_properties_root_order_and_context_are_stable():
         ("FLUIDSIM_PT_scene_surface", 60, True),
         ("FLUIDSIM_PT_scene_whitewater", 70, True),
         ("FLUIDSIM_PT_scene_outputs", 80, False),
-        ("FLUIDSIM_PT_scene_cache", 90, True),
         ("FLUIDSIM_PT_scene_diagnostics", 100, True),
     )
     for class_name, order, closed in roots:
@@ -151,11 +164,6 @@ def test_scene_properties_children_follow_the_field_ownership_plan():
         "FLUIDSIM_PT_output_display": "FLUIDSIM_PT_scene_outputs",
         "FLUIDSIM_PT_output_materials": "FLUIDSIM_PT_scene_outputs",
         "FLUIDSIM_PT_output_attributes": "FLUIDSIM_PT_scene_outputs",
-        "FLUIDSIM_PT_cache_playback": "FLUIDSIM_PT_scene_cache",
-        "FLUIDSIM_PT_cache_range": "FLUIDSIM_PT_scene_cache",
-        "FLUIDSIM_PT_cache_storage": "FLUIDSIM_PT_scene_cache",
-        "FLUIDSIM_PT_cache_bake": "FLUIDSIM_PT_scene_cache",
-        "FLUIDSIM_PT_cache_manage": "FLUIDSIM_PT_scene_cache",
         "FLUIDSIM_PT_diagnostics_profiling": "FLUIDSIM_PT_scene_diagnostics",
         "FLUIDSIM_PT_diagnostics_benchmark": "FLUIDSIM_PT_scene_diagnostics",
         "FLUIDSIM_PT_diagnostics_report": "FLUIDSIM_PT_scene_diagnostics",
@@ -228,19 +236,21 @@ def test_root_registration_includes_scene_and_object_properties_modules():
 
 
 def test_transport_exposes_complete_state_dependent_artist_actions():
-    # After the D3 hub split the activity-aware Start/Stop primary control
-    # lives in the dedicated Transport panel; the hub is read-only status.
-    source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(source, "FLUIDSIM_PT_scene_transport")
-    assert 'state["id"] == "CACHE_PLAYBACK"' in block
-    assert 'state["id"] == "PRODUCTION_BAKE"' in block
-    assert 'getattr(fs, "live", False) and _timeline_playing(context)' in block
+    # Transport has one home: the activity-aware control in the pinned launcher
+    # strip. The Scene tab no longer repeats it.
+    source = (ROOT / "panels.py").read_text(encoding="utf-8")
+    block = _class_block(source, "FLUIDSIM_PT_viewport_status")
+    assert 'activity == "CACHE_PLAYBACK"' in block
+    assert 'activity == "PRODUCTION_BAKE"' in block
+    assert 'getattr(scene.fluidsim, "live", False)' in block
     assert 'operator("fluidsim.preview_pause", text="Pause Preview"' in block
     assert '"fluidsim.cache_preview_start"' in block
     assert '"fluidsim.preview_start"' in block
     assert '"fluidsim.restart_simulation"' in block
     assert '"fluidsim.bake_cancel"' in block
     assert 'text="Cancel Production Bake"' in block
+    scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
+    assert "FLUIDSIM_PT_scene_transport" not in scene_source
 
 
 def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
@@ -262,13 +272,13 @@ def test_cache_management_requires_a_resolved_existing_directory():
     assert "-> Path | None" in helper
     assert "if not raw:" in helper
     assert "return None" in helper
-    block = _class_block(source, "FLUIDSIM_PT_cache_manage")
+    block = _def_block(source, "cache_manage_available")
     assert "path is not None and is_managed_cache_directory(path)" in block
 
 
 def test_production_bake_panel_presents_one_cache_aware_writer_action():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(source, "FLUIDSIM_PT_cache_bake")
+    block = _def_block(source, "draw_cache_bake")
     assert "production_bake_action" in block
     assert 'presentation.action == "RESUME"' in block
     assert 'presentation.action == "RESTART"' in block
@@ -299,5 +309,8 @@ def test_height_fill_error_is_owned_once_by_session_status():
 
 def test_manage_cache_panel_requires_a_recognized_fluidsim_cache_directory():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
-    block = _class_block(source, "FLUIDSIM_PT_cache_manage")
+    block = _def_block(source, "cache_manage_available")
     assert "is_managed_cache_directory" in block
+    stages = (ROOT / "blender" / "ui_stages.py").read_text(encoding="utf-8")
+    shelf = _class_block(stages, "FLUIDSIM_STAGE_PT_bake_manage")
+    assert "cache_manage_available(context)" in shelf

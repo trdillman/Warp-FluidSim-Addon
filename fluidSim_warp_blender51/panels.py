@@ -1,4 +1,8 @@
-"""Compact 3D Viewport launcher for the FluidSim Properties workflow."""
+"""Pinned status/transport strip for the FluidSim 3D View sidebar.
+
+The workflow stages (``blender/ui_stages.py``) sit below it; settings and object
+roles are authored there and in Properties.
+"""
 
 from __future__ import annotations
 
@@ -31,8 +35,21 @@ class FLUIDSIM_OT_open_scene_properties(bpy.types.Operator):
         return {"CANCELLED"}
 
 
+def _status_note(state) -> str:
+    """One plain-language line about the solver session; empty when nothing to add."""
+    from .blender.scene_bridge import session
+
+    if state["id"] in {"PRODUCTION_BAKE", "CACHE_PLAYBACK"}:
+        return ""
+    if state["owns_scene"]:
+        return "Simulation loaded; Resume Preview continues it."
+    if session().active:
+        return "Another scene is using the solver."
+    return "No simulation loaded; Preview starts one."
+
+
 class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
-    """Status and lifecycle shortcuts; authored settings live in Properties."""
+    """Pinned status and transport strip above the workflow stages."""
 
     bl_label = "FluidSim"
     bl_idname = "FLUIDSIM_PT_viewport_status"
@@ -44,9 +61,9 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
 
         status = layout.box()
         status.label(text=state["label"], icon=state["icon"])
-        status.label(
-            text="This scene owns the solver" if state["owns_scene"] else "Solver not owned by this scene"
-        )
+        note = _status_note(state)
+        if note:
+            status.label(text=note)
 
         probe = probe_runtime()
         selected = configured_device()
@@ -95,14 +112,6 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
             box = layout.box()
             box.label(text=pending["summary"], icon="INFO")
             box.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
-
-        layout.separator()
-        layout.operator(
-            "fluidsim.open_scene_properties",
-            text="Open FluidSim Scene Properties",
-            icon="PROPERTIES",
-        )
-        layout.label(text="Object roles are configured in Object Properties.", icon="OBJECT_DATA")
 
 
 CLASSES = (

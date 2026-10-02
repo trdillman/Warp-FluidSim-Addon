@@ -65,8 +65,8 @@ def test_simulation_and_cache_panels_surface_runtime_state():
     assert 'operator("fluidsim.refresh_runtime_probe"' in scene_ui
     assert "runtime_status_for_device" in launcher
     assert "runtime_ready" in scene_ui
-    bake = scene_ui.split("class FLUIDSIM_PT_cache_bake", 1)[1].split(
-        "class FLUIDSIM_PT_cache_manage", 1
+    bake = scene_ui.split("def draw_cache_bake", 1)[1].split(
+        "def cache_manage_available", 1
     )[0]
     assert "_runtime_ui_state()" in bake
     assert "actions.enabled = runtime_ready" in bake

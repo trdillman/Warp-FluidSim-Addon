@@ -1,4 +1,9 @@
-"""Workflow-oriented FluidSim panels for Blender Scene Properties."""
+"""Workflow-oriented FluidSim panels for Blender Scene Properties.
+
+Transport (Preview/Pause/Restart) is the 3D View launcher, and Cache &
+Production Bake is the sidebar's Bake & Export stage; neither is repeated here.
+The cache draw functions below are shared with that stage.
+"""
 
 from __future__ import annotations
 
@@ -185,62 +190,6 @@ class _FluidSimSimulationPanel(FluidSimScenePanel):
         return _domain_visible(context) and _advanced_visible(context)
 
 
-class FLUIDSIM_PT_scene_transport(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Transport"
-    bl_idname = "FLUIDSIM_PT_scene_transport"
-    bl_order = 0
-
-    def draw(self, context):
-        layout = _layout(self)
-        scene = context.scene
-        state = activity_ui_state(scene)
-        _probe, _selected, runtime_ready, _message = _runtime_ui_state()
-
-        fs = scene.fluidsim
-        playing = bool(getattr(fs, "live", False) and _timeline_playing(context))
-
-        # Preview is a complete action: preparation and Blender playback are
-        # owned by the operator.  The timeline flag distinguishes a genuinely
-        # playing preview from an armed or paused session.
-        primary = layout.row(align=True)
-        primary.scale_y = 1.3
-        if state["id"] == "PRODUCTION_BAKE":
-            primary.operator(
-                "fluidsim.bake_cancel",
-                text="Cancel Production Bake",
-                icon="CANCEL",
-            )
-        elif state["id"] == "CACHE_PLAYBACK":
-            if playing:
-                primary.operator(
-                    "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
-                )
-            else:
-                primary.operator(
-                    "fluidsim.cache_preview_start",
-                    text="Resume Cache Preview",
-                    icon="PLAY",
-                )
-        elif playing:
-            primary.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
-        else:
-            primary.enabled = runtime_ready
-            primary.operator(
-                "fluidsim.preview_start",
-                text="Resume Preview" if state["owns_scene"] else "Preview",
-                icon="PLAY",
-            )
-
-        if state["owns_scene"] and state["id"] not in {
-            "CACHE_PLAYBACK", "PRODUCTION_BAKE"
-        }:
-            layout.operator(
-                "fluidsim.restart_simulation",
-                text="Restart Simulation",
-                icon="FILE_REFRESH",
-            )
-
-
 class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Lifecycle"
     bl_idname = "FLUIDSIM_PT_scene_lifecycle"
@@ -328,8 +277,8 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
 
         # Compact one-line live telemetry: last step cost, substep count, and
         # whether the CFL condition forced a clamp. Read-only status only —
-        # transport lives in FLUIDSIM_PT_scene_transport, lifecycle in
-        # FLUIDSIM_PT_scene_lifecycle.
+        # transport lives in the 3D View launcher (FLUIDSIM_PT_viewport_status),
+        # lifecycle in FLUIDSIM_PT_scene_lifecycle.
         step_ms = float(getattr(fs, "stat_step_ms", 0.0) or 0.0)
         substeps = int(getattr(fs, "stat_substeps", 0) or 0)
         cfl_clamped = bool(getattr(fs, "stat_cfl_clamped", False))
@@ -1112,147 +1061,94 @@ class FLUIDSIM_PT_attrs_whitewater(FluidSimScenePanel, bpy.types.Panel):
         _draw_attribute_group(_layout(self), _domain_owner(context), "whitewater")
 
 
-class FLUIDSIM_PT_scene_cache(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Cache & Production Bake"
-    bl_idname = "FLUIDSIM_PT_scene_cache"
-    bl_order = 90
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "cache_path")
-
-
-class FLUIDSIM_PT_cache_playback(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Playback"
-    bl_idname = "FLUIDSIM_PT_cache_playback"
-    bl_parent_id = "FLUIDSIM_PT_scene_cache"
-
-    def draw(self, context):
-        layout = _layout(self)
-        state = activity_ui_state(context.scene)
-        if state["id"] == "CACHE_PLAYBACK":
-            playing = bool(
-                getattr(context.scene.fluidsim, "live", False)
-                and _timeline_playing(context)
+# Cache & Production Bake lives in the 3D View sidebar's Bake & Export stage
+# (ui_stages.py), which calls these draw functions. They stay here because they
+# share this module's runtime/cache helpers and the test seams that patch them.
+def draw_cache_playback(layout, context):
+    """Preview-from-cache action; never allocates the solver."""
+    state = activity_ui_state(context.scene)
+    if state["id"] == "CACHE_PLAYBACK":
+        playing = bool(
+            getattr(context.scene.fluidsim, "live", False)
+            and _timeline_playing(context)
+        )
+        if playing:
+            layout.operator(
+                "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
             )
-            if playing:
-                layout.operator(
-                    "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
-                )
-            else:
-                layout.operator(
-                    "fluidsim.cache_preview_start",
-                    text="Resume Cache Preview",
-                    icon="PLAY",
-                )
         else:
-            layout.operator("fluidsim.cache_preview_start", text="Preview Cache", icon="PLAY")
-        layout.label(text="Cache playback does not allocate the solver.", icon="INFO")
+            layout.operator(
+                "fluidsim.cache_preview_start",
+                text="Resume Cache Preview",
+                icon="PLAY",
+            )
+    else:
+        layout.operator("fluidsim.cache_preview_start", text="Preview Cache", icon="PLAY")
+    layout.label(text="Cache playback does not allocate the solver.", icon="INFO")
 
 
-class FLUIDSIM_PT_cache_range(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Shared Playback / Export Range"
-    bl_idname = "FLUIDSIM_PT_cache_range"
-    bl_parent_id = "FLUIDSIM_PT_scene_cache"
+def draw_cache_bake(layout, context):
+    """Production Bake range, progress and the one cache-aware start/resume/cancel action."""
+    fs = context.scene.fluidsim
+    row = layout.row(align=True)
+    row.prop(fs, "bake_start")
+    row.prop(fs, "bake_end")
+    active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
+    layout.prop(fs, "bake_progress", text=fs.bake_status.title(), slider=True)
+    if fs.bake_message:
+        _draw_wrapped(layout, fs.bake_message, icon="INFO")
+    actions = layout.row(align=True)
+    if active:
+        actions.operator("fluidsim.bake_cancel", text="Cancel Bake", icon="CANCEL")
+    else:
+        from .ui_cache_state import production_bake_action
 
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        layout.prop(fs, "cache_use_custom_range")
-        if fs.cache_use_custom_range:
-            row = layout.row(align=True)
-            row.prop(fs, "cache_frame_start")
-            row.prop(fs, "cache_frame_end")
-
-
-class FLUIDSIM_PT_cache_storage(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Storage"
-    bl_idname = "FLUIDSIM_PT_cache_storage"
-    bl_parent_id = "FLUIDSIM_PT_scene_cache"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        layout.prop(fs, "cache_compress")
-        layout.prop(fs, "checkpoint_interval")
-
-
-class FLUIDSIM_PT_cache_bake(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Production Bake"
-    bl_idname = "FLUIDSIM_PT_cache_bake"
-    bl_parent_id = "FLUIDSIM_PT_scene_cache"
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = context.scene.fluidsim
-        row = layout.row(align=True)
-        row.prop(fs, "bake_start")
-        row.prop(fs, "bake_end")
-        active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
-        layout.prop(fs, "bake_progress", text=fs.bake_status.title(), slider=True)
-        if fs.bake_message:
-            _draw_wrapped(layout, fs.bake_message, icon="INFO")
-        actions = layout.row(align=True)
-        if active:
-            actions.operator("fluidsim.bake_cancel", text="Cancel Bake", icon="CANCEL")
+        presentation = production_bake_action(_cache_directory(context.scene))
+        if presentation.action != "START":
+            _draw_wrapped(layout, presentation.message, icon="INFO")
+        _probe, _selected, runtime_ready, _runtime_message = _runtime_ui_state()
+        actions.enabled = runtime_ready
+        if presentation.action == "RESUME":
+            actions.operator(
+                "fluidsim.bake_resume",
+                text="Resume Verified Bake",
+                icon="RECOVER_LAST",
+            )
         else:
-            from .ui_cache_state import production_bake_action
-
-            presentation = production_bake_action(_cache_directory(context.scene))
-            if presentation.action != "START":
-                _draw_wrapped(layout, presentation.message, icon="INFO")
-            _probe, _selected, runtime_ready, _runtime_message = _runtime_ui_state()
-            actions.enabled = runtime_ready
-            if presentation.action == "RESUME":
-                actions.operator(
-                    "fluidsim.bake_resume",
-                    text="Resume Verified Bake",
-                    icon="RECOVER_LAST",
-                )
-            else:
-                label = (
-                    "Restart Production Bake…"
-                    if presentation.action == "RESTART"
-                    else "Start Production Bake"
-                )
-                icon = "FILE_REFRESH" if presentation.destructive else "PLAY"
-                start = actions.operator("fluidsim.bake_start", text=label, icon=icon)
-                start.restart_existing = presentation.destructive
-        if _advanced_visible(context):
-            layout.operator("fluidsim.copy_bake_command", text="Copy Headless Bake Command", icon="COPYDOWN")
+            label = (
+                "Restart Production Bake…"
+                if presentation.action == "RESTART"
+                else "Start Production Bake"
+            )
+            icon = "FILE_REFRESH" if presentation.destructive else "PLAY"
+            start = actions.operator("fluidsim.bake_start", text=label, icon=icon)
+            start.restart_existing = presentation.destructive
+    if _advanced_visible(context):
+        layout.operator("fluidsim.copy_bake_command", text="Copy Headless Bake Command", icon="COPYDOWN")
 
 
-class FLUIDSIM_PT_cache_manage(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Manage Cache"
-    bl_idname = "FLUIDSIM_PT_cache_manage"
-    bl_parent_id = "FLUIDSIM_PT_scene_cache"
-    bl_options = {"DEFAULT_CLOSED"}
+def cache_manage_available(context) -> bool:
+    """True when ``cache_path`` already holds a recognized FluidSim cache."""
+    from .cache_manager import is_managed_cache_directory
 
-    @classmethod
-    def poll(cls, context):
-        if not FluidSimScenePanel.poll(context):
-            return False
-        from .cache_manager import is_managed_cache_directory
+    path = _cache_directory(getattr(context, "scene", None))
+    return path is not None and is_managed_cache_directory(path)
 
-        path = _cache_directory(context.scene)
-        return path is not None and is_managed_cache_directory(path)
 
-    def draw(self, context):
-        layout = _layout(self)
-        path = _cache_directory(context.scene)
-        if path is None:
-            return
-        layout.label(text=str(path), icon="FILE_FOLDER")
-        row = layout.row(align=True)
-        row.operator("fluidsim.cache_integrity_scan", text="Scan Integrity", icon="CHECKMARK")
-        row.operator("fluidsim.cache_remove_orphans", text="Inspect & Remove Orphans…", icon="TRASH")
-        row = layout.row(align=True)
-        row.operator("fluidsim.cache_move", text="Move Cache…", icon="FILE_PARENT")
-        row.operator("fluidsim.cache_rename", text="Rename Cache…", icon="GREASEPENCIL")
-        row.operator("fluidsim.cache_open_folder", text="Open Cache Folder", icon="FILE_FOLDER")
-        layout.operator("fluidsim.cache_free", text="Free Entire Cache…", icon="TRASH")
+def draw_cache_manage(layout, context):
+    """Integrity scan, move/rename/free and open-folder actions for the cache."""
+    path = _cache_directory(context.scene)
+    if path is None:
+        return
+    layout.label(text=str(path), icon="FILE_FOLDER")
+    row = layout.row(align=True)
+    row.operator("fluidsim.cache_integrity_scan", text="Scan Integrity", icon="CHECKMARK")
+    row.operator("fluidsim.cache_remove_orphans", text="Inspect & Remove Orphans…", icon="TRASH")
+    row = layout.row(align=True)
+    row.operator("fluidsim.cache_move", text="Move Cache…", icon="FILE_PARENT")
+    row.operator("fluidsim.cache_rename", text="Rename Cache…", icon="GREASEPENCIL")
+    row.operator("fluidsim.cache_open_folder", text="Open Cache Folder", icon="FILE_FOLDER")
+    layout.operator("fluidsim.cache_free", text="Free Entire Cache…", icon="TRASH")
 
 
 class FLUIDSIM_PT_scene_diagnostics(FluidSimScenePanel, bpy.types.Panel):
@@ -1407,7 +1303,6 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
 
 
 SCENE_PANEL_CLASSES = (
-    FLUIDSIM_PT_scene_transport,
     FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
     FLUIDSIM_PT_scene_pending,
@@ -1446,12 +1341,6 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_attrs_surface,
     FLUIDSIM_PT_attrs_particles,
     FLUIDSIM_PT_attrs_whitewater,
-    FLUIDSIM_PT_scene_cache,
-    FLUIDSIM_PT_cache_playback,
-    FLUIDSIM_PT_cache_range,
-    FLUIDSIM_PT_cache_storage,
-    FLUIDSIM_PT_cache_bake,
-    FLUIDSIM_PT_cache_manage,
     FLUIDSIM_PT_scene_diagnostics,
     FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_diagnostics_profiling,

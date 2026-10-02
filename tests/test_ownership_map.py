@@ -244,3 +244,21 @@ def test_mirror_redirect_inventory_is_recorded():
     assert "## Mirror redirection" in text
     assert re.search(r"`owner_redirect=True` \(\d+ source panels\)", text)
     assert re.search(r"Mirrored \*\*without\*\* redirect \(\d+\)", text)
+
+
+def test_stage_helper_writes_count_as_ui_writes():
+    """The Bake/Setup/Simulate/Look stages draw through ``_prop`` and must be seen.
+
+    ``_prop(layout, scene, "field")`` draws ``setting_owner(scene, "field")``.
+    The generator binds that write to the field's declared effective owner;
+    before it did, removing the Scene-tab cache panels left six cache fields
+    looking as if no panel could edit them.
+    """
+    rows = _parse_map_rows()
+    for field in (
+        "cache_path", "cache_compress", "cache_use_custom_range",
+        "cache_frame_start", "cache_frame_end", "checkpoint_interval",
+    ):
+        assert rows[field]["UI writes"] == "scene", field
+    assert rows["flip_ratio"]["UI writes"] == "domain"
+    assert rows["export_attributes"]["UI writes"] == "domain"
