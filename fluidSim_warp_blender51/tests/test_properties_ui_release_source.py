@@ -18,6 +18,10 @@ def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
         "FLUIDSIM_VIEW3D_PT_live_tuning",
+        "FLUIDSIM_STAGE_PT_setup",
+        "FLUIDSIM_STAGE_PT_simulate",
+        "EXPECTED_STAGE_PANELS",
+        "_assert_workflow_stages",
         "FLUIDSIM_PT_physics_root",
         "FLUIDSIM_OT_use_active_as_domain",
         "FLUIDSIM_OT_remove_selected_output",
@@ -40,6 +44,7 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         'extension_root / "blender" / "ui_object.py"',
         'extension_root / "blender" / "ui_physics.py"',
         'extension_root / "blender" / "ui_view3d.py"',
+        'extension_root / "blender" / "ui_stages.py"',
     ):
         assert path in source
     for panel_id in (
@@ -51,6 +56,9 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         "FLUIDSIM_PT_effect_warp_code",
         "FLUIDSIM_PT_viewport_status",
         "FLUIDSIM_VIEW3D_PT_live_tuning",
+        "FLUIDSIM_STAGE_PT_setup",
+        "FLUIDSIM_STAGE_PT_setup_advanced",
+        "FLUIDSIM_STAGE_PT_simulate",
         "FLUIDSIM_PT_physics_root",
         "FLUIDSIM_PT_physics_surface_output",
     ):

@@ -2027,6 +2027,161 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
     ), "Live Tuning must offer a jump back to the full Properties workflow"
 
 
+def _stage_context(*, with_domain=True, ui_mode="ADVANCED", **domain_overrides):
+    """Scene/domain doubles carrying only each group's own fields."""
+    domain_settings = SimpleNamespace(
+        sample_type="FLIP",
+        voxel_size=0.037,
+        particles_per_voxel=8,
+        max_particles=1_000_000,
+        auto_grow_particles=False,
+        topology_expand=False,
+        open_boundaries=False,
+        flip_ratio=0.97,
+        viscosity_enabled=False,
+        viscosity_from_particles=False,
+        viscosity_constant=1.0,
+        surface_tension_enabled=False,
+        surface_tension_coefficient=0.07,
+        use_scene_gravity=True,
+        gravity=(0.0, 0.0, -9.81),
+    )
+    for name, value in domain_overrides.items():
+        setattr(domain_settings, name, value)
+    scene_settings = SimpleNamespace(
+        schema_version=1,
+        ui_mode=ui_mode,
+        quality="BALANCED",
+        product_preset="",
+        domain_object=None,
+        stat_step_ms=1.0,
+        stat_substeps=2,
+        stat_particles=3,
+        stat_voxels=4,
+        stat_cfl_clamped=0,
+    )
+    domain_obj = SimpleNamespace(
+        fluidsim=SimpleNamespace(role="NONE"),
+        fluidsim_domain=domain_settings,
+        get=lambda _key, default=None: default,
+    )
+    if with_domain:
+        scene_settings.domain_object = domain_obj
+    scene = SimpleNamespace(fluidsim=scene_settings)
+    context = SimpleNamespace(scene=scene, object=domain_obj)
+    return context, scene_settings, domain_settings
+
+
+def _draw_stage(panel_cls, context):
+    panel = panel_cls()
+    panel.layout = _Layout()
+    panel.draw(context)
+    return panel.layout
+
+
+def test_workflow_stage_panels_bind_each_control_to_its_owner(monkeypatch):
+    """Setup/Simulate shelves edit the group the solver reads, not a stale copy."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    classes = ui_stages.STAGE_PANEL_CLASSES
+    assert len({cls.bl_idname for cls in classes}) == len(classes)
+    for cls in classes:
+        assert cls.bl_space_type == "VIEW_3D"
+        assert cls.bl_region_type == "UI"
+        assert cls.bl_category == "FluidSim"
+    assert ui_stages.FLUIDSIM_STAGE_PT_setup.bl_order < (
+        ui_stages.FLUIDSIM_STAGE_PT_simulate.bl_order
+    )
+
+    context, scene_settings, domain_settings = _stage_context(
+        viscosity_enabled=True,
+        surface_tension_enabled=True,
+        use_scene_gravity=False,
+    )
+
+    setup = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_setup, context)
+    drawn = {call["name"]: call["data"] for call in setup.prop_calls}
+    for name in ("ui_mode", "quality", "product_preset", "domain_object"):
+        assert drawn[name] is scene_settings, name
+    for name in ui_stages.SETUP_DOMAIN_PROPS:
+        assert drawn[name] is domain_settings, name
+    assert any(op["id"] == "fluidsim.apply_product_preset" for op in setup.operators)
+    assert not any(op["id"] == "fluidsim.setup_scene" for op in setup.operators), (
+        "guided setup is the empty-scene first step, not a standing button"
+    )
+
+    simulate = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    drawn = {call["name"]: call["data"] for call in simulate.prop_calls}
+    assert set(drawn) == set(ui_stages.SIMULATE_PROPS)
+    assert all(data is domain_settings for data in drawn.values())
+    assert any(
+        op["id"] == "fluidsim.open_scene_properties" for op in simulate.operators
+    )
+
+
+def test_workflow_stage_simulate_hides_inactive_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    context, _scene, _domain = _stage_context(sample_type="PIC")
+    drawn = set(
+        _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props
+    )
+    assert drawn == {
+        "viscosity_enabled",
+        "surface_tension_enabled",
+        "use_scene_gravity",
+    }
+
+    context, _scene, _domain = _stage_context(
+        viscosity_enabled=True, viscosity_from_particles=True
+    )
+    drawn = set(
+        _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props
+    )
+    assert "viscosity_enabled" in drawn
+    assert "viscosity_constant" not in drawn
+
+
+def test_workflow_stages_without_a_domain_lead_with_guided_setup(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context(with_domain=False)
+
+    setup = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_setup, context)
+    assert [op["id"] for op in setup.operators].count("fluidsim.setup_scene") == 2
+    assert not set(ui_stages.SETUP_DOMAIN_PROPS) & set(setup.props)
+    assert "domain_object" not in setup.props
+
+    simulate = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    assert not simulate.props
+    assert any("domain" in label["text"].lower() for label in simulate.labels)
+
+
+def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    shelf = ui_stages.FLUIDSIM_STAGE_PT_setup_advanced
+    assert shelf.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_setup.bl_idname
+    assert "DEFAULT_CLOSED" in shelf.bl_options
+
+    advanced, scene_settings, domain_settings = _stage_context()
+    assert shelf.poll(advanced)
+    basic, _scene, _domain = _stage_context(ui_mode="BASIC")
+    assert not shelf.poll(basic)
+
+    layout = _draw_stage(shelf, advanced)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == {
+        "max_particles",
+        "auto_grow_particles",
+        "topology_expand",
+        "open_boundaries",
+    }
+    assert all(data is domain_settings for data in drawn.values())
+
+
 def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
     _install_bpy_stub(monkeypatch)
     from pathlib import Path

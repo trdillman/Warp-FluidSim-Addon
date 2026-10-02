@@ -113,6 +113,7 @@ def _assert_packaged_entry_points(extension_root: Path) -> None:
         extension_root / "blender" / "ui_object.py",
         extension_root / "blender" / "ui_physics.py",
         extension_root / "blender" / "ui_view3d.py",
+        extension_root / "blender" / "ui_stages.py",
         extension_root / "presets" / "schema.py",
         extension_root / "resources" / "presets" / "preview_water.json",
         extension_root / "resources" / "presets" / "water_surface_tension.json",
@@ -457,6 +458,9 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_PT_effect_warp_code": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_viewport_status": ("VIEW_3D", ""),
         "FLUIDSIM_VIEW3D_PT_live_tuning": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_setup": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_setup_advanced": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_simulate": ("VIEW_3D", ""),
         "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }

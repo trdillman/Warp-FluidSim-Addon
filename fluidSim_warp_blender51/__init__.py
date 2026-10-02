@@ -22,6 +22,7 @@ def register():
         ui_object,
         ui_physics,
         ui_scene,
+        ui_stages,
         ui_view3d,
         viewport_overlay,
     )
@@ -44,6 +45,7 @@ def register():
         ("Warp Code workspace", effect_workspace.register, effect_workspace.unregister),
         ("Physics Properties UI", ui_physics.register, ui_physics.unregister),
         ("viewport Live Tuning shelf", ui_view3d.register, ui_view3d.unregister),
+        ("viewport workflow stages", ui_stages.register, ui_stages.unregister),
         ("Add-menu domain entry", menus.register, menus.unregister),
         ("source migration handlers", sources.register_handlers,
          sources.unregister_handlers),
@@ -90,6 +92,7 @@ def unregister():
         ("pre-1.1 file check", "blender.file_compat", "unregister_handlers"),
         ("source migration handlers", "blender.sources", "unregister_handlers"),
         ("Add-menu domain entry", "blender.menus", "unregister"),
+        ("viewport workflow stages", "blender.ui_stages", "unregister"),
         ("viewport Live Tuning shelf", "blender.ui_view3d", "unregister"),
         ("Physics Properties UI", "blender.ui_physics", "unregister"),
         ("Warp Code workspace", "blender.effect_workspace", "unregister"),

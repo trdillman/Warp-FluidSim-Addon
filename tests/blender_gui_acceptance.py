@@ -51,6 +51,8 @@ PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
 PANEL_IDS = [
     "FLUIDSIM_PT_viewport_status",
     "FLUIDSIM_VIEW3D_PT_live_tuning",
+    "FLUIDSIM_STAGE_PT_setup", "FLUIDSIM_STAGE_PT_setup_advanced",
+    "FLUIDSIM_STAGE_PT_simulate",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
     "FLUIDSIM_PT_scene_transport", "FLUIDSIM_PT_scene_lifecycle",

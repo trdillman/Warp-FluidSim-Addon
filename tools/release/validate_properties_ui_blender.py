@@ -98,6 +98,13 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_viewport_status",
 )
 
+# Staged-workflow sidebar shelves: panel id -> (bl_order, bl_parent_id, closed).
+EXPECTED_STAGE_PANELS = {
+    "FLUIDSIM_STAGE_PT_setup": (10, "", False),
+    "FLUIDSIM_STAGE_PT_setup_advanced": (0, "FLUIDSIM_STAGE_PT_setup", True),
+    "FLUIDSIM_STAGE_PT_simulate": (20, "", False),
+}
+
 OBJECT_ROLE_CASES = (
     ("SOURCE_ANALYTIC", "SOURCE", "source_region_kind", "ANALYTIC"),
     ("SOURCE_MESH_SHELL", "SOURCE", "source_region_kind", "MESH_SHELL"),
@@ -346,6 +353,17 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
         raise AssertionError(
             f"lean viewport Live Tuning shelf is incorrect: {live_tuning}")
     records["FLUIDSIM_VIEW3D_PT_live_tuning"] = live_tuning
+    for panel_id, (order, parent, closed) in EXPECTED_STAGE_PANELS.items():
+        stage = _panel_metadata(panel_id)
+        if (stage["space"], stage["region"]) != ("VIEW_3D", "UI"):
+            raise AssertionError(f"{panel_id} is not a 3D View sidebar panel: {stage}")
+        if str(getattr(_panel(panel_id), "bl_category", "")) != "FluidSim":
+            raise AssertionError(f"{panel_id} is not in the FluidSim sidebar tab")
+        if (stage["parent"], stage["closed"]) != (parent, closed) or (
+            not parent and stage["order"] != order
+        ):
+            raise AssertionError(f"{panel_id} order/parent/default state mismatch: {stage}")
+        records[panel_id] = stage
     physics_root = _panel_metadata("FLUIDSIM_PT_physics_root")
     if (
         physics_root["space"],
@@ -552,6 +570,67 @@ def _assert_view3d_live_tuning(module_name: str) -> dict[str, object]:
     return {"knobs": list(props), "events": len(events)}
 
 
+def _assert_workflow_stages(module_name: str) -> dict[str, object]:
+    """The staged sidebar draws its pinned controls with and without a domain."""
+    ui_stages = importlib.import_module(f"{module_name}.blender.ui_stages")
+    fs = bpy.context.scene.fluidsim
+    ds = _ensure_domain()
+    fs.ui_mode = "ADVANCED"
+    # Every conditional control open, so the whole pinned set must be drawn.
+    ds.sample_type = "FLIP"
+    ds.viscosity_enabled = True
+    ds.viscosity_from_particles = False
+    ds.surface_tension_enabled = True
+    ds.use_scene_gravity = False
+
+    def props(events):
+        return [e["property"] for e in events if e["kind"] == "prop"]
+
+    def operators(events):
+        return {e["operator"] for e in events if e["kind"] == "operator"}
+
+    setup = _draw("FLUIDSIM_STAGE_PT_setup", bpy.context)
+    setup_props = props(setup)
+    for name in ("ui_mode", "quality", "product_preset", "domain_object",
+                 *ui_stages.SETUP_DOMAIN_PROPS):
+        if name not in setup_props:
+            raise AssertionError(f"Setup stage omitted {name}: {setup_props}")
+    if "fluidsim.apply_product_preset" not in operators(setup):
+        raise AssertionError("Setup stage is missing the preset Apply button")
+
+    more = props(_draw("FLUIDSIM_STAGE_PT_setup_advanced", bpy.context))
+    if "max_particles" not in more:
+        raise AssertionError(f"Setup advanced shelf omitted max_particles: {more}")
+
+    simulate = _draw("FLUIDSIM_STAGE_PT_simulate", bpy.context)
+    simulate_props = props(simulate)
+    missing = [name for name in ui_stages.SIMULATE_PROPS if name not in simulate_props]
+    if missing:
+        raise AssertionError(f"Simulate stage omitted {missing}: {simulate_props}")
+    if "fluidsim.open_scene_properties" not in operators(simulate):
+        raise AssertionError("Simulate stage is missing the Scene Properties jump-back")
+
+    # Basic mode hides the advanced shelf; no domain offers guided setup first.
+    fs.ui_mode = "BASIC"
+    if _panel("FLUIDSIM_STAGE_PT_setup_advanced").poll(bpy.context):
+        raise AssertionError("Setup advanced shelf is visible in Basic mode")
+    fs.ui_mode = "ADVANCED"
+    domain_object = fs.domain_object
+    fs.domain_object = None
+    try:
+        empty_setup = _draw("FLUIDSIM_STAGE_PT_setup", bpy.context)
+        _draw("FLUIDSIM_STAGE_PT_simulate", bpy.context)
+    finally:
+        fs.domain_object = domain_object
+    if "fluidsim.setup_scene" not in operators(empty_setup):
+        raise AssertionError("Setup stage offers no guided setup without a domain")
+    return {
+        "setup": setup_props,
+        "simulate": simulate_props,
+        "empty_setup_operators": sorted(operators(empty_setup)),
+    }
+
+
 def _activate_object(obj) -> None:
     bpy.ops.object.select_all(action="DESELECT")
     obj.hide_set(False)
@@ -745,6 +824,7 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
         "FLUIDSIM_VIEW3D_PT_live_tuning",
+        *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
         if hasattr(bpy.types, panel_id):
@@ -758,6 +838,7 @@ def _assert_registration_cycle(extension) -> dict[str, object]:
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_viewport_status",
         "FLUIDSIM_VIEW3D_PT_live_tuning",
+        *EXPECTED_STAGE_PANELS,
         "FLUIDSIM_PT_physics_root",
     ):
         _panel(panel_id)
@@ -805,6 +886,7 @@ def main() -> None:
         report["all_authored_draws"] = _assert_all_authored_draws(
             options.module, options.work_dir)
         report["viewport_live_tuning"] = _assert_view3d_live_tuning(options.module)
+        report["workflow_stages"] = _assert_workflow_stages(options.module)
         report["physics_context"] = _assert_physics_context(options.module)
         report["role_matrix"] = _assert_object_role_matrix()
         report["field_payload_coherence"] = _assert_field_payload_coherence()
