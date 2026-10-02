@@ -461,6 +461,10 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_STAGE_PT_setup": ("VIEW_3D", ""),
         "FLUIDSIM_STAGE_PT_setup_advanced": ("VIEW_3D", ""),
         "FLUIDSIM_STAGE_PT_simulate": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_look": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_look_materials": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_bake": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_bake_advanced": ("VIEW_3D", ""),
         "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }

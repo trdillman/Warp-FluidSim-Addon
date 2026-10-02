@@ -53,6 +53,8 @@ PANEL_IDS = [
     "FLUIDSIM_VIEW3D_PT_live_tuning",
     "FLUIDSIM_STAGE_PT_setup", "FLUIDSIM_STAGE_PT_setup_advanced",
     "FLUIDSIM_STAGE_PT_simulate",
+    "FLUIDSIM_STAGE_PT_look", "FLUIDSIM_STAGE_PT_look_materials",
+    "FLUIDSIM_STAGE_PT_bake", "FLUIDSIM_STAGE_PT_bake_advanced",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
     "FLUIDSIM_PT_scene_transport", "FLUIDSIM_PT_scene_lifecycle",

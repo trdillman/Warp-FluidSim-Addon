@@ -1,4 +1,4 @@
-"""Staged workflow shelves for the 3D View sidebar: Setup, then Simulate.
+"""Staged workflow shelves for the 3D View sidebar: Setup, Simulate, Look, Bake.
 
 The compact status launcher (``FLUIDSIM_PT_viewport_status``) stays pinned at
 the top of the FluidSim tab with Preview/Pause and Apply Changes. Below it, one
@@ -10,6 +10,10 @@ existing Scene Properties panels; nothing is duplicated into a deep sidebar tree
 Every control is bound to the group that actually owns it
 (:func:`~.pending_settings.setting_owner`), the same rule the Live Tuning shelf
 follows, so an edit made here is the value the solver reads.
+
+The Bake stage draws the Scene tab's own Playback and Production Bake panels
+through their ``draw`` methods instead of restating the bake state machine
+(start / resume / restart / cancel), so the two surfaces cannot drift apart.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from .ui_common import (
     draw_property,
     draw_readout_grid,
 )
+from .ui_scene import FLUIDSIM_PT_cache_bake, FLUIDSIM_PT_cache_playback
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
@@ -44,6 +49,30 @@ SIMULATE_READOUTS = (
     ("stat_voxels", "Voxels"),
     ("stat_cfl_clamped", "CFL clamped"),
 )
+LOOK_PROPS = (
+    "liquid_view_mode",
+    "surface_enabled",
+    "surface_smooth_iterations",
+    "particle_display_fraction",
+    "particle_display_scale",
+    "whitewater_enabled",
+    "ww_emission_rate",
+    "show_whitewater",
+    "show_overlay",
+)
+LOOK_MATERIAL_PROPS = ("surface_material", "particle_material", "whitewater_material")
+BAKE_PROPS = ("cache_path", "export_attributes")
+# Drawn by the delegated Production Bake panel; pinned so a rename there is caught.
+BAKE_DELEGATED_PROPS = ("bake_start", "bake_end")
+BAKE_ADVANCED_PROPS = (
+    "cache_compress",
+    "checkpoint_interval",
+    "cache_use_custom_range",
+    "cache_frame_start",
+    "cache_frame_end",
+)
+_SURFACE_VIEW_MODES = frozenset({"SURFACE", "SURFACE_PARTICLES"})
+_PARTICLE_VIEW_MODES = frozenset({"PARTICLES", "SURFACE_PARTICLES"})
 
 
 class FluidSimStagePanel(FluidSimView3DPanel):
@@ -195,10 +224,148 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
+class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
+    """Stage 3: what the viewport shows, and which surfaces the solver builds."""
+
+    bl_label = "3 · Look"
+    bl_idname = "FLUIDSIM_STAGE_PT_look"
+    bl_order = 30
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        fs = scene.fluidsim
+        domain = active_domain_settings(scene)
+        if domain is None:
+            layout.label(text="Set up a liquid domain first.", icon="INFO")
+            return
+
+        _prop(layout, scene, "liquid_view_mode")
+
+        surface = layout.column(align=True)
+        _prop(surface, scene, "surface_enabled")
+        if domain.surface_enabled:
+            _prop(surface, scene, "surface_smooth_iterations", text="Smoothing")
+
+        if fs.liquid_view_mode in _PARTICLE_VIEW_MODES:
+            particles = layout.column(align=True)
+            _prop(particles, scene, "particle_display_fraction")
+            _prop(particles, scene, "particle_display_scale")
+
+        whitewater = layout.column(align=True)
+        _prop(whitewater, scene, "whitewater_enabled")
+        if domain.whitewater_enabled:
+            _prop(whitewater, scene, "ww_emission_rate", text="Amount")
+            _prop(whitewater, scene, "show_whitewater")
+
+        _prop(layout, scene, "show_overlay", text="Viewport HUD")
+
+
+class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
+    """Material pickers for the outputs the current view actually produces."""
+
+    bl_label = "Materials"
+    bl_idname = "FLUIDSIM_STAGE_PT_look_materials"
+    bl_parent_id = "FLUIDSIM_STAGE_PT_look"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            FluidSimStagePanel.poll(context)
+            and active_domain_settings(context.scene) is not None
+        )
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        fs = scene.fluidsim
+        domain = active_domain_settings(scene)
+        if fs.liquid_view_mode in _SURFACE_VIEW_MODES:
+            _prop(layout, scene, "surface_material")
+        if fs.liquid_view_mode in _PARTICLE_VIEW_MODES:
+            _prop(layout, scene, "particle_material")
+        if domain is not None and domain.whitewater_enabled:
+            _prop(layout, scene, "whitewater_material")
+        layout.operator(
+            "fluidsim.open_scene_properties",
+            text="All Output Settings…",
+            icon="PROPERTIES",
+        )
+
+
+class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
+    """Stage 4: bake the cache, play it back, and export from it."""
+
+    bl_label = "4 · Bake & Export"
+    bl_idname = "FLUIDSIM_STAGE_PT_bake"
+    bl_order = 40
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        if active_domain_settings(scene) is None:
+            layout.label(text="Set up a liquid domain first.", icon="INFO")
+            return
+
+        _prop(layout, scene, "cache_path")
+        _prop(layout, scene, "export_attributes")
+
+        # The Scene tab's own drawing: the bake state machine (start / resume /
+        # restart / cancel, progress, runtime readiness) lives in one place.
+        layout.separator()
+        FLUIDSIM_PT_cache_playback.draw(self, context)
+        layout.separator()
+        FLUIDSIM_PT_cache_bake.draw(self, context)
+
+        layout.separator()
+        layout.operator(
+            "fluidsim.export_frame", text="Export Current Frame…", icon="EXPORT"
+        )
+
+
+class FLUIDSIM_STAGE_PT_bake_advanced(FluidSimStagePanel, bpy.types.Panel):
+    """Storage and frame-range controls, shown only in the Advanced interface."""
+
+    bl_label = "Storage & Range"
+    bl_idname = "FLUIDSIM_STAGE_PT_bake_advanced"
+    bl_parent_id = "FLUIDSIM_STAGE_PT_bake"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            FluidSimStagePanel.poll(context)
+            and _is_advanced(context.scene)
+            and active_domain_settings(context.scene) is not None
+        )
+
+    def draw(self, context):
+        layout = _layout(self)
+        scene = context.scene
+        fs = scene.fluidsim
+        _prop(layout, scene, "cache_compress")
+        _prop(layout, scene, "checkpoint_interval")
+        _prop(layout, scene, "cache_use_custom_range")
+        if fs.cache_use_custom_range:
+            row = layout.row(align=True)
+            _prop(row, scene, "cache_frame_start")
+            _prop(row, scene, "cache_frame_end")
+        layout.operator(
+            "fluidsim.open_scene_properties",
+            text="All Cache Settings…",
+            icon="PROPERTIES",
+        )
+
+
 STAGE_PANEL_CLASSES = (
     FLUIDSIM_STAGE_PT_setup,
     FLUIDSIM_STAGE_PT_setup_advanced,
     FLUIDSIM_STAGE_PT_simulate,
+    FLUIDSIM_STAGE_PT_look,
+    FLUIDSIM_STAGE_PT_look_materials,
+    FLUIDSIM_STAGE_PT_bake,
+    FLUIDSIM_STAGE_PT_bake_advanced,
 )
 
 

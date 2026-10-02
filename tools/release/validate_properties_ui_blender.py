@@ -103,6 +103,10 @@ EXPECTED_STAGE_PANELS = {
     "FLUIDSIM_STAGE_PT_setup": (10, "", False),
     "FLUIDSIM_STAGE_PT_setup_advanced": (0, "FLUIDSIM_STAGE_PT_setup", True),
     "FLUIDSIM_STAGE_PT_simulate": (20, "", False),
+    "FLUIDSIM_STAGE_PT_look": (30, "", False),
+    "FLUIDSIM_STAGE_PT_look_materials": (0, "FLUIDSIM_STAGE_PT_look", True),
+    "FLUIDSIM_STAGE_PT_bake": (40, "", False),
+    "FLUIDSIM_STAGE_PT_bake_advanced": (0, "FLUIDSIM_STAGE_PT_bake", True),
 }
 
 OBJECT_ROLE_CASES = (
@@ -610,23 +614,92 @@ def _assert_workflow_stages(module_name: str) -> dict[str, object]:
     if "fluidsim.open_scene_properties" not in operators(simulate):
         raise AssertionError("Simulate stage is missing the Scene Properties jump-back")
 
-    # Basic mode hides the advanced shelf; no domain offers guided setup first.
+    # Look and Bake: open every gate so the whole pinned set must be drawn, then
+    # put the user-visible choices back (other checks read the view mode).
+    saved = {
+        "fs": {name: getattr(fs, name) for name in (
+            "liquid_view_mode", "show_whitewater", "cache_use_custom_range")},
+        "ds": {name: getattr(ds, name) for name in (
+            "surface_enabled", "whitewater_enabled")},
+    }
+    try:
+        fs.liquid_view_mode = "SURFACE_PARTICLES"
+        fs.show_whitewater = True
+        fs.cache_use_custom_range = True
+        ds.surface_enabled = True
+        ds.whitewater_enabled = True
+
+        look_props = props(_draw("FLUIDSIM_STAGE_PT_look", bpy.context))
+        missing = [name for name in ui_stages.LOOK_PROPS if name not in look_props]
+        if missing:
+            raise AssertionError(f"Look stage omitted {missing}: {look_props}")
+        materials = props(_draw("FLUIDSIM_STAGE_PT_look_materials", bpy.context))
+        missing = [n for n in ui_stages.LOOK_MATERIAL_PROPS if n not in materials]
+        if missing:
+            raise AssertionError(f"Look materials omitted {missing}: {materials}")
+
+        bake = _draw("FLUIDSIM_STAGE_PT_bake", bpy.context)
+        bake_props = props(bake)
+        missing = [
+            name
+            for name in (*ui_stages.BAKE_PROPS, *ui_stages.BAKE_DELEGATED_PROPS)
+            if name not in bake_props
+        ]
+        if missing:
+            raise AssertionError(f"Bake stage omitted {missing}: {bake_props}")
+        bake_ops = operators(bake)
+        for operator in ("fluidsim.cache_preview_start", "fluidsim.export_frame"):
+            if operator not in bake_ops:
+                raise AssertionError(f"Bake stage is missing {operator}: {bake_ops}")
+        if not bake_ops & {"fluidsim.bake_start", "fluidsim.bake_resume",
+                           "fluidsim.bake_cancel"}:
+            raise AssertionError(f"Bake stage offers no bake action: {bake_ops}")
+        bake_more = props(_draw("FLUIDSIM_STAGE_PT_bake_advanced", bpy.context))
+        missing = [n for n in ui_stages.BAKE_ADVANCED_PROPS if n not in bake_more]
+        if missing:
+            raise AssertionError(f"Bake advanced shelf omitted {missing}: {bake_more}")
+    finally:
+        for name, value in saved["fs"].items():
+            setattr(fs, name, value)
+        for name, value in saved["ds"].items():
+            setattr(ds, name, value)
+
+    # Basic mode hides the advanced shelves; no domain offers guided setup first.
     fs.ui_mode = "BASIC"
-    if _panel("FLUIDSIM_STAGE_PT_setup_advanced").poll(bpy.context):
-        raise AssertionError("Setup advanced shelf is visible in Basic mode")
+    for shelf in ("FLUIDSIM_STAGE_PT_setup_advanced", "FLUIDSIM_STAGE_PT_bake_advanced"):
+        if _panel(shelf).poll(bpy.context):
+            raise AssertionError(f"{shelf} is visible in Basic mode")
     fs.ui_mode = "ADVANCED"
     domain_object = fs.domain_object
     fs.domain_object = None
     try:
         empty_setup = _draw("FLUIDSIM_STAGE_PT_setup", bpy.context)
         _draw("FLUIDSIM_STAGE_PT_simulate", bpy.context)
+        empty_staged = {
+            panel_id: _draw(panel_id, bpy.context)
+            for panel_id in ("FLUIDSIM_STAGE_PT_look", "FLUIDSIM_STAGE_PT_bake")
+        }
+        empty_polls = {
+            panel_id: bool(_panel(panel_id).poll(bpy.context))
+            for panel_id in (
+                "FLUIDSIM_STAGE_PT_look_materials",
+                "FLUIDSIM_STAGE_PT_bake_advanced",
+            )
+        }
     finally:
         fs.domain_object = domain_object
     if "fluidsim.setup_scene" not in operators(empty_setup):
         raise AssertionError("Setup stage offers no guided setup without a domain")
+    for panel_id, events in empty_staged.items():
+        if props(events) or operators(events):
+            raise AssertionError(f"{panel_id} drew controls without a domain")
+    if any(empty_polls.values()):
+        raise AssertionError(f"domain-only shelves are visible without one: {empty_polls}")
     return {
         "setup": setup_props,
         "simulate": simulate_props,
+        "look": look_props,
+        "bake": bake_props,
         "empty_setup_operators": sorted(operators(empty_setup)),
     }
 

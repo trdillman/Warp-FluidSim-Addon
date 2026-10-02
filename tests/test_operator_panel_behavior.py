@@ -2027,7 +2027,9 @@ def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
     ), "Live Tuning must offer a jump back to the full Properties workflow"
 
 
-def _stage_context(*, with_domain=True, ui_mode="ADVANCED", **domain_overrides):
+def _stage_context(
+    *, with_domain=True, ui_mode="ADVANCED", scene_overrides=None, **domain_overrides
+):
     """Scene/domain doubles carrying only each group's own fields."""
     domain_settings = SimpleNamespace(
         sample_type="FLIP",
@@ -2045,6 +2047,11 @@ def _stage_context(*, with_domain=True, ui_mode="ADVANCED", **domain_overrides):
         surface_tension_coefficient=0.07,
         use_scene_gravity=True,
         gravity=(0.0, 0.0, -9.81),
+        surface_enabled=False,
+        surface_smooth_iterations=1,
+        whitewater_enabled=False,
+        ww_emission_rate=1.0,
+        export_attributes=False,
     )
     for name, value in domain_overrides.items():
         setattr(domain_settings, name, value)
@@ -2059,7 +2066,28 @@ def _stage_context(*, with_domain=True, ui_mode="ADVANCED", **domain_overrides):
         stat_particles=3,
         stat_voxels=4,
         stat_cfl_clamped=0,
+        liquid_view_mode="SURFACE_PARTICLES",
+        particle_display_fraction=0.5,
+        particle_display_scale=1.0,
+        show_whitewater=True,
+        show_overlay=True,
+        surface_material=None,
+        particle_material=None,
+        whitewater_material=None,
+        cache_path="//cache",
+        cache_compress=True,
+        checkpoint_interval=10,
+        cache_use_custom_range=False,
+        cache_frame_start=1,
+        cache_frame_end=250,
+        bake_start=1,
+        bake_end=250,
+        bake_status="IDLE",
+        bake_progress=0.0,
+        bake_message="",
     )
+    for name, value in (scene_overrides or {}).items():
+        setattr(scene_settings, name, value)
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
@@ -2180,6 +2208,193 @@ def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
         "open_boundaries",
     }
     assert all(data is domain_settings for data in drawn.values())
+
+
+_LOOK_SCENE_OWNED = {
+    "liquid_view_mode",
+    "particle_display_fraction",
+    "particle_display_scale",
+    "show_whitewater",
+    "show_overlay",
+}
+
+
+def test_workflow_stage_look_binds_each_control_to_its_owner(monkeypatch):
+    """Display choices are scene-scoped; surface/whitewater gates are the domain's."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, scene_settings, domain_settings = _stage_context(
+        surface_enabled=True, whitewater_enabled=True
+    )
+
+    look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
+    drawn = {call["name"]: call["data"] for call in look.prop_calls}
+    assert set(drawn) == set(ui_stages.LOOK_PROPS)
+    for name, data in drawn.items():
+        owner = scene_settings if name in _LOOK_SCENE_OWNED else domain_settings
+        assert data is owner, name
+
+    materials = ui_stages.FLUIDSIM_STAGE_PT_look_materials
+    assert materials.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_look.bl_idname
+    assert "DEFAULT_CLOSED" in materials.bl_options
+    layout = _draw_stage(materials, context)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == set(ui_stages.LOOK_MATERIAL_PROPS)
+    assert all(data is scene_settings for data in drawn.values())
+
+
+def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}
+    )
+    assert set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props) == {
+        "liquid_view_mode",
+        "surface_enabled",
+        "whitewater_enabled",
+        "show_overlay",
+    }, "particle, smoothing and whitewater-amount controls need their gate on"
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "PARTICLES"},
+        surface_enabled=True,
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props)
+    assert {"particle_display_fraction", "particle_display_scale"} <= drawn
+    assert "surface_smooth_iterations" in drawn
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}, whitewater_enabled=True
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props)
+    assert {"ww_emission_rate", "show_whitewater"} <= drawn
+    assert not {"particle_display_fraction", "particle_display_scale"} & drawn
+
+    materials = ui_stages.FLUIDSIM_STAGE_PT_look_materials
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}
+    )
+    assert set(_draw_stage(materials, context).props) == {"surface_material"}
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "PARTICLES"}, whitewater_enabled=True
+    )
+    assert set(_draw_stage(materials, context).props) == {
+        "particle_material",
+        "whitewater_material",
+    }
+
+
+def _patch_bake_runtime(monkeypatch, ui_stages, *, status=None, action="START"):
+    """Stub the runtime probe and cache lookup the Scene tab's bake draw consults."""
+    ui_scene = sys.modules[ui_stages.FLUIDSIM_PT_cache_bake.__module__]
+    ui_cache_state = importlib.import_module(
+        "fluidSim_warp_blender51.blender.ui_cache_state"
+    )
+    monkeypatch.setattr(
+        ui_scene,
+        "activity_ui_state",
+        lambda _scene: {"id": status or "IDLE", "owns_scene": False},
+    )
+    monkeypatch.setattr(
+        ui_scene, "_runtime_ui_state", lambda: (None, "cuda:0", True, "")
+    )
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: None)
+    monkeypatch.setattr(
+        ui_cache_state,
+        "production_bake_action",
+        lambda _directory: SimpleNamespace(
+            action=action, message="Existing cache", destructive=action == "RESTART"
+        ),
+    )
+
+
+def test_workflow_stage_bake_binds_controls_and_reuses_scene_bake_draw(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    context, scene_settings, domain_settings = _stage_context()
+
+    layout = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_bake, context)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert drawn["cache_path"] is scene_settings
+    assert drawn["export_attributes"] is domain_settings
+    for name in ui_stages.BAKE_DELEGATED_PROPS:
+        assert drawn[name] is scene_settings, name
+    operators = {op["id"] for op in layout.operators}
+    assert {
+        "fluidsim.cache_preview_start",
+        "fluidsim.bake_start",
+        "fluidsim.export_frame",
+    } <= operators
+
+
+def test_workflow_stage_bake_follows_the_scene_tab_bake_state_machine(monkeypatch):
+    """Resume / restart / cancel come from the shared draw, never a stage copy."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    bake = ui_stages.FLUIDSIM_STAGE_PT_bake
+
+    _patch_bake_runtime(monkeypatch, ui_stages, action="RESUME")
+    context, _scene, _domain = _stage_context()
+    operators = [op["id"] for op in _draw_stage(bake, context).operators]
+    assert "fluidsim.bake_resume" in operators
+    assert "fluidsim.bake_start" not in operators
+
+    _patch_bake_runtime(monkeypatch, ui_stages, action="RESTART")
+    context, _scene, _domain = _stage_context()
+    layout = _draw_stage(bake, context)
+    start = [op for op in layout.operators if op["id"] == "fluidsim.bake_start"]
+    assert start and "Restart" in start[0]["text"]
+
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"bake_status": "RUNNING"}
+    )
+    operators = [op["id"] for op in _draw_stage(bake, context).operators]
+    assert "fluidsim.bake_cancel" in operators
+    assert "fluidsim.bake_start" not in operators
+
+
+def test_workflow_stage_bake_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    shelf = ui_stages.FLUIDSIM_STAGE_PT_bake_advanced
+    assert shelf.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_bake.bl_idname
+    assert "DEFAULT_CLOSED" in shelf.bl_options
+
+    advanced, scene_settings, _domain = _stage_context(
+        scene_overrides={"cache_use_custom_range": True}
+    )
+    assert shelf.poll(advanced)
+    basic, _scene, _domain = _stage_context(ui_mode="BASIC")
+    assert not shelf.poll(basic)
+    empty, _scene, _domain = _stage_context(with_domain=False)
+    assert not shelf.poll(empty)
+
+    layout = _draw_stage(shelf, advanced)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == set(ui_stages.BAKE_ADVANCED_PROPS)
+    assert all(data is scene_settings for data in drawn.values())
+
+    closed, _scene, _domain = _stage_context()
+    drawn = set(_draw_stage(shelf, closed).props)
+    assert "cache_use_custom_range" in drawn
+    assert not {"cache_frame_start", "cache_frame_end"} & drawn
+
+
+def test_workflow_stages_look_and_bake_without_a_domain_stay_quiet(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context(with_domain=False)
+
+    for panel in (ui_stages.FLUIDSIM_STAGE_PT_look, ui_stages.FLUIDSIM_STAGE_PT_bake):
+        layout = _draw_stage(panel, context)
+        assert not layout.props, panel.bl_idname
+        assert not layout.operators, panel.bl_idname
+        assert any("domain" in label["text"].lower() for label in layout.labels)
+    assert not ui_stages.FLUIDSIM_STAGE_PT_look_materials.poll(context)
 
 
 def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
