@@ -148,8 +148,40 @@ def test_pcg_centralizes_required_full_grid_work_buffer_clears():
     assert "for array in (x, self.r, self.z, self.p_dir, self.ap)" not in source
     assert "self.ap[:full_n].zero_()" not in source
     assert source.count("x[:full_n].zero_()") == 1
-    assert source.count("self._zero_pcg_vectors(full_n, x)") == 1
-    assert "for array in (x, self.r, self.z, self.p_dir, self.ap)" in helper
+    assert source.count("self._zero_pcg_vectors(full_n, x,") == 1
+    assert "self.x0[:full_n].zero_()" not in source
+    # One fused launch clears the whole working set (and x0 when requested).
+    assert "k_zero_pcg_vectors" in helper
+    assert "[:n].zero_()" not in helper
+
+
+def test_fused_copy_and_pcg_zero_kernels_match_reference(cuda_device):
+    from fluidSim_warp_blender51.sim.pressure import k_zero_pcg_vectors
+    from fluidSim_warp_blender51.sim.solver import k_copy3_float
+
+    device = cuda_device
+    rng = np.random.default_rng(7)
+    n, total = 37, 64
+    src = [rng.random(total, dtype=np.float32) + 1.0 for _ in range(3)]
+    dst = [np.full(total, -5.0, dtype=np.float32) for _ in range(3)]
+    src_wp = [wp.array(a, dtype=float, device=device) for a in src]
+    dst_wp = [wp.array(a, dtype=float, device=device) for a in dst]
+    wp.launch(k_copy3_float, dim=n, inputs=[*src_wp, *dst_wp], device=device)
+    for s, d, d0 in zip(src, dst_wp, dst):
+        out = d.numpy()
+        np.testing.assert_array_equal(out[:n], s[:n])
+        np.testing.assert_array_equal(out[n:], d0[n:])
+
+    for zero_x0 in (0, 1):
+        vecs = [wp.array(np.full(total, 3.0, dtype=np.float32), dtype=float,
+                         device=device) for _ in range(6)]
+        wp.launch(k_zero_pcg_vectors, dim=n, inputs=[*vecs, zero_x0],
+                  device=device)
+        for index, vec in enumerate(vecs):
+            out = vec.numpy()
+            cleared = zero_x0 if index == 5 else 1
+            assert np.all(out[:n] == (0.0 if cleared else 3.0))
+            assert np.all(out[n:] == 3.0)
 
 
 def test_pcg_cuda_conditional_path_does_not_preclassify_residual_on_host():
