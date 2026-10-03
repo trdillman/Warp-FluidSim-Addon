@@ -535,7 +535,7 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
     assert len(background) == 2
     # No --python-use-system-env: Blender does not load Warp from PYTHONPATH.
     # Smoke setup places the locked wheel in the isolated extensions/.local
-    # directory, which is where the preferences button installs it.
+    # directory. The preferences button does not write there.
     assert all("--python-use-system-env" not in command for command in background)
     assert all(env.get("PYTHONPATH") == "/validation/warp-site" for env in environments)
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")

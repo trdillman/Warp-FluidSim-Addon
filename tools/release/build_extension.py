@@ -28,8 +28,9 @@ REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
 REQUIRED_WARP_VERSION = "1.17.0"
 REQUIRED_WARP_DISTRIBUTION = "1.17.0+cu12"
 REQUIRED_BLENDER_MIN = "5.2.0"
-# Blender 5.2 rejects a permission reason longer than this:
-# `a value no longer than 64 characters expected`.
+# Blender 5.2 ``scripts/addons_core/bl_pkg/cli/blender_ext.py``:
+# ``TERSE_DESCRIPTION_MAX_LENGTH = 64``, enforced by
+# ``pkg_manifest_validate_terse_description_or_error`` for permission reasons.
 PERMISSION_REASON_MAX_LENGTH = 64
 BUNDLED_WHEEL_DIR = "wheels"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
@@ -749,10 +750,12 @@ def _fetch_locked_wheels(root: Path) -> None:
 
 
 def _provision_smoke_warp(target: Path) -> None:
-    """Install the locked host wheel where the preferences button installs it.
+    """Extract the locked host wheel for an offline smoke Blender.
 
     Smoke Blender starts with ``--offline-mode``, so the checksummed download
-    happens here, before Blender launches. The extension zip stays wheel-free.
+    happens here, before Blender launches. This shared ``extensions/.local``
+    directory is only the smoke harness. The preferences button does not write
+    there. The extension zip stays wheel-free.
     """
     sys.path.insert(0, str(TOOL_ROOT))
     try:

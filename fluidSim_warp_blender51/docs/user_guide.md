@@ -25,9 +25,13 @@ FluidSim Warp 2.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 Install the extension ZIP for your platform. On first run, open **Edit →
 Preferences → Add-ons → FluidSim Warp** and press the **Install Warp** button.
 This downloads the certified NVIDIA Warp 1.17.0 wheel (~160 MB) from PyPI and
-installs it into Blender's Python. The button is safe to press multiple times:
-if Warp is already installed at the correct version, it reports success without
-reinstalling. An NVIDIA driver that supports CUDA 12 (R525 or newer) is required.
+extracts it into the directory Blender keeps for this extension. The button is
+safe to press again: when that copy is already 1.17.0 it reports success and
+does not write. If Warp is already loaded from another add-on, or an older
+Warp is in Blender's user site-packages, the button stops and asks you to
+remove that copy. It also stops when Online Access is turned off in System
+preferences, or when Blender was started with `--offline-mode`. An NVIDIA
+driver that supports CUDA 12 (R525 or newer) is required.
 
 If a newer 1.x Warp is ever loaded instead (for example through a developer
 override), FluidSim still runs but marks the runtime status as
@@ -300,10 +304,11 @@ Conditional panels are:
 
 Preferences contains the **Install Warp** button, runtime selection, and
 detection. **Install Warp** downloads the certified NVIDIA Warp 1.17.0 wheel
-from PyPI, checks its SHA-256 against the shipped lock, and installs that
-file. Pressing it again when that version is already installed does nothing
-further. An older Warp that FluidSim refuses is replaced in place; restart
-Blender if a Warp module was already loaded. The external-Warp developer path
+from PyPI, checks its SHA-256 against the shipped lock, and extracts that
+file into this extension's own directory. Pressing it again when that copy is
+already 1.17.0 does nothing further. A Warp copy FluidSim does not own is not
+modified; remove it and press the button again. The button does not download
+when Blender's online access is off. The external-Warp developer path
 appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device selection does not
 appear in scene panels.
 

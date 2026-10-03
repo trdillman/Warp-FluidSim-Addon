@@ -12,7 +12,9 @@ from dataclasses import replace
 from pathlib import Path
 
 # Smoke Blender is offline. The release harness extracts the locked wheel into
-# the isolated extensions/.local directory before this script starts.
+# the isolated extensions/.local directory before this script starts. That is
+# the smoke harness only. The preferences button installs into the extension's
+# own user directory and is not what placed this copy.
 _provisioned_warp = os.environ.get("BLENDER_USER_EXTENSIONS", "")
 if _provisioned_warp:
     _local_site = str(Path(_provisioned_warp) / ".local")
@@ -81,7 +83,7 @@ def _assert_installed_warp(module: str) -> tuple[Path, Path]:
     if not repository_value or not user_extensions_value:
         raise AssertionError("release smoke environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    # The preferences button installs Warp into <extensions>/.local.
+    # The offline smoke harness extracted Warp under <extensions>/.local.
     wheel_root = Path(user_extensions_value).resolve() / ".local"
     warp_path = Path(wp.__file__).resolve()
     if wp.__version__ != EXPECTED_WARP_VERSION:
@@ -102,7 +104,7 @@ def _assert_installed_warp(module: str) -> tuple[Path, Path]:
         warp_path.relative_to(wheel_root)
     except ValueError as exc:
         raise AssertionError(
-            f"Warp loaded outside the preferences install directory: {warp_path}"
+            f"Warp loaded outside the smoke provision directory: {warp_path}"
         ) from exc
     return extension_root, warp_path
 
@@ -653,6 +655,14 @@ def main() -> None:
         "fluidsim.refresh_runtime_probe",
         bpy.ops.fluidsim.refresh_runtime_probe(),
     )
+
+    # In smoke test (--offline-mode), invoking install_warp operator when certified
+    # Warp 1.17.0 is already installed reports success and writes nothing.
+    install_res = bpy.ops.fluidsim.install_warp()
+    if install_res != {"FINISHED"}:
+        raise AssertionError(
+            f"fluidsim.install_warp expected {{'FINISHED'}} when already installed, got {install_res}"
+        )
 
     _disable_and_verify(module)
     _enable_and_verify(module)

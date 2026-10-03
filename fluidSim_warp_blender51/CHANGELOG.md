@@ -6,11 +6,13 @@
 
 - **Warp is no longer bundled.** The extension zip does not contain NVIDIA
   Warp wheels. **Install Warp** in Add-on Preferences downloads the locked
-  Warp 1.17.0 wheel (CUDA 12) from PyPI, checks its SHA-256, and installs
-  that file into Blender's extension site-packages. Pressing it again when
-  1.17.0 or a newer untested 1.x is already installed reports success and
-  does not write a second copy. An older or wrong-major Warp is replaced in
-  the directory that provided it; restart Blender if Warp was already loaded.
+  Warp 1.17.0 wheel (CUDA 12) from PyPI, checks its SHA-256, and extracts
+  that file into the directory Blender gives this extension
+  (`bpy.utils.extension_path_user`). Pressing it again when that owned copy
+  is already 1.17.0 reports success and writes nothing. Warp loaded from
+  another add-on, or an older Warp in Blender's user site-packages, is left
+  untouched; remove that copy first. The button does nothing when Blender's
+  online access is off.
 - The extension now declares `network` permission for the PyPI download.
 - Updated THIRD_PARTY_NOTICES.md to reflect the new installation method.
 

@@ -83,27 +83,30 @@ expected; otherwise, a changed hash needs an explanation before release.
 ## Sharing Warp with other extensions
 
 FluidSim does not ship a Warp wheel. **Install Warp** in add-on preferences
-downloads the locked `warp-lang` 1.17.0 wheel from PyPI and installs it into
-Blender's extension site-packages (`extensions/.local`), the same directory
-Blender uses for extension wheels. That install supplies the top-level `warp`
-package; it does not give each extension a private `warp` module. Python
-imports an existing `sys.modules["warp"]` before consulting `sys.path`, so
-changing path order after Warp Foundry or another extension imported Warp
-does not switch versions. FluidSim's development override only changes
-`sys.path` after explicit opt-in and is not a fix for an already imported
-Warp module.
+downloads the locked `warp-lang` 1.17.0 wheel from PyPI and extracts it into
+the directory Blender assigns to this extension
+(`bpy.utils.extension_path_user`). That is not the shared
+`extensions/.local` wheel store, and it is not Blender's user site-packages.
+If Warp is already loaded from another path, the button refuses and does not
+write. Python imports an existing `sys.modules["warp"]` before consulting
+`sys.path`, so changing path order after Warp Foundry or another extension
+imported Warp does not switch versions. FluidSim's development override only
+changes `sys.path` after explicit opt-in and is not a fix for an already
+imported Warp module.
 
 FluidSim certifies Warp 1.17.0. Its runtime rejects Warp older than 1.17.0
 or a different major version before initializing it; newer 1.x versions
-remain untested and show a warning. The preferences button replaces an
-incompatible Warp in the directory that provided it and leaves a compatible
-install untouched. To use FluidSim and Warp Foundry in the same Blender
-process, align them on a version tested by both projects, then restart
-Blender. Until that is validated, use separate Blender processes/profiles
-for the extensions. Reinstalling FluidSim alone cannot replace a `warp`
-module another extension already loaded. Do not delete `sys.modules`
-entries, shadow the package with a private path, or swap Warp's native
-libraries in process.
+remain untested and show a warning. A second press when this extension's own
+copy is already 1.17.0 reports success and writes nothing. An older copy in
+that same directory is replaced. A copy anywhere else, including another
+add-on or the user site-packages, is left in place until the user removes it.
+The button also stops when `bpy.app.online_access` is off. To use FluidSim
+and Warp Foundry in the same Blender process, align them on a version tested
+by both projects, then restart Blender. Until that is validated, use separate
+Blender processes/profiles for the extensions. Reinstalling FluidSim alone
+cannot replace a `warp` module another extension already loaded. Do not
+delete `sys.modules` entries, shadow the package with a private path, or swap
+Warp's native libraries in process.
 
 ## Changing a pinned dependency
 

@@ -9,9 +9,11 @@ is the certified runtime. The Windows x64 and Linux x64 wheels are pinned by
 filename, size, SHA-256, and HTTPS URL in `warp_wheels.lock.json` (the same
 document as `tools/release/wheels.lock.json` in the repository). When the
 user presses **Install Warp** in Add-on Preferences, FluidSim downloads that
-one wheel from PyPI, verifies its SHA-256 checksum, and installs it with pip
-into Blender's extension site-packages. The download uses the extension's
-`network` permission. FluidSim does not install a floating or "latest" Warp.
+one wheel from PyPI, verifies its SHA-256 checksum, and extracts it into the
+directory Blender assigns to this extension. The download uses the extension's
+`network` permission and Blender's online-access flag. FluidSim does not
+install a floating or "latest" Warp, and it does not write into another
+add-on's directory or into Blender's user site-packages.
 
 ## Third-party components
 
@@ -35,8 +37,8 @@ installed alongside Warp. They are not copied into the FluidSim zip.
 - `warp_wheels.lock.json` pins the exact wheel filenames, sizes, SHA-256
   checksums, and PyPI URLs. The installer refuses any wheel that does not
   match these checksums.
-- The Install Warp button is idempotent: pressing it when the certified version
-  is already installed reports success without reinstalling.
+- The Install Warp button is idempotent: pressing it when this extension's own
+  copy is already Warp 1.17.0 reports success and writes nothing.
 - A developer-only override (`FLUIDSIM_ALLOW_EXTERNAL_WARP=1`) can point at a
   Warp checkout for development; it is never used by release packages.
 

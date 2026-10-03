@@ -14,9 +14,10 @@ from .runtime.warp_runtime import (
 )
 from .version import CERTIFIED_WARP_VERSION
 from .warp_installer import (
+    foreign_warp_block_reason,
     get_installed_warp_info,
     install_warp,
-    is_certified_warp_installed,
+    owned_install_status,
 )
 
 _DEVICE_ITEMS_CACHE: list[tuple[str, str, str]] = []
@@ -117,10 +118,8 @@ class FLUIDSIM_OT_install_warp(bpy.types.Operator):
         )
 
         if result.success:
-            if result.already_installed:
-                self.report({"INFO"}, result.message)
-            else:
-                self.report({"INFO"}, result.message)
+            self.report({"INFO"}, result.message)
+            if not result.already_installed:
                 prefs = _preferences(context)
                 _refresh_runtime(prefs)
         else:
@@ -128,10 +127,7 @@ class FLUIDSIM_OT_install_warp(bpy.types.Operator):
 
         return {"FINISHED"} if result.success else {"CANCELLED"}
 
-    def invoke(self, context, event):
-        if is_certified_warp_installed() and not self.force_reinstall:
-            self.report({"INFO"}, "Warp is already installed at the certified version")
-            return {"FINISHED"}
+    def invoke(self, context, _event):
         return self.execute(context)
 
 
@@ -203,40 +199,53 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="Runtime", icon="GPU")
 
-        warp_installed, warp_info = get_installed_warp_info()
-        if not warp_installed:
+        blocked = foreign_warp_block_reason()
+        foreign = bool(blocked) and (
+            "does not own" in blocked or "user site-packages" in blocked
+        )
+        if foreign:
             row = box.row()
             row.alert = True
-            row.label(text="Warp is not installed", icon="ERROR")
+            row.label(text="Remove the other Warp copy first", icon="ERROR")
+            box.label(text=blocked)
             row = box.row()
             row.scale_y = 1.5
             row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
-            box.label(
-                text=(
-                    f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
-                    "(CUDA 12) from PyPI."
-                )
-            )
         else:
-            box.label(text=warp_info)
-            box.prop(self, "device")
-            probe = probe_runtime()
-            selected = configured_device()
-            ready, message = runtime_status_for_device(selected, probe=probe)
-            row = box.row(align=True)
-            row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
-            row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
-            if probe.module_file:
-                box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
-            if not is_certified_warp_installed():
+            warp_installed, warp_info = get_installed_warp_info()
+            status = owned_install_status()
+            if not warp_installed or status is None:
                 row = box.row()
                 row.alert = True
-                op = row.operator(
-                    "fluidsim.install_warp",
-                    text="Replace with Certified Warp",
-                    icon="FILE_REFRESH",
+                row.label(text="Warp is not installed", icon="ERROR")
+                row = box.row()
+                row.scale_y = 1.5
+                row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
+                box.label(
+                    text=(
+                        f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
+                        "(CUDA 12) from PyPI."
+                    )
                 )
-                op.force_reinstall = True
+            else:
+                box.label(text=warp_info)
+                box.prop(self, "device")
+                probe = probe_runtime()
+                selected = configured_device()
+                ready, message = runtime_status_for_device(selected, probe=probe)
+                row = box.row(align=True)
+                row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
+                row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+                if probe.module_file:
+                    box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
+                if status == "unsupported":
+                    row = box.row()
+                    row.alert = True
+                    row.operator(
+                        "fluidsim.install_warp",
+                        text="Install Certified Warp",
+                        icon="IMPORT",
+                    )
 
         authoring = layout.box()
         authoring.label(text="Custom Effects", icon="MODIFIER")
