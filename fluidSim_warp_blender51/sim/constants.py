@@ -72,6 +72,11 @@ DEFAULT_PRESSURE_TOLERANCE = 1.0e-5
 # 42 costs 42 iterations regardless of what the ceiling allows.
 DEFAULT_VISCOSITY_ITERATIONS = 64
 DEFAULT_VISCOSITY_TOLERANCE = 1.0e-4
+# Collider friction is the fraction of wall slip removed per this much
+# simulated time (one 24 fps frame). The grid applies it every substep as
+# (1 - friction) ** (dt / reference), so the result does not depend on the
+# CFL substep count, quality tier, frame rate or time scale.
+COLLIDER_FRICTION_REFERENCE_TIME = 1.0 / 24.0
 
 # Timer tracks (profiler contract): compute_0..15 phase assignment
 TIMER_PHASE_SLOTS = {

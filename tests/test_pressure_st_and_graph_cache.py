@@ -138,6 +138,88 @@ def test_pcg_graph_cache_evicts_lru_instead_of_flushing(cuda_device):
     assert len(solver._pcg_graphs) == 8
 
 
+def _count_body_captures(solver):
+    """Count conditional-graph captures: each one records the body once."""
+    counter = {"captures": 0}
+    record = solver._record_pcg_iterations
+
+    def counting_record(*args):
+        counter["captures"] += 1
+        return record(*args)
+
+    solver._record_pcg_iterations = counting_record
+    return counter
+
+
+def test_pcg_conditional_graph_cache_evicts_lru_instead_of_flushing(cuda_device):
+    """REVIEW-015: a cold conditional-graph key flushed all eight captures.
+
+    Same access pattern as the host-batched cache test above: a hot set of
+    solve shapes plus one fresh shape per solve. Every flush forced the hot
+    shapes to re-capture and re-pay ``wp.synchronize_device``.
+    """
+    if not wp.is_conditional_graph_supported():
+        pytest.skip("conditional CUDA graphs unsupported")
+    solver = _prepared_solver(cuda_device)
+    assert solver._ensure_pcg_dot()
+    solver._pcg_conditional_graphs.clear()
+    counter = _count_body_captures(solver)
+    work_n = solver.grid.voxel_capacity
+    hot = [25, 50, 75, 100, 125, 150]  # max_iterations of the hot shapes
+    solves = 12
+
+    for i in range(solves):
+        for max_iterations in hot + [175 + 25 * i]:
+            solver._get_pcg_conditional_graphs(work_n, 1, max_iterations)
+
+    distinct_keys = len(hot) + solves
+    assert counter["captures"] == distinct_keys
+    # a cold key evicts one entry, so the cache stays full instead of resetting
+    assert len(solver._pcg_conditional_graphs) == solver._PCG_GRAPH_CAPACITY
+    solver.release()
+
+
+def test_pcg_conditional_graph_reads_tolerance_at_launch(cuda_device):
+    """REVIEW-015: tol_sq was baked into the captured graph and its cache key.
+
+    tol_sq scales with the active voxel count, which moves on nearly every
+    solve, so each solve minted a key that was never reused (dam_break: 39
+    captures in 371 solves, one per distinct tol_sq). One capture must serve
+    every tolerance and still stop at the tolerance each solve asked for.
+    """
+    import numpy as np
+
+    if not wp.is_conditional_graph_supported():
+        pytest.skip("conditional CUDA graphs unsupported")
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = wp.full(
+        grid.voxel_capacity, VOXEL_FLUID, dtype=wp.int32, device=cuda_device)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[0], rhs[1] = 1.0, -1.0  # zero mean: solvable under pure Neumann
+    solver.build_preconditioner(voxel_type)
+
+    def solve(tolerance):
+        wp.copy(solver.rhs, wp.array(rhs, device=cuda_device))
+        status = solver.solve_pcg(
+            voxel_type, max_iterations=400, tolerance=tolerance, check_every=25)
+        assert status["converged"], status
+        assert solver.last_pcg_execution_mode == "cuda_conditional"
+        assert solver.last_residual_squared < (
+            tolerance * tolerance * grid.voxel_capacity)
+        return solver.last_iterations
+
+    loose = solve(1.0e-3)
+    graphs = dict(solver._pcg_conditional_graphs)
+    counter = _count_body_captures(solver)
+    tight = solve(1.0e-7)
+    assert tight > loose  # the reused graph honored the tighter tolerance
+    assert solve(1.0e-3) == loose  # ...and did not keep it afterwards
+    assert counter["captures"] == 0
+    assert solver._pcg_conditional_graphs == graphs
+    solver.release()
+
+
 def test_native_pcg_capture_failure_is_reported_in_frame_stats(cuda_device):
     """REVIEW-016: a failed graph capture degraded silently to host batches."""
     from types import SimpleNamespace

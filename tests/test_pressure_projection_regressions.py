@@ -412,12 +412,14 @@ def test_grid_boundary_applies_collider_friction_and_restitution(cuda_device):
                 wp.array(friction, dtype=float, device=cuda_device),
                 wp.array(restitution, dtype=float, device=cuda_device),
                 g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                g.num_leaves, g.voxel_size,
+                g.num_leaves, g.voxel_size, 1.0,
                 u_dev, v_dev, w_dev, u_dev, v_dev, w_dev],
         device=cuda_device)
 
     assert u_dev.numpy()[solid] == pytest.approx(-0.9, abs=1.0e-5)
-    assert v_dev.numpy()[fluid] == pytest.approx(2.0, abs=1.0e-5)
+    # v is tangential to the +X wall: friction 0.75 keeps a quarter of the
+    # slip relative to the (resting) collider.
+    assert v_dev.numpy()[fluid] == pytest.approx(0.5, abs=1.0e-5)
 
     separating = np.zeros(LEAF_VOLUME, dtype=np.float32)
     separating[solid] = -1.0
@@ -433,12 +435,74 @@ def test_grid_boundary_applies_collider_friction_and_restitution(cuda_device):
                 wp.zeros(LEAF_VOLUME, dtype=wp.vec3, device=cuda_device),
                 wp.array(friction, dtype=float, device=cuda_device), zero,
                 g.leaf_table, g.leaf_coords,
-                g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size, 1.0,
                 separating_u, tangential_v, w_dev,
                 separating_u, tangential_v, w_dev],
         device=cuda_device)
     assert separating_u.numpy()[solid] == pytest.approx(-1.0, abs=1.0e-5)
-    assert tangential_v.numpy()[fluid] == pytest.approx(2.0, abs=1.0e-5)
+    assert tangential_v.numpy()[fluid] == pytest.approx(0.5, abs=1.0e-5)
+
+
+def _tangential_friction(device, friction, ratios, collider_vel=(0.0, 0.3, 0.1)):
+    """Run the material kernel on a fluid voxel beside a +X solid voxel.
+
+    Returns the fluid voxel's (u, v, w) faces after one launch per entry of
+    ``ratios`` (the friction_time_ratio passed to each launch).
+    """
+    g = _one_leaf_grid(device)
+    fluid = 3 + 3 * 8 + 3 * 64
+    solid = fluid + 1
+    voxel_type = np.zeros(LEAF_VOLUME, dtype=np.int32)
+    voxel_type[fluid] = VOXEL_FLUID
+    voxel_type[solid] = VOXEL_COLLISION
+    sdf = np.ones(LEAF_VOLUME, dtype=np.float32)
+    sdf[solid] = -1.0
+    vel = np.zeros((LEAF_VOLUME, 3), dtype=np.float32)
+    vel[solid] = collider_vel
+    friction_field = np.zeros(LEAF_VOLUME, dtype=np.float32)
+    friction_field[solid] = friction
+    faces = []
+    for value in (0.1234567, 2.0, 0.7):
+        face = np.zeros(LEAF_VOLUME, dtype=np.float32)
+        face[fluid] = value
+        faces.append(wp.array(face, dtype=float, device=device))
+    for ratio in ratios:
+        wp.launch(
+            k_apply_collider_material_to_grid, dim=LEAF_VOLUME,
+            inputs=[wp.array(voxel_type, dtype=wp.int32, device=device),
+                    wp.array(sdf, dtype=float, device=device),
+                    wp.array(vel, dtype=wp.vec3, device=device),
+                    wp.array(friction_field, dtype=float, device=device),
+                    wp.zeros(LEAF_VOLUME, dtype=float, device=device),
+                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
+                    g.num_leaves, g.voxel_size, ratio,
+                    *faces, *faces],
+            device=device)
+    return tuple(float(face.numpy()[fluid]) for face in faces)
+
+
+def test_grid_friction_one_moves_tangential_faces_with_the_collider(cuda_device):
+    u, v, w = _tangential_friction(cuda_device, 1.0, [0.25])
+    # v and w run along the +X wall and take the collider's velocity; u is
+    # the face toward the -X fluid neighbour and is not a wall face.
+    assert v == pytest.approx(0.3, abs=1.0e-6)
+    assert w == pytest.approx(0.1, abs=1.0e-6)
+    assert u == np.float32(0.1234567)
+
+
+def test_grid_friction_zero_leaves_faces_bit_exact(cuda_device):
+    u, v, w = _tangential_friction(cuda_device, 0.0, [1.0])
+    assert (u, v, w) == (np.float32(0.1234567), np.float32(2.0),
+                         np.float32(0.7))
+
+
+def test_grid_friction_follows_elapsed_time_not_substep_count(cuda_device):
+    one = _tangential_friction(cuda_device, 0.75, [1.0])
+    four = _tangential_friction(cuda_device, 0.75, [0.25] * 4)
+    # One reference time keeps a quarter of the slip relative to the collider.
+    assert one[1] == pytest.approx(0.3 + (2.0 - 0.3) * 0.25, abs=1.0e-6)
+    assert four[1] == pytest.approx(one[1], abs=1.0e-5)
+    assert four[2] == pytest.approx(one[2], abs=1.0e-5)
 
 
 def test_grid_friction_does_not_damp_fluid_without_solid_neighbor(cuda_device):
@@ -463,7 +527,7 @@ def test_grid_friction_does_not_damp_fluid_without_solid_neighbor(cuda_device):
                 wp.array(friction, dtype=float, device=cuda_device),
                 wp.zeros(LEAF_VOLUME, dtype=float, device=cuda_device),
                 g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                g.num_leaves, g.voxel_size,
+                g.num_leaves, g.voxel_size, 1.0,
                 u, v_dev, u, u, v_dev, u],
         device=cuda_device)
 
@@ -613,12 +677,13 @@ def test_projection_pins_wall_faces_but_not_faces_inside_the_collider(
     assert wu[interior] == pytest.approx(0.5)
 
 
-def _wall_film(voxel_size=0.05, frames=12):
+def _wall_film(voxel_size=0.05, frames=12, friction=0.0):
     """Collapse a column that starts flush against two box colliders.
 
-    Returns (film, past_wall): particles still hanging within one voxel of a
-    wall more than 0.1 m above the column centre, and particles that ended
-    up inside a wall.
+    Returns (film, past_wall, near_z): particles still hanging within one
+    voxel of a wall more than 0.1 m above the column centre, particles that
+    ended up inside a wall, and the mean height of the particles within one
+    voxel of a wall.
     """
     half, top = 0.25, 0.75
     spacing = voxel_size / 2
@@ -634,7 +699,7 @@ def _wall_film(voxel_size=0.05, frames=12):
     # boundaries, running from behind the column to x = 0.55.
     solver.set_colliders([
         _box_collider((0.25, sign * 0.4, 0.5), (0.3, 0.15, 0.6),
-                      0.0, 0.0, device)
+                      friction, 0.0, device)
         for sign in (1.0, -1.0)])
     axis = lambda lo, hi: np.arange(lo + spacing / 2, hi, spacing)  # noqa: E731
     pts = np.stack(np.meshgrid(axis(0.0, 0.25), axis(-half, half),
@@ -653,14 +718,25 @@ def _wall_film(voxel_size=0.05, frames=12):
     past_wall = int(np.count_nonzero(
         (np.abs(p[:, 1]) > half + 0.25 * voxel_size)
         & (p[:, 0] < 0.55 - voxel_size)))
-    return film, past_wall
+    near_z = float(np.mean(p[near, 2])) if np.any(near) else 0.0
+    return film, past_wall, near_z
 
 
 def test_column_against_collider_face_falls_freely(cuda_device):
     """Free slip on a vertical collider face: no film, no penetration."""
-    film, past_wall = _wall_film()
+    film, past_wall, _ = _wall_film()
     assert film == 0
     assert past_wall == 0
+
+
+def test_collider_friction_slows_fluid_sliding_down_the_wall(cuda_device):
+    """Friction 1 holds the wall layer (no-slip); friction 0 lets it fall."""
+    film0, past0, near_z0 = _wall_film(friction=0.0)
+    film1, past1, near_z1 = _wall_film(friction=1.0)
+    assert past0 == 0 and past1 == 0
+    assert film0 == 0
+    assert film1 > 0
+    assert near_z1 > near_z0 + 0.05
 
 
 def test_pcg_reports_failure_status_when_system_cannot_converge(cuda_device):

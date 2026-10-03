@@ -123,7 +123,8 @@ def test_probe_rejects_warp_below_the_floor(monkeypatch):
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is False
     assert "requires NVIDIA Warp 1.17.0 or newer 1.x" in probe.message
-    assert "Reinstall the FluidSim extension" in probe.message
+    assert "share the top-level warp module" in probe.message
+    assert "restart Blender" in probe.message
 
 
 def test_probe_loads_newer_untested_warp_with_a_warning(monkeypatch):

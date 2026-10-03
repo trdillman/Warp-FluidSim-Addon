@@ -162,6 +162,17 @@ def test_viscosity_fixed_active_work_uses_active_bounds(cuda_device, monkeypatch
     monkeypatch.setattr(
         cuda_reduction.CudaDotProduct, "launch", fake_dot_launch)
 
+    # The captured reductions read the active count on device and launch over
+    # its bucket, which for one full leaf is the leaf itself.
+    real_dot_launch_active = cuda_reduction.CudaDotProduct.launch_active
+
+    def fake_dot_launch_active(self, a, b, output, num_leaves, dim, *args):
+        reduction_counts.append(dim)
+        return real_dot_launch_active(self, a, b, output, num_leaves, dim, *args)
+
+    monkeypatch.setattr(
+        cuda_reduction.CudaDotProduct, "launch_active", fake_dot_launch_active)
+
     def fake_copy(dest, src, dest_offset=0, src_offset=0, count=0, stream=None):
         if id(dest) in tracked_copy_dests:
             copy_counts.append(count)

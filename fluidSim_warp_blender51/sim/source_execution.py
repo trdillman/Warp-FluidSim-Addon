@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 from . import constants as C
 from .attributes import normalize_color, stable_source_id
@@ -137,7 +138,7 @@ class CompiledSourceExecution:
                 SourceOperation.SINK,
                 SourceOperation.ACTIVATION,
             }:
-                wp.launch(
+                fast_launch(
                     k_apply_compiled_source,
                     dim=max(1, region.leaf_count * C.LEAF_VOLUME),
                     inputs=[
@@ -197,7 +198,7 @@ class CompiledSourceExecution:
             ):
                 point_values = region.points
                 count = len(point_values.positions)
-                wp.launch(
+                fast_launch(
                     k_reserve_owned_point_slots,
                     dim=1,
                     inputs=[count, particles.capacity, self._emission_state],
@@ -208,7 +209,7 @@ class CompiledSourceExecution:
                     ],
                     device=self.device,
                 )
-                wp.launch(
+                fast_launch(
                     k_source_owned_points,
                     dim=max(1, count),
                     inputs=[
@@ -278,7 +279,7 @@ class CompiledSourceExecution:
             elif plan.operation == SourceOperation.LIQUID:
                 if not region.leaf_count:
                     continue
-                wp.launch(
+                fast_launch(
                     k_emit_compiled_source_particles,
                     dim=region.leaf_count * C.LEAF_VOLUME,
                     inputs=[
@@ -365,7 +366,7 @@ class CompiledSourceExecution:
                         region.device_staggered_w,
                     )
                 )
-                wp.launch(
+                fast_launch(
                     k_apply_compiled_staggered_source,
                     dim=max(1, region.leaf_count * C.LEAF_VOLUME),
                     inputs=[
@@ -388,7 +389,7 @@ class CompiledSourceExecution:
                     device=self.device,
                 )
             else:
-                wp.launch(
+                fast_launch(
                     k_apply_compiled_source,
                     dim=max(1, region.leaf_count * C.LEAF_VOLUME),
                     inputs=[
@@ -451,7 +452,7 @@ class CompiledSourceExecution:
             if any(item.severity == "ERROR" for item in region.diagnostics):
                 continue
             payload = plan.payload
-            wp.launch(
+            fast_launch(
                 k_apply_compiled_source,
                 dim=max(1, region.leaf_count * C.LEAF_VOLUME),
                 inputs=[
@@ -523,7 +524,7 @@ class CompiledSourceExecution:
             return
         owner = self.runtime
         grid = owner.grid
-        wp.launch(
+        fast_launch(
             k_source_shape_forces,
             dim=owner._nvox,
             inputs=[
@@ -745,14 +746,14 @@ class CompiledSourceExecution:
             if plan.lifecycle == SourceLifecycle.DIRECT_APPEND and region.points is not None:
                 count = int(len(region.points.positions))
                 if count:
-                    wp.launch(
+                    fast_launch(
                         k_add_emission_demand,
                         dim=1,
                         inputs=[count, self._emission_state],
                         device=self.device,
                     )
             elif region.leaf_count:
-                wp.launch(
+                fast_launch(
                     k_count_compiled_source_particles,
                     dim=region.leaf_count * C.LEAF_VOLUME,
                     inputs=[
@@ -770,7 +771,7 @@ class CompiledSourceExecution:
                 )
 
         if self._transaction_shape_count:
-            wp.launch(
+            fast_launch(
                 k_count_source_shapes_particles,
                 dim=owner._nvox,
                 inputs=[
@@ -786,7 +787,7 @@ class CompiledSourceExecution:
                 device=self.device,
             )
         for mesh_index, source in enumerate(self._transaction_mesh_sources):
-            wp.launch(
+            fast_launch(
                 k_count_mesh_source_particles,
                 dim=owner._nvox,
                 inputs=[
@@ -804,7 +805,7 @@ class CompiledSourceExecution:
                 device=self.device,
             )
 
-        wp.launch(
+        fast_launch(
             k_admit_emission_batch,
             dim=1,
             inputs=[particles.count, particles.capacity, self._emission_state],
@@ -874,7 +875,7 @@ class CompiledSourceExecution:
             if emitted:
                 particles = self.runtime.particles
                 if particles.has_optional_channel("uid"):
-                    wp.launch(
+                    fast_launch(
                         k_assign_emitted_uids,
                         dim=emitted,
                         inputs=[
@@ -949,7 +950,7 @@ class CompiledSourceExecution:
         shapes = self._shapes()
 
         if shape_count:
-            wp.launch(
+            fast_launch(
                 k_source_shapes,
                 dim=owner._nvox,
                 inputs=[
@@ -977,7 +978,7 @@ class CompiledSourceExecution:
         for source in mesh_sources:
             if not source.enabled or source.mesh is None:
                 continue
-            wp.launch(
+            fast_launch(
                 k_mesh_source_field,
                 dim=owner._nvox,
                 inputs=[
@@ -1006,7 +1007,7 @@ class CompiledSourceExecution:
                 int(self._height_profile_res[0]),
                 int(self._height_profile_res[1]),
             )
-            wp.launch(
+            fast_launch(
                 k_source_height,
                 dim=owner._nvox,
                 inputs=[
@@ -1028,7 +1029,7 @@ class CompiledSourceExecution:
                 device=self.device,
             )
 
-        wp.launch(
+        fast_launch(
             k_source_resolve_type,
             dim=owner._nvox,
             inputs=[owner.voxel_type.data, grid.num_leaves],
@@ -1039,7 +1040,7 @@ class CompiledSourceExecution:
         if self._transaction_shape_count:
             nvox = int(owner._nvox)
             demand, offsets = self._shape_emission_scan_buffers(nvox)
-            wp.launch(
+            fast_launch(
                 k_source_shapes_particle_demand,
                 dim=nvox,
                 inputs=[
@@ -1056,7 +1057,7 @@ class CompiledSourceExecution:
                 device=self.device,
             )
             wp.utils.array_scan(demand, offsets, inclusive=False)
-            wp.launch(
+            fast_launch(
                 k_reserve_scanned_slots,
                 dim=1,
                 inputs=[
@@ -1073,7 +1074,7 @@ class CompiledSourceExecution:
                 ],
                 device=self.device,
             )
-            wp.launch(
+            fast_launch(
                 k_source_shapes_particles,
                 dim=nvox,
                 inputs=[
@@ -1108,7 +1109,7 @@ class CompiledSourceExecution:
                 device=self.device,
             )
         for mesh_index, source in enumerate(self._transaction_mesh_sources):
-            wp.launch(
+            fast_launch(
                 k_mesh_source_particles,
                 dim=owner._nvox,
                 inputs=[
@@ -1166,13 +1167,13 @@ class CompiledSourceExecution:
         uid_base = int(particles.next_uid)
         self._emission_state.zero_()
         self._compiled_result.zero_()
-        wp.launch(
+        fast_launch(
             k_add_emission_demand,
             dim=1,
             inputs=[required, self._emission_state],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_admit_emission_batch,
             dim=1,
             inputs=[particles.count, particles.capacity, self._emission_state],
@@ -1181,7 +1182,7 @@ class CompiledSourceExecution:
         empty_scalar = self._compiled_empty_scalar
         for packet, positions, velocities in uploaded:
             count = len(packet.positions)
-            wp.launch(
+            fast_launch(
                 k_reserve_owned_point_slots,
                 dim=1,
                 inputs=[count, particles.capacity, self._emission_state],
@@ -1192,7 +1193,7 @@ class CompiledSourceExecution:
                 ],
                 device=self.device,
             )
-            wp.launch(
+            fast_launch(
                 k_source_owned_points,
                 dim=max(1, count),
                 inputs=[
@@ -1249,7 +1250,7 @@ class CompiledSourceExecution:
             raise RuntimeError("direct particle transaction violated its admitted count")
         if admitted:
             if emitted and particles.has_optional_channel("uid"):
-                wp.launch(
+                fast_launch(
                     k_assign_emitted_uids,
                     dim=emitted,
                     inputs=[initial, emitted, uid_base, particles.int_attrs["uid"]],

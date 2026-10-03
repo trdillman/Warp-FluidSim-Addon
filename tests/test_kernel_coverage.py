@@ -23,7 +23,8 @@ def _is_real_warp_entry(entry):
         return False
     # kernels_core.py:94-104 intentionally wraps wp.utils device primitives
     # instead of exposing raw wp.Kernel objects for reduction aliases.
-    return "wp." in source
+    # fast_launch is sim.fastlaunch.launch, a recorded-command wp.launch.
+    return "wp." in source or "fast_launch(" in source
 
 
 def check_kernel_coverage(verbose=False):

@@ -78,9 +78,82 @@ def main():
 
     check_pointcloud_churn(scene)
     check_drifting_count_reuses_datablock()
+    check_mesh_bulk_buffer_publication()
+    check_pointcloud_integer_bulk_publication()
 
     bpy.ops.fluidsim.release()
     check_two_scene_collection_behavior()
+
+
+def check_mesh_bulk_buffer_publication():
+    """Check exact topology and signed attributes through real Blender RNA."""
+    import numpy as np
+    from fluidSim_warp_blender51.blender import output_publication as output
+
+    mesh = bpy.data.meshes.new("FluidSim Buffer Gate")
+    obj = bpy.data.objects.new("FluidSim Buffer Gate", mesh)
+    verts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], np.float32)
+    tris = np.array([[0, 1, 2], [0, 2, 3]], np.int32)
+    ids = np.array([-1, 7, 23, 100], np.int32)
+    try:
+        pointer = mesh.as_pointer()
+        output._swap_mesh(obj, verts, tris, attributes={"source_id": ids})
+        actual = np.empty(tris.size, np.int32)
+        mesh.loops.foreach_get("vertex_index", actual)
+        check("mesh bulk buffer preserves triangle indices",
+              np.array_equal(actual, tris.ravel()))
+        actual_ids = np.empty(len(ids), np.int32)
+        mesh.attributes["fluidsim_source_id"].data.foreach_get("value", actual_ids)
+        check("signed integer attribute preserves values",
+              np.array_equal(actual_ids, ids))
+        check("mesh bulk upload preserves smooth shading",
+              all(face.use_smooth for face in mesh.polygons))
+        output._swap_mesh(obj, verts[:3], tris[:1], attributes={"source_id": ids[:3]})
+        check("mesh bulk upload handles changing topology",
+              mesh.as_pointer() == pointer and len(mesh.vertices) == 3
+              and len(mesh.loops) == 3 and len(mesh.polygons) == 1)
+        # Particle/whitewater fallback shares the writer but has no faces.
+        output._swap_vertex_cloud(obj, verts, attributes={"source_id": ids})
+        actual_ids = np.empty(len(ids), np.int32)
+        mesh.attributes["fluidsim_source_id"].data.foreach_get("value", actual_ids)
+        check("vertex-cloud sibling preserves integer attributes",
+              len(mesh.vertices) == 4 and len(mesh.polygons) == 0
+              and np.array_equal(actual_ids, ids))
+        output._swap_mesh(obj, np.empty((0, 3), np.float32), np.empty((0, 3), np.int32))
+        check("empty mesh clears previous bulk publication",
+              len(mesh.vertices) == len(mesh.loops) == len(mesh.polygons) == 0)
+    finally:
+        bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.meshes.remove(mesh)
+
+
+def check_pointcloud_integer_bulk_publication():
+    """Read signed values and spare-capacity padding through PointCloud RNA."""
+    import numpy as np
+    from fluidSim_warp_blender51.blender import output_publication as output
+
+    cloud = bpy.data.pointclouds.new("FluidSim Integer Buffer Gate")
+    obj = bpy.data.objects.new("FluidSim Integer Buffer Gate", cloud)
+    positions = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], np.float32)
+    ids = np.array([-1, 7, 23, 100], np.int32)
+    try:
+        output._swap_points(obj, positions, 0.1, attributes={"source_id": ids})
+        pointer = obj.data.as_pointer()
+        actual = np.empty(len(obj.data.points), np.int32)
+        obj.data.attributes["fluidsim_source_id"].data.foreach_get("value", actual)
+        check("PointCloud signed integer values and padding preserved",
+              np.array_equal(actual[:len(ids)], ids)
+              and np.all(actual[len(ids):] == 0))
+        output._swap_points(obj, positions[:2], 0.1, attributes={"source_id": ids[:2]})
+        obj.data.attributes["fluidsim_source_id"].data.foreach_get("value", actual)
+        check("PointCloud reused buffer clears stale integer values",
+              obj.data.as_pointer() == pointer
+              and np.array_equal(actual[:2], ids[:2])
+              and np.all(actual[2:] == 0))
+    finally:
+        cloud = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.pointclouds.remove(cloud)
 
 
 def check_two_scene_collection_behavior():

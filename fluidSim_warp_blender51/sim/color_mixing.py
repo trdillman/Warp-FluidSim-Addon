@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 from .fields import voxel_flat_index, voxel_floor, world_to_voxel
 
@@ -131,13 +132,13 @@ class ColorMixTransport:
             self.weight,
             self.color_mass,
         ]
-        wp.launch(
+        fast_launch(
             k_accumulate_particle_color,
             dim=particle_count,
             inputs=common,
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_blend_particle_color,
             dim=particle_count,
             inputs=[*common, blend],

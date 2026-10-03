@@ -14,6 +14,8 @@ from dataclasses import dataclass, field as dc_field
 
 import numpy as np
 import warp as wp
+from . import fastlaunch
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -152,6 +154,42 @@ def k_fill_float(data: wp.array(dtype=float), value: float):
 
 
 @wp.kernel
+def k_zero_fluid_grid(
+    u: wp.array(dtype=float), v: wp.array(dtype=float),
+    w: wp.array(dtype=float), wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+    temperature: wp.array(dtype=float), viscosity: wp.array(dtype=float),
+    density: wp.array(dtype=float), voxel_type: wp.array(dtype=wp.int32),
+    voxel_counts: wp.array(dtype=wp.int32),
+):
+    i = wp.tid()
+    u[i] = 0.0
+    v[i] = 0.0
+    w[i] = 0.0
+    wu[i] = 0.0
+    wv[i] = 0.0
+    ww[i] = 0.0
+    temperature[i] = 0.0
+    viscosity[i] = 0.0
+    density[i] = 0.0
+    voxel_type[i] = 0
+    voxel_counts[i] = 0
+
+
+@wp.kernel
+def k_reset_collision_grid(
+    velocity: wp.array(dtype=wp.vec3), friction: wp.array(dtype=float),
+    restitution: wp.array(dtype=float), sdf: wp.array(dtype=float),
+    far: float,
+):
+    i = wp.tid()
+    velocity[i] = wp.vec3(0.0, 0.0, 0.0)
+    friction[i] = 0.0
+    restitution[i] = 0.0
+    sdf[i] = far
+
+
+@wp.kernel
 def k_mark_domain_walls(
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
@@ -269,6 +307,18 @@ def k_transform_collider_points(
 def k_copy_float(src: wp.array(dtype=float), dst: wp.array(dtype=float)):
     tid = wp.tid()
     dst[tid] = src[tid]
+
+
+@wp.kernel
+def k_copy3_float(
+    src_a: wp.array(dtype=float), src_b: wp.array(dtype=float),
+    src_c: wp.array(dtype=float), dst_a: wp.array(dtype=float),
+    dst_b: wp.array(dtype=float), dst_c: wp.array(dtype=float),
+):
+    tid = wp.tid()
+    dst_a[tid] = src_a[tid]
+    dst_b[tid] = src_b[tid]
+    dst_c[tid] = src_c[tid]
 
 
 @wp.func
@@ -1127,6 +1177,7 @@ class FluidSolver:
 
     def release(self):
         """Break GPU-owning backreferences before the session drops this solver."""
+        fastlaunch.clear()
         pressure_solver = getattr(self, "pressure_solver", None)
         if pressure_solver is not None:
             pressure_solver.release()
@@ -1212,7 +1263,7 @@ class FluidSolver:
         p = self.particles
         if s.spacetime_enabled and s.spacetime_resync_surface:
             g = self.grid
-            wp.launch(
+            fast_launch(
                 k_resync_particle_positions_spacetime, dim=self._np_dim(),
                 inputs=[p.position, p.velocity, p.time_offset, p.count,
                         self.vel.u, self.vel.v, self.vel.w,
@@ -1293,7 +1344,7 @@ class FluidSolver:
         self._nvox = max(1, g.active_voxel_count)
 
         # Carry churn across the rebuild (only persistent grid field).
-        wp.launch(
+        fast_launch(
             k_remap_leaf_field, dim=self._nvox,
             inputs=[self.churn.data, self.old_leaf_table, g.leaf_coords,
                     g.num_leaves, g.leaves_dim],
@@ -1310,22 +1361,28 @@ class FluidSolver:
         # reads or writes this substep (all launches are bounded by nvox and
         # guarded by num_leaves on device).
         nv = self._nvox
-        arrays = (*self.vel.arrays(), self.voxel_type.data,
-                  self.voxel_counts.data, self.temperature.data,
-                  self.viscosity_field.data, self.density.data)
-        if clear_collision:
-            arrays += (self.collision_vel, self.collision_friction,
-                       self.collision_restitution)
-        for a in arrays:
-            a[:nv].zero_()
+        # Two fused kernels replace twelve memsets and a fill: one launch
+        # per group instead of 13 slice + memset pairs.
+        fast_launch(
+            k_zero_fluid_grid, dim=nv,
+            inputs=[*self.vel.arrays(), self.temperature.data,
+                    self.viscosity_field.data, self.density.data,
+                    self.voxel_type.data, self.voxel_counts.data],
+            device=self.device,
+        )
         if not clear_collision:
             return
-        wp.launch(k_fill_float, dim=nv,
-                  inputs=[self.collision_sdf.data, 1.0e6], device=self.device)
+        fast_launch(
+            k_reset_collision_grid, dim=nv,
+            inputs=[self.collision_vel, self.collision_friction,
+                    self.collision_restitution, self.collision_sdf.data,
+                    1.0e6],
+            device=self.device,
+        )
         s = self.settings
         if s.domain_sdf_walls and not s.open_boundaries:
             g = self.grid
-            wp.launch(
+            fast_launch(
                 k_mark_domain_walls, dim=nv,
                 inputs=[g.leaf_coords, g.num_leaves, g.origin, g.voxel_size,
                         wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
@@ -1349,7 +1406,7 @@ class FluidSolver:
             axis = tuple(v / mag for v in av) if mag > 1.0e-9 else (0.0, 0.0, 1.0)
             angle = mag * elapsed
             linear_disp = tuple(v * elapsed for v in col.linear_velocity)
-            wp.launch(
+            fast_launch(
                 k_transform_collider_points, dim=col.base_points.shape[0],
                 inputs=[col.base_points, wp.vec3(*col.center), wp.vec3(*axis),
                         angle, wp.vec3(*linear_disp)],
@@ -1370,7 +1427,7 @@ class FluidSolver:
                        math.sqrt(sum(value * value for value in extent)))
             lv = col.linear_velocity
             av = col.angular_velocity
-            wp.launch(
+            fast_launch(
                 k_rasterize_collider_material, dim=self._nvox,
                 inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
                         s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
@@ -1385,7 +1442,7 @@ class FluidSolver:
         nv = self._nvox
         np_dim = self._np_dim()
         self.voxel_counts.data[:nv].zero_()
-        wp.launch(
+        fast_launch(
             k_particle_to_voxel_count_and_update_index,
             dim=np_dim,
             inputs=[self.particles.position, self.particles.count,
@@ -1485,7 +1542,7 @@ class FluidSolver:
         nv = self._nvox
         if st.spacetime_enabled:
             prev_dt = self._st_previous_dt if self._st_previous_dt > 0.0 else float(dt or (st.time_scale / max(st.frame_rate, 1.0)))
-            wp.launch(
+            fast_launch(
                 k_gather_grid_data_spacetime, dim=nv,
                 inputs=[p.position, p.velocity, p.time_offset,
                         g.leaf_table, g.leaf_coords, g.num_leaves,
@@ -1498,7 +1555,7 @@ class FluidSolver:
                 device=self.device,
             )
         else:
-            wp.launch(
+            fast_launch(
                 k_gather_grid_data, dim=nv,
                 inputs=[p.position, p.velocity,
                         g.leaf_table, g.leaf_coords, g.num_leaves,
@@ -1510,7 +1567,7 @@ class FluidSolver:
                          self.vel.wu, self.vel.wv, self.vel.ww],
                 device=self.device,
             )
-        wp.launch(
+        fast_launch(
             k_normalize_mac, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1519,7 +1576,7 @@ class FluidSolver:
         )
         # Particle/phase accumulators -> voxel activity (fluid mask).
         if st.spacetime_enabled:
-            wp.launch(
+            fast_launch(
                 k_spacetime_weights_to_phase_active, dim=self._nvox,
                 inputs=[self.vel.wu, self.vel.wv, self.vel.ww,
                         self.voxel_type.data, g.leaf_table, g.leaf_coords,
@@ -1529,7 +1586,7 @@ class FluidSolver:
                 outputs=[self.density.data], device=self.device,
             )
         else:
-            wp.launch(
+            fast_launch(
                 k_particle_to_grid_active, dim=self._nvox,
                 inputs=[self.voxel_counts.data, g.num_leaves],
                 outputs=[self.voxel_type.data], device=self.device,
@@ -1539,7 +1596,7 @@ class FluidSolver:
         if st.viscosity_enabled and st.viscosity_from_particles:
             self.attr_weight.data[:self._nvox].zero_()
             self.viscosity_field.data[:self._nvox].zero_()
-            wp.launch(
+            fast_launch(
                 k_particle_to_grid_collect, dim=self._np_dim(),
                 inputs=[p.position, p.attr("viscosity"), p.count,
                         g.leaf_table, g.voxels_dim, g.leaves_dim,
@@ -1547,7 +1604,7 @@ class FluidSolver:
                 outputs=[self.viscosity_field.data, self.attr_weight.data],
                 device=self.device,
             )
-            wp.launch(
+            fast_launch(
                 k_particle_to_grid_average, dim=self._nvox,
                 inputs=[self.viscosity_field.data, self.attr_weight.data,
                         g.num_leaves],
@@ -1555,10 +1612,12 @@ class FluidSolver:
             )
 
     def _save_velocities(self):
-        nv = self._nvox
-        wp.copy(self.vel_saved_u, self.vel.u, count=nv)
-        wp.copy(self.vel_saved_v, self.vel.v, count=nv)
-        wp.copy(self.vel_saved_w, self.vel.w, count=nv)
+        fast_launch(
+            k_copy3_float, dim=self._nvox,
+            inputs=[self.vel.u, self.vel.v, self.vel.w,
+                    self.vel_saved_u, self.vel_saved_v, self.vel_saved_w],
+            device=self.device,
+        )
 
     def _forces(self, dt):
         g = self.grid
@@ -1568,7 +1627,7 @@ class FluidSolver:
         post_p2g = getattr(self.sourcing, "apply_post_p2g_fields", None)
         if post_p2g is not None:
             post_p2g(dt)
-        wp.launch(
+        fast_launch(
             k_forces_gravity, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1581,7 +1640,7 @@ class FluidSolver:
         # values in SourcePipeline.apply().
         self.sourcing.apply_forces(dt)
         if any(component != 0.0 for component in s.directional_force):
-            wp.launch(
+            fast_launch(
                 k_forces_directional, dim=self._nvox,
                 inputs=[self.vel.u, self.vel.v, self.vel.w,
                         self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1590,7 +1649,7 @@ class FluidSolver:
             )
         if (s.omnidirectional_force_strength != 0.0
                 and s.omnidirectional_force_radius > 0.0):
-            wp.launch(
+            fast_launch(
                 k_forces_omnidirectional, dim=self._nvox,
                 inputs=[g.leaf_coords, g.num_leaves,
                         self.vel.u, self.vel.v, self.vel.w,
@@ -1602,7 +1661,7 @@ class FluidSolver:
                 device=self.device,
             )
         if self.force_fields:
-            wp.launch(
+            fast_launch(
                 k_forces_proxy_fields, dim=self._nvox,
                 inputs=[self._force_field_data(), len(self.force_fields),
                         g.leaf_coords, g.num_leaves, g.origin, g.voxel_size,
@@ -1613,7 +1672,7 @@ class FluidSolver:
             )
         diffusion_amount = max(0.0, min(float(s.force_diffusion), 1.0))
         if diffusion_amount > 0.0:
-            wp.launch(
+            fast_launch(
                 k_forces_diffusion, dim=self._nvox,
                 inputs=[self.vel.u, self.vel.v, self.vel.w,
                         self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1626,7 +1685,7 @@ class FluidSolver:
             self.vel.v, self.tmp_v = self.tmp_v, self.vel.v
             self.vel.w, self.tmp_w = self.tmp_w, self.vel.w
         if s.dissipation_enabled and s.dissipation_rate > 0.0:
-            wp.launch(
+            fast_launch(
                 k_dissipate_particle_attribute, dim=self._np_dim(),
                 inputs=[self.particles.attr(s.dissipation_attribute),
                         self.particles.count, s.dissipation_rate,
@@ -1635,7 +1694,7 @@ class FluidSolver:
             )
         if (s.attraction_enabled and s.attraction_strength != 0.0
                 and s.attraction_max_distance > 0.0):
-            wp.launch(
+            fast_launch(
                 k_attract_sdf_gradient_direction, dim=self._nvox,
                 inputs=[self.collision_sdf.data, g.leaf_table, g.leaf_coords,
                         g.voxels_dim, g.leaves_dim, g.num_leaves,
@@ -1649,7 +1708,7 @@ class FluidSolver:
         # particle SDF after P2G and before implicit viscosity/pressure.
         self.surface_tension.apply(dt)
         if s.max_speed > 0.0:
-            wp.launch(
+            fast_launch(
                 k_forces_speed_limit, dim=self._nvox,
                 inputs=[self.vel.u, self.vel.v, self.vel.w,
                         self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1669,7 +1728,7 @@ class FluidSolver:
         if not s.viscosity_enabled:
             return
         if not s.viscosity_from_particles and s.viscosity_constant > 0.0:
-            wp.launch(
+            fast_launch(
                 k_fill_float, dim=self._nvox,
                 inputs=[self.viscosity_field.data, s.viscosity_constant],
                 device=self.device,
@@ -1693,13 +1752,13 @@ class FluidSolver:
 
     def _collision_faces(self):
         g = self.grid
-        wp.launch(
+        fast_launch(
             k_sdf_to_axis_collision, dim=self._nvox,
             inputs=[self.collision_sdf.data, g.leaf_table, g.leaf_coords,
                     g.voxels_dim, g.leaves_dim, g.num_leaves, 0.0],
             outputs=[self.voxel_type.data], device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_expand_shift_axis_velocity_in_collider, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w, self.voxel_type.data,
                     self.collision_vel, g.leaf_table, g.leaf_coords,
@@ -1746,14 +1805,15 @@ class FluidSolver:
                              f"to a slower host loop: {error}")
         return "; ".join(parts)
 
-    def _collider_material_response(self):
+    def _collider_material_response(self, dt):
         g = self.grid
-        wp.launch(
+        fast_launch(
             k_apply_collider_material_to_grid, dim=self._nvox,
             inputs=[self.voxel_type.data, self.collision_sdf.data,
                     self.collision_vel, self.collision_friction,
                     self.collision_restitution, g.leaf_table, g.leaf_coords,
                     g.voxels_dim, g.leaves_dim, g.num_leaves, g.voxel_size,
+                    float(dt) / C.COLLIDER_FRICTION_REFERENCE_TIME,
                     self.collision_impact_u, self.collision_impact_v,
                     self.collision_impact_w,
                     self.vel.u, self.vel.v, self.vel.w],
@@ -1764,7 +1824,7 @@ class FluidSolver:
         """Clamp MAC velocity to a CFL-safe bound and kill inf/nan."""
         g = self.grid
         max_speed = self._cfl_speed_limit(dt)
-        wp.launch(
+        fast_launch(
             k_sanitize_mac_velocity, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1781,7 +1841,7 @@ class FluidSolver:
         safe_dt = max(float(dt), 1.0e-8)
         max_speed = max(s.cfl * g.voxel_size / safe_dt * 2.0, 50.0)
         p = self.particles
-        wp.launch(
+        fast_launch(
             k_sanitize_particles, dim=self._np_dim(),
             inputs=[p.position, p.velocity, p.alive, p.count, max_speed,
                     wp.vec3(*s.domain_min), wp.vec3(*s.domain_max)],
@@ -1792,7 +1852,7 @@ class FluidSolver:
         g = self.grid
         s = self.settings
         p = self.particles
-        wp.launch(
+        fast_launch(
             k_staggered_field_to_particle, dim=self._np_dim(),
             inputs=[p.position, p.count,
                     self.vel.u, self.vel.v, self.vel.w,
@@ -1806,7 +1866,7 @@ class FluidSolver:
 
         if s.spacetime_enabled:
             self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
-            wp.launch(
+            fast_launch(
                 k_advect_particles_spacetime, dim=self._np_dim(),
                 inputs=[p.position, p.velocity, p.time_offset, p.count,
                         self.vel.u, self.vel.v, self.vel.w,
@@ -1824,7 +1884,7 @@ class FluidSolver:
             )
             self._st_previous_dt = float(dt)
         else:
-            wp.launch(
+            fast_launch(
                 k_advect_particles, dim=self._np_dim(),
                 inputs=[p.position, p.velocity, p.count,
                         self.vel.u, self.vel.v, self.vel.w,
@@ -1859,12 +1919,12 @@ class FluidSolver:
         g = self.grid
         p = self.particles
         np_dim = self._np_dim()
-        wp.launch(k_particle_age, dim=np_dim,
+        fast_launch(k_particle_age, dim=np_dim,
                   inputs=[p.attr("age"), p.count, dt], device=self.device)
-        wp.launch(k_particle_lifespan, dim=np_dim,
+        fast_launch(k_particle_lifespan, dim=np_dim,
                   inputs=[p.attr("age"), p.attr("life"), p.count, 1],
                   outputs=[p.alive], device=self.device)
-        wp.launch(
+        fast_launch(
             k_particle_in_sink_check, dim=np_dim,
             inputs=[p.position, p.count, self.voxel_type.data,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
@@ -1881,7 +1941,7 @@ class FluidSolver:
         p = self.particles
         self._index_particles()
         separation = 0.5 * self.quality.nominal_particle_spacing
-        wp.launch(
+        fast_launch(
             k_particles_relax, dim=self._np_dim(),
             inputs=[p.position, p.count, p.voxel_index,
                     self.voxel_counts.data, self.bins.starts, self.bins.indices,
@@ -1912,7 +1972,7 @@ class FluidSolver:
         g = self.grid
         p = self.particles
         ww = self.whitewater
-        wp.launch(
+        fast_launch(
             k_compute_churn, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w, self.voxel_type.data,
                     g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
@@ -1959,7 +2019,7 @@ class FluidSolver:
             getattr(self, "_whitewater_launch_bound", ww.host_count)
             + self._np_dim())
         nww = max(1, self._whitewater_launch_bound)
-        wp.launch(
+        fast_launch(
             k_advect_whitewater, dim=nww,
             inputs=[ww.position, ww.velocity, ww.age, ww.life,
                     ww.alive, ww.type, ww.count,
@@ -2004,7 +2064,7 @@ class FluidSolver:
         ww.compact(active_whitewater)
         active_whitewater = ww.refresh_host_count()
         self.ww_density.data[:self._nvox].zero_()
-        wp.launch(
+        fast_launch(
             k_whitewater_set_grid_data, dim=max(1, active_whitewater),
             inputs=[ww.position, ww.alive, ww.count,
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
@@ -2056,7 +2116,7 @@ class FluidSolver:
         # calculated by select_substeps so clamp diagnostics remain truthful.
         if policy.adaptive and has_particles:
             self.max_speed_dev.zero_()
-            wp.launch(
+            fast_launch(
                 k_max_vec3_magnitude, dim=self.particles.host_count,
                 inputs=[self.particles.velocity, self.particles.count],
                 outputs=[self.max_speed_dev], device=self.device,
@@ -2104,7 +2164,7 @@ class FluidSolver:
         if not s.whitewater_enabled or ww.host_count <= 0:
             return 0
         self.max_speed_dev.zero_()
-        wp.launch(
+        fast_launch(
             k_max_vec3_magnitude, dim=ww.host_count,
             inputs=[ww.velocity, ww.count],
             outputs=[self.max_speed_dev], device=self.device,
@@ -2184,16 +2244,20 @@ class FluidSolver:
                 self._forces(dt)
             with self._phase("viscosity"):
                 self._viscosity(dt)
-            wp.copy(self.collision_impact_u, self.vel.u, count=self._nvox)
-            wp.copy(self.collision_impact_v, self.vel.v, count=self._nvox)
-            wp.copy(self.collision_impact_w, self.vel.w, count=self._nvox)
+            fast_launch(
+                k_copy3_float, dim=self._nvox,
+                inputs=[self.vel.u, self.vel.v, self.vel.w,
+                        self.collision_impact_u, self.collision_impact_v,
+                        self.collision_impact_w],
+                device=self.device,
+            )
             with self._phase("collision"):
                 self._collision_faces()
             self.features.run(
                 FrameFeaturePhase.BEFORE_PRESSURE, self, time_ctx)
             with self._phase("pressure"):
                 self._pressure(dt)
-                self._collider_material_response()
+                self._collider_material_response(dt)
             self._sanitize(dt)
             with self._phase("g2p"):
                 self._g2p_advect(dt)

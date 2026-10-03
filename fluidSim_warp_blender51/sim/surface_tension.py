@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import time
 
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -472,7 +473,7 @@ class SurfaceTensionSolver:
             DEFAULT_CURVATURE_CLAMP_VOXELS / float(grid.voxel_size)
         )
         start = time.perf_counter()
-        wp.launch(
+        fast_launch(
             k_surface_tension_normals,
             dim=self.solver._nvox,
             inputs=[
@@ -492,7 +493,7 @@ class SurfaceTensionSolver:
         current = self._normal_a
         other = self._normal_b
         for _ in range(smoothing_iterations):
-            wp.launch(
+            fast_launch(
                 k_surface_tension_smooth_normals,
                 dim=self.solver._nvox,
                 inputs=[
@@ -515,7 +516,7 @@ class SurfaceTensionSolver:
         # acceleration field.  Device resets are ordered before the kernel;
         # the final frame readback therefore reflects the latest substep.
         self._active_count.zero_()
-        wp.launch(
+        fast_launch(
             k_surface_tension_acceleration,
             dim=self.solver._nvox,
             inputs=[
@@ -541,14 +542,14 @@ class SurfaceTensionSolver:
             ],
             device=self.solver.device,
         )
-        wp.launch(
+        fast_launch(
             k_surface_tension_accumulate_frame_active_count,
             dim=1,
             inputs=[self._active_count],
             outputs=[self._frame_max_active_count],
             device=self.solver.device,
         )
-        wp.launch(
+        fast_launch(
             k_apply_surface_tension_to_mac,
             dim=self.solver._nvox,
             inputs=[

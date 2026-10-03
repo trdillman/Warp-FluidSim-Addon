@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import numpy as np
 import warp as wp
+from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
@@ -416,15 +417,15 @@ class SurfacePipeline:
                 grid, sdf, tmp, nvox, positions, h, radius,
                 seed_splat, passes, far_distance)
         else:
-            wp.launch(
+            fast_launch(
                 k_surface_sdf_reset, dim=nvox,
                 inputs=[sdf.data, grid.num_leaves, far_distance],
                 device=solver.device)
-            wp.launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
+            fast_launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
                       grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat, max_distance], outputs=[sdf.data], device=solver.device)
         def apply(kernel, iterations, strength):
             for _ in range(max(0, int(iterations))):
-                wp.launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                fast_launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
                           grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
                 sdf.data, tmp.data = tmp.data, sdf.data
         apply(self.filter_kernel(int(s.surface_filter_type)), s.surface_filter_iterations, s.surface_filter_strength)
@@ -450,26 +451,26 @@ class SurfacePipeline:
 
         # Seed unclamped: "no closest point yet" has to stay distinguishable
         # from "known, and far", or propagation would carry the fill value.
-        wp.launch(k_surface_sdf_reset, dim=nvox,
+        fast_launch(k_surface_sdf_reset, dim=nvox,
                   inputs=[sdf_data, grid.num_leaves, SDF_BAND_FAR], device=dev)
-        wp.launch(k_surface_band_index_reset, dim=nvox,
+        fast_launch(k_surface_band_index_reset, dim=nvox,
                   inputs=[grid.num_leaves], outputs=[closest], device=dev)
-        wp.launch(k_build_surface_sdf, dim=solver._np_dim(),
+        fast_launch(k_build_surface_sdf, dim=solver._np_dim(),
                   inputs=[positions, solver.particles.count, grid.leaf_table,
                           grid.voxels_dim, grid.leaves_dim, grid.origin, h,
                           radius, seed_splat, SDF_SPLAT_NO_CULL],
                   outputs=[sdf_data], device=dev)
-        wp.launch(k_seed_surface_sdf_closest, dim=solver._np_dim(),
+        fast_launch(k_seed_surface_sdf_closest, dim=solver._np_dim(),
                   inputs=[positions, solver.particles.count, grid.leaf_table,
                           grid.voxels_dim, grid.leaves_dim, grid.origin, h,
                           radius, seed_splat, sdf_data],
                   outputs=[closest], device=dev)
-        wp.launch(k_gather_surface_band_points, dim=nvox,
+        fast_launch(k_gather_surface_band_points, dim=nvox,
                   inputs=[closest, positions, grid.num_leaves],
                   outputs=[points], device=dev)
 
         for _ in range(int(passes)):
-            wp.launch(k_propagate_surface_sdf_band, dim=nvox,
+            fast_launch(k_propagate_surface_sdf_band, dim=nvox,
                       inputs=[sdf_data, points, grid.leaf_table,
                               grid.leaf_coords, grid.voxels_dim,
                               grid.leaves_dim, grid.num_leaves, grid.origin,
@@ -479,7 +480,7 @@ class SurfacePipeline:
             points, points_tmp = points_tmp, points
 
         self._band_points, self._band_points_tmp = points, points_tmp
-        wp.launch(k_clamp_surface_sdf, dim=nvox,
+        fast_launch(k_clamp_surface_sdf, dim=nvox,
                   inputs=[grid.num_leaves, far_distance], outputs=[sdf_data],
                   device=dev)
         return sdf_data, tmp_data
@@ -1285,12 +1286,12 @@ class SurfaceExtractor:
         n_leaves = int(getattr(g, "active_leaf_count", 0))
         if n_leaves <= 0:
             return None
-        wp.launch(
+        fast_launch(
             k_leaf_coord_bounds_init, dim=1,
             inputs=[g.voxels_dim], outputs=[self._bounds],
             device=self.device,
         )
-        wp.launch(
+        fast_launch(
             k_leaf_coord_bounds, dim=n_leaves,
             inputs=[g.leaf_coords, g.num_leaves],
             outputs=[self._bounds],
@@ -1336,7 +1337,7 @@ class SurfaceExtractor:
         lo = np.maximum(np.minimum(lo, vdim - dims), 0)
         nx, ny, nz = (int(dims[0]), int(dims[1]), int(dims[2]))
         self._ensure_dense((nx, ny, nz))
-        wp.launch(
+        fast_launch(
             k_sparse_to_dense_sdf,
             dim=nx * ny * nz,
             inputs=[
