@@ -16,9 +16,18 @@ def _lock() -> dict:
     return json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
 
 
-def test_manifest_bundles_exactly_the_locked_warp_wheels():
-    assert sorted(_manifest()["wheels"]) == sorted(
-        f"./wheels/{name}" for name in _lock()["files"])
+def test_manifest_does_not_bundle_wheels():
+    """Verify that the manifest does not declare bundled wheels (user installs via button)."""
+    manifest = _manifest()
+    assert "wheels" not in manifest or manifest.get("wheels") == []
+
+
+def test_manifest_declares_network_permission():
+    """Verify that the manifest declares network permission for PyPI downloads."""
+    manifest = _manifest()
+    assert "permissions" in manifest
+    assert "network" in manifest["permissions"]
+    assert "PyPI" in manifest["permissions"]["network"] or "download" in manifest["permissions"]["network"].lower()
 
 
 def test_warp_lock_covers_every_platform_once_and_matches_identity():

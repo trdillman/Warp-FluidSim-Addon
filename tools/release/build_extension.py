@@ -325,13 +325,15 @@ def verify_source_tree(root: Path) -> SourceVerification:
     if not lock_platforms or not lock_platforms.issubset(platforms):
         raise RuntimeError("locked wheel platforms must be a supported platform subset")
 
-    manifest_wheels = manifest.get("wheels")
-    expected_wheels = sorted(f"./{BUNDLED_WHEEL_DIR}/{name}" for name in files)
-    if not isinstance(manifest_wheels, list) or sorted(manifest_wheels) != expected_wheels:
+    manifest_wheels = manifest.get("wheels", [])
+    if manifest_wheels:
         raise RuntimeError(
-            f"manifest wheels must be exactly the locked Warp wheels {expected_wheels}, "
+            "manifest wheels must be empty (Warp is installed via preferences button), "
             f"got {manifest_wheels!r}"
         )
+    permissions = manifest.get("permissions", {})
+    if "network" not in permissions:
+        raise RuntimeError("manifest must declare 'network' permission for PyPI downloads")
     if "generated" in manifest.get("build", {}):
         raise RuntimeError("tracked source manifest must not contain generated metadata")
 
@@ -616,6 +618,70 @@ def _validate_embedded_manifest_and_payload(
     return payloads, normalized_manifest
 
 
+def _validate_embedded_manifest_no_wheels(
+    package: Path,
+    platform: str,
+    archive: zipfile.ZipFile,
+    names: Mapping[str, str],
+    source: SourceVerification,
+    reference_payloads: dict[str, str] | None,
+    reference_manifest: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Validate embedded manifest for packages without bundled wheels."""
+    embedded = tomllib.loads(archive.read(names["blender_manifest.toml"]).decode("utf-8"))
+    if embedded.get("id") != source.extension_id or embedded.get("version") != source.version:
+        raise RuntimeError(f"embedded manifest identity mismatch: {package.name}")
+    if embedded.get("license") != REQUIRED_LICENSE:
+        raise RuntimeError(f"embedded manifest license mismatch: {package.name}")
+    if tuple(embedded.get("platforms", ())) != source.platforms:
+        raise RuntimeError(
+            f"embedded source platform mismatch: expected {list(source.platforms)}, "
+            f"got {embedded.get('platforms')}"
+        )
+    embedded_wheels = embedded.get("wheels") or []
+    if embedded_wheels:
+        raise RuntimeError(f"embedded manifest should have no wheels: {package.name}")
+    if "network" not in embedded.get("permissions", {}):
+        raise RuntimeError(f"embedded manifest missing network permission: {package.name}")
+    generated = embedded.get("build", {}).get("generated", {})
+    if generated.get("platforms") != [platform]:
+        raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
+
+    normalized_manifest = dict(embedded)
+    normalized_build = dict(normalized_manifest.get("build", {}))
+    normalized_build.pop("generated", None)
+    normalized_manifest["build"] = normalized_build
+    payloads = {
+        relative: _sha256_bytes(archive.read(archive_name))
+        for relative, archive_name in names.items()
+        if relative != "blender_manifest.toml"
+        and PurePosixPath(relative).parts[0] != BUNDLED_WHEEL_DIR
+    }
+    if reference_payloads is None:
+        return payloads, normalized_manifest
+    if payloads != reference_payloads or normalized_manifest != reference_manifest:
+        raise RuntimeError(
+            "split-platform payloads differ outside generated platform metadata"
+        )
+    return payloads, normalized_manifest
+
+
+def _validate_no_bundled_wheels(
+    package: Path,
+    archive: zipfile.ZipFile,
+    names: Mapping[str, str],
+) -> None:
+    """Verify the package contains no bundled Warp wheels."""
+    bundled = sorted(
+        name for name in names
+        if PurePosixPath(name).parts[0] == BUNDLED_WHEEL_DIR
+    )
+    if bundled:
+        raise RuntimeError(
+            f"package {package.name} should not contain bundled wheels, found: {bundled}"
+        )
+
+
 def _validate_bundled_wheel(
     package: Path,
     platform: str,
@@ -667,10 +733,10 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
         platform = _platform_from_package_name(package, source.extension_id, source.version)
         with zipfile.ZipFile(package) as archive:
             names = _archive_relative_names(archive)
-            wheel = _validate_bundled_wheel(package, platform, archive, names, source)
-            _validate_archive_members(names, frozenset({wheel}))
+            _validate_no_bundled_wheels(package, archive, names)
+            _validate_archive_members(names, frozenset())
             _validate_required_package_content(package, archive, names, collision_guard)
-            reference_payloads, reference_manifest = _validate_embedded_manifest_and_payload(
+            reference_payloads, reference_manifest = _validate_embedded_manifest_no_wheels(
                 package,
                 platform,
                 archive,
@@ -684,7 +750,7 @@ def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecor
             ArtifactRecord(
                 path=package,
                 platform=platform,
-                runtime_dependency="bundled",
+                runtime_dependency="user-install",
                 size=package.stat().st_size,
                 sha256=_sha256_path(package),
             )
@@ -760,12 +826,14 @@ def build(
     run_lint: bool = True,
     fetcher: Callable[[Path], object] | None = None,
 ) -> list[Path]:
-    """Fetch the locked wheels, then run static gates, Blender validation,
-    split build, and archive inspection."""
+    """Run static gates, Blender validation, split build, and archive inspection.
+
+    Note: wheels are not fetched or bundled. Users install Warp via the
+    preferences button which downloads from PyPI.
+    """
     root = Path(root).resolve()
     blender = Path(blender)
     output = Path(output).resolve()
-    (fetcher or _fetch_locked_wheels)(root)
     source = verify_source_tree(root)
     output.mkdir(parents=True, exist_ok=True)
     for path in output.glob(f"{source.extension_id}-{source.version}-*.zip"):

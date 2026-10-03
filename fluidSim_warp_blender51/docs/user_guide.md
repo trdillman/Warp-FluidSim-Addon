@@ -14,18 +14,20 @@ FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Target |
 |---|---|
-| FluidSim | 2.0.0 |
+| FluidSim | 2.1.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | Bundled NVIDIA Warp 1.17.0 (CUDA 12 build), installed by Blender with the extension |
+| Warp dependency | NVIDIA Warp 1.17.0 (CUDA 12 build), installed via preferences button |
 | Cache compatibility | Cache v2 write/playback/resume; Cache v1 (1.0.x) is refused: bake again |
 
-Install the extension ZIP for your platform; there is nothing else to install.
-Blender installs the bundled, checksum-locked Warp wheel into its own
-extension site-packages. FluidSim never invokes `pip` or downloads anything at
-run time. It needs an NVIDIA driver that supports CUDA 12 (R525 or newer).
+Install the extension ZIP for your platform. On first run, open **Edit →
+Preferences → Add-ons → FluidSim Warp** and press the **Install Warp** button.
+This downloads the certified NVIDIA Warp 1.17.0 wheel (~160 MB) from PyPI and
+installs it into Blender's Python. The button is safe to press multiple times:
+if Warp is already installed at the correct version, it reports success without
+reinstalling. An NVIDIA driver that supports CUDA 12 (R525 or newer) is required.
 
 If a newer 1.x Warp is ever loaded instead (for example through a developer
 override), FluidSim still runs but marks the runtime status as

@@ -85,12 +85,6 @@ def _assert_bundled_warp(module: str) -> tuple[Path, Path]:
         raise AssertionError(
             f"FluidSim loaded outside the isolated installed repository: {extension_root}"
         ) from exc
-    try:
-        warp_path.relative_to(wheel_root)
-    except ValueError as exc:
-        raise AssertionError(
-            f"Warp did not load from the extension's bundled wheel: {warp_path}"
-        ) from exc
     return extension_root, warp_path
 
 

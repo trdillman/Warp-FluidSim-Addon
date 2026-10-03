@@ -1,15 +1,16 @@
 # Third-Party Notices
 
-FluidSim Warp is distributed under GPL-3.0-or-later. Each FluidSim platform
-package bundles exactly one unmodified NVIDIA Warp wheel for that platform.
-It does not include Blender or any other third-party runtime binary.
+FluidSim Warp is distributed under GPL-3.0-or-later. The extension does not
+bundle NVIDIA Warp; instead, users install Warp via a button in Add-on
+Preferences that downloads the certified wheel from PyPI.
 
 NVIDIA Warp `warp-lang 1.17.0` (the PyPI build for CUDA 12, CUDA Toolkit 12.9)
 is the certified runtime. The Windows x64 and Linux x64 wheels are pinned by
-SHA-256 in `../tools/release/wheels.lock.json`, listed in
-`blender_manifest.toml`, and installed by Blender itself when the extension is
-installed. FluidSim performs no runtime download, `pip` invocation, or
-automatic dependency installation.
+SHA-256 in `../tools/release/wheels.lock.json`. When the user presses
+**Install Warp** in Add-on Preferences, FluidSim downloads the wheel for the
+current platform from PyPI, verifies its SHA-256 checksum, and installs it
+into Blender's Python using pip. The download requires network access (the
+extension declares the `network` permission for this purpose).
 
 ## Third-party components
 
@@ -29,11 +30,12 @@ installed alongside Warp.
 
 ## Distribution and runtime policy
 
-- `blender_manifest.toml` declares exactly the locked Warp wheels; Blender's
-  split build puts only the matching platform wheel in each package.
-- Release inspection requires that one wheel, verifies its SHA-256 against the
-  lock, and rejects any other `.whl`, Blender runtime archive, or loose Warp
-  package directory inside the installable extension.
+- `blender_manifest.toml` declares `network` permission for the PyPI download.
+- `tools/release/wheels.lock.json` pins the exact wheel filenames, sizes,
+  SHA-256 checksums, and PyPI URLs. The installer refuses any wheel that does
+  not match these checksums.
+- The Install Warp button is idempotent: pressing it when the certified version
+  is already installed reports success without reinstalling.
 - A developer-only override (`FLUIDSIM_ALLOW_EXTERNAL_WARP=1`) can point at a
   Warp checkout for development; it is never used by release packages.
 

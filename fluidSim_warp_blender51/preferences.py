@@ -1,4 +1,4 @@
-"""Add-on preferences: bundled Warp runtime and CUDA device selection."""
+"""Add-on preferences: Warp installation and CUDA device selection."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ from .runtime.warp_runtime import (
     cuda_device_items,
     probe_runtime,
     runtime_status_for_device,
+)
+from .warp_installer import (
+    get_installed_warp_info,
+    install_warp,
+    is_certified_warp_installed,
 )
 
 _DEVICE_ITEMS_CACHE: list[tuple[str, str, str]] = []
@@ -84,6 +89,51 @@ def _refresh_runtime(prefs):
     return probe, runtime_status_for_device(selected, probe=probe)
 
 
+class FLUIDSIM_OT_install_warp(bpy.types.Operator):
+    """Download and install the certified NVIDIA Warp runtime from PyPI."""
+
+    bl_idname = "fluidsim.install_warp"
+    bl_label = "Install Warp"
+    bl_description = (
+        "Download and install the certified NVIDIA Warp runtime. "
+        "Requires an internet connection"
+    )
+    bl_options = {"INTERNAL"}
+
+    force_reinstall: BoolProperty(
+        name="Force Reinstall",
+        default=False,
+        description="Reinstall even if already installed",
+    )
+
+    def execute(self, context):
+        def progress(msg: str) -> None:
+            self.report({"INFO"}, msg)
+
+        result = install_warp(
+            force_reinstall=self.force_reinstall,
+            progress_callback=progress,
+        )
+
+        if result.success:
+            if result.already_installed:
+                self.report({"INFO"}, result.message)
+            else:
+                self.report({"INFO"}, result.message)
+                prefs = _preferences(context)
+                _refresh_runtime(prefs)
+        else:
+            self.report({"ERROR"}, result.message)
+
+        return {"FINISHED"} if result.success else {"CANCELLED"}
+
+    def invoke(self, context, event):
+        if is_certified_warp_installed() and not self.force_reinstall:
+            self.report({"INFO"}, "Warp is already installed at the certified version")
+            return {"FINISHED"}
+        return self.execute(context)
+
+
 class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
     """Refresh Warp import state and the CUDA device list."""
 
@@ -151,17 +201,31 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         box = layout.box()
         box.label(text="Runtime", icon="GPU")
-        box.prop(self, "device")
 
-        probe = probe_runtime()
-        selected = configured_device()
-        ready, message = runtime_status_for_device(selected, probe=probe)
-        row = box.row(align=True)
-        row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
-        row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
-        if probe.module_file:
-            box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
-        box.label(text="NVIDIA Warp ships inside the FluidSim extension; nothing else to install.")
+        warp_installed, warp_info = get_installed_warp_info()
+        if not warp_installed:
+            row = box.row()
+            row.alert = True
+            row.label(text="Warp is not installed", icon="ERROR")
+            row = box.row()
+            row.scale_y = 1.5
+            row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
+            box.label(text="Downloads NVIDIA Warp from PyPI (~160 MB).")
+        else:
+            box.prop(self, "device")
+            probe = probe_runtime()
+            selected = configured_device()
+            ready, message = runtime_status_for_device(selected, probe=probe)
+            row = box.row(align=True)
+            row.label(text=message, icon="CHECKMARK" if ready else "ERROR")
+            row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+            if probe.module_file:
+                box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
+            if not is_certified_warp_installed():
+                row = box.row()
+                row.alert = True
+                op = row.operator("fluidsim.install_warp", text="Reinstall Certified Warp", icon="FILE_REFRESH")
+                op.force_reinstall = True
 
         authoring = layout.box()
         authoring.label(text="Custom Effects", icon="MODIFIER")
@@ -179,6 +243,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
 
 
 CLASSES = (
+    FLUIDSIM_OT_install_warp,
     FLUIDSIM_OT_refresh_runtime_probe,
     FLUIDSIM_OT_redetect_device,
     FLUIDSIM_AP_preferences,

@@ -202,13 +202,23 @@ def _cached_probe() -> RuntimeProbe:
             cuda_devices=devices,
             warning=support_message,
         )
+    except ImportError as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        return RuntimeProbe(
+            available=False,
+            message=(
+                "NVIDIA Warp is not installed. Open Add-on Preferences and press "
+                "'Install Warp' to download and install it from PyPI."
+            ),
+            last_error=error,
+        )
     except Exception as exc:  # imported by Blender UI; retain actionable state
         error = f"{type(exc).__name__}: {exc}"
         return RuntimeProbe(
             available=False,
             message=(
-                "FluidSim could not load its bundled Warp runtime: "
-                f"{error}. Reinstall the FluidSim extension so Blender installs its bundled Warp runtime."
+                f"FluidSim could not load the Warp runtime: {error}. "
+                "Try pressing 'Install Warp' in Add-on Preferences to reinstall it."
             ),
             last_error=error,
         )

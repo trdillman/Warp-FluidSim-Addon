@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.0 — User-installed Warp runtime
+
+### Changed
+
+- **Warp is no longer bundled.** The extension no longer ships NVIDIA Warp
+  wheels. Instead, a clear **Install Warp** button in Add-on Preferences
+  downloads the certified Warp 1.17.0 wheel from PyPI and installs it into
+  Blender's Python. The button is safe to press multiple times (already
+  installed = success, not a duplicate install) and refuses uncertified or
+  incompatible Warp versions.
+- The extension now declares `network` permission for the PyPI download.
+- Updated THIRD_PARTY_NOTICES.md to reflect the new installation method.
+
+### Compatibility
+
+- The certified Warp version (1.17.0, CUDA 12 build) is unchanged.
+- Solver numerics and cache compatibility are unchanged from 2.0.0.
+- Existing 2.0.0 installations with bundled Warp continue to work; this
+  change only affects new installs.
+
+---
+
 ## 2.0.0 — Blender 5.2 LTS, bundled Warp 1.17 and the end of 1.0.x compatibility
 
 ### Upgrade notes
