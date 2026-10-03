@@ -355,8 +355,9 @@ def main():
         "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_pressure",
         "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_scene_surface",
         "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
-        "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
-        "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
+        "FLUIDSIM_PT_viewport_status", "FLUIDSIM_PT_header_popover",
+        "FLUIDSIM_STAGE_PT_bake",
+        "FLUIDSIM_STAGE_PT_bake_storage", "FLUIDSIM_PT_scene_diagnostics",
         "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
         "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
         "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_packages",
@@ -372,7 +373,8 @@ def main():
            "run_benchmark", "write_report", "effect_add", "effect_remove", "effect_duplicate",
            "effect_move", "effect_test_draft", "effect_apply_stack",
            "effect_revert_draft", "effect_preview_one_frame",
-           "effect_create_controller", "effect_export_package", "export_frame"]
+           "effect_create_controller", "effect_export_package", "export_frame",
+           "open_workspace"]
     missing_ops = [o for o in ops if not hasattr(bpy.ops.fluidsim, o)]
     check("operators registered", not missing_ops, str(missing_ops))
 

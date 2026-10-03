@@ -112,7 +112,8 @@ def _assert_packaged_entry_points(extension_root: Path) -> None:
         extension_root / "blender" / "ui_scene.py",
         extension_root / "blender" / "ui_object.py",
         extension_root / "blender" / "ui_physics.py",
-        extension_root / "blender" / "ui_view3d.py",
+        extension_root / "blender" / "ui_stages.py",
+        extension_root / "blender" / "ui_header.py",
         extension_root / "presets" / "schema.py",
         extension_root / "resources" / "presets" / "preview_water.json",
         extension_root / "resources" / "presets" / "water_surface_tension.json",
@@ -456,7 +457,15 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_PT_effect_packages": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_effect_warp_code": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_viewport_status": ("VIEW_3D", ""),
-        "FLUIDSIM_VIEW3D_PT_live_tuning": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_setup": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_setup_advanced": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_simulate": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_look": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_look_materials": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_bake": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_bake_storage": ("VIEW_3D", ""),
+        "FLUIDSIM_STAGE_PT_bake_manage": ("VIEW_3D", ""),
+        "FLUIDSIM_PT_header_popover": ("VIEW_3D", ""),
         "FLUIDSIM_PT_physics_root": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_physics_surface_output": ("PROPERTIES", "physics"),
     }
@@ -479,6 +488,17 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_PT_inputs",
         "FLUIDSIM_PT_physics",
         "FLUIDSIM_PT_snippets",
+        # Replaced by the pinned launcher strip and the Bake & Export stage.
+        "FLUIDSIM_VIEW3D_PT_live_tuning",
+        "FLUIDSIM_VIEW3D_PT_full_settings",
+        "FLUIDSIM_PT_scene_transport",
+        "FLUIDSIM_PT_scene_cache",
+        "FLUIDSIM_PT_cache_playback",
+        "FLUIDSIM_PT_cache_range",
+        "FLUIDSIM_PT_cache_storage",
+        "FLUIDSIM_PT_cache_bake",
+        "FLUIDSIM_PT_cache_manage",
+        "FLUIDSIM_STAGE_PT_bake_advanced",
     ):
         if hasattr(bpy.types, legacy):
             raise AssertionError(f"legacy dense sidebar panel is still registered: {legacy}")
@@ -488,6 +508,7 @@ def _assert_properties_ui() -> dict[str, object]:
         "FLUIDSIM_OT_use_active_as_domain",
         "FLUIDSIM_OT_clear_domain_assignment",
         "FLUIDSIM_OT_remove_selected_output",
+        "FLUIDSIM_OT_open_workspace",
     ):
         if not hasattr(bpy.types, operator_id):
             raise AssertionError(

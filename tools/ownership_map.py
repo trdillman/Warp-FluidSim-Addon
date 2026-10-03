@@ -66,6 +66,11 @@ DRAW_HELPERS = {
     "draw_property": (1, 2, False),
     "draw_property_grid": (1, 2, True),
 }
+# Stage helpers that draw ``setting_owner(scene, field)``: the control edits
+# whichever group owns the field, so the write is bound to the field's declared
+# effective owner (resolved in build_map). Value = field_argument_index.
+OWNER_RESOLVED_DRAW_HELPERS = {"_prop": 2}
+EFFECTIVE_OWNER = "effective"
 # Read-only telemetry rendering: reads the group, never edits it.
 READOUT_HELPERS = {"draw_readout_grid": (1, 2)}
 
@@ -403,6 +408,16 @@ def _classify_accesses(node, env, fields, table_names, func):
                 if field_name in fields:
                     func.writes.append((field_name, kind, node.lineno, name))
 
+    # UI write through a helper that resolves the owner itself
+    elif name in OWNER_RESOLVED_DRAW_HELPERS:
+        field_index = OWNER_RESOLVED_DRAW_HELPERS[name]
+        if len(node.args) > field_index:
+            target = node.args[field_index]
+            if isinstance(target, ast.Constant) and target.value in fields:
+                func.writes.append(
+                    (target.value, EFFECTIVE_OWNER, node.lineno, name)
+                )
+
     # Read-only telemetry rendering
     elif name in READOUT_HELPERS:
         data_index, pairs_index = READOUT_HELPERS[name]
@@ -685,7 +700,14 @@ def build_map():
         ui_write_kinds, ui_sites = set(), []
         other_write_kinds, other_write_sites = set(), []
         for kind, module, location, line, via, is_ui in writes.get(field, ()):
-            if is_ui and via in ("prop", "draw_property", "draw_property_grid"):
+            if kind == EFFECTIVE_OWNER:
+                kind = effective.get(field)
+                if kind not in (SCENE, DOMAIN):
+                    kind = None
+            if is_ui and via in (
+                "prop", "draw_property", "draw_property_grid",
+                *OWNER_RESOLVED_DRAW_HELPERS,
+            ):
                 if kind:
                     ui_write_kinds.add(kind)
                     ui_sites.append((location, line, kind, via))

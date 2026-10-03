@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import importlib.util
 import inspect
 import os
 import struct
@@ -1937,94 +1938,649 @@ def test_contextual_domain_actions_revalidate_object_role_and_identity(monkeypat
     )
 
 
-def test_viewport_shelf_is_lean_live_tuning_not_a_full_mirror(monkeypatch):
-    """The N-panel is a HUD + lean Live Tuning shelf, not a 50-panel mirror.
-
-    D1/D5: the full Scene workflow is no longer re-hosted in the sidebar. The
-    only sidebar body panel is a shallow Live Tuning shelf exposing the two
-    live-compatible knobs bound to the solver's owner (``active_domain_settings``)
-    plus a jump back to the authoritative Properties workflow.
-    """
+def _draw_launcher(
+    monkeypatch,
+    *,
+    state_id="IDLE",
+    label="Idle",
+    owns_scene=False,
+    runtime_ready=True,
+    playing=False,
+    session_active=False,
+    pending_action="NONE",
+):
+    """Draw the pinned status/transport strip against doubles for its inputs."""
     _install_bpy_stub(monkeypatch)
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1] / "fluidSim_warp_blender51"
-    module_path = root / "blender" / "ui_view3d.py"
-    assert module_path.is_file(), "View3D sidebar adapter is missing"
-
-    ui_view3d = _reload_module("fluidSim_warp_blender51.blender.ui_view3d")
     panels = _reload_module("fluidSim_warp_blender51.panels")
-    assert panels.FLUIDSIM_PT_viewport_status in panels.CLASSES
-
-    classes = ui_view3d.VIEW3D_PANEL_CLASSES
-    assert len({cls.bl_idname for cls in classes}) == len(classes)
-    ids = {cls.bl_idname for cls in classes}
-
-    # The verbatim full-mirror scaffold is gone.
-    assert "FLUIDSIM_VIEW3D_PT_full_settings" not in ids
-    assert not any(
-        hasattr(ui_view3d, name)
-        for name in ("VIEW3D_SOURCE_PANELS", "_make_panel_mirror", "_mirror_id")
-    ), "the N-panel full-mirror scaffold must be removed"
-
-    # Exactly one lean shelf panel, parented under the compact status launcher.
-    tuning = ui_view3d.FLUIDSIM_VIEW3D_PT_live_tuning
-    assert tuning in classes
-    assert tuning.bl_parent_id == "FLUIDSIM_PT_viewport_status"
-
-    # N-panel nesting depth <= 3 (success-criterion §11).
-    parents = {
-        panels.FLUIDSIM_PT_viewport_status.bl_idname: str(
-            getattr(panels.FLUIDSIM_PT_viewport_status, "bl_parent_id", "") or ""
-        )
-    }
-    for cls in classes:
-        parents[cls.bl_idname] = str(getattr(cls, "bl_parent_id", "") or "")
-
-    def depth(pid, seen=()):
-        parent = parents.get(pid, "")
-        if not parent or parent in seen:
-            return 1
-        return 1 + depth(parent, seen + (pid,))
-
-    assert max(depth(pid) for pid in parents) <= 3
-
-    # Each knob binds to the group that declares it, and the shelf offers the
-    # jump-back operator. The doubles carry only their own group's fields: a
-    # domain double holding particle_display_fraction once hid that the real
-    # shelf drew it from the domain group and silently dropped it.
-    domain_settings = SimpleNamespace(
-        domain_object=None,
-        voxel_size=0.037,
-        particles_per_voxel=12,
-        flip_ratio=0.97,
+    scene_bridge = importlib.import_module("fluidSim_warp_blender51.blender.scene_bridge")
+    monkeypatch.setattr(
+        panels,
+        "activity_ui_state",
+        lambda _scene: {
+            "id": state_id,
+            "label": label,
+            "icon": "INFO",
+            "owns_scene": owns_scene,
+        },
     )
+    monkeypatch.setattr(
+        panels,
+        "pending_ui_state",
+        lambda _scene: {"action": pending_action, "summary": "Edits pending"},
+    )
+    monkeypatch.setattr(panels, "probe_runtime", lambda: None)
+    monkeypatch.setattr(panels, "configured_device", lambda: "cuda:0")
+    monkeypatch.setattr(
+        panels,
+        "runtime_status_for_device",
+        lambda _device, probe=None: (runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"),
+    )
+    monkeypatch.setattr(
+        scene_bridge, "session", lambda: SimpleNamespace(active=session_active)
+    )
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(live=playing)),
+        screen=SimpleNamespace(is_animation_playing=playing),
+    )
+    panel = panels.FLUIDSIM_PT_viewport_status()
+    panel.layout = _Layout()
+    panel.draw(context)
+    return panels, panel.layout
+
+
+def _operator(layout, operator_id):
+    return next(op for op in layout.operators if op["id"] == operator_id)
+
+
+def test_viewport_launcher_is_a_pinned_status_strip_not_a_settings_shelf(monkeypatch):
+    """The sidebar top is status + transport; every setting lives in a stage.
+
+    The old Live Tuning child shelf and the "Open FluidSim Scene Properties"
+    jump are gone: flip_ratio and particle_display_fraction are Simulate / Look
+    stage controls, so the strip must not bind a single property.
+    """
+    panels, layout = _draw_launcher(monkeypatch)
+    assert panels.FLUIDSIM_PT_viewport_status in panels.CLASSES
+    launcher = panels.FLUIDSIM_PT_viewport_status
+    assert launcher.bl_space_type == "VIEW_3D"
+    assert launcher.bl_region_type == "UI"
+    assert launcher.bl_category == "FluidSim"
+    assert not getattr(launcher, "bl_parent_id", "")
+
+    assert not layout.props, "the strip is transport and status only"
+    assert "fluidsim.open_scene_properties" not in {op["id"] for op in layout.operators}
+    assert importlib.util.find_spec("fluidSim_warp_blender51.blender.ui_view3d") is None
+
+    texts = [label["text"] for label in layout.labels]
+    assert "Idle" in texts
+    assert "No simulation loaded; Preview starts one." in texts
+    preview = _operator(layout, "fluidsim.preview_start")
+    assert preview["text"] == "Preview"
+    assert preview["enabled"] is True
+    assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
+
+
+def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
+    """`Solver not owned by this scene` was jargon; say what Preview will do."""
+    _panels, layout = _draw_launcher(monkeypatch, owns_scene=True, label="Live Ready")
+    texts = [label["text"] for label in layout.labels]
+    assert "Simulation loaded; Resume Preview continues it." in texts
+    assert _operator(layout, "fluidsim.preview_start")["text"] == "Resume Preview"
+    assert _operator(layout, "fluidsim.restart_simulation")["text"] == "Restart Simulation"
+
+    _panels, layout = _draw_launcher(monkeypatch, session_active=True)
+    texts = [label["text"] for label in layout.labels]
+    assert "Another scene is using the solver." in texts
+
+    for note_free in ("PRODUCTION_BAKE", "CACHE_PLAYBACK"):
+        _panels, layout = _draw_launcher(
+            monkeypatch, state_id=note_free, label="Busy", owns_scene=True
+        )
+        assert [label["text"] for label in layout.labels if label["text"] != "Busy"] == [
+            "CUDA ready"
+        ], note_free
+
+    for scenario in (
+        {},
+        {"owns_scene": True},
+        {"session_active": True},
+        {"state_id": "PRODUCTION_BAKE"},
+    ):
+        _panels, layout = _draw_launcher(monkeypatch, **scenario)
+        assert not any("not owned" in label["text"] for label in layout.labels)
+
+
+def test_viewport_launcher_keeps_preview_present_but_greyed_when_not_ready(monkeypatch):
+    _panels, layout = _draw_launcher(monkeypatch, runtime_ready=False, owns_scene=True)
+    op_ids = [op["id"] for op in layout.operators]
+    assert "fluidsim.preview_start" in op_ids
+    assert "fluidsim.step" not in op_ids
+    assert _operator(layout, "fluidsim.preview_start")["enabled"] is False
+
+
+def test_viewport_launcher_transport_follows_the_activity(monkeypatch):
+    _panels, layout = _draw_launcher(monkeypatch, playing=True)
+    pause = _operator(layout, "fluidsim.preview_pause")
+    assert pause["text"] == "Pause Preview"
+    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+
+    _panels, layout = _draw_launcher(
+        monkeypatch, state_id="CACHE_PLAYBACK", label="Cache Playback Ready"
+    )
+    resume = _operator(layout, "fluidsim.cache_preview_start")
+    assert resume["text"] == "Resume Cache Preview"
+    assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
+
+    _panels, layout = _draw_launcher(
+        monkeypatch, state_id="CACHE_PLAYBACK", label="Playing Cache", playing=True
+    )
+    assert _operator(layout, "fluidsim.preview_pause")["text"] == "Pause Cache Preview"
+
+    _panels, layout = _draw_launcher(
+        monkeypatch, state_id="PRODUCTION_BAKE", label="Baking", owns_scene=True
+    )
+    assert _operator(layout, "fluidsim.bake_cancel")["text"] == "Cancel Production Bake"
+    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+
+
+def test_viewport_launcher_offers_apply_changes_only_when_something_is_pending(monkeypatch):
+    _panels, layout = _draw_launcher(monkeypatch)
+    assert "fluidsim.apply_changes" not in {op["id"] for op in layout.operators}
+
+    _panels, layout = _draw_launcher(monkeypatch, pending_action="REINIT")
+    assert "fluidsim.apply_changes" in {op["id"] for op in layout.operators}
+    assert any(label["text"] == "Edits pending" for label in layout.labels)
+
+
+def _stage_context(
+    *, with_domain=True, ui_mode="ADVANCED", scene_overrides=None, **domain_overrides
+):
+    """Scene/domain doubles carrying only each group's own fields."""
+    domain_settings = SimpleNamespace(
+        sample_type="FLIP",
+        voxel_size=0.037,
+        particles_per_voxel=8,
+        max_particles=1_000_000,
+        auto_grow_particles=False,
+        topology_expand=False,
+        open_boundaries=False,
+        flip_ratio=0.97,
+        viscosity_enabled=False,
+        viscosity_from_particles=False,
+        viscosity_constant=1.0,
+        surface_tension_enabled=False,
+        surface_tension_coefficient=0.07,
+        use_scene_gravity=True,
+        gravity=(0.0, 0.0, -9.81),
+        surface_enabled=False,
+        surface_smooth_iterations=1,
+        whitewater_enabled=False,
+        ww_emission_rate=1.0,
+        export_attributes=False,
+    )
+    for name, value in domain_overrides.items():
+        setattr(domain_settings, name, value)
     scene_settings = SimpleNamespace(
-        domain_object=None, schema_version=1, particle_display_fraction=0.5)
+        schema_version=1,
+        ui_mode=ui_mode,
+        quality="BALANCED",
+        product_preset="",
+        domain_object=None,
+        stat_step_ms=1.0,
+        stat_substeps=2,
+        stat_particles=3,
+        stat_voxels=4,
+        stat_cfl_clamped=0,
+        liquid_view_mode="SURFACE_PARTICLES",
+        particle_display_fraction=0.5,
+        particle_display_scale=1.0,
+        show_whitewater=True,
+        show_overlay=True,
+        surface_material=None,
+        particle_material=None,
+        whitewater_material=None,
+        cache_path="//cache",
+        cache_compress=True,
+        checkpoint_interval=10,
+        cache_use_custom_range=False,
+        cache_frame_start=1,
+        cache_frame_end=250,
+        bake_start=1,
+        bake_end=250,
+        bake_status="IDLE",
+        bake_progress=0.0,
+        bake_message="",
+    )
+    for name, value in (scene_overrides or {}).items():
+        setattr(scene_settings, name, value)
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
         get=lambda _key, default=None: default,
     )
-    scene_settings.domain_object = domain_obj
+    if with_domain:
+        scene_settings.domain_object = domain_obj
     scene = SimpleNamespace(fluidsim=scene_settings)
     context = SimpleNamespace(scene=scene, object=domain_obj)
+    return context, scene_settings, domain_settings
 
-    panel = tuning()
+
+def _draw_stage(panel_cls, context):
+    panel = panel_cls()
     panel.layout = _Layout()
     panel.draw(context)
+    return panel.layout
 
-    drawn = {call["name"]: call for call in panel.layout.prop_calls}
-    assert set(drawn) == {
-        "flip_ratio",
-        "particle_display_fraction",
-    }, "Live Tuning must exclude structural quality and sampling settings"
-    assert drawn["flip_ratio"]["data"] is domain_settings
-    assert drawn["particle_display_fraction"]["data"] is scene_settings
+
+def test_workflow_stage_panels_bind_each_control_to_its_owner(monkeypatch):
+    """Setup/Simulate shelves edit the group the solver reads, not a stale copy."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    classes = ui_stages.STAGE_PANEL_CLASSES
+    assert len({cls.bl_idname for cls in classes}) == len(classes)
+    for cls in classes:
+        assert cls.bl_space_type == "VIEW_3D"
+        assert cls.bl_region_type == "UI"
+        assert cls.bl_category == "FluidSim"
+    assert ui_stages.FLUIDSIM_STAGE_PT_setup.bl_order < (
+        ui_stages.FLUIDSIM_STAGE_PT_simulate.bl_order
+    )
+
+    context, scene_settings, domain_settings = _stage_context(
+        viscosity_enabled=True,
+        surface_tension_enabled=True,
+        use_scene_gravity=False,
+    )
+
+    setup = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_setup, context)
+    drawn = {call["name"]: call["data"] for call in setup.prop_calls}
+    for name in ("ui_mode", "quality", "product_preset", "domain_object"):
+        assert drawn[name] is scene_settings, name
+    for name in ui_stages.SETUP_DOMAIN_PROPS:
+        assert drawn[name] is domain_settings, name
+    assert any(op["id"] == "fluidsim.apply_product_preset" for op in setup.operators)
+    assert not any(op["id"] == "fluidsim.setup_scene" for op in setup.operators), (
+        "guided setup is the empty-scene first step, not a standing button"
+    )
+
+    simulate = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    drawn = {call["name"]: call["data"] for call in simulate.prop_calls}
+    assert set(drawn) == set(ui_stages.SIMULATE_PROPS)
+    assert all(data is domain_settings for data in drawn.values())
     assert any(
-        op["id"] == "fluidsim.open_scene_properties"
-        for op in panel.layout.operators
-    ), "Live Tuning must offer a jump back to the full Properties workflow"
+        op["id"] == "fluidsim.open_scene_properties" for op in simulate.operators
+    )
+
+
+def test_workflow_stage_simulate_hides_inactive_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    context, _scene, _domain = _stage_context(sample_type="PIC")
+    drawn = set(
+        _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props
+    )
+    assert drawn == {
+        "viscosity_enabled",
+        "surface_tension_enabled",
+        "use_scene_gravity",
+    }
+
+    context, _scene, _domain = _stage_context(
+        viscosity_enabled=True, viscosity_from_particles=True
+    )
+    drawn = set(
+        _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props
+    )
+    assert "viscosity_enabled" in drawn
+    assert "viscosity_constant" not in drawn
+
+
+def test_workflow_stages_without_a_domain_lead_with_guided_setup(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context(with_domain=False)
+
+    setup = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_setup, context)
+    assert [op["id"] for op in setup.operators].count("fluidsim.setup_scene") == 2
+    assert not set(ui_stages.SETUP_DOMAIN_PROPS) & set(setup.props)
+    assert "domain_object" not in setup.props
+
+    simulate = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    assert not simulate.props
+    assert any("domain" in label["text"].lower() for label in simulate.labels)
+
+
+def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    shelf = ui_stages.FLUIDSIM_STAGE_PT_setup_advanced
+    assert shelf.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_setup.bl_idname
+    assert "DEFAULT_CLOSED" in shelf.bl_options
+
+    advanced, scene_settings, domain_settings = _stage_context()
+    assert shelf.poll(advanced)
+    basic, _scene, _domain = _stage_context(ui_mode="BASIC")
+    assert not shelf.poll(basic)
+
+    layout = _draw_stage(shelf, advanced)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == {
+        "max_particles",
+        "auto_grow_particles",
+        "topology_expand",
+        "open_boundaries",
+    }
+    assert all(data is domain_settings for data in drawn.values())
+
+
+_LOOK_SCENE_OWNED = {
+    "liquid_view_mode",
+    "particle_display_fraction",
+    "particle_display_scale",
+    "show_whitewater",
+    "show_overlay",
+}
+
+
+def test_workflow_stage_look_binds_each_control_to_its_owner(monkeypatch):
+    """Display choices are scene-scoped; surface/whitewater gates are the domain's."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, scene_settings, domain_settings = _stage_context(
+        surface_enabled=True, whitewater_enabled=True
+    )
+
+    look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
+    drawn = {call["name"]: call["data"] for call in look.prop_calls}
+    assert set(drawn) == set(ui_stages.LOOK_PROPS)
+    for name, data in drawn.items():
+        owner = scene_settings if name in _LOOK_SCENE_OWNED else domain_settings
+        assert data is owner, name
+
+    materials = ui_stages.FLUIDSIM_STAGE_PT_look_materials
+    assert materials.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_look.bl_idname
+    assert "DEFAULT_CLOSED" in materials.bl_options
+    layout = _draw_stage(materials, context)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == set(ui_stages.LOOK_MATERIAL_PROPS)
+    assert all(data is scene_settings for data in drawn.values())
+
+
+def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}
+    )
+    assert set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props) == {
+        "liquid_view_mode",
+        "surface_enabled",
+        "whitewater_enabled",
+        "show_overlay",
+    }, "particle, smoothing and whitewater-amount controls need their gate on"
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "PARTICLES"},
+        surface_enabled=True,
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props)
+    assert {"particle_display_fraction", "particle_display_scale"} <= drawn
+    assert "surface_smooth_iterations" in drawn
+
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}, whitewater_enabled=True
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props)
+    assert {"ww_emission_rate", "show_whitewater"} <= drawn
+    assert not {"particle_display_fraction", "particle_display_scale"} & drawn
+
+    materials = ui_stages.FLUIDSIM_STAGE_PT_look_materials
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "SURFACE"}
+    )
+    assert set(_draw_stage(materials, context).props) == {"surface_material"}
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "PARTICLES"}, whitewater_enabled=True
+    )
+    assert set(_draw_stage(materials, context).props) == {
+        "particle_material",
+        "whitewater_material",
+    }
+
+
+def _patch_bake_runtime(
+    monkeypatch, ui_stages, *, status=None, action="START", cache_dir=None, managed=False
+):
+    """Stub the runtime probe and cache lookup the shared bake draws consult."""
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    ui_cache_state = importlib.import_module(
+        "fluidSim_warp_blender51.blender.ui_cache_state"
+    )
+    cache_manager = importlib.import_module("fluidSim_warp_blender51.blender.cache_manager")
+    monkeypatch.setattr(
+        ui_scene,
+        "activity_ui_state",
+        lambda _scene: {"id": status or "IDLE", "owns_scene": False},
+    )
+    monkeypatch.setattr(
+        ui_scene, "_runtime_ui_state", lambda: (None, "cuda:0", True, "")
+    )
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: cache_dir)
+    monkeypatch.setattr(
+        cache_manager, "is_managed_cache_directory", lambda _path: managed
+    )
+    monkeypatch.setattr(
+        ui_cache_state,
+        "production_bake_action",
+        lambda _directory: SimpleNamespace(
+            action=action, message="Existing cache", destructive=action == "RESTART"
+        ),
+    )
+
+
+def test_workflow_stage_bake_binds_controls_and_reuses_the_shared_bake_draw(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    context, scene_settings, domain_settings = _stage_context()
+
+    layout = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_bake, context)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert drawn["cache_path"] is scene_settings
+    assert drawn["export_attributes"] is domain_settings
+    for name in ui_stages.BAKE_DELEGATED_PROPS:
+        assert drawn[name] is scene_settings, name
+    operators = {op["id"] for op in layout.operators}
+    assert {
+        "fluidsim.cache_preview_start",
+        "fluidsim.bake_start",
+        "fluidsim.export_frame",
+    } <= operators
+
+
+def test_workflow_stage_bake_follows_the_shared_bake_state_machine(monkeypatch):
+    """Resume / restart / cancel come from the shared draw, never a stage copy."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    bake = ui_stages.FLUIDSIM_STAGE_PT_bake
+
+    _patch_bake_runtime(monkeypatch, ui_stages, action="RESUME")
+    context, _scene, _domain = _stage_context()
+    operators = [op["id"] for op in _draw_stage(bake, context).operators]
+    assert "fluidsim.bake_resume" in operators
+    assert "fluidsim.bake_start" not in operators
+
+    _patch_bake_runtime(monkeypatch, ui_stages, action="RESTART")
+    context, _scene, _domain = _stage_context()
+    layout = _draw_stage(bake, context)
+    start = [op for op in layout.operators if op["id"] == "fluidsim.bake_start"]
+    assert start and "Restart" in start[0]["text"]
+
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"bake_status": "RUNNING"}
+    )
+    operators = [op["id"] for op in _draw_stage(bake, context).operators]
+    assert "fluidsim.bake_cancel" in operators
+    assert "fluidsim.bake_start" not in operators
+
+
+def test_workflow_stage_bake_headless_command_is_advanced_only(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    bake = ui_stages.FLUIDSIM_STAGE_PT_bake
+
+    context, _scene, _domain = _stage_context(ui_mode="ADVANCED")
+    assert "fluidsim.copy_bake_command" in {
+        op["id"] for op in _draw_stage(bake, context).operators
+    }
+    context, _scene, _domain = _stage_context(ui_mode="BASIC")
+    assert "fluidsim.copy_bake_command" not in {
+        op["id"] for op in _draw_stage(bake, context).operators
+    }
+
+
+def test_workflow_stage_bake_storage_shelf_edits_scene_cache_settings(monkeypatch):
+    """Storage & Range keeps every cache setting reachable now the Scene tab dropped them."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    shelf = ui_stages.FLUIDSIM_STAGE_PT_bake_storage
+    assert shelf.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_bake.bl_idname
+    assert "DEFAULT_CLOSED" in shelf.bl_options
+
+    # Cache settings are scene-level: reachable in Basic mode and before a domain exists.
+    for overrides in ({}, {"ui_mode": "BASIC"}, {"with_domain": False}):
+        context, _scene, _domain = _stage_context(**overrides)
+        assert shelf.poll(context), overrides
+
+    opened, scene_settings, _domain = _stage_context(
+        scene_overrides={"cache_use_custom_range": True}
+    )
+    drawn = {call["name"]: call["data"] for call in _draw_stage(shelf, opened).prop_calls}
+    assert set(drawn) == set(ui_stages.BAKE_STORAGE_PROPS)
+    assert all(data is scene_settings for data in drawn.values())
+
+    closed, _scene, _domain = _stage_context()
+    drawn = set(_draw_stage(shelf, closed).props)
+    assert "cache_use_custom_range" in drawn
+    assert not {"cache_frame_start", "cache_frame_end"} & drawn
+
+
+def test_workflow_stage_bake_manage_shelf_needs_a_recognized_cache(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    from pathlib import Path
+
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    manage = ui_stages.FLUIDSIM_STAGE_PT_bake_manage
+    assert manage.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_bake.bl_idname
+    assert "DEFAULT_CLOSED" in manage.bl_options
+    context, _scene, _domain = _stage_context()
+
+    _patch_bake_runtime(monkeypatch, ui_stages, cache_dir=None)
+    assert not manage.poll(context)
+    _patch_bake_runtime(monkeypatch, ui_stages, cache_dir=Path("cache"), managed=False)
+    assert not manage.poll(context)
+
+    _patch_bake_runtime(monkeypatch, ui_stages, cache_dir=Path("cache"), managed=True)
+    assert manage.poll(context)
+    # An existing cache stays manageable even when the scene lost its domain.
+    empty, _scene, _domain = _stage_context(with_domain=False)
+    assert manage.poll(empty)
+
+    operators = {op["id"] for op in _draw_stage(manage, context).operators}
+    assert operators == {
+        "fluidsim.cache_integrity_scan",
+        "fluidsim.cache_remove_orphans",
+        "fluidsim.cache_move",
+        "fluidsim.cache_rename",
+        "fluidsim.cache_open_folder",
+        "fluidsim.cache_free",
+    }
+
+
+def test_scene_tab_leaves_transport_and_cache_to_the_sidebar(monkeypatch):
+    """Panel-level de-duplication: those controls have exactly one home each."""
+    _install_bpy_stub(monkeypatch)
+    from pathlib import Path
+
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    removed = (
+        "FLUIDSIM_PT_scene_transport",
+        "FLUIDSIM_PT_scene_cache",
+        "FLUIDSIM_PT_cache_playback",
+        "FLUIDSIM_PT_cache_range",
+        "FLUIDSIM_PT_cache_storage",
+        "FLUIDSIM_PT_cache_bake",
+        "FLUIDSIM_PT_cache_manage",
+    )
+    scene_ids = {cls.bl_idname for cls in ui_scene.SCENE_PANEL_CLASSES}
+    assert not scene_ids & set(removed)
+    assert not [name for name in removed if hasattr(ui_scene, name)]
+    assert "FLUIDSIM_PT_scene_control" in scene_ids, "Status & Runtime stays in Scene"
+
+    # Every control those panels drew is reachable from the Bake stage and shelves.
+    _patch_bake_runtime(
+        monkeypatch,
+        ui_stages,
+        cache_dir=Path("cache"),
+        managed=True,
+    )
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"cache_use_custom_range": True}
+    )
+    reachable_props = set()
+    reachable_ops = set()
+    for panel in (
+        ui_stages.FLUIDSIM_STAGE_PT_bake,
+        ui_stages.FLUIDSIM_STAGE_PT_bake_storage,
+        ui_stages.FLUIDSIM_STAGE_PT_bake_manage,
+    ):
+        layout = _draw_stage(panel, context)
+        reachable_props |= set(layout.props)
+        reachable_ops |= {op["id"] for op in layout.operators}
+    assert {
+        "cache_path",
+        "bake_start",
+        "bake_end",
+        "bake_progress",
+        "cache_compress",
+        "checkpoint_interval",
+        "cache_use_custom_range",
+        "cache_frame_start",
+        "cache_frame_end",
+    } <= reachable_props
+    assert {
+        "fluidsim.cache_preview_start",
+        "fluidsim.bake_start",
+        "fluidsim.copy_bake_command",
+        "fluidsim.cache_integrity_scan",
+        "fluidsim.cache_free",
+    } <= reachable_ops
+
+
+def test_workflow_stages_look_and_bake_without_a_domain_stay_quiet(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    _patch_bake_runtime(monkeypatch, ui_stages)
+    context, scene_settings, _domain = _stage_context(with_domain=False)
+
+    look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
+    assert not look.props and not look.operators
+    assert any("domain" in label["text"].lower() for label in look.labels)
+
+    # Only the scene-level cache location stays editable; nothing can be baked yet.
+    bake = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_bake, context)
+    assert [call["name"] for call in bake.prop_calls] == ["cache_path"]
+    assert bake.prop_calls[0]["data"] is scene_settings
+    assert not bake.operators
+    assert any("domain" in label["text"].lower() for label in bake.labels)
+    assert not ui_stages.FLUIDSIM_STAGE_PT_look_materials.poll(context)
 
 
 def test_physics_context_uses_existing_scene_and_object_owners(monkeypatch):
@@ -2630,25 +3186,6 @@ def test_status_panel_names_the_loaded_build(monkeypatch):
 
     monkeypatch.setattr(ui_scene, "__package__", "bl_ext.user_default.fluidsim_warp.blender")
     assert ui_scene._build_identity() == f"FluidSim {VERSION_STRING} · installed extension"
-
-
-def test_transport_keeps_complete_preview_action_present_when_not_ready(monkeypatch):
-    _install_bpy_stub(monkeypatch)
-    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
-    monkeypatch.setattr(ui_scene, "_runtime_ui_state",
-                        lambda: (SimpleNamespace(), "cuda:0", False, "not ready"))
-    monkeypatch.setattr(ui_scene, "activity_ui_state",
-                        lambda scene: {"id": "IDLE", "owns_scene": True,
-                                       "label": "Idle", "icon": "PAUSE"})
-    panel = ui_scene.FLUIDSIM_PT_scene_transport()
-    panel.layout = _Layout()
-    panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(status=""))))
-
-    op_ids = [op["id"] for op in panel.layout.operators]
-    assert "fluidsim.preview_start" in op_ids
-    assert "fluidsim.step" not in op_ids
-    preview = next(op for op in panel.layout.operators if op["id"] == "fluidsim.preview_start")
-    assert preview["enabled"] is False
 
 
 def test_advanced_lifecycle_enables_step_buttons_when_runtime_ready(monkeypatch):
@@ -3367,3 +3904,385 @@ def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     effect_workspace.set_session_trust("effect-1", False)
     assert effect_workspace.session_trust_enabled("effect-1") is False
     assert effect_workspace.reprompt_trust_required(untrusted) is True
+
+
+
+# ---------------------------------------------------------------------------
+# Viewport header surfaces: the FluidSim popover and the workspace button.
+# ---------------------------------------------------------------------------
+
+
+class _FakeArea:
+    """An editor area whose ``type`` assignment rebuilds its space, like Blender."""
+
+    def __init__(self, kind, width, height):
+        self.width = width
+        self.height = height
+        self.ui_type = kind
+        self.type_changes = []
+        self._type = kind
+        self.spaces = [SimpleNamespace(type=kind, show_region_ui=False)]
+
+    @property
+    def type(self):
+        return self._type
+
+    @type.setter
+    def type(self, value):
+        self._type = value
+        self.type_changes.append(value)
+        self.spaces = [SimpleNamespace(type=value, show_region_ui=False)]
+
+
+class _FakeWorkspaces(list):
+    def get(self, name):
+        return next((item for item in self if item.name == name), None)
+
+
+class _FakeHeader:
+    def __init__(self):
+        self.funcs = []
+
+    def append(self, func):
+        self.funcs.append(func)
+
+    def remove(self, func):
+        self.funcs.remove(func)  # ValueError when absent, as an over-eager caller sees
+
+
+_DEFAULT_LAYOUT_AREAS = (
+    ("VIEW_3D", 1500, 900),
+    ("OUTLINER", 300, 200),
+    ("PROPERTIES", 300, 600),
+)
+
+
+def _fake_workspace(name, specs):
+    return SimpleNamespace(
+        name=name,
+        object_mode="SCULPT",
+        screens=[SimpleNamespace(areas=[_FakeArea(*spec) for spec in specs])],
+    )
+
+
+def _header_env(
+    monkeypatch, *, header=True, area_specs=_DEFAULT_LAYOUT_AREAS, duplicate="ok"
+):
+    """bpy doubles + freshly imported panels/stages/header modules."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    registered = []
+    fake_bpy.utils = SimpleNamespace(
+        register_class=registered.append,
+        unregister_class=lambda cls: registered.remove(cls),
+    )
+    header_type = _FakeHeader() if header else None
+    if header_type is not None:
+        fake_bpy.types.VIEW3D_HT_header = header_type
+    layout = _fake_workspace("Layout", area_specs)
+    workspaces = _FakeWorkspaces([layout])
+    calls = []
+
+    def _duplicate():
+        calls.append("duplicate")
+        if duplicate == "cancel":
+            return {"CANCELLED"}
+        if duplicate == "ok":
+            workspaces.append(_fake_workspace("Layout.001", area_specs))
+        return {"FINISHED"}
+
+    fake_bpy.ops = SimpleNamespace(workspace=SimpleNamespace(duplicate=_duplicate))
+    fake_bpy.data = SimpleNamespace(workspaces=workspaces)
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    ui_header = _reload_module("fluidSim_warp_blender51.blender.ui_header")
+    return SimpleNamespace(
+        bpy=fake_bpy,
+        panels=panels,
+        ui_stages=ui_stages,
+        ui_header=ui_header,
+        header=header_type,
+        registered=registered,
+        layout=layout,
+        workspaces=workspaces,
+        window=SimpleNamespace(workspace=layout),
+        calls=calls,
+    )
+
+
+def _draw_header_popover(
+    monkeypatch,
+    *,
+    with_domain=True,
+    runtime_ready=True,
+    state_id="IDLE",
+    owns_scene=False,
+    pending_action="NONE",
+    workspace_name="Layout",
+    **domain_overrides,
+):
+    env = _header_env(monkeypatch)
+    monkeypatch.setattr(
+        env.ui_header,
+        "activity_ui_state",
+        lambda _scene: {
+            "id": state_id,
+            "label": "Idle",
+            "icon": "INFO",
+            "owns_scene": owns_scene,
+        },
+    )
+    monkeypatch.setattr(
+        env.ui_header,
+        "runtime_ui_state",
+        lambda: (runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"),
+    )
+    monkeypatch.setattr(
+        env.panels,
+        "pending_ui_state",
+        lambda _scene: {"action": pending_action, "summary": "Edits pending"},
+    )
+    context, scene_settings, domain_settings = _stage_context(
+        with_domain=with_domain, **domain_overrides
+    )
+    context.workspace = SimpleNamespace(name=workspace_name)
+    context.screen = SimpleNamespace(is_animation_playing=False)
+    panel = env.ui_header.FLUIDSIM_PT_header_popover()
+    panel.layout = _Layout()
+    panel.draw(context)
+    return env, panel.layout, scene_settings, domain_settings
+
+
+def test_header_popover_is_a_viewport_header_popover_and_registers_with_its_button(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    ui_header = env.ui_header
+    popover = ui_header.FLUIDSIM_PT_header_popover
+    assert popover.bl_space_type == "VIEW_3D"
+    assert popover.bl_region_type == "HEADER"
+    assert popover.bl_idname == "FLUIDSIM_PT_header_popover"
+    assert ui_header.CLASSES == (ui_header.FLUIDSIM_OT_open_workspace, popover)
+
+    context, _scene, _domain = _stage_context()
+    assert popover.poll(context)
+    assert not popover.poll(SimpleNamespace(scene=SimpleNamespace()))
+    assert not popover.poll(SimpleNamespace(scene=None))
+
+    layout = _Layout()
+    ui_header.draw_header_button(SimpleNamespace(layout=layout), context)
+    assert layout.popovers == [
+        {"panel": popover.bl_idname, "text": "FluidSim", "icon": "MOD_FLUIDSIM"}
+    ]
+
+    ui_header.register()
+    assert env.header.funcs == [ui_header.draw_header_button]
+    assert env.registered == list(ui_header.CLASSES)
+    ui_header.unregister()
+    assert env.header.funcs == []
+    assert env.registered == []
+    ui_header.unregister()  # a second unregister must be harmless
+
+
+def test_header_button_register_tolerates_a_build_without_the_header_type(monkeypatch):
+    env = _header_env(monkeypatch, header=False)
+    env.ui_header.register()
+    assert env.registered == list(env.ui_header.CLASSES)
+    env.ui_header.unregister()
+    assert env.registered == []
+
+
+def test_header_popover_draws_the_stage_controls_bound_to_their_owners(monkeypatch):
+    """Same drawings as the sidebar: quality + every Simulate control, same owners."""
+    env, layout, scene_settings, domain_settings = _draw_header_popover(
+        monkeypatch,
+        viscosity_enabled=True,
+        surface_tension_enabled=True,
+        use_scene_gravity=False,
+    )
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == {"quality", *env.ui_stages.SIMULATE_PROPS}
+    assert drawn["quality"] is scene_settings
+    for name in env.ui_stages.SIMULATE_PROPS:
+        assert drawn[name] is domain_settings, name
+
+    context, *_ = _stage_context(
+        viscosity_enabled=True, surface_tension_enabled=True, use_scene_gravity=False
+    )
+    simulate = _draw_stage(env.ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
+    for name, call_data in {c["name"]: c["data"] for c in simulate.prop_calls}.items():
+        assert type(call_data) is type(drawn[name]), name
+
+    operators = {op["id"] for op in layout.operators}
+    assert {"fluidsim.preview_start", "fluidsim.open_workspace"} <= operators
+    assert "fluidsim.apply_changes" not in operators
+    assert any(label["text"] == "Idle" for label in layout.labels)
+
+
+def test_header_popover_hides_inactive_simulate_controls(monkeypatch):
+    _env, layout, _scene, _domain = _draw_header_popover(monkeypatch, sample_type="PIC")
+    assert set(layout.props) == {
+        "quality",
+        "viscosity_enabled",
+        "surface_tension_enabled",
+        "use_scene_gravity",
+    }
+
+
+def test_header_popover_without_a_domain_offers_guided_setup_only(monkeypatch):
+    _env, layout, _scene, _domain = _draw_header_popover(monkeypatch, with_domain=False)
+    assert not layout.props
+    ids = [op["id"] for op in layout.operators]
+    assert ids.count("fluidsim.setup_scene") == 2
+    assert not {"fluidsim.preview_start", "fluidsim.apply_changes"} & set(ids)
+    assert any("domain" in label["text"].lower() for label in layout.labels)
+
+
+def test_header_popover_follows_the_activity_and_the_runtime(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch, runtime_ready=False)
+    assert any("no CUDA" in label["text"] for label in layout.labels)
+    assert _operator(layout, "fluidsim.preview_start")["enabled"] is False
+
+    _env, layout, *_ = _draw_header_popover(
+        monkeypatch, state_id="PRODUCTION_BAKE", owns_scene=True
+    )
+    assert _operator(layout, "fluidsim.bake_cancel")["text"] == "Cancel Production Bake"
+    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, owns_scene=True)
+    assert _operator(layout, "fluidsim.preview_start")["text"] == "Resume Preview"
+    assert "fluidsim.restart_simulation" in {op["id"] for op in layout.operators}
+
+
+def test_header_popover_offers_apply_changes_only_when_something_is_pending(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="REINIT")
+    assert "fluidsim.apply_changes" in {op["id"] for op in layout.operators}
+    assert any(label["text"] == "Edits pending" for label in layout.labels)
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="NONE")
+    assert "fluidsim.apply_changes" not in {op["id"] for op in layout.operators}
+
+
+def test_header_popover_hides_the_workspace_button_inside_the_workspace(monkeypatch):
+    _env, layout, *_ = _draw_header_popover(monkeypatch)
+    button = _operator(layout, "fluidsim.open_workspace")
+    assert button["text"] == "FluidSim Workspace"
+
+    _env, layout, *_ = _draw_header_popover(monkeypatch, workspace_name="FluidSim")
+    assert "fluidsim.open_workspace" not in {op["id"] for op in layout.operators}
+    assert "fluidsim.preview_start" in {op["id"] for op in layout.operators}
+
+
+def _run_open_workspace(env):
+    reports = []
+    operator = env.ui_header.FLUIDSIM_OT_open_workspace()
+    operator.report = lambda levels, message: reports.append((set(levels), message))
+    result = operator.execute(SimpleNamespace(window=env.window))
+    return result, reports
+
+
+def test_open_workspace_creates_a_prepared_copy_of_the_layout_once(monkeypatch):
+    env = _header_env(
+        monkeypatch,
+        area_specs=(("VIEW_3D", 1500, 900), ("OUTLINER", 300, 200), ("PROPERTIES", 300, 600)),
+    )
+    result, reports = _run_open_workspace(env)
+    assert result == {"FINISHED"}
+    assert env.calls == ["duplicate"]
+    assert [w.name for w in env.workspaces] == ["Layout", "FluidSim"]
+    created = env.workspaces.get("FluidSim")
+    assert env.window.workspace is created
+    assert created.object_mode == "OBJECT"
+    areas = created.screens[0].areas
+    assert [a.type for a in areas] == ["VIEW_3D", "DOPESHEET_EDITOR", "PROPERTIES"]
+    assert areas[0].spaces[0].show_region_ui is True
+    assert areas[1].ui_type == "TIMELINE"
+    assert env.layout.object_mode == "SCULPT", "the user's own workspace is untouched"
+    assert reports and "INFO" in next(iter(reports[0][0]))
+
+    # The second press only switches back; it never duplicates again.
+    env.window.workspace = env.layout
+    result, _reports = _run_open_workspace(env)
+    assert result == {"FINISHED"}
+    assert env.calls == ["duplicate"]
+    assert env.window.workspace is created
+    assert len(env.workspaces) == 2
+
+
+@pytest.mark.parametrize("duplicate", ["cancel", "silent"])
+def test_open_workspace_reports_instead_of_switching_when_duplicate_fails(
+    monkeypatch, duplicate
+):
+    env = _header_env(monkeypatch, duplicate=duplicate)
+    result, reports = _run_open_workspace(env)
+    assert result == {"CANCELLED"}
+    assert env.window.workspace is env.layout
+    assert [w.name for w in env.workspaces] == ["Layout"]
+    assert reports and "WARNING" in next(iter(reports[0][0]))
+
+
+def test_open_workspace_needs_a_window(monkeypatch):
+    env = _header_env(monkeypatch)
+    operator = env.ui_header.FLUIDSIM_OT_open_workspace
+    assert operator.poll(SimpleNamespace(window=object()))
+    assert not operator.poll(SimpleNamespace(window=None))
+    assert not operator.poll(SimpleNamespace())
+
+
+def test_prepare_workspace_makes_a_viewport_with_sidebar_and_a_timeline(monkeypatch):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W", (("OUTLINER", 800, 600), ("PROPERTIES", 300, 600), ("FILE_BROWSER", 800, 100))
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert workspace.object_mode == "OBJECT"
+    assert [a.type for a in areas] == ["VIEW_3D", "PROPERTIES", "DOPESHEET_EDITOR"]
+    assert areas[0].spaces[0].show_region_ui is True
+    assert areas[2].ui_type == "TIMELINE"
+    assert areas[1].type_changes == [], "Properties is never repurposed"
+
+
+def test_prepare_workspace_leaves_a_ready_layout_alone_but_opens_the_sidebar(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W",
+        (("VIEW_3D", 1000, 800), ("DOPESHEET_EDITOR", 1000, 80), ("OUTLINER", 200, 400)),
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert all(a.type_changes == [] for a in areas)
+    assert areas[0].spaces[0].show_region_ui is True
+
+
+def test_prepare_workspace_converts_only_the_smallest_spare_area_to_a_timeline(
+    monkeypatch,
+):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace(
+        "W",
+        (
+            ("VIEW_3D", 1000, 800),
+            ("OUTLINER", 200, 400),
+            ("FILE_BROWSER", 600, 60),
+            ("PROPERTIES", 300, 400),
+        ),
+    )
+    env.ui_header.prepare_workspace(workspace)
+    areas = workspace.screens[0].areas
+    assert [a.type for a in areas] == [
+        "VIEW_3D",
+        "OUTLINER",
+        "DOPESHEET_EDITOR",
+        "PROPERTIES",
+    ]
+
+
+def test_prepare_workspace_without_a_spare_area_adds_no_timeline(monkeypatch):
+    env = _header_env(monkeypatch)
+    workspace = _fake_workspace("W", (("VIEW_3D", 1000, 800), ("PROPERTIES", 300, 400)))
+    env.ui_header.prepare_workspace(workspace)
+    assert [a.type for a in workspace.screens[0].areas] == ["VIEW_3D", "PROPERTIES"]
+    # A workspace object that lists no screens is tolerated too.
+    env.ui_header.prepare_workspace(SimpleNamespace(object_mode="EDIT"))

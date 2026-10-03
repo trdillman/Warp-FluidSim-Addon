@@ -302,12 +302,36 @@ selection does not appear in scene panels.
 
 ### 3D View FluidSim workflow
 
-The primary **3D View → FluidSim** panel stays deliberately small. It shows
-activity, runtime readiness, lifecycle actions, pending-change count, and the
-Scene Properties shortcut. A single collapsed **Full Settings** child mirrors
-the complete Scene Properties hierarchy, including Custom Effects, by calling
-the existing draw and poll implementations. Both surfaces therefore edit the
-same `Scene.fluidsim` and `Scene.fluidsim_effects` owners.
+The **3D View → FluidSim** sidebar tab follows the order you work in. A pinned
+strip at the top shows activity, runtime readiness, Preview / Pause / Resume /
+Restart and Apply Changes; below it four stages hold the settings:
+
+1. **Setup** — interface level, Quality, presets, Domain, voxel size, sampling.
+2. **Simulate** — flip ratio, viscosity, surface tension, scene gravity, and the
+   live readout.
+3. **Look** — view mode, surface, whitewater, particle display and Materials.
+4. **Bake & Export** — cache folder, Preview Cache, Production Bake and Export
+   Current Frame, with **Storage & Range** and **Manage Cache** shelves.
+
+Each control has one home, and every stage edits the same `Scene.fluidsim` /
+domain-object owners as Scene and Physics Properties.
+
+**FluidSim header popover.** The 3D View header carries a **FluidSim** button.
+It opens a floating panel with the live loop — the status line, Preview / Pause /
+Resume / Restart, Apply Changes when an edit is waiting, Quality and the
+physics you tune while watching (flip ratio, viscosity, surface tension, scene
+gravity). It draws the same functions as the sidebar, so the two never differ.
+With no domain yet it offers Guided Setup instead. Use it when the sidebar is
+closed or you are working in a large viewport.
+
+**FluidSim workspace.** **FluidSim Workspace** in that popover switches to a
+workspace named *FluidSim*: a large 3D Viewport with the sidebar open and a
+Timeline, copied from the layout you are using. The first press creates it and
+later presses only switch back to it. Blender lets an add-on open the sidebar
+but not pick its tab, so click the **FluidSim** tab once if another tab is
+showing. The workspace is saved with the .blend like any other; delete it from
+the workspace tabs (right-click → Delete) if you do not want it. Disabling the
+add-on never removes it.
 
 ### Physics Properties — contextual FluidSim objects
 

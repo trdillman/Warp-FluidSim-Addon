@@ -49,11 +49,15 @@ PLAYBACK_MIN_FRAMES = 3
 PLAYBACK_PROGRESS_TIMEOUT_SECONDS = 45.0
 
 PANEL_IDS = [
-    "FLUIDSIM_PT_viewport_status",
-    "FLUIDSIM_VIEW3D_PT_live_tuning",
+    "FLUIDSIM_PT_viewport_status", "FLUIDSIM_PT_header_popover",
+    "FLUIDSIM_STAGE_PT_setup", "FLUIDSIM_STAGE_PT_setup_advanced",
+    "FLUIDSIM_STAGE_PT_simulate",
+    "FLUIDSIM_STAGE_PT_look", "FLUIDSIM_STAGE_PT_look_materials",
+    "FLUIDSIM_STAGE_PT_bake", "FLUIDSIM_STAGE_PT_bake_storage",
+    "FLUIDSIM_STAGE_PT_bake_manage",
     "FLUIDSIM_PT_physics_root",
     "FLUIDSIM_PT_physics_surface_output",
-    "FLUIDSIM_PT_scene_transport", "FLUIDSIM_PT_scene_lifecycle",
+    "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
     "FLUIDSIM_PT_scene_setup",
     "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
@@ -65,8 +69,7 @@ PANEL_IDS = [
     "FLUIDSIM_PT_sim_dissipation", "FLUIDSIM_PT_sim_attraction",
     "FLUIDSIM_PT_sim_spacetime", "FLUIDSIM_PT_scene_surface",
     "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
-    "FLUIDSIM_PT_scene_cache", "FLUIDSIM_PT_cache_playback",
-    "FLUIDSIM_PT_cache_bake", "FLUIDSIM_PT_scene_diagnostics",
+    "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
     "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
     "FLUIDSIM_PT_custom_effects", "FLUIDSIM_PT_effect_engineering",
@@ -483,9 +486,14 @@ def _run_phase(phase, scene):
         scene.fluidsim.ui_mode = "BASIC"
         _draw_all_panels_smoke("addon enabled, solver inactive")
         _assert_panel_state(
-            "FLUIDSIM_PT_scene_transport",
+            "FLUIDSIM_PT_viewport_status",
             "Basic Preview action",
             operator_id="fluidsim.preview_start",
+        )
+        _assert_panel_state(
+            "FLUIDSIM_PT_header_popover",
+            "Header popover guided setup without a domain",
+            operator_id="fluidsim.setup_scene",
         )
         _assert_panel_state(
             "FLUIDSIM_PT_scene_setup",
@@ -774,6 +782,12 @@ def _run_phase(phase, scene):
         missing = [p for p in PANEL_IDS if not hasattr(bpy.types, p)]
         check("panels registered in GUI", not missing, str(missing))
         check("ui redraw with overlay", True)
+        _assert_panel_state(
+            "FLUIDSIM_PT_header_popover",
+            "Header popover quality and workspace button",
+            property_name="quality",
+            operator_id="fluidsim.open_workspace",
+        )
 
         # Property edits through the UI data path (as the panels would).
         from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
@@ -815,8 +829,80 @@ def _run_phase(phase, scene):
             check("viewport screenshot", ok, detail)
         except Exception as exc:  # noqa: BLE001
             check("viewport screenshot", False, repr(exc))
-        STATE["phase"] = "render"
+        STATE["phase"] = "workspace"
         return 0.3
+
+    if phase == "workspace":
+        # The header's workspace button in the real window manager. Blender applies
+        # a window.workspace change on the next event-loop tick, so every switch is
+        # verified one tick after it is requested.
+        override = _view3d_override()
+        window = override["window"]
+        step = STATE.get("workspace_step", "create")
+        if step == "create":
+            STATE["workspace_home"] = window.workspace.name
+            STATE["workspace_home_mode"] = window.workspace.object_mode
+            STATE["workspace_count"] = len(bpy.data.workspaces)
+            check("FluidSim workspace absent beforehand",
+                  bpy.data.workspaces.get("FluidSim") is None)
+            with bpy.context.temp_override(**override):
+                result = bpy.ops.fluidsim.open_workspace()
+            check("open_workspace creates the workspace", result == {"FINISHED"},
+                  result)
+            STATE["workspace_step"] = "verify"
+            return 0.5
+        home = bpy.data.workspaces.get(STATE["workspace_home"])
+        if step == "verify":
+            created = bpy.data.workspaces.get("FluidSim")
+            check("FluidSim workspace added once",
+                  created is not None
+                  and len(bpy.data.workspaces) == STATE["workspace_count"] + 1)
+            check("window switched to the FluidSim workspace",
+                  window.workspace.name == "FluidSim", window.workspace.name)
+            areas = [area for screen in created.screens for area in screen.areas]
+            viewports = [area for area in areas if area.type == "VIEW_3D"]
+            check("FluidSim workspace has a viewport with the sidebar open",
+                  bool(viewports) and all(
+                      space.show_region_ui
+                      for area in viewports for space in area.spaces
+                      if space.type == "VIEW_3D"),
+                  [area.type for area in areas])
+            check("FluidSim workspace has a timeline",
+                  any(area.type == "DOPESHEET_EDITOR" and area.ui_type == "TIMELINE"
+                      for area in areas),
+                  [(area.type, area.ui_type) for area in areas])
+            check("FluidSim workspace opens in Object mode",
+                  created.object_mode == "OBJECT", created.object_mode)
+            check("home workspace untouched",
+                  home is not None
+                  and home.object_mode == STATE["workspace_home_mode"],
+                  home.object_mode if home is not None else None)
+            window.workspace = home
+            STATE["workspace_step"] = "reuse"
+            return 0.5
+        if step == "reuse":
+            check("window returned to the home workspace",
+                  window.workspace.name == STATE["workspace_home"],
+                  window.workspace.name)
+            with bpy.context.temp_override(**override):
+                result = bpy.ops.fluidsim.open_workspace()
+            check("open_workspace switches to the existing workspace",
+                  result == {"FINISHED"}, result)
+            STATE["workspace_step"] = "reused"
+            return 0.5
+        if step == "reused":
+            check("second press reuses the workspace",
+                  window.workspace.name == "FluidSim"
+                  and len(bpy.data.workspaces) == STATE["workspace_count"] + 1,
+                  f"{window.workspace.name}, {len(bpy.data.workspaces)} workspaces")
+            window.workspace = home
+            STATE["workspace_step"] = "restored"
+            return 0.5
+        check("window restored to the home workspace",
+              window.workspace.name == STATE["workspace_home"],
+              window.workspace.name)
+        STATE["phase"] = "render"
+        return 0.2
 
     if phase == "render":
         scene = bpy.context.scene
