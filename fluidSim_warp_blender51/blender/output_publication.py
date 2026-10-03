@@ -95,6 +95,15 @@ def _attribute_property(data_type):
     }[data_type]
 
 
+def _rna_int_buffer(values, *, unsigned=False):
+    """Expose contiguous int32 data with Blender's exact bulk-buffer format.
+
+    Windows NumPy can expose int32 as 'l'; RNA requires 'i' or 'I' and
+    otherwise converts every element in Python. Recast the same bytes.
+    """
+    return memoryview(values).cast("B").cast("I" if unsigned else "i")
+
+
 def publish_attribute(data, spec, values, *, live_count=None):
     """Create/update one Blender attribute with strict type/domain alignment."""
     attributes = getattr(data, "attributes", None)
@@ -121,7 +130,10 @@ def publish_attribute(data, spec, values, *, live_count=None):
     padded = np.zeros(target_shape, dtype=spec.numpy_dtype)
     if count:
         padded[:count] = normalized
-    attr.data.foreach_set(_attribute_property(spec.data_type), padded.ravel())
+    flat = padded.ravel()
+    if spec.data_type == "INT":
+        flat = _rna_int_buffer(flat)
+    attr.data.foreach_set(_attribute_property(spec.data_type), flat)
     return attr
 
 
@@ -585,11 +597,15 @@ def _swap_mesh(obj, verts, tris, colors=None, attributes=None):
         mesh.vertices.foreach_set("co", verts.ravel())
     if nt:
         mesh.loops.add(nt * 3)
-        mesh.loops.foreach_set("vertex_index", tris.ravel())
+        mesh.loops.foreach_set(
+            "vertex_index", _rna_int_buffer(tris.ravel(), unsigned=True))
         mesh.polygons.add(nt)
         mesh.polygons.foreach_set(
-            "loop_start", np.arange(0, nt * 3, 3, dtype=np.int32))
-        mesh.polygons.foreach_set("loop_total", np.full(nt, 3, dtype=np.int32))
+            "loop_start", _rna_int_buffer(
+                np.arange(0, nt * 3, 3, dtype=np.int32), unsigned=True))
+        mesh.polygons.foreach_set(
+            "loop_total", _rna_int_buffer(
+                np.full(nt, 3, dtype=np.int32), unsigned=True))
         mesh.shade_smooth()
     if nv:
         _write_mesh_colors(mesh, tris, colors)

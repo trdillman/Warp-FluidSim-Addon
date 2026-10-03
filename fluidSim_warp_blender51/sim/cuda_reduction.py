@@ -44,18 +44,11 @@ __device__ __forceinline__ float fluid_block_sum(float sum, float *warp_sums)
   return sum;  // valid in thread 0 only
 }
 
-extern "C" __global__ void fluid_dot_reduce(
-    const float *a, const float *b, int count, float *output,
-    float *partials, unsigned int *ticket)
+__device__ __forceinline__ void fluid_dot_combine(
+    float sum, float *output, float *partials, unsigned int *ticket)
 {
   __shared__ float warp_sums[32];
   __shared__ bool is_last;
-  const int index = blockIdx.x * blockDim.x + threadIdx.x;
-  const int stride = blockDim.x * gridDim.x;
-  float sum = 0.0f;
-  for (int i = index; i < count; i += stride) {
-    sum += a[i] * b[i];
-  }
   sum = fluid_block_sum(sum, warp_sums);
   if (threadIdx.x == 0) {
     partials[blockIdx.x] = sum;
@@ -77,6 +70,39 @@ extern "C" __global__ void fluid_dot_reduce(
     *ticket = 0u;
   }
 }
+
+extern "C" __global__ void fluid_dot_reduce(
+    const float *a, const float *b, int count, float *output,
+    float *partials, unsigned int *ticket)
+{
+  const int index = blockIdx.x * blockDim.x + threadIdx.x;
+  const int stride = blockDim.x * gridDim.x;
+  float sum = 0.0f;
+  for (int i = index; i < count; i += stride) {
+    sum += a[i] * b[i];
+  }
+  fluid_dot_combine(sum, output, partials, ticket);
+}
+
+// Same reduction, with the element count read on device as
+// ``num_leaves[0] * leaf_volume`` so one captured launch serves every active
+// count up to its launch dimension. When the grid is at least as large as the
+// host-counted launch would have used, each element lands on the same thread
+// and the extra blocks publish exact zeros, so the ordered combine produces
+// the host-counted result bit for bit.
+extern "C" __global__ void fluid_dot_reduce_active(
+    const float *a, const float *b, const int *num_leaves, int leaf_volume,
+    float *output, float *partials, unsigned int *ticket)
+{
+  const int count = num_leaves[0] * leaf_volume;
+  const int index = blockIdx.x * blockDim.x + threadIdx.x;
+  const int stride = blockDim.x * gridDim.x;
+  float sum = 0.0f;
+  for (int i = index; i < count; i += stride) {
+    sum += a[i] * b[i];
+  }
+  fluid_dot_combine(sum, output, partials, ticket);
+}
 """
 
 @dataclass
@@ -86,6 +112,7 @@ class _CudaModuleEntry:
     module: object
     kernel: object
     references: int = 0
+    active_kernel: object = None
 
 
 class _CudaModuleCache:
@@ -187,21 +214,25 @@ def _acquire_kernel(device):
                 compile_kernel()
             module = build.load_cuda(str(cubin_path), device)
             kernel = None
+            active_kernel = None
             try:
                 if module:
                     kernel = context.runtime.core.wp_cuda_get_kernel(
                         device.context, module, b"fluid_dot_reduce")
+                    active_kernel = context.runtime.core.wp_cuda_get_kernel(
+                        device.context, module, b"fluid_dot_reduce_active")
             except Exception:
                 if module:
                     _unload_native_module(context.runtime, device, module)
                 raise
-            if kernel:
+            if kernel and active_kernel:
                 entry = _CudaModuleEntry(
                     runtime=context.runtime,
                     device=device,
                     module=module,
                     kernel=kernel,
                     references=1,
+                    active_kernel=active_kernel,
                 )
                 owner.entries[key] = entry
                 return owner, key, entry
@@ -236,6 +267,7 @@ class CudaDotProduct:
         self._cache_owner, self._cache_key, self._entry = _acquire_kernel(device)
         self._module = self._entry.module
         self._kernel = self._entry.kernel
+        self._active_kernel = self._entry.active_kernel
         self._max_blocks = max(1, int(device.sm_count) * 2)
         # Per-instance scratch for the ordered cross-block combine. The ticket
         # is reset by the last block of every launch, so both buffers stay
@@ -252,27 +284,46 @@ class CudaDotProduct:
         self._entry = None
         self._module = None
         self._kernel = None
+        self._active_kernel = None
 
     def launch(self, a, b, output, count):
-        a_ptr = ctypes.c_void_p(a.ptr)
-        b_ptr = ctypes.c_void_p(b.ptr)
-        count_value = ctypes.c_int(count)
-        output_ptr = ctypes.c_void_p(output.ptr)
-        partials_ptr = ctypes.c_void_p(self._partials.ptr)
-        ticket_ptr = ctypes.c_void_p(self._ticket.ptr)
-        params = (ctypes.c_void_p * 6)(
-            ctypes.addressof(a_ptr),
-            ctypes.addressof(b_ptr),
-            ctypes.addressof(count_value),
-            ctypes.addressof(output_ptr),
-            ctypes.addressof(partials_ptr),
-            ctypes.addressof(ticket_ptr),
+        """``*output += dot(a[:count], b[:count])``."""
+        self._launch(self._kernel, count, (
+            ctypes.c_void_p(a.ptr),
+            ctypes.c_void_p(b.ptr),
+            ctypes.c_int(count),
+            ctypes.c_void_p(output.ptr),
+        ))
+
+    def launch_active(self, a, b, output, num_leaves, dim, leaf_volume=512):
+        """``*output += dot`` over the first ``num_leaves[0]*leaf_volume``
+        elements, with that count read on device.
+
+        ``dim`` sizes the grid exactly as ``launch(count=dim)`` would and must
+        be at least the active count; any such ``dim`` gives the result
+        ``launch(count=active)`` gives, bit for bit, so a captured launch can
+        be replayed across active counts.
+        """
+        self._launch(self._active_kernel, dim, (
+            ctypes.c_void_p(a.ptr),
+            ctypes.c_void_p(b.ptr),
+            ctypes.c_void_p(num_leaves.ptr),
+            ctypes.c_int(leaf_volume),
+            ctypes.c_void_p(output.ptr),
+        ))
+
+    def _launch(self, kernel, dim, values):
+        values = values + (
+            ctypes.c_void_p(self._partials.ptr),
+            ctypes.c_void_p(self._ticket.ptr),
         )
+        params = (ctypes.c_void_p * len(values))(
+            *(ctypes.addressof(value) for value in values))
         launch = context.runtime.core.wp_cuda_launch_kernel
         args = (
             self.device.context,
-            self._kernel,
-            count,
+            kernel,
+            dim,
             self._max_blocks,
             256,
             0,
