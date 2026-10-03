@@ -71,3 +71,16 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - `dam_break` is a rocky cove: its mesh colliders (dam abutments, cove terrain, sea stack, jetty), the visual training walls and apron, the reservoir and the domain all come from `tools/dam_break_cove.py`, which the builder, `analyze_demos.py` and `check_demo_blends.py` share.
 - Verify saved demo files with `blender --background --python tools/check_demo_blends.py`, then analyze outputs with `python tools/analyze_demos.py` and expect `DEMO-ANALYSIS-PASS (21/21)`. `tools/analyze_demos.py` parses `sys.argv` directly, so run it under plain `python`, never through `blender --background --python`.
 - For moving-collider (rotating/translating obstacle) changes, build and analyze `paddle_stir`: `blender --background --python tools/build_demo_scenes.py -- paddle_stir`, then `python tools/analyze_demos.py paddle_stir`. It is opt-in and outside the canonical 21/21 set, so the bare analyzer run is unaffected. The current rebuilt demo is expected to report `DEMO-ANALYSIS-PASS (10/10)`; treat any failing check as a regression.
+
+## Cursor Cloud specific instructions
+
+The Cloud Agent environment puts the hosted-CI toolchain on `PATH`. `python` is Python 3.13 from `/opt/fluidsim-dev` with the pins in `fluidSim_warp_blender51/requirements-dev.txt` (pytest 9.1.1, ruff 0.16.2, numpy 2.3.4, Warp 1.17.0). `blender` is Blender 5.2.0 LTS at `/opt/blender/blender`.
+
+This image has no NVIDIA GPU, so Warp exposes CPU only. CUDA tests skip, and the production gate's CUDA lane cannot pass here. Use the hosted CI checks as the default proof:
+
+- `python -m ruff check .` from `fluidSim_warp_blender51`
+- `CUDA_VISIBLE_DEVICES=-1 python -m pytest -q` from the repository root
+- Warp CPU validators `tools/release/validate_phase4_warp.py`, `tools/release/validate_phase5_warp.py`, and `tools/release/validate_custom_effects_warp.py` with `--device cpu` and `--expected-warp-root` set to Warp's site-packages directory
+- extension package smoke: `python tools/release/build_extension.py --blender "$(command -v blender)" --output dist --skip-python-checks --skip-lint --smoke-platform linux-x64`
+
+For Blender to import this Warp while keeping Blender's bundled numpy, set `PYTHONPATH=/opt/fluidsim-warp`. Keep `BLENDER_USER_EXTENSIONS` on a private directory for every `--factory-startup` command, as described above.
