@@ -61,9 +61,10 @@ def _phase_labels():
     }
 
 
-# Solver-visible configuration of demos/dam_break.blend, mirrored from
-# tools/build_demo_scenes.py:build_dam_break() so a bpy-free profile can run the
-# same domain, resolution, and liquid column as the shipped demo scene.
+# The classic dam-break benchmark: the domain, resolution and liquid column
+# demos/dam_break.blend used before its 2026-09-29 rocky-cove redesign, with no
+# colliders. It stays fixed so profiles remain comparable across releases; the
+# shipped demo now adds mesh colliders a bpy-free profile cannot load.
 DAM_BREAK_SCENE = {
     "domain_min": (0.0, -1.00146496, 0.0),
     "domain_max": (5.6, 1.00146496, 1.6),
@@ -72,8 +73,8 @@ DAM_BREAK_SCENE = {
     "min_substeps": 1,
     "max_substeps": 16,
     "whitewater_enabled": True,
-    # build_dam_break() creates the source column with lo=(0,0,0) and
-    # hi=(0.6,0.6,1.2) -> centre (0.3,0.3,0.6), half extents (0.3,0.3,0.6).
+    # The source column lo=(0,0,0), hi=(0.6,0.6,1.2) -> centre (0.3,0.3,0.6),
+    # half extents (0.3,0.3,0.6).
     "source_position": (0.3, 0.3, 0.6),
     "source_half_extents": (0.3, 0.3, 0.6),
     "source_emit_rate": 8.0,
@@ -82,7 +83,7 @@ DAM_BREAK_SCENE = {
 
 
 def dam_break_sources():
-    """Source column matching demos/dam_break.blend's analytic box source."""
+    """Source column of the classic dam-break benchmark."""
     from fluidSim_warp_blender51.sim.enums import (
         SourceShapeShape,
         SourceShapeSourceMode,
@@ -302,8 +303,9 @@ def main(argv=None):
     parser.add_argument("--no-phase-timers", action="store_true")
     parser.add_argument(
         "--scene-preset", choices=("benchmark", "dam_break"), default="benchmark",
-        help="'dam_break' mirrors demos/dam_break.blend domain, resolution, "
-             "substep range, whitewater state, and source column.")
+        help="'dam_break' is the classic dam-break benchmark: the pre-cove "
+             "demos/dam_break.blend domain, resolution, substep range, "
+             "whitewater state, and source column, without colliders.")
     parser.add_argument("--no-whitewater", action="store_true")
     parser.add_argument("--viscosity", action="store_true")
     parser.add_argument("--viscosity-constant", type=float, default=1.0)

@@ -491,7 +491,7 @@ def main(argv=None):
         ), env=env, reject_output=True, expect_marker="DEMO-BUILD-PASS")
     _run(
         "demo analysis", [blender_py, "tools/analyze_demos.py"], env=env,
-        expect_marker="DEMO-ANALYSIS-PASS (18/18)")
+        expect_marker="DEMO-ANALYSIS-PASS (21/21)")
     _run("demo blend checks", _blender(
         blender_exe,
         "--background",

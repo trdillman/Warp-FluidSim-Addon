@@ -51,6 +51,54 @@ def test_martin_moses_front_position_rejects_value_below_reported_range(monkeypa
     )
 
 
+def _dam_break_checks(monkeypatch, history):
+    """Run analyze_dam_break on (front x, back-wall column height) per frame."""
+    analyzer = _load_demo_analyzer()
+    captured = {}
+    meta = {
+        "gravity": 9.81,
+        "column_height": 1.2,
+        "column_width": 0.6,
+        "fps": 24,
+        "domain": [[0.0, -1.0, 0.0], [5.6, 1.0, 1.6]],
+        "voxel_size": 0.03,
+        "apron_end_x": 2.0,
+    }
+    frames = {f: {"positions": np.array([[front, 0.0, 0.1], [0.1, 0.0, column]])}
+              for f, (front, column) in history.items()}
+    series = {"whitewater_count": [0, 101] + [0] * (len(history) - 2)}
+
+    monkeypatch.setattr(analyzer, "load_scene", lambda _name: (meta, series, frames))
+    monkeypatch.setattr(analyzer, "common_checks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        analyzer,
+        "check",
+        lambda _scene, name, passed, detail: captured.setdefault(name, (passed, detail)),
+    )
+    analyzer.analyze_dam_break()
+    return captured
+
+
+def test_dam_break_front_phase_ends_where_the_apron_ends(monkeypatch):
+    """Once the bore leaves the flat apron it is over; a later low front is terrain."""
+    captured = _dam_break_checks(monkeypatch, {
+        1: (0.5, 1.0), 2: (1.0, 0.7), 3: (1.5, 0.5), 4: (2.5, 0.1), 5: (1.0, 0.1)})
+
+    assert captured["front advances monotonically"] == (
+        True, "min frame-to-frame delta 500.0 mm")
+    assert captured["column collapses"][1].startswith(
+        "minimum pre-reflection left-wall height 0.50 m")
+
+
+def test_dam_break_front_check_fails_when_the_apron_window_is_too_short(monkeypatch):
+    """A bore that crosses the apron in under three frames proves no advance."""
+    captured = _dam_break_checks(monkeypatch, {
+        1: (0.5, 1.0), 2: (1.5, 0.5), 3: (2.5, 0.1), 4: (3.0, 0.1)})
+
+    assert captured["front advances monotonically"] == (
+        False, "only 2 front(s) before the apron ends (need 3)")
+
+
 def test_column_collapse_uses_pre_reflection_minimum_not_last_frame():
     analyzer = _load_demo_analyzer()
     frames = {
