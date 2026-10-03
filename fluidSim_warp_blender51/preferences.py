@@ -12,6 +12,7 @@ from .runtime.warp_runtime import (
     probe_runtime,
     runtime_status_for_device,
 )
+from .version import CERTIFIED_WARP_VERSION
 from .warp_installer import (
     get_installed_warp_info,
     install_warp,
@@ -210,8 +211,14 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             row = box.row()
             row.scale_y = 1.5
             row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
-            box.label(text="Downloads NVIDIA Warp from PyPI (~160 MB).")
+            box.label(
+                text=(
+                    f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
+                    "(CUDA 12) from PyPI."
+                )
+            )
         else:
+            box.label(text=warp_info)
             box.prop(self, "device")
             probe = probe_runtime()
             selected = configured_device()
@@ -224,7 +231,11 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             if not is_certified_warp_installed():
                 row = box.row()
                 row.alert = True
-                op = row.operator("fluidsim.install_warp", text="Reinstall Certified Warp", icon="FILE_REFRESH")
+                op = row.operator(
+                    "fluidsim.install_warp",
+                    text="Replace with Certified Warp",
+                    icon="FILE_REFRESH",
+                )
                 op.force_reinstall = True
 
         authoring = layout.box()

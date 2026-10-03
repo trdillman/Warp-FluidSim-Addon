@@ -117,6 +117,11 @@ def ensure_host_streams() -> None:
 
 def _import_warp():
     ensure_host_streams()
+    # The preferences installer places Warp in Blender's extension site-packages.
+    # Add that directory before the import when Blender has not already done so.
+    from ..warp_installer import ensure_installed_warp_on_path
+
+    ensure_installed_warp_on_path()
     import warp as wp
 
     return wp

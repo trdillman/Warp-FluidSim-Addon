@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 2.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -298,9 +298,14 @@ Conditional panels are:
 
 ### Add-on Preferences
 
-Preferences contains only runtime selection and detection. The external-Warp
-developer path appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device
-selection does not appear in scene panels.
+Preferences contains the **Install Warp** button, runtime selection, and
+detection. **Install Warp** downloads the certified NVIDIA Warp 1.17.0 wheel
+from PyPI, checks its SHA-256 against the shipped lock, and installs that
+file. Pressing it again when that version is already installed does nothing
+further. An older Warp that FluidSim refuses is replaced in place; restart
+Blender if a Warp module was already loaded. The external-Warp developer path
+appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device selection does not
+appear in scene panels.
 
 ### 3D View FluidSim workflow
 
@@ -762,8 +767,9 @@ voxel, topology expansion, and secondary surface-grid settings.
 ## 12. Validation limits for this build
 
 Release 2.0.0 passed the GUI-inclusive production gate on Windows 11 with
-Blender 5.2.0 LTS and the bundled Warp 1.17.0 on an NVIDIA GeForce RTX 4080
-SUPER. The gate runs the CUDA pytest regressions, the CUDA self-validations, the GUI
+Blender 5.2.0 LTS and NVIDIA Warp 1.17.0 on an NVIDIA GeForce RTX 4080
+SUPER. Release 2.1.0 installs that same Warp build from the preferences
+button instead of shipping the wheel inside the extension. The gate runs the CUDA pytest regressions, the CUDA self-validations, the GUI
 acceptance checks, saved-demo timeline playback, cache-v2 production bake,
 export and resume, handler save/reopen, the release validators and the bounded
 demo-analysis checks for all four demos. A clean-profile install of the

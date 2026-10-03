@@ -10,7 +10,6 @@ from unittest import mock
 
 import pytest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 
@@ -31,7 +30,7 @@ def test_wheel_lock_exists_and_has_valid_structure():
     assert isinstance(lock["files"], dict)
     assert len(lock["files"]) >= 1
 
-    for filename, meta in lock["files"].items():
+    for _filename, meta in lock["files"].items():
         assert "sha256" in meta
         assert "size" in meta
         assert "url" in meta
@@ -81,31 +80,168 @@ def test_install_result_dataclass():
 
 
 def test_install_warp_returns_already_installed_when_certified():
-    """Verify install_warp returns success without action when certified version is installed."""
+    """A certified install is success and does not download another copy."""
     from fluidSim_warp_blender51.warp_installer import install_warp
 
-    with mock.patch("fluidSim_warp_blender51.warp_installer.is_certified_warp_installed", return_value=True):
-        with mock.patch("fluidSim_warp_blender51.warp_installer._get_installed_warp_version", return_value="1.17.0"):
+    with mock.patch(
+        "fluidSim_warp_blender51.warp_installer._get_installed_warp_version",
+        return_value="1.17.0",
+    ):
+        with mock.patch("fluidSim_warp_blender51.warp_installer._download_wheel") as download:
             result = install_warp()
-            assert result.success is True
-            assert result.already_installed is True
-            assert "already installed" in result.message.lower()
+    assert result.success is True
+    assert result.already_installed is True
+    assert "already installed" in result.message.lower()
+    download.assert_not_called()
+
+
+def test_install_warp_leaves_a_newer_untested_warp_in_place():
+    """A newer 1.x Warp is already accepted; the button must not add a second copy."""
+    from fluidSim_warp_blender51.warp_installer import install_warp
+
+    with mock.patch(
+        "fluidSim_warp_blender51.warp_installer._get_installed_warp_version",
+        return_value="1.18.0",
+    ):
+        with mock.patch("fluidSim_warp_blender51.warp_installer._download_wheel") as download:
+            result = install_warp()
+    assert result.success is True
+    assert result.already_installed is True
+    download.assert_not_called()
+
+
+def test_install_warp_replaces_an_incompatible_warp_from_the_locked_url(tmp_path):
+    """An older Warp is replaced in its own directory from the locked URL only."""
+    from fluidSim_warp_blender51.warp_installer import install_warp
+
+    payload = b"certified-wheel"
+    info = mock.Mock(
+        filename="warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+        platform="linux-x64",
+    )
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    commands = []
+
+    def fake_download(url, destination, **_kwargs):
+        assert url == info.url
+        destination.write_bytes(payload)
+
+    def fake_pip(wheel, destination, *, force):
+        commands.append((wheel.name, destination, force))
+        return None
+
+    inserted_warp = "warp" not in sys.modules
+    if inserted_warp:
+        sys.modules["warp"] = mock.Mock()
+    try:
+        with mock.patch(
+            "fluidSim_warp_blender51.warp_installer._get_installed_warp_version",
+            return_value="1.16.0",
+        ), mock.patch(
+            "fluidSim_warp_blender51.warp_installer.get_wheel_info_for_platform",
+            return_value=info,
+        ), mock.patch(
+            "fluidSim_warp_blender51.warp_installer._loaded_warp_site_packages",
+            return_value=site,
+        ), mock.patch(
+            "fluidSim_warp_blender51.warp_installer._download_wheel",
+            side_effect=fake_download,
+        ), mock.patch(
+            "fluidSim_warp_blender51.warp_installer._pip_install",
+            side_effect=fake_pip,
+        ), mock.patch(
+            "fluidSim_warp_blender51.warp_installer._sha256_path",
+            return_value=info.sha256,
+        ):
+            result = install_warp()
+    finally:
+        if inserted_warp:
+            sys.modules.pop("warp", None)
+
+    assert result.success is True
+    assert result.already_installed is False
+    assert "Restart Blender" in result.message
+    assert commands == [(info.filename, site, True)]
+
+
+def test_install_warp_reports_pip_failure_without_claiming_success(tmp_path):
+    from fluidSim_warp_blender51.warp_installer import install_warp
+
+    payload = b"certified-wheel"
+    info = mock.Mock(
+        filename="warp.whl",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+        platform="linux-x64",
+    )
+
+    def fake_download(_url, destination, **_kwargs):
+        destination.write_bytes(payload)
+
+    with mock.patch(
+        "fluidSim_warp_blender51.warp_installer._get_installed_warp_version",
+        return_value=None,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer.get_wheel_info_for_platform",
+        return_value=info,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer._default_install_target",
+        return_value=tmp_path,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer._download_wheel",
+        side_effect=fake_download,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer._sha256_path",
+        return_value=info.sha256,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer._pip_install",
+        return_value="pip install failed: permission denied",
+    ):
+        result = install_warp()
+    assert result.success is False
+    assert "permission denied" in result.message
+
+
+def test_shipped_wheel_lock_matches_the_release_lock():
+    shipped = json.loads((ROOT / "warp_wheels.lock.json").read_text(encoding="utf-8"))
+    release = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
+    assert shipped == release
+    assert shipped["warp_version"] == "1.17.0"
+
+
+def test_preferences_register_the_install_warp_button():
+    source = (ROOT / "preferences.py").read_text(encoding="utf-8")
+    assert 'bl_idname = "fluidsim.install_warp"' in source
+    assert 'text="Install Warp"' in source
+    assert "network" not in source or "PyPI" in (ROOT / "blender_manifest.toml").read_text()
 
 
 def test_install_warp_fails_for_unsupported_platform():
     """Verify install_warp returns failure for unsupported platforms."""
     from fluidSim_warp_blender51.warp_installer import install_warp
 
-    with mock.patch("fluidSim_warp_blender51.warp_installer._host_platform", return_value=None):
+    with mock.patch(
+        "fluidSim_warp_blender51.warp_installer._get_installed_warp_version",
+        return_value=None,
+    ), mock.patch(
+        "fluidSim_warp_blender51.warp_installer._host_platform",
+        return_value=None,
+    ):
         result = install_warp()
-        assert result.success is False
-        assert "platform" in result.message.lower()
+    assert result.success is False
+    assert "platform" in result.message.lower()
 
 
 def test_download_wheel_verifies_checksum():
     """Verify that _download_wheel rejects payloads with wrong checksums."""
-    from fluidSim_warp_blender51.warp_installer import _download_wheel
     import tempfile
+
+    from fluidSim_warp_blender51.warp_installer import _download_wheel
 
     with tempfile.TemporaryDirectory() as tmpdir:
         dest = pathlib.Path(tmpdir) / "test.whl"
@@ -140,8 +276,9 @@ def test_download_wheel_verifies_checksum():
 
 def test_download_wheel_rejects_non_https():
     """Verify that _download_wheel rejects non-HTTPS URLs."""
-    from fluidSim_warp_blender51.warp_installer import _download_wheel
     import tempfile
+
+    from fluidSim_warp_blender51.warp_installer import _download_wheel
 
     with tempfile.TemporaryDirectory() as tmpdir:
         dest = pathlib.Path(tmpdir) / "test.whl"
@@ -156,7 +293,7 @@ def test_download_wheel_rejects_non_https():
 
 def test_version_constants_match_lock():
     """Verify that version.py constants match the wheel lock."""
-    from fluidSim_warp_blender51.version import CERTIFIED_WARP_VERSION, CERTIFIED_WARP_DISTRIBUTION
+    from fluidSim_warp_blender51.version import CERTIFIED_WARP_DISTRIBUTION, CERTIFIED_WARP_VERSION
 
     lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
     assert lock["warp_version"] == CERTIFIED_WARP_VERSION

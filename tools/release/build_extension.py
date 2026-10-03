@@ -564,60 +564,6 @@ def _validate_required_package_content(
         raise RuntimeError(f"invalid Geometry Nodes asset in {package.name}")
 
 
-def _validate_embedded_manifest_and_payload(
-    package: Path,
-    platform: str,
-    archive: zipfile.ZipFile,
-    names: Mapping[str, str],
-    source: SourceVerification,
-    reference_payloads: dict[str, str] | None,
-    reference_manifest: dict[str, Any] | None,
-) -> tuple[dict[str, str], dict[str, Any]]:
-    embedded = tomllib.loads(archive.read(names["blender_manifest.toml"]).decode("utf-8"))
-    if embedded.get("id") != source.extension_id or embedded.get("version") != source.version:
-        raise RuntimeError(f"embedded manifest identity mismatch: {package.name}")
-    if embedded.get("license") != REQUIRED_LICENSE:
-        raise RuntimeError(f"embedded manifest license mismatch: {package.name}")
-    if tuple(embedded.get("platforms", ())) != source.platforms:
-        raise RuntimeError(
-            f"embedded source platform mismatch: expected {list(source.platforms)}, "
-            f"got {embedded.get('platforms')}"
-        )
-    expected_wheels = sorted(
-        f"./{BUNDLED_WHEEL_DIR}/{name}" for name in source.bundled_warp_wheels
-    )
-    if sorted(embedded.get("wheels") or []) != expected_wheels:
-        raise RuntimeError(f"embedded manifest wheels mismatch: {package.name}")
-    generated = embedded.get("build", {}).get("generated", {})
-    if generated.get("platforms") != [platform]:
-        raise RuntimeError(f"generated platform metadata mismatch: {package.name}")
-    platform_wheel = f"./{BUNDLED_WHEEL_DIR}/{source.wheel_for_platform(platform)}"
-    if generated.get("wheels", []) != [platform_wheel]:
-        raise RuntimeError(
-            f"generated wheels must be [{platform_wheel!r}]: {package.name}"
-        )
-
-    normalized_manifest = dict(embedded)
-    normalized_build = dict(normalized_manifest.get("build", {}))
-    normalized_build.pop("generated", None)
-    normalized_manifest["build"] = normalized_build
-    # Each split package carries only its own platform's Warp wheel; compare the
-    # rest of the payload across platforms.
-    payloads = {
-        relative: _sha256_bytes(archive.read(archive_name))
-        for relative, archive_name in names.items()
-        if relative != "blender_manifest.toml"
-        and PurePosixPath(relative).parts[0] != BUNDLED_WHEEL_DIR
-    }
-    if reference_payloads is None:
-        return payloads, normalized_manifest
-    if payloads != reference_payloads or normalized_manifest != reference_manifest:
-        raise RuntimeError(
-            "split-platform payloads differ outside generated platform metadata"
-        )
-    return payloads, normalized_manifest
-
-
 def _validate_embedded_manifest_no_wheels(
     package: Path,
     platform: str,
@@ -682,32 +628,8 @@ def _validate_no_bundled_wheels(
         )
 
 
-def _validate_bundled_wheel(
-    package: Path,
-    platform: str,
-    archive: zipfile.ZipFile,
-    names: Mapping[str, str],
-    source: SourceVerification,
-) -> str:
-    """Require exactly the platform's locked Warp wheel, byte-identical to the lock."""
-    wheel_name = source.wheel_for_platform(platform)
-    relative = f"{BUNDLED_WHEEL_DIR}/{wheel_name}"
-    bundled = sorted(
-        name for name in names
-        if PurePosixPath(name).parts[0] == BUNDLED_WHEEL_DIR
-    )
-    if bundled != [relative]:
-        raise RuntimeError(
-            f"package {package.name} must bundle exactly {relative}, found {bundled}"
-        )
-    expected_sha = dict(source.wheel_sha256)[wheel_name]
-    if _sha256_bytes(archive.read(names[relative])) != expected_sha:
-        raise RuntimeError(f"bundled Warp wheel checksum mismatch in {package.name}")
-    return relative
-
-
 def inspect_packages(root: Path, packages: Iterable[Path]) -> list[ArtifactRecord]:
-    """Inspect split archives: exactly one locked Warp wheel, no other binaries."""
+    """Inspect split archives: no Warp wheel, no other runtime binaries."""
     root = Path(root).resolve()
     source = verify_source_tree(root)
     collision_guard = _collision_guard(root)
@@ -814,6 +736,28 @@ def _fetch_locked_wheels(root: Path) -> None:
         lock_path=_tool_root_for(root) / "wheels.lock.json",
         wheel_dir=root / BUNDLED_WHEEL_DIR,
     )
+
+
+def _provision_smoke_warp(target: Path) -> None:
+    """Install the locked host wheel where the preferences button installs it.
+
+    Smoke Blender starts with ``--offline-mode``, so the checksummed download
+    happens here, before Blender launches. The extension zip stays wheel-free.
+    """
+    sys.path.insert(0, str(TOOL_ROOT))
+    try:
+        from fetch_warp_wheels import fetch_wheels, host_platform
+    finally:
+        sys.path.pop(0)
+    platform = host_platform()
+    if platform is None:
+        raise RuntimeError("no certified Warp wheel for this host platform")
+    wheels = fetch_wheels(platform=platform)
+    if len(wheels) != 1:
+        raise RuntimeError(f"expected one locked wheel for {platform}, found {wheels}")
+    target.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(wheels[0]) as archive:
+        archive.extractall(target)
 
 
 def build(
@@ -929,6 +873,8 @@ def run_installed_script(
     }
     for path in isolated_paths.values():
         path.mkdir(parents=True, exist_ok=True)
+    if runner is _run:
+        _provision_smoke_warp(isolated_paths["BLENDER_USER_EXTENSIONS"] / ".local")
     env.update({key: str(path) for key, path in isolated_paths.items()})
     env["FLUIDSIM_CI_REPOSITORY"] = str(repo_dir)
     if extra_env:

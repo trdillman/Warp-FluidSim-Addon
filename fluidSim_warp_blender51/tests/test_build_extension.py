@@ -31,13 +31,10 @@ blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
-wheels = [
-  "./wheels/{LINUX_WHEEL}",
-  "./wheels/{WINDOWS_WHEEL}",
-]
 
 [permissions]
 files = "Read and write simulation caches, exports, and presets"
+network = "Download NVIDIA Warp runtime from PyPI when you press Install Warp"
 
 [build]
 paths_exclude_pattern = [
@@ -160,15 +157,14 @@ def _write_package(
     extra: dict[str, bytes] | None = None,
     wheel_platform: str | None = None,
     wheel_payload: bytes | None = None,
+    include_wheel: bool = False,
 ) -> None:
     wheel_name, payload = WHEELS[wheel_platform or platform]
-    generated = (
-        f'\n[build.generated]\nplatforms = ["{platform}"]\n'
-        f'wheels = ["./wheels/{WHEELS[platform][0]}"]\n'
-    )
+    generated = f'\n[build.generated]\nplatforms = ["{platform}"]\n'
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("blender_manifest.toml", _manifest() + generated)
-        archive.writestr(f"wheels/{wheel_name}", wheel_payload or payload)
+        if include_wheel:
+            archive.writestr(f"wheels/{wheel_name}", wheel_payload or payload)
         archive.writestr("__init__.py", "def register(): pass\ndef unregister(): pass\n")
         archive.writestr("LICENSE", "GPL-3.0-or-later\n")
         archive.writestr(
@@ -302,24 +298,32 @@ def test_collision_guard_retired_owners_must_be_protected(tmp_path: Path):
         build_extension.verify_source_tree(tmp_path)
 
 
-@pytest.mark.parametrize(
-    "replacement",
-    ["", f'  "./wheels/{LINUX_WHEEL}",\n  "./wheels/numpy-2.0-py3-none-any.whl",\n'],
-)
-def test_verify_source_tree_requires_manifest_wheels_to_match_lock(
-    tmp_path: Path, replacement: str
-):
+def test_verify_source_tree_rejects_manifest_wheels(tmp_path: Path):
     _write_project(tmp_path)
     manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
     manifest = manifest.replace(
-        f'  "./wheels/{LINUX_WHEEL}",\n  "./wheels/{WINDOWS_WHEEL}",\n', replacement)
+        "[permissions]",
+        f'wheels = [\n  "./wheels/{LINUX_WHEEL}",\n]\n\n[permissions]',
+    )
     (tmp_path / "blender_manifest.toml").write_text(manifest, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="manifest wheels must be exactly"):
+    with pytest.raises(RuntimeError, match="must be empty"):
+        build_extension.verify_source_tree(tmp_path)
+
+
+def test_verify_source_tree_requires_network_permission(tmp_path: Path):
+    _write_project(tmp_path)
+    manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
+    manifest = manifest.replace(
+        'network = "Download NVIDIA Warp runtime from PyPI when you press Install Warp"\n',
+        "",
+    )
+    (tmp_path / "blender_manifest.toml").write_text(manifest, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="network"):
         build_extension.verify_source_tree(tmp_path)
 
 
 @pytest.mark.parametrize("platform", ["windows-x64", "linux-x64"])
-def test_inspect_packages_accepts_archive_with_its_platform_wheel(
+def test_inspect_packages_accepts_archive_without_a_warp_wheel(
     tmp_path: Path,
     platform: str,
 ):
@@ -328,23 +332,15 @@ def test_inspect_packages_accepts_archive_with_its_platform_wheel(
     _write_package(package, platform=platform)
     records = build_extension.inspect_packages(tmp_path, [package])
     assert [record.platform for record in records] == [platform]
-    assert records[0].runtime_dependency == "bundled"
+    assert records[0].runtime_dependency == "user-install"
     assert records[0].sha256
 
 
-def test_inspect_packages_rejects_other_platform_wheel(tmp_path: Path):
+def test_inspect_packages_rejects_a_bundled_wheel(tmp_path: Path):
     _write_project(tmp_path)
     package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
-    _write_package(package, platform="linux-x64", wheel_platform="windows-x64")
-    with pytest.raises(RuntimeError, match="must bundle exactly"):
-        build_extension.inspect_packages(tmp_path, [package])
-
-
-def test_inspect_packages_rejects_wheel_checksum_mismatch(tmp_path: Path):
-    _write_project(tmp_path)
-    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
-    _write_package(package, wheel_payload=b"tampered")
-    with pytest.raises(RuntimeError, match="checksum mismatch"):
+    _write_package(package, platform="linux-x64", include_wheel=True)
+    with pytest.raises(RuntimeError, match="should not contain bundled wheels"):
         build_extension.inspect_packages(tmp_path, [package])
 
 
@@ -361,7 +357,10 @@ def test_inspect_packages_keeps_sorted_artifact_records_for_valid_archives(
 
     assert [record.path for record in records] == [linux.resolve(), windows.resolve()]
     assert [record.platform for record in records] == ["linux-x64", "windows-x64"]
-    assert [record.runtime_dependency for record in records] == ["bundled", "bundled"]
+    assert [record.runtime_dependency for record in records] == [
+        "user-install",
+        "user-install",
+    ]
     assert [record.size for record in records] == [
         linux.stat().st_size,
         windows.stat().st_size,
@@ -478,7 +477,7 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     fetched: list[Path] = []
     packages = build_extension.build(
         tmp_path, Path("/opt/blender"), output, runner=fake_run, fetcher=fetched.append)
-    assert fetched == [tmp_path.resolve()]
+    assert fetched == []
     flattened = [" ".join(command) for command in commands]
     assert any("-m ruff check" in command for command in flattened)
     assert any("-m pytest" in command for command in flattened)
@@ -522,8 +521,9 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
     )
     background = [command for command in commands if "--background" in command]
     assert len(background) == 2
-    # No --python-use-system-env: Warp must come from the bundled wheel, not
-    # from PYTHONPATH or the Python user site.
+    # No --python-use-system-env: Blender does not load Warp from PYTHONPATH.
+    # Smoke setup places the locked wheel in the isolated extensions/.local
+    # directory, which is where the preferences button installs it.
     assert all("--python-use-system-env" not in command for command in background)
     assert all(env.get("PYTHONPATH") == "/validation/warp-site" for env in environments)
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")

@@ -116,8 +116,9 @@ jobs:
           sudo apt-get install -y -q --no-install-recommends
           libegl1 libgl1 libsm6 libxi6 libxkbcommon0 libxrender1 libxxf86vm1 libxfixes3
       - name: Restore the locked Warp wheels
-        # build_extension.py fetches any missing wheel and verifies every
-        # checksum against tools/release/wheels.lock.json.
+        # The extension zip does not contain Warp. Smoke setup installs the
+        # locked wheel into the isolated extensions/.local directory after
+        # verifying it against tools/release/wheels.lock.json.
         uses: actions/cache@v6
         with:
           path: fluidSim_warp_blender51/wheels/*.whl

@@ -6,34 +6,35 @@ Preferences that downloads the certified wheel from PyPI.
 
 NVIDIA Warp `warp-lang 1.17.0` (the PyPI build for CUDA 12, CUDA Toolkit 12.9)
 is the certified runtime. The Windows x64 and Linux x64 wheels are pinned by
-SHA-256 in `../tools/release/wheels.lock.json`. When the user presses
-**Install Warp** in Add-on Preferences, FluidSim downloads the wheel for the
-current platform from PyPI, verifies its SHA-256 checksum, and installs it
-into Blender's Python using pip. The download requires network access (the
-extension declares the `network` permission for this purpose).
+filename, size, SHA-256, and HTTPS URL in `warp_wheels.lock.json` (the same
+document as `tools/release/wheels.lock.json` in the repository). When the
+user presses **Install Warp** in Add-on Preferences, FluidSim downloads that
+one wheel from PyPI, verifies its SHA-256 checksum, and installs it with pip
+into Blender's extension site-packages. The download uses the extension's
+`network` permission. FluidSim does not install a floating or "latest" Warp.
 
 ## Third-party components
 
 | Dependency or resource | Certified version/status | License or terms | Included in FluidSim ZIPs? |
 |---|---:|---|---:|
-| NVIDIA Warp (`warp-lang`) | 1.17.0 (CUDA 12 build) | Apache License, Version 2.0 | Yes, as the unmodified upstream wheel |
-| CUDA runtime/compiler components used by Warp | As shipped inside the Warp wheel | NVIDIA Software License Agreement | Yes, inside the Warp wheel |
-| NVIDIA libmathdx components used by Warp | As shipped inside the Warp wheel | NVIDIA upstream terms | Yes, inside the Warp wheel |
+| NVIDIA Warp (`warp-lang`) | 1.17.0 (CUDA 12 build) | Apache License, Version 2.0 | No. Installed from PyPI by the preferences button |
+| CUDA runtime/compiler components used by Warp | As shipped inside the Warp wheel | NVIDIA Software License Agreement | No. They arrive inside the installed Warp wheel |
+| NVIDIA libmathdx components used by Warp | As shipped inside the Warp wheel | NVIDIA upstream terms | No. They arrive inside the installed Warp wheel |
 | NumPy | Version supplied by Blender 5.2.0 or newer | BSD 3-Clause License | No separate FluidSim copy |
 | Blender Python API | Blender 5.2.0 or newer | GNU General Public License | No |
 
 The Warp wheel carries its own complete license inventory in
 `warp_lang-1.17.0.dist-info/licenses/`, including `LICENSE.md`,
-`cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. The wheel
-is redistributed byte-for-byte, so those notices travel with it and are
-installed alongside Warp.
+`cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. The
+preferences button installs that unmodified wheel, so those notices are
+installed alongside Warp. They are not copied into the FluidSim zip.
 
 ## Distribution and runtime policy
 
 - `blender_manifest.toml` declares `network` permission for the PyPI download.
-- `tools/release/wheels.lock.json` pins the exact wheel filenames, sizes,
-  SHA-256 checksums, and PyPI URLs. The installer refuses any wheel that does
-  not match these checksums.
+- `warp_wheels.lock.json` pins the exact wheel filenames, sizes, SHA-256
+  checksums, and PyPI URLs. The installer refuses any wheel that does not
+  match these checksums.
 - The Install Warp button is idempotent: pressing it when the certified version
   is already installed reports success without reinstalling.
 - A developer-only override (`FLUIDSIM_ALLOW_EXTERNAL_WARP=1`) can point at a

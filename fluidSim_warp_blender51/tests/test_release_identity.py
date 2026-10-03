@@ -27,7 +27,7 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.2.0"
-    assert version == (2, 0, 0)
+    assert version == (2, 1, 0)
     assert _assigned_value(ROOT / "version.py", "BUILD_CHANNEL") == "stable"
 
 
@@ -83,7 +83,8 @@ def test_user_guide_declares_certified_support_matrix():
         "Windows x64",
         "Linux x64",
         "NVIDIA CUDA",
-        "Bundled NVIDIA Warp 1.17.0",
+        "NVIDIA Warp 1.17.0",
+        "Install Warp",
         "Cache v1 (1.0.x) is refused",
     ):
         assert text in guide
