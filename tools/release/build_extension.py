@@ -28,6 +28,9 @@ REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
 REQUIRED_WARP_VERSION = "1.17.0"
 REQUIRED_WARP_DISTRIBUTION = "1.17.0+cu12"
 REQUIRED_BLENDER_MIN = "5.2.0"
+# Blender 5.2 rejects a permission reason longer than this:
+# `a value no longer than 64 characters expected`.
+PERMISSION_REASON_MAX_LENGTH = 64
 BUNDLED_WHEEL_DIR = "wheels"
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
@@ -332,8 +335,15 @@ def verify_source_tree(root: Path) -> SourceVerification:
             f"got {manifest_wheels!r}"
         )
     permissions = manifest.get("permissions", {})
-    if "network" not in permissions:
+    if not isinstance(permissions, dict) or "network" not in permissions:
         raise RuntimeError("manifest must declare 'network' permission for PyPI downloads")
+    for name, reason in permissions.items():
+        if not isinstance(reason, str) or len(reason) > PERMISSION_REASON_MAX_LENGTH:
+            length = len(reason) if isinstance(reason, str) else "non-string"
+            raise RuntimeError(
+                f"manifest permissions.{name} must be at most "
+                f"{PERMISSION_REASON_MAX_LENGTH} characters, found {length}"
+            )
     if "generated" in manifest.get("build", {}):
         raise RuntimeError("tracked source manifest must not contain generated metadata")
 

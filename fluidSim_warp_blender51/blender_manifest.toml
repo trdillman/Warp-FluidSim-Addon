@@ -18,7 +18,7 @@ tags = ["Physics"]
 
 [permissions]
 files = "Read and write simulation caches, exports, and user presets"
-network = "Download NVIDIA Warp runtime from PyPI when you press 'Install Warp' in preferences"
+network = "Download the certified NVIDIA Warp build from PyPI"
 
 [build]
 paths_exclude_pattern = [

@@ -34,7 +34,7 @@ tags = ["Physics"]
 
 [permissions]
 files = "Read and write simulation caches, exports, and presets"
-network = "Download NVIDIA Warp runtime from PyPI when you press Install Warp"
+network = "Download the certified NVIDIA Warp build from PyPI"
 
 [build]
 paths_exclude_pattern = [
@@ -310,11 +310,23 @@ def test_verify_source_tree_rejects_manifest_wheels(tmp_path: Path):
         build_extension.verify_source_tree(tmp_path)
 
 
+def test_verify_source_tree_rejects_permission_reasons_over_64_characters(tmp_path: Path):
+    _write_project(tmp_path)
+    manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
+    manifest = manifest.replace(
+        'network = "Download the certified NVIDIA Warp build from PyPI"',
+        'network = "' + ("x" * 65) + '"',
+    )
+    (tmp_path / "blender_manifest.toml").write_text(manifest, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="64"):
+        build_extension.verify_source_tree(tmp_path)
+
+
 def test_verify_source_tree_requires_network_permission(tmp_path: Path):
     _write_project(tmp_path)
     manifest = (tmp_path / "blender_manifest.toml").read_text(encoding="utf-8")
     manifest = manifest.replace(
-        'network = "Download NVIDIA Warp runtime from PyPI when you press Install Warp"\n',
+        'network = "Download the certified NVIDIA Warp build from PyPI"\n',
         "",
     )
     (tmp_path / "blender_manifest.toml").write_text(manifest, encoding="utf-8")

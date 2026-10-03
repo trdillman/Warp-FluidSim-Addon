@@ -27,7 +27,12 @@ def test_manifest_declares_network_permission():
     manifest = _manifest()
     assert "permissions" in manifest
     assert "network" in manifest["permissions"]
-    assert "PyPI" in manifest["permissions"]["network"] or "download" in manifest["permissions"]["network"].lower()
+    reason = manifest["permissions"]["network"]
+    assert "PyPI" in reason or "download" in reason.lower()
+    # Blender 5.2: permission reasons must be no longer than 64 characters.
+    for name, value in manifest["permissions"].items():
+        assert isinstance(value, str)
+        assert len(value) <= 64, (name, len(value), value)
 
 
 def test_warp_lock_covers_every_platform_once_and_matches_identity():
