@@ -39,7 +39,10 @@ def _child(root, workload, frames, warmup, out):
 
     from fluidSim_warp_blender51.diagnostics.benchmark import default_benchmark_settings
     from fluidSim_warp_blender51.sim.enums import (
-        SourceShapeShape, SourceShapeSourceMode, SourceShapeType)
+        SourceShapeShape,
+        SourceShapeSourceMode,
+        SourceShapeType,
+    )
     from fluidSim_warp_blender51.sim.solver import FluidSolver, SourceShapeDesc
 
     # demos/dam_break.blend, as mirrored by tools/profile_gpu_solver.py
@@ -143,6 +146,25 @@ def _summarize(runs, labels, workloads):
     return table
 
 
+def run_paired_trials(versions, workloads, trials, trial):
+    """Fresh-process trial callback, paired rounds with rotating version order.
+
+    Two versions produce AB, BA, AB, BA (ABBA across adjacent rounds).
+    Used by both the exploratory solver benchmark and the production budget.
+    """
+    runs = []
+    for rnd in range(trials):
+        for index, workload in enumerate(workloads):
+            shift = (rnd + index) % len(versions)
+            ordered = versions[shift:] + versions[:shift]
+            for label, root in ordered:
+                run = trial(label, root, workload, rnd)
+                run.update(label=label, round=rnd, workload=workload,
+                           order=[item[0] for item in ordered])
+                runs.append(run)
+    return runs
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -160,27 +182,24 @@ def main(argv=None):
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    runs = []
-    for rnd in range(args.trials):
-        for w_index, workload in enumerate(workloads):
-            shift = (rnd + w_index) % len(versions)
-            for label, root in versions[shift:] + versions[:shift]:
-                out = out_dir / f"r{rnd}_{workload}_{label}.json"
-                proc = subprocess.run(
-                    [sys.executable, "-u", os.path.abspath(__file__), "--child",
-                     root, workload, str(args.frames), str(args.warmup), str(out)],
-                    capture_output=True, text=True)
-                if proc.returncode != 0:
-                    (out_dir / f"r{rnd}_{workload}_{label}.err").write_text(
-                        proc.stdout + proc.stderr)
-                    raise SystemExit(f"{label}/{workload} round {rnd} failed "
-                                     f"(exit {proc.returncode}); see {out_dir}")
-                run = json.loads(out.read_text())
-                run.update(label=label, round=rnd)
-                runs.append(run)
-                print(f"round {rnd} {workload:8s} {label:8s} "
-                      f"median={run['hostMsMedian']:8.2f} ms "
-                      f"ms/substep={run['msPerSubstep']:.2f}", flush=True)
+    def trial(label, root, workload, rnd):
+        out = out_dir / f"r{rnd}_{workload}_{label}.json"
+        proc = subprocess.run(
+            [sys.executable, "-u", os.path.abspath(__file__), "--child",
+             root, workload, str(args.frames), str(args.warmup), str(out)],
+            capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            (out_dir / f"r{rnd}_{workload}_{label}.err").write_text(
+                proc.stdout + proc.stderr)
+            raise SystemExit(f"{label}/{workload} round {rnd} failed "
+                             f"(exit {proc.returncode}); see {out_dir}")
+        run = json.loads(out.read_text())
+        print(f"round {rnd} {workload:8s} {label:8s} "
+              f"median={run['hostMsMedian']:8.2f} ms "
+              f"ms/substep={run['msPerSubstep']:.2f}", flush=True)
+        return run
+
+    runs = run_paired_trials(versions, workloads, args.trials, trial)
 
     summary = {
         "versions": dict(versions), "workloads": workloads,

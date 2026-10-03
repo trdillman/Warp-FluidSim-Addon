@@ -130,7 +130,7 @@ MANUAL_BLENDER_PROBES = {
     "tests/blender_phase3_profile_safe_review.py":
         "profile-safe visible review via tools/launch_profile_safe_addon_review.py",
     "tests/blender_performance_playback_benchmark.py":
-        "benchmark driven by its own harness (--owned-process-pid); not a pass/fail gate",
+        "GUI handler benchmark uses its own owned-process harness; D7 demo budget is gated separately",
 }
 RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
 # tools/release/validate_{check}_blender.py: (check, inputs, success marker).
@@ -345,6 +345,9 @@ def _write_gate_manifest(blender_exe, warp_version=None):
         "include_gui": True,
         "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
         "demo_artifact_sha256": digest,
+        "performance_budget_artifact": "artifacts/performance_budget/budget.json",
+        "performance_budget_sha256": hashlib.sha256(
+            (ROOT / "artifacts/performance_budget/budget.json").read_bytes()).hexdigest(),
     }
     GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
@@ -378,6 +381,10 @@ def main(argv=None):
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()
     warp_root = _check_certified_warp(blender_py, env)
+    _run("paired D7 performance budget", [
+        blender_py, "tools/run_performance_budget.py", "--blender", blender_exe,
+        "--trials", "8", "--out-dir", "artifacts/performance_budget",
+    ], env=env, expect_marker="PERFORMANCE-BUDGET-PASS")
     _run("python syntax", [
         blender_py, "-m", "py_compile",
         "tools/profile_gpu_solver.py",
@@ -386,6 +393,11 @@ def main(argv=None):
         "tools/build_demo_scenes.py",
         "tools/check_demo_blends.py",
         "tools/run_production_gate.py",
+        "tools/run_performance_budget.py",
+        "tools/benchmark_budget_demo.py",
+        "tools/budget_scene_compat.py",
+        "tools/performance_budget.py",
+        "tools/benchmark_versions.py",
         "tools/validate_gui_playback_report.py",
         "tests/blender_cache_export_pipeline.py",
         "tests/blender_memory_safety_gate.py",

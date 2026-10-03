@@ -1,0 +1,385 @@
+{
+  "schema": "fluidsim-d7-budget-v1",
+  "limit": 1.05,
+  "demos": {
+    "dam_break": {
+      "reference_commit": "9c0d99e62adda14bb7b075a447c01fefe7187da3",
+      "ratios": {
+        "timing": 0.6288714957973085,
+        "stage": 0.6860233197180101
+      },
+      "stages": {
+        "sourcing": {
+          "reference_ms": 2.418499847408384,
+          "candidate_ms": 1.692350022494793
+        },
+        "indexing": {
+          "reference_ms": 3.783249936532229,
+          "candidate_ms": 2.9936498613096774
+        },
+        "p2g": {
+          "reference_ms": 2.7811501058749855,
+          "candidate_ms": 5.090099875815213
+        },
+        "forces": {
+          "reference_ms": 1.2766498839482665,
+          "candidate_ms": 0.7875499431975186
+        },
+        "viscosity": {
+          "reference_ms": 0.053150171879678965,
+          "candidate_ms": 0.05280005279928446
+        },
+        "pressure": {
+          "reference_ms": 23.982550017535686,
+          "candidate_ms": 14.681999862659723
+        },
+        "g2p": {
+          "reference_ms": 5.900649994146079,
+          "candidate_ms": 3.6518999841064215
+        },
+        "advection": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "collision": {
+          "reference_ms": 3.6103501333855093,
+          "candidate_ms": 2.429199928883463
+        },
+        "sink": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "relax": {
+          "reference_ms": 5.359900183975697,
+          "candidate_ms": 4.063099913764745
+        },
+        "surface": {
+          "reference_ms": 4.98249992961064,
+          "candidate_ms": 3.865949925966561
+        },
+        "whitewater": {
+          "reference_ms": 9.728249977342784,
+          "candidate_ms": 6.785049918107688
+        },
+        "custom": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "lifecycle": {
+          "reference_ms": 7.118099951185286,
+          "candidate_ms": 3.735999925993383
+        },
+        "misc": {
+          "reference_ms": 6.373650045134127,
+          "candidate_ms": 2.3424001410603523
+        },
+        "solver": {
+          "reference_ms": 76.80814922787249,
+          "candidate_ms": 51.90204951213673
+        }
+      },
+      "order_ratios": {
+        "timing": {
+          "reference-first": 0.6333354267411532,
+          "candidate-first": 0.6288714957973085
+        },
+        "stage": {
+          "reference-first": 0.695033960013387,
+          "candidate-first": 0.6679184191791786
+        }
+      },
+      "work_ratios": {
+        "timing": 1.0549466277058859,
+        "stage": 1.0105276981330298
+      },
+      "verdict": "PASS"
+    },
+    "crown_splash": {
+      "reference_commit": "9c0d99e62adda14bb7b075a447c01fefe7187da3",
+      "ratios": {
+        "timing": 0.6326255802221601,
+        "stage": 0.7377019920546255
+      },
+      "stages": {
+        "sourcing": {
+          "reference_ms": 0.17339980695396662,
+          "candidate_ms": 0.37764996523037553
+        },
+        "indexing": {
+          "reference_ms": 2.9800498741678894,
+          "candidate_ms": 2.382549981120974
+        },
+        "p2g": {
+          "reference_ms": 3.627350088208914,
+          "candidate_ms": 2.996800118125975
+        },
+        "forces": {
+          "reference_ms": 1.0446500382386148,
+          "candidate_ms": 0.7514000171795487
+        },
+        "viscosity": {
+          "reference_ms": 0.0420001451857388,
+          "candidate_ms": 0.044249987695366144
+        },
+        "pressure": {
+          "reference_ms": 18.525549967307597,
+          "candidate_ms": 12.391900178045034
+        },
+        "g2p": {
+          "reference_ms": 4.439950047526509,
+          "candidate_ms": 3.4549000556580722
+        },
+        "advection": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "collision": {
+          "reference_ms": 1.752499840222299,
+          "candidate_ms": 1.0823000338859856
+        },
+        "sink": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "relax": {
+          "reference_ms": 4.510350001510233,
+          "candidate_ms": 3.5331000108271837
+        },
+        "surface": {
+          "reference_ms": 4.162399971392006,
+          "candidate_ms": 4.406500025652349
+        },
+        "whitewater": {
+          "reference_ms": 8.058299892582,
+          "candidate_ms": 6.242599920369685
+        },
+        "custom": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "lifecycle": {
+          "reference_ms": 5.587999999988824,
+          "candidate_ms": 3.400800167582929
+        },
+        "misc": {
+          "reference_ms": 5.043649987783283,
+          "candidate_ms": 1.9952500006183982
+        },
+        "solver": {
+          "reference_ms": 60.64225040609017,
+          "candidate_ms": 43.560500314924866
+        }
+      },
+      "order_ratios": {
+        "timing": {
+          "reference-first": 0.6309534526615789,
+          "candidate-first": 0.6869650433094674
+        },
+        "stage": {
+          "reference-first": 0.7141710900885153,
+          "candidate-first": 0.7713806003296056
+        }
+      },
+      "work_ratios": {
+        "timing": 0.9871426466254052,
+        "stage": 0.9829378962150053
+      },
+      "verdict": "PASS"
+    },
+    "paddle_stir": {
+      "reference_commit": "9c0d99e62adda14bb7b075a447c01fefe7187da3",
+      "ratios": {
+        "timing": 0.627187161750794,
+        "stage": 0.7672343186186876
+      },
+      "stages": {
+        "sourcing": {
+          "reference_ms": 0.11789996642619371,
+          "candidate_ms": 0.1881000935100019
+        },
+        "indexing": {
+          "reference_ms": 2.0677499705925584,
+          "candidate_ms": 1.5372500056400895
+        },
+        "p2g": {
+          "reference_ms": 1.6639000969007611,
+          "candidate_ms": 2.8135499451309443
+        },
+        "forces": {
+          "reference_ms": 0.703000056091696,
+          "candidate_ms": 0.4068500129505992
+        },
+        "viscosity": {
+          "reference_ms": 0.02829998265951872,
+          "candidate_ms": 0.026500027161091566
+        },
+        "pressure": {
+          "reference_ms": 12.163700070232153,
+          "candidate_ms": 7.860399957280606
+        },
+        "g2p": {
+          "reference_ms": 2.9819500050507486,
+          "candidate_ms": 2.2383000468835235
+        },
+        "advection": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "collision": {
+          "reference_ms": 2.7582497568801045,
+          "candidate_ms": 2.203999843914062
+        },
+        "sink": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "relax": {
+          "reference_ms": 2.7900999994017184,
+          "candidate_ms": 1.995400059968233
+        },
+        "surface": {
+          "reference_ms": 2.567749994341284,
+          "candidate_ms": 2.2358998539857566
+        },
+        "whitewater": {
+          "reference_ms": 5.250349815469235,
+          "candidate_ms": 3.4881499595940113
+        },
+        "custom": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "lifecycle": {
+          "reference_ms": 3.685050003696233,
+          "candidate_ms": 1.9536498584784567
+        },
+        "misc": {
+          "reference_ms": 4.190450010355562,
+          "candidate_ms": 2.011700125876814
+        },
+        "solver": {
+          "reference_ms": 40.66509974654764,
+          "candidate_ms": 29.0975000243634
+        }
+      },
+      "order_ratios": {
+        "timing": {
+          "reference-first": 0.6187454000107016,
+          "candidate-first": 0.627187161750794
+        },
+        "stage": {
+          "reference-first": 0.762224283280632,
+          "candidate-first": 0.7672343186186876
+        }
+      },
+      "work_ratios": {
+        "timing": 0.9690762847328505,
+        "stage": 0.9690762847328505
+      },
+      "verdict": "PASS"
+    },
+    "chromatic_vortex": {
+      "reference_commit": "c5919d668f469942200c58274eca13337d3aa624",
+      "ratios": {
+        "timing": 0.6615690743984395,
+        "stage": 0.6544608495696376
+      },
+      "stages": {
+        "sourcing": {
+          "reference_ms": 1.3656000373885036,
+          "candidate_ms": 0.8804500102996826
+        },
+        "indexing": {
+          "reference_ms": 2.1558500011451542,
+          "candidate_ms": 1.561799959745258
+        },
+        "p2g": {
+          "reference_ms": 1.5750500606372952,
+          "candidate_ms": 1.2909999350085855
+        },
+        "forces": {
+          "reference_ms": 1.780599937774241,
+          "candidate_ms": 1.0084001114591956
+        },
+        "viscosity": {
+          "reference_ms": 0.03130006371065974,
+          "candidate_ms": 0.02929999027401209
+        },
+        "pressure": {
+          "reference_ms": 10.927150025963783,
+          "candidate_ms": 7.680399983655661
+        },
+        "g2p": {
+          "reference_ms": 2.2588998544961214,
+          "candidate_ms": 1.4745498774573207
+        },
+        "advection": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "collision": {
+          "reference_ms": 1.551650115288794,
+          "candidate_ms": 1.0136001510545611
+        },
+        "sink": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "relax": {
+          "reference_ms": 2.9173499206081033,
+          "candidate_ms": 2.0594000816345215
+        },
+        "surface": {
+          "reference_ms": 0.41664985474199057,
+          "candidate_ms": 0.3481500898487866
+        },
+        "whitewater": {
+          "reference_ms": 0.2733499277383089,
+          "candidate_ms": 0.23140001576393843
+        },
+        "custom": {
+          "reference_ms": 0.0,
+          "candidate_ms": 0.0
+        },
+        "lifecycle": {
+          "reference_ms": 3.885400074068457,
+          "candidate_ms": 2.2000999888405204
+        },
+        "misc": {
+          "reference_ms": 4.254449973814189,
+          "candidate_ms": 2.0387499826028943
+        },
+        "solver": {
+          "reference_ms": 33.70359994005412,
+          "candidate_ms": 22.023349534720182
+        }
+      },
+      "order_ratios": {
+        "timing": {
+          "reference-first": 0.6615690743984395,
+          "candidate-first": 0.6560869156484633
+        },
+        "stage": {
+          "reference-first": 0.6579896423773011,
+          "candidate-first": 0.6544608495696376
+        }
+      },
+      "work_ratios": {
+        "timing": 1.0122448979591836,
+        "stage": 1.0122448979591836
+      },
+      "verdict": "PASS"
+    }
+  },
+  "verdict": "PASS",
+  "candidate_head": "11aa45a73766d9073eb51b8d544168ab75decfc5",
+  "candidate_dirty": "M docs/NEXT_MAJOR_RELEASE_PLAN.md\n M docs/RELEASE_2_1_HANDOFF.md\n M tools/benchmark_versions.py\n M tools/run_production_gate.py",
+  "scene_refs": {
+    "dam_break": "c5919d668f469942200c58274eca13337d3aa624",
+    "crown_splash": "c5919d668f469942200c58274eca13337d3aa624",
+    "paddle_stir": "c5919d668f469942200c58274eca13337d3aa624",
+    "chromatic_vortex": "ad769d23c3c4d7e6eaa5ac0e0a3b29a46ce07689"
+  },
+  "trials": 8,
+  "raw_sha256": "1e11023088d68828778feba59c10148ba2cf719c75fccfc380edcd4ff6370248"
+}

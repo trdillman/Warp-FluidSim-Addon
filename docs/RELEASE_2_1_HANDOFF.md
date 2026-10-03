@@ -149,10 +149,76 @@ Against 1.1.0 it shows no regression.
      (0.82–1.32, 63.6 → 54.5 ms/frame). Evidence:
      `C:\Users\Tyler\wt\bench_viscgraph\`, probe in `C:\Users\Tyler\wt\probe\`.
 
-Add the 2.0 comparison to the gate, so the budget is enforced on every run
-rather than measured once. Use ABBA pairs, at least 8 per demo, median
+The recurring D7 comparison is implemented as a mandatory production-gate lane
+through `tools/run_performance_budget.py`, reusing `benchmark_versions.py`
+for rotating fresh-process trials. The measured historical results above
+do not certify the new gate; see the executable contract below. The gate uses ABBA pairs, at least 8 per demo, median
 excluding frame 1, and the stage-profiler breakdown. Whole-frame time alone
 is too noisy on a shared workstation to settle a 5% question.
+
+### Executable D7 contract (2026-10-03)
+
+| Demo | Pinned code reference | Reference Warp |
+|---|---|---|
+| dam_break, crown_splash, paddle_stir | 1.0.255: `9c0d99e62adda14bb7b075a447c01fefe7187da3` | 1.16.0 |
+| chromatic_vortex | 1.1.0: `c5919d668f469942200c58274eca13337d3aa624` | 1.16.0 |
+
+Candidate Warp is the certified 1.17.0. All trials use the same bridge-saved
+scene bytes extracted from `c5919d6`, including the classic dam_break.
+The exception is chromatic_vortex: its bridge re-save is pinned at the 2.0
+release commit `ad769d23c3c4d7e6eaa5ac0e0a3b29a46ce07689`, SHA-256
+`86130f7573aebeda782628bdc0ece25929786a20e18435788c3284448a8d3f05`.
+Those bytes match the recorded `vortex_2x.blend` used in the original comparison;
+the pre-bridge chromatic_vortex file at the 1.1 code commit is not executable
+with equivalent current-master settings. The
+rocky-cove redesign remains covered by current-demo correctness gates; it is
+not compared to the old classic workload. No tracked demo is rebuilt or edited.
+
+Each demo requires at least eight trials per version in **each** of two lanes:
+ordinary demo `step_ms` and a separate GPU-synchronized stage profile. Adjacent
+rounds run AB, BA (ABBA); each trial scores the median of simulation frames
+2-48, and each demo scores the median of per-round candidate/reference ratios.
+Scene time advances for animated sources and colliders. This is the direct
+scene-bridge demo budget, not certification of foreground GUI-handler timing.
+
+The pre-split reference has a storage-only adapter: authored Domain values
+are copied back to its Scene RNA. Old implicit attribute-export work stays
+enabled in the candidate. Substeps, physics, sources and workloads are not
+reduced. Effective settings must match across versions, rounds and lanes.
+Only three added fields have compatibility meanings (old implicit export,
+absent disabled color mixing, and its inactive mixing rate). Changed viscosity
+iteration and variable-projection defaults are ignored **only while their
+parent feature is disabled**. Active values remain strict.
+Recorded solver frames and simulation time must advance; every frame must
+have positive particles and substeps, and paired per-frame particle counts
+must agree. Actual adaptive CFL schedules are left intact and their paired
+total-substep ratios (frames 2-48) are reported. A median ratio below 0.95 in
+either lane makes an otherwise passing result INCONCLUSIVE, requiring workload
+investigation instead of crediting less work as a speedup. Small adaptive
+trajectory differences are allowed; authored substep settings remain strict.
+
+Stage trials use the same current nesting-aware `Profiler` on both code
+versions; the old profiler double-counted nested spans. Every phase is recorded,
+and the profiler's non-overlapping solver total is compared. Do not sum nested
+phase times to invent a total. Timing trials keep stage profiling disabled.
+
+PASS requires timing and stage solver-total paired medians <=1.05 for every
+demo. FAIL requires both lanes above 1.05 and both order strata confirming the
+regression. A conflicting lane or order-dependent excess is INCONCLUSIVE.
+Missing, malformed or incomparable evidence is ERROR. All non-pass states
+block headless/full production success. Historical paddle_stir +5.5% has no
+automatic waiver; its determinism-cost discussion remains an owner decision.
+
+Set `FLUIDSIM_PERF_10255_ROOT` and `FLUIDSIM_PERF_110_ROOT` to clean checkouts
+at the pinned commits, and `FLUIDSIM_PERF_REFERENCE_WARP_PATH` to a Warp 1.16
+site directory without foreign NumPy. Candidate Warp comes from certified
+`PYTHONPATH`. A focused run is
+`python tools/run_performance_budget.py --blender <Blender-5.2-exe> --trials 8`.
+Every trial isolates config, scripts, datafiles and extensions, and disables
+the user site. Raw JSON/logs, `runs.json` and `budget.json` are under
+`artifacts/performance_budget/`. A full production manifest binds the budget
+report by SHA-256. The current verification outcome is recorded in
+`docs/PERFORMANCE_BUDGET_GATE_20261003.md`.
 
 ## 4. Features (2.1+ candidates, need owner approval)
 

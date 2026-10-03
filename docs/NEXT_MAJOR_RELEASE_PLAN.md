@@ -207,6 +207,10 @@ Topology frontier (6 tasks, the next-highest ROI in the results doc), then the p
 follow-on (5 tasks), the rest of the device-resident surface work, cache-cursor
 integration, and viscosity SDF reuse. **For 2.0 itself:** add a performance budget to the
 gate. The 4 demos may be at most 5% slower per frame than the 1.0.255 baseline.
+The executed contract uses 1.1.0 for chromatic_vortex because 1.0.255 cannot
+execute it. The recurring gate freezes bridge-saved workloads and requires
+paired timing and stage evidence; see `RELEASE_2_1_HANDOFF.md` section 3 for
+exact commits and decision semantics.
 
 ## 5. Sequence
 
