@@ -142,7 +142,8 @@ Against 1.1.0 it shows no regression.
      octave gives 18 captures and 8 gives 54, with no measurable host-time
      difference.
    - Per-frame particle and velocity hashes are bitwise identical to REVIEW-015
-     on visc and visc_st, and the GUI gate hash is unchanged (`ffd50faa…`).
+     on visc and visc_st, and the GUI gate hash is unchanged (`cfd0bf04…`, master's reference after
+     collider grid friction; re-verified on the rebased branch).
    - `tools/benchmark_versions.py`, 5 paired trials against REVIEW-015:
      visc 0.81× (range 0.77–0.88, 48.8 → 38.9 ms/frame), visc_st 0.86×
      (0.82–1.32, 63.6 → 54.5 ms/frame). Evidence:
