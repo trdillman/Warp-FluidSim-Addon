@@ -1575,11 +1575,12 @@ def test_modal_bake_registers_and_clears_deep_production_ownership(
     operator.restart_existing = False
 
     assert operator.execute(context) == {"RUNNING_MODAL"}
-    assert production_bake.active_bake(scene) is operator._controller
+    controller = production_bake.active_bake(scene)
+    assert controller is operator._run.controller
     assert production_bake.cache_path_is_active(tmp_path / "cache")
 
-    operator._controller.status = production_bake.BakeStatus.COMPLETE
-    operator._controller.message = "Production bake complete"
+    controller.status = production_bake.BakeStatus.COMPLETE
+    controller.message = "Production bake complete"
     assert operator._finish(context) == {"FINISHED"}
     assert production_bake.active_bake(scene) is None
 

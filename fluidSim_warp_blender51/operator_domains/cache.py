@@ -54,34 +54,12 @@ def _solver_settings():
     return _runtime._solver_settings()
 
 
-_ACTIVE_BAKE = None
-_ACTIVE_BAKE_SCENE = None
+def _scene_is_available(scene, key: int) -> bool:
+    from ..blender.production_bake import scene_key
 
-
-class _SceneRegistrationProxy:
-    def __init__(self, token: int):
-        self._token = int(token)
-
-    def as_pointer(self):
-        return self._token
-
-
-def _scene_registration_token(scene) -> int:
     try:
         pointer = getattr(scene, "as_pointer", None)
-        if callable(pointer):
-            value = int(pointer())
-            if value:
-                return value
-    except (ReferenceError, TypeError, ValueError):
-        pass
-    return id(scene)
-
-
-def _scene_is_available(scene, token: int) -> bool:
-    try:
-        pointer = getattr(scene, "as_pointer", None)
-        if callable(pointer) and int(pointer()) != int(token):
+        if callable(pointer) and int(pointer()) != int(key):
             return False
     except (ReferenceError, TypeError, ValueError):
         return False
@@ -89,7 +67,7 @@ def _scene_is_available(scene, token: int) -> bool:
     if scenes is None:
         return True
     try:
-        return any(_scene_registration_token(candidate) == int(token) for candidate in scenes)
+        return any(scene_key(candidate) == int(key) for candidate in scenes)
     except (ReferenceError, TypeError):
         return False
 
@@ -110,107 +88,74 @@ class _FLUIDSIM_OT_production_bake_modal:
     resume_existing = False
     restart_existing = False
     _timer = None
-    _controller = None
-    _scene = None
-    _scene_token = 0
+    _run = None
     _window_manager = None
-    _restart_cache = None
 
     @classmethod
     def poll(cls, context):
-        global _ACTIVE_BAKE
-        if _ACTIVE_BAKE is not None:
+        from ..blender import production_bake
+
+        if production_bake.active_bakes():
             cls.poll_message_set("A production bake is already active")
             return False
         return _runtime_poll(cls)
 
     def execute(self, context):
-        global _ACTIVE_BAKE, _ACTIVE_BAKE_SCENE
-        from ..blender import cache_bake, production_bake
-        from ..blender.production_bake import BakeController, ProductionBakeBackend
+        from ..blender.cache_bake import BakeRun
 
-        scene = context.scene
-        self._scene = scene
-        self._scene_token = _scene_registration_token(scene)
         self._window_manager = context.window_manager
-        self._restart_cache = None
-        fs = scene.fluidsim
-        backend = ProductionBakeBackend(
-            checkpoint_interval=int(fs.checkpoint_interval),
-            compressed=bool(fs.cache_compress),
-        )
-        controller = BakeController(backend=backend)
-        self._controller = controller
-        registered = False
+        self._timer = None
+        run = None
         try:
-            if self.resume_existing:
-                controller.resume(scene, end=int(fs.bake_end))
-            else:
-                controller.start(
-                    scene,
-                    int(fs.bake_start),
-                    int(fs.bake_end),
-                    restart=bool(self.restart_existing),
-                )
-            controller.reserve_cache_path(backend.cache_path(scene))
-            production_bake.register_active_bake(scene, controller)
-            registered = True
-            if self.restart_existing:
-                self._restart_cache = cache_bake._protect_restart_cache(
-                    backend.cache_path(scene)
-                )
-            _update_bake_rna(scene, controller)
-            window_manager = self._window_manager
-            self._timer = window_manager.event_timer_add(
+            run = BakeRun(
+                context.scene,
+                resume=self.resume_existing,
+                restart=bool(self.restart_existing),
+            )
+            self._run = run
+            _update_bake_rna(run.scene, run.controller)
+            self._timer = self._window_manager.event_timer_add(
                 0.05, window=context.window
             )
-            window_manager.modal_handler_add(self)
+            self._window_manager.modal_handler_add(self)
         except Exception as exc:  # noqa: BLE001
             cleanup_errors = []
-            try:
-                if self._restart_cache is not None and self._restart_cache.active:
-                    self._restart_cache.restore()
-            except Exception as cleanup_exc:  # noqa: BLE001
-                cleanup_errors.append(f"cache restore failed: {cleanup_exc}")
             try:
                 if self._timer is not None:
                     self._window_manager.event_timer_remove(self._timer)
                     self._timer = None
             except Exception as cleanup_exc:  # noqa: BLE001
                 cleanup_errors.append(f"timer cleanup failed: {cleanup_exc}")
-            finally:
-                if registered:
-                    production_bake.clear_active_bake(
-                        _SceneRegistrationProxy(self._scene_token), controller
-                    )
-            _ACTIVE_BAKE = None
-            _ACTIVE_BAKE_SCENE = None
+            if run is not None:
+                try:
+                    run.close()
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    cleanup_errors.append(f"cache restore failed: {cleanup_exc}")
+            self._run = None
             suffix = "" if not cleanup_errors else f"; {'; '.join(cleanup_errors)}"
             self.report(
                 {"ERROR"}, f"Production bake could not start: {exc}{suffix}"
             )
             return {"CANCELLED"}
-        _ACTIVE_BAKE = controller
-        _ACTIVE_BAKE_SCENE = scene
         return {"RUNNING_MODAL"}
 
-    def _settle_restart_cache(self):
-        from ..blender import cache_bake
+    def _advance(self, failure):
+        """Tick the run once; a failure to settle its cache fails the bake."""
         from ..blender.production_bake import BakeStatus
 
-        cache_bake._settle_restart_cache(
-            self._restart_cache,
-            self._controller.status,
-            running_status=BakeStatus.RUNNING,
-            terminal_statuses={BakeStatus.CANCELLED, BakeStatus.FAILED},
-        )
+        try:
+            self._run.tick()
+        except Exception as exc:  # noqa: BLE001
+            controller = self._run.controller
+            controller.status = BakeStatus.FAILED
+            controller.error = f"{type(exc).__name__}: {exc}"
+            controller.message = f"{failure}: {exc}"
 
     def _finish(self, context, *, scene_available=None):
-        global _ACTIVE_BAKE, _ACTIVE_BAKE_SCENE
-        from ..blender import production_bake
         from ..blender.production_bake import BakeStatus
 
-        controller = self._controller
+        run = self._run
+        controller = run.controller
         cleanup_error = None
         try:
             if self._timer is not None:
@@ -220,19 +165,18 @@ class _FLUIDSIM_OT_production_bake_modal:
         except Exception as exc:  # noqa: BLE001
             cleanup_error = exc
         finally:
-            _ACTIVE_BAKE = None
-            _ACTIVE_BAKE_SCENE = None
-            production_bake.clear_active_bake(
-                _SceneRegistrationProxy(self._scene_token), controller
-            )
+            try:
+                run.close()
+            except Exception as exc:  # noqa: BLE001
+                cleanup_error = cleanup_error or exc
         if cleanup_error is not None:
             controller.status = BakeStatus.FAILED
             controller.error = f"{type(cleanup_error).__name__}: {cleanup_error}"
             controller.message = f"Production bake cleanup failed: {cleanup_error}"
         if scene_available is None:
-            scene_available = _scene_is_available(self._scene, self._scene_token)
+            scene_available = _scene_is_available(run.scene, run.scene_key)
         if scene_available:
-            _update_bake_rna(self._scene, controller)
+            _update_bake_rna(run.scene, controller)
         if controller.status is BakeStatus.COMPLETE:
             self.report({"INFO"}, controller.message)
             return {"FINISHED"}
@@ -243,74 +187,33 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"CANCELLED"}
 
     def _cancel_removed_scene(self, context):
-        from ..blender.production_bake import BakeStatus
-
-        controller = self._controller
-        controller.request_cancel()
-        cleanup_errors = []
-        backend_session = getattr(getattr(controller, "backend", None), "sess", None)
-        force_release = getattr(backend_session, "force_release", None)
-        if callable(force_release):
-            try:
-                force_release(preserve_error=True)
-            except Exception as exc:  # noqa: BLE001
-                cleanup_errors.append(f"session cleanup failed: {exc}")
-        try:
-            if self._restart_cache is not None and self._restart_cache.active:
-                self._restart_cache.restore()
-        except Exception as exc:  # noqa: BLE001
-            cleanup_errors.append(f"cache restore failed: {exc}")
-        if cleanup_errors:
-            message = "; ".join(cleanup_errors)
-            controller.status = BakeStatus.FAILED
-            controller.error = message
-            controller.message = f"Production bake cleanup failed: {message}"
-        else:
-            controller.status = BakeStatus.CANCELLED
-            controller.message = "Production bake cancelled because its scene was removed"
+        self._run.abandon("Production bake cancelled because its scene was removed")
         return self._finish(context, scene_available=False)
 
     def modal(self, context, event):
-        from ..blender.production_bake import BakeStatus
-
-        if not _scene_is_available(self._scene, self._scene_token):
+        run = self._run
+        if not _scene_is_available(run.scene, run.scene_key):
             return self._cancel_removed_scene(context)
         if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
-            self._controller.request_cancel()
-            _update_bake_rna(self._scene, self._controller)
+            run.request_cancel()
+            _update_bake_rna(run.scene, run.controller)
             return {"RUNNING_MODAL"}
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
-        self._controller.tick(self._scene)
-        try:
-            self._settle_restart_cache()
-        except Exception as exc:  # noqa: BLE001
-            self._controller.status = BakeStatus.FAILED
-            self._controller.error = f"{type(exc).__name__}: {exc}"
-            self._controller.message = f"Production bake failed: {exc}"
-        _update_bake_rna(self._scene, self._controller)
-        if self._controller.status in {
-            BakeStatus.COMPLETE,
-            BakeStatus.CANCELLED,
-            BakeStatus.FAILED,
-        }:
+        self._advance("Production bake failed")
+        _update_bake_rna(run.scene, run.controller)
+        if run.finished:
             return self._finish(context)
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
-        from ..blender.production_bake import BakeStatus
-
-        if self._controller is not None:
-            if not _scene_is_available(self._scene, self._scene_token):
-                return self._cancel_removed_scene(context)
-            try:
-                self._controller.request_cancel()
-                self._controller.tick(self._scene)
-                self._settle_restart_cache()
-            except Exception as exc:  # noqa: BLE001
-                self._controller.status = BakeStatus.FAILED
-                self._controller.error = f"{type(exc).__name__}: {exc}"
-                self._controller.message = f"Production bake cleanup failed: {exc}"
+        run = self._run
+        if run is None:
+            return {"CANCELLED"}
+        if not _scene_is_available(run.scene, run.scene_key):
+            return self._cancel_removed_scene(context)
+        run.request_cancel()
+        self._advance("Production bake cleanup failed")
         return self._finish(context)
 
 
@@ -374,15 +277,19 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
 
     @classmethod
     def poll(cls, _context):
-        if _ACTIVE_BAKE is None:
+        from ..blender import production_bake
+
+        if not production_bake.active_bakes():
             cls.poll_message_set("No production bake is active")
             return False
         return True
 
-    def execute(self, context):
-        _ACTIVE_BAKE.request_cancel()
-        scene = _ACTIVE_BAKE_SCENE or context.scene
-        _update_bake_rna(scene, _ACTIVE_BAKE)
+    def execute(self, _context):
+        from ..blender import production_bake
+
+        for scene, controller in production_bake.active_bakes():
+            controller.request_cancel()
+            _update_bake_rna(scene, controller)
         return {"FINISHED"}
 
 

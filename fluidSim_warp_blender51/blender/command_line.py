@@ -212,8 +212,8 @@ def run(options: CliOptions) -> int:
             return code
 
         from ..runtime.warp_runtime import probe_runtime, warp_version_support
+        from .cache_bake import BakeRun
         from .production_bake import (
-            BakeController,
             BakeStatus,
             ProductionBakeBackend,
             SignalCancellation,
@@ -281,38 +281,38 @@ def run(options: CliOptions) -> int:
             checkpoint_interval=options.checkpoint_interval,
             compressed=bool(getattr(fs, "cache_compress", False)),
         )
-        controller = BakeController(backend=backend, progress_callback=_emit)
         existing = load_manifest(manifest_path(options.cache))
-        if options.resume == "required":
+        resume = options.resume == "required" or (
+            options.resume == "auto" and existing is not None
+        )
+        if resume:
             decision = backend.resume_decision(scene)
             if not decision.allowed:
                 code = EXIT_RESUME_INCOMPATIBLE
                 report["message"] = f"{decision.code}: {decision.message}"
                 return code
-            controller.resume(scene, end=end)
-        elif options.resume == "auto" and existing is not None:
-            decision = backend.resume_decision(scene)
-            if not decision.allowed:
-                code = EXIT_RESUME_INCOMPATIBLE
-                report["message"] = f"{decision.code}: {decision.message}"
-                return code
-            controller.resume(scene, end=end)
-        else:
-            if options.resume == "never" and existing is not None:
-                code = EXIT_RESUME_INCOMPATIBLE
-                report["message"] = (
-                    "A cache-v2 manifest already exists and --resume=never will not overwrite it"
-                )
-                return code
-            controller.start(scene, start, end, restart=False)
+        elif options.resume == "never" and existing is not None:
+            code = EXIT_RESUME_INCOMPATIBLE
+            report["message"] = (
+                "A cache-v2 manifest already exists and --resume=never will not overwrite it"
+            )
+            return code
 
-        with SignalCancellation(controller):
-            while controller.status in {
-                BakeStatus.INITIALIZING,
-                BakeStatus.RUNNING,
-                BakeStatus.CANCELLING,
-            }:
-                controller.tick(scene)
+        run = BakeRun(
+            scene,
+            start=start,
+            end=end,
+            resume=resume,
+            progress_callback=_emit,
+            backend=backend,
+        )
+        controller = run.controller
+        try:
+            with SignalCancellation(controller):
+                while not run.finished:
+                    run.tick()
+        finally:
+            run.close()
 
         result = controller.result()
         report["frames_committed"] = (
