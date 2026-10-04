@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from fluidsim_testpkg.sim import capacity_planner
+from fluidsim_testpkg.sim.constants import LEAF_VOLUME
 from fluidsim_testpkg.sim.memory_safety import (
-    LEAF_VOLUME,
     SURFACE_TENSION_BYTES_PER_VOXEL,
     SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL,
     estimate_solver_bytes,
-    recommend_safe_settings,
 )
 
 
@@ -69,23 +68,6 @@ def test_capacity_signature_tracks_capillary_support_inputs():
     assert baseline["surface_tension_enabled"] is False
     assert wider["surface_tension_band_voxels"] == 3.0
     assert baseline != wider
-
-
-def test_safe_recommendations_keep_capillary_memory_in_candidate_estimates():
-    settings = _settings(
-        domain_max=(12.8, 12.8, 12.8),
-        leaf_capacity=2048,
-        max_particles=100_000,
-        max_whitewater=50_000,
-        surface_tension_enabled=True,
-    )
-    budget = 640 * 1024**2
-    assert estimate_solver_bytes(settings) > budget
-    changes = recommend_safe_settings(settings, budget)
-    assert changes
-    candidate = dict(settings)
-    candidate.update(changes)
-    assert estimate_solver_bytes(candidate) <= budget
 
 
 def test_capacity_halo_respects_a_larger_authored_sdf_splat_radius():

@@ -160,7 +160,7 @@ The prepared batch must include legacy analytic/mesh sources, normalized point/v
 
 ### 5.3 `sim/capacity_service.py` — one capacity/safety authority
 
-Consolidate the overlapping roles of `capacity_planner.py`, `particle_capacity.py`, and `memory_safety.recommend_safe_settings()` behind:
+Consolidate the overlapping roles of `capacity_planner.py`, `particle_capacity.py`, and the memory estimate in `memory_safety.py` (its former `assess_configuration()`/`recommend_safe_settings()` second planner has been deleted; it had no production caller) behind:
 
 ```python
 assess(resolved_quality, prepared_scene, resources, runtime_state=None) -> CapacityAssessment

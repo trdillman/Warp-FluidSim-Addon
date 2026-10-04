@@ -1,4 +1,4 @@
-"""Conservative GPU allocation estimates and one-click safe settings."""
+"""Conservative GPU allocation estimates and live resource sampling."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ import os
 import subprocess
 import time
 
+from .constants import LEAF_VOLUME
 from .quality_contract import resolve_quality
 
 
-LEAF_VOLUME = 512
 BASE_BYTES = 256 * 1024**2
 SIM_BYTES_PER_VOXEL = 356
 SURFACE_TENSION_BYTES_PER_VOXEL = 24
@@ -81,24 +81,6 @@ def safe_memory_budget(
     ))
 
 
-def assess_configuration(settings, resources: dict) -> dict:
-    estimate = estimate_solver_bytes(settings)
-    budget = safe_memory_budget(
-        int(resources.get("gpu_total_bytes", 0)),
-        int(resources.get("gpu_free_bytes", 0)),
-    )
-    return {
-        "safe": estimate <= budget,
-        "estimated_bytes": estimate,
-        "budget_bytes": budget,
-        "resources": dict(resources),
-        "recommended": (
-            {} if estimate <= budget
-            else recommend_safe_settings(settings, budget, resources)
-        ),
-    }
-
-
 def _windows_system_pressure() -> tuple[float, float]:
     if os.name != "nt":
         return 0.0, 0.0
@@ -140,11 +122,11 @@ def _windows_system_pressure() -> tuple[float, float]:
 def vram_snapshot(device_name: str) -> dict:
     """Sample VRAM only: no subprocess, no sleep.
 
-    ``assess_configuration`` reads ``gpu_total_bytes`` and ``gpu_free_bytes``
-    and nothing else, so the capacity decision needs none of the telemetry that
-    costs a 50 ms sleep plus an nvidia-smi launch. Callers reachable from a
-    frame-change handler use this; the panel's telemetry readout, which the
-    user asked for and can wait for, uses ``resource_snapshot``.
+    The capacity decision reads ``gpu_total_bytes`` and ``gpu_free_bytes`` and
+    nothing else, so it needs none of the telemetry that costs a 50 ms sleep
+    plus an nvidia-smi launch. Callers reachable from a frame-change handler
+    use this; the panel's telemetry readout, which the user asked for and can
+    wait for, uses ``resource_snapshot``.
     """
     import warp as wp
 
@@ -263,84 +245,3 @@ def estimate_solver_bytes(settings) -> int:
         estimate += render_leaves * LEAF_VOLUME * RENDER_BYTES_PER_VOXEL
         estimate += render_leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
     return int(estimate)
-
-
-def recommend_safe_settings(
-    settings, budget_bytes: int, machine: dict | None = None
-) -> dict[str, int | float]:
-    """Fit current settings under live resource pressure with minimal changes."""
-    machine = machine or {}
-    current = {
-        "leaf_capacity": max(64, int(_value(settings, "leaf_capacity", 8192))),
-        "max_particles": max(100_000, int(_value(settings, "max_particles", 100_000))),
-        "max_whitewater": max(50_000, int(_value(settings, "max_whitewater", 50_000))),
-        "voxel_size": max(1.0e-4, float(_value(settings, "voxel_size", 0.1))),
-        "particles_per_voxel": max(1.0, float(_value(settings, "particles_per_voxel", 8.0))),
-        "topology_expand": max(0, int(_value(settings, "topology_expand", 1))),
-        "surface_resolution_mode": int(_value(settings, "surface_resolution_mode", 0)),
-        "surface_resolution_multiplier": float(_value(settings, "surface_resolution_multiplier", 2.0)),
-        "surface_leaf_capacity_scale": float(_value(settings, "surface_leaf_capacity_scale", 8.0)),
-        "surface_max_dense_dim": int(_value(settings, "surface_max_dense_dim", 512)),
-        "surface_enabled": bool(_value(settings, "surface_enabled", True)),
-        # Preserve optional P5 allocation state while evaluating candidates.
-        # Dropping these fields would make subsequent estimates silently fall
-        # back to the disabled defaults and could accept an over-budget plan.
-        "surface_tension_enabled": bool(
-            _value(settings, "surface_tension_enabled", False)),
-        "surface_tension_coefficient": float(
-            _value(settings, "surface_tension_coefficient", 0.0)),
-        "surface_voxel_size": float(_value(settings, "surface_voxel_size", 0.0)),
-        "domain_min": tuple(_value(settings, "domain_min", (-2.0, -2.0, 0.0))),
-        "domain_max": tuple(_value(settings, "domain_max", (2.0, 2.0, 4.0))),
-    }
-    budget = max(512 * 1024**2, int(budget_bytes))
-    high_gpu = float(machine.get("gpu_utilization", 0.0)) >= 85.0
-    high_cpu = float(machine.get("cpu_utilization", 0.0)) >= 85.0
-    high_ram = float(machine.get("ram_utilization", 0.0)) >= 85.0
-    if estimate_solver_bytes(settings) <= budget and not (high_gpu or high_cpu or high_ram):
-        return {}
-
-    values = dict(current)
-    if high_gpu:
-        values["voxel_size"] *= 1.15
-        values["particles_per_voxel"] = max(2.0, values["particles_per_voxel"] * 0.75)
-        values["topology_expand"] = min(values["topology_expand"], 1)
-        values["max_particles"] = max(100_000, int(values["max_particles"] * 0.8))
-        values["max_whitewater"] = max(50_000, int(values["max_whitewater"] * 0.7))
-    if high_cpu:
-        values["voxel_size"] *= 1.1
-        values["particles_per_voxel"] = max(2.0, values["particles_per_voxel"] * 0.8)
-        values["topology_expand"] = min(values["topology_expand"], 1)
-    if high_ram:
-        values["max_particles"] = max(100_000, int(values["max_particles"] * 0.75))
-        values["max_whitewater"] = max(50_000, int(values["max_whitewater"] * 0.5))
-
-    if estimate_solver_bytes(values) > budget or high_gpu or high_cpu:
-        values["surface_resolution_mode"] = 0
-        values["surface_leaf_capacity_scale"] = 1.0
-        values["surface_max_dense_dim"] = min(256, values["surface_max_dense_dim"])
-    while estimate_solver_bytes(values) > budget:
-        effective_leaves = min(values["leaf_capacity"], _domain_leaf_cells(values))
-        candidates = {
-            "voxel_size": (
-                effective_leaves * LEAF_VOLUME * SIM_BYTES_PER_VOXEL,
-                None,
-            ),
-            "max_particles": (values["max_particles"] * PARTICLE_BYTES, 100_000),
-            "max_whitewater": (values["max_whitewater"] * WHITEWATER_BYTES, 50_000),
-        }
-        reducible = [
-            (cost, name, floor) for name, (cost, floor) in candidates.items()
-            if name == "voxel_size" or values[name] > floor
-        ]
-        if not reducible:
-            break
-        _cost, name, floor = max(reducible)
-        if name == "voxel_size":
-            values[name] *= 2.0 ** (1.0 / 3.0)
-        else:
-            values[name] = max(floor, values[name] // 2)
-    return {
-        name: value for name, value in values.items()
-        if name in current and value != current[name]
-    }

@@ -406,13 +406,6 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
         lambda *_a, **_k: (_ for _ in ()).throw(
             RuntimeError("replacement allocation failed")),
     )
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
-        "safe": True,
-        "estimated_bytes": 0,
-        "budget_bytes": 1024,
-        "resources": {},
-        "recommended": {},
-    })
 
     with pytest.raises(RuntimeError, match="replacement allocation failed"):
         sess.initialize(scene, ignore_memory_safeguard=True)
@@ -504,15 +497,6 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
         simulation_admission.SimulationAdmission,
         "_prepare_solver_replacement",
         lambda *_a, **_k: prepared.append(True))
-    from fluidSim_warp_blender51.sim import memory_safety
-
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
-        "safe": True,
-        "estimated_bytes": 0,
-        "budget_bytes": 1024,
-        "resources": {},
-        "recommended": {},
-    })
 
     with pytest.raises(RuntimeError, match="particle demand is unknown"):
         sess.initialize(scene)
@@ -563,14 +547,6 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
 
     monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     from fluidSim_warp_blender51.sim import memory_safety
-
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
-        "safe": True,
-        "estimated_bytes": 0,
-        "budget_bytes": 1024,
-        "resources": {},
-        "recommended": {},
-    })
 
     with pytest.raises(RuntimeError, match="particle demand is unknown"):
         sess.initialize(scene_b)
@@ -664,15 +640,6 @@ def test_reinitialize_memory_bypass_selects_grown_peak_plan_truthfully(monkeypat
     )
     scene.fluidsim.domain_object.fluidsim_domain.profiling_enabled = False
     scene.fluidsim.domain_object.fluidsim_domain.profiling_sync = False
-    from fluidSim_warp_blender51.sim import memory_safety
-
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
-        "safe": True,
-        "estimated_bytes": 0,
-        "budget_bytes": 1024,
-        "resources": {},
-        "recommended": {},
-    })
 
     with pytest.raises(RuntimeError, match="candidate allocation attempted"):
         sess.initialize(scene, ignore_memory_safeguard=True)
@@ -766,13 +733,6 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
     monkeypatch.setattr(
         memory_safety, "release_cuda_memory",
         lambda device: cuda_releases.append(device))
-    monkeypatch.setattr(memory_safety, "assess_configuration", lambda *_a: {
-        "safe": True,
-        "estimated_bytes": 0,
-        "budget_bytes": 1024,
-        "resources": {},
-        "recommended": {},
-    })
 
     with pytest.raises(RuntimeError, match="required 9, available 8"):
         sess.initialize(scene)

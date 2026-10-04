@@ -319,9 +319,9 @@ def test_vram_snapshot_costs_no_sleep_and_no_subprocess(monkeypatch):
     """The capacity check sits on the frame-change path; telemetry must not.
 
     ``resource_snapshot`` blocks 50 ms and launches nvidia-smi with a 2 s
-    timeout. ``initialize`` is reachable from ``frame_change_post``, and
-    ``assess_configuration`` reads only the two VRAM fields, so the handler
-    path pays for neither.
+    timeout. ``initialize`` is reachable from ``frame_change_post``, and the
+    capacity decision reads only the two VRAM fields, so the handler path pays
+    for neither.
     """
     fake_warp = types.ModuleType("warp")
     fake_warp.get_device = lambda name: SimpleNamespace(
