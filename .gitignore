@@ -38,6 +38,7 @@ Desktop.ini
 /review_output/
 /fluidsim_warp_snippets/
 /fluidSim_warp_blender51/demo_outputs/
+/demos/*_preview.png
 /demos/*.blend[0-9]
 /demos/fluidsim_cache/
 /demos/fluidsim_report.json

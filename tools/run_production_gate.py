@@ -41,6 +41,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 if os.name == "nt":
     DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
     DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe"
@@ -75,30 +76,30 @@ GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 GATE_BLENDER_USER_EXTENSIONS = ROOT / "artifacts" / "gate_blender_user_extensions"
 # Background Blender acceptance scripts that take no arguments: (script, marker).
 BACKGROUND_ACCEPTANCE = (
-    ("tests/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
-    ("tests/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
-    ("tests/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
-    ("tests/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
-    ("tests/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
-    ("tests/blender_pre_bridge_file_acceptance.py", "PRE-BRIDGE-FILE-ACCEPTANCE-PASS"),
-    ("tests/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
-    ("tests/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
-    ("tests/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
-    ("tests/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
-    ("tests/blender_simulation_admission_acceptance.py", "SIMULATION-ADMISSION-ACCEPTANCE-PASS"),
-    ("tests/blender_closed_domain_stability_acceptance.py", "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"),
-    ("tests/blender_custom_effects_acceptance.py", "CUSTOM-EFFECTS-ACCEPTANCE-PASS"),
-    ("tests/blender_chromatic_vortex_containment_acceptance.py",
+    ("tests/acceptance/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
+    ("tests/acceptance/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
+    ("tests/acceptance/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
+    ("tests/acceptance/blender_viewport_2frame_gate.py", "VIEWPORT-2FRAME-GATE-PASS"),
+    ("tests/acceptance/blender_background_acceptance.py", "BACKGROUND-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_pre_bridge_file_acceptance.py", "PRE-BRIDGE-FILE-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_attribute_viz_acceptance.py", "ATTRIBUTE-VIZ-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_mesh_source_acceptance.py", "MESH-SOURCE-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_force_region_acceptance.py", "FORCE-REGION-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_phase4_live_interaction_acceptance.py", "PHASE4-LIVE-INTERACTION-PASS"),
+    ("tests/acceptance/blender_simulation_admission_acceptance.py", "SIMULATION-ADMISSION-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_closed_domain_stability_acceptance.py", "CLOSED-DOMAIN-STABILITY-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_custom_effects_acceptance.py", "CUSTOM-EFFECTS-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_chromatic_vortex_containment_acceptance.py",
      "CHROMATIC-VORTEX-CONTAINMENT-ACCEPTANCE-PASS"),
-    ("tests/blender_color_mixing_runtime_acceptance.py", "COLOR-MIXING-RUNTIME-ACCEPTANCE-PASS"),
-    ("tests/blender_color_mixing_ui_acceptance.py", "COLOR-MIXING-UI-ACCEPTANCE-PASS"),
-    ("tests/blender_mixed_source_batch_acceptance.py", "MIXED-SOURCE-BATCH-ACCEPTANCE-PASS"),
-    ("tests/blender_quick_setup_idempotence.py", "QUICK-SETUP-IDEMPOTENCE-PASS"),
-    ("tests/blender_source_sampling_acceptance.py", "SOURCE-SAMPLING-ACCEPTANCE-PASS"),
-    ("tests/blender_tooltip_acceptance.py", "TOOLTIP-ACCEPTANCE-PASS"),
-    ("tests/blender_topology_transaction_acceptance.py", "TOPOLOGY-TRANSACTION-ACCEPTANCE-PASS"),
-    ("tests/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
-    ("tests/blender_animated_cache_playback_acceptance.py",
+    ("tests/acceptance/blender_color_mixing_runtime_acceptance.py", "COLOR-MIXING-RUNTIME-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_color_mixing_ui_acceptance.py", "COLOR-MIXING-UI-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_mixed_source_batch_acceptance.py", "MIXED-SOURCE-BATCH-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_quick_setup_idempotence.py", "QUICK-SETUP-IDEMPOTENCE-PASS"),
+    ("tests/acceptance/blender_source_sampling_acceptance.py", "SOURCE-SAMPLING-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_tooltip_acceptance.py", "TOOLTIP-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_topology_transaction_acceptance.py", "TOPOLOGY-TRANSACTION-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_animated_cache_playback_acceptance.py",
      "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
 )
 # Source acceptance scripts that write a JSON report: (capability, marker).
@@ -109,28 +110,28 @@ SOURCE_REPORT_ACCEPTANCE = (
     ("animated_source", "ANIMATED-SOURCE-ACCEPTANCE-PASS"),
     ("volume_source", "VOLUME-SOURCE-ACCEPTANCE-PASS"),
 )
-# tests/blender_*.py scripts this gate deliberately does not run, with why.
-# tests/test_production_gate_coverage.py requires every script to be run here
+# tests/acceptance/blender_*.py scripts this gate deliberately does not run, with why.
+# tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
-    "tests/blender_artist_bake_deleted_scene_acceptance.py":
+    "tests/acceptance/blender_artist_bake_deleted_scene_acceptance.py":
         "needs a real GUI modal bake; exits silently in --background",
-    "tests/blender_artist_bake_gui_acceptance.py":
+    "tests/acceptance/blender_artist_bake_gui_acceptance.py":
         "timer-driven GUI probe: call start(report_path) in a GUI session",
-    "tests/blender_artist_context_consent_acceptance.py":
+    "tests/acceptance/blender_artist_context_consent_acceptance.py":
         "needs real editor contexts and simulated ESC/RET events in a GUI session",
-    "tests/blender_artist_workflow_acceptance.py":
+    "tests/acceptance/blender_artist_workflow_acceptance.py":
         "GUI timeline probe: call start(report_path) in a GUI session",
-    "tests/blender_effect_add_invoke_acceptance.py":
+    "tests/acceptance/blender_effect_add_invoke_acceptance.py":
         "needs the interactive Add Effect search popup",
-    "tests/blender_particle_autogrowth_live_review.py":
-        "profile-safe live review via tools/launch_profile_safe_addon_review.py; leaves the GUI open",
-    "tests/blender_phase1_source_ui_acceptance.py":
-        "profile-safe interactive review via tools/launch_profile_safe_addon_review.py",
-    "tests/blender_phase3_profile_safe_review.py":
-        "profile-safe visible review via tools/launch_profile_safe_addon_review.py",
-    "tests/blender_performance_playback_benchmark.py":
-        "benchmark driven by its own harness (--owned-process-pid); not a pass/fail gate",
+    "tests/acceptance/blender_particle_autogrowth_live_review.py":
+        "profile-safe live review via tools/gate/launch_profile_safe_addon_review.py; leaves the GUI open",
+    "tests/acceptance/blender_phase1_source_ui_acceptance.py":
+        "profile-safe interactive review via tools/gate/launch_profile_safe_addon_review.py",
+    "tests/acceptance/blender_phase3_profile_safe_review.py":
+        "profile-safe visible review via tools/gate/launch_profile_safe_addon_review.py",
+    "tests/acceptance/blender_performance_playback_benchmark.py":
+        "separate foreground handler/visibility evidence; the mandatory saved-demo budget runs via tools/benchmark_versions.py",
 }
 RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
 # tools/release/validate_{check}_blender.py: (check, inputs, success marker).
@@ -330,11 +331,27 @@ def _fluidsim_version():
     return _version_constant("VERSION_STRING")
 
 
+def _validate_performance_evidence():
+    from tools.benchmark_versions import _inventory
+    from tools.performance_budget import evaluate_budget
+    performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
+    report = json.loads(performance.read_text(encoding="utf-8"))
+    if report.get("passed") is not True or report.get("gitHead") != _git_text("rev-parse", "HEAD"):
+        raise RuntimeError("missing passing performance budget evidence for this HEAD")
+    if report.get("candidateInventorySha256") != _inventory(ROOT):
+        raise RuntimeError("source or demo bytes changed after the performance comparison")
+    if not evaluate_budget(report.get("runs"))["passed"]:
+        raise RuntimeError("raw performance evidence does not satisfy the budget")
+    return report
+
+
 def _write_gate_manifest(blender_exe, warp_version=None):
+    report = _validate_performance_evidence()
     artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
     manifest = {
         "gate_run_at": _dt.datetime.now(_dt.UTC).isoformat(),
         "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
@@ -345,6 +362,9 @@ def _write_gate_manifest(blender_exe, warp_version=None):
         "include_gui": True,
         "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
         "demo_artifact_sha256": digest,
+        "performance_artifact": "artifacts/performance_budget/summary.json",
+        "performance_artifact_sha256": hashlib.sha256(performance.read_bytes()).hexdigest(),
+        "performance_reference_commits": report["referenceCommits"],
     }
     GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
@@ -364,7 +384,7 @@ def main(argv=None):
     parser.add_argument(
         "--include-gui",
         action="store_true",
-        help="also run tests/blender_gui_acceptance.py and report full production proof",
+        help="also run tests/acceptance/blender_gui_acceptance.py and report full production proof",
     )
     args = parser.parse_args(argv)
     blender_exe = os.environ.get("BLENDER_EXE", DEFAULT_BLENDER_EXE)
@@ -380,52 +400,54 @@ def main(argv=None):
     warp_root = _check_certified_warp(blender_py, env)
     _run("python syntax", [
         blender_py, "-m", "py_compile",
-        "tools/profile_gpu_solver.py",
-        "tools/profile_user_path.py",
-        "tools/analyze_demos.py",
-        "tools/build_demo_scenes.py",
-        "tools/check_demo_blends.py",
+        "tools/profiling/profile_gpu_solver.py",
+        "tools/profiling/profile_user_path.py",
+        "tools/demos/analyze_demos.py",
+        "tools/demos/build_demo_scenes.py",
+        "tools/demos/check_demo_blends.py",
         "tools/run_production_gate.py",
-        "tools/validate_gui_playback_report.py",
-        "tests/blender_cache_export_pipeline.py",
-        "tests/blender_memory_safety_gate.py",
-        "tests/blender_mesh_source_acceptance.py",
-        "tests/blender_force_region_acceptance.py",
-        "tests/blender_phase3_source_ui_acceptance.py",
-        "tests/blender_capacity_planner_acceptance.py",
-        "tests/blender_simulation_admission_acceptance.py",
-        "tests/blender_closed_domain_stability_acceptance.py",
-        "tests/blender_custom_effects_acceptance.py",
-        "tests/blender_phase3_profile_safe_review.py",
-        "tests/blender_phase4_live_interaction_acceptance.py",
-        "tests/blender_gui_acceptance.py",
-        "tests/blender_gui_playback_probe.py",
-        "tests/blender_viewport_2frame_gate.py",
-        "tests/blender_pre_bridge_file_acceptance.py",
-        "tests/_phase2_source_acceptance_common.py",
+        "tools/benchmark_versions.py",
+        "tools/benchmark_demo_trial.py",
+        "tools/performance_budget.py",
+        "tools/gate/validate_gui_playback_report.py",
+        "tests/acceptance/blender_cache_export_pipeline.py",
+        "tests/acceptance/blender_memory_safety_gate.py",
+        "tests/acceptance/blender_mesh_source_acceptance.py",
+        "tests/acceptance/blender_force_region_acceptance.py",
+        "tests/acceptance/blender_phase3_source_ui_acceptance.py",
+        "tests/acceptance/blender_capacity_planner_acceptance.py",
+        "tests/acceptance/blender_simulation_admission_acceptance.py",
+        "tests/acceptance/blender_closed_domain_stability_acceptance.py",
+        "tests/acceptance/blender_custom_effects_acceptance.py",
+        "tests/acceptance/blender_phase3_profile_safe_review.py",
+        "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
+        "tests/acceptance/blender_gui_acceptance.py",
+        "tests/acceptance/blender_gui_playback_probe.py",
+        "tests/acceptance/blender_viewport_2frame_gate.py",
+        "tests/acceptance/blender_pre_bridge_file_acceptance.py",
+        "tests/acceptance/_phase2_source_acceptance_common.py",
         *(script for script, _ in BACKGROUND_ACCEPTANCE),
-        *(f"tests/blender_{capability}_acceptance.py"
+        *(f"tests/acceptance/blender_{capability}_acceptance.py"
           for capability, _ in SOURCE_REPORT_ACCEPTANCE),
         *(f"tools/release/validate_{check}_blender.py"
           for check, _, _ in RELEASE_BLENDER_VALIDATORS),
     ], env=env)
     _run("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
-        "tests/test_pressure_projection_regressions.py",
-        "tests/test_cache_io.py",
-        "tests/test_io_path_policy.py",
+        "tests/solver/test_pressure_projection_regressions.py",
+        "tests/cache_io/test_cache_io.py",
+        "tests/cache_io/test_io_path_policy.py",
         "-q",
     ], env=env)
     for script in (
-        "tests/smoke_core.py",
-        "tests/smoke_solver.py",
-        "tests/test_solver_validation.py",
-        "tests/test_validation.py",
-        "tests/test_kernel_coverage.py",
+        "tests/scripts/smoke_core.py",
+        "tests/scripts/smoke_solver.py",
+        "tests/validation/test_solver_validation.py",
+        "tests/validation/test_validation.py",
     ):
         _run(script, [blender_py, script], env=env)
     _run("GPU profiler smoke", [
-        blender_py, "tools/profile_gpu_solver.py",
+        blender_py, "tools/profiling/profile_gpu_solver.py",
         "--device", "cuda:0",
         "--frames", "3",
         "--warmup", "1",
@@ -463,20 +485,20 @@ def main(argv=None):
     _run(
         "Phase 3 source UI acceptance",
         _blender(blender_exe, "--background", "--factory-startup", "--python",
-                 "tests/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
+                 "tests/acceptance/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
                  os.path.abspath("artifacts/phase3_source_ui_acceptance.json")),
         env=env, reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
     _run(
         "source capacity planner acceptance",
         _blender(blender_exe, "--background", "--factory-startup", "--python",
-                 "tests/blender_capacity_planner_acceptance.py", "--", "--json-out",
+                 "tests/acceptance/blender_capacity_planner_acceptance.py", "--", "--json-out",
                  os.path.abspath("artifacts/capacity_planner_acceptance.json")),
         env=env, reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
     for capability, success_marker in SOURCE_REPORT_ACCEPTANCE:
         _run(
             f"{capability} acceptance",
             _blender(blender_exe, "--background", "--factory-startup", "--python",
-                     f"tests/blender_{capability}_acceptance.py", "--", "--json-out",
+                     f"tests/acceptance/blender_{capability}_acceptance.py", "--", "--json-out",
                      os.path.abspath(f"artifacts/phase2_source_acceptance/{capability}.json")),
             env=env, reject_output=True, expect_marker=success_marker)
     for scene_name in CANONICAL_DEMO_SCENES:
@@ -485,26 +507,26 @@ def main(argv=None):
             "--background",
             "--factory-startup",
             "--python",
-            "tools/build_demo_scenes.py",
+            "tools/demos/build_demo_scenes.py",
             "--",
             scene_name,
         ), env=env, reject_output=True, expect_marker="DEMO-BUILD-PASS")
     _run(
-        "demo analysis", [blender_py, "tools/analyze_demos.py"], env=env,
+        "demo analysis", [blender_py, "tools/demos/analyze_demos.py"], env=env,
         expect_marker="DEMO-ANALYSIS-PASS (21/21)")
     _run("demo blend checks", _blender(
         blender_exe,
         "--background",
         "--factory-startup",
         "--python",
-        "tools/check_demo_blends.py",
+        "tools/demos/check_demo_blends.py",
     ), env=env, reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
     if include_gui:
         _run("interactive GUI acceptance", _blender(
             blender_exe,
             "--factory-startup",
             "--python",
-            "tests/blender_gui_acceptance.py",
+            "tests/acceptance/blender_gui_acceptance.py",
         ), env=env, reject_output=True, expect_marker="GUI-ACCEPTANCE-PASS")
         playback_report = os.path.abspath("artifacts/gui_playback_probe.json")
         # A stale passing artifact must never validate a probe that exited 0
@@ -522,12 +544,12 @@ def main(argv=None):
             blender_exe,
             "--factory-startup",
             "--python",
-            "tests/blender_gui_playback_probe.py",
+            "tests/acceptance/blender_gui_playback_probe.py",
         ), env=playback_env, reject_output=True,
            expect_marker="GUI-PLAYBACK-PROBE-PASS")
         _run("saved-demo GUI playback report", [
             blender_py,
-            "tools/validate_gui_playback_report.py",
+            "tools/gate/validate_gui_playback_report.py",
             playback_report,
             "--expected-blend",
             playback_env["FLUIDSIM_PLAYBACK_BLEND"],
@@ -538,7 +560,7 @@ def main(argv=None):
             "--background",
             "--factory-startup",
             "--python",
-            "tools/profile_user_path.py",
+            "tools/profiling/profile_user_path.py",
             "--",
             "--frames",
             "6",
@@ -555,6 +577,15 @@ def main(argv=None):
             "--json-out",
             "artifacts/user_path_profile.json",
         ), env=env)
+    # Run after demo rebuilds and GUI probes, so the budget covers the final
+    # delivered saved files, not the pre-build inputs.
+    _run("paired demo performance budget", [
+        blender_py, "tools/benchmark_versions.py", "--demo-budget",
+        "--blender", blender_exe, "--candidate-root", str(ROOT),
+        "--trials", "8", "--frames", "48",
+        "--out-dir", "artifacts/performance_budget",
+    ], env=env, expect_marker="PERFORMANCE-BUDGET-PASS")
+    _validate_performance_evidence()
     if include_gui:
         _write_gate_manifest(
             blender_exe, _version_constant("CERTIFIED_WARP_VERSION"))

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
+# Shared helper modules (_test_device, settings_doubles) live in tests/support/ and
+# are imported by bare name from every test folder and from the acceptance scripts.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "support"))
+
 # Keep in sync with fluidSim_warp_blender51/tests/conftest.py (that suite also
-# runs standalone from the add-on folder).  tests/test_cuda_device_fixture.py
+# runs standalone from the add-on folder).  tests/repo/test_cuda_device_fixture.py
 # asserts both copies resolve devices identically, and that the scripts'
 # ``_test_device.script_device`` honours the same override.
 TEST_DEVICE_ENV = "FLUIDSIM_TEST_DEVICE"

@@ -61,7 +61,7 @@ fluidsim_warp/
 The solver remains authoritative for simulation semantics. `io/` owns durable
 serialization, `blender/production_bake.py` owns transaction orchestration, and
 `blender/setup_wizard.py` owns product onboarding. The package boundary keeps
-`sim/` free of `bpy`. Repository-level `../tools/release/` owns build, smoke,
+`sim/` free of `bpy`. Repository-level `tools/release/` owns build, smoke,
 generation, and validation workflows; the runtime package retains only the
 installed headless entry point.
 
@@ -278,8 +278,8 @@ resumable because deterministic type-transition state cannot be inferred.
 - **Size-suffixed variants** (OpenCL workgroup knobs like `Jacobi8/16/32`,
   `ReduceSum128..1024`) collapse to one parameterized Warp kernel registered
   under all aliases.
-- Kernel identity registration coverage is asserted at **188/188** canonical names by
-  `tests/test_kernel_coverage.py` against `fluidSim_synth.kernel_manifest`.
+- Kernel identity registration covered all **188** canonical names when the
+  reference kernel manifest was removed (it lives in git history).
 
 ---
 
@@ -342,7 +342,7 @@ and controller snapshots instead of trusting stored update-callback state.
   padded capacity. Separate views filter aligned host arrays by type; they do
   not allocate separate GPU pools. Legacy-unclassified points remain visible
   only on the combined object.
-  `blender/viewport.py` remains the timeline/overlay adapter.
+  `blender/viewport_overlay.py` remains the diagnostic overlay adapter.
 - **`blender/scene_bridge.py` (`request_scene_update`)** is the property-update
   bridge for realtime UI edits. Its `SceneUpdate` enum owns the supported
   actions and default status reasons, so property callbacks do not exchange
@@ -377,7 +377,7 @@ and controller snapshots instead of trusting stored update-callback state.
   Look, Bake & Export) and reuses the authoritative Scene draw functions
   (`draw_cache_playback`, `draw_cache_bake`, `draw_cache_manage`) and
   `pending_settings.setting_owner` ownership; it introduces no second settings
-  model. The former `ui_view3d.py` Live Tuning / Full Settings mirrors and the
+  model. The former Live Tuning / Full Settings mirrors and the
   Scene-tab Transport and Cache panels were removed because a stage now owns
   each control.
 - **`blender/ui_header.py`** appends a **FluidSim** popover
@@ -468,7 +468,7 @@ Rayleigh–Lamb oscillation trend oracle, zero-coefficient full-solver
 equivalence, capillary timestep trends, and finite-energy/diagnostic guards.
 Failures are reported rather than crashing the suite.
 
-`../tools/release/validate_phase5_warp.py` is a separate supplied-package gate. It
+`tools/release/validate_phase5_warp.py` is a separate supplied-package gate. It
 executes all P5 kernels on one analytic sparse leaf, validates inward force,
 finite/clamped curvature and acceleration, linear coefficient scaling,
 collision exclusion, MAC integration, optional-scratch lifecycle, and timestep
@@ -477,7 +477,7 @@ particle pool, proving that capillarity selects 27 requested substeps in the
 probe case and reports the authored clamp to 8. CPU execution proves code paths;
 `cuda:0` execution is required for release certification.
 
-`../tools/release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
+`tools/release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
 treating source strings as UI proof. It draws 49 authored surfaces, validates
 one collapsed root plus 51 View3D mirrors with exact poll/draw parity, exercises
 domain/input contexts and all six output kinds in Physics Properties, revalidates
@@ -547,8 +547,8 @@ this PR's own CUDA-test-fix commit message (`ba9ca3d`, 2026-09-21) cites
 about the current tree.
 
 Neither count is a substitute for the GUI-inclusive gate's own scoped pytest
-lane (`tests/test_pressure_projection_regressions.py`,
-`tests/test_cache_io.py`, `tests/test_io_path_policy.py`; 79 passed at
+lane (`tests/solver/test_pressure_projection_regressions.py`,
+`tests/cache_io/test_cache_io.py`, `tests/cache_io/test_io_path_policy.py`; 79 passed at
 `gate_run_at: 2026-09-22T06:23:28Z`) — that lane is real-GPU evidence for
 those regressions specifically, while the two counts above are broader but
 CPU-only.
@@ -599,8 +599,7 @@ The GUI-inclusive 1.0.255 production gate at proof HEAD
 Its promoted values are `front_speed_over_c0=1.0082030232`,
 `column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`, and
 `max_crown_height=0.0883056670`. The authoritative source is
-`artifacts/demo_analysis/analysis_report.json`, SHA-256
-`a32872b81b2538034819d8eec13466678714be94872e3f14bb0fb39bd9250926`, mirrored in-tree at `demos/analysis_report.json`.
+`artifacts/demo_analysis/analysis_report.json`.
 
 These values are reproducible. Before `d2a6b6d`, `max_crown_height` varied
 by about 16% between runs of the same commit. The cause was four

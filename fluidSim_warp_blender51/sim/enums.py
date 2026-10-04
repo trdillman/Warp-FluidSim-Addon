@@ -1,7 +1,7 @@
-"""Solver enums ported from the synthesized FluidSim enum tables.
+"""Solver enums ported from the original FluidSim enum tables.
 
-Python IntEnum mirrors of the reference `REQUIRED_ENUMS` that the port
-uses. Values must stay identical to the synthesized tables for fidelity.
+Python IntEnum mirrors of the reference enums that the port uses. Values
+must stay identical to the original tables (see git history) for fidelity.
 No bpy imports here.
 """
 

@@ -39,7 +39,7 @@ A demo scene must satisfy all of the following:
 An enabled effect that the scene's own settings can never trigger is a UI-only
 claim. It shows up in panels and metadata and changes nothing. Example: a
 whitewater churn threshold above the highest churn the scene ever produces.
-`tools/check_demo_blends.py` enforces this in two layers:
+`tools/demos/check_demo_blends.py` enforces this in two layers:
 
 - **Static preconditions** (`EFFECT_PRECONDITIONS`): each enabled effect must
   have a nonzero driving coefficient. Whitewater needs `ww_churn_gain > 0` and
@@ -96,7 +96,7 @@ location and appearance do not promote them to canonical demos.
 ## Storage and naming
 
 - Canonical playable demos live under `demos/` and are inventoried by
-  `tools/check_demo_blends.py`.
+  `tools/demos/check_demo_blends.py`.
 - Static or workflow-reference assets live under `resources/examples/`, tests,
   or ignored artifact directories and must not use language implying live demo
   compliance.
@@ -107,7 +107,7 @@ location and appearance do not promote them to canonical demos.
 
 ## Acceptance evidence
 
-`tools/check_demo_blends.py` is the executable all-demo gate. Its inventory must
+`tools/demos/check_demo_blends.py` is the executable all-demo gate. Its inventory must
 match every tracked `demos/*.blend`, and it must verify reopen/reset,
 authoritative domain ownership, nonzero solver state, and changing owned output
 through the real frame path. A capability-specific demo also requires the

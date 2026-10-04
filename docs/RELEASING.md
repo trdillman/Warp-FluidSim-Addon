@@ -59,7 +59,7 @@ expected; otherwise, a changed hash needs an explanation before release.
 3. **Pull request.** Open a pull request into `master` and wait for both CI
    jobs to pass. Merge it.
 4. **GPU gate.** On the merged commit, run the gate as described above. Also
-   run `python tools/analyze_demos.py`, which must report every demo check
+   run `python tools/demos/analyze_demos.py`, which must report every demo check
    passing.
 5. **Tag.** Tag the merged commit `v<version>` and push the tag. CI runs again
    on the tag and uploads the packages for that exact commit.
@@ -68,7 +68,7 @@ expected; otherwise, a changed hash needs an explanation before release.
      with `python tools/release/build_extension.py --blender <blender>
      --output dist` on the tagged commit, or take the Linux one from the
      tag's CI run.
-   - `production_gate_manifest.json` from step 4.
+   - `artifacts/production_gate_manifest.json` from step 4.
 
    Paste the changelog section into the release notes.
 7. **Update your own Blender.** Blender never updates an installed add-on
