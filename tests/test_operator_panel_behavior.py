@@ -975,19 +975,22 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
 def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
+
     settings = SimpleNamespace(
         particles_per_voxel=8.0,
         spacetime_enabled=True,
+        spacetime_seed=1729,
         spacetime_reference_mass=0.0,
     )
-    solver = SimpleNamespace(
-        settings=settings,
-        particles=object(),
-        _st_reference_mass_cached=4.0,
+    spacetime = SpaceTimeState(
+        settings, SimpleNamespace(liquid_sampling=8.0, rest_particle_count=8)
     )
-    solver._calibrate_st_reference_mass = lambda: (_ for _ in ()).throw(
+    spacetime.reference_mass_cached = 4.0
+    spacetime.calibrate_reference_mass = lambda: (_ for _ in ()).throw(
         AssertionError("existing calibration should be density-rescaled")
     )
+    solver = SimpleNamespace(settings=settings, particles=object(), spacetime=spacetime)
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
@@ -1000,7 +1003,7 @@ def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkey
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
     assert settings.particles_per_voxel == 8.0
-    assert solver._st_reference_mass_cached == 4.0
+    assert solver.spacetime.reference_mass_cached == 4.0
     assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
     assert "particles_per_voxel" not in _pending_module()._LIVE_SETTING_FIELDS
 

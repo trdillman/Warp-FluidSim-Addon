@@ -421,8 +421,6 @@ class SceneInteractionState:
 
 
 _INTERACTION_STATES = {}
-_ST_REFERENCE_MASS_CACHE = {}
-_ST_REFERENCE_MASS_CACHE_LIMIT = 64
 
 
 def _interaction_state(scene):
@@ -704,39 +702,6 @@ def _setting_targets(fields):
     return targets
 
 
-def _remember_st_reference_mass(settings, reference_mass):
-    """Cache the density-normalized automatic ST calibration for one seed."""
-    ppc = max(1.0e-6, float(settings.particles_per_voxel))
-    reference_mass = float(reference_mass or 0.0)
-    if reference_mass <= 0.0:
-        return
-    key = int(getattr(settings, "spacetime_seed", 1729))
-    if len(_ST_REFERENCE_MASS_CACHE) >= _ST_REFERENCE_MASS_CACHE_LIMIT:
-        _ST_REFERENCE_MASS_CACHE.pop(next(iter(_ST_REFERENCE_MASS_CACHE)))
-    _ST_REFERENCE_MASS_CACHE[key] = reference_mass / ppc
-
-
-def _cached_st_reference_mass(solver):
-    """Return a calibration that scales linearly with particle density.
-
-    The estimator's expected mass is linear in particles-per-voxel.  Solver
-    initialization already paid for a real calibration, so remember its
-    density-normalized coefficient and avoid an ~86 ms Monte-Carlo call for
-    every distinct slider/keyframe value.
-    """
-    settings = solver.settings
-    ppc = max(1.0e-6, float(settings.particles_per_voxel))
-    key = int(getattr(settings, "spacetime_seed", 1729))
-    coefficient = _ST_REFERENCE_MASS_CACHE.get(key)
-    if coefficient is None:
-        calibrated = solver._calibrate_st_reference_mass()
-        coefficient = float(calibrated) / ppc
-        if len(_ST_REFERENCE_MASS_CACHE) >= _ST_REFERENCE_MASS_CACHE_LIMIT:
-            _ST_REFERENCE_MASS_CACHE.pop(next(iter(_ST_REFERENCE_MASS_CACHE)))
-        _ST_REFERENCE_MASS_CACHE[key] = coefficient
-    return coefficient * ppc
-
-
 def _apply_realtime_solver_settings(scene, sess: Session | None = None):
     """Atomically push live settings and refresh ST-FLIP derived state."""
     sess = sess or session()
@@ -753,26 +718,22 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
         for target in targets if hasattr(settings, target)
     }
     old_ppv = getattr(settings, "particles_per_voxel", None)
-    old_reference = getattr(solver, "_st_reference_mass_cached", None)
-    if (old_reference is not None
-            and getattr(settings, "spacetime_enabled", False)
-            and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0):
-        _remember_st_reference_mass(settings, old_reference)
+    spacetime = getattr(solver, "spacetime", None)
+    old_reference = getattr(spacetime, "reference_mass_cached", None)
+    if spacetime is not None:
+        spacetime.remember_calibration()
     try:
         _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
                               quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
         new_ppv = getattr(settings, "particles_per_voxel", None)
-        if (old_ppv != new_ppv
-                and getattr(settings, "spacetime_enabled", False)
-                and float(getattr(settings, "spacetime_reference_mass", 0.0)) <= 0.0
-                and hasattr(solver, "_calibrate_st_reference_mass")):
-            solver._st_reference_mass_cached = _cached_st_reference_mass(solver)
+        if old_ppv != new_ppv and spacetime is not None:
+            spacetime.rescale_for_density()
     except Exception:
         for target, value in previous.items():
             setattr(settings, target, value)
         if old_reference is not None:
-            solver._st_reference_mass_cached = old_reference
+            spacetime.reference_mass_cached = old_reference
         raise
     return True
 

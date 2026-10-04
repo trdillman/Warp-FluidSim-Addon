@@ -258,21 +258,6 @@ def test_failed_pending_apply_retains_action_and_reason(monkeypatch):
     assert pending["blocked_reason"] == "allocation failed"
 
 
-def test_st_reference_calibration_cache_scales_distinct_density_without_recompute(
-        monkeypatch):
-    bridge = _bridge(monkeypatch)
-    calls = []
-    solver = SimpleNamespace(
-        settings=SimpleNamespace(particles_per_voxel=8.0, spacetime_seed=9),
-        _calibrate_st_reference_mass=lambda: calls.append(1) or 3.5,
-    )
-
-    assert bridge.pending._cached_st_reference_mass(solver) == 3.5
-    solver.settings.particles_per_voxel = 16.0
-    assert bridge.pending._cached_st_reference_mass(solver) == 7.0
-    assert calls == [1]
-
-
 def test_pending_publication_warning_updates_scene_and_session(monkeypatch):
     bridge = _bridge(monkeypatch)
     scene = _scene()

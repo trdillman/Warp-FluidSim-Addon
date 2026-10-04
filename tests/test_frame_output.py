@@ -444,15 +444,15 @@ def test_surface_transfer_buffers_persist_across_host_frames():
     HostFrame(solver).output_attributes(
         settings, "surface", positions=targets
     )
-    first_transfer = solver._surface_attribute_transfer
+    first_transfer = solver.surface_attribute_transfer
     first_sample_buffer = first_transfer._sampled
     solver.frame += 1
     HostFrame(solver).output_attributes(
         settings, "surface", positions=targets
     )
 
-    assert solver._surface_attribute_transfer is first_transfer
-    assert solver._surface_attribute_transfer._sampled is first_sample_buffer
+    assert solver.surface_attribute_transfer is first_transfer
+    assert solver.surface_attribute_transfer._sampled is first_sample_buffer
     counts = first_transfer.operation_counts()
     assert counts["hash_grid_builds"] == 2
     assert counts["local_lookups"] == 2
@@ -490,6 +490,7 @@ def test_host_frame_owns_live_surface_publication_cadence():
 
 def test_solver_reset_invalidates_frame_zero_host_snapshot():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
+    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 
     calls = {}
     solver = FluidSolver.__new__(FluidSolver)
@@ -500,6 +501,7 @@ def test_solver_reset_invalidates_frame_zero_host_snapshot():
         spacetime_reference_mass=0.0,
         spacetime_enabled=False,
     )
+    solver.spacetime = SpaceTimeState(solver.settings, None)
     solver.particles = SimpleNamespace(
         clear=lambda: None, host_count=1, refresh_host_count=lambda: 1,
         position=_Array([[1, 2, 3]], calls, "positions"),

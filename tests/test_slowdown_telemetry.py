@@ -8,6 +8,7 @@ from fluidSim_warp_blender51.sim import constants as C
 from fluidSim_warp_blender51.sim.kernels_fluid import k_particles_relax
 from fluidSim_warp_blender51.sim.particles import ParticleSystem
 from fluidSim_warp_blender51.sim.solver import FluidSolver, FrameStats
+from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 from fluidSim_warp_blender51.sim.surface import SurfaceExtractor
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
 
@@ -71,7 +72,8 @@ def test_solver_reset_clears_surface_extractor_buffers():
         spacetime_reference_mass=0.0,
     )
     calibration_calls = []
-    solver._calibrate_st_reference_mass = lambda: calibration_calls.append("calibrated")
+    solver.spacetime = SpaceTimeState(solver.settings, None)
+    solver.spacetime.calibrate_reference_mass = lambda: calibration_calls.append("calibrated")
     solver.surface = SimpleNamespace(reset=lambda: extractor.reset_buffers())
     solver.frame = 99
     solver.sim_time = 1.0

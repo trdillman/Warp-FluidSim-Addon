@@ -1072,7 +1072,7 @@ def test_spatiotemporal_flip(device):
 
     solver = FluidSolver(settings)
     try:
-        ref_mass = float(solver._st_reference_mass())
+        ref_mass = float(solver.spacetime.reference_mass())
         ref_expected = float(settings.particles_per_voxel)
         ref_ok = bool(
             np.isfinite(ref_mass)
