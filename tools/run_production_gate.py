@@ -39,7 +39,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 if os.name == "nt":
@@ -332,7 +331,7 @@ def _fluidsim_version():
 
 
 def _validate_performance_evidence():
-    from tools.benchmark_versions import _inventory
+    from tools.benchmark_versions import REFERENCE_COMMITS, _inventory
     from tools.performance_budget import evaluate_budget
     performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
     report = json.loads(performance.read_text(encoding="utf-8"))
@@ -340,8 +339,32 @@ def _validate_performance_evidence():
         raise RuntimeError("missing passing performance budget evidence for this HEAD")
     if report.get("candidateInventorySha256") != _inventory(ROOT):
         raise RuntimeError("source or demo bytes changed after the performance comparison")
-    if not evaluate_budget(report.get("runs"))["passed"]:
+    recomputed = evaluate_budget(report.get("runs"))
+    if not recomputed["passed"]:
         raise RuntimeError("raw performance evidence does not satisfy the budget")
+    if any(report.get(key) != value for key, value in recomputed.items()):
+        raise RuntimeError("stored performance summary differs from raw evidence")
+    if report.get("referenceCommits") != REFERENCE_COMMITS:
+        raise RuntimeError("performance reference commits differ from pinned releases")
+    observed_sources = {}
+    for run in report['runs']:
+        baseline = run['label'] == 'baseline'
+        expected_head = REFERENCE_COMMITS[run['referenceVersion']] if baseline else report['gitHead']
+        root_inventory = run.get('rootInventorySha256')
+        root = Path(run['root'])
+        if (run.get('gitHead') != expected_head
+                or run.get('candidateInventorySha256') != report['candidateInventorySha256']
+                or type(run.get('processId')) is not int or run['processId'] <= 0
+                or not isinstance(root_inventory, str) or len(root_inventory) != 64
+                or any(value not in '0123456789abcdef' for value in root_inventory)
+                or Path(run.get('addon', '')).resolve() != (root / 'fluidSim_warp_blender51/__init__.py').resolve()
+                or (not baseline and root_inventory != report['candidateInventorySha256'])):
+            raise RuntimeError('raw performance trial provenance is not bound to selected sources')
+        cohort = run['referenceVersion'] if baseline else 'candidate'
+        observed = (str(root.resolve()), root_inventory)
+        if cohort in observed_sources and observed_sources[cohort] != observed:
+            raise RuntimeError('raw performance source inventory changes between trials')
+        observed_sources[cohort] = observed
     return report
 
 
