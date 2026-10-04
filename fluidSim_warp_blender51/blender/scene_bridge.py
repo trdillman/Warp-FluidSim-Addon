@@ -287,14 +287,11 @@ class Session:
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
-        self.solver.set_sources(
+        self.solver.set_source_batch(
             self.scene_inputs.gather_sources(
                 scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                sync_generation=sync_generation))
-        extra_plans = self.scene_inputs.gather_source_plans(scene, depsgraph)
-        if extra_plans:
-            self.solver.set_source_plans(
-                tuple(self.solver.sourcing.plans) + tuple(extra_plans))
+                sync_generation=sync_generation),
+            self.scene_inputs.gather_source_plans(scene, depsgraph))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_force_fields(

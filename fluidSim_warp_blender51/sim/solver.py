@@ -808,17 +808,15 @@ class FluidSolver:
     # Host configuration
 
     def set_source_batch(self, legacy_descriptors=(), native_plans=()):
-        """Atomically install the complete runtime source snapshot."""
+        """Atomically install the complete runtime source snapshot.
+
+        This is the only way to install sources, and it replaces everything
+        installed before: legacy descriptors and native plans always arrive
+        together, so neither representation can be dropped by a later call.
+        """
         from .sourcing import SourceBatch
         self.sourcing.set_source_batch(SourceBatch(
             tuple(legacy_descriptors), tuple(native_plans)))
-
-    def set_sources(self, sources):
-        self.sourcing.set_sources(sources)
-
-    def set_source_plans(self, plans):
-        """Set immutable Phase 2 source plans through the public seam."""
-        self.sourcing.set_plans(plans)
 
     def set_colliders(self, colliders):
         self.colliders = list(colliders)

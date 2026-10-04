@@ -240,7 +240,7 @@ flowchart LR
 | Documentation | `docs/user_guide.md`, `docs/technical_report.md` | Document units, lifecycle, regions, compatibility lanes, and actual Volume-kernel status |
 | Verification | existing source, mesh, bridge, panel, Blender acceptance, and production-gate tests | Test through these existing seams rather than adding a parallel test framework |
 
-The deep module remains `SourcePipeline`: the solver knows only `set_sources`,
+The deep module remains `SourcePipeline`: the solver knows only `set_source_batch`,
 `apply(dt)`, `reset_runtime()`, and an emission result. Blender-specific
 properties and objects stop at `SceneInputs`; GPU sampling details remain inside
 the pipeline implementation.

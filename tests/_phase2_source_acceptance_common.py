@@ -93,7 +93,7 @@ def settings(substeps=1, max_particles=20_000):
 
 def step_solver(plans, frames=1, *, substeps=1, max_particles=20_000):
     solver = FluidSolver(settings(substeps=substeps, max_particles=max_particles))
-    solver.set_source_plans(tuple(plans))
+    solver.set_source_batch(native_plans=tuple(plans))
     samples = []
     stats = None
     for _ in range(frames):
@@ -241,7 +241,7 @@ def main(capability):
             key=stable_key, cadence=SourceEvaluationCadence.EVERY_SIM_FRAME,
             payload=PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
                                 velocity=inherited_velocity))
-        solver.set_source_plans((moved,))
+        solver.set_source_batch(native_plans=(moved,))
         stats = solver.step_frame()
         step_samples.append(float(stats.step_time * 1000.0))
         emitted_particles = solver.particles.host_count
@@ -268,7 +268,7 @@ def main(capability):
         emitted_particles = first_count
         solver_four, _, _ = step_solver((plan,), frames=1, substeps=4)
         four_substep_count = solver_four.particles.host_count
-        solver.reset(); solver.set_source_plans((plan,)); solver.step_frame()
+        solver.reset(); solver.set_source_batch(native_plans=(plan,)); solver.step_frame()
         reset_count = solver.particles.host_count
         reopened, _, _ = step_solver((plan,), frames=1)
         reopened_count = reopened.particles.host_count
@@ -312,8 +312,8 @@ def main(capability):
         pressure_solver, _, _ = step_solver((pressure_seed,), frames=1)
         control_solver, _, _ = step_solver((pressure_seed,), frames=1)
         pressure_particle_count = pressure_solver.particles.host_count
-        pressure_solver.set_source_plans((pressure_plan,))
-        control_solver.set_source_plans(())
+        pressure_solver.set_source_batch(native_plans=(pressure_plan,))
+        control_solver.set_source_batch()
         pressure_solver.step_frame()
         control_solver.step_frame()
         pressure_velocity_max = max(

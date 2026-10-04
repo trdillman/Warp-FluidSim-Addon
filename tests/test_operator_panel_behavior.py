@@ -989,8 +989,9 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         reset=lambda: events.append(
             ("reset", solver.settings.flip_ratio, solver.settings.spacetime_seed)
         ),
-        set_sources=lambda values: events.append(("sources", tuple(values))),
-        set_source_plans=lambda values: events.append(("plans", tuple(values))),
+        set_source_batch=lambda descriptors=(), plans=(): events.append(
+            ("sources", tuple(descriptors), tuple(plans))
+        ),
         set_colliders=lambda values: events.append(("colliders", tuple(values))),
         set_force_fields=lambda values: events.append(("forces", tuple(values))),
         set_height_source=lambda value: events.append(("height", value)),

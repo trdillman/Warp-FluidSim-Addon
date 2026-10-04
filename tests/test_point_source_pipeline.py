@@ -120,7 +120,7 @@ def test_direct_point_arrays_reach_live_particles_without_constant_substitution(
                     velocity=(-1, -1, -1), temperature=-1, viscosity=-1,
                     density=-1, lifespan=-1, use_lifespan=True),
     )
-    solver.set_source_plans((direct,))
+    solver.set_source_batch(native_plans=(direct,))
     solver._rebuild_topology(expand=0)
     solver._clear_grid_fields()
     assert solver.sourcing.apply(1.0 / 24.0)

@@ -35,8 +35,8 @@ def _make_solver(compiled,with_source):
  s=SolverSettings();s.domain_min=(0,0,0);s.domain_max=(1.6,1.6,1.6);s.voxel_size=.2;s.max_particles=20000;s.whitewater_enabled=False;s.surface_enabled=False;s.min_substeps=1;s.max_substeps=1;s.pressure_iterations=20;s.device="cuda:0"
  solver=FluidSolver(s)
  if with_source:
-  if compiled: solver.set_source_plans((source(AnalyticRegionPlan(shape=SourceShapeShape.BOX,position=(.8,.8,.8),half_extents=(.3,.3,.3)),"ab",SourceEvaluationCadence.STATIC),))
-  else: solver.set_sources((SourceShapeDesc(shape=SourceShapeShape.BOX,position=(.8,.8,.8),half_extents=(.3,.3,.3),radius=.3,height=.3,emit_rate=8.0,source_id="ab"),))
+  if compiled: solver.set_source_batch(native_plans=(source(AnalyticRegionPlan(shape=SourceShapeShape.BOX,position=(.8,.8,.8),half_extents=(.3,.3,.3)),"ab",SourceEvaluationCadence.STATIC),))
+  else: solver.set_source_batch((SourceShapeDesc(shape=SourceShapeShape.BOX,position=(.8,.8,.8),half_extents=(.3,.3,.3),radius=.3,height=.3,emit_rate=8.0,source_id="ab"),))
  return solver
 
 def measure_solver_pair(with_source,frames):

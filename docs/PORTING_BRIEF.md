@@ -27,7 +27,7 @@ themselves. The solver maintains these invariants; keep them when patching:
    capacity with no host readback. Invariant: `alive` is zero beyond the live
    range (`clear()` and the trailing `k_ww_mark_alive` maintain this).
 3. Particle emission (`sim/solver.py::_source`): the emission shape array is
-   cached (`_emit_shape_array`) and invalidated by `set_sources` /
+   cached (`_emit_shape_array`) and invalidated by `set_source_batch` /
    `set_height_source` / domain changes; it is not rebuilt per substep. The
    post-emission `_index_particles` re-run happens only when an emitter fired.
 4. `host_count` mirrors (`particles`, `whitewater`) are refreshed once per

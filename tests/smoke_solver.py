@@ -28,7 +28,7 @@ settings = SolverSettings(
 solver = FluidSolver(settings)
 
 # Dam-break: a box of liquid in one corner, emitted once (field of particles).
-solver.set_sources([
+solver.set_source_batch([
     SourceShapeDesc(
         enabled=True, shape=2, stype=0, mode=1,
         position=(-0.5, -0.5, 0.6),
@@ -50,7 +50,7 @@ for frame in range(8):
         assert stats.active_particles > 1000, "no particles emitted"
 
 # Stop emitting; let it settle a few frames.
-solver.set_sources([])
+solver.set_source_batch()
 for frame in range(4):
     stats = solver.step_frame()
     print(f"settle {frame}: particles={stats.active_particles} "

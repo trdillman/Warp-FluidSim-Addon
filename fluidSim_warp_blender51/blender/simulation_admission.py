@@ -560,10 +560,7 @@ class SimulationAdmission:
         inputs.materialize_device_meshes(
             snapshot.descriptors, snapshot.colliders,
             snapshot.configured_device)
-        candidate.set_sources(snapshot.descriptors)
-        if snapshot.extra_plans:
-            candidate.set_source_plans(
-                tuple(candidate.sourcing.plans) + snapshot.extra_plans)
+        candidate.set_source_batch(snapshot.descriptors, snapshot.extra_plans)
         candidate.set_colliders(snapshot.colliders)
         candidate.set_force_fields(snapshot.force_fields)
         candidate.set_height_source(snapshot.height_source)
