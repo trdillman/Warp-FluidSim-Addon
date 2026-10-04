@@ -29,6 +29,7 @@ from ..sim.whitewater_types import (
     partition_type_indices,
     validate_type_values,
 )
+from .scene_access import active_domain_settings
 
 SURFACE_NAME = "FluidSim Surface"
 PARTICLES_NAME = "FluidSim Particles"
@@ -304,10 +305,6 @@ def _domain_settings(scene):
     ``None`` without a designated domain; readers then take the disabled
     defaults, so nothing solver-backed is published.
     """
-    # Lazy import: scene_bridge reaches into this module, so the accessor is
-    # pulled at call time rather than closing the cycle at import.
-    from .scene_bridge import active_domain_settings
-
     return active_domain_settings(scene)
 
 

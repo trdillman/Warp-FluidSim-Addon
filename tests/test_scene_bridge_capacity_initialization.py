@@ -163,7 +163,7 @@ def test_session_step_rejects_capacity_limited_frame_before_publication(monkeypa
     sess = scene_bridge.Session()
     sess.solver = StepSolver()
     sess.scene_identity = "scene"
-    monkeypatch.setattr(scene_bridge, "_scene_identity", lambda _scene: "scene")
+    monkeypatch.setattr(scene_bridge, "scene_identity", lambda _scene: "scene")
     updates = []
     monkeypatch.setattr(
         viewport, "update_outputs",
@@ -224,7 +224,7 @@ def test_deferred_growth_never_releases_solver_or_partially_publishes_source(
     sess = scene_bridge.Session()
     sess.solver = solver
     sess.scene_identity = "scene"
-    monkeypatch.setattr(scene_bridge, "_scene_identity", lambda _scene: "scene")
+    monkeypatch.setattr(scene_bridge, "scene_identity", lambda _scene: "scene")
     updates = []
     monkeypatch.setattr(
         viewport, "update_outputs",

@@ -87,7 +87,7 @@ def _active_reset(
     )
     sess = bridge.Session()
     sess.solver = old_solver
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     sess.start_frame = 4
     sess.last_frame = 23
     sess.frame_stats = [{"frame": 23}]
@@ -428,7 +428,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     plan = SimpleNamespace(scene_signature="identical-content", suggestions=(1,))
     sess = bridge.Session()
     sess._set_capacity_plan(first, plan, memory_bypassed=True)
-    sess.particle_capacity_notice_scene_identity = bridge._scene_identity(first)
+    sess.particle_capacity_notice_scene_identity = bridge.scene_identity(first)
 
     assert sess.capacity_plan_for_scene(first) is plan
     assert "|operation=INITIALIZE" in sess.capacity_plan_scene_signature
@@ -525,7 +525,7 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
         particles=SimpleNamespace(capacity=4_000_000, host_count=0),
         device="cuda:0",
     )
-    sess.scene_identity = bridge._scene_identity(scene_a)
+    sess.scene_identity = bridge.scene_identity(scene_a)
     sess.scene_inputs = SimpleNamespace(clear=lambda: None)
     from fluidSim_warp_blender51.blender import simulation_admission
     monkeypatch.setattr(
@@ -554,7 +554,7 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
     expected = memory_safety.estimate_solver_bytes(old_settings)
     assert seen_residencies == [expected]
     assert sess.solver is not None
-    assert sess.scene_identity == bridge._scene_identity(scene_a)
+    assert sess.scene_identity == bridge.scene_identity(scene_a)
     assert sess.capacity_plan_operation == "INITIALIZE"
 
 
@@ -659,9 +659,9 @@ def test_capacity_notice_uses_live_pool_after_growth_and_replacement(monkeypatch
     bridge = _bridge(monkeypatch)
     scene = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(max_particles=4)))
     sess = bridge.Session()
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     sess.solver = SimpleNamespace(particles=SimpleNamespace(capacity=8))
-    sess.particle_capacity_notice_scene_identity = bridge._scene_identity(scene)
+    sess.particle_capacity_notice_scene_identity = bridge.scene_identity(scene)
 
     assert "Active pool 8; Initial Reserve 4" in (
         sess.particle_capacity_notice_for_scene(scene))

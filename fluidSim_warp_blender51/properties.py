@@ -1011,7 +1011,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     Everything the solver consumes: resolution, particles, forces, pressure,
     viscosity, surface tension, surface/whitewater generation, height fill and
     the production attribute inventory. Read these through
-    ``scene_bridge.active_domain_settings(scene)``, never off ``scene.fluidsim``.
+    ``scene_access.active_domain_settings(scene)``, never off ``scene.fluidsim``.
     """
 
     def __setattr__(self, name, value):

@@ -919,7 +919,7 @@ def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkey
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
@@ -2920,7 +2920,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
         particles=SimpleNamespace(capacity=65_536),
         device="cuda:0",
     )
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     from fluidSim_warp_blender51.blender import simulation_admission
 
     monkeypatch.setattr(
@@ -3508,10 +3508,6 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
     fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
     fake_bridge.current_error = lambda scene: ""
     fake_bridge.capacity_plan_for_scene = lambda scene: None
-    # Domain panels read their settings owner through the bridge, which resolves
-    # the designated domain object's group like the real active_domain_settings.
-    fake_bridge.active_domain_settings = (
-        lambda scene: scene.fluidsim.domain_object.fluidsim_domain)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
     )

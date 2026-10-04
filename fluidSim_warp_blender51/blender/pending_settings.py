@@ -14,6 +14,13 @@ from enum import Enum
 
 import bpy
 
+from .scene_access import (
+    active_domain_object,
+    active_domain_settings,
+    scene_get,
+    scene_identity,
+    scene_set,
+)
 from .solver_settings import (
     DIRECT_SETTING_FIELDS as _DIRECT_SETTING_FIELDS,
     SETTING_ALIASES as _SETTING_ALIASES,
@@ -33,31 +40,6 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 def session():
     from .scene_bridge import session as solver_session
     return solver_session()
-
-
-def _active_settings(scene):
-    """Live settings group the solver builds from.
-
-    Post-migration this is the domain object's ``fluidsim_domain`` group, not the
-    stale ``scene.fluidsim`` ghost copy. Lazy import mirrors ``session()`` to keep
-    the scene_bridge import cycle broken.
-    """
-    from .scene_bridge import active_domain_settings
-    return active_domain_settings(scene)
-
-
-def _scene_get(scene, key: str, default=""):
-    try:
-        return scene.get(key, default)
-    except AttributeError:
-        return getattr(scene, key, default)
-
-
-def _scene_set(scene, key: str, value):
-    try:
-        scene[key] = value
-    except TypeError:
-        setattr(scene, key, value)
 
 
 class SceneUpdate(str, Enum):
@@ -228,7 +210,7 @@ _SCENE_OWNED_TIERS = frozenset({
 #                     docstring) so the read owner matches the UI write owner.
 #   domain_object  -- REINITIALIZE, but it is declared only on the scene group:
 #                     it names which object is the domain.
-#                     scene_bridge.active_domain_settings()
+#                     scene_access.active_domain_settings()
 #                     itself, solver_settings.domain_bounds/domain_transform, and
 #                     the rendering and session operators all read it from
 #                     scene.fluidsim.
@@ -283,7 +265,7 @@ def setting_owner(scene, name):
     """
     if _scene_owned(name):
         return getattr(scene, "fluidsim", None)
-    return _active_settings(scene)
+    return active_domain_settings(scene)
 
 
 def validate_transition_registry(declared_fields=None):
@@ -397,7 +379,7 @@ def _signature_owners(scene):
     """Return ``(scene_fs, domain_fs)`` — the two datablocks signature fields
     resolve to. ``domain_fs`` is ``active_domain_settings``: the designated
     domain object's ``fluidsim_domain``, or ``None`` without one."""
-    return getattr(scene, "fluidsim", None), _active_settings(scene)
+    return getattr(scene, "fluidsim", None), active_domain_settings(scene)
 
 
 def _authoring_owner(scene_fs, domain_fs, name):
@@ -443,20 +425,8 @@ _ST_REFERENCE_MASS_CACHE = {}
 _ST_REFERENCE_MASS_CACHE_LIMIT = 64
 
 
-def _scene_identity(scene):
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return value
-        except (TypeError, ValueError, ReferenceError):
-            pass
-    return id(scene)
-
-
 def _interaction_state(scene):
-    key = _scene_identity(scene)
+    key = scene_identity(scene)
     state = _INTERACTION_STATES.get(key)
     if state is None or state.scene is not scene:
         state = SceneInteractionState(scene=scene)
@@ -534,7 +504,7 @@ def _reinit_signature(scene):
               for name in sorted(_REINIT_SETTING_FIELDS)]
     # domain_object is the scene-level identity pointer (excluded from migration),
     # so it is always read from scene.fluidsim.
-    domain = getattr(scene_fs, "domain_object", None)
+    domain = active_domain_object(scene)
     values.append(("domain_identity", _stable_value(domain)))
     try:
         values.append(("domain_bounds", _stable_value(_domain_bounds(scene))))
@@ -602,25 +572,25 @@ def _action_presentation(action, count):
 
 def _cache_pending_presentation(scene, state):
     action = _pending_label(state.pending_action)
-    _scene_set(scene, "fluidsim_pending_action", action)
-    _scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
-    _scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
-    _scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
+    scene_set(scene, "fluidsim_pending_action", action)
+    scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
+    scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
+    scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
 
 
 def pending_presentation(scene):
     """Return draw-safe cached pending data without inspecting RNA or geometry."""
-    state = _INTERACTION_STATES.get(_scene_identity(scene))
+    state = _INTERACTION_STATES.get(scene_identity(scene))
     if state is None:
-        reasons = tuple(filter(None, str(_scene_get(
+        reasons = tuple(filter(None, str(scene_get(
             scene, "fluidsim_pending_reasons", "")).splitlines()))
-        action = str(_scene_get(scene, "fluidsim_pending_action", "NONE"))
-        count = int(_scene_get(scene, "fluidsim_pending_count", len(reasons)))
+        action = str(scene_get(scene, "fluidsim_pending_action", "NONE"))
+        count = int(scene_get(scene, "fluidsim_pending_count", len(reasons)))
         result = {
             "action": action,
             "count": count,
             "reasons": reasons,
-            "blocked_reason": str(_scene_get(
+            "blocked_reason": str(scene_get(
                 scene, "fluidsim_pending_blocked", "")),
         }
         result.update(_action_presentation(action, count))
@@ -696,7 +666,7 @@ def capture_applied_state(scene, sess=None, *, reset_only=False):
             name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
             for name in _REINIT_SETTING_FIELDS
         }
-        domain = getattr(scene_fs, "domain_object", None)
+        domain = active_domain_object(scene)
         matrix = getattr(domain, "matrix_world", None)
         state.domain_matrix_snapshot = (
             matrix.copy() if matrix is not None and hasattr(matrix, "copy") else matrix)
@@ -772,7 +742,7 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = _active_settings(scene)
+    fs = active_domain_settings(scene)
     solver = sess.solver
     settings = getattr(solver, "settings", None)
     if settings is None:
@@ -828,7 +798,7 @@ def apply_reset_solver_settings(scene, sess: Session | None = None):
     if not sess.owns_scene(scene):
         return False
     _apply_scene_settings(
-        _active_settings(scene), sess.solver.settings,
+        active_domain_settings(scene), sess.solver.settings,
         _LIVE_SETTING_FIELDS | _RESET_SETTING_FIELDS,
         quality_fidelity=_scene_quality_fidelity(scene))
     _apply_gravity(scene, sess.solver.settings)
@@ -841,7 +811,7 @@ def _apply_realtime_surface_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    fs = _active_settings(scene)
+    fs = active_domain_settings(scene)
     solver = sess.solver
     _apply_scene_settings(fs, solver.settings, _SURFACE_SETTING_FIELDS)
     solver.rebuild_surface()
@@ -852,7 +822,7 @@ def _apply_realtime_whitewater_settings(scene, sess: Session | None = None):
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
-    sess.solver.settings.whitewater_enabled = _active_settings(scene).whitewater_enabled
+    sess.solver.settings.whitewater_enabled = active_domain_settings(scene).whitewater_enabled
     return True
 
 
@@ -927,7 +897,7 @@ def change_confirmation_token(scene):
     if getattr(scene, "fluidsim_effects", None) is not None:
         from .effects import scene_effect_instances
         effects = tuple(item.to_dict() for item in scene_effect_instances(scene))
-    return _scene_identity(scene), current_interaction_signatures(scene), effects
+    return scene_identity(scene), current_interaction_signatures(scene), effects
 
 
 def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=False) -> bool:
@@ -1046,7 +1016,7 @@ def revert_pending_values(scene):
             owner = _authoring_owner(scene_fs, domain_fs, name)
             if owner is not None and hasattr(owner, name):
                 setattr(owner, name, value)
-        domain = getattr(scene_fs, "domain_object", None)
+        domain = active_domain_object(scene)
         if domain is not None and state.domain_matrix_snapshot is not None:
             domain.matrix_world = state.domain_matrix_snapshot
     finally:
@@ -1118,24 +1088,24 @@ def update_particle_capacity_policy(scene):
     fs = scene.fluidsim
     # Two owners: the growth policy itself is domain-owned (LIVE tier), while
     # ``status`` and the capacity plan below stay scene-owned.
-    domain_fs = _active_settings(scene)
+    domain_fs = active_domain_settings(scene)
     if sess.owns_scene(scene):
         sess.solver.settings.auto_grow_particles = bool(
             domain_fs.auto_grow_particles)
         sess.solver.settings.particle_growth_failure_policy = str(
             domain_fs.particle_growth_failure_policy)
-        sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
+        sess.particle_capacity_notice_scene_identity = scene_identity(scene)
         fs.status = sess.particle_capacity_notice_for_scene(scene)
         had_scene_plan = (
             sess.capacity_plan is not None
-            and sess.capacity_plan_scene_identity == _scene_identity(scene))
+            and sess.capacity_plan_scene_identity == scene_identity(scene))
         sess.invalidate_capacity_plan_for_scene(scene)
         refresh_pending_state(scene, sess)
         if had_scene_plan:
             _schedule_capacity_plan_refresh(scene)
     else:
         sess.invalidate_capacity_plan_for_scene(scene)
-        sess.particle_capacity_notice_scene_identity = _scene_identity(scene)
+        sess.particle_capacity_notice_scene_identity = scene_identity(scene)
         fs.status = sess.particle_capacity_notice_for_scene(scene)
     _tag_view3d_redraw()
 
@@ -1236,7 +1206,7 @@ def _on_interaction_state_update(*args):
         bpy.context, "scene", None)
     if scene is None:
         return
-    state = _INTERACTION_STATES.get(_scene_identity(scene))
+    state = _INTERACTION_STATES.get(scene_identity(scene))
     if state is not None:
         refresh_pending_state(scene, session())
 

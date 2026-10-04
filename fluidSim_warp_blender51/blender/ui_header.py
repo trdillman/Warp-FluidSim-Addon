@@ -16,7 +16,7 @@ from __future__ import annotations
 import bpy
 
 from ..panels import draw_pending_apply, draw_transport, runtime_ui_state
-from .scene_bridge import active_domain_settings
+from .scene_access import active_domain_settings
 from .ui_common import activity_ui_state, draw_status_message
 from .ui_stages import (
     draw_guided_setup_buttons,

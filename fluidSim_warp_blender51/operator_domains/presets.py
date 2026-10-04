@@ -84,7 +84,7 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
     def execute(self, context):
         from ..presets import library
         from ..blender import pending_settings
-        from ..blender.scene_bridge import active_domain_settings
+        from ..blender.scene_access import active_domain_settings
 
         identifier = str(context.scene.fluidsim.product_preset or "")
         target = active_domain_settings(context.scene)
@@ -166,7 +166,7 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
 
     def execute(self, context):
         from ..presets import library
-        from ..blender.scene_bridge import active_domain_settings
+        from ..blender.scene_access import active_domain_settings
 
         source = active_domain_settings(context.scene)
         if source is None:

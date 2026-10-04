@@ -70,7 +70,7 @@ def _live_session(scene_bridge, scene, *, last_frame):
     """
     sess = scene_bridge.Session()
     sess.solver = object()  # Session.active is `self.solver is not None`
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
     sess.start_frame = 1
     sess.last_frame = last_frame
     steps = []
@@ -203,7 +203,7 @@ def test_step_never_implicitly_writes_legacy_cache(monkeypatch):
     sess.solver = SimpleNamespace(
         frame=9, sourcing=None, step_frame=lambda: stats)
     scene = _scene(9)
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
     scene.fluidsim.cache_enabled = True
 
     sess.step(scene, timeline_frame=4)

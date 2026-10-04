@@ -9,6 +9,7 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender.scene_access import active_domain_object
 from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
@@ -70,7 +71,7 @@ class FLUIDSIM_OT_use_active_as_domain(bpy.types.Operator):
         if obj is None or getattr(obj, "type", None) != "MESH":
             cls.poll_message_set("Select a mesh object to use as the FluidSim domain")
             return False
-        if obj is getattr(scene.fluidsim, "domain_object", None):
+        if obj is active_domain_object(scene):
             cls.poll_message_set("The active object is already the FluidSim domain")
             return False
         from ..blender.ui_common import active_object_role
@@ -125,14 +126,14 @@ class FLUIDSIM_OT_clear_domain_assignment(bpy.types.Operator):
             scene is not None
             and getattr(scene, "fluidsim", None) is not None
             and obj is not None
-            and obj is getattr(scene.fluidsim, "domain_object", None)
+            and obj is active_domain_object(scene)
         )
 
     def execute(self, context):
         scene = getattr(context, "scene", None)
         fs = getattr(scene, "fluidsim", None) if scene is not None else None
         obj = getattr(context, "active_object", None)
-        if fs is None or obj is None or obj is not getattr(fs, "domain_object", None):
+        if fs is None or obj is None or obj is not active_domain_object(scene):
             self.report({"ERROR"}, "The active object is no longer the FluidSim domain")
             return {"CANCELLED"}
         fs.domain_object = None

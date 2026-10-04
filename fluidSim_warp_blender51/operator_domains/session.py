@@ -9,6 +9,7 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender.scene_access import active_domain_object, active_domain_settings
 from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
@@ -176,7 +177,7 @@ def _format_capacity_value(value):
 
 
 def _apply_domain_bounds(scene, minimum, maximum):
-    domain = getattr(scene.fluidsim, "domain_object", None)
+    domain = active_domain_object(scene)
     if domain is None:
         raise RuntimeError("The scene has no domain object to resize")
     if getattr(domain, "parent", None) is not None:
@@ -245,8 +246,6 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=560)
 
     def draw(self, context):
-        from ..blender.scene_bridge import active_domain_settings
-
         layout = self.layout
         layout.label(text="Approve these exact scene changes?", icon="QUESTION")
         layout.label(text=self.suggestion_label)
@@ -274,8 +273,6 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         layout.label(text="Settings are unchanged until you confirm.")
 
     def execute(self, context):
-        from ..blender.scene_bridge import active_domain_settings
-
         bridge = _bridge()
         scene = context.scene
         scene_fs = scene.fluidsim
@@ -317,8 +314,6 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             scene_fs.status = "Capacity option is no longer safe — review alternatives"
             return {"CANCELLED"}
 
-        from ..blender.scene_bridge import active_domain_settings
-
         domain_settings = active_domain_settings(scene)
         if domain_settings is None:
             message = "Capacity option cannot apply without a designated domain"
@@ -333,7 +328,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             for name in changes
             if hasattr(domain_settings, name)
         }
-        domain = getattr(scene_fs, "domain_object", None)
+        domain = active_domain_object(scene)
         old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
         changed = []
         try:

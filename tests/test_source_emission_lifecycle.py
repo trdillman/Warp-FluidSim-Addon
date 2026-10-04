@@ -465,7 +465,7 @@ def test_session_sync_installs_legacy_and_native_sources_together(monkeypatch):
     scene = SimpleNamespace()
     session.solver = solver
     session.scene_inputs = _mixed_scene_inputs(legacy, (pressure,))
-    session.scene_identity = scene_bridge._scene_identity(scene)
+    session.scene_identity = scene_bridge.scene_identity(scene)
     try:
         session.sync_scene(scene)
         assert solver.sourcing.sources == [legacy]

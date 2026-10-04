@@ -80,7 +80,7 @@ def _activate(bridge, scene, *, frame=5):
     solver = SimpleNamespace(frame=frame, settings=settings, particles=object())
     sess = bridge.session()
     sess.solver = solver
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     sess.start_frame = scene.frame_start
     sess.last_frame = frame
     bridge.pending.capture_applied_state(scene, sess)
@@ -174,7 +174,7 @@ def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
             frame=0,
             settings=SimpleNamespace(voxel_size=actual_scene.fluidsim.domain_object.fluidsim_domain.voxel_size),
         )
-        sess.scene_identity = bridge._scene_identity(actual_scene)
+        sess.scene_identity = bridge.scene_identity(actual_scene)
         bridge.pending.capture_applied_state(actual_scene, sess)
         return sess
 
@@ -391,7 +391,7 @@ def test_apply_operators_do_not_destroy_another_scenes_solver(monkeypatch):
     bridge.pending.refresh_pending_state(second, sess)
     # Restore ownership to the first scene while keeping the second snapshot.
     sess.solver = first_solver
-    sess.scene_identity = bridge._scene_identity(first)
+    sess.scene_identity = bridge.scene_identity(first)
 
     for apply in (bridge.pending.apply_pending_reset, bridge.pending.apply_pending_reinitialize):
         try:

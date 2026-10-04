@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import traceback
 
 from ..sim import constants as C
+from .scene_access import active_domain_settings
 from .scene_inputs import SceneInputs
 from .solver_settings import build_settings, domain_transform
 
@@ -272,10 +273,6 @@ def capture_snapshot(
         capacity_plan = _plan_capacity(
             settings, tuple(footprints), seeds, collider_footprints, resources,
             additional_transaction_bytes=additional_transaction_bytes)
-        # Lazy import: scene_bridge imports this module, so the active-domain
-        # accessor is pulled at call time to avoid a top-level import cycle.
-        from .scene_bridge import active_domain_settings
-
         fs = active_domain_settings(scene)
         snapshot = AdmissionSnapshot(
             scene_identity=scene_identity,

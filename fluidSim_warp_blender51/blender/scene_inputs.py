@@ -7,6 +7,7 @@ import hashlib
 import numpy as np
 
 from ..sim.attributes import stable_source_id
+from .scene_access import active_domain_settings
 
 
 def _effective_source_target(scene, pg) -> int:
@@ -21,9 +22,6 @@ def _effective_source_target(scene, pg) -> int:
     )
 
     schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-    # Lazy import: scene_bridge imports this module transitively, so pull the
-    # active-domain accessor at call time to avoid a top-level import cycle.
-    from .scene_bridge import active_domain_settings
     from .solver_settings import scene_quality_fidelity
 
     fs = active_domain_settings(scene)
@@ -997,9 +995,6 @@ class SceneInputs:
     def gather_height_source(self, scene, depsgraph=None):
         from ..sim.enums import SourceEmissionMode, SourceHeightBackMode
         from ..sim.solver import HeightSourceDesc
-        # Lazy import: scene_bridge imports this module transitively, so pull the
-        # active-domain accessor at call time to avoid a top-level import cycle.
-        from .scene_bridge import active_domain_settings
 
         fs = active_domain_settings(scene)
         if fs is None:
