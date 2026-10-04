@@ -8,7 +8,7 @@ GENERATOR = TOOLS_RELEASE / "generate_custom_effect_demos.py"
 VALIDATOR = TOOLS_RELEASE / "validate_custom_effects_blender.py"
 RUNTIME = TOOLS_RELEASE / "custom_effect_demo_runtime.py"
 EXAMPLES = ROOT / "resources" / "examples"
-ACCEPTANCE = ROOT.parent / "tests" / "blender_custom_effects_acceptance.py"
+ACCEPTANCE = ROOT.parent / "tests" / "acceptance" / "blender_custom_effects_acceptance.py"
 
 DEMO_NAMES = (
     "05_custom_effects_vortex.blend",

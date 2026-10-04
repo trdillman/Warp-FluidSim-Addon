@@ -49,7 +49,7 @@ Or run it directly with a focused report. Keep the private extensions directory:
 
 ```bash
 BLENDER_USER_EXTENSIONS="$PWD/artifacts/gate_blender_user_extensions" \
-blender --background --factory-startup --python tools/profile_user_path.py -- \
+blender --background --factory-startup --python tools/profiling/profile_user_path.py -- \
   --frames 6 --voxel-size 0.08 --max-particles 200000 \
   --collider-subdiv 2 --json-out artifacts/user_path_profile.json
 ```
@@ -82,9 +82,6 @@ Keep source assets in Git:
   entries, runtime acceptance, and preview images
 - clearly labelled distributed examples and validation/review assets under
   `fluidSim_warp_blender51/resources/examples/`
-- curated historical scan reports under `backlog/reports/`
-- review records under `reviews/` when active tasks depend on them or they are
-  deliberately retained as archived provenance
 
 Keep generated output out of Git:
 
@@ -100,7 +97,7 @@ Follow `docs/DEMO_SCENE_CONTRACT.md`. A new or changed `demos/*.blend` must
 reopen at `frame_start`, resolve an authoritative Domain object, initialize a
 non-empty solver from owned sources or seeds, advance through the production
 frame handlers, and publish changing owned output. Add it to
-`tools/check_demo_blends.py` and add focused runtime acceptance for the feature
+`tools/demos/check_demo_blends.py` and add focused runtime acceptance for the feature
 it advertises.
 
 Do not call a static `.blend`, rendered comparison, CPU fixture, benchmark,
