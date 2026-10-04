@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .cache_manager import RESTART_MANAGED_ENTRIES, require_restartable_cache_directory
+from .scene_access import scene_identity
 
 
 def _remove_managed_entry(path: Path) -> None:
@@ -170,7 +171,7 @@ class BakeRun:
                 compressed=bool(getattr(fs, "cache_compress", False)),
             )
         self.scene = scene
-        self.scene_key = production_bake.scene_key(scene)
+        self.scene_key = scene_identity(scene)
         self.controller = production_bake.BakeController(
             backend=backend, progress_callback=progress_callback)
         self._restart_cache: _RestartCacheProtection | None = None

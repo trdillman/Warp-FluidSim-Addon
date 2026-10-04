@@ -14,46 +14,6 @@ from . import common as _runtime
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Export the current simulation frame (surface + particles) to disk"""
 
@@ -69,7 +29,7 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")
@@ -97,12 +57,12 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime_poll(cls)
+        return _runtime._runtime_poll(cls)
 
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         from ..io import cache
 
         try:

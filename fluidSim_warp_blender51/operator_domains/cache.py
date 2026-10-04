@@ -9,54 +9,13 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender.scene_access import scene_identity
 from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 def _scene_is_available(scene, key: int) -> bool:
-    from ..blender.production_bake import scene_key
-
     try:
         pointer = getattr(scene, "as_pointer", None)
         if callable(pointer) and int(pointer()) != int(key):
@@ -67,7 +26,7 @@ def _scene_is_available(scene, key: int) -> bool:
     if scenes is None:
         return True
     try:
-        return any(scene_key(candidate) == int(key) for candidate in scenes)
+        return any(scene_identity(candidate) == int(key) for candidate in scenes)
     except (ReferenceError, TypeError):
         return False
 
@@ -98,7 +57,7 @@ class _FLUIDSIM_OT_production_bake_modal:
         if production_bake.active_bakes():
             cls.poll_message_set("A production bake is already active")
             return False
-        return _runtime_poll(cls)
+        return _runtime._runtime_poll(cls)
 
     def execute(self, context):
         from ..blender.cache_bake import BakeRun
@@ -236,7 +195,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
         if not self.restart_existing:
             return self.execute(context)
         try:
-            self.expected_cache_path = str(_resolved_cache_path(context.scene))
+            self.expected_cache_path = str(_runtime._resolved_cache_path(context.scene))
         except Exception as exc:
             self.report({"ERROR"}, f"Cache path could not be resolved: {exc}")
             return {"CANCELLED"}
@@ -251,7 +210,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
 
     def execute(self, context):
         if self.restart_existing and self.expected_cache_path:
-            current = str(_resolved_cache_path(context.scene))
+            current = str(_runtime._resolved_cache_path(context.scene))
             if current != self.expected_cache_path:
                 self.report(
                     {"ERROR"}, "Cache path changed after confirmation; review Restart again"
@@ -327,7 +286,7 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
         from ..blender.cache_manager import inspect_cache
 
         try:
-            path = _resolved_cache_path(context.scene)
+            path = _runtime._resolved_cache_path(context.scene)
             inspection = inspect_cache(path)
         except Exception as exc:
             self.report({"ERROR"}, f"Cache could not be inspected: {exc}")
@@ -351,7 +310,7 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache, remove_orphans
 
-        path = _resolved_cache_path(context.scene)
+        path = _runtime._resolved_cache_path(context.scene)
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; inspect again")
             return {"CANCELLED"}
@@ -378,7 +337,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
 
     def invoke(self, context, _event):
         try:
-            self.expected_cache_path = str(_resolved_cache_path(context.scene))
+            self.expected_cache_path = str(_runtime._resolved_cache_path(context.scene))
         except Exception as exc:
             self.report({"ERROR"}, f"Cache path could not be resolved: {exc}")
             return {"CANCELLED"}
@@ -393,7 +352,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import free_cache
 
-        path = _resolved_cache_path(context.scene)
+        path = _runtime._resolved_cache_path(context.scene)
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; review Free Cache again")
             return {"CANCELLED"}
@@ -420,7 +379,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         self.expected_source = str(source)
         if not self.destination:
             self.destination = str(source.with_name(source.name + "_moved"))
@@ -436,7 +395,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         from ..blender.cache_manager import move_cache
 
         fs = context.scene.fluidsim
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Move again")
             return {"CANCELLED"}
@@ -462,7 +421,7 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         self.expected_source = str(source)
         self.name = source.name
         return context.window_manager.invoke_props_dialog(self, width=560)
@@ -476,7 +435,7 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
         from ..blender.cache_manager import rename_cache
 
         fs = context.scene.fluidsim
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Rename again")
             return {"CANCELLED"}

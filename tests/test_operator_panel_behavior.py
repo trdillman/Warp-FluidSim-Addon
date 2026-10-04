@@ -503,9 +503,6 @@ class _Layout:
 def test_capacity_dialog_never_displays_scene_mirror_fallback(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
-    session_operators = sys.modules[
-        "fluidSim_warp_blender51.operator_domains.session"
-    ]
     domain_settings = SimpleNamespace()
     scene = SimpleNamespace(
         fluidsim=SimpleNamespace(
@@ -514,7 +511,7 @@ def test_capacity_dialog_never_displays_scene_mirror_fallback(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        session_operators,
+        operators._operator_runtime,
         "_solver_settings",
         lambda: SimpleNamespace(build_settings=lambda _scene: SimpleNamespace()),
     )

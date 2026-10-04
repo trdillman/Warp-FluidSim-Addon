@@ -15,46 +15,6 @@ from . import common as _runtime
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 class FLUIDSIM_OT_use_active_as_domain(bpy.types.Operator):
     """Assign the active mesh as the scene's FluidSim domain bounds object."""
 
@@ -293,7 +253,7 @@ class FLUIDSIM_OT_copy_bake_command(bpy.types.Operator):
             "--cache",
             str(Path(bpy.path.abspath(fs.cache_path)).resolve()),
             "--device",
-            _configured_device(),
+            _runtime._configured_device(),
             "--resume",
             "auto",
             "--checkpoint-interval",

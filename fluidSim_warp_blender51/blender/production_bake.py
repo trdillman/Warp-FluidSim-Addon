@@ -31,6 +31,7 @@ from ..io.checkpoint import (
     write_checkpoint_atomic,
 )
 from ..version import VERSION_STRING
+from .scene_access import scene_identity
 
 
 class BakeStatus(str, Enum):
@@ -239,19 +240,6 @@ _ACTIVE_STATUSES = {
 }
 
 
-def scene_key(scene) -> int:
-    """Stable identity of ``scene`` for bake ownership (its pointer, else ``id``)."""
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return value
-        except (ReferenceError, TypeError, ValueError):
-            pass
-    return id(scene)
-
-
 def _active_cache_path(controller) -> Path | None:
     if getattr(controller, "status", None) not in _ACTIVE_STATUSES:
         return None
@@ -265,7 +253,7 @@ def _active_cache_path(controller) -> Path | None:
 
 def register_active_bake(scene, controller: BakeController) -> None:
     """Give one controller authoritative bake ownership for ``scene``."""
-    key = scene_key(scene)
+    key = scene_identity(scene)
     existing = _ACTIVE_BAKES.get(key)
     if existing is not None and existing[1] is not controller:
         raise RuntimeError("A Production Bake is already active for this scene")
@@ -280,7 +268,7 @@ def register_active_bake(scene, controller: BakeController) -> None:
 
 def active_bake(scene) -> BakeController | None:
     """Return the controller that currently owns ``scene``'s bake workflow."""
-    held = _ACTIVE_BAKES.get(scene_key(scene))
+    held = _ACTIVE_BAKES.get(scene_identity(scene))
     return None if held is None else held[1]
 
 
@@ -300,7 +288,7 @@ def active_bakes() -> tuple[tuple[object, BakeController], ...]:
 
 def clear_active_bake(scene, controller: BakeController | None = None) -> None:
     """Release bake ownership, optionally only for the expected controller."""
-    key = scene_key(scene)
+    key = scene_identity(scene)
     existing = _ACTIVE_BAKES.get(key)
     if existing is None or (controller is not None and existing[1] is not controller):
         return
