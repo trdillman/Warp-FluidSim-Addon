@@ -11,6 +11,7 @@ This glossary names the domain concepts used by architecture reviews and impleme
 - **Replacement Cutover** — the explicit point after successful Admission Preflight where the existing Solver Session is released and replacement GPU allocation begins. Replacement is preflight-atomic, not fully swap-atomic.
 - **Active Domain** — the scene's designated domain object (`scene.fluidsim.domain_object`) and the `fluidsim_domain` settings group on it. Domain settings exist only there; `scene.fluidsim` holds scene-level state. No domain object means "no domain", never a cue to read `scene.fluidsim`.
 - **Scene identity** — the key that names one Blender scene across Python wrappers (the datablock pointer; `id()` only for dead datablocks and test doubles).
+- **Capacity Approval** — the artist's confirmation of one planner-verified capacity option after an Admission Preflight capacity blocker. Applying it is all-or-nothing: every setting is written and read back (Blender clamps out-of-range writes silently, which would break the costed budget), the domain object is resized when the option moves the bounds, and any failure restores every value before the solver retry is attempted.
 
 ## Blender output
 
@@ -38,6 +39,7 @@ This glossary names the domain concepts used by architecture reviews and impleme
 - **Production Cache Bake** (`blender/cache_bake.py`) owns authoritative sequential cache generation and restoration of temporary Blender state. It does not call Preview Playback handlers or Output Publication.
 - **Pending Settings** (`blender/pending_settings.py`) owns the exhaustive lifecycle registry, applied snapshots, pending state/presentation, apply/revert/debounce policy, and depsgraph/undo/load handlers.
 - **Solver Settings** (`blender/solver_settings.py`) owns Blender-authored-value projection only.
+- **Capacity Approval** (`blender/capacity_approval.py`) owns the apply / read-back / resize / rollback transaction for one capacity option. It is a leaf (no `bpy`); `FLUIDSIM_OT_apply_capacity_suggestion` keeps the dialog, the stale-scene and live-budget checks, and the solver retry.
 - **Scene access** (`blender/scene_access.py`) owns the Active Domain accessors (`active_domain_object`, `active_domain_settings`), Scene identity, and the scene custom-property helpers. It is a leaf (no `bpy`, no FluidSim imports), so every module imports it at the top; nothing re-derives the designated domain or a scene's identity.
 
 Dependency direction is one-way: Blender UI/handler adapters call these deep modules; deep modules call Solver Settings, Output Publication, the Solver Session, and `sim`/`io` owners through narrow seams. UI adapters do not reconstruct lifecycle or playback policy, and Output Publication never reacquires solver data while publishing.

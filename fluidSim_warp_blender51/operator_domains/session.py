@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender import capacity_approval
 from ..blender.scene_access import active_domain_object, active_domain_settings, scene_identity
 from . import common as _runtime
 
@@ -120,45 +120,7 @@ class FLUIDSIM_OT_clear_error(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _capacity_suggestion(plan, key):
-    return next(
-        (item for item in getattr(plan, "suggestions", ()) if getattr(item, "key", "") == key), None
-    )
-
-
-def _format_capacity_value(value):
-    if isinstance(value, (tuple, list)):
-        return "(" + ", ".join(f"{float(item):.4g}" for item in value) + ")"
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    if isinstance(value, int):
-        return f"{value:,}"
-    return str(value)
-
-
-def _apply_domain_bounds(scene, minimum, maximum):
-    domain = active_domain_object(scene)
-    if domain is None:
-        raise RuntimeError("The scene has no domain object to resize")
-    if getattr(domain, "parent", None) is not None:
-        raise RuntimeError("Automatic domain-bound adjustment requires an unparented domain")
-    rotations = tuple(float(value) for value in domain.rotation_euler)
-    delta_rotations = tuple(
-        float(value) for value in getattr(domain, "delta_rotation_euler", (0.0, 0.0, 0.0))
-    )
-
-    def angle_distance(value):
-        return abs((value + math.pi) % (2.0 * math.pi) - math.pi)
-
-    if any(angle_distance(value) > 1.0e-6 for value in rotations + delta_rotations):
-        raise RuntimeError("Automatic domain-bound adjustment requires an axis-aligned domain")
-    minimum = tuple(float(value) for value in minimum)
-    maximum = tuple(float(value) for value in maximum)
-    dimensions = tuple(maximum[i] - minimum[i] for i in range(3))
-    if any(value <= 0.0 for value in dimensions):
-        raise RuntimeError("Suggested domain bounds are not valid")
-    domain.location = tuple((minimum[i] + maximum[i]) * 0.5 for i in range(3))
-    domain.dimensions = dimensions
+def _update_view_layer():
     if getattr(bpy.context, "view_layer", None) is not None:
         bpy.context.view_layer.update()
 
@@ -193,7 +155,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     def invoke(self, context, _event):
         plan = _runtime._owned_capacity_plan(context.scene)
-        suggestion = _capacity_suggestion(plan, self.suggestion_key)
+        suggestion = capacity_approval.find_suggestion(plan, self.suggestion_key)
         if suggestion is None:
             self.report({"WARNING"}, "Capacity option is stale; initialize again")
             return {"CANCELLED"}
@@ -215,8 +177,8 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             old_value = getattr(domain_settings, name, None)
             layout.label(
                 text=(
-                    f"{name}: {_format_capacity_value(old_value)} → "
-                    f"{_format_capacity_value(value)}"
+                    f"{name}: {capacity_approval.format_value(old_value)} → "
+                    f"{capacity_approval.format_value(value)}"
                 )
             )
         layout.separator()
@@ -265,7 +227,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             )
             scene_fs.status = "Capacity options changed — review the refreshed warning"
             return {"CANCELLED"}
-        suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
+        suggestion = capacity_approval.find_suggestion(fresh_plan, self.suggestion_key)
         if suggestion is None:
             self.report(
                 {"WARNING"},
@@ -280,56 +242,15 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             self.report({"ERROR"}, message)
             scene_fs.status = message
             return {"CANCELLED"}
-        changes = dict(suggestion.changes)
-        domain_min = changes.pop("domain_min", None)
-        domain_max = changes.pop("domain_max", None)
-        old_values = {
-            name: getattr(domain_settings, name)
-            for name in changes
-            if hasattr(domain_settings, name)
-        }
-        domain = active_domain_object(scene)
-        old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
-        changed = []
         try:
-            for name, value in changes.items():
-                if not hasattr(domain_settings, name):
-                    raise RuntimeError(f"Capacity option cannot apply setting {name!r}")
-                rna = getattr(domain_settings, "bl_rna", None)
-                properties = getattr(rna, "properties", {})
-                rna_property = properties.get(name)
-                if rna_property is not None and rna_property.type == "INT":
-                    value = int(value)
-                setattr(domain_settings, name, value)
-                # RNA clamps out-of-range assignments to the declared
-                # [min, max] silently, so a write can succeed while storing a
-                # different number than the one the dialog costed. Reporting
-                # that as approved would break the budget promise this whole
-                # flow exists to keep -- read back and fail into the rollback.
-                stored = getattr(domain_settings, name)
-                if isinstance(value, float):
-                    matches = math.isclose(stored, value, rel_tol=1e-6)
-                else:
-                    matches = stored == value
-                if not matches:
-                    raise RuntimeError(
-                        f"setting {name!r} was stored as {stored!r} instead of "
-                        f"{value!r}; it is outside the range this build allows"
-                    )
-                changed.append(name)
-            if domain_min is not None or domain_max is not None:
-                settings = _runtime._solver_settings().build_settings(scene)
-                _apply_domain_bounds(
-                    scene,
-                    domain_min if domain_min is not None else settings.domain_min,
-                    domain_max if domain_max is not None else settings.domain_max,
-                )
-                changed.append("domain bounds")
-        except Exception as exc:  # noqa: BLE001
-            for name, value in old_values.items():
-                setattr(domain_settings, name, value)
-            if domain is not None and old_domain is not None:
-                domain.location, domain.dimensions = old_domain
+            changed = capacity_approval.apply_suggestion(
+                domain_settings,
+                active_domain_object(scene),
+                suggestion.changes,
+                build_settings=lambda: _runtime._solver_settings().build_settings(scene),
+                on_transform_changed=_update_view_layer,
+            )
+        except capacity_approval.CapacityApplyError as exc:
             self.report({"ERROR"}, f"Capacity option was not applied: {exc}")
             scene_fs.status = f"Capacity option was not applied: {exc}"
             return {"CANCELLED"}

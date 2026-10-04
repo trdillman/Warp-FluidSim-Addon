@@ -740,6 +740,85 @@ def test_capacity_option_refuses_without_designated_domain(monkeypatch):
     assert fs.status == "Capacity option cannot apply without a designated domain"
 
 
+def _capacity_bounds_scene(monkeypatch, domain_overrides=None):
+    """An operator, scene and domain for an option that resizes the domain."""
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="shrink",
+        label="Tighten the domain",
+        changes={"max_particles": 4_000_000, "domain_min": (0.0, 0.0, 0.0), "domain_max": (2.0, 2.0, 2.0)},
+        estimated_bytes=1024,
+        budget_bytes=2048,
+    )
+    plan = SimpleNamespace(scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    domain_settings = _RnaPropertyGroup(CAPACITY_RNA, max_particles=2_000_000, leaf_capacity=8192)
+    domain = SimpleNamespace(
+        fluidsim_domain=domain_settings,
+        location=(0.0, 0.0, 0.0),
+        dimensions=(4.0, 4.0, 4.0),
+        rotation_euler=(0.0, 0.0, 0.0),
+        parent=None,
+    )
+    for name, value in (domain_overrides or {}).items():
+        setattr(domain, name, value)
+    fs = SimpleNamespace(domain_object=domain, status="Capacity warning")
+    scene = SimpleNamespace(fluidsim=fs)
+    initialized = []
+    bridge = SimpleNamespace(
+        session=lambda: SimpleNamespace(capacity_plan=plan),
+        refresh_capacity_plan=lambda actual: plan,
+        clear_error=lambda actual: None,
+        initialize_session=lambda actual: (
+            initialized.append(actual)
+            or SimpleNamespace(solver=SimpleNamespace(device="cuda:0"))
+        ),
+    )
+    monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
+    monkeypatch.setattr(
+        operators._operator_runtime,
+        "_solver_settings",
+        lambda: SimpleNamespace(
+            build_settings=lambda _scene: SimpleNamespace(
+                domain_min=(0.0, 0.0, 0.0), domain_max=(9.0, 9.0, 9.0)
+            )
+        ),
+    )
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(invoke_props_dialog=lambda actual, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "shrink"
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    return op, context, domain, domain_settings, fs, initialized
+
+
+def test_capacity_option_resizes_the_domain_then_retries(monkeypatch):
+    op, context, domain, domain_settings, fs, initialized = _capacity_bounds_scene(monkeypatch)
+
+    assert op.execute(context) == {"FINISHED"}
+
+    assert domain_settings.max_particles == 4_000_000
+    assert domain.location == (1.0, 1.0, 1.0)
+    assert domain.dimensions == (2.0, 2.0, 2.0)
+    assert initialized == [context.scene]
+
+
+def test_capacity_option_that_cannot_resize_the_domain_changes_nothing(monkeypatch):
+    op, context, domain, domain_settings, fs, initialized = _capacity_bounds_scene(
+        monkeypatch, {"parent": object()}
+    )
+
+    assert op.execute(context) == {"CANCELLED"}
+
+    assert domain_settings.max_particles == 2_000_000
+    assert (domain.location, domain.dimensions) == ((0.0, 0.0, 0.0), (4.0, 4.0, 4.0))
+    assert initialized == []
+    assert fs.status.startswith("Capacity option was not applied:")
+    assert "unparented" in fs.status
+
+
 def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
     """Guard the assumption `_Layout` is built on.
 
