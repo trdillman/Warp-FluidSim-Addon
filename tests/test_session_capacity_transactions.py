@@ -111,6 +111,7 @@ def _active_reset(
 
     def plan_scene(
             _scene, settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         assert additional_transaction_bytes == expected_live_solver_bytes
         planned.append(int(settings.max_particles))
@@ -394,6 +395,7 @@ def test_reinitialize_bypassed_memory_plan_retains_truth_after_candidate_failure
 
     def plan_scene(
             _scene, _settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         planned_residencies.append(additional_transaction_bytes)
         return snapshot
@@ -427,7 +429,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     second = SimpleNamespace()
     plan = SimpleNamespace(scene_signature="identical-content", suggestions=(1,))
     sess = bridge.Session()
-    sess._set_capacity_plan(first, plan, memory_bypassed=True)
+    sess.set_capacity_plan(first, plan, memory_bypassed=True)
     sess.particle_capacity_notice_scene_identity = bridge.scene_identity(first)
 
     assert sess.capacity_plan_for_scene(first) is plan
@@ -441,7 +443,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     assert sess.capacity_plan_for_scene(first) is None
 
     plan.scene_signature = "identical-content"
-    sess._set_capacity_plan(first, plan, memory_bypassed=True)
+    sess.set_capacity_plan(first, plan, memory_bypassed=True)
     sess.release(first)
     assert sess.capacity_plan is None
     assert sess.capacity_plan_scene_identity is None
@@ -451,7 +453,7 @@ def test_capacity_plan_owner_signature_and_release_load_invalidation(monkeypatch
     assert sess.particle_capacity_notice_for_scene(first) == ""
 
     global_session = bridge.session()
-    global_session._set_capacity_plan(first, plan, memory_bypassed=True)
+    global_session.set_capacity_plan(first, plan, memory_bypassed=True)
     from fluidSim_warp_blender51.blender import pending_settings
     pending_settings._on_load_pre("")
     assert global_session.capacity_plan is None
@@ -486,6 +488,7 @@ def test_first_initialize_plans_with_exactly_zero_live_residency(monkeypatch):
 
     def plan_scene(
             _scene, settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         planned_models.append((
             int(settings.max_particles), additional_transaction_bytes))
@@ -541,6 +544,7 @@ def test_cross_scene_initialize_charges_existing_solver_residency(monkeypatch):
 
     def plan_scene(
             _scene, _settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         seen_residencies.append(additional_transaction_bytes)
         return SimpleNamespace(capacity_plan=plan, seeds=())
@@ -567,10 +571,11 @@ def test_owned_reset_refresh_uses_runtime_capacity_and_exact_residency(monkeypat
     calls = []
     original = SimpleNamespace(scene_signature="owned-refresh", suggestions=())
     plan = SimpleNamespace(scene_signature="owned-refresh", suggestions=())
-    sess._set_capacity_plan(scene, original, operation="RESET")
+    sess.set_capacity_plan(scene, original, operation="RESET")
 
     def plan_scene(
             _scene, settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         calls.append((int(settings.max_particles), additional_transaction_bytes))
         return SimpleNamespace(capacity_plan=plan)
@@ -599,12 +604,13 @@ def test_owned_reinitialize_refresh_uses_authored_reserve_after_runtime_growth(
         scene_signature="capacity-1024", suggestions=(suggestion,),
         blockers=(SimpleNamespace(code="PARTICLE_CAPACITY"),),
     )
-    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    sess.set_capacity_plan(scene, original, operation="REINITIALIZE")
     expected_signature = sess.capacity_plan_signature_for_scene(scene)
     calls = []
 
     def plan_scene(
             _scene, settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         capacity = int(settings.max_particles)
         calls.append((capacity, additional_transaction_bytes))
@@ -688,7 +694,7 @@ def test_capacity_policy_edit_does_not_discard_another_scenes_plan(monkeypatch):
     )))
     plan = SimpleNamespace(scene_signature="owner", suggestions=())
     sess = bridge.session()
-    sess._set_capacity_plan(owner, plan)
+    sess.set_capacity_plan(owner, plan)
     from fluidSim_warp_blender51.blender import pending_settings
     monkeypatch.setattr(pending_settings, "_tag_view3d_redraw", lambda: None)
 
@@ -717,6 +723,7 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
 
     def plan_scene(
             _scene, _settings, _resources, *,
+            depsgraph=None,
             additional_transaction_bytes=0):
         planned_residencies.append(additional_transaction_bytes)
         return snapshot

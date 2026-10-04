@@ -1064,7 +1064,7 @@ def test_initialize_failure_releases_partial_session(monkeypatch):
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_preflight",
         lambda *_args, **_kwargs: (
-            snapshot, {"safe": True, "estimated_bytes": 0}, None))
+            snapshot, None))
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_configure_candidate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -1118,7 +1118,7 @@ def test_constructor_failure_collects_unassigned_solver_cycle(monkeypatch):
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_preflight",
         lambda *_args, **_kwargs: (
-            snapshot, {"safe": True, "estimated_bytes": 0}, None))
+            snapshot, None))
 
     with pytest.raises(RuntimeError, match="constructor failed"):
         sess.initialize(scene)

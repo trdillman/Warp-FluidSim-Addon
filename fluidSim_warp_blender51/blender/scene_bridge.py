@@ -45,7 +45,6 @@ class Session:
         self.benchmark_compare = None
         self.error = ""
         self.device = None
-        self.memory_assessment = {}
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
         self.capacity_plan_operation = None
@@ -88,7 +87,7 @@ class Session:
             return binding
         return f"{binding}|initial-reserve={int(authored_reserve)}"
 
-    def _set_capacity_plan(
+    def set_capacity_plan(
             self, scene, plan, *, operation=None, memory_bypassed=False):
         if operation is None:
             operation = "REINITIALIZE" if self.owns_scene(scene) else "INITIALIZE"
@@ -152,6 +151,50 @@ class Session:
             f"Initial Reserve {authored:,} will be allocated on Initialize; "
             f"the auto-growth hard limit remains {MAX_AUTO_PARTICLES:,}.")
 
+    def begin_run(self, start_frame=1, *, reported_growth_capacity=None):
+        """Start one run's bookkeeping afresh.
+
+        The frame cursor, cache coverage and frame statistics describe a single
+        run of the solver. Every path that installs or retires a solver begins
+        a new run here, so these fields cannot drift apart. The growth notice
+        marker is only restarted when ``reported_growth_capacity`` is given.
+        """
+        self.start_frame = int(start_frame)
+        self.cache_written_start = None
+        self.cache_written_end = None
+        self.cache_settings_records = {}
+        self.last_frame = -1
+        self.frame_stats = []
+        if reported_growth_capacity is not None:
+            self.last_reported_growth_capacity = int(reported_growth_capacity)
+
+    def bind_scene(self, identity, key):
+        """Bind the session to the scene identity and content digest it owns."""
+        self.scene_identity = identity
+        self.scene_key = key
+
+    def install_solver(self, candidate, *, profiler, device, scene_inputs):
+        """Replacement Cutover: the single swap of the authoritative solver.
+
+        ``candidate`` has already passed admission. The retired solver, its
+        device memory and the superseded scene inputs are released here.
+        """
+        old_solver = self.solver
+        old_inputs = self.scene_inputs
+        self.solver = candidate
+        self.profiler = profiler
+        self.device = device
+        self.scene_inputs = scene_inputs
+        if old_inputs is not scene_inputs:
+            old_inputs.clear()
+        if old_solver is not None:
+            retired_device = getattr(old_solver, "device", None)
+            release = getattr(old_solver, "release", None)
+            if callable(release):
+                release()
+            from ..sim.memory_safety import release_cuda_memory
+            release_cuda_memory(retired_device)
+
     def _clear_runtime(self):
         solver = self.solver
         device = getattr(solver, "device", None) or self.device
@@ -160,17 +203,10 @@ class Session:
             if hasattr(solver, "release"):
                 solver.release()
         self.profiler = None
-        self.start_frame = 1
-        self.cache_written_start = None
-        self.cache_written_end = None
-        self.cache_settings_records = {}
-        self.last_frame = -1
-        self.frame_stats = []
+        self.begin_run(reported_growth_capacity=0)
         self.scene_inputs.clear()
         self.device = None
-        self.last_reported_growth_capacity = 0
-        self.scene_identity = None
-        self.scene_key = ""
+        self.bind_scene(None, "")
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
         del solver
@@ -183,7 +219,6 @@ class Session:
 
     def clear_error(self, scene=None):
         self.error = ""
-        self.memory_assessment = {}
         if scene is not None:
             scene_set(scene, ERROR_SCENE_KEY, "")
 

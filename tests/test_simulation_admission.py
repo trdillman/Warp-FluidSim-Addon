@@ -34,15 +34,28 @@ class _Session:
         self.last_reported_growth_capacity = 0
         self.profiler = None
         self.device = "cuda:0"
-        self.memory_assessment = {}
         self.scene_identity = 101
         self.scene_key = "old-key"
         self.start_frame = 1
-        self.cache_written_start = None
-        self.cache_written_end = None
-        self.cache_settings_records = {}
-        self.last_frame = -1
-        self.frame_stats = []
+        self.run_begins = []
+        self.bound = []
+
+    # The Session interface Admission may use. The real behaviour of the
+    # three runtime methods is pinned in test_session_runtime.py.
+    def install_solver(self, candidate, *, profiler, device, scene_inputs):
+        old = self.solver
+        self.solver, self.profiler, self.device = candidate, profiler, device
+        self.scene_inputs = scene_inputs
+        if old is not None:
+            old.release()
+
+    def begin_run(self, start_frame=1, *, reported_growth_capacity=None):
+        self.start_frame = start_frame
+        self.run_begins.append((start_frame, reported_growth_capacity))
+
+    def bind_scene(self, identity, key):
+        self.bound.append((identity, key))
+        self.scene_identity, self.scene_key = identity, key
 
     def owns_scene(self, _scene):
         return self.solver is not None
@@ -130,7 +143,7 @@ def test_candidate_failures_preserve_live_session_and_post_cutover_failure_clean
     monkeypatch.setattr(
         owner, "_preflight",
         lambda *_args, **_kwargs: (
-            snapshot, {"safe": True, "estimated_bytes": 1}, None))
+            snapshot, None))
 
     def fail(name):
         raise RuntimeError(f"{name} failed")
@@ -181,7 +194,7 @@ def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
     def preflight(*_args, **_kwargs):
         calls.append("snapshot")
         events.append("preflight")
-        return snapshot, {"safe": True, "estimated_bytes": 1}, None
+        return snapshot, None
 
     monkeypatch.setattr(owner, "_preflight", preflight)
     candidate = _Runtime("replacement")

@@ -1052,7 +1052,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
 
     def preflight(_owner, _scene, **kwargs):
         preflight_calls.append(kwargs)
-        return snapshot, {"safe": True}, None
+        return snapshot, None
 
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_preflight", preflight
@@ -2858,7 +2858,7 @@ def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     )
     first = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
     second = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
-    bridge.session()._set_capacity_plan(first, plan)
+    bridge.session().set_capacity_plan(first, plan)
     monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
 
     assert (
@@ -2942,7 +2942,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
     )
     planned = []
 
-    def plan_scene(_scene, settings, _resources, *, additional_transaction_bytes=0):
+    def plan_scene(_scene, settings, _resources, *, depsgraph=None, additional_transaction_bytes=0):
         capacity = int(settings.max_particles)
         planned.append((capacity, additional_transaction_bytes))
         suggestion = SimpleNamespace(
@@ -2965,7 +2965,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
 
     monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     original = plan_scene(scene, SimpleNamespace(max_particles=1024), {}).capacity_plan
-    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    sess.set_capacity_plan(scene, original, operation="REINITIALIZE")
     expected_signature = sess.capacity_plan_signature_for_scene(scene)
     initialized = []
     monkeypatch.setattr(
@@ -3010,7 +3010,7 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     )
     fs = SimpleNamespace(max_particles=8, status="")
     scene = SimpleNamespace(fluidsim=fs)
-    bridge.session()._set_capacity_plan(scene, original)
+    bridge.session().set_capacity_plan(scene, original)
     monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
     context = SimpleNamespace(
         scene=scene,
@@ -3024,7 +3024,7 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     monkeypatch.setattr(
         bridge,
         "refresh_capacity_plan",
-        lambda actual: bridge.session()._set_capacity_plan(actual, changed),
+        lambda actual: bridge.session().set_capacity_plan(actual, changed),
     )
 
     assert op.execute(context) == {"CANCELLED"}

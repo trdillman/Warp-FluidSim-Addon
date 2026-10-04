@@ -349,8 +349,8 @@ class SimulationAdmission:
         self._capture_applied_state = applied_state_capture
         self._apply_reset_settings = reset_settings_apply
 
-    def _capture(
-            self, scene, settings, resources, depsgraph=None, *,
+    def _plan_scene(
+            self, scene, settings, resources, *, depsgraph=None,
             additional_transaction_bytes=0):
         from . import cache_identity
 
@@ -362,30 +362,13 @@ class SimulationAdmission:
             additional_transaction_bytes=additional_transaction_bytes,
         )
 
-    def _plan_scene(
-            self, scene, settings, resources, depsgraph=None, *,
-            additional_transaction_bytes=0):
-        return self._capture(
-            scene, settings, resources, depsgraph,
-            additional_transaction_bytes=additional_transaction_bytes)
-
-    def _call_plan_scene(
-            self, scene, settings, resources, *, depsgraph=None,
-            additional_transaction_bytes=0):
-        kwargs = {
-            "additional_transaction_bytes": additional_transaction_bytes,
-        }
-        if depsgraph is not None:
-            kwargs["depsgraph"] = depsgraph
-        return self._plan_scene(scene, settings, resources, **kwargs)
-
     def _replan_snapshot(
             self, snapshot, settings, resources, *, scene=None,
             depsgraph=None, additional_transaction_bytes=0):
         if not hasattr(snapshot, "footprints"):
             if scene is None:
                 return snapshot
-            return self._call_plan_scene(
+            return self._plan_scene(
                 scene, settings, resources, depsgraph=depsgraph,
                 additional_transaction_bytes=additional_transaction_bytes)
         return replan_snapshot(
@@ -418,7 +401,7 @@ class SimulationAdmission:
             settings = replace(settings, max_particles=int(runtime_capacity))
         resources = vram_snapshot(settings.device)
         live_solver_bytes = self._live_solver_bytes()
-        snapshot = self._call_plan_scene(
+        snapshot = self._plan_scene(
             scene, settings, resources, depsgraph=depsgraph,
             additional_transaction_bytes=live_solver_bytes)
         snapshot.settings = settings
@@ -454,7 +437,7 @@ class SimulationAdmission:
                     snapshot = candidate_snapshot
                 else:
                     snapshot = original_snapshot
-            self.session._set_capacity_plan(
+            self.session.set_capacity_plan(
                 scene, snapshot.capacity_plan, operation=operation,
                 memory_bypassed=ignore_memory_safeguard)
             integrity = _integrity_blockers(snapshot.capacity_plan)
@@ -495,7 +478,7 @@ class SimulationAdmission:
             snapshot.settings = settings
             if not hasattr(snapshot, "frame_start"):
                 snapshot.frame_start = int(getattr(scene, "frame_start", 1))
-            self.session._set_capacity_plan(
+            self.session.set_capacity_plan(
                 scene, snapshot.capacity_plan, operation=operation,
                 memory_bypassed=ignore_memory_safeguard)
             late_integrity = _integrity_blockers(snapshot.capacity_plan)
@@ -509,17 +492,7 @@ class SimulationAdmission:
                     raise RuntimeError(reset_memory_blocking_message(
                         snapshot.capacity_plan))
                 raise RuntimeError(capacity_blocking_message(late_memory))
-            memory_assessment = {
-                "safe": not bool(late_memory),
-                "estimated_bytes": int(getattr(
-                    snapshot.capacity_plan, "estimated_bytes", 0)),
-                "budget_bytes": int(getattr(
-                    snapshot.capacity_plan, "budget_bytes", 0)),
-                "recommended": tuple(getattr(
-                    snapshot.capacity_plan, "suggestions", ())),
-                "resources": dict(resources),
-            }
-            return snapshot, memory_assessment, initial_growth
+            return snapshot, initial_growth
         except Exception:
             self._release_snapshot(snapshot)
             raise
@@ -538,11 +511,11 @@ class SimulationAdmission:
                 max_particles=int(self.session.solver.particles.capacity))
         from ..sim.memory_safety import vram_snapshot
         resources = vram_snapshot(settings.device)
-        snapshot = self._call_plan_scene(
+        snapshot = self._plan_scene(
             scene, settings, resources, depsgraph=depsgraph,
             additional_transaction_bytes=self._live_solver_bytes())
         try:
-            return self.session._set_capacity_plan(
+            return self.session.set_capacity_plan(
                 scene, snapshot.capacity_plan, operation=operation)
         finally:
             self._release_snapshot(snapshot)
@@ -608,25 +581,13 @@ class SimulationAdmission:
 
     def _commit_solver_replacement(
             self, candidate, snapshot, *, profiler, settings):
-        old_solver = self.session.solver
-        old_inputs = self.session.scene_inputs
         transfer = getattr(snapshot, "transfer_scene_inputs", None)
         new_inputs = (
             transfer() if callable(transfer)
-            else getattr(snapshot, "scene_inputs", old_inputs))
-        self.session.solver = candidate
-        self.session.profiler = profiler
-        self.session.device = settings.device
-        self.session.scene_inputs = new_inputs
-        if old_inputs is not new_inputs:
-            old_inputs.clear()
-        if old_solver is not None:
-            device = getattr(old_solver, "device", None)
-            release = getattr(old_solver, "release", None)
-            if callable(release):
-                release()
-            from ..sim.memory_safety import release_cuda_memory
-            release_cuda_memory(device)
+            else getattr(snapshot, "scene_inputs", self.session.scene_inputs))
+        self.session.install_solver(
+            candidate, profiler=profiler, device=settings.device,
+            scene_inputs=new_inputs)
 
     def _prepare_outputs(self, scene):
         from . import output_publication
@@ -664,7 +625,7 @@ class SimulationAdmission:
             operation = (
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
-            snapshot, memory_assessment, initial_growth = self._preflight(
+            snapshot, initial_growth = self._preflight(
                 scene, depsgraph=depsgraph, operation=operation,
                 ignore_memory_safeguard=ignore_memory_safeguard)
             validate = getattr(snapshot, "assert_evaluation_valid", None)
@@ -687,31 +648,26 @@ class SimulationAdmission:
                 candidate, snapshot, profiler=profiler, settings=settings)
             replacement_committed = True
             candidate = None
-            self.session.memory_assessment = memory_assessment
-            self.session.scene_identity = getattr(
-                snapshot, "scene_identity", None)
-            if self.session.scene_identity is None:
-                self.session.scene_identity = self._scene_identity(scene)
-            self.session.scene_key = getattr(snapshot, "scene_key", None)
-            if self.session.scene_key is None:
-                self.session.scene_key = cache_identity.scene_key(scene)
-            self.session.start_frame = int(getattr(
-                snapshot, "frame_start", getattr(scene, "frame_start", 1)))
-            self.session.cache_written_start = None
-            self.session.cache_written_end = None
-            self.session.cache_settings_records = {}
-            self.session.last_frame = -1
-            self.session.frame_stats = []
+            identity = getattr(snapshot, "scene_identity", None)
+            if identity is None:
+                identity = self._scene_identity(scene)
+            key = getattr(snapshot, "scene_key", None)
+            if key is None:
+                key = cache_identity.scene_key(scene)
+            self.session.bind_scene(identity, key)
+            self.session.begin_run(
+                int(getattr(
+                    snapshot, "frame_start", getattr(scene, "frame_start", 1))),
+                reported_growth_capacity=(
+                    None if initial_growth is None else initial_growth[1]))
             self._prepare_outputs(scene)
             fs = scene.fluidsim
             if initial_growth is not None:
-                self.session.last_reported_growth_capacity = int(initial_growth[1])
                 fs.status = (
                     "Solver ready — particle capacity grew "
                     f"{initial_growth[0]:,} → {initial_growth[1]:,}")
             else:
                 fs.status = "Solver ready"
-            self.session.memory_assessment = {}
             self.session.clear_error(scene)
             self._capture_applied_state(scene, self.session)
             self._publish_effect_snapshot(scene, snapshot)
@@ -740,7 +696,7 @@ class SimulationAdmission:
         replacement_committed = False
         snapshot = None
         try:
-            snapshot, _memory, replacement_growth = self._preflight(
+            snapshot, replacement_growth = self._preflight(
                 scene, depsgraph=depsgraph,
                 runtime_capacity=runtime_capacity, operation="RESET")
             settings = snapshot.settings
@@ -752,13 +708,12 @@ class SimulationAdmission:
                 settings=settings)
             replacement_committed = True
             candidate = None
-            self.session.start_frame = int(getattr(
-                snapshot, "frame_start", getattr(scene, "frame_start", 1)))
-            self.session.cache_written_start = None
-            self.session.cache_written_end = None
-            self.session.cache_settings_records = {}
-            self.session.last_frame = -1
-            self.session.frame_stats = []
+            self.session.begin_run(
+                int(getattr(
+                    snapshot, "frame_start", getattr(scene, "frame_start", 1))),
+                reported_growth_capacity=(
+                    None if replacement_growth is None
+                    else replacement_growth[1]))
             self.session.clear_error(scene)
             from . import output_publication
             output_publication.update_outputs(scene, self.session)
@@ -767,8 +722,6 @@ class SimulationAdmission:
             if replacement_growth is None:
                 scene.fluidsim.status = "Simulation reset"
             else:
-                self.session.last_reported_growth_capacity = int(
-                    replacement_growth[1])
                 scene.fluidsim.status = (
                     "Simulation reset — particle capacity grew "
                     f"{replacement_growth[0]:,} → {replacement_growth[1]:,}")

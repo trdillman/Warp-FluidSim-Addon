@@ -480,7 +480,7 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
     solver.particles = SimpleNamespace(capacity=4096)
     old_plan = SimpleNamespace(scene_signature="old")
     new_plan = SimpleNamespace(scene_signature="new")
-    sess._set_capacity_plan(scene, old_plan, memory_bypassed=True)
+    sess.set_capacity_plan(scene, old_plan, memory_bypassed=True)
     refreshed = []
     timer_callbacks = []
     bridge.bpy.app.timers = SimpleNamespace(register=lambda callback, **_kwargs: (
@@ -488,7 +488,7 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
 
     def refresh(actual):
         refreshed.append(actual)
-        return sess._set_capacity_plan(actual, new_plan)
+        return sess.set_capacity_plan(actual, new_plan)
 
     monkeypatch.setattr(sess, "refresh_capacity_plan", refresh)
     scene.fluidsim.domain_object.fluidsim_domain.max_particles = 2048

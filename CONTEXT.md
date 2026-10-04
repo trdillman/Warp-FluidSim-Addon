@@ -32,7 +32,7 @@ This glossary names the domain concepts used by architecture reviews and impleme
 ## Module ownership and dependency direction
 
 - **Simulation Admission** (`blender/simulation_admission.py`) owns the authored-scene-to-running-Solver-Session transaction, coherent Admission Snapshot, preflight, Replacement Cutover, and failure cleanup.
-- **Solver Session** (`blender/scene_bridge.py`) owns only the live solver runtime, direct scene synchronization and stepping, frame statistics, errors, teardown, and its established lifecycle compatibility functions.
+- **Solver Session** (`blender/scene_bridge.py`) owns only the live solver runtime, direct scene synchronization and stepping, frame statistics, errors, teardown, and its established lifecycle compatibility functions. It also owns every write to its own runtime fields: Simulation Admission performs Replacement Cutover through `install_solver`, restarts per-run bookkeeping with `begin_run`, and binds the scene with `bind_scene`; it never assigns Session fields (`tests/test_session_runtime.py` guards this).
 - **Output Publication** (`blender/output_publication.py`) owns persistent output objects/datablocks, payload adaptation, preparation, publication, materials, attributes, capacity/schema, and visibility. `viewport_overlay.py` only draws diagnostics.
 - **Playback** (`blender/playback.py`) owns Preview/Cache Playback selection, timeline interpretation, catch-up/desynchronization, rewind delegation, render-restore and re-entry suppression, and playback handlers.
 - **Production Cache Bake** (`blender/cache_bake.py`) owns authoritative sequential cache generation and restoration of temporary Blender state. It does not call Preview Playback handlers or Output Publication.
