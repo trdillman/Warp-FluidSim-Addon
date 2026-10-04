@@ -976,7 +976,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     from fluidSim_warp_blender51.blender import effects
     monkeypatch.setattr(effects, "build_effect_stack_for_admission", lambda scene: ())
     monkeypatch.setattr(effects, "publish_admitted_effects", lambda scene, instances: None)
-    import fluidSim_warp_blender51.blender.sources as sources
+    importlib.import_module("fluidSim_warp_blender51.blender.sources")
     import fluidSim_warp_blender51.blender.output_publication as output_publication
     from fluidSim_warp_blender51.sim.solver import SolverSettings
 
@@ -1342,7 +1342,7 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
         )
     )
     addon = _reload_module("fluidSim_warp_blender51")
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     pending_settings = _reload_module(
         "fluidSim_warp_blender51.blender.pending_settings"
     )
@@ -3162,7 +3162,7 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     probe_ops = [op for op in panel.layout.operators
                  if op["id"] == "fluidsim.refresh_runtime_probe"]
     assert probe_ops and probe_ops[0].get("text")
-    joined = "".join(l["text"] for l in panel.layout.labels)
+    joined = "".join(label["text"] for label in panel.layout.labels)
     assert long_status[-20:] in joined
 
 
@@ -3180,7 +3180,7 @@ def test_status_panel_names_the_loaded_build(monkeypatch):
     panel = ui_scene.FLUIDSIM_PT_scene_control()
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-    joined = " ".join(l["text"] for l in panel.layout.labels)
+    joined = " ".join(label["text"] for label in panel.layout.labels)
     assert f"FluidSim {VERSION_STRING}" in joined
     assert "loaded from" in joined
 
@@ -3258,7 +3258,7 @@ def test_status_hub_is_read_only_with_live_strip(monkeypatch):
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
 
-    labels = "".join(l["text"] for l in panel.layout.labels)
+    labels = "".join(label["text"] for label in panel.layout.labels)
     # State name is shown.
     assert "Live Preview" in labels
     # Labeled runtime recovery (from Task 0.4) is retained.
@@ -4250,6 +4250,7 @@ def test_prepare_workspace_leaves_a_ready_layout_alone_but_opens_the_sidebar(
         "W",
         (("VIEW_3D", 1000, 800), ("DOPESHEET_EDITOR", 1000, 80), ("OUTLINER", 200, 400)),
     )
+    workspace.screens[0].areas[1].ui_type = "TIMELINE"
     env.ui_header.prepare_workspace(workspace)
     areas = workspace.screens[0].areas
     assert all(a.type_changes == [] for a in areas)

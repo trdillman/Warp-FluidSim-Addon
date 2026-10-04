@@ -389,24 +389,82 @@ def _cove_depth(p):
     return depth
 
 
+@lru_cache(maxsize=1)
+def _stack_triangles():
+    """The stack surface using Blender Mesh's quad tessellation rule.
+
+    Blender starts with diagonal 0-2 and flips only when the two triangle
+    normals oppose. Keep the generated polygon mesh and solver unchanged.
+    """
+    mesh = stack_mesh()
+    triangles = []
+    for face in mesh.faces:
+        if len(face) == 3:
+            triangles.append(mesh.verts[list(face)])
+        else:
+            assert len(face) == 4
+            a, b, c, d = mesh.verts[list(face)].astype(np.float32)
+            flip = np.dot(np.cross(b - a, c - a), np.cross(d - a, c - a)) > 0
+            indices = ((0, 1, 3), (1, 2, 3)) if flip else ((0, 1, 2), (0, 2, 3))
+            triangles.extend(mesh.verts[[face[i] for i in tri]] for tri in indices)
+    result = np.asarray(triangles)
+    result.setflags(write=False)
+    return result
+
+
+def _triangle_surface_depth(points, triangles):
+    """Signed Euclidean surface distance, positive in a closed triangle mesh.
+
+    Accumulate solid angles for the inside test and the nearest plane/edge
+    distance. Stream triangles to avoid a points-by-triangles allocation.
+    """
+    best = np.full(len(points), np.inf)
+    winding = np.zeros(len(points))
+    for a, b, c in triangles:
+        ab, ac = b - a, c - a
+        normal = np.cross(ab, ac)
+        normal2 = np.dot(normal, normal)
+        if normal2 == 0:
+            raise ValueError("Degenerate stack triangle")
+        ap = points - a
+        plane = (ap @ normal) / normal2
+        projected = ap - plane[:, None] * normal
+        d00, d01, d11 = np.dot(ab, ab), np.dot(ab, ac), np.dot(ac, ac)
+        d20, d21 = projected @ ab, projected @ ac
+        determinant = d00 * d11 - d01 * d01
+        u = (d11 * d20 - d01 * d21) / determinant
+        v = (d00 * d21 - d01 * d20) / determinant
+        on_face = (u >= 0) & (v >= 0) & (u + v <= 1)
+        best = np.minimum(best, np.where(on_face, plane * plane * normal2, np.inf))
+        for start, end in ((a, b), (b, c), (c, a)):
+            edge = end - start
+            fraction = np.clip(((points - start) @ edge) / np.dot(edge, edge), 0, 1)
+            delta = points - (start + fraction[:, None] * edge)
+            best = np.minimum(best, np.einsum("ij,ij->i", delta, delta))
+
+        va, vb, vc = a - points, b - points, c - points
+        la, lb, lc = (np.linalg.norm(vector, axis=1) for vector in (va, vb, vc))
+        numerator = np.einsum("ij,ij->i", va, np.cross(vb, vc))
+        denominator = (la * lb * lc + np.einsum("ij,ij->i", va, vb) * lc
+                       + np.einsum("ij,ij->i", vb, vc) * la
+                       + np.einsum("ij,ij->i", vc, va) * lb)
+        winding += 2 * np.arctan2(numerator, denominator)
+    distance = np.sqrt(best)
+    return np.where(np.abs(winding) > 2 * np.pi, distance, -distance)
+
+
 def _stack_depth(p):
-    zs, scale = stack_rings()
-    cx, cy = STACK_CENTER
-    ax, ay = STACK_AXES
-    dx, dy, z = (p[:, 0] - cx) / ax, (p[:, 1] - cy) / ay, p[:, 2]
-    rho = np.hypot(dx, dy)
-    ang = np.mod(np.arctan2(dy, dx), 2 * np.pi) * STACK_SIDES / (2 * np.pi)
-    s0 = np.floor(ang).astype(np.int64) % STACK_SIDES
-    s1, fs = (s0 + 1) % STACK_SIDES, ang - np.floor(ang)
-    r0 = np.clip(np.searchsorted(zs, z) - 1, 0, len(zs) - 2)
-    fz = np.clip((z - zs[r0]) / (zs[r0 + 1] - zs[r0]), 0.0, 1.0)
-
-    def ring(r):
-        return scale[r, s0] * (1 - fs) + scale[r, s1] * fs
-
-    boundary = ring(r0) * (1 - fz) + ring(r0 + 1) * fz
-    radial = (boundary - rho) * min(ax, ay)
-    return np.minimum(radial, np.minimum(z - BASE_Z, STACK_TOP - z))
+    if not np.isfinite(p).all():
+        raise ValueError("Non-finite particle position")
+    triangles = _stack_triangles()
+    # A closed surface cannot contain a point outside its bounding box.
+    lo, hi = triangles.min(axis=(0, 1)), triangles.max(axis=(0, 1))
+    candidates = np.flatnonzero(((p >= lo) & (p <= hi)).all(axis=1))
+    depth = np.full(len(p), -np.inf)
+    for start in range(0, len(candidates), 4096):
+        ids = candidates[start:start + 4096]
+        depth[ids] = _triangle_surface_depth(p[ids], triangles)
+    return depth
 
 
 def solid_depth(points):
