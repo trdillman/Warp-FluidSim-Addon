@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fluidSim_warp_blender51 import registration
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -45,9 +47,10 @@ def test_controller_snapshot_uses_matrix_and_stable_object_name_not_pointer():
 
 
 def test_root_registration_includes_effect_scene_model():
-    source = (ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert "effects.register" in source
-    assert "effects.unregister" in source
+    registered = {
+        step.module for step in registration.STEPS if step.register and step.unregister
+    }
+    assert "blender.effects" in registered
 
 
 def test_admission_uses_effect_stack_and_fails_closed_before_cutover():

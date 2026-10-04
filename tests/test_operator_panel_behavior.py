@@ -1589,7 +1589,7 @@ def test_solver_mutation_operators_are_disabled_during_production_bake(monkeypat
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
     context = SimpleNamespace(scene=scene)
-    operators._bridge().session().solver = object()
+    operators._operator_runtime._bridge().session().solver = object()
     controller = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
     production_bake.register_active_bake(scene, controller)
     monkeypatch.setattr(operators._operator_runtime, "_runtime_poll", lambda _cls: True)

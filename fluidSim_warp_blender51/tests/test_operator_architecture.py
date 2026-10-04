@@ -46,8 +46,10 @@ def test_operator_classes_are_owned_by_named_capability_modules():
 
     assert actual_owners == expected_owners
     assert len(class_names) == len(set(class_names))
+    # The facade discovers operators; naming one there would be a second list.
+    assert class_names
     facade = FACADE.read_text(encoding="utf-8")
-    assert all(name in facade for name in class_names)
+    assert not [name for name in class_names if name in facade]
 
 
 def _runtime_pass_throughs(source: str) -> list[str]:

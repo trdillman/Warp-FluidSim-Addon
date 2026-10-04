@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fluidSim_warp_blender51 import registration
+
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "blender" / "effect_ui.py"
 
@@ -62,13 +64,13 @@ def test_artist_mode_hides_raw_kernel_plumbing():
 
 def test_legacy_public_panels_are_removed_and_v2_ui_registered():
     panels = (ROOT / "panels.py").read_text(encoding="utf-8")
-    root = (ROOT / "__init__.py").read_text(encoding="utf-8")
     classes_block = panels.split("CLASSES = (", 1)[1].split(")\n\n\ndef register", 1)[0]
     assert "FLUIDSIM_PT_snippets" not in classes_block
     assert "FLUIDSIM_PT_snippet_editor" not in classes_block
     assert "FLUIDSIM_PT_snippet_shortcuts" not in classes_block
-    assert "effect_ui.register" in root
-    assert "effect_ui.unregister" in root
+    assert "blender.effect_ui" in {
+        step.module for step in registration.STEPS if step.register and step.unregister
+    }
 
 
 def test_panel_draw_path_never_mutates_the_active_effect_index():
@@ -86,9 +88,13 @@ def test_package_import_reads_the_validated_installed_archive_not_report_metadat
 
 
 def test_no_retired_snippet_operator_is_registered():
-    source = (ROOT / "operators.py").read_text(encoding="utf-8")
-    classes_block = source.split("CLASSES = (", 1)[1].split(")\n\n\ndef register", 1)[0]
-    assert "FLUIDSIM_OT_snippet_" not in classes_block
+    # ``operators.CLASSES`` is every operator class the capability modules define.
+    domain_sources = [
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "operator_domains").glob("*.py"))
+    ]
+    assert domain_sources
+    assert not [source for source in domain_sources if "class FLUIDSIM_OT_snippet_" in source]
 
 
 def test_library_failures_and_live_draft_drift_are_visible_in_the_panel():

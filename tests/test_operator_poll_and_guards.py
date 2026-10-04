@@ -160,8 +160,39 @@ def test_operators_touching_the_live_session_all_have_a_poll(monkeypatch):
     # Warp runtime.
     assert "poll" in vars(operators.FLUIDSIM_OT_export_cache_sequence)
     assert not issubclass(
-        operators.FLUIDSIM_OT_export_cache_sequence, operators._FLUIDSIM_OT_session_base
+        operators.FLUIDSIM_OT_export_cache_sequence,
+        operators._operator_runtime._FLUIDSIM_OT_session_base,
     )
+
+
+def test_facade_registers_every_operator_a_domain_module_defines(monkeypatch):
+    """Operators are listed nowhere but their class statements: the facade
+    discovers them, registers each once, and unregisters in reverse."""
+    import ast
+    from pathlib import Path
+
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    registered, unregistered = [], []
+    fake_bpy.utils = SimpleNamespace(
+        register_class=registered.append, unregister_class=unregistered.append
+    )
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+
+    domains = Path(operators.__file__).parent / "operator_domains"
+    defined = sorted(
+        node.name
+        for path in domains.glob("*.py")
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.ClassDef) and node.name.startswith("FLUIDSIM_OT_")
+    )
+    assert defined and sorted(cls.__name__ for cls in operators.CLASSES) == defined
+    assert all(getattr(operators, cls.__name__) is cls for cls in operators.CLASSES)
+
+    operators.register()
+    operators.unregister()
+
+    assert registered == list(operators.CLASSES)
+    assert unregistered == list(reversed(operators.CLASSES))
 
 
 def test_clear_object_role_poll_explains_why_it_is_greyed_out(monkeypatch):
