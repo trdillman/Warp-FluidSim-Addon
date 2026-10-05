@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## Production gate and storage
+## Active local development workflow
 
 From the repository root, the production command is
 `python tools/run_production_gate.py`. Run one gate at a time: make sure no
