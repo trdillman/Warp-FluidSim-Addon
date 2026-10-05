@@ -27,7 +27,7 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.2.0"
-    assert version == (2, 1, 0)
+    assert version == (2, 2, 0)
     assert _assigned_value(ROOT / "version.py", "BUILD_CHANNEL") == "stable"
 
 

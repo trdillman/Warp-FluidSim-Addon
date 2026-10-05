@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "fluidsim_warp"
 name = "FluidSim Warp"
-version = "2.1.0"
+version = "2.2.0"
 tagline = "Interactive CUDA liquid simulation for Blender"
 maintainer = "FluidSim"
 type = "add-on"

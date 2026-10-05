@@ -214,8 +214,10 @@ def analyze_dam_break():
     # Martin & Moses dimensionless front position at T = t*sqrt(2g/a) = 2.
     T = ts * math.sqrt(2 * g / a)
     Z = fronts / a
-    if (T >= 2).any():
-        z_at_2 = float(np.interp(2.0, T, Z))
+    apron_T, apron_Z = T[pre_wall], Z[pre_wall]
+    z_at_2 = None
+    if len(apron_T) and apron_T[0] <= 2.0 <= apron_T[-1]:
+        z_at_2 = float(np.interp(2.0, apron_T, apron_Z))
         front_position_min, front_position_max = MARTIN_MOSES_FRONT_POSITION_RANGE
         check(name, "Martin-Moses front position at T=2",
               front_position_min <= z_at_2 <= front_position_max,
@@ -223,7 +225,7 @@ def analyze_dam_break():
               f"(experimental {front_position_min:.1f}-{front_position_max:.1f})")
     else:
         check(name, "Martin-Moses front position at T=2", False,
-              "front never reached T=2")
+              "T=2 is not bracketed by the flat-apron front samples")
 
     # Column collapse is an early, pre-reflection event.  Sampling only the
     # final frame confuses a returning slosh wave with an uncollapsed column.
@@ -256,7 +258,7 @@ def analyze_dam_break():
           f"highest wetted sand {runup:.2f} m (need 0.25; dune top "
           f"{cove.DUNE_HEIGHT:.2f})")
     return {"front_speed_over_c0": speed / c0,
-            "z_at_T2": z_at_2 if (T >= 2).any() else None,
+            "z_at_T2": z_at_2,
             "column_height_end": h_end,
             "collider_penetration_m": penetration,
             "downstream_fraction": downstream,

@@ -57,6 +57,8 @@ def _campaign(*, baseline=100.0, candidate=100.0, solver_candidate=None,
 		"max_whitewater": 200_000,
 	}
 	effective_settings = {
+		"time_scale": 1.0,
+		"frame_rate": 24,
 		"voxel_size": 0.03,
 		"min_substeps": 1,
 		"max_substeps": 16,

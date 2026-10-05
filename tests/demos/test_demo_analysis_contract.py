@@ -295,3 +295,37 @@ def test_crown_height_ignores_intact_droplet_and_late_jet_spray(monkeypatch):
 def test_crown_phase_height_is_zero_for_an_empty_window():
     analyzer = _load_demo_analyzer()
     assert analyzer.crown_phase_height({1: 0.2, 6: 0.3}, 2, 5) == 0.0
+
+
+@pytest.mark.parametrize("history, expected_pass", [
+    ({1:(.7,.4),2:(.8,.4),3:(.9,.4),4:(1.,.4),5:(1.1,.4),
+      6:(1.2,.4),7:(1.3,.4),8:(1.4,.4),9:(2.5,.4),10:(1.8,.4),
+      11:(1.8,.4),12:(1.8,.4)}, False),
+    ({f:(.8+.1*f,.4) for f in range(1,13)}, True),
+])
+def test_martin_moses_requires_T2_brackets_inside_apron_prefix(monkeypatch, history, expected_pass):
+    captured = _dam_break_checks(monkeypatch, history)
+    assert captured["Martin-Moses front position at T=2"][0] is expected_pass
+
+
+def test_martin_moses_rejects_missing_lower_bracket(monkeypatch):
+    # T of the first frame already exceeds2; endpoint extrapolation proves nothing.
+    captured = _dam_break_checks(monkeypatch, {10:(1.8,.4),11:(1.9,.4),12:(1.95,.4)})
+    assert captured["Martin-Moses front position at T=2"][0] is False
+
+
+def test_martin_moses_accepts_exact_T2_prefix_endpoint(monkeypatch):
+    analyzer = _load_demo_analyzer()
+    a = 2*9.81
+    meta = {"gravity":9.81,"column_height":1.2,"column_width":a,"fps":1,
+            "domain":[[0,-1,0],[100,1,1.6]],"voxel_size":.03,"apron_end_x":80.}
+    frames = {f:{"positions":np.array([[.1,0,.4],[x,0,.1]])}
+              for f,x in [(1,40.),(2,3*a),(3,90.)]}
+    captured={}
+    monkeypatch.setattr(analyzer,"load_scene",lambda _: (meta,{"whitewater_count":[101]*3},frames))
+    monkeypatch.setattr(analyzer,"common_checks",lambda *_a,**_k:None)
+    monkeypatch.setattr(analyzer,"check",
+                        lambda _scene,name,passed,detail:captured.setdefault(name,(passed,detail)))
+    result=analyzer.analyze_dam_break()
+    assert captured["Martin-Moses front position at T=2"][0] is True
+    assert result["z_at_T2"] == pytest.approx(3.)

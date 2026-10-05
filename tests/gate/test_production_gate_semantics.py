@@ -4,7 +4,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "run_production_gate", ROOT / "tools" / "run_production_gate.py"
@@ -82,12 +81,22 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     artifact.write_text("{}", encoding="utf-8")
     performance = tmp_path / "artifacts" / "performance_budget" / "summary.json"
     performance.parent.mkdir()
-    from tools.benchmark_versions import _inventory
     from test_performance_budget import _campaign
-    performance.write_text(json.dumps({"passed": True, "gitHead": "abc123",
-                                       "candidateInventorySha256": _inventory(tmp_path),
-                                       "runs": _campaign(),
-                                       "referenceCommits": {"1.0.255": "baseline"}}))
+
+    from tools.benchmark_versions import REFERENCE_COMMITS, _inventory
+    from tools.performance_budget import evaluate_budget
+    runs = _campaign()
+    inventory = _inventory(tmp_path)
+    for run in runs:
+        root = Path(run['root'])
+        run.update(addon=str(root / 'fluidSim_warp_blender51/__init__.py'), processId=123,
+                   rootInventorySha256=inventory if run['label'] == 'candidate' else 'b' * 64,
+                   gitHead='abc123' if run['label'] == 'candidate' else REFERENCE_COMMITS[run['referenceVersion']],
+                   candidateInventorySha256=inventory)
+    performance.write_text(json.dumps(dict(evaluate_budget(runs), gitHead="abc123",
+                                       candidateInventorySha256=_inventory(tmp_path),
+                                       runs=runs,
+                                       referenceCommits=REFERENCE_COMMITS)))
     manifest = tmp_path / "artifacts" / "production_gate_manifest.json"
     monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
     monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
@@ -120,6 +129,7 @@ def test_performance_budget_runs_in_headless_and_full_gate(monkeypatch):
 
 def test_failed_budget_prevents_any_gate_pass(monkeypatch, capsys):
     import subprocess
+
     import pytest
 
     _stub_gate(monkeypatch)

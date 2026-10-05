@@ -7,6 +7,10 @@ package (`from tools.demos import dam_break_cove`); scripts also run directly
 
 ## Layout
 
+`storage_hygiene/` vendors the pinned standard-library checker, retention policy,
+regression suite and Liquid context hook. `run_production_gate.main()` invokes it
+before production and in `finally`; its tests must pass before production starts.
+
 Kept at `tools/` root on purpose: these form the hash-bound performance-budget
 and gate core. `benchmark_versions._inventory` hashes these exact paths and
 `_snapshot_candidate` copies them by name, and `run_production_gate.py` is
@@ -65,5 +69,6 @@ Tightly coupled to `fluidSim_warp_blender51/tests/test_release_*`, ci.yml and
 | `smoke_test_blender.py` | Installed-package lifecycle / Custom Effects / Warp smoke | `build_extension.py` |
 | `gpu_regression_blender.py` | Full NVIDIA GPU validation + 10-frame preview | `build_extension.py` |
 | `generate_examples.py`, `generate_geometry_nodes.py`, `generate_custom_effect_demos.py`, `custom_effect_demo_runtime.py`, `tool_loading.py` | Generators for bundled example/asset `.blend` files and their shared helpers | add-on asset tests, smoke test |
+| `build_custom_effect_example_scenes.py` | Builds the 12 Custom Effect example scenes under `resources/examples/custom_effects/scenes/` (Blender); examples, not demos; trusts effects only in a private temp store | `tests/acceptance/blender_custom_effect_example_scenes_acceptance.py`, `fluidSim_warp_blender51/tests/test_custom_effect_templates_and_example_scenes.py` |
 | `validate_{phase3,phase4,phase5,custom_effects}_{warp,blender}.py`, `validate_examples_blender.py`, `validate_properties_ui_blender.py` | Release-only validators run on CPU Warp in ci.yml and on CUDA/Blender in the gate | ci.yml, gate (`RELEASE_WARP_VALIDATORS`, `RELEASE_BLENDER_VALIDATORS`), smoke test |
 | `candidate_collision_guard_1_0_253.json`, `candidate_integration_1_0_255.json` | Historical release-candidate records (authored data) | both: `tests/repo/test_release_1_0_253_integration.py`; `collision_guard` also `build_extension.py` and `fluidSim_warp_blender51/tests/test_build_extension.py` |

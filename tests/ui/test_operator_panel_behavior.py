@@ -180,6 +180,55 @@ def _reload_module(name):
     return importlib.import_module(name)
 
 
+@pytest.mark.parametrize("location", ["installed repository/fluidsim_warp", "source/fluidSim_warp_blender51"])
+def test_copy_bake_command_targets_shipped_runner_at_extension_root(monkeypatch, tmp_path, location):
+    from pathlib import Path
+    import shlex
+    import subprocess
+
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    rendering = _reload_module("fluidSim_warp_blender51.operator_domains.rendering")
+    extension = tmp_path / location
+    operator_file = extension / "operator_domains" / "rendering.py"
+    operator_file.parent.mkdir(parents=True)
+    operator_file.write_text("# installed operator module location\n")
+    runner = extension / "release" / "run_headless_bake.py"
+    runner.parent.mkdir()
+    source_runner = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51/release/run_headless_bake.py"
+    runner.write_bytes(source_runner.read_bytes())
+    monkeypatch.setattr(rendering, "__file__", str(operator_file))
+    monkeypatch.setattr(rendering, "_configured_device", lambda: "cuda:3")
+    fake_bpy.data = SimpleNamespace(filepath=str(tmp_path / "saved scene.blend"))
+    fake_bpy.app = SimpleNamespace(binary_path=str(tmp_path / "Blender 5.2/blender.exe"))
+    fake_bpy.path = SimpleNamespace(abspath=lambda path: path)
+    context = SimpleNamespace(
+        scene=SimpleNamespace(name="Liquid Scene", fluidsim=SimpleNamespace(
+            bake_start=3, bake_end=48, cache_path=str(tmp_path / "bake cache"), checkpoint_interval=7)),
+        window_manager=SimpleNamespace(clipboard=""),
+    )
+    seen = []
+    real_windows_join, real_posix_join = subprocess.list2cmdline, shlex.join
+
+    def capture(join):
+        def joined(args):
+            seen.append(args)
+            return join(args)
+        return joined
+
+    monkeypatch.setattr(subprocess, "list2cmdline", capture(real_windows_join))
+    monkeypatch.setattr(shlex, "join", capture(real_posix_join))
+    assert rendering.FLUIDSIM_OT_copy_bake_command().execute(context) == {"FINISHED"}
+    assert len(seen) == 1
+    args = seen[0]
+    assert Path(args[args.index("--python") + 1]) == runner.resolve()
+    assert Path(args[args.index("--python") + 1]).is_file()
+    assert args[args.index("--scene") + 1] == "Liquid Scene"
+    assert args[args.index("--device") + 1] == "cuda:3"
+    assert args[args.index("--start") + 1] == "3"
+    assert args[args.index("--checkpoint-interval") + 1] == "7"
+    assert context.window_manager.clipboard
+
+
 def test_reloading_addon_root_preserves_loaded_submodule_identities(monkeypatch):
     _install_bpy_stub(monkeypatch)
     from fluidSim_warp_blender51.sim import enums
@@ -976,7 +1025,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     from fluidSim_warp_blender51.blender import effects
     monkeypatch.setattr(effects, "build_effect_stack_for_admission", lambda scene: ())
     monkeypatch.setattr(effects, "publish_admitted_effects", lambda scene, instances: None)
-    import fluidSim_warp_blender51.blender.sources as sources
+    importlib.import_module("fluidSim_warp_blender51.blender.sources")
     import fluidSim_warp_blender51.blender.output_publication as output_publication
     from fluidSim_warp_blender51.sim.solver import SolverSettings
 
@@ -1342,7 +1391,7 @@ def test_addon_unregister_releases_runtime_handlers(monkeypatch):
         )
     )
     addon = _reload_module("fluidSim_warp_blender51")
-    scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
     pending_settings = _reload_module(
         "fluidSim_warp_blender51.blender.pending_settings"
     )
@@ -3162,7 +3211,7 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     probe_ops = [op for op in panel.layout.operators
                  if op["id"] == "fluidsim.refresh_runtime_probe"]
     assert probe_ops and probe_ops[0].get("text")
-    joined = "".join(l["text"] for l in panel.layout.labels)
+    joined = "".join(label["text"] for label in panel.layout.labels)
     assert long_status[-20:] in joined
 
 
@@ -3180,7 +3229,7 @@ def test_status_panel_names_the_loaded_build(monkeypatch):
     panel = ui_scene.FLUIDSIM_PT_scene_control()
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
-    joined = " ".join(l["text"] for l in panel.layout.labels)
+    joined = " ".join(label["text"] for label in panel.layout.labels)
     assert f"FluidSim {VERSION_STRING}" in joined
     assert "loaded from" in joined
 
@@ -3258,7 +3307,7 @@ def test_status_hub_is_read_only_with_live_strip(monkeypatch):
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
 
-    labels = "".join(l["text"] for l in panel.layout.labels)
+    labels = "".join(label["text"] for label in panel.layout.labels)
     # State name is shown.
     assert "Live Preview" in labels
     # Labeled runtime recovery (from Task 0.4) is retained.
@@ -4250,6 +4299,7 @@ def test_prepare_workspace_leaves_a_ready_layout_alone_but_opens_the_sidebar(
         "W",
         (("VIEW_3D", 1000, 800), ("DOPESHEET_EDITOR", 1000, 80), ("OUTLINER", 200, 400)),
     )
+    workspace.screens[0].areas[1].ui_type = "TIMELINE"
     env.ui_header.prepare_workspace(workspace)
     areas = workspace.screens[0].areas
     assert all(a.type_changes == [] for a in areas)

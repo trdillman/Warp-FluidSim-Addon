@@ -1,5 +1,16 @@
 # AGENTS.md
 
+## Active local development workflow
+
+From the repository root, the production command is
+`python tools/run_production_gate.py`. Run one gate at a time: make sure no
+other session is using the GPU (or, with `--include-gui`, Blender windows).
+The command runs the mandatory storage regressions and pre-production/end-task
+storage reports itself; no external wrapper is required. Follow the storage
+task-start/ownership/retention/cleanup procedure in `docs/RELEASING.md`, and
+never disable the hook for ordinary development runs. Storage checks alone do
+not qualify a release candidate.
+
 Build the Blender 5.2 FluidSim Warp add-on from the in-repo requirements. Keep simulation GPU-resident, support interactive viewport playback, and preserve the listed FluidSim features. The original porting contracts (enums, kernel inventory, dispatch/custom-kernel contracts, UI behavior, profiling, validation targets) were removed from the tree and live in git history. The live field-storage contract is a sparse tiled leaf grid: fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
 
 ## Branched experiments are not merge candidates

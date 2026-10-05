@@ -107,6 +107,7 @@ def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, 
     import io
     import re
     import tarfile
+
     from test_performance_budget import _campaign
 
     source = tmp_path / "source"
@@ -149,6 +150,9 @@ def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, 
         row = next(dict(run) for run in fixtures if run["workload"] == demo
                    and run["round"] == block and run["slot"] == slot)
         row["root"] = root
+        row["addon"] = str(Path(root) / 'fluidSim_warp_blender51/__init__.py')
+        row["rootInventorySha256"] = bench._inventory(Path(root))
+        row["processId"] = 123
         row["version"] = reference if row["label"] == "baseline" else "2.0.0"
         return row
     monkeypatch.setattr(bench, "_run_trial", child)

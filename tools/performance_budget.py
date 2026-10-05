@@ -11,7 +11,6 @@ import math
 import statistics
 from collections import defaultdict
 
-
 DEMOS = ("crown_splash", "dam_break", "paddle_stir", "chromatic_vortex")
 REFERENCE_VERSIONS = {
 	"crown_splash": "1.0.255",
@@ -176,6 +175,13 @@ def _validate_run(run, index):
 	if len(records) != len(EXPECTED_FRAMES) or tuple(frames) != EXPECTED_FRAMES:
 		errors.append(f"{name}: records must contain frames 1 through 48 exactly once")
 	previous_time_after = None
+	stage_inventory = None
+	authored_dt = None
+	if isinstance(effective, dict):
+		if _positive_number(effective.get("time_scale")) and _positive_number(effective.get("frame_rate")):
+			authored_dt = effective["time_scale"] / effective["frame_rate"]
+		else:
+			errors.append(f"{name}: effectiveSettings requires positive time_scale and frame_rate")
 	for record_index, record in enumerate(records):
 		frame_name = f"{name}.records[{record_index}]"
 		if not isinstance(record, dict):
@@ -188,6 +194,8 @@ def _validate_run(run, index):
 		time_after = record.get("simTimeAfter")
 		if not _positive_number(frame_dt):
 			errors.append(f"{frame_name}: frameDt must be positive and finite")
+		elif authored_dt is not None and not math.isclose(frame_dt, authored_dt, rel_tol=1.0e-8, abs_tol=1.0e-8):
+			errors.append(f"{frame_name}: frameDt differs from effectiveSettings authored duration")
 		if not _finite_number(time_before) or not _finite_number(time_after):
 			errors.append(
 				f"{frame_name}: simTimeBefore and simTimeAfter must be finite")
@@ -213,6 +221,15 @@ def _validate_run(run, index):
 			continue
 		if not _positive_number(timers.get("solver")):
 			errors.append(f"{frame_name}: timers.solver must be positive and finite")
+		stage_names = {key for key in timers if isinstance(key, str) and key.startswith("compute_")}
+		if stage_inventory is None:
+			stage_inventory = stage_names
+		elif stage_names != stage_inventory:
+			errors.append(f"{frame_name}: compute stage inventory changed within trial")
+		if not any(_positive_number(timers.get(key)) for key in ("compute_2", "compute_p2g")):
+			errors.append(f"{frame_name}: mandatory P2G stage must be positive")
+		if not any(_positive_number(timers.get(key)) for key in ("compute_5", "compute_pressure")):
+			errors.append(f"{frame_name}: mandatory pressure stage must be positive")
 		compute = [value for key, value in timers.items()
 				   if isinstance(key, str) and key.startswith("compute_")]
 		if not compute:
@@ -276,7 +293,7 @@ def evaluate_budget(runs):
 	invalid_reasons = []
 	for demo in DEMOS:
 		demo_runs = by_demo[demo]
-		for field in ("blendSha256", "settingsSha256", "warp"):
+		for field in ("blendSha256", "settingsSha256", "warp", "device"):
 			values = {run[field] for run in demo_runs}
 			if len(values) != 1:
 				invalid_reasons.append(f"{demo}: {field} must match across both variants")
@@ -302,6 +319,9 @@ def evaluate_budget(runs):
 			if not label_runs:
 				effective_keys[label] = set()
 				continue
+			stage_sets = {frozenset(key for key in run["records"][0]["timers"] if key.startswith("compute_")) for run in label_runs}
+			if len(stage_sets) != 1:
+				invalid_reasons.append(f"{demo}: {label} compute stage inventory changes between trials")
 			key_sets = {frozenset(run["effectiveSettings"]) for run in label_runs}
 			if len(key_sets) != 1:
 				invalid_reasons.append(

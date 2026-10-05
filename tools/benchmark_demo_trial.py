@@ -1,11 +1,13 @@
 """Fresh Blender child for the saved-demo performance budget (not GUI proof)."""
 import hashlib
+import importlib.util
 import json
+import os
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict
 from enum import Enum
-from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -58,13 +60,17 @@ def main():
     else:
         root, blend, out, frames, reference, payload_path = argv
     root, blend = Path(root).resolve(), Path(blend).resolve()
+    inventory_spec = importlib.util.spec_from_file_location('budget_inventory', Path(__file__).with_name('benchmark_versions.py'))
+    inventory_module = importlib.util.module_from_spec(inventory_spec)
+    inventory_spec.loader.exec_module(inventory_module)
+    root_inventory = inventory_module._inventory(root)
     sys.path.insert(0, str(root))
     # Use the selected checkout's loader; never an installed add-on.
     from tools.repo_addon_loader import enable_repo_addon
     bpy.ops.wm.open_mainfile(filepath=str(blend))
     addon = enable_repo_addon(str(root), default_set=False, persistent=False)
-    from fluidSim_warp_blender51.blender import scene_bridge
     from fluidSim_warp_blender51 import version
+    from fluidSim_warp_blender51.blender import scene_bridge
 
     scene = bpy.context.scene
     scene.fluidsim.live = False
@@ -115,7 +121,9 @@ def main():
     effective = json.loads(json.dumps(asdict(settings), default=lambda value: value.name
                                       if isinstance(value, Enum) else str(value)))
     from fluidSim_warp_blender51.sim.attributes import (
-        OUTPUT_TOGGLE_NAMES, enabled_attribute_keys)
+        OUTPUT_TOGGLE_NAMES,
+        enabled_attribute_keys,
+    )
     attributes = {kind: list(enabled_attribute_keys(settings, kind))
                   for kind in OUTPUT_TOGGLE_NAMES}
     # Compare resolved output contracts, not inactive authored toggles.
@@ -151,7 +159,10 @@ def main():
                          "activeParticles": int(stats.active_particles)})
         if not rows[-1]["activeParticles"]:
             raise RuntimeError("demo produced no liquid particles")
+        if inventory_module._inventory(root) != root_inventory:
+            raise RuntimeError('selected source changed during the trial')
         report = {"root": str(root), "addon": addon.__file__,
+                  "processId": os.getpid(), "rootInventorySha256": root_inventory,
                   "version": version.VERSION_STRING, "referenceVersion": reference,
                   "blend": str(blend), "blendSha256": hashlib.sha256(blend.read_bytes()).hexdigest(),
                   "device": device, "warp": wp.config.version, "profilerSync": True,

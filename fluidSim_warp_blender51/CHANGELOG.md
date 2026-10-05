@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0 — User-installed Warp runtime
+## 2.2.0 — User-installed Warp runtime
 
 ### Changed
 
@@ -19,11 +19,84 @@
 ### Compatibility
 
 - The certified Warp version (1.17.0, CUDA 12 build) is unchanged.
-- Solver numerics and cache compatibility are unchanged from 2.0.0.
-- Existing 2.0.0 installations with bundled Warp continue to work; this
-  change only affects new installs.
+- Solver numerics and cache compatibility are unchanged from 2.1.0.
+- Existing 2.1.0 installations with bundled Warp continue to work until this
+  zip is installed; then press **Install Warp**.
 
 ---
+
+## 2.1.0 — staged sidebar, collider walls that slide and grip, faster viscosity
+
+### Upgrade notes
+
+- **Simulation results change wherever liquid touches a collider.** Fluid no
+  longer clings to collider walls as a film, and collider **Friction** now
+  acts on the grid, not only on particles. Friction 0 gives free-slip walls
+  and 1 gives no-slip walls. Re-bake scenes with colliders; a high-friction
+  collider now slows the liquid near it noticeably (the paddle_stir demo's
+  swirl is weaker).
+- **Caches must be baked again.** The new Export Attributes setting is part
+  of the cache settings signature, so 2.0.0 caches no longer match.
+- **The Scene tab is slimmer.** Transport, the five Cache panels and the
+  3D View Live Tuning shelf moved into the FluidSim sidebar stages (below).
+
+### Added
+
+- **Workflow stages in the 3D View FluidSim sidebar:** 1 · Setup,
+  2 · Simulate, 3 · Look and 4 · Bake & Export. Each control writes to the
+  group that owns it (scene or active domain). The top panel is now a status,
+  runtime and transport strip.
+- **FluidSim header popover** in the 3D Viewport header (Play/Reset, Quality,
+  live-tunable values) and a **FluidSim workspace** button that creates and
+  then reuses a workspace with a large viewport, the sidebar and a timeline.
+- **Export Attributes** switch on the domain, off by default. When off, only
+  the state the simulation needs is published and cached; the per-attribute
+  toggles apply only when it is on. Baking with it off measured about 10%
+  faster than 2.0's default attribute set.
+- **Custom Effect starter templates.** A new custom effect can start from a
+  template instead of an empty definition.
+- **Ten example effect packages** (`.fseffect`) and **twelve example scenes**
+  under `resources/examples/custom_effects/`. The scenes open Untrusted
+  Imported: review and trust the code, then Compile & Apply and resume Live.
+- The Status & Runtime panel names the loaded FluidSim version and whether it
+  is the installed extension or a repository checkout.
+- `tools/release/install_local.py` installs a package into a given Blender and
+  checks the FluidSim version, the Warp build that loaded and CUDA.
+
+### Fixed
+
+- Fluid that starts against a collider face slides down it instead of
+  hanging on it as a film for seconds.
+- Collider friction 0 and 1 no longer produce identical grid velocities.
+- A Warp already loaded by another extension (such as Warp Foundry) that is
+  older than 1.17.0 or a different major version is rejected before it is
+  initialized, with a message naming the version.
+- The copied **Headless Bake Command** points at the runner shipped inside the
+  installed extension.
+
+### Changed
+
+- The **Dam Break** demo is a rocky cove: a reservoir released from between
+  two dam abutments over a concrete apron onto a sand beach between two
+  headlands, with a sea stack and a timber jetty as real colliders.
+
+### Performance
+
+- Viscosity solves reuse their captured CUDA graphs across time steps
+  (213 → 30 captures on the dam_break viscosity benchmark): about 19% less
+  time per frame with viscosity, 14% with viscosity and surface tension.
+- Pressure solves reuse their CUDA graphs across tolerances (35 → 3 captures
+  over 42 dam_break frames).
+- Per-substep kernels replay recorded launches, and grid clears, velocity
+  copies and PCG vector clears are fused into fewer kernels. Results are
+  bitwise identical.
+- Integer attributes are published to Blender without a copy again.
+
+### Known limitations
+
+- Linux x64 remains packaged but uncertified (see 2.0.0).
+- A cache frame still records the simulation settings, not source or collider
+  animation; bake again after changing an animation.
 
 ## 2.0.0 — Blender 5.2 LTS, bundled Warp 1.17 and the end of 1.0.x compatibility
 
@@ -57,6 +130,7 @@ See `docs/migrating_to_2_0.md` for the full upgrade path.
 - Every gate lane (pytest, CUDA regressions, Blender background acceptance,
   release validators, the demo bake and the GUI production gate) runs against
   Blender 5.2 and Warp 1.17.
+
 ### Fixed
 
 - A production bake with an animated source or collider (such as the

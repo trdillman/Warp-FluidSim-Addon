@@ -82,7 +82,7 @@ def _write_project(root: Path) -> None:
         "# surface tension math\n", encoding="utf-8")
     effect_sim = root / "sim" / "effects"
     effect_sim.mkdir()
-    for name in ("schema.py", "runtime.py", "package.py"):
+    for name in ("schema.py", "runtime.py", "package.py", "templates.py"):
         (effect_sim / name).write_text(f"# custom effect {name}\n", encoding="utf-8")
     blender_dir = root / "blender"
     blender_dir.mkdir(exist_ok=True)
@@ -182,6 +182,7 @@ def _write_package(
         archive.writestr("sim/effects/schema.py", "# custom effects schema\n")
         archive.writestr("sim/effects/runtime.py", "# custom effects runtime\n")
         archive.writestr("sim/effects/package.py", "# custom effects package\n")
+        archive.writestr("sim/effects/templates.py", "# custom effects templates\n")
         archive.writestr("blender/effects.py", "# custom effects scene adapter\n")
         archive.writestr("blender/effect_ui.py", "# custom effects UI\n")
         archive.writestr("blender/effect_workspace.py", "# Warp Code workspace\n")

@@ -274,7 +274,7 @@ class FLUIDSIM_OT_copy_bake_command(bpy.types.Operator):
         if not blend_path:
             self.report({"ERROR"}, "Save the .blend file before copying a bake command")
             return {"CANCELLED"}
-        runner = Path(__file__).resolve().parent / "release" / "run_headless_bake.py"
+        runner = Path(__file__).resolve().parents[1] / "release" / "run_headless_bake.py"
         fs = context.scene.fluidsim
         args = [
             bpy.app.binary_path,

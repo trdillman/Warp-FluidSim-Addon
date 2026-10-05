@@ -754,11 +754,11 @@ class FLUIDSIM_OT_effect_export_package(bpy.types.Operator):
         if item is None:
             return {"CANCELLED"}
         try:
-            definition = effects.effect_instance_from_pg(context.scene, item).definition
+            definition = effects.exportable_definition(context.scene, item)
             path = Path(self.filepath)
             if path.suffix != ".fseffect":
                 path = path.with_suffix(".fseffect")
-            effect_library.export_definition(path, replace(definition, built_in=False))
+            effect_library.export_definition(path, definition)
         except Exception as exc:
             self.report({"ERROR"}, f"Package export failed: {exc}"[:240])
             return {"CANCELLED"}
@@ -767,10 +767,14 @@ class FLUIDSIM_OT_effect_export_package(bpy.types.Operator):
 
 
 def _draw_effect_stack(layout, stack) -> None:
+    from ..preferences import effect_authoring_enabled
+
     box = layout.box()
     header = box.row(align=True)
     header.label(text="Effect Stack", icon="MODIFIER")
     header.operator("fluidsim.effect_add", text="Add Effect", icon="ADD")
+    if effect_authoring_enabled():
+        header.operator("fluidsim.effect_create_custom", text="New Custom", icon="SCRIPT")
 
     row = box.row()
     row.template_list(

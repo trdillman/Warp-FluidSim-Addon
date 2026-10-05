@@ -18,16 +18,16 @@ a device synchronize, so no version's own stats decide its score.
 Run it with the Python that has the Warp you want to test on its path.
 """
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
-import time
-import tempfile
 import tarfile
-import shutil
-import hashlib
+import tempfile
+import time
 from pathlib import Path
 
 WORKLOADS = ("plain", "visc", "st", "visc_st")
@@ -75,19 +75,62 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     """One fresh child process, with retained failure logs for either harness."""
     out = Path(out)
     out.unlink(missing_ok=True)
-    proc = subprocess.run(command, capture_output=True, text=True, env=env,
-                          cwd=cwd, timeout=900)
+    try:
+        if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS":
+            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, env=env, cwd=cwd) as child:
+                try:
+                    stdout, stderr = child.communicate(timeout=900)
+                except BaseException as exc:
+                    child.kill()
+                    stdout, stderr = child.communicate()
+                    out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+                    if isinstance(exc, subprocess.TimeoutExpired):
+                        exc.stdout, exc.stderr = stdout, stderr
+                    raise
+                proc = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+                observed_pid = child.pid
+        else:
+            proc = subprocess.run(command, capture_output=True, text=True, env=env,
+                                  cwd=cwd, timeout=900)
+    except subprocess.TimeoutExpired as exc:
+        def decoded(value):
+            return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
+        out.with_suffix('.log').write_text(decoded(exc.stdout) + decoded(exc.stderr), encoding='utf-8')
+        raise
     out.with_suffix(".log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
     if proc.returncode:
         raise RuntimeError(f"trial failed (exit {proc.returncode}); see {out.with_suffix('.log')}")
     if expect_marker and expect_marker not in proc.stdout:
         raise RuntimeError(f"trial missing marker {expect_marker}; see {out.with_suffix('.log')}")
-    return json.loads(out.read_text(encoding="utf-8"))
+    report = json.loads(out.read_text(encoding="utf-8"))
+    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and report.get("processId") != observed_pid:
+        raise RuntimeError("reported child process identity differs from launched process")
+    return report
+
+
+def _checkpoint_summary(path, report):
+    temporary = path.with_suffix('.json.part')
+    temporary.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    os.replace(temporary, path)
+
+
+def _validate_trial_identity(run, root, inventory):
+    if (Path(run.get('root', '')).resolve() != root.resolve()
+            or Path(run.get('addon', '')).resolve() != (root / 'fluidSim_warp_blender51/__init__.py').resolve()
+            or run.get('rootInventorySha256') != inventory
+            or _inventory(root) != inventory
+            or type(run.get('processId')) is not int or run['processId'] <= 0):
+        raise RuntimeError('observed child source/addon/process identity differs from selected snapshot')
 
 
 def demo_budget_main(argv):
     """Release lane: exact saved workloads, pinned references, fresh ABBA trials."""
-    from tools.performance_budget import REFERENCE_VERSIONS, abba_schedule, evaluate_budget
+    from tools.performance_budget import (
+        REFERENCE_VERSIONS,
+        abba_schedule,
+        evaluate_budget,
+    )
     parser = argparse.ArgumentParser(description=demo_budget_main.__doc__)
     parser.add_argument("--demo-budget", action="store_true")
     parser.add_argument("--blender", required=True)
@@ -112,6 +155,13 @@ def demo_budget_main(argv):
     inventory = None
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True).strip()
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=candidate, text=True)
+    def checkpoint(verdict):
+        report = dict(verdict, gitHead=head, gitStatus=status.splitlines(), referenceCommits=REFERENCE_COMMITS,
+                      trials=args.trials, frames=args.frames, runs=runs,
+                      candidateInventorySha256=inventory,
+                      measurementKind="saved_demo_scene_bridge_with_stage_sync")
+        _checkpoint_summary(summary_path, report)
+    checkpoint({'passed': False, 'status': 'incomplete'})
     try:
         with tempfile.TemporaryDirectory(prefix="fluidsim-perf-references-") as temp:
             snapshot = Path(temp) / "candidate"
@@ -138,6 +188,9 @@ def demo_budget_main(argv):
                            expect_marker="DEMO-SETTINGS-EXTRACT-PASS")
                 for block, slot, label in schedule:
                     root = roots[reference] if label == "baseline" else candidate
+                    root_inventory = _inventory(root)
+                    if _inventory(candidate) != inventory:
+                        raise RuntimeError('candidate snapshot changed during measurement')
                     out = out_dir / f"{demo}_b{block}_s{slot}_{label}.json"
                     # Never accept a stale trial after an abnormal child exit.
                     out.unlink(missing_ok=True)
@@ -147,6 +200,9 @@ def demo_budget_main(argv):
                                str(root), str(blend), str(out), str(args.frames), reference, str(payload)]
                     run = _run_trial(command, out, env=env, cwd=root,
                                      expect_marker="DEMO-PERFORMANCE-TRIAL-PASS")
+                    _validate_trial_identity(run, root, root_inventory)
+                    if _inventory(candidate) != inventory:
+                        raise RuntimeError('candidate snapshot changed during measurement')
                     if run["version"] != (reference if label == "baseline" else _candidate_version(candidate)):
                         raise RuntimeError("runtime add-on version does not match selected checkout")
                     run.update(label=label, round=block, slot=slot, workload=demo,
@@ -154,15 +210,12 @@ def demo_budget_main(argv):
                                candidateInventorySha256=inventory)
                     out.write_text(json.dumps(run, indent=2), encoding="utf-8")
                     runs.append(run)
+                    checkpoint({'passed': False, 'status': 'incomplete'})
                     print(f"{demo} block={block} slot={slot} {label}: trial recorded", flush=True)
         verdict = evaluate_budget(runs)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         verdict = {"passed": False, "status": "invalid", "error": str(exc)}
-    verdict.update(gitHead=head, gitStatus=status.splitlines(), referenceCommits=REFERENCE_COMMITS,
-                   trials=args.trials, frames=args.frames, runs=runs,
-                   candidateInventorySha256=inventory,
-                   measurementKind="saved_demo_scene_bridge_with_stage_sync")
-    summary_path.write_text(json.dumps(verdict, indent=2) + "\n", encoding="utf-8")
+    checkpoint(verdict)
     print("PERFORMANCE-BUDGET-PASS" if verdict["passed"] else "PERFORMANCE-BUDGET-FAIL",
           verdict["status"], summary_path, flush=True)
     return 0 if verdict["passed"] else 1
@@ -183,7 +236,10 @@ def _child(root, workload, frames, warmup, out):
 
     from fluidSim_warp_blender51.diagnostics.benchmark import default_benchmark_settings
     from fluidSim_warp_blender51.sim.enums import (
-        SourceShapeShape, SourceShapeSourceMode, SourceShapeType)
+        SourceShapeShape,
+        SourceShapeSourceMode,
+        SourceShapeType,
+    )
     from fluidSim_warp_blender51.sim.solver import FluidSolver, SourceShapeDesc
 
     # demos/dam_break.blend, as mirrored by tools/profiling/profile_gpu_solver.py
