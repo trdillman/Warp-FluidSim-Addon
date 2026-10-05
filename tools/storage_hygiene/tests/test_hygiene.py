@@ -41,6 +41,47 @@ class HygieneTests(unittest.TestCase):
         self.assertEqual(result['roots'][0]['logical_bytes'], 10)
         self.assertTrue(result['roots'][0]['complete'])
 
+    def test_windows_policy_paths_validate_on_every_host(self):
+        self.cfg['roots'][0]['path'] = r'C:\fixture'
+        self.cfg['roots'][0]['protected'] = [r'C:\fixture\hold']
+        self.cfg['never_probe'] = [r'C:\denied']
+        self.cfg['records'] = [dict(path=r'C:\fixture\cache')]
+        h.validate(self.cfg)
+        self.assertTrue(h.within(r'c:\FIXTURE\hold', r'C:\fixture'))
+        self.assertFalse(h.within(r'C:\fixture-other', r'C:\fixture'))
+        self.cfg['roots'].append(dict(self.cfg['roots'][0], path=r'c:\FIXTURE\child'))
+        with self.assertRaisesRegex(ValueError, 'overlap'):
+            h.validate(self.cfg)
+
+    def test_windows_drive_relative_paths_remain_invalid(self):
+        self.cfg['never_probe'] = [r'C:relative']
+        with self.assertRaisesRegex(ValueError, 'absolute paths'):
+            h.validate(self.cfg)
+
+    @unittest.skipIf(os.name == 'nt', 'requires a non-Windows host')
+    def test_foreign_windows_roots_are_never_probed(self):
+        for path in (r'C:\fixture', r'\\server\share\fixture'):
+            with self.subTest(path=path):
+                self.cfg['roots'][0]['path'] = path
+                with patch.object(h.os, 'lstat', side_effect=AssertionError('foreign probe')), \
+                     patch.object(h.os, 'scandir', side_effect=AssertionError('foreign scan')):
+                    result = self.check()
+                root = result['roots'][0]
+                self.assertFalse(root['complete'])
+                self.assertIsNone(root['logical_bytes'])
+                self.assertEqual(root['budget_assessment'], 'unknown')
+                self.assertIn('foreign_platform', self.codes(result))
+                self.assertIn('coverage_incomplete', self.codes(result))
+
+    @unittest.skipIf(os.name == 'nt', 'requires a non-Windows host')
+    def test_foreign_windows_drive_is_never_probed(self):
+        self.cfg['drive'] = 'C:\\'
+        self.cfg['roots'] = []
+        with patch.object(h.shutil, 'disk_usage', side_effect=AssertionError('foreign drive probe')):
+            result = h.check(self.cfg)
+        self.assertIsNone(result['free_bytes'])
+        self.assertIn('free_space_unavailable', self.codes(result))
+
     def test_oversized_is_warning_with_owner_and_safe_guidance(self):
         self.cfg['roots'][0]['budget_bytes'] = 5
         result = self.check()

@@ -20,6 +20,10 @@ For an owned output policy set `FLUIDSIM_STORAGE_POLICY` to its JSON path, using
 the vendored policy schema; roots cannot overlap. Stale warnings require a
 completed registered disposable root and a complete scan. Default container
 scans are bounded lower bounds and deliberately exclude protected material.
+On non-Windows hosts, the bundled Windows paths remain valid policy entries
+but are reported as unmeasured with unknown budgets; no Windows drive or root
+is probed or translated to a mounted path. Native owned-output policies still
+use the same bounded scanning and protection rules.
 Overrides retain all bundled denied/protected paths and the current checkout
 as never-probe holds. Measure owned disposable outputs outside those holds;
 an override cannot authorize probing retained source/proof or denied material.

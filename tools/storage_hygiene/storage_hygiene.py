@@ -2,8 +2,9 @@
 import argparse
 import json
 import math
+import ntpath
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import stat
 import subprocess
@@ -21,13 +22,23 @@ def is_reparse(st):
     return stat.S_ISLNK(st.st_mode) or bool(getattr(st, 'st_file_attributes', 0) & 0x400)
 
 
+def is_absolute(path):
+    return os.path.isabs(path) or PureWindowsPath(path).is_absolute()
+
+
 def normalized(path):
+    if PureWindowsPath(path).is_absolute():
+        return ntpath.normcase(ntpath.normpath(path))
     return os.path.normcase(os.path.abspath(path))  # deliberately not resolve()
 
 
 def within(path, parent):
     try:
-        return os.path.commonpath([normalized(path), normalized(parent)]) == normalized(parent)
+        windows = PureWindowsPath(path).is_absolute()
+        if windows != PureWindowsPath(parent).is_absolute():
+            return False
+        paths = ntpath if windows else os.path
+        return paths.commonpath([normalized(path), normalized(parent)]) == normalized(parent)
     except ValueError:
         return False
 
@@ -36,7 +47,7 @@ def validate(config):
     if not isinstance(config, dict) or config.get('version') != 1 or not isinstance(config.get('roots'), list):
         raise ValueError('Expected version=1 and roots list')
     denied = config.get('never_probe', [])
-    if not isinstance(denied, list) or any(not isinstance(p, str) or not os.path.isabs(p) for p in denied):
+    if not isinstance(denied, list) or any(not isinstance(p, str) or not is_absolute(p) for p in denied):
         raise ValueError('never_probe must be a list of absolute paths')
     for field in ('free_warn_bytes', 'max_entries', 'max_seconds'):
         value = config.get(field)
@@ -47,17 +58,17 @@ def validate(config):
     if not isinstance(records, list):
         raise ValueError('records must be a list')
     for record in records:
-        if not isinstance(record, dict) or not isinstance(record.get('path'), str) or not os.path.isabs(record['path']):
+        if not isinstance(record, dict) or not isinstance(record.get('path'), str) or not is_absolute(record['path']):
             raise ValueError('Records require absolute paths')
     for root in config['roots']:
-        if not isinstance(root, dict) or not isinstance(root.get('path'), str) or not os.path.isabs(root['path']):
+        if not isinstance(root, dict) or not isinstance(root.get('path'), str) or not is_absolute(root['path']):
             raise ValueError('Roots require absolute paths')
         for field in ('budget_bytes', 'stale_days'):
             value = root.get(field)
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value < 0:
                 raise ValueError('Invalid root ' + field)
         protected = root.get('protected', [])
-        if not isinstance(protected, list) or any(not isinstance(p, str) or not os.path.isabs(p) for p in protected):
+        if not isinstance(protected, list) or any(not isinstance(p, str) or not is_absolute(p) for p in protected):
             raise ValueError('Protected paths require absolute paths')
         if any(within(root['path'], p) or within(p, root['path']) for p in paths):
             raise ValueError('Root overlap would double count bytes')
@@ -77,7 +88,11 @@ def check(config, *, now=None, free_bytes=None):
             detail=detail, guidance=GUIDANCE, **fields))
 
     try:
-        free_bytes = shutil.disk_usage(config.get('drive', Path.cwd().anchor)).free if free_bytes is None else free_bytes
+        if free_bytes is None:
+            drive = config.get('drive', Path.cwd().anchor)
+            if os.name != 'nt' and PureWindowsPath(drive).is_absolute():
+                raise OSError('Windows drive is unmeasured on this host')
+            free_bytes = shutil.disk_usage(drive).free
         result['free_bytes'] = free_bytes
         if free_bytes < config['free_warn_bytes']:
             warn('low_free_space', detail='Drive free space below configured warning threshold', bytes=free_bytes)
@@ -125,6 +140,13 @@ def check(config, *, now=None, free_bytes=None):
                      observed_logical_bytes=size, budget_bytes=root['budget_bytes'],
                      budget_assessment=assessment, complete=False,
                      excluded_reasons=sorted(failed_codes), cleanup_authorized=False)
+
+        # A Windows policy remains valid on Linux, but its paths must never be
+        # interpreted as relative native paths or mapped to mounted drives.
+        if os.name != 'nt' and PureWindowsPath(root['path']).is_absolute():
+            incomplete('foreign_platform', root['path'], 'Windows root is unmeasured on this host')
+            coverage()
+            continue
 
         # Check each ancestor without resolving links or probing protected paths.
         ancestors = list(reversed(Path(root['path']).parents)) + [Path(root['path'])]
