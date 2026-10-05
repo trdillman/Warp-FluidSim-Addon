@@ -35,11 +35,11 @@ The following 10 curated custom effect packages are bundled under `resources/exa
 | `helical_vortex-1.0.0.fseffect` | `example.helical_vortex` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Spiraling corkscrew vortex combining tangential swirl with axial drive along a cylinder axis. |
 | `directional_wind-1.0.0.fseffect` | `example.directional_wind` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Aerodynamic drag and periodic gusting force within a localized controller bounding sphere. |
 | `centrifugal_spinner-1.0.0.fseffect` | `example.centrifugal_spinner` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Radial $\omega^2 r$ centrifugal ejection perpendicular to a rotating shaft. |
-| `surface_tension_bead-1.0.0.fseffect` | `example.surface_tension_bead` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Surface | Cohesive damping on low-density boundary particles to create droplet beading and sheets. |
+| `surface_tension_bead-1.0.0.fseffect` | `example.surface_tension_bead` | `ACTIVE_VOXELS` | `BEFORE_PRESSURE` / substep | Surface | Damps grid velocity in sparsely filled surface voxels (from the live particle count) so sheets and droplets stay together. |
 | `viscous_heating-1.0.0.fseffect` | `example.viscous_heating` | `PARTICLES` | `AFTER_PARTICLE_UPDATE` / substep | Thermal | Friction dissipation converting high particle speeds into temperature increases. |
 | `periodic_ripples-1.0.0.fseffect` | `example.periodic_ripples` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Waves | Concentric circular traveling harmonic ripple waves radiating outward from a disturbance controller. |
 | `bounding_box_confinement-1.0.0.fseffect` | `example.bounding_box_confinement` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Boundary | Smooth elastic restorative containment barrier keeping particles inside a 3D box. |
-| `voxel_viscosity_decay-1.0.0.fseffect` | `example.voxel_viscosity_decay` | `ACTIVE_VOXELS` | `AFTER_PARTICLE_TRANSFER` / frame | Grid | Per-frame active-voxel relaxation decaying elevated viscosity fields toward baseline. |
+| `voxel_viscosity_decay-1.0.0.fseffect` | `example.voxel_viscosity_decay` | `ACTIVE_VOXELS` | `AFTER_PARTICLE_TRANSFER` / substep | Grid | Blends particle-splatted grid viscosity toward a base value by exp(−rate × time), so a thick fluid thins over the shot. Needs viscosity enabled with Viscosity From Particles. |
 
 ### How to use an example effect in Blender
 

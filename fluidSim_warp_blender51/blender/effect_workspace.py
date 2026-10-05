@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
@@ -359,6 +358,8 @@ class FLUIDSIM_OT_effect_parameter_remove(bpy.types.Operator):
         item, _kernel = _active(context.scene)
         if item is None or self.parameter_index >= len(item.parameters):
             return {"CANCELLED"}
+        # Unbind the key first, or every kernel that used it fails validation.
+        effects.unbind_parameter_key(item, item.parameters[self.parameter_index].key)
         item.parameters.remove(self.parameter_index)
         effects.rebuild_definition_json(context.scene, item)
         return {"FINISHED"}
@@ -616,15 +617,18 @@ class FLUIDSIM_OT_effect_test_sandbox(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_effect_install_to_library(bpy.types.Operator):
-    """Package this effect and save to your user library (~/.config/.../fluidsim/effects/)."""
+    """Package this effect and save it to your user effect library."""
 
     bl_idname = "fluidsim.effect_install_to_library"
     bl_label = "Save to User Library"
 
     @staticmethod
     def _package_path(item):
-        safe_id = str(item.effect_id).replace(".", "_")
-        return effects.effect_user_root(create=True) / f"{safe_id}-{item.effect_version}.fseffect"
+        from .effect_library import user_library_path
+
+        # Same folder and naming as effect_library.install_package, so the
+        # library browser lists what was saved here.
+        return user_library_path() / f"{item.effect_id}-{item.effect_version}.fseffect"
 
     def invoke(self, context, event):
         item, _kernel = _active(context.scene)
@@ -642,11 +646,11 @@ class FLUIDSIM_OT_effect_install_to_library(bpy.types.Operator):
         if item is None:
             return {"CANCELLED"}
         effects.rebuild_definition_json(context.scene, item)
-        instance = effects.effect_instance_from_pg(context.scene, item)
+        definition = effects.exportable_definition(context.scene, item)
         pkg_path = self._package_path(item)
         from ..sim.effects.package import write_effect_package
         try:
-            write_effect_package(pkg_path, replace(instance.definition, built_in=False))
+            write_effect_package(pkg_path, definition)
             # No trust is recorded here: an installed package is reviewed through
             # Review & Trust (or session trust) like any other, never auto-trusted.
             self.report({"INFO"}, f"Saved to library: {pkg_path.name}")
@@ -775,6 +779,17 @@ class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
                 r_val.prop(param, "minimum", text="Min")
                 r_val.prop(param, "maximum", text="Max")
                 r_val.prop(param, "unit", text="Unit")
+            elif param.kind == "BOOL":
+                p_box.prop(param, "bool_value", text="Default")
+            elif param.kind == "VECTOR":
+                r_vec = p_box.row(align=True)
+                r_vec.prop(param, "vector_value", text="Default")
+                r_vec.prop(param, "unit", text="Unit")
+            elif param.kind == "COLOR":
+                p_box.prop(param, "color_value", text="Default")
+            elif param.kind == "ENUM":
+                p_box.prop(param, "enum_items_json", text="Items")
+                p_box.prop(param, "enum_value", text="Default")
             elif param.kind == "OBJECT":
                 r_obj = p_box.row(align=True)
                 r_obj.prop(param, "object_value", text="Object")

@@ -8,7 +8,7 @@ from fluidsim_testpkg.resources.examples.custom_effects.example_effects import (
     EXAMPLE_EFFECT_DEFINITIONS,
 )
 from fluidsim_testpkg.sim.effects.compiler import compile_effect
-from fluidsim_testpkg.sim.effects.enums import ParameterKind
+from fluidsim_testpkg.sim.effects.enums import EffectCadence, ParameterKind
 from fluidsim_testpkg.sim.effects.package import read_effect_package
 from fluidsim_testpkg.sim.effects.sandbox import sandbox_test
 from fluidsim_testpkg.sim.effects.schema import EffectDefinitionV2, EffectInstanceV2
@@ -69,6 +69,35 @@ def test_example_effects_parameters_have_metadata():
             assert param.unit
             if param.kind in {ParameterKind.FLOAT, ParameterKind.INT}:
                 assert param.minimum is not None or param.maximum is not None
+
+
+def test_example_effects_use_live_signals():
+    """PR #22 review: each example must react to what it claims to react to."""
+    defs = {d.effect_id: d for d in EXAMPLE_EFFECT_DEFINITIONS}
+    # The cylinder is bounded by distance from the axis, not from the controller.
+    helix = defs["example.helical_vortex"].kernels[0].source
+    assert "radial_len < radius" in helix and "dist < radius" not in helix
+    # particle_density is an authored constant, so it cannot find the surface.
+    bead = defs["example.surface_tension_bead"].kernels[0]
+    bead_fields = {binding.field for binding in bead.fields}
+    assert "voxel_counts" in bead_fields and "particle_density" not in bead_fields
+    # Grid viscosity is re-splatted every substep, so a per-frame relaxation
+    # step would be overwritten; the decay must be a function of time.
+    decay = defs["example.voxel_viscosity_decay"].kernels[0]
+    assert decay.cadence is EffectCadence.EVERY_SUBSTEP
+    assert "wp.exp(-decay_rate * time)" in decay.source
+
+
+def test_example_scene_builder_seeds_the_signals_effects_need():
+    builder = (Path(__file__).resolve().parents[2] / "tools" / "release"
+               / "build_custom_effect_example_scenes.py").read_text(encoding="utf-8")
+    for name in ("build_01_thermal_updraft", "build_11_layered_atmospheric_tempest"):
+        body = builder.split(f"def {name}(", 1)[1].split("\ndef ", 1)[0]
+        assert "src.fluidsim.temperature = " in body, name
+    decay = builder.split("def build_10_voxel_viscosity_decay(", 1)[1].split("\ndef ", 1)[0]
+    assert "viscosity_enabled = True" in decay
+    assert "viscosity_from_particles = True" in decay
+    assert "src.fluidsim.viscosity = " in decay
 
 
 @REQUIRES_WARP

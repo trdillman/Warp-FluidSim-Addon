@@ -133,3 +133,69 @@ def test_workspace_operators_use_real_report_attributes():
     assert "report.passed" in source
     assert "report.success" not in source
     assert "invoke_confirm" in source  # library overwrite is confirmed
+
+
+def test_edited_default_is_exported_and_unedited_default_stays_exact(effects_mod):
+    # An edited value becomes the exported default.
+    assert effects_mod._pg_default(2.5, 1.0) == 2.5
+    assert effects_mod._pg_default((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)) == (0.0, 1.0, 0.0)
+    assert effects_mod._pg_default("HIGH", "LOW") == "HIGH"
+    assert effects_mod._pg_default(True, False) is True
+    # An untouched float32 PG value keeps the exact definition value (stable digest).
+    stored = effects_mod._as_float32(0.1)
+    assert effects_mod._pg_default(stored, 0.1) == 0.1
+    assert effects_mod._pg_default((stored, 0.0, 1.0), (0.1, 0.0, 1.0)) == (0.1, 0.0, 1.0)
+    assert effects_mod._pg_default(3.0, None) == 3.0
+
+
+def test_save_and_export_bake_current_values_as_defaults():
+    source = WORKSPACE.read_text(encoding="utf-8")
+    ui = (ROOT / "blender" / "effect_ui.py").read_text(encoding="utf-8")
+    assert "effects.exportable_definition(" in source
+    assert "effects.exportable_definition(" in ui
+
+
+def test_save_to_user_library_targets_the_scanned_library_folder():
+    source = WORKSPACE.read_text(encoding="utf-8")
+    body = source.split("def _package_path(item):", 1)[1].split("def invoke", 1)[0]
+    assert "user_library_path()" in body
+    assert "effect_user_root" not in body
+
+
+def test_parameter_editor_covers_every_kind():
+    source = WORKSPACE.read_text(encoding="utf-8")
+    for prop in ("bool_value", "vector_value", "color_value", "enum_value", "enum_items_json"):
+        assert f'p_box.prop(param, "{prop}"' in source or f'r_vec.prop(param, "{prop}"' in source, prop
+
+
+def _remove_target(csv, authored, definition_json=""):
+    kernel = SimpleNamespace(
+        kernel_id="voxel_buoyancy", parameter_keys_csv=csv, parameter_keys_authored=authored
+    )
+    return SimpleNamespace(definition_json=definition_json, kernels=[kernel]), kernel
+
+
+def test_unbind_parameter_key_strips_authored_csv(effects_mod):
+    pg, kernel = _remove_target("strength, radius", True)
+    effects_mod.unbind_parameter_key(pg, "strength")
+    assert kernel.parameter_keys_csv == "radius"
+    effects_mod.unbind_parameter_key(pg, "missing")
+    assert kernel.parameter_keys_csv == "radius"
+
+
+def test_unbind_parameter_key_handles_legacy_fallback_keys(effects_mod):
+    import json
+
+    from fluidsim_testpkg.sim.effects.templates import voxel_acceleration_template
+
+    definition = voxel_acceleration_template()
+    assert definition.kernels[0].parameter_keys == ("buoyancy",)
+    pg, kernel = _remove_target("", False, json.dumps(definition.to_dict()))
+    effects_mod.unbind_parameter_key(pg, "buoyancy")
+    assert kernel.parameter_keys_csv == ""
+    assert kernel.parameter_keys_authored is True  # emptied csv now really unbinds
+    result = effects_mod.kernel_definition_from_pg(
+        SimpleNamespace(**{**vars(_kernel_pg("", True)), "kernel_id": "voxel_buoyancy"}),
+        definition.kernels[0],
+    )
+    assert result.parameter_keys == ()

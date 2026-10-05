@@ -229,7 +229,8 @@ def build_01_thermal_updraft(output_dir: Path, device: str, dry_run: bool) -> Pa
     scene = fresh_scene("Example: Thermal Updraft")
     add_camera_and_light(scene, cam_loc=(3.6, -3.6, 2.8), cam_rot=(1.05, 0.0, 0.785))
     make_domain(scene, (-1.2, -1.2, 0.0), (1.2, 1.2, 2.6), voxel_size=0.075)
-    make_source_box(scene, (-0.45, -0.45, 0.1), (0.45, 0.45, 1.2), name="Heated Liquid Column")
+    src = make_source_box(scene, (-0.45, -0.45, 0.1), (0.45, 0.45, 1.2), name="Heated Liquid Column")
+    src.fluidsim.temperature = 60.0  # above the 20 °C ambient, or there is no buoyancy
     controller = make_controller(scene, "Updraft Origin", (0.0, 0.0, 0.0), display_type="ARROWS", size=0.5)
 
     eff_def = next(d for d in EXAMPLE_EFFECT_DEFINITIONS if d.effect_id == "example.thermal_updraft")
@@ -324,7 +325,7 @@ def build_06_surface_tension_bead(output_dir: Path, device: str, dry_run: bool) 
     eff_def = next(d for d in EXAMPLE_EFFECT_DEFINITIONS if d.effect_id == "example.surface_tension_bead")
     add_effect_layer(
         scene, eff_def, instance_id="example-beading",
-        parameters={"rest_density": 1000.0, "surface_threshold": 880.0, "damping_factor": 4.0},
+        parameters={"surface_count": 6.0, "damping_factor": 4.0},
     )
     return finalize_and_save(scene, "06_surface_tension_bead_example.blend", output_dir, device=device, dry_run=dry_run)
 
@@ -386,8 +387,13 @@ def build_10_voxel_viscosity_decay(output_dir: Path, device: str, dry_run: bool)
 
     scene = fresh_scene("Example: Voxel Viscosity Decay")
     add_camera_and_light(scene, cam_loc=(3.6, -3.6, 2.8), cam_rot=(1.05, 0.0, 0.785))
-    make_domain(scene, (-1.5, -1.5, 0.0), (1.5, 1.5, 2.0), voxel_size=0.08)
-    make_source_box(scene, (-0.8, -0.8, 0.1), (0.8, 0.8, 1.0), name="High Viscosity Fluid")
+    dom = make_domain(scene, (-1.5, -1.5, 0.0), (1.5, 1.5, 2.0), voxel_size=0.08)
+    # The effect edits the grid viscosity splatted from particles, so the
+    # solver must run viscosity from particle attributes.
+    dom.fluidsim_domain.viscosity_enabled = True
+    dom.fluidsim_domain.viscosity_from_particles = True
+    src = make_source_box(scene, (-0.8, -0.8, 0.1), (0.8, 0.8, 1.0), name="High Viscosity Fluid")
+    src.fluidsim.viscosity = 0.5  # thick start, thinning toward base_viscosity
 
     eff_def = next(d for d in EXAMPLE_EFFECT_DEFINITIONS if d.effect_id == "example.voxel_viscosity_decay")
     add_effect_layer(
@@ -408,7 +414,8 @@ def build_11_layered_atmospheric_tempest(output_dir: Path, device: str, dry_run:
     scene = fresh_scene("Example: Layered Atmospheric Tempest")
     add_camera_and_light(scene, cam_loc=(4.5, -4.5, 3.5), cam_rot=(1.05, 0.0, 0.785))
     make_domain(scene, (-2.0, -2.0, 0.0), (2.0, 2.0, 2.6), voxel_size=0.08)
-    make_source_box(scene, (-0.6, -0.6, 0.1), (0.6, 0.6, 1.2), name="Convective Tempest Source")
+    src = make_source_box(scene, (-0.6, -0.6, 0.1), (0.6, 0.6, 1.2), name="Convective Tempest Source")
+    src.fluidsim.temperature = 55.0  # above the 20 °C ambient, or the updraft layer does nothing
 
     updraft_ctrl = make_controller(scene, "Tempest Updraft Origin", (0.0, 0.0, 0.0), display_type="ARROWS", size=0.5)
     wind_ctrl = make_controller(scene, "Tempest Wind Stream", (0.0, 0.0, 1.2), display_type="SINGLE_ARROW", size=0.7)

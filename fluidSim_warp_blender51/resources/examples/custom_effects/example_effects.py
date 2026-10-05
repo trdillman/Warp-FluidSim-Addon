@@ -1,8 +1,8 @@
 """Curated example Custom Effects bundled as package templates for FluidSim.
 
 These 10 custom effect examples demonstrate various physical behaviors,
-domains (PARTICLES and ACTIVE_VOXELS), stages (AFTER_PARTICLE_TRANSFER, AFTER_PARTICLE_UPDATE),
-cadences (EVERY_SUBSTEP, ONCE_PER_FRAME), and controller-driven spatial falloffs.
+domains (PARTICLES and ACTIVE_VOXELS), stages (AFTER_PARTICLE_TRANSFER, BEFORE_PRESSURE,
+AFTER_PARTICLE_UPDATE), and controller-driven spatial falloffs.
 """
 
 from __future__ import annotations
@@ -90,7 +90,6 @@ _VEL_RW = _field("particle_velocity", FieldAccess.READ_WRITE_CURRENT)
 _VEL_R = _field("particle_velocity", FieldAccess.READ)
 _TEMP_R = _field("particle_temperature", FieldAccess.READ)
 _TEMP_RW = _field("particle_temperature", FieldAccess.READ_WRITE_CURRENT)
-_DENS_R = _field("particle_density", FieldAccess.READ)
 _VISC_RW = _field("viscosity", FieldAccess.READ_WRITE_CURRENT)
 
 
@@ -208,14 +207,13 @@ if dist < radius and dist > 1.0e-6:
                 stage=EffectStage.AFTER_PARTICLE_TRANSFER,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""axis_len = wp.length(axis)
-offset = position - controller
-dist = wp.length(offset)
-if axis_len > 1.0e-6 and dist < radius:
+if axis_len > 1.0e-6:
     axis_n = axis / axis_len
+    offset = position - controller
     along_axis = wp.dot(offset, axis_n)
     radial = offset - axis_n * along_axis
     radial_len = wp.length(radial)
-    if radial_len > 1.0e-6:
+    if radial_len > 1.0e-6 and radial_len < radius:
         tangent = wp.cross(axis_n, radial / radial_len)
         falloff = 1.0 - (radial_len / radius)
         accel = tangent * (swirl * falloff) + axis_n * (axial_drive * falloff)
@@ -326,7 +324,7 @@ if axis_len > 1.0e-6:
         version="1.0.0",
         name="Surface Tension Bead",
         summary="Dampen boundary droplet dispersion to form cohesive beads.",
-        description="Identifies isolated or low-density surface particles and damps their divergent velocity to retain tighter liquid sheets and droplets.",
+        description="Finds sparsely filled surface voxels from the live particle count and damps their grid velocity, so liquid sheets and droplets stay tighter.",
         category="Surface",
         author="FluidSim Examples",
         license="GPL-3.0-or-later",
@@ -335,25 +333,31 @@ if axis_len > 1.0e-6:
         tags=("surface", "tension", "droplet"),
         cost_hint="LOW",
         parameters=(
-            _param_float("rest_density", "Rest Density", 1000.0, 1.0, 5000.0, "kg/m³", "Reference bulk liquid density."),
-            _param_float("surface_threshold", "Surface Threshold", 850.0, 1.0, 5000.0, "kg/m³", "Density below which particles are considered boundary."),
-            _param_float("damping_factor", "Damping Factor", 3.0, 0.0, 50.0, "1/s", "Velocity damping strength applied to low-density particles."),
+            _param_float("surface_count", "Surface Particle Count", 6.0, 1.0, 64.0, "particles", "Voxels holding fewer particles than this count as liquid surface."),
+            _param_float("damping_factor", "Damping Factor", 3.0, 0.0, 50.0, "1/s", "Velocity damping strength in the emptiest surface voxels."),
         ),
         kernels=(
             KernelDefinitionV2(
                 kernel_id="surface_tension_bead",
                 label="Apply Surface Beading",
-                domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                domain=EffectDomain.ACTIVE_VOXELS,
+                stage=EffectStage.BEFORE_PRESSURE,
                 cadence=EffectCadence.EVERY_SUBSTEP,
-                source="""current_density = particle_density[particle_index]
-if current_density < surface_threshold and current_density > 1.0e-6:
-    deficit = (surface_threshold - current_density) / rest_density
+                source="""count = float(voxel_counts[flat_voxel_index])
+if count > 0.0 and count < surface_count:
+    deficit = (surface_count - count) / surface_count
     factor = wp.clamp(1.0 - damping_factor * deficit * solver_time_step, 0.0, 1.0)
-    particle_velocity[particle_index] = particle_velocity[particle_index] * factor""",
-                fields=(_VEL_RW, _DENS_R),
-                parameter_keys=("rest_density", "surface_threshold", "damping_factor"),
-                description="Selectively damps velocity on low-density surface particles.",
+    velocity_u[flat_voxel_index] = velocity_u[flat_voxel_index] * factor
+    velocity_v[flat_voxel_index] = velocity_v[flat_voxel_index] * factor
+    velocity_w[flat_voxel_index] = velocity_w[flat_voxel_index] * factor""",
+                fields=(
+                    _field("voxel_counts", FieldAccess.READ),
+                    _field("velocity_u", FieldAccess.READ_WRITE_CURRENT),
+                    _field("velocity_v", FieldAccess.READ_WRITE_CURRENT),
+                    _field("velocity_w", FieldAccess.READ_WRITE_CURRENT),
+                ),
+                parameter_keys=("surface_count", "damping_factor"),
+                description="Damps grid velocity in sparsely filled surface voxels.",
             ),
         ),
     ),
@@ -511,8 +515,8 @@ particle_velocity[particle_index] = particle_velocity[particle_index] + accel * 
         effect_id="example.voxel_viscosity_decay",
         version="1.0.0",
         name="Voxel Viscosity Decay",
-        summary="Relax active-grid viscosity toward base fluid viscosity.",
-        description="Runs on active grid voxels once per frame to relax dynamic or shear-thickened viscosity values back toward baseline viscosity.",
+        summary="Thin out a thick fluid over time toward a base viscosity.",
+        description="Each substep, blends the grid viscosity splatted from particles toward a base viscosity by exp(-decay rate x time), so a thick fluid thins out over the shot. Needs viscosity enabled with Viscosity From Particles.",
         category="Grid",
         author="FluidSim Examples",
         license="GPL-3.0-or-later",
@@ -522,7 +526,7 @@ particle_velocity[particle_index] = particle_velocity[particle_index] + accel * 
         cost_hint="MEDIUM",
         parameters=(
             _param_float("base_viscosity", "Base Viscosity", 0.001, 0.0, 10.0, "m²/s", "Target baseline kinematic viscosity."),
-            _param_float("decay_rate", "Decay Rate", 0.4, 0.0, 10.0, "1/s", "Rate at which active voxel viscosity relaxes to base."),
+            _param_float("decay_rate", "Decay Rate", 0.4, 0.0, 10.0, "1/s", "Rate at which grid viscosity relaxes to base over simulation time."),
         ),
         kernels=(
             KernelDefinitionV2(
@@ -530,8 +534,10 @@ particle_velocity[particle_index] = particle_velocity[particle_index] + accel * 
                 label="Relax Grid Viscosity",
                 domain=EffectDomain.ACTIVE_VOXELS,
                 stage=EffectStage.AFTER_PARTICLE_TRANSFER,
-                cadence=EffectCadence.ONCE_PER_FRAME,
-                source="""factor = wp.clamp(1.0 - decay_rate * real_time_step, 0.0, 1.0)
+                cadence=EffectCadence.EVERY_SUBSTEP,
+                # The grid is re-splatted from particles every substep, so the
+                # decay is a function of time, not an accumulated per-step factor.
+                source="""factor = wp.exp(-decay_rate * time)
 viscosity[flat_voxel_index] = base_viscosity + (viscosity[flat_voxel_index] - base_viscosity) * factor""",
                 fields=(_VISC_RW,),
                 parameter_keys=("base_viscosity", "decay_rate"),

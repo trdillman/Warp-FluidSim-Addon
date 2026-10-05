@@ -754,11 +754,11 @@ class FLUIDSIM_OT_effect_export_package(bpy.types.Operator):
         if item is None:
             return {"CANCELLED"}
         try:
-            definition = effects.effect_instance_from_pg(context.scene, item).definition
+            definition = effects.exportable_definition(context.scene, item)
             path = Path(self.filepath)
             if path.suffix != ".fseffect":
                 path = path.with_suffix(".fseffect")
-            effect_library.export_definition(path, replace(definition, built_in=False))
+            effect_library.export_definition(path, definition)
         except Exception as exc:
             self.report({"ERROR"}, f"Package export failed: {exc}"[:240])
             return {"CANCELLED"}

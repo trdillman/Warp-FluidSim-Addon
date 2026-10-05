@@ -149,7 +149,11 @@ class FLUIDSIM_PG_effect_parameter(bpy.types.PropertyGroup):
     vector_value: FloatVectorProperty(size=3, update=_mark_dirty)
     color_value: FloatVectorProperty(size=4, subtype="COLOR", min=0.0, max=1.0, update=_mark_dirty)
     enum_value: StringProperty(update=_mark_dirty)
-    enum_items_json: StringProperty(default="[]")
+    enum_items_json: StringProperty(
+        default="[]",
+        description='Enum choices as a JSON list of [id, label] pairs, e.g. [["LOW", "Low"], ["HIGH", "High"]]',
+        update=_mark_structure_dirty,
+    )
     object_value: PointerProperty(type=bpy.types.Object, update=_mark_dirty)
 
 
@@ -313,6 +317,21 @@ def _pg_limit(enabled: bool, pg_value: float, base_value):
     return float(pg_value)
 
 
+def _pg_default(pg_value, base_default):
+    """A parameter default from its PG storage; an unedited value keeps the exact definition value."""
+    if base_default is None:
+        return pg_value
+    if isinstance(pg_value, float) and not isinstance(base_default, bool):
+        if isinstance(base_default, (int, float)) and _as_float32(base_default) == pg_value:
+            return base_default
+    elif isinstance(pg_value, tuple) and isinstance(base_default, (tuple, list)):
+        if len(base_default) == len(pg_value) and all(
+            _as_float32(b) == p for b, p in zip(base_default, pg_value, strict=True)
+        ):
+            return base_default
+    return pg_value
+
+
 def parameter_definition_from_pg(item, base: ParameterDefinitionV2 | None = None) -> ParameterDefinitionV2:
     kind = ParameterKind(item.kind)
     if base is not None and base.kind is not kind:
@@ -343,6 +362,27 @@ def parameter_definition_from_pg(item, base: ParameterDefinitionV2 | None = None
     )
 
 
+def _kernel_parameter_keys(kernel_pg, base: KernelDefinitionV2 | None) -> tuple[str, ...]:
+    csv = str(getattr(kernel_pg, "parameter_keys_csv", ""))
+    if base is None or csv.strip() or getattr(kernel_pg, "parameter_keys_authored", True):
+        # The PG is authoritative once authored, so an emptied field really unbinds.
+        return tuple(k.strip() for k in csv.split(",") if k.strip())
+    return base.parameter_keys  # .blend saved before the field existed
+
+
+def unbind_parameter_key(pg, key: str) -> None:
+    """Drop ``key`` from every kernel's bound parameters (before removing the parameter)."""
+    original = {}
+    if pg.definition_json:
+        definition = EffectDefinitionV2.from_dict(json.loads(pg.definition_json))
+        original = {kernel.kernel_id: kernel for kernel in definition.kernels}
+    for kernel_pg in pg.kernels:
+        keys = _kernel_parameter_keys(kernel_pg, original.get(kernel_pg.kernel_id))
+        if key in keys:
+            kernel_pg.parameter_keys_csv = ", ".join(k for k in keys if k != key)
+            kernel_pg.parameter_keys_authored = True
+
+
 def kernel_definition_from_pg(kernel_pg, base: KernelDefinitionV2 | None = None) -> KernelDefinitionV2:
     source = (
         kernel_pg.source_text.as_string()
@@ -350,12 +390,7 @@ def kernel_definition_from_pg(kernel_pg, base: KernelDefinitionV2 | None = None)
         else (base.source if base is not None else "pass")
     )
     fields = tuple(FieldBindingV2(item.field, FieldAccess(item.access)) for item in kernel_pg.fields)
-    csv = str(getattr(kernel_pg, "parameter_keys_csv", ""))
-    if base is None or csv.strip() or getattr(kernel_pg, "parameter_keys_authored", True):
-        # The PG is authoritative once authored, so an emptied field really unbinds.
-        param_keys = tuple(k.strip() for k in csv.split(",") if k.strip())
-    else:
-        param_keys = base.parameter_keys  # .blend saved before the field existed
+    param_keys = _kernel_parameter_keys(kernel_pg, base)
 
     if base is not None:
         return replace(
@@ -481,6 +516,24 @@ def convert_instance_to_custom(scene, pg):
     pg.status = "DRAFT"
     refresh_stack_state(scene)
     return pg
+
+
+def exportable_definition(scene, pg) -> EffectDefinitionV2:
+    """The definition to package, with each parameter's current value as its default.
+
+    Only export bakes values into defaults: at run time the PG value is the live,
+    possibly animated value, and folding it into the definition would change the
+    trust digest on every edit.
+    """
+    definition = effect_instance_from_pg(scene, pg).definition
+    by_key = {item.key: item for item in pg.parameters}
+    parameters = tuple(
+        replace(p, default=_pg_default(_parameter_value(by_key[p.key]), p.default))
+        if p.key in by_key and p.kind is not ParameterKind.OBJECT
+        else p
+        for p in definition.parameters
+    )
+    return replace(definition, parameters=parameters, built_in=False)
 
 
 def effect_instance_from_pg(scene, pg) -> EffectInstanceV2:
