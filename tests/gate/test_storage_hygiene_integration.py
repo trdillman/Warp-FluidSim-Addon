@@ -13,6 +13,13 @@ from tools.storage_hygiene import integration
 
 
 class ProductionStorageTests(unittest.TestCase):
+    def test_agent_guidance_directs_normal_workflow_to_hooked_entrypoint(self):
+        guidance = (gate.ROOT / 'AGENTS.md').read_text()
+        self.assertIn('Active local development workflow', guidance)
+        self.assertIn('`python tools/run_production_gate.py`', guidance)
+        self.assertIn('mandatory storage regressions', guidance)
+        self.assertIn('docs/RELEASING.md', guidance)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

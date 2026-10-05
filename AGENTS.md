@@ -1,5 +1,18 @@
 # AGENTS.md
 
+## Active local development workflow
+
+This storage-adopted checkout is the current owned Liquid main development lane
+(`task/liquid-storage-hygiene-20261005`). Work here rather than altering the
+frozen qualified `9947` snapshot or another owner's dirty canonical checkout.
+From this repository root, the normal production command is
+`python tools/run_production_gate.py` (add `--include-gui` only with coordinated
+GPU/GUI allocation). It directly runs mandatory storage regressions and
+pre-production/end-task reports; no external wrapper or dated task dependency
+is required. Follow the storage task-start/ownership/retention/cleanup procedure
+in `docs/RELEASING.md`. Never disable the hook for ordinary development runs.
+These tooling checks do not promote this branch to a qualified release candidate.
+
 Build the Blender 5.2 FluidSim Warp add-on from the in-repo requirements. Keep simulation GPU-resident, support interactive viewport playback, and preserve the listed FluidSim features. The original porting contracts (enums, kernel inventory, dispatch/custom-kernel contracts, UI behavior, profiling, validation targets) were removed from the tree and live in git history. The live field-storage contract is a sparse tiled leaf grid: fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
 
 ## Branched experiments are not merge candidates
