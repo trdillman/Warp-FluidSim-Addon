@@ -180,6 +180,55 @@ def _reload_module(name):
     return importlib.import_module(name)
 
 
+@pytest.mark.parametrize("location", ["installed repository/fluidsim_warp", "source/fluidSim_warp_blender51"])
+def test_copy_bake_command_targets_shipped_runner_at_extension_root(monkeypatch, tmp_path, location):
+    from pathlib import Path
+    import shlex
+    import subprocess
+
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    rendering = _reload_module("fluidSim_warp_blender51.operator_domains.rendering")
+    extension = tmp_path / location
+    operator_file = extension / "operator_domains" / "rendering.py"
+    operator_file.parent.mkdir(parents=True)
+    operator_file.write_text("# installed operator module location\n")
+    runner = extension / "release" / "run_headless_bake.py"
+    runner.parent.mkdir()
+    source_runner = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51/release/run_headless_bake.py"
+    runner.write_bytes(source_runner.read_bytes())
+    monkeypatch.setattr(rendering, "__file__", str(operator_file))
+    monkeypatch.setattr(rendering, "_configured_device", lambda: "cuda:3")
+    fake_bpy.data = SimpleNamespace(filepath=str(tmp_path / "saved scene.blend"))
+    fake_bpy.app = SimpleNamespace(binary_path=str(tmp_path / "Blender 5.2/blender.exe"))
+    fake_bpy.path = SimpleNamespace(abspath=lambda path: path)
+    context = SimpleNamespace(
+        scene=SimpleNamespace(name="Liquid Scene", fluidsim=SimpleNamespace(
+            bake_start=3, bake_end=48, cache_path=str(tmp_path / "bake cache"), checkpoint_interval=7)),
+        window_manager=SimpleNamespace(clipboard=""),
+    )
+    seen = []
+    real_windows_join, real_posix_join = subprocess.list2cmdline, shlex.join
+
+    def capture(join):
+        def joined(args):
+            seen.append(args)
+            return join(args)
+        return joined
+
+    monkeypatch.setattr(subprocess, "list2cmdline", capture(real_windows_join))
+    monkeypatch.setattr(shlex, "join", capture(real_posix_join))
+    assert rendering.FLUIDSIM_OT_copy_bake_command().execute(context) == {"FINISHED"}
+    assert len(seen) == 1
+    args = seen[0]
+    assert Path(args[args.index("--python") + 1]) == runner.resolve()
+    assert Path(args[args.index("--python") + 1]).is_file()
+    assert args[args.index("--scene") + 1] == "Liquid Scene"
+    assert args[args.index("--device") + 1] == "cuda:3"
+    assert args[args.index("--start") + 1] == "3"
+    assert args[args.index("--checkpoint-interval") + 1] == "7"
+    assert context.window_manager.clipboard
+
+
 def test_reloading_addon_root_preserves_loaded_submodule_identities(monkeypatch):
     _install_bpy_stub(monkeypatch)
     from fluidSim_warp_blender51.sim import enums
