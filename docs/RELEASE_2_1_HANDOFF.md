@@ -206,13 +206,21 @@ Evidence is regenerated at `artifacts/performance_budget/summary.json`, with
 raw trial JSON and child logs alongside it. The full gate manifest includes
 the summary path, SHA-256 and reference commits. Historical paddle_stir +4.0%
 absolute / +5.5% paired is not a passing result under this contract.
-Current evidence and runtime outcome: `artifacts/performance_budget/summary.json`.
+Historical October 3 evidence and runtime outcome: `artifacts/performance_budget/summary.json`.
 The 2026-10-03 delivery ran two complete 64-trial GPU comparisons; all four
 measured snapshots passed. The final source fingerprint differed from the
-latest snapshot, so current-checkout certification remains blocked. This is
+latest snapshot, so that checkout's certification remained blocked. This is
 not a full production-gate pass. Paired deltas and the stable-checkout rerun
 action are preserved outside the concurrently cleaned checkout at
 `C:\Users\Tyler\fluidsim-gate-logs\PERFORMANCE_BUDGET_GATE_DELIVERY_20261003.md`.
+
+The later frozen Windows candidate `9947db954abe64d3f0dd6d6feb2ed96866b56a7d`
+has separate resumed qualification at
+`C:\Users\Tyler\Documents\Codex\2026-10-02\task-3\delivery\liquid-9947-windows\RESULT.md`.
+Its 64 fresh paired trials passed for that exact source and saved demo snapshots.
+The composite verdict is `RESUMED-FROZEN-SOURCE-QUALIFICATION-PASS`, not
+`FULL-PRODUCTION-GATE-PASS`. It does not certify this later tooling branch,
+Linux runtime, hosted CI, or an eventual integrated release commit.
 
 ## 4. Features (2.1+ candidates, need owner approval)
 

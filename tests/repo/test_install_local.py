@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from tools.release import install_local
 
@@ -62,3 +63,65 @@ def test_legacy_copies_found_in_addons_and_extensions(tmp_path):
     (tmp_path / "5.2" / "extensions" / "user_default" / "fluidsim_warp").mkdir(parents=True)
     found = install_local.legacy_copies(tmp_path)
     assert sorted(p.relative_to(tmp_path).parts[1] for p in found) == ["extensions", "scripts"]
+
+
+def test_failed_probe_cannot_report_ready(monkeypatch, capsys):
+    output = install_local.PROBE_MARKER + json.dumps(_report())
+    monkeypatch.setattr(install_local, "_run", lambda command: subprocess.CompletedProcess(
+        command, 37, output, "Blender failed after reporting runtime"))
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main(["--blender", "blender", "--probe-only"]) == 37
+    captured = capsys.readouterr()
+    assert "READY:" not in captured.out
+    assert "NOT READY: Blender probe exited 37" in captured.err
+
+
+def test_failed_install_does_not_start_probe(monkeypatch, tmp_path, capsys):
+    package = tmp_path / "extension.zip"
+    package.write_bytes(b"fixture")
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 19, "", "install failed")
+
+    monkeypatch.setattr(install_local, "_run", run)
+    assert install_local.main(["--blender", "blender", "--zip", str(package)]) == 19
+    assert len(commands) == 1
+    assert "install-file" in commands[0]
+    assert "READY:" not in capsys.readouterr().out
+
+
+def test_successful_install_then_probe_reports_ready(monkeypatch, tmp_path, capsys):
+    package = tmp_path / "extension.zip"
+    package.write_bytes(b"fixture")
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        output = install_local.PROBE_MARKER + json.dumps(_report()) if len(commands) == 2 else "installed"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(install_local, "_run", run)
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main(["--blender", "blender", "--zip", str(package)]) == 0
+    assert "install-file" in commands[0]
+    assert "--python-expr" in commands[1]
+    assert "READY:" in capsys.readouterr().out
+
+
+def test_install_and_probe_receive_repaired_environment(monkeypatch):
+    calls = []
+    monkeypatch.setattr(install_local, "_blender_process_environment",
+                        lambda source: {"PROCESSOR_ARCHITECTURE": "AMD64", "owned": "preserved"})
+
+    def run(command, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(install_local.subprocess, "run", run)
+    install_local._run(["blender", "install-file"])
+    install_local._run(["blender", "--python-expr", "probe"])
+    assert len(calls) == 2
+    assert all(call["env"] == {"PROCESSOR_ARCHITECTURE": "AMD64", "owned": "preserved"}
+               for call in calls)

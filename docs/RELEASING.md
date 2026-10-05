@@ -49,7 +49,7 @@ is set to `-1`, so CUDA-only tests skip rather than fail.
 | Job | Proves |
 | --- | --- |
 | `checks` | ruff is clean, and release metadata matches between `version.py`, `blender_manifest.toml`, the Warp lock and the delivery policy. Every module compiles and the full pytest suite passes. The whitewater, surface-tension and Custom Effects kernels compile and pass their validators on Warp **CPU**. |
-| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it against an external Warp, then uninstalls it. |
+| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it against its bundled, checksum-locked Warp wheel, then uninstalls it. |
 
 The packages and JSON reports are attached to each run as artifacts.
 
