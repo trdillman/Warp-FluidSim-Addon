@@ -887,7 +887,13 @@ def run_installed_script(
     for path in isolated_paths.values():
         path.mkdir(parents=True, exist_ok=True)
     if runner is _run:
-        _provision_smoke_warp(isolated_paths["BLENDER_USER_EXTENSIONS"] / ".local")
+        _provision_smoke_warp(
+            isolated_paths["BLENDER_USER_EXTENSIONS"]
+            / ".user"
+            / "fluidsim_ci"
+            / "fluidsim_warp"
+            / ".local"
+        )
     env.update({key: str(path) for key, path in isolated_paths.items()})
     env["FLUIDSIM_CI_REPOSITORY"] = str(repo_dir)
     if extra_env:

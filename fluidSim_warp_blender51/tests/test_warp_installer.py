@@ -490,3 +490,108 @@ def test_version_constants_match_lock():
     lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
     assert lock["warp_version"] == CERTIFIED_WARP_VERSION
     assert lock["distribution_version"] == CERTIFIED_WARP_DISTRIBUTION
+
+
+def test_shared_extensions_local_is_not_treated_as_owned(tmp_path, monkeypatch):
+    """A Warp installation in the shared extensions/.local directory is NOT owned by FluidSim."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    shared_extensions = tmp_path / "extensions"
+    shared_local = shared_extensions / ".local"
+    _seed_owned_warp(shared_local, "1.17.0")
+
+    # Set up bpy stand-in with user_resource returning shared_extensions
+    # but extension_path_user failing or returning None
+    bpy = types.ModuleType("bpy")
+    bpy.utils = SimpleNamespace(
+        user_resource=lambda kind: str(shared_extensions) if kind == "EXTENSIONS" else None,
+        extension_path_user=lambda package, path="", create=False: None,
+    )
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setattr(warp_installer, "__package__", "bl_ext.user_default.fluidsim_warp")
+
+    # _default_install_target must raise RuntimeError rather than falling back to shared .local
+    with pytest.raises(RuntimeError, match="extension directory"):
+        warp_installer._default_install_target()
+
+    # _owned_candidates must NOT include shared_local
+    assert shared_local not in warp_installer._owned_candidates()
+    assert warp_installer.owned_install_status() is None
+    assert warp_installer.is_certified_warp_installed() is False
+
+
+def test_shared_extensions_local_warp_does_not_count_as_fluidsim_installed(tmp_path, monkeypatch):
+    """Another add-on's Warp 1.17.0 in shared extensions/.local does not count as installed for FluidSim."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    shared_extensions = tmp_path / "extensions"
+    shared_local = shared_extensions / ".local"
+    _seed_owned_warp(shared_local, "1.17.0")
+
+    fluidsim_own_dir = shared_extensions / ".user" / "user_default" / "fluidsim_warp" / ".local"
+
+    bpy = types.ModuleType("bpy")
+    bpy.utils = SimpleNamespace(
+        user_resource=lambda kind: str(shared_extensions) if kind == "EXTENSIONS" else None,
+        extension_path_user=lambda package, path="", create=False: str(fluidsim_own_dir),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setattr(warp_installer, "__package__", "bl_ext.user_default.fluidsim_warp")
+
+    # FluidSim's own directory is empty, but shared .local has Warp 1.17.0.
+    # On the old buggy behavior, _owned_candidates() appended shared_local,
+    # making is_certified_warp_installed() return True!
+    # Under fixed behavior, it MUST return False and owned_install_status() must be None.
+    assert shared_local not in warp_installer._owned_candidates()
+    assert warp_installer.owned_install_status() is None
+    assert warp_installer.is_certified_warp_installed() is False
+
+
+def test_shared_extensions_local_target_is_refused_with_clear_error(tmp_path, monkeypatch):
+    """If extension_path_user resolves to shared extensions/.local, refuse with clear error."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    shared_extensions = tmp_path / "extensions"
+    shared_local = shared_extensions / ".local"
+
+    bpy = types.ModuleType("bpy")
+    bpy.utils = SimpleNamespace(
+        user_resource=lambda kind: str(shared_extensions) if kind == "EXTENSIONS" else None,
+        extension_path_user=lambda package, path="", create=False: str(shared_local),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setattr(warp_installer, "__package__", "bl_ext.user_default.fluidsim_warp")
+
+    with pytest.raises(RuntimeError, match="Refusing to write Warp into Blender's shared extensions directory"):
+        warp_installer._default_install_target()
+
+
+def test_warp_loaded_from_shared_extensions_local_is_flagged_as_foreign(tmp_path, monkeypatch):
+    """If Warp was imported from shared extensions/.local, foreign_warp_block_reason flags it."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    shared_extensions = tmp_path / "extensions"
+    shared_local = shared_extensions / ".local"
+    _seed_owned_warp(shared_local, "1.17.0")
+
+    fluidsim_own_dir = shared_extensions / ".user" / "user_default" / "fluidsim_warp" / ".local"
+
+    bpy = types.ModuleType("bpy")
+    bpy.utils = SimpleNamespace(
+        user_resource=lambda kind: str(shared_extensions) if kind == "EXTENSIONS" else None,
+        extension_path_user=lambda package, path="", create=False: str(fluidsim_own_dir),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setattr(warp_installer, "__package__", "bl_ext.user_default.fluidsim_warp")
+    monkeypatch.setattr(warp_installer, "_user_site_warp_path", lambda: None)
+
+    # Simulate sys.modules["warp"] loaded from shared_local
+    fake_warp = types.ModuleType("warp")
+    fake_warp.__file__ = str(shared_local / "warp" / "__init__.py")
+    monkeypatch.setitem(sys.modules, "warp", fake_warp)
+
+    reason = warp_installer.foreign_warp_block_reason()
+    assert reason is not None
+    assert "which FluidSim does not own" in reason
+    assert str(shared_local) in reason
+

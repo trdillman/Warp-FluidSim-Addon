@@ -12,12 +12,14 @@ from dataclasses import replace
 from pathlib import Path
 
 # Smoke Blender is offline. The release harness extracts the locked wheel into
-# the isolated extensions/.local directory before this script starts. That is
+# the isolated extension user directory before this script starts. That is
 # the smoke harness only. The preferences button installs into the extension's
 # own user directory and is not what placed this copy.
 _provisioned_warp = os.environ.get("BLENDER_USER_EXTENSIONS", "")
 if _provisioned_warp:
-    _local_site = str(Path(_provisioned_warp) / ".local")
+    _local_site = str(
+        Path(_provisioned_warp) / ".user" / "fluidsim_ci" / "fluidsim_warp" / ".local"
+    )
     if _local_site not in sys.path:
         sys.path.insert(0, _local_site)
 
@@ -83,8 +85,8 @@ def _assert_installed_warp(module: str) -> tuple[Path, Path]:
     if not repository_value or not user_extensions_value:
         raise AssertionError("release smoke environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    # The offline smoke harness extracted Warp under <extensions>/.local.
-    wheel_root = Path(user_extensions_value).resolve() / ".local"
+    # The offline smoke harness extracted Warp under the extension's own user .local dir.
+    wheel_root = Path(bpy.utils.extension_path_user(module, path=".local")).resolve()
     warp_path = Path(wp.__file__).resolve()
     if wp.__version__ != EXPECTED_WARP_VERSION:
         raise AssertionError(

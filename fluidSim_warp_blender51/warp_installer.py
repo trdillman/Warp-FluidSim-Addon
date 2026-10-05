@@ -209,10 +209,10 @@ def _default_install_target(*, create: bool = False) -> Path:
     """Return the directory this add-on owns for Warp installation.
 
     Blender's extension user site for this add-on
-    (``bpy.utils.extension_path_user``), or the extensions/.local path when
-    running in an extension environment. It is never the directory an
-    imported ``warp`` module came from, and it is never
-    ``site.getusersitepackages()``. ``create`` is false on the
+    (``bpy.utils.extension_path_user``). It is never the directory an
+    imported ``warp`` module came from, it is never
+    ``site.getusersitepackages()``, and it is never the shared
+    Blender ``extensions/.local`` directory. ``create`` is false on the
     already-installed check so a second press does not write.
     """
     try:
@@ -238,17 +238,20 @@ def _default_install_target(*, create: bool = False) -> Path:
                         "Refusing to write Warp into Blender's user site-packages. "
                         "Remove that copy, then press Install Warp."
                     )
+                extensions = _blender_extensions_dir()
+                if extensions is not None:
+                    shared_local = extensions / ".local"
+                    if target.resolve() == shared_local.resolve() or _is_relative_to(target, shared_local):
+                        raise RuntimeError(
+                            "Refusing to write Warp into Blender's shared extensions directory. "
+                            "FluidSim requires its own extension directory."
+                        )
                 return target
         except Exception as exc:
+            if "does not name an extension" not in str(exc) and "Refusing" in str(exc):
+                raise
             if "does not name an extension" not in str(exc):
                 raise
-
-    extensions = _blender_extensions_dir()
-    if extensions is not None:
-        target = extensions / ".local"
-        if create:
-            target.mkdir(parents=True, exist_ok=True)
-        return target
 
     raise RuntimeError(
         "Could not determine this add-on's extension directory. "
@@ -309,11 +312,6 @@ def _owned_candidates() -> list[Path]:
         candidates.append(primary)
     except RuntimeError:
         pass
-    extensions = _blender_extensions_dir()
-    if extensions is not None:
-        local_dir = extensions / ".local"
-        if not any(c.resolve() == local_dir.resolve() for c in candidates):
-            candidates.append(local_dir)
     return candidates
 
 
@@ -526,6 +524,17 @@ def install_warp(
                     "Remove any Warp there, then press Install Warp."
                 ),
             )
+        extensions = _blender_extensions_dir()
+        if extensions is not None:
+            shared_local = extensions / ".local"
+            if destination.resolve() == shared_local.resolve() or _is_relative_to(destination, shared_local):
+                return InstallResult(
+                    success=False,
+                    message=(
+                        "Refusing to write Warp into Blender's shared extensions directory. "
+                        "FluidSim requires its own extension directory."
+                    ),
+                )
         loaded = _importable_warp_file()
         if loaded is not None and not any(
             _is_relative_to(loaded, cand) for cand in _owned_candidates()

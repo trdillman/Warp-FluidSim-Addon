@@ -50,8 +50,14 @@ def _assert_installed_bundled_runtime(module: str, probe) -> None:
     if not repository_value or not user_extensions_value:
         raise AssertionError("GPU release environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    # Blender installs extension wheels into <extensions>/.local site-packages.
-    wheel_root = Path(user_extensions_value).resolve() / ".local"
+    # The offline harness extracts Warp into the extension's own user .local dir.
+    wheel_root = (
+        Path(user_extensions_value).resolve()
+        / ".user"
+        / "fluidsim_ci"
+        / "fluidsim_warp"
+        / ".local"
+    )
     if not probe.module_file:
         raise AssertionError("Warp runtime reported no module source path")
     warp_path = Path(probe.module_file).resolve()
