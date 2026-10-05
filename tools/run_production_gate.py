@@ -395,6 +395,14 @@ def _write_gate_manifest(blender_exe, warp_version=None):
 
 
 def main(argv=None):
+    """Run storage regressions/reports around the unchanged production gate."""
+    from tools.storage_hygiene.integration import production_storage
+
+    with production_storage(ROOT):
+        return _production_main(argv)
+
+
+def _production_main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run FluidSim verification gates with explicit GUI semantics.",
         epilog=(

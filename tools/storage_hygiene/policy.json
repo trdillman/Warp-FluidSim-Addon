@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "drive": "C:\\",
+  "free_warn_bytes": 32212254720,
+  "max_entries": 20000,
+  "max_seconds": 0.5,
+  "never_probe": [
+    "C:\\awt\\astro-warp-usd-_rpdzg1o",
+    "C:\\awt\\astro-warp-usd-y6i62nsh",
+    "C:\\awt\\astro-warp-usd-unt7cebm",
+    "C:\\awt\\astro-warp-usd-evvb_7c9",
+    "C:\\awt\\astro-warp-usd-2hqxw36u",
+    "C:\\awt\\astro-warp-usd-1flxn9qy",
+    "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-03\\task-2\\pytest-orchestration-final\\base"
+  ],
+  "records": [],
+  "roots": [
+    {
+      "path": "C:\\tmp", "budget_bytes": 21474836480, "stale_days": 7,
+      "project": "container-monitor", "owner": "project coordinators", "state": "retained",
+      "disposable": false, "retention_reason": "Mixed project storage: record-level ownership required; no deletion authority",
+      "require_child_records": true,
+      "protected": ["C:\\tmp\\WarpSmoke-release-orchestration-20260912"]
+    },
+    {
+      "path": "C:\\fg-target", "budget_bytes": 21474836480, "stale_days": 7,
+      "project": "container-monitor", "owner": "FreeGrind coordinator", "state": "retained",
+      "disposable": false, "retention_reason": "Current release and proof containers are preserved",
+      "require_child_records": true,
+      "protected": ["C:\\fg-target\\laf", "C:\\fg-target\\laf-build", "C:\\fg-target\\retention-origin", "C:\\fg-target\\proof"]
+    },
+    {
+      "path": "C:\\awt", "budget_bytes": 10737418240, "stale_days": 7,
+      "project": "container-monitor", "owner": "Astro Warp coordinator", "state": "retained",
+      "disposable": false, "retention_reason": "Ownership/current references unresolved; preserve packages, profiles, scenes and USD evidence",
+      "require_child_records": true, "protected": []
+    },
+    {
+      "path": "C:\\Users\\Tyler\\Documents\\Codex", "budget_bytes": 53687091200, "stale_days": 14,
+      "project": "container-monitor", "owner": "project coordinators", "state": "retained",
+      "disposable": false, "retention_reason": "Source, recovery archives and current development are retained; budgets are diagnostics only",
+      "require_child_records": true,
+      "protected": [
+        "C:\\Users\\Tyler\\Documents\\Codex\\nexus_clone_warp_parity",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-02\\task-2",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-02\\task-3",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-03\\task-5",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-03\\task-6",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-04\\task-2\\cleanup-inventory",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-10-04\\task-2\\storage-hygiene"
+      ]
+    }
+  ]
+}

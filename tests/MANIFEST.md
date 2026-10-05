@@ -3,6 +3,11 @@
 Root-level repository tests. Two suites exist: this folder (`tests/`) and the add-on's own
 `fluidSim_warp_blender51/tests/` (see the end). `pytest.ini` runs both:
 
+`gate/test_storage_hygiene_integration.py` proves the normal gate's pre/post
+reports, real vendored storage suite, substituted full orchestration, and
+failure/exit preservation without launching DCC/GPU work. The checker itself has
+26 stdlib regressions under `tools/storage_hygiene/tests/`.
+
 ```
 testpaths = tests fluidSim_warp_blender51/tests
 pythonpath = .

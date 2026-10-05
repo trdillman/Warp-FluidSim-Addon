@@ -7,6 +7,10 @@ package (`from tools.demos import dam_break_cove`); scripts also run directly
 
 ## Layout
 
+`storage_hygiene/` vendors the pinned standard-library checker, retention policy,
+regression suite and Liquid context hook. `run_production_gate.main()` invokes it
+before production and in `finally`; its tests must pass before production starts.
+
 Kept at `tools/` root on purpose: these form the hash-bound performance-budget
 and gate core. `benchmark_versions._inventory` hashes these exact paths and
 `_snapshot_candidate` copies them by name, and `run_production_gate.py` is
