@@ -32,6 +32,15 @@ See `docs/migrating_to_2_0.md` for the full upgrade path.
 - Every gate lane (pytest, CUDA regressions, Blender background acceptance,
   release validators, the demo bake and the GUI production gate) runs against
   Blender 5.2 and Warp 1.17.
+
+### Added
+
+- **Custom Effect starter templates.** A new custom effect can start from a
+  template instead of an empty definition.
+- **Ten example effect packages** (`.fseffect`) and **twelve example scenes**
+  under `resources/examples/custom_effects/`. The scenes open Untrusted
+  Imported: review and trust the code, then Compile & Apply and resume Live.
+
 ### Fixed
 
 - A production bake with an animated source or collider (such as the

@@ -7,6 +7,7 @@ apply, cache, and report boundary converts them to immutable v2 snapshots.
 from __future__ import annotations
 
 import json
+import struct
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -25,7 +26,15 @@ from bpy.props import (
 
 from ..sim.effects.builtins import builtin_effect_definitions
 from ..sim.effects.compiler import CandidateBuildResult, build_candidate_effects
-from ..sim.effects.enums import EffectStatus, ParameterKind, TrustState
+from ..sim.effects.enums import (
+    EffectCadence,
+    EffectDomain,
+    EffectStage,
+    EffectStatus,
+    FieldAccess,
+    ParameterKind,
+    TrustState,
+)
 from ..sim.effects.fingerprint import (
     effect_fingerprint,
     effective_stack_instances,
@@ -35,6 +44,8 @@ from ..sim.effects.schema import (
     EffectDefinitionV2,
     EffectInstanceV2,
     FieldBindingV2,
+    KernelDefinitionV2,
+    ParameterDefinitionV2,
 )
 from ..sim.effects.trust import TrustStore, content_trust_digest
 
@@ -99,16 +110,39 @@ def _mark_dirty(_self=None, context=None):
             scene.fluidsim_effects.blocking_reason = f"Effect snapshot error: {exc}"
 
 
+_BUILDING_INSTANCE = False
+
+
+def _mark_structure_dirty(_self=None, context=None):
+    """Refresh after an edit to a parameter's definition (key/kind/limits/...).
+
+    Unlike ``_mark_dirty`` this never takes the live-value path, and it is a
+    no-op while ``add_instance_to_scene`` is still populating the group.
+    """
+    scene = getattr(context, "scene", None) if context is not None else None
+    if _BUILDING_INSTANCE or scene is None or not hasattr(scene, "fluidsim_effects"):
+        return
+    try:
+        refresh_stack_state(scene)
+    except Exception as exc:  # authoring feedback, not an execution path
+        scene.fluidsim_effects.blocking_reason = f"Effect snapshot error: {exc}"
+
+
+def _parameter_keys_edited(self, context=None):
+    self.parameter_keys_authored = True
+    _mark_dirty(self, context)
+
+
 class FLUIDSIM_PG_effect_parameter(bpy.types.PropertyGroup):
-    key: StringProperty()
-    label: StringProperty()
-    kind: EnumProperty(items=_PARAMETER_KIND_ITEMS, default="FLOAT")
-    unit: StringProperty(default="NONE")
-    description: StringProperty()
-    minimum: FloatProperty(default=0.0)
-    maximum: FloatProperty(default=0.0)
-    has_minimum: BoolProperty(default=False)
-    has_maximum: BoolProperty(default=False)
+    key: StringProperty(update=_mark_structure_dirty)
+    label: StringProperty(update=_mark_structure_dirty)
+    kind: EnumProperty(items=_PARAMETER_KIND_ITEMS, default="FLOAT", update=_mark_structure_dirty)
+    unit: StringProperty(default="NONE", update=_mark_structure_dirty)
+    description: StringProperty(update=_mark_structure_dirty)
+    minimum: FloatProperty(default=0.0, update=_mark_structure_dirty)
+    maximum: FloatProperty(default=0.0, update=_mark_structure_dirty)
+    has_minimum: BoolProperty(default=False, update=_mark_structure_dirty)
+    has_maximum: BoolProperty(default=False, update=_mark_structure_dirty)
     float_value: FloatProperty(update=_mark_dirty)
     int_value: IntProperty(update=_mark_dirty)
     bool_value: BoolProperty(update=_mark_dirty)
@@ -136,6 +170,8 @@ class FLUIDSIM_PG_effect_kernel(bpy.types.PropertyGroup):
     frame_start: IntProperty(default=0, min=0, update=_mark_dirty)
     frame_end: IntProperty(default=0, min=0, update=_mark_dirty)
     frame_step: IntProperty(default=1, min=1, update=_mark_dirty)
+    parameter_keys_csv: StringProperty(default="", update=_parameter_keys_edited)
+    parameter_keys_authored: BoolProperty(default=False)
     error_line: IntProperty(default=0)
     error_column: IntProperty(default=0)
     generated_source_digest: StringProperty()
@@ -248,6 +284,205 @@ def _controller_snapshot(pg):
     }
 
 
+def unique_id(prefix: str, existing) -> str:
+    """Return ``prefix_N`` not present in ``existing`` (``len()+1`` collides after removals)."""
+    taken = set(existing)
+    number = len(taken) + 1
+    while f"{prefix}_{number}" in taken:
+        number += 1
+    return f"{prefix}_{number}"
+
+
+def _as_float32(value: float) -> float | None:
+    try:
+        return struct.unpack("f", struct.pack("f", float(value)))[0]
+    except OverflowError:
+        return None
+
+
+def _pg_limit(enabled: bool, pg_value: float, base_value):
+    """A parameter min/max from its float32 PG storage.
+
+    Unticked clears the limit.  An unchanged limit keeps the exact definition
+    value, so float32 rounding never perturbs the content digest.
+    """
+    if not enabled:
+        return None
+    if base_value is not None and _as_float32(base_value) == float(pg_value):
+        return base_value
+    return float(pg_value)
+
+
+def parameter_definition_from_pg(item, base: ParameterDefinitionV2 | None = None) -> ParameterDefinitionV2:
+    kind = ParameterKind(item.kind)
+    if base is not None and base.kind is not kind:
+        base = None  # kind changed: the old default/enum items no longer apply
+    enum_items = base.enum_items if base is not None else ()
+    if item.enum_items_json:
+        try:
+            parsed = json.loads(item.enum_items_json)
+            if parsed:
+                enum_items = tuple(tuple(pair) for pair in parsed)
+        except Exception:
+            pass
+    val = _parameter_value(item)
+    min_val = _pg_limit(item.has_minimum, item.minimum, base.minimum if base is not None else None)
+    max_val = _pg_limit(item.has_maximum, item.maximum, base.maximum if base is not None else None)
+    return ParameterDefinitionV2(
+        key=str(item.key),
+        label=str(item.label or item.key),
+        kind=kind,
+        default=base.default if base is not None else val,
+        minimum=min_val,
+        maximum=max_val,
+        unit=str(item.unit or (base.unit if base is not None else "NONE")),
+        description=str(item.description or (base.description if base is not None else "")),
+        enum_items=enum_items,
+        runtime_bindable=base.runtime_bindable if base is not None else True,
+        animatable=base.animatable if base is not None else True,
+    )
+
+
+def kernel_definition_from_pg(kernel_pg, base: KernelDefinitionV2 | None = None) -> KernelDefinitionV2:
+    source = (
+        kernel_pg.source_text.as_string()
+        if kernel_pg.source_text is not None
+        else (base.source if base is not None else "pass")
+    )
+    fields = tuple(FieldBindingV2(item.field, FieldAccess(item.access)) for item in kernel_pg.fields)
+    csv = str(getattr(kernel_pg, "parameter_keys_csv", ""))
+    if base is None or csv.strip() or getattr(kernel_pg, "parameter_keys_authored", True):
+        # The PG is authoritative once authored, so an emptied field really unbinds.
+        param_keys = tuple(k.strip() for k in csv.split(",") if k.strip())
+    else:
+        param_keys = base.parameter_keys  # .blend saved before the field existed
+
+    if base is not None:
+        return replace(
+            base,
+            label=str(kernel_pg.label or base.label),
+            domain=EffectDomain(kernel_pg.domain),
+            stage=EffectStage(kernel_pg.stage),
+            cadence=EffectCadence(kernel_pg.cadence),
+            source=source.rstrip("\n") or "pass",
+            fields=fields,
+            parameter_keys=param_keys,
+            safe_mode=bool(kernel_pg.safe_mode),
+            frame_start=int(kernel_pg.frame_start),
+            frame_end=int(kernel_pg.frame_end),
+            frame_step=max(1, int(kernel_pg.frame_step)),
+        )
+
+    return KernelDefinitionV2(
+        kernel_id=str(kernel_pg.kernel_id),
+        label=str(kernel_pg.label or kernel_pg.kernel_id),
+        domain=EffectDomain(kernel_pg.domain),
+        stage=EffectStage(kernel_pg.stage),
+        cadence=EffectCadence(kernel_pg.cadence),
+        source=source.rstrip("\n") or "pass",
+        fields=fields,
+        parameter_keys=param_keys,
+        safe_mode=bool(kernel_pg.safe_mode),
+        frame_start=int(kernel_pg.frame_start),
+        frame_end=int(kernel_pg.frame_end),
+        frame_step=max(1, int(kernel_pg.frame_step)),
+    )
+
+
+def rebuild_definition_json(scene, pg) -> EffectDefinitionV2:
+    """Rebuild pg.definition_json and content_digest from the live RNA authoring properties."""
+    raw_def = json.loads(pg.definition_json)
+    definition = EffectDefinitionV2.from_dict(raw_def)
+    param_map = {p.key: p for p in definition.parameters}
+    param_defs = [parameter_definition_from_pg(item, base=param_map.get(item.key)) for item in pg.parameters]
+    original = {kernel.kernel_id: kernel for kernel in definition.kernels}
+    kernels = [kernel_definition_from_pg(kernel_pg, original.get(kernel_pg.kernel_id)) for kernel_pg in pg.kernels]
+
+    definition = replace(
+        definition,
+        name=str(pg.display_name or definition.name),
+        parameters=tuple(param_defs),
+        kernels=tuple(kernels) if kernels else definition.kernels,
+    )
+    pg.definition_json = json.dumps(definition.to_dict(), sort_keys=True, allow_nan=False)
+    digest = content_trust_digest(definition)
+    pg.content_digest = digest
+    pg.display_name = definition.name
+    store = trust_store_for_scene(scene)
+    state = store.status(digest, built_in=definition.built_in)
+    pg.trust_state = state.value
+    if pg.status != "TESTED":
+        pg.status = "DRAFT" if state in {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED} else "UNTRUSTED"
+    refresh_stack_state(scene)
+    return definition
+
+
+def add_custom_effect_from_template(scene, template_key: str, *, effect_name: str | None = None):
+    from ..sim.effects.templates import get_template_definition
+    definition = get_template_definition(template_key)
+    uid = uuid.uuid4().hex[:12]
+    custom_id = f"custom.{template_key.lower()}_{uid[:6]}"
+    display_name = effect_name or definition.name
+    definition = replace(
+        definition,
+        effect_id=custom_id,
+        name=display_name,
+        built_in=False,
+    )
+    instance = EffectInstanceV2(
+        instance_id=f"effect-{uid}",
+        definition=definition,
+        order=len(scene.fluidsim_effects.items),
+        display_name=display_name,
+    )
+    pg = add_instance_to_scene(scene, instance)
+    object_params = [p for p in definition.parameters if p.kind is ParameterKind.OBJECT]
+    for p_def in object_params:
+        suffix = f" {p_def.label}" if len(object_params) > 1 else ""
+        empty = bpy.data.objects.new(f"FluidSim {display_name}{suffix} Controller", None)
+        empty.empty_display_type = "PLAIN_AXES"
+        empty.empty_display_size = 0.5
+        empty["fluidsim_owned"] = True
+        empty["fluidsim_effect_controller"] = instance.instance_id
+        empty["fluidsim_effect_parameter"] = p_def.key
+        target_collection = getattr(scene, "collection", None)
+        if target_collection is not None:
+            target_collection.objects.link(empty)
+        empty.location = (0.0, 0.0, 1.0)
+        for param_pg in pg.parameters:
+            if param_pg.key == p_def.key:
+                param_pg.object_value = empty
+                break
+    if object_params:
+        rebuild_definition_json(scene, pg)
+    return pg
+
+
+def convert_instance_to_custom(scene, pg):
+    """Detach a built-in or imported package instance into an editable custom effect."""
+    uid = uuid.uuid4().hex[:8]
+    old_def = json.loads(pg.definition_json)
+    old_id = old_def.get("effect_id", "custom")
+    clean_id = old_id.split(".")[-1]
+    new_id = f"custom.{clean_id}_{uid}"
+    pg.effect_id = new_id
+    pg.display_name = f"{pg.display_name} (Custom)"
+    instance = effect_instance_from_pg(scene, pg)
+    new_def = replace(
+        instance.definition,
+        effect_id=new_id,
+        name=pg.display_name,
+        built_in=False,
+    )
+    pg.definition_json = json.dumps(new_def.to_dict(), sort_keys=True, allow_nan=False)
+    digest = content_trust_digest(new_def)
+    pg.content_digest = digest
+    pg.trust_state = TrustState.UNTRUSTED_IMPORTED.value
+    pg.status = "DRAFT"
+    refresh_stack_state(scene)
+    return pg
+
+
 def effect_instance_from_pg(scene, pg) -> EffectInstanceV2:
     """Build one immutable execution snapshot from Blender authoring state."""
 
@@ -255,26 +490,21 @@ def effect_instance_from_pg(scene, pg) -> EffectInstanceV2:
     original = {kernel.kernel_id: kernel for kernel in definition.kernels}
     kernels = []
     for kernel_pg in pg.kernels:
-        base = original[kernel_pg.kernel_id]
-        source = (
-            kernel_pg.source_text.as_string()
-            if kernel_pg.source_text is not None
-            else base.source
-        )
-        fields = tuple(FieldBindingV2(item.field, item.access) for item in kernel_pg.fields)
-        kernels.append(replace(
-            base,
-            domain=kernel_pg.domain,
-            stage=kernel_pg.stage,
-            cadence=kernel_pg.cadence,
-            source=source.rstrip("\n") or "pass",
-            fields=fields,
-            safe_mode=bool(kernel_pg.safe_mode),
-            frame_start=int(kernel_pg.frame_start),
-            frame_end=int(kernel_pg.frame_end),
-            frame_step=max(1, int(kernel_pg.frame_step)),
-        ))
+        base = original.get(kernel_pg.kernel_id)
+        kernels.append(kernel_definition_from_pg(kernel_pg, base))
+
     definition = replace(definition, kernels=tuple(kernels))
+    if not definition.built_in:
+        # Authored effects: the PG is the source of truth for name and parameters.
+        # Built-ins keep their shipped definition so the trust digest stays exact.
+        param_map = {p.key: p for p in definition.parameters}
+        definition = replace(
+            definition,
+            name=str(pg.display_name or definition.name),
+            parameters=tuple(
+                parameter_definition_from_pg(item, param_map.get(item.key)) for item in pg.parameters
+            ),
+        )
     parameter_values = {item.key: _parameter_value(item) for item in pg.parameters}
     controllers = {
         item.key: _controller_snapshot(item)
@@ -336,6 +566,15 @@ def _set_parameter_pg(target, definition, value, scene=None):
 
 
 def add_instance_to_scene(scene, instance: EffectInstanceV2, *, select: bool = True):
+    global _BUILDING_INSTANCE
+    _BUILDING_INSTANCE = True
+    try:
+        return _add_instance_to_scene(scene, instance, select=select)
+    finally:
+        _BUILDING_INSTANCE = False
+
+
+def _add_instance_to_scene(scene, instance: EffectInstanceV2, *, select: bool = True):
     stack = scene.fluidsim_effects
     pg = stack.items.add()
     pg.instance_id = instance.instance_id
@@ -372,6 +611,8 @@ def add_instance_to_scene(scene, instance: EffectInstanceV2, *, select: bool = T
         kernel_pg.frame_start = kernel.frame_start
         kernel_pg.frame_end = kernel.frame_end
         kernel_pg.frame_step = kernel.frame_step
+        kernel_pg.parameter_keys_csv = ", ".join(kernel.parameter_keys)
+        kernel_pg.parameter_keys_authored = True
         text_name = f"FluidSim Effect - {instance.instance_id} - {kernel.kernel_id}.py"
         text = bpy.data.texts.get(text_name) or bpy.data.texts.new(text_name)
         text.clear()

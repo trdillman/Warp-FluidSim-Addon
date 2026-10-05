@@ -33,7 +33,7 @@ need the real `bpy` use `pytest.importorskip("bpy")` and skip under a plain inte
 | `perf/` | 11 | Benchmark, profiler and playback-performance tooling contracts |
 | `demos/` | 2 | Demo scene geometry and demo-analysis acceptance criteria |
 | `repo/` | 5 | Repository, packaging and release-surface contracts |
-| `acceptance/` | 42 | Blender scripts (NOT pytest): see below |
+| `acceptance/` | 43 | Blender scripts (NOT pytest): see below |
 | `scripts/` | 6 | Headless/smoke scripts (NOT pytest): see below |
 
 ## Rules for this folder
@@ -265,6 +265,7 @@ Not collected by pytest (no `test_` prefix). Each is run as `blender --backgroun
 | `blender_closed_domain_stability_acceptance.py` | CUDA regression for closed-domain drift and artificial energy growth. |
 | `blender_color_mixing_runtime_acceptance.py` | Focused Blender/CUDA proof for the saved chromatic-vortex workflow. |
 | `blender_color_mixing_ui_acceptance.py` | Focused Blender 5.1 acceptance for color-mixing authoring controls. |
+| `blender_custom_effect_example_scenes_acceptance.py` | Blender/CUDA playback of the 12 Custom Effect example scenes: ship untrusted, apply once trusted, particles advance. Manual (not in the gate's background list). |
 | `blender_custom_effects_acceptance.py` | Blender 5.1 acceptance for built-in Custom Effects and package import. |
 | `blender_force_region_acceptance.py` | Real Blender/CUDA acceptance for object-level FluidSim FORCE regions. |
 | `blender_gui_acceptance.py` | Interactive Blender GUI acceptance test for the FluidSim Warp add-on. |

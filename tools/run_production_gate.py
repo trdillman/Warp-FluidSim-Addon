@@ -122,6 +122,8 @@ MANUAL_BLENDER_PROBES = {
         "needs real editor contexts and simulated ESC/RET events in a GUI session",
     "tests/acceptance/blender_artist_workflow_acceptance.py":
         "GUI timeline probe: call start(report_path) in a GUI session",
+    "tests/acceptance/blender_custom_effect_example_scenes_acceptance.py":
+        "plays back all 12 custom-effect example scenes; run manually after tools/release/build_custom_effect_example_scenes.py",
     "tests/acceptance/blender_effect_add_invoke_acceptance.py":
         "needs the interactive Add Effect search popup",
     "tests/acceptance/blender_particle_autogrowth_live_review.py":
