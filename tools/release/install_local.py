@@ -18,6 +18,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+if __package__:
+    from .build_extension import _blender_process_environment
+else:  # Direct execution: python tools/release/install_local.py.
+    from build_extension import _blender_process_environment
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADDON_ROOT = REPO_ROOT / "fluidSim_warp_blender51"
 PROBE_MARKER = "FLUIDSIM_INSTALL_PROBE="
@@ -101,7 +106,10 @@ def check_probe(report: dict | None, expected_version: str) -> list[str]:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(
+        command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=_blender_process_environment(os.environ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: legacy FluidSim copy (remove or archive it): {path}")
 
     result = _run([str(args.blender), "--background", "--python-expr", PROBE_SCRIPT])
+    if result.returncode != 0:
+        print(result.stdout[-2000:], result.stderr[-2000:], sep="\n", file=sys.stderr)
+        print(f"NOT READY: Blender probe exited {result.returncode}", file=sys.stderr)
+        return result.returncode
     report = parse_probe(result.stdout)
     if report:
         for key in ("blender", "fluidsim_version", "fluidsim_path", "warp_version",

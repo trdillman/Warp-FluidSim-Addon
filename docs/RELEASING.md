@@ -4,6 +4,51 @@ A release needs two kinds of proof. Hosted CI runs on every pull request.
 The manual GPU gate runs once per release on a machine with an NVIDIA GPU.
 Either one alone is not enough.
 
+## Storage workflow
+
+Normal `python tools/run_production_gate.py` automatically runs the vendored
+storage regression suite, reports `pre-production`, and reports `end-task` in
+`finally`, including production and hygiene-test failures. Hygiene-test failure
+blocks production; storage warnings remain diagnostics and do not change its
+exit code. Reports never delete, move or recycle files. No external installation
+is needed; see `tools/storage_hygiene/PROVENANCE.md`.
+
+At task startup run `python tools/storage_hygiene/storage_hygiene.py check`.
+Before allocating output, record absolute path, project, owner, run ID, source
+SHA, state, budget/expiry, active lease, retention reason and protected evidence.
+For an owned output policy set `FLUIDSIM_STORAGE_POLICY` to its JSON path, using
+the vendored policy schema; roots cannot overlap. Stale warnings require a
+completed registered disposable root and a complete scan. Default container
+scans are bounded lower bounds and deliberately exclude protected material.
+On non-Windows hosts, the bundled Windows paths remain valid policy entries
+but are reported as unmeasured with unknown budgets; no Windows drive or root
+is probed or translated to a mounted path. Native owned-output policies still
+use the same bounded scanning and protection rules.
+Overrides retain all bundled denied/protected paths and the current checkout
+as never-probe holds. Measure owned disposable outputs outside those holds;
+an override cannot authorize probing retained source/proof or denied material.
+The four-container telemetry pass remains mandatory with an override, which adds
+a separate owned-output pass. Their measurements are not additive. Observed
+file-age warnings include retained/unknown material and never authorize cleanup;
+age is neither task age nor evidence of obsolescence. Incomplete budget assessment
+is unknown unless its measured lower bound already exceeds the budget. Traversal
+remains bounded at 20,000 entries/0.5 seconds per root, plus OS metadata latency;
+the default four-root allowance is about two seconds per phase. Existing denied
+paths and newly observed inaccessible paths remain excluded on later phases.
+
+At task end reconcile records and report retained/cleanup-eligible outputs.
+Clean only owned disposable artifacts through a verified recoverable route;
+keep source, dirty work, autosaves, qualified packages/baselines and failure
+evidence. A warning grants no deletion authority. Permanent deletion requires
+exact approval. Missing/invalid mandatory policy or unavailable mandatory
+pre-production telemetry blocks admission with exit 2, before production starts.
+Invalid optional overrides remain diagnostic while the default pass is mandatory.
+End-task telemetry failure is diagnostic and preserves the completed production
+exit code or exception. Valid incomplete, aging, budget and low-space results
+remain warnings.
+The default policy warns below 30 GiB free and retains known denied paths as
+never-probe. Storage-hook tests alone do not requalify GPU/GUI behavior.
+
 ## What hosted CI proves
 
 `.github/workflows/ci.yml` runs on every pull request, on every push to
@@ -13,7 +58,7 @@ is set to `-1`, so CUDA-only tests skip rather than fail.
 | Job | Proves |
 | --- | --- |
 | `checks` | ruff is clean, and release metadata matches between `version.py`, `blender_manifest.toml`, the Warp lock and the delivery policy. Every module compiles and the full pytest suite passes. The whitewater, surface-tension and Custom Effects kernels compile and pass their validators on Warp **CPU**. |
-| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it against an external Warp, then uninstalls it. |
+| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it against its bundled, checksum-locked Warp wheel, then uninstalls it. |
 
 The packages and JSON reports are attached to each run as artifacts.
 

@@ -56,7 +56,8 @@ def prepare_workspace(workspace) -> None:
             if area.type == "VIEW_3D":
                 for space in _spaces_of(area, "VIEW_3D"):
                     space.show_region_ui = True
-        if not any(area.type == "DOPESHEET_EDITOR" for area in areas):
+        if not any(area.type == "DOPESHEET_EDITOR" and area.ui_type == "TIMELINE"
+                   for area in areas):
             spare = [area for area in areas if area.type not in _KEEP_AREA_TYPES]
             if spare:
                 timeline = min(spare, key=lambda area: area.width * area.height)
