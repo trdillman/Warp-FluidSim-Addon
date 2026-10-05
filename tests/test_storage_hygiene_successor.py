@@ -21,7 +21,7 @@ class SuccessorTests(unittest.TestCase):
                 default = helper.policy(Path(directory), default=True)
                 local = helper.policy(Path(directory))
                 seen = []
-                with patch.object(helper, 'emit_configs', side_effect=lambda configs, phase: seen.append((phase, configs))), \
+                with patch.object(helper, 'emit_configs', side_effect=lambda configs, phase: seen.append((phase, configs)) or True), \
                      patch.object(helper.subprocess, 'run'):
                     with helper.production_storage(Path(directory)):
                         pass
@@ -48,15 +48,18 @@ class SuccessorTests(unittest.TestCase):
             base = Path(directory)
             hold = str(base / 'hold')
             denied = str(base / 'denied')
-            default = dict(version=1, roots=[], never_probe=[])
-            local = dict(version=1, roots=[dict(protected=[hold])], never_probe=[denied])
+            default = dict(version=1, drive=base.anchor, free_warn_bytes=0,
+                           max_entries=100, max_seconds=1, roots=[], never_probe=[])
+            local = dict(default, roots=[dict(path=str(base), budget_bytes=100, stale_days=7,
+                project='fixture', owner='test', state='retained', disposable=False,
+                retention_reason='fixture', protected=[hold])], never_probe=[denied])
             def policy(root, *, default=False):
                 return globals_config if default else local
             globals_config = default
             seen = []
             with patch.object(helper, 'policy', side_effect=policy), \
                  patch.dict('os.environ', {'FLUIDSIM_STORAGE_POLICY': 'synthetic-policy'}), \
-                 patch.object(helper, 'emit_configs', side_effect=lambda configs, phase: seen.append(configs)), \
+                 patch.object(helper, 'emit_configs', side_effect=lambda configs, phase: seen.append(configs) or True), \
                  patch.object(helper.subprocess, 'run'):
                 with helper.production_storage(base):
                     pass

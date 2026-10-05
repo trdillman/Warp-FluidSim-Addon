@@ -36,7 +36,12 @@ At task end reconcile records and report retained/cleanup-eligible outputs.
 Clean only owned disposable artifacts through a verified recoverable route;
 keep source, dirty work, autosaves, qualified packages/baselines and failure
 evidence. A warning grants no deletion authority. Permanent deletion requires
-exact approval. Missing/invalid policies are explicit diagnostics in both phases.
+exact approval. Missing/invalid mandatory policy or unavailable mandatory
+pre-production telemetry blocks admission with exit 2, before production starts.
+Invalid optional overrides remain diagnostic while the default pass is mandatory.
+End-task telemetry failure is diagnostic and preserves the completed production
+exit code or exception. Valid incomplete, aging, budget and low-space results
+remain warnings.
 The default policy warns below 30 GiB free and retains known denied paths as
 never-probe. Storage-hook tests alone do not requalify GPU/GUI behavior.
 
