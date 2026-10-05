@@ -6,8 +6,9 @@ This storage-adopted checkout is the current owned Liquid main development lane
 (`task/liquid-storage-hygiene-20261005`). Work here rather than altering the
 frozen qualified `9947` snapshot or another owner's dirty canonical checkout.
 From this repository root, the normal production command is
-`python tools/run_production_gate.py` (add `--include-gui` only with coordinated
-GPU/GUI allocation). It directly runs mandatory storage regressions and
+`python tools/run_production_gate.py`. Both default and GUI gates require prior
+coordinated GPU allocation; `--include-gui` also requires GUI allocation.
+The command directly runs mandatory storage regressions and
 pre-production/end-task reports; no external wrapper or dated task dependency
 is required. Follow the storage task-start/ownership/retention/cleanup procedure
 in `docs/RELEASING.md`. Never disable the hook for ordinary development runs.
