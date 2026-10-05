@@ -30,7 +30,7 @@ def test_release_identity_targets_blender_52_with_only_locked_warp_wheels():
         (ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
 
     assert manifest["id"] == "fluidsim_warp"
-    assert manifest["version"] == "2.0.0"
+    assert manifest["version"] == "2.1.0"
     assert manifest["blender_version_min"] == "5.2.0"
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert _assigned(ROOT / "version.py", "BLENDER_MIN_VERSION") == (5, 2, 0)

@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 2.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 2.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Target |
 |---|---|
-| FluidSim | 2.0.0 |
+| FluidSim | 2.1.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
@@ -59,9 +59,8 @@ After selecting one or more mesh objects, the shortest workflow is:
    outputs, and starts Blender timeline playback.
 
 The compact **3D View → FluidSim** status panel exposes Preview, Pause/Resume,
-Apply Changes, and Restart shortcuts. Its Live Tuning child contains only
-runtime-compatible adjustments and links to the authoritative Scene Properties
-workflow. Object roles and per-input controls remain
+Apply Changes, and Restart shortcuts. Below it, the Setup, Simulate, Look and
+Bake & Export stages hold the controls for each step (see *3D View FluidSim workflow* in section 3). Object roles and per-input controls remain
 in **Object Properties** and also appear contextually in **Physics Properties**.
 
 Guided setup creates or reuses one owned collection tree without deleting or
