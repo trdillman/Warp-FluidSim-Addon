@@ -90,13 +90,17 @@ def check(config, *, now=None, free_bytes=None):
         if not registered:
             warn('registration', root, 'Owner/project/state/retention record incomplete; no cleanup eligibility')
         measure = dict(path=root['path'], owner=root.get('owner'), logical_bytes=None,
-                       unique_file_bytes=None, files=0, complete=True, newest_mtime=None)
+                       unique_file_bytes=None, files=0, complete=True, newest_mtime=None,
+                       observed_old_file_count=0, observed_old_file_bytes=0,
+                       inaccessible_paths=[])
         result['roots'].append(measure)
         deadline = time.monotonic() + config['max_seconds']
         count = 0
         identities = set()
         protected = root.get('protected', []) + config.get('never_probe', [])
         failed_codes = set()
+        aged_samples = []
+        oldest_age = 0
         unknown_children = []
         known_children = {normalized(record['path']) for record in config.get('records', [])
                           if all(record.get(f) for f in ('project', 'owner', 'retention_reason'))
@@ -104,9 +108,23 @@ def check(config, *, now=None, free_bytes=None):
 
         def incomplete(code, path, detail=''):
             measure['complete'] = False
+            if code == 'inaccessible' and str(path) not in measure['inaccessible_paths']:
+                measure['inaccessible_paths'].append(str(path))
             if code not in failed_codes:
-                warn(code, root, str(path) + (': ' + detail if detail else ''))
+                warn(code, root, str(path) + (': ' + detail if detail else ''), affected_path=str(path))
                 failed_codes.add(code)
+
+        def coverage():
+            size = measure['logical_bytes']
+            assessment = ('exceeded' if size is not None and size > root['budget_bytes']
+                          else ('within' if measure['complete'] else 'unknown'))
+            measure['budget_assessment'] = assessment
+            if not measure['complete']:
+                warn('coverage_incomplete', root,
+                     'Unvisited/protected/denied/linked material is unmeasured; no whole-folder size or age conclusion',
+                     observed_logical_bytes=size, budget_bytes=root['budget_bytes'],
+                     budget_assessment=assessment, complete=False,
+                     excluded_reasons=sorted(failed_codes), cleanup_authorized=False)
 
         # Check each ancestor without resolving links or probing protected paths.
         ancestors = list(reversed(Path(root['path']).parents)) + [Path(root['path'])]
@@ -131,9 +149,11 @@ def check(config, *, now=None, free_bytes=None):
                 allowed = False
                 break
         if not allowed:
+            coverage()
             continue
         if not stat.S_ISDIR(st.st_mode):
             incomplete('not_directory', root['path'])
+            coverage()
             continue
         stack = [root['path']]
         while stack:
@@ -180,6 +200,13 @@ def check(config, *, now=None, free_bytes=None):
                                     measure['unique_file_bytes'] += est.st_size
                                 measure['files'] += 1
                                 measure['newest_mtime'] = max(measure['newest_mtime'] or est.st_mtime, est.st_mtime)
+                                file_age = max(0, (now - est.st_mtime) / 86400)
+                                if file_age > root['stale_days']:
+                                    measure['observed_old_file_count'] += 1
+                                    measure['observed_old_file_bytes'] += est.st_size
+                                    oldest_age = max(oldest_age, file_age)
+                                    if len(aged_samples) < 5:
+                                        aged_samples.append(dict(path=entry.path, age_days=file_age))
                         except OSError as exc:
                             incomplete('inaccessible', entry.path, str(exc))
             except OSError as exc:
@@ -188,6 +215,16 @@ def check(config, *, now=None, free_bytes=None):
         newest = measure['newest_mtime']
         age = max(0, (now - newest) / 86400) if newest is not None else None
         measure['age_days'] = age
+        coverage()
+        if measure['observed_old_file_count']:
+            warn('aging', root,
+                 'Observed old file modification timestamps only; task age, obsolescence and deletion eligibility are not inferred',
+                 observed_old_file_count=measure['observed_old_file_count'],
+                 observed_old_file_bytes=measure['observed_old_file_bytes'],
+                 oldest_observed_age_days=oldest_age, threshold_days=root['stale_days'],
+                 sample=aged_samples, complete=measure['complete'],
+                 retention_state=root.get('state', 'unknown'),
+                 cleanup_authorized=False)
         if unknown_children:
             warn('unregistered_children', root, 'Top-level folders lack ownership/retention records; names do not establish ownership', count=len(unknown_children), sample=unknown_children[:10])
         if size is not None and size > root['budget_bytes']:
@@ -195,6 +232,22 @@ def check(config, *, now=None, free_bytes=None):
         if registered and root.get('disposable') is True and root.get('state') == 'completed' and measure['complete'] and age is not None and age > root['stale_days']:
             warn('stale', root, 'Completed owned disposable output exceeds retention age; eligibility still requires owner review', bytes=size, age_days=age)
     return result
+
+
+def exclude_inaccessible(config, result):
+    """Carry observed denials to later phases; no filesystem access or persistence."""
+    if not result:
+        return []
+    paths = [path for row in result.get('roots', []) for path in row.get('inaccessible_paths', [])]
+    paths += [warning.get('affected_path') or warning.get('path')
+              for warning in result.get('warnings', []) if warning.get('code') == 'inaccessible']
+    denied = config.setdefault('never_probe', [])
+    added = []
+    for path in paths:
+        if isinstance(path, str) and os.path.isabs(path) and path not in denied:
+            denied.append(path)
+            added.append(path)
+    return added
 
 
 def emit(config, phase, project):
@@ -242,7 +295,7 @@ def main(argv=None):
         if rc:
             print('STORAGE-HYGIENE-TEST-FAIL: production command was not started', file=sys.stderr, flush=True)
             return rc
-    emit(config, 'pre-production', args.project)
+    exclude_inaccessible(config, emit(config, 'pre-production', args.project))
     try:
         return subprocess.call(command)
     finally:

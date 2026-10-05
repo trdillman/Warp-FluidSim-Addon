@@ -1,7 +1,7 @@
 # Vendored checker
 
 `storage_hygiene.py`, `policy.json` and `tests/test_hygiene.py` are copied unchanged
-from local shared commit `ca82ff220a6b2be0027fe9df0d537159a22cacd4`.
+from local shared commit `4b64d29dd0cc4707abdc28b452647f35963f6390`.
 They require only Python's standard library and live in this repository; no dated
 external task path, installation, network or optional import is needed.
 `integration.py` binds them to Liquid's production entry point.

@@ -239,6 +239,86 @@ class HygieneTests(unittest.TestCase):
         self.assertEqual(launch.call_count, 1)
         self.assertIn('STORAGE-HYGIENE-TEST-FAIL', errors.getvalue())
 
+    def test_retained_old_files_warn_age_without_cleanup_authority(self):
+        os.utime(self.file, (self.now - 8*86400, self.now - 8*86400))
+        self.cfg['roots'][0].update(state='retained', disposable=False)
+        result = self.check()
+        self.assertIn('aging', self.codes(result))
+        self.assertNotIn('stale', self.codes(result))
+        warning = next(w for w in result['warnings'] if w['code'] == 'aging')
+        self.assertFalse(warning['cleanup_authorized'])
+        self.assertEqual(warning['retention_state'], 'retained')
+        self.assertEqual(warning['observed_old_file_bytes'], 10)
+        self.assertEqual(self.file.read_bytes(), b'1234567890')
+
+    def test_unknown_owner_can_receive_age_observation(self):
+        os.utime(self.file, (self.now - 8*86400, self.now - 8*86400))
+        self.cfg['roots'][0].pop('owner')
+        result = self.check()
+        self.assertIn('aging', self.codes(result))
+        self.assertIn('registration', self.codes(result))
+        self.assertNotIn('stale', self.codes(result))
+
+    def test_fresh_file_does_not_hide_old_observed_file(self):
+        os.utime(self.file, (self.now - 8*86400, self.now - 8*86400))
+        (self.output / 'fresh.bin').write_bytes(b'x')
+        self.assertIn('aging', self.codes(self.check()))
+
+    def test_excluded_coverage_warns_unknown_budget_and_sample_age(self):
+        excluded = self.output / 'retained-proof'
+        excluded.mkdir()
+        (excluded / 'unmeasured').write_bytes(b'x'*1000)
+        self.cfg['roots'][0]['protected'] = [str(excluded)]
+        os.utime(self.file, (self.now - 8*86400, self.now - 8*86400))
+        result = self.check()
+        self.assertIn('coverage_incomplete', self.codes(result))
+        warning = next(w for w in result['warnings'] if w['code'] == 'coverage_incomplete')
+        self.assertEqual(warning['budget_assessment'], 'unknown')
+        self.assertEqual(warning['observed_logical_bytes'], 10)
+        aging = next(w for w in result['warnings'] if w['code'] == 'aging')
+        self.assertFalse(aging['complete'])
+        self.assertFalse(aging['cleanup_authorized'])
+        self.assertNotIn('stale', self.codes(result))
+
+    def test_entire_protected_root_has_unknown_coverage_not_zero(self):
+        self.cfg['roots'][0]['protected'] = [str(self.output)]
+        result = self.check()
+        warning = next(w for w in result['warnings'] if w['code'] == 'coverage_incomplete')
+        self.assertIsNone(warning['observed_logical_bytes'])
+        self.assertEqual(warning['budget_assessment'], 'unknown')
+        self.assertNotIn('aging', self.codes(result))
+
+    def test_bounded_scan_is_unknown_budget_not_within_budget(self):
+        self.cfg['max_entries'] = 0
+        result = self.check()
+        self.assertEqual(result['roots'][0]['budget_assessment'], 'unknown')
+        self.assertIn('coverage_incomplete', self.codes(result))
+
+    def test_all_observed_denials_are_recorded_for_later_phase_exclusion(self):
+        children = [self.output / name for name in ('denied-one', 'denied-two')]
+        for child in children:
+            child.mkdir()
+        original = h.os.scandir
+        def denied(path):
+            if normalized_for_test(path) in {normalized_for_test(p) for p in children}:
+                raise PermissionError('synthetic denial')
+            return original(path)
+        with patch.object(h.os, 'scandir', side_effect=denied):
+            result = self.check()
+        self.assertEqual(set(result['roots'][0]['inaccessible_paths']), {str(p) for p in children})
+        warnings = [w for w in result['warnings'] if w['code'] == 'inaccessible']
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(warnings[0]['affected_path'], {str(p) for p in children})
+
+    def test_observed_denial_excludes_exact_paths_without_hiding_container(self):
+        child = str(self.output / 'denied')
+        result = {'roots': [{'inaccessible_paths': [child]}], 'warnings': [
+            {'code': 'inaccessible', 'path': str(self.output), 'affected_path': child}]}
+        self.assertEqual(h.exclude_inaccessible(self.cfg, result), [child])
+        self.assertIn(child, self.cfg['never_probe'])
+        self.assertNotIn(str(self.output), self.cfg['never_probe'])
+        self.assertEqual(h.exclude_inaccessible(self.cfg, result), [])
+
 
 def normalized_for_test(path):
     return os.path.normcase(os.path.abspath(path))

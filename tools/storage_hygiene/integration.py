@@ -11,8 +11,8 @@ from . import storage_hygiene as checker
 HERE = Path(__file__).resolve().parent
 
 
-def policy(root):
-    override = os.environ.get("FLUIDSIM_STORAGE_POLICY")
+def policy(root, *, default=False):
+    override = None if default else os.environ.get("FLUIDSIM_STORAGE_POLICY")
     path = Path(override) if override else HERE / "policy.json"
     try:
         required = json.loads((HERE / "policy.json").read_text(encoding="utf-8-sig"))
@@ -34,10 +34,26 @@ def policy(root):
         return {}  # emit diagnoses invalid configuration in both phases
 
 
+def emit_configs(configs, phase):
+    for label, config in configs:
+        result = checker.emit(config, phase, label)
+        for _, target in configs:
+            checker.exclude_inaccessible(target, result)
+
+
 @contextmanager
 def production_storage(root):
-    config = policy(root)
-    checker.emit(config, "pre-production", "liquid")
+    configs = [("liquid", policy(root, default=True))]
+    if os.environ.get("FLUIDSIM_STORAGE_POLICY"):
+        configs.append(("liquid:owned", policy(root)))
+    # Owner overrides may add holds/denials, never relax the mandatory pass.
+    denied = list(dict.fromkeys(
+        [path for _, config in configs for path in config.get("never_probe", [])] +
+        [path for _, config in configs for entry in config.get("roots", [])
+         for path in entry.get("protected", [])]))
+    for _, config in configs:
+        config["never_probe"] = denied.copy()
+    emit_configs(configs, "pre-production")
     try:
         subprocess.run(
             [sys.executable, "-B", "-m", "unittest", "discover", "-s",
@@ -46,4 +62,4 @@ def production_storage(root):
         )
         yield
     finally:
-        checker.emit(config, "end-task", "liquid")
+        emit_configs(configs, "end-task")

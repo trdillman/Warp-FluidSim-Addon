@@ -23,6 +23,14 @@ scans are bounded lower bounds and deliberately exclude protected material.
 Overrides retain all bundled denied/protected paths and the current checkout
 as never-probe holds. Measure owned disposable outputs outside those holds;
 an override cannot authorize probing retained source/proof or denied material.
+The four-container telemetry pass remains mandatory with an override, which adds
+a separate owned-output pass. Their measurements are not additive. Observed
+file-age warnings include retained/unknown material and never authorize cleanup;
+age is neither task age nor evidence of obsolescence. Incomplete budget assessment
+is unknown unless its measured lower bound already exceeds the budget. Traversal
+remains bounded at 20,000 entries/0.5 seconds per root, plus OS metadata latency;
+the default four-root allowance is about two seconds per phase. Existing denied
+paths and newly observed inaccessible paths remain excluded on later phases.
 
 At task end reconcile records and report retained/cleanup-eligible outputs.
 Clean only owned disposable artifacts through a verified recoverable route;
