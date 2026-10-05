@@ -1,16 +1,15 @@
 # FluidSim Warp 2.1: handoff from 2.0
 
 This is the starting point for 2.1. It lists what 2.0 left open on purpose, the
-evidence behind each item, and a suggested order. The 2.0 record is
-`docs/RELEASE_2_0_PROGRESS.md`; the plan it executed is
-`docs/NEXT_MAJOR_RELEASE_PLAN.md`.
+evidence behind each item, and a suggested order. The 2.0 progress record and
+release plan were removed from the tree; they remain in git history.
 
 ## Baseline 2.0 hands over
 
 | Item | State at handoff |
 |---|---|
 | Platform | Blender 5.2 LTS, bundled Warp 1.17.0 (cu12), Windows 11 x64 certified on one RTX 4080 SUPER; Linux x64 packaged, gate 52/53 GUI on WSL2, uncertified |
-| Demo reference hash | `e49d23ef…e1ae` (demo bakes are bitwise reproducible on the same GPU, driver and Warp build). Since the collider wall-film fix: `ffd50faa…2873`. Since collider grid friction (`75f9265`): `cfd0bf04…ec52`. Since the rocky-cove dam_break rebuild: `2cb4f781…3a73` (see `demos/ANALYSIS.md`) |
+| Demo reference hash | `e49d23ef…e1ae` (demo bakes are bitwise reproducible on the same GPU, driver and Warp build). Since the collider wall-film fix: `ffd50faa…2873`. Since collider grid friction (`75f9265`): `cfd0bf04…ec52`. Since the rocky-cove dam_break rebuild: `2cb4f781…3a73` (evidence: `artifacts/demo_analysis/ANALYSIS.md` from that gate run) |
 | Tests | see the final row of the progress record |
 | Performance | vs 1.0.255: crown_splash −2.7%, dam_break +0.4%, paddle_stir +4.0% (absolute medians; paired median +5.5%). chromatic_vortex vs 1.1.0: −2.2%. 2.0 adds no measurable solver cost over 1.1.0; paddle_stir's gap is 1.1.0's deterministic P2G gather (section 3) |
 | Open P0/P1 | none |
@@ -61,7 +60,7 @@ evidence behind each item, and a suggested order. The 2.0 record is
 
 ## 2. Open review cards (medium / low)
 
-None block a release. Each has a card in `backlog/tasks/`.
+None block a release. (Their former task cards were removed from the tree; see git history.)
 
 | Card | Severity | Summary | Suggested fix |
 |---|---|---|---|
@@ -108,7 +107,7 @@ and about 4% faster on chromatic_vortex. Evidence:
 `C:\Users\Tyler\fluidsim-gate-logs\perf-2.0-20260927\`.
 
 **Solver-only follow-up (2026-09-29).**
-`docs/PERFORMANCE_2_0_BENCHMARK_20260929.md` runs one dam_break workload on the
+A benchmark write-up (since removed from the repo) ran one dam_break workload on the
 pre-optimization code, 1.1.0, 2.0 and master, all on Warp 1.17. Against the
 pre-optimization code, 2.0 is:
 - about 5.6× faster with viscosity
@@ -149,10 +148,71 @@ Against 1.1.0 it shows no regression.
      (0.82–1.32, 63.6 → 54.5 ms/frame). Evidence:
      `C:\Users\Tyler\wt\bench_viscgraph\`, probe in `C:\Users\Tyler\wt\probe\`.
 
-Add the 2.0 comparison to the gate, so the budget is enforced on every run
-rather than measured once. Use ABBA pairs, at least 8 per demo, median
-excluding frame 1, and the stage-profiler breakdown. Whole-frame time alone
-is too noisy on a shared workstation to settle a 5% question.
+**Performance budget gate (implemented 2026-10-03).** Every headless and full
+production-gate run now invokes `tools/benchmark_versions.py --demo-budget`.
+It uses eight fresh-process trials **per version and demo**, arranged in four
+complete ABBA blocks with alternating baseline-first/candidate-first order.
+Every trial opens the same current saved demo in both versions, advances frames
+1–48 through Scene Bridge with output publication enabled, and reports the
+median of frames 2–48. The scene files and intended physics/substep values are
+unchanged. A compatibility adapter applies the candidate's effective Domain
+RNA values to each reference owner in memory (Scene-owned in 1.0.255,
+object-owned in 1.1.0). This prevents historical defaults, including Variable
+Projection, from substituting different physics. All common effective
+SolverSettings must match; unknown
+version-specific settings invalidate the comparison. Disabled species is a
+recorded neutral schema difference. Where a reference lacks the global Export
+Attributes switch, the adapter translates it to individual legacy toggles and
+verifies equal derived output-attribute inventories; inactive authored toggles
+are compared by their effective values. Every measured frame must advance the
+same simulated duration with identical configured substep limits and physics.
+Actual CFL-selected substep counts are recorded diagnostics; small differences
+between the atomic reference and current solver are not settings changes.
+Fewer candidate particles invalidate evidence. Live-handler suppression and
+synchronized profiling are enabled in
+memory. This is background Scene Bridge evidence, not foreground
+handler/draw evidence; the GUI playback probe remains a separate lane.
+
+The fixed reference commits are `9c0d99e62adda14bb7b075a447c01fefe7187da3`
+(1.0.255, crown_splash/dam_break/paddle_stir) and
+`c5919d668f469942200c58274eca13337d3aa624` (1.1.0, chromatic_vortex).
+These are the peeled commits of `archive/release-prep-1.0.255` and `v1.1.0`,
+not their annotated-tag object IDs.
+The exception is file compatibility only; paddle_stir is **not** rebaselined
+to 1.1.0. Both variants use the same certified Warp runtime and identical
+saved-file bytes. References are extracted from Git into temporary directories;
+candidate source and the four files are copied once into a private snapshot.
+The snapshot inventory SHA-256 binds the summary to the measured add-on, demo,
+child, runner, evaluator and production-gate bytes. The
+gate runs the budget after rebuilding/checking demos, and rejects a full
+pass if source or saved-file bytes change afterward. Both headless and full
+passes re-evaluate the raw report before claiming success.
+
+Within a block, divide the candidate's median of two trial medians by the
+reference's median of two trial medians; the score is the median of those block
+ratios. A pass requires both whole-frame and synchronized solver ratios ≤1.05
+and agreement between the two orders. If both exceed 1.05, this is a regression.
+If stage and frame evidence or the two orders disagree, the result is
+**inconclusive and blocks the gate**. Missing/invalid evidence also blocks it.
+Per-stage medians and ratios accompany every decision. This cancels linear
+slot drift; it does not claim to eliminate arbitrary workstation interference.
+Profiler synchronization is enabled in both variants, so these timings include
+instrumentation overhead and must not be presented as ordinary viewport FPS.
+The solver score sums only outermost synchronized phase spans in both versions,
+because the legacy profiler double-counted nested spans. Original per-frame
+solver totals remain in `reportedSolverMs` beside the comparable total.
+
+Evidence is regenerated at `artifacts/performance_budget/summary.json`, with
+raw trial JSON and child logs alongside it. The full gate manifest includes
+the summary path, SHA-256 and reference commits. Historical paddle_stir +4.0%
+absolute / +5.5% paired is not a passing result under this contract.
+Current evidence and runtime outcome: `artifacts/performance_budget/summary.json`.
+The 2026-10-03 delivery ran two complete 64-trial GPU comparisons; all four
+measured snapshots passed. The final source fingerprint differed from the
+latest snapshot, so current-checkout certification remains blocked. This is
+not a full production-gate pass. Paired deltas and the stable-checkout rerun
+action are preserved outside the concurrently cleaned checkout at
+`C:\Users\Tyler\fluidsim-gate-logs\PERFORMANCE_BUDGET_GATE_DELIVERY_20261003.md`.
 
 ## 4. Features (2.1+ candidates, need owner approval)
 
@@ -169,7 +229,7 @@ is too noisy on a shared workstation to settle a 5% question.
   lane that writes `artifacts/production_gate_manifest.json`. Run it detached,
   don't touch GUI windows during the run, and expect the demo hash to change
   only when results change.
-- The demo builder (`tools/build_demo_scenes.py`) rewrites the tracked
+- The demo builder (`tools/demos/build_demo_scenes.py`) rewrites the tracked
   `demos/*` files. Back them up first.
 - Keep Blender-loaded worktrees under short paths; Blender's Python hits the
   260-character path limit.

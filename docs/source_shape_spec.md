@@ -154,7 +154,7 @@ by any kernel** — set by `paradigmParticleSetGridData` (`:18563`), propagated 
 
 ## 5. Consequences for the port's own claims
 
-- `docs/SOURCE_EMISSION_PRODUCT_PLAN.md:76` previously framed the defect as "`Mode = Field`
+- An earlier source-emission product plan (since removed) previously framed the defect as "`Mode = Field`
   creates liquid ... nonconformant". That premise is corrected: Field is pressure influence,
   creates no liquid, and is hidden from the normal Sources UI until pressure sourcing exists.
 - A regression test asserting "a FIELD-mode source produces fluid voxels" would encode the

@@ -2,9 +2,7 @@
 
 Measured 2026-09-22 at HEAD `f383eae` (Blender 5.1, CUDA). Supersedes the
 `UNCALIBRATED` placeholder `PADDLE_SPINUP_MOMENTUM_MARGIN = 0.3` that shipped
-in `tools/analyze_demos.py` with no bake behind it.
-
-Closes `backlog/tasks/TASK-POLICY-DRIFT-016-PADDLE-SPINUP-THRESHOLD-CALIBRATION.md`.
+in `tools/demos/analyze_demos.py` with no bake behind it.
 
 ## What the check measures
 
@@ -34,7 +32,7 @@ attempt.
 ## Method
 
 21 real bakes (~28 s each), one per row, built through
-`tools/build_demo_scenes.py` with the calibration envelope it now reads from
+`tools/demos/build_demo_scenes.py` with the calibration envelope it now reads from
 `FLUIDSIM_PADDLE_*` environment variables. Defaults are byte-preserving: with
 no variant set the shipped `paddle_stir.blend` is produced unchanged, and a
 variant never writes over it.
@@ -45,7 +43,7 @@ FLUIDSIM_PADDLE_VOXEL=0.010 \
 FLUIDSIM_PADDLE_SEED_SPACING=0.010 \
 FLUIDSIM_PADDLE_RPM=100 \
 FLUIDSIM_PADDLE_FRAME_SCALE=1.0 \
-blender --background --factory-startup --python tools/build_demo_scenes.py -- paddle_stir
+blender --background --factory-startup --python tools/demos/build_demo_scenes.py -- paddle_stir
 ```
 
 Four axes were swept independently and then combined at the worst corner:
@@ -137,7 +135,7 @@ reason this threshold can be calibrated at all.
 
 The solver has since been made bitwise deterministic (`d2a6b6d`). The old
 statistic still swung 20% under a 1e-6 relative change in drop speed, so it
-was rebound to the crown phase only (see `tools/analyze_demos.py`).
+was rebound to the crown phase only (see `tools/demos/analyze_demos.py`).
 
 ## Verification
 
@@ -157,7 +155,7 @@ was rebound to the crown phase only (see `tools/analyze_demos.py`).
 
 `base_r1..r5` - the shipped settings - score **10/10** on the full analyzer.
 Regression coverage for the accept and reject sides is in
-`tests/test_demo_analysis_contract.py`.
+`tests/demos/test_demo_analysis_contract.py`.
 
 ## Recheck on master `b5e0050` (2026-09-24)
 
