@@ -20,13 +20,6 @@ from fluidSim_warp_blender51.sim import spacetime
 from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 
 
-@pytest.fixture(autouse=True)
-def _fresh_density_cache():
-    spacetime._DENSITY_COEFFICIENTS.clear()
-    yield
-    spacetime._DENSITY_COEFFICIENTS.clear()
-
-
 def _settings(**overrides):
     values = {
         "spacetime_enabled": False,
@@ -266,7 +259,7 @@ def test_density_edits_leave_a_pinned_or_disabled_reference_alone(overrides, mon
 
     assert calls == []
     assert state.reference_mass_cached == 4.0
-    assert spacetime._DENSITY_COEFFICIENTS == {}
+    assert state._density_coefficient is None
 
 
 def test_an_unset_calibration_is_not_remembered():
@@ -275,16 +268,29 @@ def test_an_unset_calibration_is_not_remembered():
 
     state.remember_calibration()
 
-    assert spacetime._DENSITY_COEFFICIENTS == {}
+    assert state._density_coefficient is None
 
 
-def test_the_coefficient_cache_is_bounded_and_drops_the_oldest_first():
-    for seed in range(spacetime._DENSITY_COEFFICIENT_LIMIT + 10):
-        spacetime._store_density_coefficient(seed, float(seed))
+def test_solvers_with_the_same_seed_but_different_quality_do_not_share_a_coefficient():
+    """The remembered coefficient belongs to one state, not to the process."""
+    coarse = _state(_settings(spacetime_enabled=True), _quality(liquid_sampling=8.0))
+    fine = _state(_settings(spacetime_enabled=True), _quality(liquid_sampling=1.0))
 
-    assert len(spacetime._DENSITY_COEFFICIENTS) == spacetime._DENSITY_COEFFICIENT_LIMIT
-    assert 0 not in spacetime._DENSITY_COEFFICIENTS
-    assert spacetime._DENSITY_COEFFICIENT_LIMIT + 9 in spacetime._DENSITY_COEFFICIENTS
+    coarse.remember_calibration()
+    assert fine.rescale_for_density() is True
+
+    assert fine.reference_mass_cached == pytest.approx(CALIBRATION_GOLDENS[(1.0, 1729)])
+
+
+def test_a_seed_edit_discards_the_remembered_coefficient():
+    settings = _settings(spacetime_enabled=True)
+    state = _state(settings)
+    state.remember_calibration()
+
+    settings.spacetime_seed = 9
+    state.rescale_for_density()
+
+    assert state.reference_mass_cached == pytest.approx(CALIBRATION_GOLDENS[(8.0, 9)])
 
 
 # --- checkpoint ----------------------------------------------------------------

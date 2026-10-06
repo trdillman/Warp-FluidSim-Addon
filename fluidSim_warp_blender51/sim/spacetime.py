@@ -34,12 +34,6 @@ _SEED_MASK = 0x7FFFFFFF
 _LCG_MULTIPLIER = 1664525
 _LCG_INCREMENT = 1013904223
 
-# Calibration per unit of particle density, process-wide, keyed by jitter seed.
-# Bounded so a long editing session cannot grow it without limit.
-_DENSITY_COEFFICIENTS: dict[int, float] = {}
-_DENSITY_COEFFICIENT_LIMIT = 64
-
-
 def _poly6_1d(r: float) -> float:
     q = 1.0 - r * r
     if q <= 0.0:
@@ -57,12 +51,6 @@ def _temporal_weight(tau: float) -> float:
     return (35.0 / 16.0) * _poly6_1d(tau - 0.5)
 
 
-def _store_density_coefficient(key: int, coefficient: float) -> None:
-    if len(_DENSITY_COEFFICIENTS) >= _DENSITY_COEFFICIENT_LIMIT:
-        _DENSITY_COEFFICIENTS.pop(next(iter(_DENSITY_COEFFICIENTS)))
-    _DENSITY_COEFFICIENTS[key] = coefficient
-
-
 class SpaceTimeState:
     """The solver's ST-FLIP carry-over, built from its live settings and quality."""
 
@@ -78,6 +66,9 @@ class SpaceTimeState:
         self.seed = 0
         self.previous_dt = 0.0
         self.reference_mass_cached = 0.0
+        # (jitter seed, m0 per unit of particle density): owned by this state,
+        # so two solvers with the same seed but different quality never share it.
+        self._density_coefficient: tuple[int, float] | None = None
         self.reset_for_run()
 
     # -- lifecycle ---------------------------------------------------------
@@ -199,7 +190,7 @@ class SpaceTimeState:
         reference_mass = float(self.reference_mass_cached or 0.0)
         if reference_mass <= 0.0:
             return
-        _store_density_coefficient(self._cache_key(), reference_mass / self._density())
+        self._density_coefficient = (self._cache_key(), reference_mass / self._density())
 
     def rescale_for_density(self) -> bool:
         """Re-derive the automatic m0 for the current particle density.
@@ -212,10 +203,12 @@ class SpaceTimeState:
             return False
         key = self._cache_key()
         density = self._density()
-        coefficient = _DENSITY_COEFFICIENTS.get(key)
-        if coefficient is None:
+        remembered = self._density_coefficient
+        if remembered is not None and remembered[0] == key:
+            coefficient = remembered[1]
+        else:
             coefficient = float(self.calibrate_reference_mass()) / density
-            _store_density_coefficient(key, coefficient)
+            self._density_coefficient = (key, coefficient)
         self.reference_mass_cached = coefficient * density
         return True
 
