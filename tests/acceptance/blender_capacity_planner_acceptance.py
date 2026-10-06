@@ -79,7 +79,7 @@ def main():
     # Exact-fit direct append commits all particles.
     exact = FluidSolver(settings(2))
     try:
-        exact.set_source_plans((direct_plan(
+        exact.set_source_batch(native_plans=(direct_plan(
             "exact", ((-0.1, 0.0, 0.7), (0.1, 0.0, 0.7))),))
         exact.step_frame()
         count = exact.particles.refresh_host_count()
@@ -92,7 +92,7 @@ def main():
     # Two individually valid direct sources exceed the aggregate pool by one.
     aggregate = FluidSolver(settings(3))
     try:
-        aggregate.set_source_plans((
+        aggregate.set_source_batch(native_plans=(
             direct_plan("first", ((-0.2, 0.0, 0.7), (-0.1, 0.0, 0.7))),
             direct_plan("second", ((0.1, 0.0, 0.7), (0.2, 0.0, 0.7))),
         ))

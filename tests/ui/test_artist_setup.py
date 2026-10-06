@@ -49,12 +49,6 @@ def _load_source_roles(monkeypatch):
         pass
 
     common._FLUIDSIM_OT_session_base = SessionBase
-    for name in (
-        "_bridge", "_configured_device", "_mutation_poll", "_owned_capacity_plan",
-        "_owned_capacity_signature", "_pending", "_resolved_cache_path",
-        "_runtime_poll", "_scene_identity_token", "_solver_settings",
-    ):
-        setattr(common, name, lambda *args, **kwargs: None)
 
     setup_module = types.ModuleType("artist_setup_package.blender.setup_wizard")
     setup_module.setup_selected = lambda *_args: SimpleNamespace(

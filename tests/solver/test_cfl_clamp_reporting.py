@@ -120,7 +120,7 @@ def test_the_clamp_flag_reaches_the_panel_and_does_not_latch(monkeypatch):
     sess.solver = SimpleNamespace(
         frame=5, sourcing=None,
         step_frame=lambda: _stats(reported[0]))
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
 
     sess.step(scene)
     assert scene.fluidsim.stat_cfl_clamped is True
@@ -138,7 +138,7 @@ def test_whitewater_truth_reaches_live_scene_status(monkeypatch):
     sess = scene_bridge.Session()
     sess.solver = SimpleNamespace(
         frame=5, sourcing=None, step_frame=lambda: _stats(False))
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
 
     sess.step(scene)
 

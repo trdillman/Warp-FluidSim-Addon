@@ -118,13 +118,13 @@ def run_benchmark(
 
     solver = FluidSolver(settings)
     try:
-        solver.set_sources(sources)
+        solver.set_source_batch(sources)
 
         result = BenchmarkResult()
         t_begin = time.perf_counter()
         for f in range(frames):
             if f == emit_frames:
-                solver.set_sources([])
+                solver.set_source_batch()
             stats = solver.step_frame()
             result.step_times.append(stats.step_time)
             result.active_voxels.append(stats.active_voxels)

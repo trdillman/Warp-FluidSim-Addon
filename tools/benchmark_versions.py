@@ -7,8 +7,8 @@ the machine (thermal, background load) spreads evenly instead of landing on
 whichever version ran last.
 
 The child only touches API every benchmarked version shares (SolverSettings
-fields, ``FluidSolver(settings, profiler)``, ``set_sources``, ``step_frame``,
-``release``), and times each frame on the host around ``step_frame()`` plus
+fields, ``FluidSolver(settings, profiler)``, ``set_source_batch`` (or
+``set_sources`` on older versions), ``step_frame``, ``release``), and times each frame on the host around ``step_frame()`` plus
 a device synchronize, so no version's own stats decide its score.
 
     python tools/benchmark_versions.py \\
@@ -275,12 +275,15 @@ def _child(root, workload, frames, warmup, out):
     box.velocity = (0.7, 0.0, 0.0)
 
     solver = FluidSolver(s, profiler=None)
-    solver.set_sources([box])
+    # Older benchmarked versions only have ``set_sources``; current ones only
+    # have ``set_source_batch``. Both replace the whole installed source set.
+    install_sources = getattr(solver, "set_source_batch", None) or solver.set_sources
+    install_sources([box])
     records = []
     try:
         for frame in range(warmup + frames):
             if frame == EMIT_FRAMES:
-                solver.set_sources([])
+                install_sources([])
             wp.synchronize_device("cuda:0")
             t0 = time.perf_counter()
             stats = solver.step_frame()

@@ -306,28 +306,6 @@ def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
     assert source.count("force_surface=True") == 2
 
 
-def test_active_domain_settings_reads_only_the_domain_object(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
-
-    domain_group = SimpleNamespace(voxel_size=0.02, max_particles=9_000_000)
-    domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
-
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(schema_version=1, domain_object=domain_obj))
-    assert scene_bridge.active_domain_object(scene) is domain_obj
-    assert scene_bridge.active_domain_settings(scene) is domain_group
-
-    # schema_version plays no part in the lookup.
-    pre = SimpleNamespace(schema_version=0, domain_object=domain_obj)
-    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=pre)) is domain_group
-
-    # No designated domain: None, never the scene group, whatever it carries.
-    orphan = SimpleNamespace(schema_version=1, domain_object=None, voxel_size=0.5)
-    assert scene_bridge.active_domain_settings(SimpleNamespace(fluidsim=orphan)) is None
-
-    # No fluidsim at all: None, never a raise.
-    assert scene_bridge.active_domain_settings(SimpleNamespace()) is None
-
-
 def test_build_settings_reads_domain_fields_from_migrated_object(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     # Bind through the freshly-imported submodule identity (not the possibly

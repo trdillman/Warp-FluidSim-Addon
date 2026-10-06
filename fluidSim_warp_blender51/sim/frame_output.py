@@ -131,7 +131,7 @@ class HostFrame:
         self.frame = int(getattr(solver, "frame", 0))
         self._values = {}
         self._surface_transfer = getattr(
-            solver, "_surface_attribute_transfer", None
+            solver, "surface_attribute_transfer", None
         )
         if self._surface_transfer is not None:
             self._surface_transfer.invalidate()
@@ -475,7 +475,7 @@ class HostFrame:
             self._surface_transfer = SurfaceAttributeTransfer(
                 device=self.solver.device
             )
-            self.solver._surface_attribute_transfer = self._surface_transfer
+            self.solver.surface_attribute_transfer = self._surface_transfer
         return self._surface_transfer
 
     def whitewater_attribute(self, key: str, *, stride: int = 1):

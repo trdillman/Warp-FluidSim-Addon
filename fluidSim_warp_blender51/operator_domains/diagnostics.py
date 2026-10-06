@@ -14,46 +14,6 @@ from . import common as _runtime
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 class FLUIDSIM_OT_run_validation(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Run the GPU validation suite (may take ~30s)"""
 
@@ -61,12 +21,12 @@ class FLUIDSIM_OT_run_validation(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_label = "Run Validation Suite"
 
     def execute(self, context):
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         try:
             from ..diagnostics import validation
 
-            results = validation.run_all(device=_configured_device())
+            results = validation.run_all(device=_runtime._configured_device())
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Validation failed to run: {exc}")
             return {"CANCELLED"}
@@ -95,7 +55,7 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         try:
             from ..diagnostics import benchmark as bench
@@ -168,7 +128,7 @@ class FLUIDSIM_OT_write_report(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         from ..diagnostics import report as report_mod
 
@@ -190,7 +150,7 @@ class FLUIDSIM_OT_write_report(bpy.types.Operator):
                 if sess.benchmark_compare else None,
                 package_name=__package__.rsplit(".", 1)[0],
                 blender_version=".".join(str(value) for value in bpy.app.version[:3]),
-                selected_device=_configured_device(),
+                selected_device=_runtime._configured_device(),
                 cache_path=bpy.path.abspath(fs.cache_path),
                 scene_signature=str(getattr(sess, "scene_key", "")),
                 settings_signature=settings_signature,

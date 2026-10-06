@@ -37,5 +37,5 @@ def test_root_import_does_not_eagerly_import_blender_or_warp():
 
 
 def test_validation_operator_description_does_not_hardcode_stale_test_count():
-    source = (ROOT / "operators.py").read_text(encoding="utf-8")
+    source = (ROOT / "operator_domains" / "diagnostics.py").read_text(encoding="utf-8")
     assert "13-test GPU validation suite" not in source

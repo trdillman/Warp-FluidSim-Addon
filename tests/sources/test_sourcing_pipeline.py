@@ -424,7 +424,8 @@ def test_apply_owns_launch_order_cache_and_full_capacity_signal(monkeypatch):
     arrays, launches = _record_warp(monkeypatch)
     owner = _owner(host_count=8, capacity=8)
     pipeline = _pipeline(owner)
-    pipeline.set_sources([SourceShapeDesc(mode=1)])
+    pipeline.set_source_batch(
+        sourcing.SourceBatch(legacy_descriptors=(SourceShapeDesc(mode=1),)))
     pipeline.set_height_source(
         HeightSourceDesc(
             enabled=True,

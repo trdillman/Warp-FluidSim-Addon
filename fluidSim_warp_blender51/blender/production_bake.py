@@ -31,6 +31,7 @@ from ..io.checkpoint import (
     write_checkpoint_atomic,
 )
 from ..version import VERSION_STRING
+from .scene_access import scene_identity
 
 
 class BakeStatus(str, Enum):
@@ -226,25 +227,17 @@ class BakeController:
         )
 
 
-_ACTIVE_BAKES: dict[int, BakeController] = {}
+# Bakes holding ownership: scene key -> (scene, controller). The scene is kept so
+# a holder that has only the controller (the cancel operator) can still reach the
+# scene it bakes, and so a bake can be released by controller after its scene was
+# removed (a removed scene's pointer reads 0, so its key cannot be recomputed).
+_ACTIVE_BAKES: dict[int, tuple[object, BakeController]] = {}
 _ACTIVE_STATUSES = {
     BakeStatus.PREFLIGHT,
     BakeStatus.INITIALIZING,
     BakeStatus.RUNNING,
     BakeStatus.CANCELLING,
 }
-
-
-def _scene_key(scene) -> int:
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return value
-        except (ReferenceError, TypeError, ValueError):
-            pass
-    return id(scene)
 
 
 def _active_cache_path(controller) -> Path | None:
@@ -260,41 +253,53 @@ def _active_cache_path(controller) -> Path | None:
 
 def register_active_bake(scene, controller: BakeController) -> None:
     """Give one controller authoritative bake ownership for ``scene``."""
-    key = _scene_key(scene)
+    key = scene_identity(scene)
     existing = _ACTIVE_BAKES.get(key)
-    if existing is not None and existing is not controller:
+    if existing is not None and existing[1] is not controller:
         raise RuntimeError("A Production Bake is already active for this scene")
     intended_path = _active_cache_path(controller)
     if intended_path is not None:
-        for owner in tuple(_ACTIVE_BAKES.values()):
+        for _owner_scene, owner in tuple(_ACTIVE_BAKES.values()):
             if owner is not controller and _active_cache_path(owner) == intended_path:
                 raise RuntimeError(
                     f"Production Bake cache path is already active: {intended_path}")
-    _ACTIVE_BAKES[key] = controller
+    _ACTIVE_BAKES[key] = (scene, controller)
 
 
 def active_bake(scene) -> BakeController | None:
     """Return the controller that currently owns ``scene``'s bake workflow."""
-    return _ACTIVE_BAKES.get(_scene_key(scene))
+    held = _ACTIVE_BAKES.get(scene_identity(scene))
+    return None if held is None else held[1]
 
 
 def bake_is_active(scene) -> bool:
     controller = active_bake(scene)
-    return bool(controller is not None and controller.status in {
-        BakeStatus.PREFLIGHT,
-        BakeStatus.INITIALIZING,
-        BakeStatus.RUNNING,
-        BakeStatus.CANCELLING,
-    })
+    return bool(controller is not None and controller.status in _ACTIVE_STATUSES)
+
+
+def active_bakes() -> tuple[tuple[object, BakeController], ...]:
+    """Every registered bake still running, as ``(scene, controller)`` pairs."""
+    return tuple(
+        (scene, controller)
+        for scene, controller in tuple(_ACTIVE_BAKES.values())
+        if controller.status in _ACTIVE_STATUSES
+    )
 
 
 def clear_active_bake(scene, controller: BakeController | None = None) -> None:
     """Release bake ownership, optionally only for the expected controller."""
-    key = _scene_key(scene)
+    key = scene_identity(scene)
     existing = _ACTIVE_BAKES.get(key)
-    if existing is None or (controller is not None and existing is not controller):
+    if existing is None or (controller is not None and existing[1] is not controller):
         return
     _ACTIVE_BAKES.pop(key, None)
+
+
+def release_active_bake(controller: BakeController) -> None:
+    """Release ``controller``'s ownership; needs no live scene to find it."""
+    for key, (_scene, held) in tuple(_ACTIVE_BAKES.items()):
+        if held is controller:
+            del _ACTIVE_BAKES[key]
 
 
 def cache_path_is_active(path: Path | str) -> bool:
@@ -302,7 +307,7 @@ def cache_path_is_active(path: Path | str) -> bool:
     candidate = Path(path).resolve()
     return any(
         _active_cache_path(controller) == candidate
-        for controller in tuple(_ACTIVE_BAKES.values())
+        for _scene, controller in tuple(_ACTIVE_BAKES.values())
     )
 
 
@@ -489,13 +494,15 @@ class ProductionBakeBackend:
             self._original_session_signatures = signatures
 
     def _clear_for_restart(self, base: Path) -> None:
-        from .cache_manager import require_restartable_cache_directory
+        from .cache_manager import (
+            RESTART_MANAGED_ENTRIES,
+            require_restartable_cache_directory,
+        )
 
         if not base.exists():
             return
-        entries = ("fluidsim_cache.json", "frames", "checkpoints", "logs")
-        require_restartable_cache_directory(base, entries)
-        for name in entries:
+        require_restartable_cache_directory(base)
+        for name in RESTART_MANAGED_ENTRIES:
             path = base / name
             if path.is_dir():
                 shutil.rmtree(path)

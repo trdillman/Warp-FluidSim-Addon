@@ -28,8 +28,8 @@ need the real `bpy` use `pytest.importorskip("bpy")` and skip under a plain inte
 | `test_ownership_map.py` | 1 | Pins `docs/ownership-map.md`. Stays at the root because `tools/ownership_map.py` writes that path into the generated doc |
 | `support/` | 2 | Shared helpers (not tests) |
 | `validation/` | 7 | Sparse-grid / transfer / pressure / viscosity numerical validation |
-| `solver/` | 19 | Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitewater) |
-| `runtime/` | 24 | Add-on runtime logic that runs without Blender: settings, capacity, scene bridge, checkpoints, Warp discovery |
+| `solver/` | 21 | Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitewater) |
+| `runtime/` | 30 | Add-on runtime logic that runs without Blender: settings, capacity, scene bridge, checkpoints, Warp discovery |
 | `sources/` | 16 | Fluid sources, sinks and force regions |
 | `surface/` | 7 | Render-surface (SDF) pipeline and viewport point-cloud output |
 | `cache_io/` | 5 | Cache IO and output publication |
@@ -89,6 +89,8 @@ Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitew
 | `test_particles_per_voxel_cap.py` | REVIEW-005: one liquid-occupancy ceiling, not six copies of the literal 64. | - |
 | `test_pressure_projection_regressions.py` | Focused pressure projection safety regressions. | CUDA |
 | `test_pressure_st_and_graph_cache.py` | ST-FLIP PCG initialization and CUDA-graph cache regressions. | CUDA |
+| `test_solver_collaborator_contract.py` | Sub-solvers read only the pinned private solver attributes; the surface-transfer slot is public. | - |
+| `test_spacetime.py` | SpaceTime FLIP state: calibration goldens, reference-mass ladder, checkpoint scalars, leaf import. | - |
 | `test_sparse_leaf_grid_contract.py` | Regression guard for the live sparse tiled leaf-grid wording contract. | - |
 | `test_stflip_experimental_defaults.py` | ST-FLIP ships as Experimental and Variable Projection is off by default. | - |
 | `test_stflip_kernel_boundary_regressions.py` | Focused contracts for ST-FLIP transfer behavior at support/grid boundaries. | - |
@@ -106,6 +108,8 @@ Add-on runtime logic that runs without Blender: settings, capacity, scene bridge
 | File | Covers | Needs |
 |---|---|---|
 | `test_addon_core_regressions.py` | Focused regressions for bpy/Warp-independent add-on authorities. | - |
+| `test_bake_run.py` | The one BakeRun lifecycle, bake registry and restart-entry list. | - |
+| `test_capacity_approval.py` | Capacity Approval transaction (settings write, clamp read-back, domain resize, rollback) with stand-ins. | - |
 | `test_capacity_planner.py` | Capacity planner estimates and recommendations. | - |
 | `test_capacity_service.py` | Contracts for the single active capacity assessment/recommendation service. | - |
 | `test_checkpoint_state.py` | Pure checkpoint schema validation tests. | - |
@@ -116,12 +120,16 @@ Add-on runtime logic that runs without Blender: settings, capacity, scene bridge
 | `test_memory_safety_recovery.py` | Regression contracts for pre-allocation GPU memory recovery. | - |
 | `test_pending_settings_registry.py` | Exhaustive/disjoint Pending Settings transition registry contracts. | - |
 | `test_phase2_review_repairs.py` | Regressions for the Phase 2 review repairs. | CUDA |
+| `test_preset_schema_matches_properties.py` | The preset schema matches the Blender properties it assigns. | - |
 | `test_quality_contract.py` | Pure and caller-parity tests for the authoritative quality resolver. | - |
+| `test_registration.py` | One registration table; operators discovered from their modules. | - |
 | `test_readback_stride_and_discovery.py` | Device-side display decimation and lazy Warp discovery contracts. | - |
+| `test_scene_access.py` | Active Domain accessors and scene identity have one owner. | - |
 | `test_scene_bridge_cache_playback.py` | Regression tests for cache playback frame-change routing. | - |
 | `test_scene_bridge_capacity_initialization.py` | Capacity initialization when the scene bridge starts a session. | - |
 | `test_scene_bridge_collider_cache.py` | Regression tests for collider Warp mesh cache invalidation. | - |
 | `test_scene_bridge_settings.py` | Regression tests for Blender scene-to-solver settings mapping. | - |
+| `test_session_runtime.py` | The Solver Session owns its runtime fields; Simulation Admission only asks. | - |
 | `test_session_capacity_transactions.py` | Trace regressions for active capacity and scene-owned plan transactions. | - |
 | `test_settings_default_agreement.py` | Settings declarations agree with each other and with their meaning. | - |
 | `test_settings_getattr_names.py` | Defaulted settings reads must name a field that exists. | - |

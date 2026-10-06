@@ -7,6 +7,8 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from .scene_access import active_domain_object
+
 OWNER_TAG = "fluidsim_owned"
 OWNER_ID_TAG = "fluidsim_owner_id"
 KIND_TAG = "fluidsim_kind"
@@ -690,7 +692,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         # Quick setups (and any setup on a scene without a domain) size the domain
         # from the preset's gravity and voxel size. Those are domain-owned, so the
         # domain object has to exist before the preset can be written to it.
-        fit_domain = apply_preset or getattr(scene.fluidsim, "domain_object", None) is None
+        fit_domain = apply_preset or active_domain_object(scene) is None
         domain = None
         if fit_domain:
             domain, domain_created = _ensure_domain(helpers, owner_id)

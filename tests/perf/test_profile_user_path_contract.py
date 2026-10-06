@@ -647,6 +647,12 @@ def test_profile_instrumentation_restores_exact_callables_and_resources():
 
 def test_main_runs_profile_workflow_and_restores_instrumentation(
         monkeypatch, tmp_path, capsys):
+    import types
+
+    # scene_bridge imports bpy at import time; do not rely on an earlier test
+    # having left it cached in sys.modules.
+    monkeypatch.setitem(
+        sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))
     from fluidSim_warp_blender51.blender import output_publication, scene_bridge
     from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
     import warp as wp

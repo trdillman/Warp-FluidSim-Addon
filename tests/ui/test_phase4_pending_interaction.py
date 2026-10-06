@@ -80,7 +80,7 @@ def _activate(bridge, scene, *, frame=5):
     solver = SimpleNamespace(frame=frame, settings=settings, particles=object())
     sess = bridge.session()
     sess.solver = solver
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     sess.start_frame = scene.frame_start
     sess.last_frame = frame
     bridge.pending.capture_applied_state(scene, sess)
@@ -174,7 +174,7 @@ def test_rewind_reconstructs_with_pending_allocation_once(monkeypatch):
             frame=0,
             settings=SimpleNamespace(voxel_size=actual_scene.fluidsim.domain_object.fluidsim_domain.voxel_size),
         )
-        sess.scene_identity = bridge._scene_identity(actual_scene)
+        sess.scene_identity = bridge.scene_identity(actual_scene)
         bridge.pending.capture_applied_state(actual_scene, sess)
         return sess
 
@@ -256,21 +256,6 @@ def test_failed_pending_apply_retains_action_and_reason(monkeypatch):
     assert pending["action"] == "REINIT_PENDING"
     assert pending["reasons"]
     assert pending["blocked_reason"] == "allocation failed"
-
-
-def test_st_reference_calibration_cache_scales_distinct_density_without_recompute(
-        monkeypatch):
-    bridge = _bridge(monkeypatch)
-    calls = []
-    solver = SimpleNamespace(
-        settings=SimpleNamespace(particles_per_voxel=8.0, spacetime_seed=9),
-        _calibrate_st_reference_mass=lambda: calls.append(1) or 3.5,
-    )
-
-    assert bridge.pending._cached_st_reference_mass(solver) == 3.5
-    solver.settings.particles_per_voxel = 16.0
-    assert bridge.pending._cached_st_reference_mass(solver) == 7.0
-    assert calls == [1]
 
 
 def test_pending_publication_warning_updates_scene_and_session(monkeypatch):
@@ -391,7 +376,7 @@ def test_apply_operators_do_not_destroy_another_scenes_solver(monkeypatch):
     bridge.pending.refresh_pending_state(second, sess)
     # Restore ownership to the first scene while keeping the second snapshot.
     sess.solver = first_solver
-    sess.scene_identity = bridge._scene_identity(first)
+    sess.scene_identity = bridge.scene_identity(first)
 
     for apply in (bridge.pending.apply_pending_reset, bridge.pending.apply_pending_reinitialize):
         try:
@@ -480,7 +465,7 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
     solver.particles = SimpleNamespace(capacity=4096)
     old_plan = SimpleNamespace(scene_signature="old")
     new_plan = SimpleNamespace(scene_signature="new")
-    sess._set_capacity_plan(scene, old_plan, memory_bypassed=True)
+    sess.set_capacity_plan(scene, old_plan, memory_bypassed=True)
     refreshed = []
     timer_callbacks = []
     bridge.bpy.app.timers = SimpleNamespace(register=lambda callback, **_kwargs: (
@@ -488,7 +473,7 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
 
     def refresh(actual):
         refreshed.append(actual)
-        return sess._set_capacity_plan(actual, new_plan)
+        return sess.set_capacity_plan(actual, new_plan)
 
     monkeypatch.setattr(sess, "refresh_capacity_plan", refresh)
     scene.fluidsim.domain_object.fluidsim_domain.max_particles = 2048

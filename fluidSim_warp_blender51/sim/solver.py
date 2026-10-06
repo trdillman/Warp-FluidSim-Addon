@@ -45,6 +45,7 @@ from .color_mixing import ColorMixTransport
 from .frame_features import FrameFeaturePhase, FrameFeatures
 from .frame_runtime import FrameStats, SubstepPolicy, select_substeps
 from .quality_contract import resolve_quality
+from .spacetime import SpaceTimeState
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
 from .whitewater import (
@@ -111,26 +112,6 @@ from .kernels_fluid import (
     k_particles_relax,
     k_clear_just_initialized_tracked,
 )
-
-
-# ST-FLIP host-side calibration helpers
-
-
-def _st_poly6_1d_host(r: float) -> float:
-    q = 1.0 - r * r
-    if q <= 0.0:
-        return 0.0
-    return q * q * q
-
-
-def _st_spatial_weight_1d_host(r: float) -> float:
-    return (35.0 / 32.0) * _st_poly6_1d_host(r)
-
-
-def _st_temporal_weight_host(tau: float) -> float:
-    if tau > 0.5:
-        return 0.0
-    return (35.0 / 16.0) * _st_poly6_1d_host(tau - 0.5)
 
 
 def _motion_leaf_radius(max_speed: float, frame_dt: float,
@@ -774,7 +755,7 @@ class FluidSolver:
         self.surface_tension = SurfaceTensionSolver(self)
         self.color_mixing = self._new_color_mixing()
         self._host_frame_cache = None
-        self._surface_attribute_transfer = None
+        self.surface_attribute_transfer = None
         self.last_particle_growth = None
         self.features = FrameFeatures(device=self.device)
         # Compatibility alias for diagnostics that read this established name.
@@ -790,14 +771,7 @@ class FluidSolver:
         self.sim_time = 0.0
         self.stats = FrameStats()
         self._whitewater_emit_seed = 12345
-        self._st_step_seed = int(settings.spacetime_seed) & 0x7FFFFFFF
-        self._st_previous_dt = 0.0
-        reference_mass = float(getattr(settings, "spacetime_reference_mass", 0.0))
-        self._st_reference_mass_cached = (
-            reference_mass if reference_mass > 0.0
-            else self._calibrate_st_reference_mass()
-            if settings.spacetime_enabled else 0.0
-        )
+        self.spacetime = SpaceTimeState(settings, self.quality)
         # Active-work launch bound for per-voxel kernels, refreshed after
         # every topology rebuild. Kernels guard on the device-side count, so
         # any dim >= the active voxel count is safe; dispatching only the
@@ -808,17 +782,15 @@ class FluidSolver:
     # Host configuration
 
     def set_source_batch(self, legacy_descriptors=(), native_plans=()):
-        """Atomically install the complete runtime source snapshot."""
+        """Atomically install the complete runtime source snapshot.
+
+        This is the only way to install sources, and it replaces everything
+        installed before: legacy descriptors and native plans always arrive
+        together, so neither representation can be dropped by a later call.
+        """
         from .sourcing import SourceBatch
         self.sourcing.set_source_batch(SourceBatch(
             tuple(legacy_descriptors), tuple(native_plans)))
-
-    def set_sources(self, sources):
-        self.sourcing.set_sources(sources)
-
-    def set_source_plans(self, plans):
-        """Set immutable Phase 2 source plans through the public seam."""
-        self.sourcing.set_plans(plans)
 
     def set_colliders(self, colliders):
         self.colliders = list(colliders)
@@ -938,7 +910,7 @@ class FluidSolver:
 
     def reset(self):
         self._host_frame_cache = None
-        self._surface_attribute_transfer = None
+        self.surface_attribute_transfer = None
         sourcing = getattr(self, "sourcing", None)
         if sourcing is not None:
             sourcing.reset()
@@ -958,16 +930,8 @@ class FluidSolver:
         self.churn.zero()
         self.frame = 0
         self.sim_time = 0.0
-        self._st_previous_dt = 0.0
+        self.spacetime.reset_for_run()
         settings = getattr(self, "settings", None)
-        if settings is not None:
-            self._st_step_seed = int(settings.spacetime_seed) & 0x7FFFFFFF
-            reference_mass = float(getattr(settings, "spacetime_reference_mass", 0.0))
-            self._st_reference_mass_cached = (
-                reference_mass if reference_mass > 0.0
-                else self._calibrate_st_reference_mass()
-                if settings.spacetime_enabled else 0.0
-            )
         self.grid.begin_topology()
         self.grid.finalize_topology()
         self._nvox = max(1, self.grid.active_voxel_count)
@@ -1040,10 +1004,7 @@ class FluidSolver:
                 "particle_capacity": int(self.particles.capacity),
                 "whitewater_capacity": int(self.whitewater.capacity),
                 "whitewater_emit_seed": int(self._whitewater_emit_seed),
-                "st_step_seed": int(self._st_step_seed),
-                "st_previous_dt": float(self._st_previous_dt),
-                "st_reference_mass_cached": float(
-                    self._st_reference_mass_cached),
+                **self.spacetime.checkpoint_scalars(),
                 "next_particle_uid": int(self.particles.next_uid),
                 "particle_optional_channels": ",".join(
                     self.particles.optional_channels),
@@ -1113,10 +1074,7 @@ class FluidSolver:
         self.frame = int(scalars["frame"])
         self.sim_time = float(scalars["sim_time"])
         self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
-        self._st_step_seed = int(scalars["st_step_seed"])
-        self._st_previous_dt = float(scalars["st_previous_dt"])
-        self._st_reference_mass_cached = float(
-            scalars["st_reference_mass_cached"])
+        self.spacetime.restore_checkpoint_scalars(scalars)
         self._rebuild_transient_state_after_restore()
         self.assert_checkpoint_invariants()
 
@@ -1170,8 +1128,7 @@ class FluidSolver:
                 raise ValueError("restored particle UIDs are invalid")
             if int(self.particles.next_uid) <= int(np.max(uid)):
                 raise ValueError("restored next_particle_uid is not monotonic")
-        if not math.isfinite(self.sim_time) or not math.isfinite(
-                self._st_previous_dt):
+        if not math.isfinite(self.sim_time) or not self.spacetime.timing_is_finite():
             raise ValueError("restored timing state is non-finite")
         return True
 
@@ -1190,7 +1147,7 @@ class FluidSolver:
         if host_frame is not None:
             host_frame.solver = None
         self._host_frame_cache = None
-        self._surface_attribute_transfer = None
+        self.surface_attribute_transfer = None
 
         surface = getattr(self, "surface", None)
         if surface is not None:
@@ -1462,74 +1419,6 @@ class FluidSolver:
     def _source(self, dt):
         return self.sourcing.apply(dt)
 
-    def _calibrate_st_reference_mass(self):
-        """Monte Carlo estimate of the ST phase reference mass m0.
-
-        The paper defines m0 as the expected space-time mass estimator at a
-        face under a uniform particle distribution with Nppc particles per
-        cell.  Use the exact kernels used by the Warp P2G path on a small
-        particle-filled patch with tau uniformly sampled in [-1/2, 1/2].
-        This keeps phase thresholds tied to the implemented kernel constants,
-        support convention, and particle-per-cell density rather than assuming
-        a closed-form normalization.
-        """
-        s = self.settings
-        manual = float(getattr(s, "spacetime_reference_mass", 0.0))
-        if manual > 0.0 and math.isfinite(manual):
-            return manual
-        ppc = max(1.0e-6, float(self.quality.liquid_sampling))
-        particles_per_cell = max(1, int(math.ceil(ppc)))
-        particle_mass = ppc / float(particles_per_cell)
-        # Deterministic and intentionally small: 3 MAC face orientations,
-        # 27 cells around the face support, 32 random realizations.
-        rng = np.random.default_rng(int(getattr(s, "spacetime_seed", 1729)) & 0xFFFFFFFF)
-        faces = (
-            np.array((0.0, 0.5, 0.5), dtype=np.float64),
-            np.array((0.5, 0.0, 0.5), dtype=np.float64),
-            np.array((0.5, 0.5, 0.0), dtype=np.float64),
-        )
-        total = 0.0
-        samples = 0
-        for face in faces:
-            lo = np.floor(face - 1.0).astype(int)
-            hi = np.floor(face + 1.0).astype(int)
-            for _ in range(32):
-                accum = 0.0
-                for ix in range(int(lo[0]), int(hi[0]) + 1):
-                    for iy in range(int(lo[1]), int(hi[1]) + 1):
-                        for iz in range(int(lo[2]), int(hi[2]) + 1):
-                            cell = np.array((ix, iy, iz), dtype=np.float64)
-                            for _p in range(particles_per_cell):
-                                pos = cell + rng.random(3)
-                                r = face - pos
-                                ws = (
-                                    _st_spatial_weight_1d_host(float(r[0]))
-                                    * _st_spatial_weight_1d_host(float(r[1]))
-                                    * _st_spatial_weight_1d_host(float(r[2]))
-                                )
-                                if ws <= 0.0:
-                                    continue
-                                tau = rng.random() - 0.5
-                                accum += particle_mass * ws * _st_temporal_weight_host(float(tau))
-                total += accum
-                samples += 1
-        if samples <= 0:
-            return max(1.0, ppc)
-        estimate = total / float(samples)
-        if not math.isfinite(estimate) or estimate <= 1.0e-8:
-            return max(1.0, ppc)
-        return float(estimate)
-
-    def _st_reference_mass(self):
-        s = self.settings
-        ref = float(getattr(s, "spacetime_reference_mass", 0.0))
-        if ref > 0.0 and math.isfinite(ref):
-            return ref
-        cached = float(getattr(self, "_st_reference_mass_cached", 0.0))
-        if cached > 0.0 and math.isfinite(cached):
-            return cached
-        return max(1.0, float(self.quality.rest_particle_count))
-
     def _p2g(self, dt=None):
         g = self.grid
         p = self.particles
@@ -1541,7 +1430,7 @@ class FluidSolver:
         # whole bake irreproducible; see k_gather_grid_data.
         nv = self._nvox
         if st.spacetime_enabled:
-            prev_dt = self._st_previous_dt if self._st_previous_dt > 0.0 else float(dt or (st.time_scale / max(st.frame_rate, 1.0)))
+            prev_dt = self.spacetime.gather_dt(dt)
             fast_launch(
                 k_gather_grid_data_spacetime, dim=nv,
                 inputs=[p.position, p.velocity, p.time_offset,
@@ -1581,7 +1470,7 @@ class FluidSolver:
                 inputs=[self.vel.wu, self.vel.wv, self.vel.ww,
                         self.voxel_type.data, g.leaf_table, g.leaf_coords,
                         g.voxels_dim, g.leaves_dim, g.num_leaves,
-                        self._st_reference_mass(), st.spacetime_phase_eta,
+                        self.spacetime.reference_mass(), st.spacetime_phase_eta,
                         st.spacetime_phase_threshold],
                 outputs=[self.density.data], device=self.device,
             )
@@ -1784,7 +1673,7 @@ class FluidSolver:
             self.voxel_counts.data,
             s,
             max_gradient=self._cfl_speed_limit(dt),
-            reference_mass=(self._st_reference_mass()
+            reference_mass=(self.spacetime.reference_mass()
                             if st_projection else None),
             pressure_source=lambda: self.sourcing.apply_pressure_sources(dt),
         )
@@ -1865,7 +1754,7 @@ class FluidSolver:
         )
 
         if s.spacetime_enabled:
-            self._st_step_seed = (self._st_step_seed * 1664525 + 1013904223) & 0x7FFFFFFF
+            step_seed = self.spacetime.advance_seed()
             fast_launch(
                 k_advect_particles_spacetime, dim=self._np_dim(),
                 inputs=[p.position, p.velocity, p.time_offset, p.count,
@@ -1877,12 +1766,12 @@ class FluidSolver:
                         g.origin, g.voxel_size, dt, int(s.trace_mode),
                         wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
                         1 if s.open_boundaries else 0,
-                        self._st_step_seed, s.spacetime_jitter_strength,
+                        step_seed, s.spacetime_jitter_strength,
                         1 if s.spacetime_adaptive_jitter else 0,
                         s.spacetime_local_cfl, int(s.spacetime_max_local_substeps)],
                 outputs=[p.alive], device=self.device,
             )
-            self._st_previous_dt = float(dt)
+            self.spacetime.record_step(dt)
         else:
             fast_launch(
                 k_advect_particles, dim=self._np_dim(),

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 import bpy
 
+from .scene_access import scene_identity
+
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
@@ -334,26 +336,14 @@ def set_cache_playback_enabled(scene, enabled: bool):
             return False
     if enabled:
         sess.release(scene)
-        _CACHE_CURSORS.pop(_scene_identity(scene), None)
+        _CACHE_CURSORS.pop(scene_identity(scene), None)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
     else:
-        _CACHE_CURSORS.pop(_scene_identity(scene), None)
+        _CACHE_CURSORS.pop(scene_identity(scene), None)
         if getattr(fs, "live", False):
             set_live_enabled(scene, True)
     return True
-
-
-def _scene_identity(scene):
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return value
-        except (ReferenceError, TypeError, ValueError):
-            pass
-    return id(scene)
 
 
 def clear_cache_cursors():
@@ -501,7 +491,7 @@ def handle_frame_change(sess, scene, depsgraph):
         return
     frame = scene.frame_current
     if getattr(fs, "cache_playback_enabled", False):
-        scene_id = _scene_identity(scene)
+        scene_id = scene_identity(scene)
         if _CACHE_CURSORS.get(scene_id) == frame:
             return
         try:
@@ -602,7 +592,7 @@ def _on_frame_change(scene, depsgraph):
             and scene.frame_current == restore_frame):
         if getattr(getattr(scene, "fluidsim", None),
                    "cache_playback_enabled", False):
-            _CACHE_CURSORS[_scene_identity(scene)] = restore_frame
+            _CACHE_CURSORS[scene_identity(scene)] = restore_frame
         else:
             sess = _bridge().session()
             if sess.owns_scene(scene):

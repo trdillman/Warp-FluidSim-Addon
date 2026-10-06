@@ -199,7 +199,7 @@ def run_profile(args, on_frame=None):
     settings = _build_settings(args)
     profiler = Profiler(device=args.device, sync=args.sync, enabled=not args.no_phase_timers)
     solver = FluidSolver(settings, profiler=profiler)
-    solver.set_sources(build_sources(args))
+    solver.set_source_batch(build_sources(args))
 
     raw_frames = []
     total_frames = args.warmup + args.frames
@@ -207,7 +207,7 @@ def run_profile(args, on_frame=None):
     try:
         for frame in range(total_frames):
             if frame == args.emit_frames:
-                solver.set_sources([])
+                solver.set_source_batch()
             stats = solver.step_frame()
             if on_frame is not None:
                 on_frame(frame, stats)

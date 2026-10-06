@@ -12,9 +12,9 @@ from enum import Enum
 import math
 from typing import Any, Mapping
 
+from .constants import LEAF_DIM
 from .enums import SurfaceResolutionMode
 
-LEAF_DIM = 8
 MIN_VOXEL_SIZE = 1.0e-4
 MIN_SURFACE_FRACTION = 1.0 / 16.0
 MAX_LIQUID_SAMPLING = 64.0

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fluidSim_warp_blender51 import registration
+
 ROOT = Path(__file__).resolve().parents[1]
 PANELS = ROOT / "panels.py"
 PREFERENCES = ROOT / "preferences.py"
@@ -146,11 +148,8 @@ def test_header_popover_shares_the_stage_drawings_and_the_add_on_registers_it():
     assert "area_dupli" not in header
     assert "bpy.ops.workspace.duplicate()" in workspace
 
-    init = (ROOT / "__init__.py").read_text(encoding="utf-8")
-    register = init.split("def register()", 1)[1].split("def unregister()", 1)[0]
-    unregister = init.split("def unregister()", 1)[1]
-    assert '"viewport header popover", ui_header.register, ui_header.unregister' in register
-    assert '"viewport header popover", "blender.ui_header", "unregister"' in unregister
-    # Registered after the stages it draws, torn down before them.
-    assert register.index("ui_stages.register") < register.index("ui_header.register")
-    assert unregister.index("blender.ui_header") < unregister.index("blender.ui_stages")
+    # Registered after the stages it draws; ``unregister_all`` walks the same
+    # table in reverse, so it is torn down before them.
+    modules = [step.module for step in registration.STEPS if step.register and step.unregister]
+    assert "blender.ui_header" in modules
+    assert modules.index("blender.ui_stages") < modules.index("blender.ui_header")

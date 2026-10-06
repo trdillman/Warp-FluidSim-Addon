@@ -1,8 +1,9 @@
-"""Sequential Production Cache Bake owner.
+"""Production Cache Bake lifecycle owner.
 
 The transaction/controller primitives live in ``production_bake``; this module
-owns the synchronous sequential workflow and remains the public compatibility
-entry point used by scripts and tests.
+owns the lifecycle around them (``BakeRun``) and the synchronous sequential
+workflow built on it, which remains the public compatibility entry point used
+by scripts and tests.
 """
 
 from __future__ import annotations
@@ -13,12 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-_RESTART_MANAGED_ENTRIES = (
-    "fluidsim_cache.json",
-    "frames",
-    "checkpoints",
-    "logs",
-)
+from .cache_manager import RESTART_MANAGED_ENTRIES, require_restartable_cache_directory
+from .scene_access import scene_identity
 
 
 def _remove_managed_entry(path: Path) -> None:
@@ -44,14 +41,11 @@ class _RestartCacheProtection:
         return self.backup_path is not None
 
     def stage(self) -> None:
-        from .cache_manager import require_restartable_cache_directory
-
-        require_restartable_cache_directory(
-            self.cache_path, _RESTART_MANAGED_ENTRIES)
+        require_restartable_cache_directory(self.cache_path)
         self._root_existed = self.cache_path.exists()
         existing = [
             name
-            for name in _RESTART_MANAGED_ENTRIES
+            for name in RESTART_MANAGED_ENTRIES
             if (self.cache_path / name).exists()
             or (self.cache_path / name).is_symlink()
         ]
@@ -106,7 +100,7 @@ class _RestartCacheProtection:
         if backup_path is None:
             return
         names = (
-            _RESTART_MANAGED_ENTRIES
+            RESTART_MANAGED_ENTRIES
             if self._staging_complete
             else tuple(self._staged_names)
         )
@@ -140,18 +134,140 @@ def _protect_restart_cache(cache_path: Path | str) -> _RestartCacheProtection:
     return protection
 
 
-def _settle_restart_cache(
-    protection: _RestartCacheProtection | None,
-    status,
-    *, running_status,
-    terminal_statuses,
-) -> None:
-    if protection is None or not protection.active:
-        return
-    if status is running_status:
-        protection.commit()
-    elif status in terminal_statuses:
-        protection.restore()
+class BakeRun:
+    """One Production Cache Bake, from lease to release.
+
+    Construction takes everything a bake owns -- the controller, the reserved
+    cache path, scene ownership and, for a restart, the staged previous cache --
+    and gives all of it back if any step fails. ``tick`` advances the bake and
+    settles the staged cache (keep the replacement once it is admitted, return
+    the old cache if the bake ends without one). ``close`` is the single exit:
+    it returns an un-admitted restart's cache and releases ownership, and is
+    safe to call again. Drive it from a loop (synchronous bake, command line)
+    or from a timer (the modal operator).
+
+    ``backend`` defaults to a ``ProductionBakeBackend`` built from the scene's
+    checkpoint and compression settings; ``start``/``end`` default to the scene's
+    authored bake range.
+    """
+
+    def __init__(
+        self,
+        scene,
+        *,
+        start: int | None = None,
+        end: int | None = None,
+        resume: bool = False,
+        restart: bool = False,
+        progress_callback: Callable[[dict], None] | None = None,
+        backend=None,
+    ):
+        from . import production_bake
+
+        fs = scene.fluidsim
+        if backend is None:
+            backend = production_bake.ProductionBakeBackend(
+                checkpoint_interval=int(getattr(fs, "checkpoint_interval", 1)),
+                compressed=bool(getattr(fs, "cache_compress", False)),
+            )
+        self.scene = scene
+        self.scene_key = scene_identity(scene)
+        self.controller = production_bake.BakeController(
+            backend=backend, progress_callback=progress_callback)
+        self._restart_cache: _RestartCacheProtection | None = None
+        end = int(fs.bake_end if end is None else end)
+        try:
+            if resume:
+                self.controller.resume(scene, end=end)
+            else:
+                start = int(fs.bake_start if start is None else start)
+                self.controller.start(scene, start, end, restart=restart)
+            cache_path = backend.cache_path(scene)
+            self.controller.reserve_cache_path(cache_path)
+            production_bake.register_active_bake(scene, self.controller)
+            if restart:
+                self._restart_cache = _protect_restart_cache(cache_path)
+        except BaseException:
+            production_bake.release_active_bake(self.controller)
+            raise
+
+    @property
+    def finished(self) -> bool:
+        """Whether the bake has reached a terminal state (or never started)."""
+        from .production_bake import BakeStatus
+
+        return self.controller.status not in {
+            BakeStatus.INITIALIZING,
+            BakeStatus.RUNNING,
+            BakeStatus.CANCELLING,
+        }
+
+    def request_cancel(self) -> None:
+        self.controller.request_cancel()
+
+    def tick(self) -> float | None:
+        """Advance one transition, then settle the staged cache.
+
+        Returns the controller's suggested timer delay. A failure to settle the
+        cache propagates; ``close`` still releases ownership.
+        """
+        from .production_bake import BakeStatus
+
+        delay = self.controller.tick(self.scene)
+        protection = self._restart_cache
+        if protection is not None and protection.active:
+            status = self.controller.status
+            if status is BakeStatus.RUNNING:
+                protection.commit()
+            elif status in (BakeStatus.CANCELLED, BakeStatus.FAILED):
+                protection.restore()
+        return delay
+
+    def abandon(self, reason: str) -> None:
+        """End a bake whose scene is gone: nothing can be ticked against it.
+
+        Cancels the controller, force-releases the backend's solver session and
+        returns an un-admitted restart's old cache. The run ends CANCELLED with
+        ``reason``, or FAILED if either cleanup step failed. Call ``close``
+        afterwards to release ownership.
+        """
+        from .production_bake import BakeStatus
+
+        controller = self.controller
+        controller.request_cancel()
+        errors = []
+        session = getattr(getattr(controller, "backend", None), "sess", None)
+        force_release = getattr(session, "force_release", None)
+        if callable(force_release):
+            try:
+                force_release(preserve_error=True)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"session cleanup failed: {exc}")
+        try:
+            protection = self._restart_cache
+            if protection is not None and protection.active:
+                protection.restore()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"cache restore failed: {exc}")
+        if errors:
+            detail = "; ".join(errors)
+            controller.status = BakeStatus.FAILED
+            controller.error = detail
+            controller.message = f"Production bake cleanup failed: {detail}"
+        else:
+            controller.status = BakeStatus.CANCELLED
+            controller.message = reason
+
+    def close(self) -> None:
+        """Return an un-admitted restart's old cache and release ownership."""
+        from .production_bake import release_active_bake
+
+        try:
+            protection = self._restart_cache
+            if protection is not None and protection.active:
+                protection.restore()
+        finally:
+            release_active_bake(self.controller)
 
 
 def run_synchronous(
@@ -165,57 +281,20 @@ def run_synchronous(
     progress_callback: Callable[[dict], None] | None = None,
 ):
     """Run the authoritative sequential cache transaction to a terminal state."""
-    from .production_bake import (
-        BakeController,
-        BakeStatus,
-        ProductionBakeBackend,
-        clear_active_bake,
-        register_active_bake,
-    )
+    from .production_bake import BakeStatus
 
-    fs = scene.fluidsim
-    start = int(fs.bake_start if start is None else start)
-    end = int(fs.bake_end if end is None else end)
-    backend = ProductionBakeBackend(
-        checkpoint_interval=int(getattr(fs, "checkpoint_interval", 1)),
-        compressed=bool(getattr(fs, "cache_compress", False)),
-    )
-    controller = BakeController(
-        backend=backend, progress_callback=progress_callback)
-    restart_cache = None
+    run = BakeRun(
+        scene, start=start, end=end, resume=resume, restart=restart,
+        progress_callback=progress_callback)
     try:
-        if resume:
-            controller.resume(scene, end=end)
-        else:
-            controller.start(scene, start, end, restart=restart)
-        controller.reserve_cache_path(backend.cache_path(scene))
-        register_active_bake(scene, controller)
-        if restart:
-            restart_cache = _protect_restart_cache(backend.cache_path(scene))
-        while controller.status in {
-            BakeStatus.INITIALIZING,
-            BakeStatus.RUNNING,
-            BakeStatus.CANCELLING,
-        }:
-            controller.tick(scene)
-            _settle_restart_cache(
-                restart_cache,
-                controller.status,
-                running_status=BakeStatus.RUNNING,
-                terminal_statuses={
-                    BakeStatus.CANCELLED,
-                    BakeStatus.FAILED,
-                },
-            )
+        while not run.finished:
+            run.tick()
+        controller = run.controller
         if controller.status is BakeStatus.FAILED:
             raise RuntimeError(controller.error or controller.message)
         return controller.result()
     finally:
-        try:
-            if restart_cache is not None and restart_cache.active:
-                restart_cache.restore()
-        finally:
-            clear_active_bake(scene, controller)
+        run.close()
 
 
 def bake(scene, sess, start: int, end: int) -> str:

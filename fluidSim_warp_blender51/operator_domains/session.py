@@ -3,55 +3,16 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender import capacity_approval
+from ..blender.scene_access import active_domain_object, active_domain_settings, scene_identity
 from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
-
-
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
 
 
 class FLUIDSIM_OT_initialize(bpy.types.Operator):
@@ -63,7 +24,7 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _mutation_poll(cls, context)
+        return _runtime._mutation_poll(cls, context)
 
     ignore_memory_safeguard: BoolProperty(
         name="Run Anyway",
@@ -80,12 +41,12 @@ class FLUIDSIM_OT_initialize(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         try:
-            sess = _bridge().initialize_session(
+            sess = _runtime._bridge().initialize_session(
                 scene,
                 ignore_memory_safeguard=self.ignore_memory_safeguard,
             )
         except Exception as exc:  # noqa: BLE001
-            plan = _owned_capacity_plan(scene)
+            plan = _runtime._owned_capacity_plan(scene)
             integrity_blocked = bool(
                 plan
                 and any(
@@ -126,7 +87,7 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
         if production_bake.bake_is_active(getattr(context, "scene", None)):
             cls.poll_message_set("Production Bake owns this scene")
             return False
-        sess = _bridge().session()
+        sess = _runtime._bridge().session()
         if not sess.active:
             cls.poll_message_set("No solver session is active")
             return False
@@ -137,7 +98,7 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        if not _bridge().release_session(context.scene):
+        if not _runtime._bridge().release_session(context.scene):
             self.report({"WARNING"}, "Another scene owns the live solver")
             return {"CANCELLED"}
         context.scene.fluidsim.status = "Solver released"
@@ -152,52 +113,14 @@ class FLUIDSIM_OT_clear_error(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         bridge.clear_error(context.scene)
         fs = context.scene.fluidsim
         fs.status = "Solver ready" if bridge.session().active else "Solver not initialized"
         return {"FINISHED"}
 
 
-def _capacity_suggestion(plan, key):
-    return next(
-        (item for item in getattr(plan, "suggestions", ()) if getattr(item, "key", "") == key), None
-    )
-
-
-def _format_capacity_value(value):
-    if isinstance(value, (tuple, list)):
-        return "(" + ", ".join(f"{float(item):.4g}" for item in value) + ")"
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    if isinstance(value, int):
-        return f"{value:,}"
-    return str(value)
-
-
-def _apply_domain_bounds(scene, minimum, maximum):
-    domain = getattr(scene.fluidsim, "domain_object", None)
-    if domain is None:
-        raise RuntimeError("The scene has no domain object to resize")
-    if getattr(domain, "parent", None) is not None:
-        raise RuntimeError("Automatic domain-bound adjustment requires an unparented domain")
-    rotations = tuple(float(value) for value in domain.rotation_euler)
-    delta_rotations = tuple(
-        float(value) for value in getattr(domain, "delta_rotation_euler", (0.0, 0.0, 0.0))
-    )
-
-    def angle_distance(value):
-        return abs((value + math.pi) % (2.0 * math.pi) - math.pi)
-
-    if any(angle_distance(value) > 1.0e-6 for value in rotations + delta_rotations):
-        raise RuntimeError("Automatic domain-bound adjustment requires an axis-aligned domain")
-    minimum = tuple(float(value) for value in minimum)
-    maximum = tuple(float(value) for value in maximum)
-    dimensions = tuple(maximum[i] - minimum[i] for i in range(3))
-    if any(value <= 0.0 for value in dimensions):
-        raise RuntimeError("Suggested domain bounds are not valid")
-    domain.location = tuple((minimum[i] + maximum[i]) * 0.5 for i in range(3))
-    domain.dimensions = dimensions
+def _update_view_layer():
     if getattr(bpy.context, "view_layer", None) is not None:
         bpy.context.view_layer.update()
 
@@ -224,20 +147,20 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        plan = _owned_capacity_plan(getattr(context, "scene", None))
+        plan = _runtime._owned_capacity_plan(getattr(context, "scene", None))
         if not getattr(plan, "suggestions", ()):
             cls.poll_message_set("Initialize first to calculate safe capacity options")
             return False
         return True
 
     def invoke(self, context, _event):
-        plan = _owned_capacity_plan(context.scene)
-        suggestion = _capacity_suggestion(plan, self.suggestion_key)
+        plan = _runtime._owned_capacity_plan(context.scene)
+        suggestion = capacity_approval.find_suggestion(plan, self.suggestion_key)
         if suggestion is None:
             self.report({"WARNING"}, "Capacity option is stale; initialize again")
             return {"CANCELLED"}
-        self.expected_scene_signature = _owned_capacity_signature(context.scene, plan)
-        self.expected_scene_identity = _scene_identity_token(context.scene)
+        self.expected_scene_signature = _runtime._owned_capacity_signature(context.scene, plan)
+        self.expected_scene_identity = str(scene_identity(context.scene))
         self.changes_json = json.dumps(dict(suggestion.changes))
         self.suggestion_label = str(suggestion.label)
         self.estimated_bytes = str(int(suggestion.estimated_bytes))
@@ -245,8 +168,6 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=560)
 
     def draw(self, context):
-        from ..blender.scene_bridge import active_domain_settings
-
         layout = self.layout
         layout.label(text="Approve these exact scene changes?", icon="QUESTION")
         layout.label(text=self.suggestion_label)
@@ -256,8 +177,8 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             old_value = getattr(domain_settings, name, None)
             layout.label(
                 text=(
-                    f"{name}: {_format_capacity_value(old_value)} → "
-                    f"{_format_capacity_value(value)}"
+                    f"{name}: {capacity_approval.format_value(old_value)} → "
+                    f"{capacity_approval.format_value(value)}"
                 )
             )
         layout.separator()
@@ -274,20 +195,18 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
         layout.label(text="Settings are unchanged until you confirm.")
 
     def execute(self, context):
-        from ..blender.scene_bridge import active_domain_settings
-
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         scene = context.scene
         scene_fs = scene.fluidsim
-        if self.expected_scene_identity and self.expected_scene_identity != _scene_identity_token(
-            scene
+        if self.expected_scene_identity and self.expected_scene_identity != str(
+            scene_identity(scene)
         ):
             self.report(
                 {"WARNING"},
                 "Capacity option belongs to another scene; review this scene",
             )
             return {"CANCELLED"}
-        if _owned_capacity_plan(scene) is None:
+        if _runtime._owned_capacity_plan(scene) is None:
             self.report(
                 {"WARNING"},
                 "Capacity option is no longer owned by this scene",
@@ -300,7 +219,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             return {"CANCELLED"}
         if (
             self.expected_scene_signature
-            and _owned_capacity_signature(scene, fresh_plan) != self.expected_scene_signature
+            and _runtime._owned_capacity_signature(scene, fresh_plan) != self.expected_scene_signature
         ):
             self.report(
                 {"WARNING"},
@@ -308,7 +227,7 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             )
             scene_fs.status = "Capacity options changed — review the refreshed warning"
             return {"CANCELLED"}
-        suggestion = _capacity_suggestion(fresh_plan, self.suggestion_key)
+        suggestion = capacity_approval.find_suggestion(fresh_plan, self.suggestion_key)
         if suggestion is None:
             self.report(
                 {"WARNING"},
@@ -317,64 +236,21 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
             scene_fs.status = "Capacity option is no longer safe — review alternatives"
             return {"CANCELLED"}
 
-        from ..blender.scene_bridge import active_domain_settings
-
         domain_settings = active_domain_settings(scene)
         if domain_settings is None:
             message = "Capacity option cannot apply without a designated domain"
             self.report({"ERROR"}, message)
             scene_fs.status = message
             return {"CANCELLED"}
-        changes = dict(suggestion.changes)
-        domain_min = changes.pop("domain_min", None)
-        domain_max = changes.pop("domain_max", None)
-        old_values = {
-            name: getattr(domain_settings, name)
-            for name in changes
-            if hasattr(domain_settings, name)
-        }
-        domain = getattr(scene_fs, "domain_object", None)
-        old_domain = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
-        changed = []
         try:
-            for name, value in changes.items():
-                if not hasattr(domain_settings, name):
-                    raise RuntimeError(f"Capacity option cannot apply setting {name!r}")
-                rna = getattr(domain_settings, "bl_rna", None)
-                properties = getattr(rna, "properties", {})
-                rna_property = properties.get(name)
-                if rna_property is not None and rna_property.type == "INT":
-                    value = int(value)
-                setattr(domain_settings, name, value)
-                # RNA clamps out-of-range assignments to the declared
-                # [min, max] silently, so a write can succeed while storing a
-                # different number than the one the dialog costed. Reporting
-                # that as approved would break the budget promise this whole
-                # flow exists to keep -- read back and fail into the rollback.
-                stored = getattr(domain_settings, name)
-                if isinstance(value, float):
-                    matches = math.isclose(stored, value, rel_tol=1e-6)
-                else:
-                    matches = stored == value
-                if not matches:
-                    raise RuntimeError(
-                        f"setting {name!r} was stored as {stored!r} instead of "
-                        f"{value!r}; it is outside the range this build allows"
-                    )
-                changed.append(name)
-            if domain_min is not None or domain_max is not None:
-                settings = _solver_settings().build_settings(scene)
-                _apply_domain_bounds(
-                    scene,
-                    domain_min if domain_min is not None else settings.domain_min,
-                    domain_max if domain_max is not None else settings.domain_max,
-                )
-                changed.append("domain bounds")
-        except Exception as exc:  # noqa: BLE001
-            for name, value in old_values.items():
-                setattr(domain_settings, name, value)
-            if domain is not None and old_domain is not None:
-                domain.location, domain.dimensions = old_domain
+            changed = capacity_approval.apply_suggestion(
+                domain_settings,
+                active_domain_object(scene),
+                suggestion.changes,
+                build_settings=lambda: _runtime._solver_settings().build_settings(scene),
+                on_transform_changed=_update_view_layer,
+            )
+        except capacity_approval.CapacityApplyError as exc:
             self.report({"ERROR"}, f"Capacity option was not applied: {exc}")
             scene_fs.status = f"Capacity option was not applied: {exc}"
             return {"CANCELLED"}
@@ -407,7 +283,7 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
         return bool(getattr(getattr(context, "scene", None), "fluidsim", None))
 
     def execute(self, context):
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         scene = context.scene
         fs = scene.fluidsim
         try:
@@ -435,12 +311,12 @@ class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     bl_label = "Reset Simulation"
 
     def execute(self, context):
-        sess = _bridge().session()
+        sess = _runtime._bridge().session()
         owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
         if not owns_scene(context.scene):
             self.report({"WARNING"}, "Solver not initialized for this scene")
             return {"CANCELLED"}
-        _bridge().reset_simulation(context.scene)
+        _runtime._bridge().reset_simulation(context.scene)
         return {"FINISHED"}
 
 
@@ -456,14 +332,14 @@ class FLUIDSIM_OT_apply_pending_reinitialize(bpy.types.Operator):
         scene = getattr(context, "scene", None)
         if getattr(scene, "fluidsim", None) is None:
             return False
-        eligible, message = _pending().reinitialize_eligibility(scene)
+        eligible, message = _runtime._pending().reinitialize_eligibility(scene)
         if not eligible and message:
             cls.poll_message_set(message)
         return eligible
 
     def execute(self, context):
         try:
-            changed = _pending().apply_pending_reinitialize(context.scene)
+            changed = _runtime._pending().apply_pending_reinitialize(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending reinitialize failed: {exc}")
             return {"CANCELLED"}
@@ -484,14 +360,14 @@ class FLUIDSIM_OT_apply_pending_reset(_FLUIDSIM_OT_session_base, bpy.types.Opera
     @classmethod
     def poll(cls, context):
         scene = getattr(context, "scene", None)
-        eligible, message = _pending().reset_eligibility(scene)
+        eligible, message = _runtime._pending().reset_eligibility(scene)
         if not eligible and message:
             cls.poll_message_set(message)
         return eligible
 
     def execute(self, context):
         try:
-            changed = _pending().apply_pending_reset(context.scene)
+            changed = _runtime._pending().apply_pending_reset(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending reset failed: {exc}")
             return {"CANCELLED"}
@@ -512,14 +388,14 @@ class FLUIDSIM_OT_revert_pending(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         scene = getattr(context, "scene", None)
-        eligible, message = _pending().revert_eligibility(scene)
+        eligible, message = _runtime._pending().revert_eligibility(scene)
         if not eligible and message:
             cls.poll_message_set(message)
         return eligible
 
     def execute(self, context):
         try:
-            reverted = _pending().revert_pending_values(context.scene)
+            reverted = _runtime._pending().revert_pending_values(context.scene)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Pending revert failed: {exc}")
             return {"CANCELLED"}
@@ -549,7 +425,7 @@ class FLUIDSIM_OT_step(_FLUIDSIM_OT_session_base, bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
         if not owns_scene(scene):
@@ -597,9 +473,9 @@ def _stop_failed_playback(context):
 
 class _RestartConfirmation:
     def invoke(self, context, event):
-        if _pending().changes_require_restart(context.scene):
+        if _runtime._pending().changes_require_restart(context.scene):
             self.allow_restart = True
-            self._confirmation_token = _pending().change_confirmation_token(context.scene)
+            self._confirmation_token = _runtime._pending().change_confirmation_token(context.scene)
             return context.window_manager.invoke_props_dialog(self)
         return self.execute(context)
 
@@ -609,7 +485,7 @@ class _RestartConfirmation:
 
     def _validate_confirmation(self, scene):
         token = getattr(self, "_confirmation_token", None)
-        if token is not None and token != _pending().change_confirmation_token(scene):
+        if token is not None and token != _runtime._pending().change_confirmation_token(scene):
             raise RuntimeError("Scene or settings changed; review the restart again")
 
 
@@ -623,7 +499,7 @@ class _PreviewStart(_RestartConfirmation):
 
     @classmethod
     def poll(cls, context):
-        return _mutation_poll(cls, context)
+        return _runtime._mutation_poll(cls, context)
 
     def execute(self, context):
         from ..blender import playback
@@ -716,7 +592,7 @@ class _ApplyChanges(_RestartConfirmation):
 
     @classmethod
     def poll(cls, context):
-        return _mutation_poll(cls, context)
+        return _runtime._mutation_poll(cls, context)
 
     def execute(self, context):
         from ..blender import playback
@@ -730,7 +606,7 @@ class _ApplyChanges(_RestartConfirmation):
                 with context.temp_override(**_animation_override(context)):
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             scene.fluidsim.live = False
-            _pending().apply_changes(
+            _runtime._pending().apply_changes(
                 scene, allow_restart=getattr(self, "allow_restart", False),
                 depsgraph=context.evaluated_depsgraph_get(),
                 force_restart=self._force_restart)
@@ -787,12 +663,12 @@ class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
             return False
         if getattr(fs, "live", False):
             return True
-        return _mutation_poll(cls, context)
+        return _runtime._mutation_poll(cls, context)
 
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         if not fs.live:
             sess = bridge.session()
             owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)

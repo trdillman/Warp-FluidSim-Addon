@@ -4,6 +4,11 @@ import json, os, shutil, subprocess, tempfile, time, traceback
 from pathlib import Path
 import bpy
 STATE = {}
+def _active_controller():
+    """The modal operator's registered running bake, or None."""
+    from fluidSim_warp_blender51.blender import production_bake
+    bakes = production_bake.active_bakes()
+    return bakes[0][1] if bakes else None
 def _snapshot(scene):
     fs = scene.fluidsim
     objects = tuple(sorted(
@@ -53,21 +58,20 @@ def _finish(passed):
     STATE["phase"] = "done"
     return None
 def _fail(exc):
-    from fluidSim_warp_blender51.operator_domains import cache as cache_ops
     STATE["report"]["error"] = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__))
-    if cache_ops._ACTIVE_BAKE is not None:
-        cache_ops._ACTIVE_BAKE.request_cancel()
+    controller = _active_controller()
+    if controller is not None:
+        controller.request_cancel()
         STATE["phase"] = "fail_wait"
         STATE["fail_deadline"] = time.monotonic() + 30.0
         return 0.1
     return _finish(False)
 def start(report_path):
     from fluidSim_warp_blender51.blender import effects, scene_bridge
-    from fluidSim_warp_blender51.operator_domains import cache as cache_ops
     if STATE.get("phase") not in {None, "done"}:
         raise RuntimeError("Deleted-scene acceptance is already running")
-    if cache_ops._ACTIVE_BAKE is not None:
+    if _active_controller() is not None:
         raise RuntimeError("A Production Bake is already active")
     source = bpy.context.scene
     if scene_bridge.active_domain_settings(source) is None:
@@ -110,11 +114,10 @@ def start(report_path):
     return {"scheduled": True, "report": str(STATE["path"])}
 def _tick():
     from fluidSim_warp_blender51.blender import production_bake
-    from fluidSim_warp_blender51.operator_domains import cache as cache_ops
     try:
         phase = STATE["phase"]
         if phase == "fail_wait":
-            if cache_ops._ACTIVE_BAKE is None:
+            if _active_controller() is None:
                 return _finish(False)
             if time.monotonic() >= STATE["fail_deadline"]:
                 count = int(STATE["report"].get("cleanup_wait_reports", 0)) + 1
@@ -136,7 +139,7 @@ def _tick():
             _check("temporary cache reserved", production_bake.cache_path_is_active(STATE["cache_path"]))
             STATE["phase"] = "wait_running"
             return 0.05
-        controller = cache_ops._ACTIVE_BAKE
+        controller = _active_controller()
         if phase == "wait_running":
             _check("modal controller remains active", controller is not None)
             if controller.status.value != "RUNNING":
@@ -148,10 +151,9 @@ def _tick():
             STATE["phase"] = "wait_cleanup"
             return 0.05
         if phase == "wait_cleanup":
-            if cache_ops._ACTIVE_BAKE is not None:
+            if controller is not None:
                 return 0.05
-            _check("active bake released", cache_ops._ACTIVE_BAKE is None)
-            _check("active bake scene released", cache_ops._ACTIVE_BAKE_SCENE is None)
+            _check("active bake released", not production_bake.active_bakes())
             _check("cache reservation released", not production_bake.cache_path_is_active(STATE["cache_path"]))
             _check("backend session released", not STATE["backend_session"].active)
             _check("original scene unchanged", _snapshot(STATE["source"]) == STATE["source_before"])

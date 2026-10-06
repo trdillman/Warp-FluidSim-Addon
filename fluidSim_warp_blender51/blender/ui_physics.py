@@ -12,7 +12,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat, output_publication, ui_object, ui_scene
-from .scene_bridge import active_domain_settings
+from .scene_access import active_domain_object, active_domain_settings
 from .ui_common import FluidSimObjectPanel, active_object_role
 
 
@@ -41,7 +41,7 @@ def physics_object_kind(context) -> str:
     fs = getattr(scene, "fluidsim", None) if scene is not None else None
     if obj is None or fs is None:
         return "NONE"
-    if obj is getattr(fs, "domain_object", None):
+    if obj is active_domain_object(scene):
         return "DOMAIN"
     try:
         output_tag = obj.get(output_publication.OUTPUT_TAG)
@@ -193,7 +193,7 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
         elif (
             kind == "NONE"
             and getattr(obj, "type", "") == "MESH"
-            and obj is not scene.fluidsim.domain_object
+            and obj is not active_domain_object(scene)
         ):
             layout.operator(
                 "fluidsim.use_active_as_domain",

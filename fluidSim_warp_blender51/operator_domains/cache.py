@@ -9,79 +9,16 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
+from ..blender.scene_access import scene_identity
 from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
-_ACTIVE_BAKE = None
-_ACTIVE_BAKE_SCENE = None
-
-
-class _SceneRegistrationProxy:
-    def __init__(self, token: int):
-        self._token = int(token)
-
-    def as_pointer(self):
-        return self._token
-
-
-def _scene_registration_token(scene) -> int:
+def _scene_is_available(scene, key: int) -> bool:
     try:
         pointer = getattr(scene, "as_pointer", None)
-        if callable(pointer):
-            value = int(pointer())
-            if value:
-                return value
-    except (ReferenceError, TypeError, ValueError):
-        pass
-    return id(scene)
-
-
-def _scene_is_available(scene, token: int) -> bool:
-    try:
-        pointer = getattr(scene, "as_pointer", None)
-        if callable(pointer) and int(pointer()) != int(token):
+        if callable(pointer) and int(pointer()) != int(key):
             return False
     except (ReferenceError, TypeError, ValueError):
         return False
@@ -89,7 +26,7 @@ def _scene_is_available(scene, token: int) -> bool:
     if scenes is None:
         return True
     try:
-        return any(_scene_registration_token(candidate) == int(token) for candidate in scenes)
+        return any(scene_identity(candidate) == int(key) for candidate in scenes)
     except (ReferenceError, TypeError):
         return False
 
@@ -110,107 +47,74 @@ class _FLUIDSIM_OT_production_bake_modal:
     resume_existing = False
     restart_existing = False
     _timer = None
-    _controller = None
-    _scene = None
-    _scene_token = 0
+    _run = None
     _window_manager = None
-    _restart_cache = None
 
     @classmethod
     def poll(cls, context):
-        global _ACTIVE_BAKE
-        if _ACTIVE_BAKE is not None:
+        from ..blender import production_bake
+
+        if production_bake.active_bakes():
             cls.poll_message_set("A production bake is already active")
             return False
-        return _runtime_poll(cls)
+        return _runtime._runtime_poll(cls)
 
     def execute(self, context):
-        global _ACTIVE_BAKE, _ACTIVE_BAKE_SCENE
-        from ..blender import cache_bake, production_bake
-        from ..blender.production_bake import BakeController, ProductionBakeBackend
+        from ..blender.cache_bake import BakeRun
 
-        scene = context.scene
-        self._scene = scene
-        self._scene_token = _scene_registration_token(scene)
         self._window_manager = context.window_manager
-        self._restart_cache = None
-        fs = scene.fluidsim
-        backend = ProductionBakeBackend(
-            checkpoint_interval=int(fs.checkpoint_interval),
-            compressed=bool(fs.cache_compress),
-        )
-        controller = BakeController(backend=backend)
-        self._controller = controller
-        registered = False
+        self._timer = None
+        run = None
         try:
-            if self.resume_existing:
-                controller.resume(scene, end=int(fs.bake_end))
-            else:
-                controller.start(
-                    scene,
-                    int(fs.bake_start),
-                    int(fs.bake_end),
-                    restart=bool(self.restart_existing),
-                )
-            controller.reserve_cache_path(backend.cache_path(scene))
-            production_bake.register_active_bake(scene, controller)
-            registered = True
-            if self.restart_existing:
-                self._restart_cache = cache_bake._protect_restart_cache(
-                    backend.cache_path(scene)
-                )
-            _update_bake_rna(scene, controller)
-            window_manager = self._window_manager
-            self._timer = window_manager.event_timer_add(
+            run = BakeRun(
+                context.scene,
+                resume=self.resume_existing,
+                restart=bool(self.restart_existing),
+            )
+            self._run = run
+            _update_bake_rna(run.scene, run.controller)
+            self._timer = self._window_manager.event_timer_add(
                 0.05, window=context.window
             )
-            window_manager.modal_handler_add(self)
+            self._window_manager.modal_handler_add(self)
         except Exception as exc:  # noqa: BLE001
             cleanup_errors = []
-            try:
-                if self._restart_cache is not None and self._restart_cache.active:
-                    self._restart_cache.restore()
-            except Exception as cleanup_exc:  # noqa: BLE001
-                cleanup_errors.append(f"cache restore failed: {cleanup_exc}")
             try:
                 if self._timer is not None:
                     self._window_manager.event_timer_remove(self._timer)
                     self._timer = None
             except Exception as cleanup_exc:  # noqa: BLE001
                 cleanup_errors.append(f"timer cleanup failed: {cleanup_exc}")
-            finally:
-                if registered:
-                    production_bake.clear_active_bake(
-                        _SceneRegistrationProxy(self._scene_token), controller
-                    )
-            _ACTIVE_BAKE = None
-            _ACTIVE_BAKE_SCENE = None
+            if run is not None:
+                try:
+                    run.close()
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    cleanup_errors.append(f"cache restore failed: {cleanup_exc}")
+            self._run = None
             suffix = "" if not cleanup_errors else f"; {'; '.join(cleanup_errors)}"
             self.report(
                 {"ERROR"}, f"Production bake could not start: {exc}{suffix}"
             )
             return {"CANCELLED"}
-        _ACTIVE_BAKE = controller
-        _ACTIVE_BAKE_SCENE = scene
         return {"RUNNING_MODAL"}
 
-    def _settle_restart_cache(self):
-        from ..blender import cache_bake
+    def _advance(self, failure):
+        """Tick the run once; a failure to settle its cache fails the bake."""
         from ..blender.production_bake import BakeStatus
 
-        cache_bake._settle_restart_cache(
-            self._restart_cache,
-            self._controller.status,
-            running_status=BakeStatus.RUNNING,
-            terminal_statuses={BakeStatus.CANCELLED, BakeStatus.FAILED},
-        )
+        try:
+            self._run.tick()
+        except Exception as exc:  # noqa: BLE001
+            controller = self._run.controller
+            controller.status = BakeStatus.FAILED
+            controller.error = f"{type(exc).__name__}: {exc}"
+            controller.message = f"{failure}: {exc}"
 
     def _finish(self, context, *, scene_available=None):
-        global _ACTIVE_BAKE, _ACTIVE_BAKE_SCENE
-        from ..blender import production_bake
         from ..blender.production_bake import BakeStatus
 
-        controller = self._controller
+        run = self._run
+        controller = run.controller
         cleanup_error = None
         try:
             if self._timer is not None:
@@ -220,19 +124,18 @@ class _FLUIDSIM_OT_production_bake_modal:
         except Exception as exc:  # noqa: BLE001
             cleanup_error = exc
         finally:
-            _ACTIVE_BAKE = None
-            _ACTIVE_BAKE_SCENE = None
-            production_bake.clear_active_bake(
-                _SceneRegistrationProxy(self._scene_token), controller
-            )
+            try:
+                run.close()
+            except Exception as exc:  # noqa: BLE001
+                cleanup_error = cleanup_error or exc
         if cleanup_error is not None:
             controller.status = BakeStatus.FAILED
             controller.error = f"{type(cleanup_error).__name__}: {cleanup_error}"
             controller.message = f"Production bake cleanup failed: {cleanup_error}"
         if scene_available is None:
-            scene_available = _scene_is_available(self._scene, self._scene_token)
+            scene_available = _scene_is_available(run.scene, run.scene_key)
         if scene_available:
-            _update_bake_rna(self._scene, controller)
+            _update_bake_rna(run.scene, controller)
         if controller.status is BakeStatus.COMPLETE:
             self.report({"INFO"}, controller.message)
             return {"FINISHED"}
@@ -243,74 +146,33 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"CANCELLED"}
 
     def _cancel_removed_scene(self, context):
-        from ..blender.production_bake import BakeStatus
-
-        controller = self._controller
-        controller.request_cancel()
-        cleanup_errors = []
-        backend_session = getattr(getattr(controller, "backend", None), "sess", None)
-        force_release = getattr(backend_session, "force_release", None)
-        if callable(force_release):
-            try:
-                force_release(preserve_error=True)
-            except Exception as exc:  # noqa: BLE001
-                cleanup_errors.append(f"session cleanup failed: {exc}")
-        try:
-            if self._restart_cache is not None and self._restart_cache.active:
-                self._restart_cache.restore()
-        except Exception as exc:  # noqa: BLE001
-            cleanup_errors.append(f"cache restore failed: {exc}")
-        if cleanup_errors:
-            message = "; ".join(cleanup_errors)
-            controller.status = BakeStatus.FAILED
-            controller.error = message
-            controller.message = f"Production bake cleanup failed: {message}"
-        else:
-            controller.status = BakeStatus.CANCELLED
-            controller.message = "Production bake cancelled because its scene was removed"
+        self._run.abandon("Production bake cancelled because its scene was removed")
         return self._finish(context, scene_available=False)
 
     def modal(self, context, event):
-        from ..blender.production_bake import BakeStatus
-
-        if not _scene_is_available(self._scene, self._scene_token):
+        run = self._run
+        if not _scene_is_available(run.scene, run.scene_key):
             return self._cancel_removed_scene(context)
         if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
-            self._controller.request_cancel()
-            _update_bake_rna(self._scene, self._controller)
+            run.request_cancel()
+            _update_bake_rna(run.scene, run.controller)
             return {"RUNNING_MODAL"}
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
-        self._controller.tick(self._scene)
-        try:
-            self._settle_restart_cache()
-        except Exception as exc:  # noqa: BLE001
-            self._controller.status = BakeStatus.FAILED
-            self._controller.error = f"{type(exc).__name__}: {exc}"
-            self._controller.message = f"Production bake failed: {exc}"
-        _update_bake_rna(self._scene, self._controller)
-        if self._controller.status in {
-            BakeStatus.COMPLETE,
-            BakeStatus.CANCELLED,
-            BakeStatus.FAILED,
-        }:
+        self._advance("Production bake failed")
+        _update_bake_rna(run.scene, run.controller)
+        if run.finished:
             return self._finish(context)
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
-        from ..blender.production_bake import BakeStatus
-
-        if self._controller is not None:
-            if not _scene_is_available(self._scene, self._scene_token):
-                return self._cancel_removed_scene(context)
-            try:
-                self._controller.request_cancel()
-                self._controller.tick(self._scene)
-                self._settle_restart_cache()
-            except Exception as exc:  # noqa: BLE001
-                self._controller.status = BakeStatus.FAILED
-                self._controller.error = f"{type(exc).__name__}: {exc}"
-                self._controller.message = f"Production bake cleanup failed: {exc}"
+        run = self._run
+        if run is None:
+            return {"CANCELLED"}
+        if not _scene_is_available(run.scene, run.scene_key):
+            return self._cancel_removed_scene(context)
+        run.request_cancel()
+        self._advance("Production bake cleanup failed")
         return self._finish(context)
 
 
@@ -333,7 +195,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
         if not self.restart_existing:
             return self.execute(context)
         try:
-            self.expected_cache_path = str(_resolved_cache_path(context.scene))
+            self.expected_cache_path = str(_runtime._resolved_cache_path(context.scene))
         except Exception as exc:
             self.report({"ERROR"}, f"Cache path could not be resolved: {exc}")
             return {"CANCELLED"}
@@ -348,7 +210,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
 
     def execute(self, context):
         if self.restart_existing and self.expected_cache_path:
-            current = str(_resolved_cache_path(context.scene))
+            current = str(_runtime._resolved_cache_path(context.scene))
             if current != self.expected_cache_path:
                 self.report(
                     {"ERROR"}, "Cache path changed after confirmation; review Restart again"
@@ -374,15 +236,19 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
 
     @classmethod
     def poll(cls, _context):
-        if _ACTIVE_BAKE is None:
+        from ..blender import production_bake
+
+        if not production_bake.active_bakes():
             cls.poll_message_set("No production bake is active")
             return False
         return True
 
-    def execute(self, context):
-        _ACTIVE_BAKE.request_cancel()
-        scene = _ACTIVE_BAKE_SCENE or context.scene
-        _update_bake_rna(scene, _ACTIVE_BAKE)
+    def execute(self, _context):
+        from ..blender import production_bake
+
+        for scene, controller in production_bake.active_bakes():
+            controller.request_cancel()
+            _update_bake_rna(scene, controller)
         return {"FINISHED"}
 
 
@@ -420,7 +286,7 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
         from ..blender.cache_manager import inspect_cache
 
         try:
-            path = _resolved_cache_path(context.scene)
+            path = _runtime._resolved_cache_path(context.scene)
             inspection = inspect_cache(path)
         except Exception as exc:
             self.report({"ERROR"}, f"Cache could not be inspected: {exc}")
@@ -444,7 +310,7 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache, remove_orphans
 
-        path = _resolved_cache_path(context.scene)
+        path = _runtime._resolved_cache_path(context.scene)
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; inspect again")
             return {"CANCELLED"}
@@ -471,7 +337,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
 
     def invoke(self, context, _event):
         try:
-            self.expected_cache_path = str(_resolved_cache_path(context.scene))
+            self.expected_cache_path = str(_runtime._resolved_cache_path(context.scene))
         except Exception as exc:
             self.report({"ERROR"}, f"Cache path could not be resolved: {exc}")
             return {"CANCELLED"}
@@ -486,7 +352,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import free_cache
 
-        path = _resolved_cache_path(context.scene)
+        path = _runtime._resolved_cache_path(context.scene)
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; review Free Cache again")
             return {"CANCELLED"}
@@ -513,7 +379,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         self.expected_source = str(source)
         if not self.destination:
             self.destination = str(source.with_name(source.name + "_moved"))
@@ -529,7 +395,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         from ..blender.cache_manager import move_cache
 
         fs = context.scene.fluidsim
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Move again")
             return {"CANCELLED"}
@@ -555,7 +421,7 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         self.expected_source = str(source)
         self.name = source.name
         return context.window_manager.invoke_props_dialog(self, width=560)
@@ -569,7 +435,7 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
         from ..blender.cache_manager import rename_cache
 
         fs = context.scene.fluidsim
-        source = _resolved_cache_path(context.scene)
+        source = _runtime._resolved_cache_path(context.scene)
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Rename again")
             return {"CANCELLED"}

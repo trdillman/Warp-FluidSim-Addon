@@ -12,42 +12,17 @@ from types import SimpleNamespace
 
 import bpy
 
+from .scene_access import (
+    active_domain_settings,
+    scene_get,
+    scene_identity,
+    scene_set,
+)
 from .scene_inputs import SceneInputs
 from .simulation_admission import capacity_blocking_message
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
-
-
-# Active-domain accessors (Phase 3)
-#
-# Domain settings live on the designated domain object's ``fluidsim_domain``
-# group; ``scene.fluidsim`` holds only scene-level state. The read path funnels
-# through these so no reader needs to know which object is the domain.
-
-
-def active_domain_object(scene):
-    """Return the scene's designated domain object, or ``None``."""
-    fs = getattr(scene, "fluidsim", None)
-    if fs is None:
-        return None
-    return getattr(fs, "domain_object", None)
-
-
-def active_domain_settings(scene):
-    """Return the designated domain object's ``fluidsim_domain`` group.
-
-    Domain settings exist only on the domain object: ``scene.fluidsim`` is a
-    ``FLUIDSIM_PG_scene`` and declares none of them, so there is no fallback.
-    ``None`` means the scene has no FluidSim settings or no designated domain
-    object; callers treat that as "no domain", never as a cue to read
-    ``scene.fluidsim``.
-    """
-    fs = getattr(scene, "fluidsim", None)
-    obj = getattr(fs, "domain_object", None)
-    if obj is None:
-        return None
-    return getattr(obj, "fluidsim_domain", None)
 
 
 # Session state
@@ -70,7 +45,6 @@ class Session:
         self.benchmark_compare = None
         self.error = ""
         self.device = None
-        self.memory_assessment = {}
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
         self.capacity_plan_operation = None
@@ -114,14 +88,14 @@ class Session:
             return binding
         return f"{binding}|initial-reserve={int(authored_reserve)}"
 
-    def _set_capacity_plan(
+    def set_capacity_plan(
             self, scene, plan, *, operation=None, memory_bypassed=False):
         if operation is None:
             operation = "REINITIALIZE" if self.owns_scene(scene) else "INITIALIZE"
         self.capacity_plan = plan
         self.capacity_plan_memory_bypassed = bool(memory_bypassed)
         self.capacity_plan_operation = str(operation)
-        self.capacity_plan_scene_identity = _scene_identity(scene)
+        self.capacity_plan_scene_identity = scene_identity(scene)
         self.capacity_plan_scene_signature = self._capacity_plan_binding_signature(
             scene, plan, self.capacity_plan_operation)
         return plan
@@ -130,7 +104,7 @@ class Session:
         plan = self.capacity_plan
         if plan is None or scene is None:
             return None
-        if self.capacity_plan_scene_identity != _scene_identity(scene):
+        if self.capacity_plan_scene_identity != scene_identity(scene):
             return None
         if self.capacity_plan_scene_signature != self._capacity_plan_binding_signature(
                 scene, plan, self.capacity_plan_operation):
@@ -144,12 +118,12 @@ class Session:
 
     def invalidate_capacity_plan_for_scene(self, scene):
         if (scene is not None and self.capacity_plan_scene_identity
-                == _scene_identity(scene)):
+                == scene_identity(scene)):
             self._clear_capacity_plan()
 
     def particle_capacity_notice_for_scene(self, scene):
         if (scene is None or self.particle_capacity_notice_scene_identity
-                != _scene_identity(scene)):
+                != scene_identity(scene)):
             return ""
         # Domain-owned: the notice must compare the runtime capacity against
         # the reserve the user actually authored, not the migrated ghost.
@@ -178,6 +152,54 @@ class Session:
             f"Initial Reserve {authored:,} will be allocated on Initialize; "
             f"the auto-growth hard limit remains {MAX_AUTO_PARTICLES:,}.")
 
+    def begin_run(self, start_frame=1, *, reported_growth_capacity=None):
+        """Start one run's bookkeeping afresh.
+
+        The frame cursor, cache coverage and frame statistics describe a single
+        run of the solver. Every path that installs or retires a solver begins
+        a new run here, so these fields cannot drift apart. The growth notice
+        marker is only restarted when ``reported_growth_capacity`` is given.
+        """
+        self.start_frame = int(start_frame)
+        self.cache_written_start = None
+        self.cache_written_end = None
+        self.cache_settings_records = {}
+        self.last_frame = -1
+        self.frame_stats = []
+        if reported_growth_capacity is not None:
+            self.last_reported_growth_capacity = int(reported_growth_capacity)
+
+    def bind_scene(self, identity, key):
+        """Bind the session to the scene identity and content digest it owns."""
+        self.scene_identity = identity
+        self.scene_key = key
+
+    def install_solver(
+            self, candidate, *, profiler, device, scene_inputs, admitted_effects=()):
+        """Replacement Cutover: the single swap of the authoritative solver.
+
+        ``candidate`` has already passed admission. The retired solver, its
+        device memory and the superseded scene inputs are released here.
+        ``admitted_effects`` are the effect instances the candidate was
+        admitted with.
+        """
+        old_solver = self.solver
+        old_inputs = self.scene_inputs
+        self.solver = candidate
+        self.profiler = profiler
+        self.device = device
+        self.scene_inputs = scene_inputs
+        self.admitted_effects = admitted_effects
+        if old_inputs is not scene_inputs:
+            old_inputs.clear()
+        if old_solver is not None:
+            retired_device = getattr(old_solver, "device", None)
+            release = getattr(old_solver, "release", None)
+            if callable(release):
+                release()
+            from ..sim.memory_safety import release_cuda_memory
+            release_cuda_memory(retired_device)
+
     def _clear_runtime(self):
         solver = self.solver
         device = getattr(solver, "device", None) or self.device
@@ -186,18 +208,11 @@ class Session:
             if hasattr(solver, "release"):
                 solver.release()
         self.profiler = None
-        self.start_frame = 1
-        self.cache_written_start = None
-        self.cache_written_end = None
-        self.cache_settings_records = {}
-        self.last_frame = -1
-        self.frame_stats = []
+        self.begin_run(reported_growth_capacity=0)
         self.scene_inputs.clear()
         self.device = None
-        self.last_reported_growth_capacity = 0
+        self.bind_scene(None, "")
         self.admitted_effects = ()
-        self.scene_identity = None
-        self.scene_key = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
         del solver
@@ -206,16 +221,15 @@ class Session:
 
     def set_error(self, scene, message):
         self.error = str(message)
-        _scene_set(scene, ERROR_SCENE_KEY, self.error)
+        scene_set(scene, ERROR_SCENE_KEY, self.error)
 
     def clear_error(self, scene=None):
         self.error = ""
-        self.memory_assessment = {}
         if scene is not None:
-            _scene_set(scene, ERROR_SCENE_KEY, "")
+            scene_set(scene, ERROR_SCENE_KEY, "")
 
     def current_error(self, scene):
-        return str(_scene_get(scene, ERROR_SCENE_KEY, "") or self.error or "")
+        return str(scene_get(scene, ERROR_SCENE_KEY, "") or self.error or "")
 
     def release(self, scene, *, preserve_error=False):
         """Release only an inactive session or the runtime owned by ``scene``."""
@@ -256,7 +270,7 @@ class Session:
                 effects.publish_admitted_effects(scene, instances)
 
             self._admission_owner = SimulationAdmission(
-                self, scene_identity=_scene_identity,
+                self, scene_identity=scene_identity,
                 effect_builder=build_effect_stack,
                 effect_publisher=publish_effect_stack,
                 applied_state_capture=pending_settings.capture_applied_state,
@@ -281,7 +295,7 @@ class Session:
             self.active
             and scene is not None
             and self.scene_identity is not None
-            and self.scene_identity == _scene_identity(scene)
+            and self.scene_identity == scene_identity(scene)
         )
 
     def sync_scene(self, scene, depsgraph=None, *, capture_first_mesh=True):
@@ -289,14 +303,11 @@ class Session:
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
-        self.solver.set_sources(
+        self.solver.set_source_batch(
             self.scene_inputs.gather_sources(
                 scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                sync_generation=sync_generation))
-        extra_plans = self.scene_inputs.gather_source_plans(scene, depsgraph)
-        if extra_plans:
-            self.solver.set_source_plans(
-                tuple(self.solver.sourcing.plans) + tuple(extra_plans))
+                sync_generation=sync_generation),
+            self.scene_inputs.gather_source_plans(scene, depsgraph))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_force_fields(
@@ -447,32 +458,6 @@ ERROR_SCENE_KEY = "fluidsim_last_error"
 
 def session() -> Session:
     return _SESSION
-
-
-def _scene_get(scene, key: str, default=""):
-    try:
-        return scene.get(key, default)
-    except AttributeError:
-        return getattr(scene, key, default)
-
-
-def _scene_set(scene, key: str, value):
-    try:
-        scene[key] = value
-    except TypeError:
-        setattr(scene, key, value)
-
-
-def _scene_identity(scene):
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return value
-        except (TypeError, ValueError, ReferenceError):
-            pass
-    return id(scene)
 
 
 def set_error(scene, message: str):

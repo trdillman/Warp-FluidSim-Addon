@@ -41,7 +41,7 @@ def test_pressure_source_is_applied_after_solve_before_projection_without_liquid
   SourceLifecycle.EVERY_FRAME,SourceEvaluationCadence.STATIC,
   AnalyticRegionPlan(shape=SourceShapeShape.BOX,position=(1,1,1),half_extents=(.5,.5,.5)),
   PayloadPlan(kind=SourcePayloadKind.PRESSURE,pressure=5.0))
- solver.set_source_plans((pressure,));solver.step_frame()
+ solver.set_source_batch(native_plans=(pressure,));solver.step_frame()
  assert solver.particles.host_count==0
  assert np.count_nonzero(solver.voxel_type.data.numpy() & C.VOXEL_FLUID)==0
  assert np.max(np.abs(solver.pressure_solver.pressure.numpy()))>=4.99
@@ -65,7 +65,7 @@ def test_pressure_source_changes_projected_liquid_velocity(cuda_device):
     SourceLifecycle.EVERY_FRAME,SourceEvaluationCadence.STATIC,
     AnalyticRegionPlan(shape=SourceShapeShape.BOX,position=(.75,.875,.875),half_extents=(.25,.5,.5)),
     PayloadPlan(kind=SourcePayloadKind.PRESSURE,pressure=8.0)))
-  solver.set_source_plans(plans);solver.step_frame()
+  solver.set_source_batch(native_plans=plans);solver.step_frame()
   result=solver.particles.velocity.numpy()[:solver.particles.host_count].copy()
   applied=solver.sourcing.last_pressure_apply_count;solver.release();return result,applied
  baseline,_=run(False);influenced,applied=run(True)
@@ -83,7 +83,7 @@ def test_staggered_source_survives_p2g_ordering_in_real_solver(cuda_device):
   SourceLifecycle.EVERY_FRAME,SourceEvaluationCadence.STATIC,
   AnalyticRegionPlan(shape=SourceShapeShape.BOX,position=(1,1,1),half_extents=(.5,.5,.5)),
   PayloadPlan(kind=SourcePayloadKind.STAGGERED_VECTOR,vector=(1,2,3)))
- solver.set_source_plans((plan,));solver.step_frame()
+ solver.set_source_batch(native_plans=(plan,));solver.step_frame()
  assert solver.sourcing.last_post_p2g_apply_count>0
  assert np.max(np.abs(solver.vel.u.numpy()))>=.99
  assert np.max(np.abs(solver.vel.v.numpy()))>=1.99
