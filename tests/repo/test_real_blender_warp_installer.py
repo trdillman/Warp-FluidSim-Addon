@@ -60,9 +60,10 @@ def built_package(tmp_path_factory) -> Path:
         run_python_checks=False,
         run_lint=False,
     )
-    linux_pkgs = [p for p in packages if "linux_x64" in p.name]
-    assert len(linux_pkgs) == 1, f"Expected 1 linux package, got {packages}"
-    return linux_pkgs[0]
+    platform = "windows_x64" if sys.platform == "win32" else "linux_x64"
+    host_packages = [p for p in packages if platform in p.name]
+    assert len(host_packages) == 1, f"Expected 1 {platform} package, got {packages}"
+    return host_packages[0]
 
 
 def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_repo") -> dict[str, str]:
@@ -85,8 +86,10 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
         "BLENDER_USER_SCRIPTS": str(scripts_dir),
         "BLENDER_USER_EXTENSIONS": str(extensions_dir),
         "BLENDER_USER_DATAFILES": str(datafiles_dir),
+        "PYTHONUSERBASE": str(base_dir / "python-user-base"),
         "TEMP": str(temp_dir),
         "TMP": str(temp_dir),
+        "FLUIDSIM_TEST_REPOSITORY": str(repo_dir),
     })
 
     subprocess.run(
@@ -126,6 +129,23 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
     return env
 
 
+def _factory_script(script: str) -> str:
+    """Enable only the installed test extension after factory startup."""
+    setup = """
+import addon_utils
+import bpy
+import os
+
+bpy.context.preferences.extensions.repos.new(
+    name='Test Repo', module='test_repo',
+    custom_directory=os.environ['FLUIDSIM_TEST_REPOSITORY'],
+)
+addon_utils.enable('bl_ext.test_repo.fluidsim_warp', default_set=False)
+assert 'bl_ext.test_repo.fluidsim_warp' in bpy.context.preferences.addons
+"""
+    return setup + script
+
+
 def test_offline_refusal_in_real_blender(tmp_path: Path, built_package: Path):
     """Verify that bpy.ops.fluidsim.install_warp() refuses before download when offline."""
     blender = _find_blender()
@@ -152,9 +172,12 @@ print('OFFLINE-REFUSE-VERIFIED')
         [
             str(blender),
             "--background",
+            "--factory-startup",
             "--offline-mode",
+            "--python-exit-code",
+            "1",
             "--python-expr",
-            script,
+            _factory_script(script),
         ],
         env=env,
         capture_output=True,
@@ -217,14 +240,20 @@ assert stat_before.st_mtime == stat_after.st_mtime, 'Warp was rewritten on secon
 assert not (shared_local / 'warp').exists()
 assert not (user_site / 'warp').exists()
 
+# A forced repair while Warp's native DLL is loaded must not mutate its tree.
+assert bpy.ops.fluidsim.install_warp(force_reinstall=True) == {'FINISHED'}
+assert warp_init.stat().st_mtime == stat_before.st_mtime
 print('ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED')
 """
     result = subprocess.run(
         [
             str(blender),
             "--background",
+            "--factory-startup",
+            "--python-exit-code",
+            "1",
             "--python-expr",
-            script,
+            _factory_script(script),
         ],
         env=env,
         capture_output=True,
@@ -233,6 +262,25 @@ print('ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED')
     )
     assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
     assert "ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED" in result.stdout
+    verify_restart = """
+import bpy
+import importlib
+from pathlib import Path
+module = 'bl_ext.test_repo.fluidsim_warp'
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+probe = runtime.probe_runtime(force=True)
+owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
+assert probe.warp_version == '1.17.0', probe
+assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
+print('LOADED-NATIVE-REPAIR-AFTER-RESTART-VERIFIED')
+"""
+    result = subprocess.run(
+        [str(blender), '--background', '--factory-startup',
+         '--python-exit-code', '1', '--python-expr', _factory_script(verify_restart)],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
+    assert 'LOADED-NATIVE-REPAIR-AFTER-RESTART-VERIFIED' in result.stdout
 
 
 def test_shared_extensions_local_foreign_warp_refusal_in_real_blender(tmp_path: Path, built_package: Path):
@@ -288,8 +336,11 @@ print('SHARED-EXTENSIONS-LOCAL-REFUSAL-VERIFIED')
         [
             str(blender),
             "--background",
+            "--factory-startup",
+            "--python-exit-code",
+            "1",
             "--python-expr",
-            script,
+            _factory_script(script),
         ],
         env=env,
         capture_output=True,
@@ -298,3 +349,93 @@ print('SHARED-EXTENSIONS-LOCAL-REFUSAL-VERIFIED')
     )
     assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
     assert "SHARED-EXTENSIONS-LOCAL-REFUSAL-VERIFIED" in result.stdout
+
+
+def test_corrupted_owned_install_can_be_repaired_in_real_blender(tmp_path: Path, built_package: Path):
+    """Repair a certified owned copy after a fresh process sees import failure."""
+    blender = _find_blender()
+    env = _setup_isolated_blender(tmp_path, built_package)
+    seed = """
+import bpy
+from pathlib import Path
+bpy.context.preferences.system.use_online_access = True
+assert bpy.ops.fluidsim.install_warp() == {'FINISHED'}
+owned = Path(bpy.utils.extension_path_user(
+    'bl_ext.test_repo.fluidsim_warp', path='.local', create=False))
+(owned / 'warp' / '__init__.py').write_text(
+    "raise ImportError('deliberately corrupted owned test install')\\n",
+    encoding='utf-8')
+print('OWNED-CORRUPTION-SEEDED')
+"""
+    repair = """
+import bpy
+import importlib
+from pathlib import Path
+module = 'bl_ext.test_repo.fluidsim_warp'
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+broken = runtime.probe_runtime(force=True)
+assert not broken.available
+assert 'deliberately corrupted' in broken.last_error, broken.last_error
+bpy.context.preferences.system.use_online_access = True
+assert bpy.ops.fluidsim.install_warp(force_reinstall=True) == {'FINISHED'}
+owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
+assert 'deliberately corrupted' in (owned / 'warp' / '__init__.py').read_text(encoding='utf-8')
+print('CORRUPTED-OWNED-INSTALL-REPAIR-STAGED')
+"""
+    verify_restart = """
+import bpy
+import importlib
+from pathlib import Path
+module = 'bl_ext.test_repo.fluidsim_warp'
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+probe = runtime.probe_runtime(force=True)
+owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
+assert probe.warp_version == '1.17.0', probe
+assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
+assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
+print('CORRUPTED-OWNED-INSTALL-REPAIR-VERIFIED')
+"""
+    for script, marker in (
+        (seed, 'OWNED-CORRUPTION-SEEDED'),
+        (repair, 'CORRUPTED-OWNED-INSTALL-REPAIR-STAGED'),
+        (verify_restart, 'CORRUPTED-OWNED-INSTALL-REPAIR-VERIFIED'),
+    ):
+        result = subprocess.run(
+            [str(blender), '--background', '--factory-startup',
+             '--python-exit-code', '1', '--python-expr', _factory_script(script)],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
+        assert marker in result.stdout
+
+
+def test_explicit_local_helper_provisions_owned_warp_in_real_blender(tmp_path: Path, built_package: Path):
+    """Exercise the helper's actual Blender script and online-state restoration."""
+    blender = _find_blender()
+    env = _setup_isolated_blender(tmp_path, built_package)
+    script = f"""
+import bpy
+import importlib
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(TOOLS_RELEASE)!r})
+import install_local
+bpy.context.preferences.system.use_online_access = False
+exec(compile(install_local.INSTALL_WARP_SCRIPT, '<explicit-local-warp-install>', 'exec'))
+assert bpy.context.preferences.system.use_online_access is False
+module = 'bl_ext.test_repo.fluidsim_warp'
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+probe = runtime.probe_runtime(force=True)
+owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
+assert probe.warp_version == '1.17.0', probe
+assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
+assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
+print('EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED')
+"""
+    result = subprocess.run(
+        [str(blender), '--background', '--factory-startup',
+         '--python-exit-code', '1', '--python-expr', _factory_script(script)],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
+    assert 'EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED' in result.stdout

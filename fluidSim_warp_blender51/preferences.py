@@ -119,7 +119,7 @@ class FLUIDSIM_OT_install_warp(bpy.types.Operator):
 
         if result.success:
             self.report({"INFO"}, result.message)
-            if not result.already_installed:
+            if not result.already_installed and not self.force_reinstall:
                 prefs = _preferences(context)
                 _refresh_runtime(prefs)
         else:
@@ -238,6 +238,15 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                 row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
                 if probe.module_file:
                     box.label(text=f"Warp: {probe.warp_version} · {probe.module_file}")
+                if status == "certified" and not ready and probe.last_error:
+                    row = box.row()
+                    row.alert = True
+                    repair = row.operator(
+                        "fluidsim.install_warp",
+                        text="Repair Warp",
+                        icon="FILE_REFRESH",
+                    )
+                    repair.force_reinstall = True
                 if status == "unsupported":
                     row = box.row()
                     row.alert = True

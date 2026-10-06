@@ -42,6 +42,8 @@ from .version import CERTIFIED_WARP_VERSION
 _CHUNK_SIZE = 1024 * 1024
 _LOCK_PATH = Path(__file__).with_name("warp_wheels.lock.json")
 _OWNED_LOCAL_DIR = ".local"
+_PENDING_REPAIR_WHEEL = ".fluidsim-warp-repair.whl"
+_PENDING_REPAIR_PID = ".fluidsim-warp-repair.pid"
 
 
 @dataclass(frozen=True)
@@ -260,15 +262,17 @@ def _default_install_target(*, create: bool = False) -> Path:
 
 
 def ensure_installed_warp_on_path() -> None:
-    """Append this extension's site-packages when that directory already exists.
+    """Apply a pending repair, then append the owned site-packages directory.
 
-    This does not create the directory, download anything, or move an already
-    imported module. A Warp loaded from anywhere else stays the loaded module.
+    This does not create the directory, download anything, or move an imported
+    module. A verified repair is applied only in a fresh process before Warp is
+    imported. A Warp loaded from anywhere else stays the loaded module.
     """
     if "warp" in sys.modules:
         return
     for target in _owned_candidates():
         if target.is_dir():
+            _apply_pending_repair(target)
             value = str(target)
             if value not in sys.path:
                 sys.path.append(value)
@@ -390,6 +394,93 @@ def _clear_owned_warp(site_packages: Path) -> None:
             child.unlink()
 
 
+def _pending_repair_path(site_packages: Path) -> Path:
+    return site_packages / _PENDING_REPAIR_WHEEL
+
+
+def _pending_repair_pid_path(site_packages: Path) -> Path:
+    return site_packages / _PENDING_REPAIR_PID
+
+
+def _owned_warp_is_loaded(site_packages: Path) -> bool:
+    module = sys.modules.get("warp")
+    file_name = getattr(module, "__file__", None) if module is not None else None
+    if not file_name:
+        return False
+    try:
+        return _is_relative_to(Path(file_name).resolve(), site_packages)
+    except OSError:
+        return False
+
+
+def _wheel_matches_lock(wheel: Path, wheel_info: WheelInfo) -> bool:
+    return (
+        wheel.is_file()
+        and wheel.stat().st_size == wheel_info.size
+        and _sha256_path(wheel) == wheel_info.sha256
+    )
+
+
+def _stage_pending_repair(wheel: Path, destination: Path, wheel_info: WheelInfo) -> None:
+    """Copy a verified wheel into owned storage without touching loaded files."""
+    destination.mkdir(parents=True, exist_ok=True)
+    pending = _pending_repair_path(destination)
+    partial = pending.with_name(pending.name + ".part")
+    pid_marker = _pending_repair_pid_path(destination)
+    pid_partial = pid_marker.with_name(pid_marker.name + ".part")
+    try:
+        shutil.copyfile(wheel, partial)
+        if not _wheel_matches_lock(partial, wheel_info):
+            raise RuntimeError("Staged Warp repair failed checksum or size verification")
+        pid_partial.write_text(str(os.getpid()), encoding="ascii")
+        pid_partial.replace(pid_marker)
+        partial.replace(pending)
+    finally:
+        partial.unlink(missing_ok=True)
+        pid_partial.unlink(missing_ok=True)
+
+
+def _apply_pending_repair(destination: Path) -> bool:
+    """Apply a staged, locked wheel before Warp is imported in a fresh process."""
+    pending = _pending_repair_path(destination)
+    if not pending.is_file():
+        return False
+    pid_marker = _pending_repair_pid_path(destination)
+    try:
+        staging_pid = int(pid_marker.read_text(encoding="ascii"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            "Pending Warp repair metadata is missing or invalid. "
+            "Open Add-on Preferences and press Repair Warp again."
+        ) from exc
+    if staging_pid == os.getpid():
+        raise RuntimeError(
+            "Warp repair is staged. Restart Blender to apply it before running the solver."
+        )
+    wheel_info = get_wheel_info_for_platform()
+    if wheel_info is None or not _wheel_matches_lock(pending, wheel_info):
+        raise RuntimeError(
+            "Pending Warp repair failed checksum or size verification. "
+            "Open Add-on Preferences and press Repair Warp again."
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix=".fluidsim-warp-repair-",
+        dir=destination,
+    ) as tmpdir:
+        extracted = Path(tmpdir) / "site-packages"
+        _extract_wheel(pending, extracted)
+        if _owned_distribution_version(extracted) != CERTIFIED_WARP_VERSION:
+            raise RuntimeError("Pending Warp repair does not contain the certified runtime")
+        _clear_owned_warp(destination)
+        for child in extracted.iterdir():
+            child.replace(destination / child.name)
+
+    pending.unlink()
+    pid_marker.unlink(missing_ok=True)
+    return True
+
+
 def _extract_wheel(wheel: Path, destination: Path) -> None:
     """Extract one wheel into ``destination``, rejecting members that escape it."""
     destination.mkdir(parents=True, exist_ok=True)
@@ -438,32 +529,37 @@ def install_warp(
     """Install the locked Warp wheel into this extension's own directory.
 
     A certified copy there, and a newer 1.x copy there, is success and does
-    not download or write. ``force_reinstall`` does not change that. An older
-    copy in that same directory is replaced. Warp loaded from any other path,
-    including another add-on or Blender's user site-packages, is left untouched.
+    not download or write. An explicit ``force_reinstall`` stages a locked
+    repair for an owned certified copy, applied before import on the next
+    process. An older copy in that same directory is replaced. Warp loaded from
+    any other path, including another add-on or Blender's user site-packages,
+    is left untouched.
     """
 
     def report(message: str) -> None:
         if progress_callback:
             progress_callback(message)
 
-    del force_reinstall  # A certified owned copy is never rewritten.
-
     blocked = foreign_warp_block_reason()
     if blocked:
         return InstallResult(success=False, message=blocked)
 
+    repairing_certified = False
+    owned_version = None
     for owned in _owned_candidates():
         owned_version = _owned_distribution_version(owned)
         if owned_version:
             status, _message = warp_version_support(owned_version)
             if status == "certified":
-                return InstallResult(
-                    success=True,
-                    message=f"Warp {owned_version} is already installed",
-                    version=owned_version,
-                    already_installed=True,
-                )
+                if not force_reinstall:
+                    return InstallResult(
+                        success=True,
+                        message=f"Warp {owned_version} is already installed",
+                        version=owned_version,
+                        already_installed=True,
+                    )
+                repairing_certified = True
+                break
             if status == "untested":
                 return InstallResult(
                     success=True,
@@ -549,6 +645,18 @@ def install_warp(
 
         report("Installing Warp...")
         try:
+            if repairing_certified or (
+                owned_version and _owned_warp_is_loaded(destination)
+            ):
+                _stage_pending_repair(wheel_path, destination, wheel_info)
+                return InstallResult(
+                    success=True,
+                    message=(
+                        f"Staged Warp {CERTIFIED_WARP_VERSION} for repair. "
+                        "Restart Blender to apply it before running the solver."
+                    ),
+                    version=CERTIFIED_WARP_VERSION,
+                )
             if owned_version:
                 _clear_owned_warp(destination)
             _extract_wheel(wheel_path, destination)

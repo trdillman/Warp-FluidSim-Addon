@@ -15,6 +15,10 @@
   online access is off.
 - The extension now declares `network` permission for the PyPI download.
 - Updated THIRD_PARTY_NOTICES.md to reflect the new installation method.
+- **Repair Warp** restores a damaged certified copy owned by this extension.
+  The checked replacement is staged safely and applied after restarting Blender.
+- The local installation helper supports an explicit `--install-warp` step;
+  ordinary installation and `--probe-only` keep downloads disabled.
 
 ### Compatibility
 

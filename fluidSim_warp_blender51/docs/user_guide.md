@@ -33,6 +33,11 @@ remove that copy. It also stops when Online Access is turned off in System
 preferences, or when Blender was started with `--offline-mode`. An NVIDIA
 driver that supports CUDA 12 (R525 or newer) is required.
 
+If the extension's certified Warp copy is damaged, Preferences shows
+**Repair Warp**. It downloads and verifies a replacement without changing the
+runtime currently loaded by Blender. Restart Blender to apply the repair
+before Warp imports; the replacement stays inside this extension's directory.
+
 If a newer 1.x Warp is ever loaded instead (for example through a developer
 override), FluidSim still runs but marks the runtime status as
 "untested Warp version"; Warp older than 1.17.0 or a 2.x Warp is refused.

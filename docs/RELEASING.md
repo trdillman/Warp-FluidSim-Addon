@@ -122,8 +122,12 @@ expected; otherwise, a changed hash needs an explanation before release.
    It installs the package, warns about legacy `fluidSim_warp_blender51`
    add-on folders, and prints the FluidSim version, the Warp build that
    actually loaded, and whether CUDA is usable. It fails when any of them is
-   wrong. `--probe-only` checks without installing. The Status & Runtime
-   panel also names the loaded build.
+   wrong. This default does not download Warp. Add `--install-warp` to
+   explicitly download the certified runtime through the installed
+   extension's checksum-verified installer. If the extension is already
+   installed, `--probe-only --install-warp` provisions Warp without replacing
+   the extension package. `--probe-only` by itself is read-only and performs
+   no network access. The Status & Runtime panel also names the loaded build.
 
 ## Sharing Warp with other extensions
 

@@ -116,13 +116,17 @@ def test_install_warp_returns_already_installed_when_certified(tmp_path, monkeyp
 
     _seed_owned_warp(tmp_path, "1.17.0")
     before = _snapshot(tmp_path)
-    _isolate_install(monkeypatch, tmp_path)
+    _isolate_install(
+        monkeypatch,
+        tmp_path,
+        importable=(tmp_path / "warp" / "__init__.py").resolve(),
+    )
     download = mock.Mock()
     extract = mock.Mock()
     monkeypatch.setattr(warp_installer, "_download_wheel", download)
     monkeypatch.setattr(warp_installer, "_extract_wheel", extract)
 
-    result = warp_installer.install_warp(force_reinstall=True)
+    result = warp_installer.install_warp()
 
     assert result.success is True
     assert result.already_installed is True
@@ -130,6 +134,141 @@ def test_install_warp_returns_already_installed_when_certified(tmp_path, monkeyp
     download.assert_not_called()
     extract.assert_not_called()
     assert _snapshot(tmp_path) == before
+
+
+def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeypatch):
+    """A repair leaves loaded files untouched, then applies before the next import."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    _seed_owned_warp(tmp_path, "1.17.0")
+    (tmp_path / "warp" / "__init__.py").write_text(
+        'raise RuntimeError("corrupted runtime")\n',
+        encoding="utf-8",
+    )
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("warp/__init__.py", '__version__ = "1.17.0"\n')
+        archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+    wheel_bytes = payload.getvalue()
+    info = mock.Mock(
+        filename="warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
+        sha256=hashlib.sha256(wheel_bytes).hexdigest(),
+        size=len(wheel_bytes),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+        platform="linux-x64",
+    )
+
+    def fake_download(url, destination, **_kwargs):
+        assert url == info.url
+        destination.write_bytes(wheel_bytes)
+
+    _isolate_install(
+        monkeypatch,
+        tmp_path,
+        importable=(tmp_path / "warp" / "__init__.py").resolve(),
+    )
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(warp_installer, "_download_wheel", fake_download)
+    monkeypatch.setattr(warp_installer, "_online_access_block_reason", lambda: None)
+    clear_owned = mock.Mock(wraps=warp_installer._clear_owned_warp)
+    monkeypatch.setattr(warp_installer, "_clear_owned_warp", clear_owned)
+    monkeypatch.setitem(
+        sys.modules,
+        "warp",
+        SimpleNamespace(__file__=str(tmp_path / "warp" / "__init__.py")),
+    )
+
+    result = warp_installer.install_warp(force_reinstall=True)
+
+    assert result.success is True
+    assert result.already_installed is False
+    assert result.version == "1.17.0"
+    assert "Restart Blender" in result.message
+    clear_owned.assert_not_called()
+    assert "corrupted runtime" in (tmp_path / "warp" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert warp_installer._pending_repair_path(tmp_path).is_file()
+
+    monkeypatch.delitem(sys.modules, "warp")
+    with pytest.raises(RuntimeError, match="Restart Blender"):
+        warp_installer.ensure_installed_warp_on_path()
+    clear_owned.assert_not_called()
+
+    warp_installer._pending_repair_pid_path(tmp_path).write_text("0", encoding="ascii")
+    warp_installer.ensure_installed_warp_on_path()
+
+    clear_owned.assert_called_once_with(tmp_path)
+    assert not warp_installer._pending_repair_path(tmp_path).exists()
+    assert (tmp_path / "warp" / "__init__.py").read_text(encoding="utf-8") == (
+        '__version__ = "1.17.0"\n'
+    )
+
+
+def test_pending_repair_rejects_tampering_before_deleting_owned_files(
+    tmp_path,
+    monkeypatch,
+):
+    """Fresh startup re-verifies a staged wheel before touching the old runtime."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    _seed_owned_warp(tmp_path, "1.17.0")
+    original = _snapshot(tmp_path)
+    wheel = tmp_path / "source.whl"
+    wheel.write_bytes(b"certified-wheel")
+    info = mock.Mock(
+        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        size=wheel.stat().st_size,
+    )
+    _isolate_install(monkeypatch, tmp_path)
+    monkeypatch.delitem(sys.modules, "warp", raising=False)
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    warp_installer._stage_pending_repair(wheel, tmp_path, info)
+    warp_installer._pending_repair_path(tmp_path).write_bytes(b"tampered")
+    warp_installer._pending_repair_pid_path(tmp_path).write_text("0", encoding="ascii")
+    clear_owned = mock.Mock(wraps=warp_installer._clear_owned_warp)
+    monkeypatch.setattr(warp_installer, "_clear_owned_warp", clear_owned)
+
+    with pytest.raises(RuntimeError, match="checksum or size"):
+        warp_installer.ensure_installed_warp_on_path()
+
+    clear_owned.assert_not_called()
+    for relative, content in original.items():
+        assert (tmp_path / relative).read_bytes() == content
+
+
+def test_pending_repair_keeps_old_wheel_if_pid_guard_cannot_be_committed(
+    tmp_path,
+    monkeypatch,
+):
+    """A marker-write failure cannot expose a new wheel under an old PID guard."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    pending = warp_installer._pending_repair_path(tmp_path)
+    pid_marker = warp_installer._pending_repair_pid_path(tmp_path)
+    pending.write_bytes(b"previous-wheel")
+    pid_marker.write_text("0", encoding="ascii")
+    wheel = tmp_path / "source.whl"
+    wheel.write_bytes(b"replacement-wheel")
+    info = mock.Mock(
+        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        size=wheel.stat().st_size,
+    )
+    replace = pathlib.Path.replace
+
+    def fail_pid_guard(source, target):
+        if source.name == f"{pid_marker.name}.part":
+            raise OSError("simulated marker write failure")
+        return replace(source, target)
+
+    monkeypatch.setattr(pathlib.Path, "replace", fail_pid_guard)
+
+    with pytest.raises(OSError, match="marker write failure"):
+        warp_installer._stage_pending_repair(wheel, tmp_path, info)
+
+    assert pending.read_bytes() == b"previous-wheel"
+    assert pid_marker.read_text(encoding="ascii") == "0"
 
 
 def test_install_warp_leaves_a_newer_untested_owned_warp_in_place(tmp_path, monkeypatch):
@@ -427,6 +566,61 @@ def test_install_warp_button_operator_second_press_writes_nothing(tmp_path, monk
     download.assert_not_called()
     extract.assert_not_called()
     assert _snapshot(tmp_path) == before
+
+
+def test_preferences_offer_repair_for_a_failed_owned_certified_runtime(monkeypatch):
+    """A failed certified runtime probe exposes an explicit owned-copy repair."""
+    preferences, _operator_instance = _operator(monkeypatch)
+    monkeypatch.setattr(preferences, "foreign_warp_block_reason", lambda: None)
+    monkeypatch.setattr(
+        preferences,
+        "get_installed_warp_info",
+        lambda: (True, "Warp 1.17.0 (certified)"),
+    )
+    monkeypatch.setattr(preferences, "owned_install_status", lambda: "certified")
+    monkeypatch.setattr(
+        preferences,
+        "probe_runtime",
+        lambda: SimpleNamespace(
+            last_error="RuntimeError: corrupted runtime",
+            module_file="",
+            warp_version="1.17.0",
+        ),
+    )
+    monkeypatch.setattr(preferences, "configured_device", lambda: "cuda:0")
+    monkeypatch.setattr(
+        preferences,
+        "runtime_status_for_device",
+        lambda _selected, *, probe: (False, probe.last_error),
+    )
+
+    operators = []
+
+    class RecordingLayout:
+        def box(self):
+            return self
+
+        def row(self, **_kwargs):
+            return self
+
+        def label(self, **_kwargs):
+            return None
+
+        def prop(self, *_args, **_kwargs):
+            return None
+
+        def operator(self, identifier, **kwargs):
+            properties = SimpleNamespace(force_reinstall=False)
+            operators.append((identifier, kwargs, properties))
+            return properties
+
+    prefs = preferences.FLUIDSIM_AP_preferences.__new__(preferences.FLUIDSIM_AP_preferences)
+    prefs.layout = RecordingLayout()
+    prefs.draw(None)
+
+    repair = next(call for call in operators if call[1].get("text") == "Repair Warp")
+    assert repair[0] == "fluidsim.install_warp"
+    assert repair[2].force_reinstall is True
 
 
 def test_download_wheel_verifies_checksum():
