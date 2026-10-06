@@ -260,3 +260,84 @@ def cuda_device_items(*, force: bool = False) -> list[tuple[str, str, str]]:
         )
         for device in state.cuda_devices
     ]
+
+
+_PREWARMED_DEVICES: set[str] = set()
+
+
+def is_kernels_prewarmed(device: str | None = None) -> bool:
+    """Return whether simulation kernels have already been warmed for ``device``."""
+    if device is None:
+        try:
+            from ..preferences import configured_device
+
+            device = configured_device()
+        except Exception:  # noqa: BLE001
+            device = ""
+    return bool(device and str(device) in _PREWARMED_DEVICES)
+
+
+def prewarm_simulation_kernels(device: str | None = None) -> bool:
+    """Compile and warm all simulation Warp kernels on the target CUDA device.
+
+    Guarantees kernel compilation and disk-cache validation occur asynchronously
+    or during idle time rather than blocking interactive timeline playback
+    on the user's first Spacebar press.
+    """
+    state = probe_runtime()
+    if not state.available:
+        return False
+    if device is None:
+        try:
+            from ..preferences import configured_device
+
+            device = configured_device()
+        except Exception:  # noqa: BLE001
+            device = ""
+        if not device and state.cuda_devices:
+            device = state.cuda_devices[0].alias
+    if not device:
+        return False
+    target_device = str(device)
+    if target_device in _PREWARMED_DEVICES:
+        return True
+
+    try:
+        wp = _import_warp()
+        wp.init()
+    except Exception:  # noqa: BLE001
+        return False
+
+    root_pkg = __name__.rsplit(".", 2)[0]
+    sim_submodules = (
+        "fields",
+        "solver",
+        "particles",
+        "color_mixing",
+        "surface_tension",
+        "pressure",
+        "viscosity",
+        "whitewater",
+        "kernels_fluid",
+        "surface",
+        "source_contracts",
+        "source_kernels",
+        "source_regions",
+        "sourcing",
+        "kernels_core",
+    )
+    from importlib import import_module
+
+    for sub in sim_submodules:
+        try:
+            import_module(f"{root_pkg}.sim.{sub}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        wp.force_load(device=target_device)
+        _PREWARMED_DEVICES.add(target_device)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"FluidSim: prewarm_simulation_kernels({target_device}) notice: {exc}")
+        return False

@@ -78,6 +78,7 @@ class Session:
         self.capacity_plan_scene_signature = ""
         self.particle_capacity_notice_scene_identity = None
         self.last_reported_growth_capacity = 0
+        self.admitted_effects = ()
         self.scene_inputs = SceneInputs()
         self.scene_identity = None
         self._admission_owner = None
@@ -194,6 +195,7 @@ class Session:
         self.scene_inputs.clear()
         self.device = None
         self.last_reported_growth_capacity = 0
+        self.admitted_effects = ()
         self.scene_identity = None
         self.scene_key = ""
         self._clear_capacity_plan()

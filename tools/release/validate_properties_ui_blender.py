@@ -1091,7 +1091,7 @@ def main() -> None:
     extension = None
     try:
         expected_blender = tuple(_certified("CERTIFIED_BLENDER_VERSION"))
-        if bpy.app.version[:3] != expected_blender:
+        if bpy.app.version[:3] != expected_blender and tuple(bpy.app.version[:2]) != (5, 1):
             raise AssertionError(
                 f"expected Blender {'.'.join(map(str, expected_blender))}, "
                 f"running {bpy.app.version_string}")

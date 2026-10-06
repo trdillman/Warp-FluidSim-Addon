@@ -624,6 +624,7 @@ class SimulationAdmission:
         self.session.profiler = profiler
         self.session.device = settings.device
         self.session.scene_inputs = new_inputs
+        self.session.admitted_effects = getattr(snapshot, "effects", ())
         if old_inputs is not new_inputs:
             old_inputs.clear()
         if old_solver is not None:
@@ -721,6 +722,7 @@ class SimulationAdmission:
             self.session.clear_error(scene)
             self._capture_applied_state(scene, self.session)
             self._publish_effect_snapshot(scene, snapshot)
+            self.session.admitted_effects = getattr(snapshot, "effects", ())
             return self.session
         except Exception as exc:
             self.session.set_error(scene, repr(exc))
@@ -767,9 +769,11 @@ class SimulationAdmission:
             self.session.frame_stats = []
             self.session.clear_error(scene)
             from . import output_publication
+
             output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(scene, self.session, reset_only=True)
             self._publish_effect_snapshot(scene, snapshot)
+            self.session.admitted_effects = getattr(snapshot, "effects", ())
             if replacement_growth is None:
                 scene.fluidsim.status = "Simulation reset"
             else:
@@ -778,6 +782,7 @@ class SimulationAdmission:
                 scene.fluidsim.status = (
                     "Simulation reset — particle capacity grew "
                     f"{replacement_growth[0]:,} → {replacement_growth[1]:,}")
+
         except Exception as exc:
             self.session.set_error(scene, repr(exc))
             traceback.clear_frames(exc.__traceback__)

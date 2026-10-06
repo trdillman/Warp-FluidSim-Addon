@@ -73,9 +73,40 @@ def register():
                 print(f"FluidSim: rollback of {name!r} failed: {undo_exc!r}")
         raise
 
+    try:
+        import bpy
+
+        timers = getattr(getattr(bpy, "app", None), "timers", None)
+        if timers is not None and hasattr(timers, "register"):
+            if not getattr(timers, "is_registered", lambda _: False)(_background_prewarm):
+                timers.register(_background_prewarm, first_interval=0.5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _background_prewarm():
+    try:
+        from .runtime.warp_runtime import prewarm_simulation_kernels
+
+        prewarm_simulation_kernels()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
 
 def unregister():
     import sys
+
+    try:
+        import bpy
+
+        timers = getattr(getattr(bpy, "app", None), "timers", None)
+        if timers is not None and hasattr(timers, "unregister"):
+            if getattr(timers, "is_registered", lambda _: False)(_background_prewarm):
+                timers.unregister(_background_prewarm)
+    except Exception:  # noqa: BLE001
+        pass
+
 
     # Reverse of register(); every step must tolerate being called on a
     # partially-registered state (e.g. after a register() rollback, or a

@@ -291,6 +291,9 @@ def set_live_enabled(scene, enabled: bool):
         if getattr(fs, "cache_playback_enabled", False):
             fs.status = "Cache playback enabled - press play"
         elif not sess.owns_scene(scene):
+            from ..runtime.warp_runtime import prewarm_simulation_kernels
+
+            prewarm_simulation_kernels()
             sess.initialize(scene)
             fs.status = "Live simulation enabled - press play"
         else:
@@ -298,6 +301,7 @@ def set_live_enabled(scene, enabled: bool):
     else:
         fs.status = "Live simulation disabled"
     return True
+
 
 
 def set_cache_playback_enabled(scene, enabled: bool):
@@ -475,6 +479,14 @@ def ensure_session_before_frames(scene, reason):
     if sess.owns_scene(scene):
         return
     try:
+        from ..runtime.warp_runtime import (
+            is_kernels_prewarmed,
+            prewarm_simulation_kernels,
+        )
+
+        if not is_kernels_prewarmed():
+            fs.status = "Compiling simulation kernels..."
+        prewarm_simulation_kernels()
         sess.initialize(scene)
     except Exception as exc:  # noqa: BLE001 - never break playback or render
         sess.set_error(scene, repr(exc))

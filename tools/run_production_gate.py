@@ -44,9 +44,15 @@ sys.path.insert(0, str(ROOT))
 if os.name == "nt":
     DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
     DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe"
+    if not os.path.exists(DEFAULT_BLENDER_EXE):
+        DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
+        DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe"
 else:
     DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
-    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe"
+    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python\bin\python.exe"
+    if not os.path.exists(DEFAULT_BLENDER_EXE):
+        DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
+        DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
 DEFAULT_PYTEST_PATH = ""
 BLENDER_FAILURE_MARKERS = (
     "Traceback (most recent call last):",

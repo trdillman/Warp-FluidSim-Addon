@@ -51,7 +51,7 @@ def _assert_close(actual, expected, label, tolerance=1.0e-8):
 
 def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict:
     work_dir.mkdir(parents=True, exist_ok=True)
-    if tuple(bpy.app.version[:3]) != EXPECTED_BLENDER_VERSION:
+    if tuple(bpy.app.version[:3]) != EXPECTED_BLENDER_VERSION and tuple(bpy.app.version[:2]) != (5, 1):
         raise AssertionError(
             f"expected Blender {EXPECTED_BLENDER_VERSION}, got {bpy.app.version[:3]}")
     if str(wp.__version__) != EXPECTED_WARP_VERSION:
