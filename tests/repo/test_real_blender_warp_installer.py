@@ -140,7 +140,7 @@ bpy.context.preferences.extensions.repos.new(
     name='Test Repo', module='test_repo',
     custom_directory=os.environ['FLUIDSIM_TEST_REPOSITORY'],
 )
-addon_utils.enable('bl_ext.test_repo.fluidsim_warp', default_set=False)
+addon_utils.enable('bl_ext.test_repo.fluidsim_warp', default_set=True)
 assert 'bl_ext.test_repo.fluidsim_warp' in bpy.context.preferences.addons
 """
     return setup + script
