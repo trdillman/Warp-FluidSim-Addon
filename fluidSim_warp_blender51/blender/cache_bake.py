@@ -188,7 +188,10 @@ class BakeRun:
             if restart:
                 self._restart_cache = _protect_restart_cache(cache_path)
         except BaseException:
-            production_bake.release_active_bake(self.controller)
+            try:
+                self.abandon("Production bake could not start")
+            finally:
+                production_bake.release_active_bake(self.controller)
             raise
 
     @property

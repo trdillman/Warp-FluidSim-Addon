@@ -298,6 +298,26 @@ def test_a_failed_acquisition_leaves_no_ownership_behind(tmp_path):
     assert (project / "frames" / "render_0001.png").read_bytes() == b"artist render"
 
 
+def test_a_failed_acquisition_frees_the_solver_session_the_start_opened(tmp_path):
+    """A started controller whose later setup step fails gives its session back too."""
+    from fluidSim_warp_blender51.blender import production_bake
+    from fluidSim_warp_blender51.blender.cache_bake import BakeRun
+
+    class _Unreachable(_Backend):
+        def cache_path(self, _scene):
+            raise OSError("cache folder unreachable")
+
+    backend = _Unreachable(tmp_path / "cache")
+    backend.sess = _Session()
+    scene = _scene()
+
+    with pytest.raises(OSError, match="cache folder unreachable"):
+        BakeRun(scene, backend=backend)
+
+    assert backend.sess.released == [True]
+    assert production_bake.active_bake(scene) is None
+
+
 def test_a_scene_cannot_hold_two_bake_runs(tmp_path):
     from fluidSim_warp_blender51.blender.cache_bake import BakeRun
 
