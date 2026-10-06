@@ -464,17 +464,14 @@ def _apply_pending_repair(destination: Path) -> bool:
             "Open Add-on Preferences and press Repair Warp again."
         )
 
-    with tempfile.TemporaryDirectory(
-        prefix=".fluidsim-warp-repair-",
-        dir=destination,
-    ) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="fluidsim-warp-repair-") as tmpdir:
         extracted = Path(tmpdir) / "site-packages"
         _extract_wheel(pending, extracted)
         if _owned_distribution_version(extracted) != CERTIFIED_WARP_VERSION:
             raise RuntimeError("Pending Warp repair does not contain the certified runtime")
         _clear_owned_warp(destination)
         for child in extracted.iterdir():
-            child.replace(destination / child.name)
+            shutil.move(str(child), str(destination / child.name))
 
     pending.unlink()
     pid_marker.unlink(missing_ok=True)

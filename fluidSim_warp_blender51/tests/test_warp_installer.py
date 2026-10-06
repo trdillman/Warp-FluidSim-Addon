@@ -238,6 +238,47 @@ def test_pending_repair_rejects_tampering_before_deleting_owned_files(
         assert (tmp_path / relative).read_bytes() == content
 
 
+def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch):
+    """Fresh repair extraction does not amplify a deep Windows extension path."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    owned = tmp_path / ("deep-extension-path-" * 5) / ("repository-name-" * 4) / ".local"
+    _seed_owned_warp(owned, "1.17.0")
+    wheel = tmp_path / "certified.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("warp/__init__.py", '__version__ = "1.17.0"\n')
+        archive.writestr(
+            "warp/examples/benchmarks/benchmark_tile_matmul_pipelined.py",
+            "# installed\n",
+        )
+        archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+    info = mock.Mock(
+        sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        size=wheel.stat().st_size,
+    )
+    _isolate_install(monkeypatch, owned)
+    monkeypatch.delitem(sys.modules, "warp", raising=False)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    warp_installer._stage_pending_repair(wheel, owned, info)
+    warp_installer._pending_repair_pid_path(owned).write_text("0", encoding="ascii")
+    extract_wheel = warp_installer._extract_wheel
+    extraction_targets = []
+
+    def guarded_extract(source, destination):
+        extraction_targets.append(destination)
+        assert not destination.resolve().is_relative_to(owned.resolve())
+        extract_wheel(source, destination)
+
+    monkeypatch.setattr(warp_installer, "_extract_wheel", guarded_extract)
+
+    warp_installer.ensure_installed_warp_on_path()
+
+    assert len(extraction_targets) == 1
+    assert (owned / "warp" / "examples" / "benchmarks").is_dir()
+    assert not warp_installer._pending_repair_path(owned).exists()
+
+
 def test_pending_repair_keeps_old_wheel_if_pid_guard_cannot_be_committed(
     tmp_path,
     monkeypatch,

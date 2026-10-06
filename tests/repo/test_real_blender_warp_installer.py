@@ -328,7 +328,7 @@ try:
     raise AssertionError('Expected refusal when foreign Warp is loaded')
 except RuntimeError as exc:
     assert 'which FluidSim does not own' in str(exc)
-    assert 'extensions/.local' in str(exc)
+    assert str(shared_local) in str(exc)
 
 print('SHARED-EXTENSIONS-LOCAL-REFUSAL-VERIFIED')
 """
