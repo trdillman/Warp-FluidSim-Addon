@@ -10,6 +10,7 @@ the extension, and ``runtime/warp_runtime.py`` validates it lazily.
 def register():
     from . import operators, panels, preferences, properties
     from .blender import (
+        demo_gallery,
         effect_ui,
         effect_workspace,
         effects,
@@ -45,6 +46,7 @@ def register():
         ("Warp Code workspace", effect_workspace.register, effect_workspace.unregister),
         ("Physics Properties UI", ui_physics.register, ui_physics.unregister),
         ("viewport workflow stages", ui_stages.register, ui_stages.unregister),
+        ("demo gallery", demo_gallery.register, demo_gallery.unregister),
         ("viewport header popover", ui_header.register, ui_header.unregister),
         ("Add-menu domain entry", menus.register, menus.unregister),
         ("source migration handlers", sources.register_handlers,
@@ -124,6 +126,7 @@ def unregister():
         ("source migration handlers", "blender.sources", "unregister_handlers"),
         ("Add-menu domain entry", "blender.menus", "unregister"),
         ("viewport header popover", "blender.ui_header", "unregister"),
+        ("demo gallery", "blender.demo_gallery", "unregister"),
         ("viewport workflow stages", "blender.ui_stages", "unregister"),
         ("Physics Properties UI", "blender.ui_physics", "unregister"),
         ("Warp Code workspace", "blender.effect_workspace", "unregister"),

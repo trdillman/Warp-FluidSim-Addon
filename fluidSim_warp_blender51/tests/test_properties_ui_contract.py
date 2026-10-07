@@ -151,7 +151,7 @@ def test_scene_properties_children_follow_the_field_ownership_plan():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     parents = {
         "FLUIDSIM_PT_scene_pending": "FLUIDSIM_PT_scene_control",
-        "FLUIDSIM_PT_scene_live_timeline": "FLUIDSIM_PT_scene_control",
+        "FLUIDSIM_PT_scene_live_timeline": "FLUIDSIM_PT_scene_lifecycle",
         "FLUIDSIM_PT_scene_presets": "FLUIDSIM_PT_scene_setup",
         "FLUIDSIM_PT_scene_capacity": "FLUIDSIM_PT_scene_domain",
         "FLUIDSIM_PT_sim_time": "FLUIDSIM_PT_scene_simulation",
@@ -317,3 +317,12 @@ def test_manage_cache_panel_requires_a_recognized_fluidsim_cache_directory():
     stages = (ROOT / "blender" / "ui_stages.py").read_text(encoding="utf-8")
     shelf = _class_block(stages, "FLUIDSIM_STAGE_PT_bake_manage")
     assert "cache_manage_available(context)" in shelf
+
+
+def test_live_timeline_recovery_is_advanced_and_nested_under_lifecycle():
+    source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
+    block = _class_block(source, "FLUIDSIM_PT_scene_live_timeline")
+    assert 'bl_parent_id = "FLUIDSIM_PT_scene_lifecycle"' in block
+    assert "_advanced_visible(context)" in block
+    assert "max_frame_catchup" in block
+

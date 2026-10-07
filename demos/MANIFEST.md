@@ -9,6 +9,13 @@ Only four demos exist: `dam_break`, `crown_splash`, `paddle_stir`,
 performance inventory hash (`tools/benchmark_versions.py::_inventory`), so any
 change to them is a real, gate-visible change.
 
+The four `.blend` files also ship in the extension:
+`tools/release/build_extension.py` (`stage_demo_assets`) copies them into the
+git-ignored `fluidSim_warp_blender51/resources/demos/` before each build, and
+the in-add-on Demo Gallery (`blender/demo_gallery.py`) loads them from there in
+installed builds. A new or renamed demo must also be added to `DEMO_IDS` in
+`build_extension.py` and `tools/release/smoke_test_blender.py`.
+
 | Path | Kind | Purpose | Read by | Written by |
 |---|---|---|---|---|
 | `dam_break.blend` | generated, committed | Rocky-cove dam break; baseline for gate, playback and performance budget | `tools/demos/check_demo_blends.py`, `tools/run_production_gate.py` (`FLUIDSIM_PLAYBACK_BLEND`), `tools/benchmark_versions.py`, `tools/benchmark_demo_trial.py`, `tools/profiling/profile_gpu_solver.py` (mirrors its domain), `tests/acceptance/blender_performance_playback_benchmark.py`, `tests/scripts/headless_stflip_timeline_viewport.py` | `tools/demos/build_demo_scenes.py` |
