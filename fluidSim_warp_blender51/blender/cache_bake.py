@@ -196,13 +196,13 @@ class BakeRun:
 
     @property
     def finished(self) -> bool:
-        """Whether the bake has reached a terminal state (or never started)."""
+        """Whether the bake has reached a terminal state."""
         from .production_bake import BakeStatus
 
-        return self.controller.status not in {
-            BakeStatus.INITIALIZING,
-            BakeStatus.RUNNING,
-            BakeStatus.CANCELLING,
+        return self.controller.status in {
+            BakeStatus.COMPLETE,
+            BakeStatus.CANCELLED,
+            BakeStatus.FAILED,
         }
 
     def request_cancel(self) -> None:

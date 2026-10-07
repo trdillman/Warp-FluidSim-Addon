@@ -432,3 +432,46 @@ def test_bake_callers_drive_the_controller_through_bake_run(relative):
         "BakeController", "register_active_bake", "clear_active_bake",
         "_protect_restart_cache", "_settle_restart_cache",
     } & called
+
+
+@pytest.mark.parametrize("status_name", ["IDLE", "PREFLIGHT"])
+def test_a_run_that_has_not_started_is_not_finished(tmp_path, status_name):
+    """``finished`` means terminal: a driver loop must not exit before the bake began."""
+    from fluidSim_warp_blender51.blender import production_bake
+    from fluidSim_warp_blender51.blender.cache_bake import BakeRun
+
+    run = BakeRun(_scene(), backend=_Backend(tmp_path / "cache"))
+    run.controller.status = production_bake.BakeStatus[status_name]
+
+    assert not run.finished
+
+
+@pytest.mark.parametrize("status_name", ["COMPLETE", "CANCELLED", "FAILED"])
+def test_a_run_in_a_terminal_state_is_finished(tmp_path, status_name):
+    from fluidSim_warp_blender51.blender import production_bake
+    from fluidSim_warp_blender51.blender.cache_bake import BakeRun
+
+    run = BakeRun(_scene(), backend=_Backend(tmp_path / "cache"))
+    run.controller.status = production_bake.BakeStatus[status_name]
+
+    assert run.finished
+
+
+def test_a_driver_that_raises_mid_bake_still_releases_ownership(tmp_path):
+    """The command line drives BakeRun like any other caller, so it gets the same release."""
+    from fluidSim_warp_blender51.blender import production_bake
+    from fluidSim_warp_blender51.blender.cache_bake import BakeRun
+
+    cache = tmp_path / "cache"
+    scene = _scene()
+    run = BakeRun(scene, backend=_Backend(cache))
+    assert production_bake.bake_is_active(scene)
+
+    with pytest.raises(KeyboardInterrupt):
+        try:
+            raise KeyboardInterrupt
+        finally:
+            run.close()
+
+    assert not production_bake.bake_is_active(scene)
+    assert not production_bake.cache_path_is_active(cache)
