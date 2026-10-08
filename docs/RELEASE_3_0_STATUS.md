@@ -10,6 +10,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | master | `cc36403` | 2079 passed, 3 skipped | `2cb4f781…3a73` (GUI gate reference) |
 | release/3.0 base: master + merge of release/2.1.0 | `94c79eb` | 2104 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | `archive/st-flip-final` tag (local) | `94c79eb` | | |
+| release/3.0 after lane D merge | `6ce6b33` | 2053 passed, 3 skipped (on D head `34528aa`; merge adds docs only) | `2cb4f781…3a73` (headless, equals master) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -59,11 +60,21 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 
 | Lane | Branch | Worktree | Head | Tests | Blocker | Next action |
 |---|---|---|---|---|---|---|
-| D st-flip-removal | `3.0/lane-d-stflip-removal` | `C:\Users\Tyler\wt\r30-d` | `94c79eb` | | | dispatched |
-| B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | `94c79eb` | | | dispatched |
-| E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | `94c79eb` | | | dispatched |
-| A split + defaults | | | | | waits for D | brief ready; dispatch after D merges |
-| C multigrid | | | | | waits for D | brief ready (two stops: tests, then kernels); dispatch after D merges |
+| D st-flip-removal | `3.0/lane-d-stflip-removal` | `C:\Users\Tyler\wt\r30-d` | `34528aa` | 2053 passed, 3 skipped | | **merged** as `6ce6b33`; demo hash unchanged |
+| B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | base `94c79eb` | | | dispatched; rebases onto D at merge |
+| E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | base `94c79eb` | | | dispatched; rebases onto D at merge |
+| A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | base `6ce6b33` | | | dispatched |
+| C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | base `6ce6b33` | | | dispatched, stop 1 (tests); orchestrator reviews before kernels |
+
+### Open items from lane D
+
+- Decide what the `TIME_OFFSET` color mode shows now that ST-FLIP is gone
+  (`output_publication.py:840`).
+- Run the Blender scripts D edited but could not run headless.
+- Verify the count quoted at `technical_report.md:481`.
+- Regenerate the ownership map after all Wave 0 merges and re-check
+  `EXPECTED_FIELD_COUNT = 212`.
+- CHANGELOG entry for the ST-FLIP removal (written by the orchestrator at alpha.1).
 
 Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. Each is
 `docs/specs/3.0/WORKER_BRIEF_TEMPLATE.md` filled in, with a shared environment section.
