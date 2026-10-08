@@ -819,16 +819,24 @@ def _run_phase(phase, scene):
               and pending_settings.pending_presentation(scene)["action"] == "NONE",
               revert_result)
 
-        # Viewport screenshot (viewport-visible proof).
-        try:
-            override = _view3d_override()
-            with bpy.context.temp_override(**override):
-                bpy.ops.screen.screenshot_area(filepath=SCREENSHOT_PATH)
-            ok, detail = _image_has_visible_content(
-                SCREENSHOT_PATH, min_width=320, min_height=200)
-            check("viewport screenshot", ok, detail)
-        except Exception as exc:  # noqa: BLE001
-            check("viewport screenshot", False, repr(exc))
+        # Viewport proof. The offscreen draw runs on every platform; the window
+        # grab is skipped on Linux, which has no window screenshot to take.
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        if scripts_dir not in sys.path:
+            sys.path.append(scripts_dir)
+        from _offscreen_view3d import check_view3d_offscreen
+
+        check("viewport offscreen draw", *check_view3d_offscreen(_view3d_override()))
+        if not sys.platform.startswith("linux"):
+            try:
+                override = _view3d_override()
+                with bpy.context.temp_override(**override):
+                    bpy.ops.screen.screenshot_area(filepath=SCREENSHOT_PATH)
+                ok, detail = _image_has_visible_content(
+                    SCREENSHOT_PATH, min_width=320, min_height=200)
+                check("viewport screenshot", ok, detail)
+            except Exception as exc:  # noqa: BLE001
+                check("viewport screenshot", False, repr(exc))
         STATE["phase"] = "workspace"
         return 0.3
 
