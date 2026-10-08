@@ -66,7 +66,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | `c391234` | 2190 passed, 3 skipped | | **merged** as `57c6540` |
 | B2 cache-v3 consumers | `3.0/lane-b2-cache-consumers` | `C:\Users\Tyler\wt\r30-b2` | base `57c6540` | | | dispatched (2.x refusal in cache manager, bake action, CLI; profiler writer; gate wiring; MANIFEST rows) |
 | A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | base `6ce6b33` | | | dispatched |
-| C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | base `6ce6b33` | | | dispatched, stop 1 (tests); orchestrator reviews before kernels |
+| C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | stop 1 `53fbfe0` | stop 1: 9 failed, 4 passed (as designed); existing solver/perf 372 passed | | stop-1 tests accepted; stop 2 (kernels) running |
 
 ### Open items from lane D
 
@@ -113,6 +113,29 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   - `properties.py:852`.
   - `tools/release/validate_examples_blender.py:118`, `validate_phase3_blender.py:318`,
     `generate_examples.py:211`.
+
+### Lane C stop-1 review (accepted)
+
+- **Spec corrections.**
+  - `k_apply_preconditioner` is not dead code: `sim/viscosity.py` launches it. Keep it.
+  - Restriction is a gathered sum × 0.25 with piecewise-constant prolongation masked to
+    fluid. The spec's fluid-count average with injection is not SPD.
+  - Air neighbours count on the coarse diagonal; solids and out-of-domain neighbours do
+    not. A coarse cell is fluid if any child is fluid, and solid only if all children are.
+- **Test 6 agreement tolerance.** Velocities are compared at tolerance 1e-6 with the 1e-4
+  bound; convergence is still asserted at 1e-5. Two correct solvers stopped at 1e-5
+  differ by about 7e-4, so the brief's 1e-4 at 1e-5 was infeasible.
+- **Check interval.** MULTIGRID chooses its own odd interval that divides
+  `max_iterations` (5 for the default 200). JACOBI keeps the caller's 25. At 25 every
+  MULTIGRID count would round up to 25 and understate the iteration ratio.
+- **Lane C's own estimate.** On the 32³ test, the float64 reference needs 13 MULTIGRID
+  iterations against 123 for JACOBI at 1e-5. Lane C expects dam_break to keep ≥3× fewer
+  iterations, but ≥1.5× faster per solve is at risk: one V-cycle costs about 5–8
+  fine-grid passes.
+- **Added for stop 2:**
+  - a test through the production `project` path;
+  - a test that the graph key separates the preconditioners;
+  - a scanner that also covers recorded-launch builders.
 
 Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. Each is
 `docs/specs/3.0/WORKER_BRIEF_TEMPLATE.md` filled in, with a shared environment section.
