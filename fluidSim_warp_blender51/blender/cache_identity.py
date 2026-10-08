@@ -153,7 +153,7 @@ def source_frame_stamp(scene, depsgraph, frame) -> str:
 
 
 def settings_signature(scene) -> str:
-    """Return the cache-v2 settings signature alone.
+    """Return the cache settings signature alone.
 
     Unlike the source signature it does not depend on the current frame:
     source records hash transforms and evaluated geometry, which an animated
@@ -165,7 +165,7 @@ def settings_signature(scene) -> str:
 
 
 def signature_bundle(scene, depsgraph=None) -> dict[str, str]:
-    """Return the cache-v2 settings/source identity bundle for a scene."""
+    """Return the cache settings/source identity bundle for a scene."""
     from ..io.cache import signature_bundle_from_records
 
     return signature_bundle_from_records(

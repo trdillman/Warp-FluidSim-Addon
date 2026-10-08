@@ -18,7 +18,7 @@ saved and every bake goes to a temporary directory.
   4. A 2.x manifest is refused with the 3.0 message and never read as empty.
 
 Run:
-  blender --background --factory-startup --python-use-system-env --python tests/acceptance/cache_v3_stamp_acceptance.py
+  blender --background --factory-startup --python-use-system-env --python tests/acceptance/blender_cache_v3_stamp_acceptance.py
 """
 from __future__ import annotations
 

@@ -1114,8 +1114,8 @@ def prepare_cache_payload(scene, frame_data):
         for key in inventory.get("whitewater", ())
     }
     if "type" not in whitewater_attributes:
-        # Cache-v1 and Phase-3 cache-v2 frames predate physical type state.
-        # Preserve them in Combined Whitewater only; never relabel as foam.
+        # A frame without a whitewater type predates physical type state.
+        # Preserve it in Combined Whitewater only; never relabel as foam.
         whitewater_attributes["type"] = np.full(
             len(whitewater), LEGACY_UNCLASSIFIED, dtype=np.int32)
     else:
