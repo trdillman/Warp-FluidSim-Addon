@@ -1,4 +1,14 @@
-"""Shared quantitative Blender Phase 2 source acceptance implementation."""
+"""Shared quantitative Blender Phase 2 source acceptance implementation.
+
+Importing this module has no side effects: it does not touch ``sys.path`` or
+``sys.modules`` and it imports neither Blender nor the add-on. A wrapper script
+calls ``setup()`` once and then ``main(capability)``. ``setup()`` puts the
+source tree on ``sys.path``, drops any add-on modules already loaded (so the
+tree under test is the one imported, not an installed copy), then imports
+Blender, Warp and the add-on and publishes the names the helpers below use as
+module globals (see ``_import_runtime``). Calling a helper before ``setup()``
+raises ``NameError``; ``main`` says so in plain words.
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,26 +20,95 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
-from _test_device import script_device  # noqa: E402
-for _name in list(sys.modules):
-    if _name == "fluidSim_warp_blender51" or _name.startswith("fluidSim_warp_blender51."):
-        del sys.modules[_name]
-
-import bpy
 import numpy as np
-import warp as wp
-from mathutils import Matrix
 
-import fluidSim_warp_blender51 as addon
-from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
-from fluidSim_warp_blender51.sim.enums import *
-from fluidSim_warp_blender51.sim.source_regions import *
-from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
-from tools.gate.validate_source_acceptance_report import validate
+ROOT = Path(__file__).resolve().parents[2]
+ADDON_PACKAGE = "fluidSim_warp_blender51"
+
+_runtime_ready = False
+
+
+def purge_addon_modules(modules=None):
+    """Delete the add-on package and its submodules from ``modules``.
+
+    ``modules`` defaults to ``sys.modules``. Returns the names removed. A module
+    that only shares the prefix (``fluidSim_warp_blender51_other``) is kept.
+    """
+    modules = sys.modules if modules is None else modules
+    purged = [
+        name for name in modules
+        if name == ADDON_PACKAGE or name.startswith(ADDON_PACKAGE + ".")
+    ]
+    for name in purged:
+        del modules[name]
+    return purged
+
+
+def _prepend_paths():
+    """Front of ``sys.path``: support, this folder, the repo root (in that order)."""
+    for path in (ROOT, Path(__file__).resolve().parent, ROOT / "tests" / "support"):
+        text = str(path)
+        while text in sys.path:
+            sys.path.remove(text)
+        sys.path.insert(0, text)
+
+
+def _import_runtime():
+    """Import Blender, Warp and the add-on; return the names the helpers use."""
+    from _test_device import script_device
+    import bpy
+    import warp as wp
+    from mathutils import Matrix
+
+    import fluidSim_warp_blender51 as addon
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+    from fluidSim_warp_blender51.sim.enums import (
+        SourceEvaluationCadence,
+        SourceLifecycle,
+        SourceOperation,
+        SourcePayloadKind,
+        SourceShapeShape,
+    )
+    from fluidSim_warp_blender51.sim.source_regions import (
+        AnalyticRegionPlan,
+        CompileContext,
+        MeshRegionPlan,
+        PayloadPlan,
+        PointRegionPlan,
+        SourceCompiler,
+        SourceKey,
+        SourcePlan,
+        VolumeRegionPlan,
+    )
+    from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
+    from tools.gate.validate_source_acceptance_report import validate
+
+    return {
+        "script_device": script_device, "bpy": bpy, "wp": wp, "Matrix": Matrix,
+        "addon": addon, "SceneInputs": SceneInputs,
+        "SourceEvaluationCadence": SourceEvaluationCadence,
+        "SourceLifecycle": SourceLifecycle, "SourceOperation": SourceOperation,
+        "SourcePayloadKind": SourcePayloadKind, "SourceShapeShape": SourceShapeShape,
+        "AnalyticRegionPlan": AnalyticRegionPlan, "CompileContext": CompileContext,
+        "MeshRegionPlan": MeshRegionPlan, "PayloadPlan": PayloadPlan,
+        "PointRegionPlan": PointRegionPlan, "SourceCompiler": SourceCompiler,
+        "SourceKey": SourceKey, "SourcePlan": SourcePlan,
+        "VolumeRegionPlan": VolumeRegionPlan,
+        "FluidSolver": FluidSolver, "SolverSettings": SolverSettings,
+        "validate": validate,
+    }
+
+
+def setup():
+    """Make the acceptance helpers usable; call once, before ``main``."""
+    global _runtime_ready
+    if _runtime_ready:
+        return
+    _prepend_paths()
+    purge_addon_modules()
+    globals().update(_import_runtime())
+    _runtime_ready = True
+
 
 MARKERS = {
     "source_region": "SOURCE-REGION-ACCEPTANCE-PASS",
@@ -58,8 +137,11 @@ def context(frame=1):
                           (0, 0, 0), (2, 2, 2), upload=True)
 
 
-def source_plan(region, key="fixture", cadence=SourceEvaluationCadence.STATIC,
-                lifecycle=SourceLifecycle.TOP_UP, payload=None):
+def source_plan(region, key="fixture", cadence=None, lifecycle=None, payload=None):
+    # ``None`` means STATIC / TOP_UP; the enums only exist after ``setup()``, so
+    # they cannot be default arguments (those run when the module is imported).
+    cadence = SourceEvaluationCadence.STATIC if cadence is None else cadence
+    lifecycle = SourceLifecycle.TOP_UP if lifecycle is None else lifecycle
     payload = payload or PayloadPlan(
         kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
         velocity=(0, 0, 0), temperature=4, viscosity=5, density=6,
@@ -141,6 +223,10 @@ def point_attribute_checks(solver, expected):
 
 
 def main(capability):
+    if not _runtime_ready:
+        raise RuntimeError(
+            "call setup() before main(): importing this module deliberately loads "
+            "neither Blender nor the add-on")
     parser = argparse.ArgumentParser()
     parser.add_argument("--json-out", required=True)
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
