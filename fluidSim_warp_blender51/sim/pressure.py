@@ -61,6 +61,16 @@ PRESSURE_STATUS_CODES = {
     PRESSURE_STATUS_INVALID: 6,
 }
 
+# Multigrid-preconditioned CG (lane C). The PCG preconditioner is selected by
+# the plain attribute ``PressureSolver.preconditioner``. A symmetric V-cycle
+# needs equal pre/post smoothing counts and the same smoother on both sides,
+# so these three constants are the single source of truth for the V-cycle.
+PRECONDITIONER_JACOBI = "JACOBI"
+PRECONDITIONER_MULTIGRID = "MULTIGRID"
+MG_PRE_SMOOTH = 2
+MG_POST_SMOOTH = 2
+MG_OMEGA = 0.67
+
 
 @wp.func
 def finite_pressure_value(value: float) -> float:
@@ -1082,6 +1092,26 @@ class PressureSolver:
 
     # Captured CUDA graphs kept alive at once, evicted least-recently-used.
     _PCG_GRAPH_CAPACITY = 8
+
+    # PCG preconditioner kind: "JACOBI" (default, fused into the PCG kernels)
+    # or "MULTIGRID" (symmetric V-cycle, see ``_apply_mg_vcycle``). Plain
+    # attribute on purpose: no RNA / SolverSettings wiring in this lane.
+    preconditioner = PRECONDITIONER_JACOBI
+    # Class-level smoothing counts; tests override them per instance.
+    _mg_pre_smooth = MG_PRE_SMOOTH
+    _mg_post_smooth = MG_POST_SMOOTH
+
+    def _apply_mg_vcycle(self, r, z):
+        """Apply one symmetric V-cycle: ``z = M^-1 r`` on full-layout arrays.
+
+        Contract (stop 1 stub): ``r`` and ``z`` are full-layout float arrays
+        (``grid.voxel_capacity``). Only fluid-unknown entries of ``z`` are
+        defined on return, and the whole call must be CUDA-graph capturable
+        (no host sync, no atomics). Call ``build_preconditioner(voxel_type)``
+        with ``preconditioner = "MULTIGRID"`` first.
+        """
+        raise NotImplementedError(
+            "multigrid V-cycle is not implemented yet (lane C stop 2)")
 
     def __del__(self):
         # Cyclic validation/benchmark owners may reach GC without an explicit
