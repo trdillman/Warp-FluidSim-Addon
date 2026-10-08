@@ -394,6 +394,9 @@ class ProductionBakeBackend:
         self._original_session_signatures = None
         self._original_session_active = False
         self._initialized = False
+        # True from the pre-bake snapshot until it is restored, so a start that
+        # is refused before the solver is touched still puts the live flag back.
+        self._snapshot_open = False
 
     @staticmethod
     def _bpy():
@@ -629,6 +632,7 @@ class ProductionBakeBackend:
         self._original_frame = int(scene.frame_current)
         self._original_live = bool(scene.fluidsim.live)
         self._original_session_active = bool(self.sess.owns_scene(scene))
+        self._snapshot_open = True
         if self._original_session_active:
             signatures = cache_identity.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
@@ -912,6 +916,7 @@ class ProductionBakeBackend:
                     restore_error = restore_error or exc
             scene.fluidsim.live = self._original_live
             self._initialized = False
+            self._snapshot_open = False
         if restore_error is not None:
             raise RuntimeError(f"could not restore pre-bake live state: {restore_error}")
 
@@ -924,6 +929,11 @@ class ProductionBakeBackend:
     def fail(self, scene, _error) -> None:
         if self._initialized:
             self._restore_original_state(scene)
+        elif self._snapshot_open:
+            # initialize() raised after snapshotting (a refused resume, a 2.x
+            # cache, existing data): it had already switched live playback off.
+            self._snapshot_open = False
+            scene.fluidsim.live = self._original_live
 
 
 def run_synchronous(
