@@ -17,6 +17,7 @@ import tempfile
 import time
 from typing import Any, Mapping
 
+from ..io.cache_schema import LEGACY_2X_CACHE_MESSAGE
 from .scene_access import active_domain_object, active_domain_settings
 
 
@@ -173,6 +174,14 @@ def _select_scene(bpy, name: str):
     return bpy.context.scene
 
 
+def _is_legacy_2x_cache(cache: Path) -> bool:
+    """Whether ``cache`` holds a FluidSim 2.x cache, which 3.0 refuses to read."""
+    from ..io.cache import detect_cache_format
+    from ..io.cache_schema import LEGACY_2X_FORMAT_VERSION
+
+    return detect_cache_format(cache) == LEGACY_2X_FORMAT_VERSION
+
+
 def _report_path(options: CliOptions) -> Path:
     return options.report_json or options.cache / "fluidsim_bake_report.json"
 
@@ -195,6 +204,14 @@ def run(options: CliOptions) -> int:
     }
     code = EXIT_BAKE_FAILURE
     try:
+        # A 2.x cache is refused before anything else runs, under every
+        # --resume mode: it can be neither resumed nor overwritten, and the
+        # check needs neither Blender nor a GPU.
+        if _is_legacy_2x_cache(options.cache):
+            code = EXIT_RESUME_INCOMPATIBLE
+            report["message"] = LEGACY_2X_CACHE_MESSAGE
+            return code
+
         import bpy
 
         from .effects import scene_effect_instances, trust_store_for_scene
@@ -294,7 +311,7 @@ def run(options: CliOptions) -> int:
         elif options.resume == "never" and existing is not None:
             code = EXIT_RESUME_INCOMPATIBLE
             report["message"] = (
-                "A cache-v2 manifest already exists and --resume=never will not overwrite it"
+                "A cache manifest already exists and --resume=never will not overwrite it"
             )
             return code
 

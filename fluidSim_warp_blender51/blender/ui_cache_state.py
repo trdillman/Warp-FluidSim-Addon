@@ -10,7 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..io.cache_schema import load_manifest, manifest_path
+from ..io.cache_schema import (
+    LEGACY_2X_CACHE_MESSAGE,
+    LegacyCacheFormatError,
+    load_manifest,
+    manifest_path,
+)
 
 
 @dataclass(frozen=True)
@@ -27,17 +32,22 @@ def production_bake_action(cache_dir: Path | str | None) -> ProductionBakeAction
     base = Path(cache_dir)
     path = manifest_path(base)
     if not path.is_file():
-        return ProductionBakeAction("START", "No cache-v2 manifest exists")
+        return ProductionBakeAction("START", "No cache manifest exists")
     try:
         manifest = load_manifest(path)
+    except LegacyCacheFormatError:
+        # A 2.x cache is neither resumable nor invalid: say to re-bake, in the
+        # one wording every consumer shows.
+        return ProductionBakeAction(
+            "RESTART", LEGACY_2X_CACHE_MESSAGE, destructive=True)
     except ValueError as exc:
         return ProductionBakeAction(
             "RESTART",
-            f"Existing cache-v2 manifest is invalid: {exc}",
+            f"Existing cache manifest is invalid: {exc}",
             destructive=True,
         )
     if manifest is None:
-        return ProductionBakeAction("START", "No cache-v2 manifest exists")
+        return ProductionBakeAction("START", "No cache manifest exists")
     last = manifest.last_committed_frame
     if last is None or last < manifest.frame_end:
         return ProductionBakeAction(

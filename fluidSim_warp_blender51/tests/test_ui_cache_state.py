@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import json
+
 from fluidsim_testpkg.blender.ui_cache_state import production_bake_action
-from fluidsim_testpkg.io.cache_schema import CacheManifestV3, write_manifest_atomic
+from fluidsim_testpkg.io.cache_schema import (
+    LEGACY_2X_CACHE_MESSAGE,
+    CacheManifestV3,
+    write_manifest_atomic,
+)
 
 
 def _manifest(*, frame_end: int = 10) -> CacheManifestV3:
@@ -27,9 +33,10 @@ def _manifest(*, frame_end: int = 10) -> CacheManifestV3:
     )
 
 
-def test_production_bake_starts_when_no_v2_manifest_exists(tmp_path):
+def test_production_bake_starts_when_no_manifest_exists(tmp_path):
     state = production_bake_action(tmp_path)
     assert state.action == "START"
+    assert state.message == "No cache manifest exists"
     assert state.destructive is False
 
 
@@ -70,8 +77,20 @@ def test_production_bake_restarts_a_complete_manifest(tmp_path):
     assert state.destructive is True
 
 
-def test_production_bake_restarts_an_invalid_v2_manifest(tmp_path):
+def test_production_bake_restarts_an_invalid_manifest(tmp_path):
     (tmp_path / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
     state = production_bake_action(tmp_path)
     assert state.action == "RESTART"
+    assert state.destructive is True
     assert "invalid" in state.message.lower()
+    assert "v2" not in state.message.lower()
+    assert state.message != LEGACY_2X_CACHE_MESSAGE
+
+
+def test_production_bake_restarts_a_fluidsim_2x_cache_with_the_rebake_message(tmp_path):
+    (tmp_path / "fluidsim_cache.json").write_text(
+        json.dumps({"format_version": 2, "frames": {}}), encoding="utf-8")
+    state = production_bake_action(tmp_path)
+    assert state.action == "RESTART"
+    assert state.destructive is True
+    assert state.message == LEGACY_2X_CACHE_MESSAGE
