@@ -194,7 +194,7 @@ The root summarizes active solver features. Children are:
   smoothing, stable capillary timestep preview, and runtime curvature/force
   diagnostics.
 - **Particle Relaxation**, **Velocity Limits**, **Global Forces**,
-  **Dissipation**, **Attraction**, and **Spatiotemporal Processing**.
+  **Dissipation**, and **Attraction**.
 
 #### Custom Effects
 
@@ -529,7 +529,7 @@ tracks and device memory metadata.
 
 ## 7. Validation
 
-**Validation / Benchmarks → Run Validation Suite** runs 21 registered tests
+**Validation / Benchmarks → Run Validation Suite** runs 20 registered tests
 on the selected certified CUDA device:
 
 1. Sparse tiled leaf-grid coordinate/index roundtrip
@@ -547,12 +547,11 @@ on the selected certified CUDA device:
 13. Viscosity stability
 14. Whitewater churn/emission/advection behavior
 15. Benchmark/profile schema compatibility
-16. ST-FLIP jitter, phase, and residual bounds
-17. Surface-tension static-droplet boundedness and volume proxy
-18. Surface-tension droplet-oscillation trend oracle
-19. Surface-tension zero-coefficient solver equivalence
-20. Surface-tension capillary timestep constraint
-21. Surface-tension finite-energy and diagnostic guard
+16. Surface-tension static-droplet boundedness and volume proxy
+17. Surface-tension droplet-oscillation trend oracle
+18. Surface-tension zero-coefficient solver equivalence
+19. Surface-tension capillary timestep constraint
+20. Surface-tension finite-energy and diagnostic guard
 
 Every result includes pass/fail, detail, and elapsed time. The five P5 entries
 are mandatory CUDA release gates. The supplied-package CPU validator is a
@@ -612,15 +611,15 @@ Cache layout:
 
 **Resume** restores only the last verified committed checkpoint, then starts at
 the next frame. Scene, solver-setting, source/evaluated-geometry, domain,
-capacity, and ST-FLIP compatibility signatures are checked before live state is
+and capacity compatibility signatures are checked before live state is
 replaced. Solver-affecting changes are rejected with a structured reason;
 render-only display/material changes remain resume-safe. **Restart** explicitly
 removes the prior v2 transaction set and begins at the authored start frame.
 
 Checkpointed state includes liquid and whitewater particles, sparse topology
 and persistent active fields, source one-shot/accumulation/RNG state, whitewater
-RNG, ST-FLIP temporal/RNG/reference-mass state, solver frame, and simulation
-time. Transient bins and scratch fields are rebuilt after restore.
+RNG, solver frame, and simulation time. Transient bins and scratch fields are
+rebuilt after restore.
 
 ### Cache management
 
@@ -728,20 +727,6 @@ Simulation resolution remains the default to preserve interactive performance.
 Frame cadence builds once after simulation substeps; Manual builds lazily when
 the mesh is requested. Keep the simulation surface field enabled when using
 whitewater or snippets that consume `surface_sdf`.
-
-## ST-FLIP (Experimental)
-
-Enable **Simulation > Spatiotemporal Processing > Enable ST-FLIP
-(Experimental)** to test spatiotemporal sampling at large time steps. The
-implementation includes temporal residuals, space-time P2G, phase-field
-activation, optional variable pressure, local trajectory substepping, and
-render-surface re-synchronization. It is experimental because it has not yet
-passed multi-scene reference-error and long-run conservation gates; keep it
-off for production scenes. **Variable Projection (Experimental)** is off by
-default since 2.0; turn it on only to evaluate density-weighted pressure. With automatic reference mass, the solver
-runs the Monte Carlo calibration for the current ST seed. Liquid Sampling is a
-Reset-tier rest-density contract, so changing it stages Reset rather than
-rescaling the active ST-FLIP reference mass in place.
 
 ## Safe Settings recovery
 
