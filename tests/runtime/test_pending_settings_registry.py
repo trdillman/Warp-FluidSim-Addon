@@ -114,12 +114,6 @@ def test_special_particle_capacity_policy_is_explicit(monkeypatch):
         pending.SETTING_TRANSITION_REGISTRY["particle_growth_failure_policy"]
         is pending.SettingTier.LIVE
     )
-    # Preserve the characterized Phase-3 behavior: this authored value is not
-    # pushed into an active solver by the surface refresh callback.
-    assert (
-        pending.SETTING_TRANSITION_REGISTRY["spacetime_resync_surface"]
-        is pending.SettingTier.AUTHORED_NEXT_RUN
-    )
 
 
 def test_quality_tier_is_reinitialize_and_detected_by_reinit_signature(monkeypatch):
@@ -288,8 +282,7 @@ def test_setting_owner_pins_the_scene_owned_partition(monkeypatch):
         pending.SettingTier.SYNC,
     })
     assert pending._SCENE_OWNED_FIELDS == frozenset({"quality", "domain_object"})
-    assert pending._DOMAIN_OWNED_FIELDS == frozenset({
-        "height_error", "spacetime_resync_surface"})
+    assert pending._DOMAIN_OWNED_FIELDS == frozenset({"height_error"})
     # The two overrides must never claim the same field.
     assert not (pending._SCENE_OWNED_FIELDS & pending._DOMAIN_OWNED_FIELDS)
 
@@ -334,19 +327,16 @@ def test_setting_owner_routes_scene_read_fields_to_the_scene_group(monkeypatch):
 def test_setting_owner_routes_domain_read_fields_to_the_domain_group(monkeypatch):
     """The mirror of the ``quality``/``domain_object`` override.
 
-    ``height_error`` and ``spacetime_resync_surface`` sit in scene-owned tiers,
-    and their tiers are correct as *lifecycle* statements: a status string
-    triggers no solver action (PRESENTATION), and the resync flag is not pushed
-    into a live solver (AUTHORED_NEXT_RUN). But every consumer of both reads the
-    domain group -- scene_inputs writes ``height_error`` there and ui_scene
-    draws it from ``_domain_owner``; ui_scene draws ``spacetime_resync_surface``
-    there and ``apply_scene_settings`` consumes it from the group its caller
-    passes, always ``active_domain_settings``. Routing either to the scene group
-    would write the frozen ghost that nothing reads.
+    ``height_error`` sits in a scene-owned tier, and its tier is correct as a
+    *lifecycle* statement: a status string triggers no solver action
+    (PRESENTATION). But every consumer reads the domain group -- scene_inputs
+    writes ``height_error`` there and ui_scene draws it from ``_domain_owner``.
+    Routing it to the scene group would write the frozen ghost that nothing
+    reads.
 
     This also gates the Phase 2 split: the class partition is derived from this
-    declaration, so a scene-owned answer here would put both fields on
-    ``FLUIDSIM_PG_scene`` and strand all 11 of their call sites.
+    declaration, so a scene-owned answer here would put the field on
+    ``FLUIDSIM_PG_scene`` and strand all 5 of its call sites.
     """
     _properties, pending, _bridge = _modules(monkeypatch)
     scene, _scene_group, domain_group = _migrated_scene()
@@ -354,11 +344,7 @@ def test_setting_owner_routes_domain_read_fields_to_the_domain_group(monkeypatch
     assert pending.SETTING_TRANSITION_REGISTRY["height_error"] is (
         pending.SettingTier.PRESENTATION
     )
-    assert pending.SETTING_TRANSITION_REGISTRY["spacetime_resync_surface"] is (
-        pending.SettingTier.AUTHORED_NEXT_RUN
-    )
-    for name in ("height_error", "spacetime_resync_surface"):
-        assert pending.setting_owner(scene, name) is domain_group, name
+    assert pending.setting_owner(scene, "height_error") is domain_group
 
 
 def test_authoring_owner_is_the_declaring_group_for_every_field(monkeypatch):

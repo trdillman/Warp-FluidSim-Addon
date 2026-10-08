@@ -35,7 +35,8 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # dead snippet-library/shortcut UI fields (233 -> 227), the pre-1.1
 # ``schema_version`` stamp (227 -> 226) and the legacy ``snippets`` store (226 -> 225),
 # then added the ``stat_native_solver_message`` readout (225 -> 226, REVIEW-016).
-EXPECTED_FIELD_COUNT = 226
+# Removing Spatiotemporal FLIP dropped its 14 ``spacetime_*`` settings (226 -> 212).
+EXPECTED_FIELD_COUNT = 212
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

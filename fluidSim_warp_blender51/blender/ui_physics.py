@@ -231,7 +231,6 @@ DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_sim_forces,
     ui_scene.FLUIDSIM_PT_sim_dissipation,
     ui_scene.FLUIDSIM_PT_sim_attraction,
-    ui_scene.FLUIDSIM_PT_sim_spacetime,
 )
 DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     DOMAIN_SOURCE_PANELS,

@@ -144,7 +144,7 @@ from host-read counts; profiler timers collected.
 
 ### Pressure (`sim/pressure.py`, `PressureSolver`)
 - **`project_frame` is the authoritative Interface** for RHS construction,
-  Jacobi/PCG and space-time selection, convergence handling, thresholding,
+  Jacobi/PCG selection, convergence handling, thresholding,
   safe projection, and the status returned to `FluidSolver`.
 - **RHS build** from MAC divergence, with collision velocities and an optional
   `count_stiffness` anti-clumping term (rest count = `particles_per_voxel`).
@@ -458,12 +458,12 @@ disabling it shrinks codegen.
 
 ## 11. Validation Methodology
 
-`sim/validation.py` defines **21 tests**, each decorated with
+`sim/validation.py` defines **20 tests**, each decorated with
 `@_test(name)` and registered in `_TESTS`. `run_all(device, progress)` executes
 them on the real CUDA device and wraps `(passed, detail)` in a
-`ValidationResult`. The first sixteen retain sparse-grid, transfer, source,
-collision, pressure, surface, viscosity, whitewater, profiler, and ST-FLIP
-coverage. Tests 17–21 add static-droplet boundedness/volume proxy, a
+`ValidationResult`. The first fifteen retain sparse-grid, transfer, source,
+collision, pressure, surface, viscosity, whitewater, and profiler
+coverage. Tests 16–20 add static-droplet boundedness/volume proxy, a
 Rayleigh–Lamb oscillation trend oracle, zero-coefficient full-solver
 equivalence, capillary timestep trends, and finite-energy/diagnostic guards.
 Failures are reported rather than crashing the suite.
@@ -578,19 +578,13 @@ CPU-only.
   outputs are filtered publication views; `BOTH` duplicates host/render views,
   not the device simulation pool.
 
-## Decoupled render surfacing and experimental ST-FLIP
+## Decoupled render surfacing
 
 Historical feature note: version 1.0.235 added a separate sparse render-surface grid with multiplier or
 custom voxel sizing, frame/manual rebuild cadence, filtering, bounded dense
 extraction, and shared viewport/cache/export mesh ownership. The simulation
 grid remains authoritative for physics and optional low-resolution surface
 fields.
-
-The experimental ST-FLIP lane adds a device-resident particle time residual,
-spatiotemporal P2G deposition, phase-field activation, optional
-variable-coefficient pressure projection, local particle CFL substeps, and
-temporary render-surface re-synchronization. Default FLIP remains unchanged
-and retains its recorded-launch/CUDA-graph PCG path.
 
 ## Current promoted demo evidence
 

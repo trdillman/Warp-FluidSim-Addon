@@ -89,7 +89,7 @@ def test_frame_stats_source_guards_json_against_infinity():
 
 def test_validation_inventory_includes_all_five_phase5_gates():
     names = _assignment_literal(ROOT / "sim" / "validation.py", "VALIDATION_TESTS")
-    assert len(names) == 20
+    assert len(names) == 19
     phase5 = names[-5:]
     assert all("surface-tension" in name for name in phase5)
     assert any("static droplet" in name for name in phase5)

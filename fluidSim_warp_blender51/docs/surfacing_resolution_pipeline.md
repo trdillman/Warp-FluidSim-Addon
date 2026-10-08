@@ -4,7 +4,7 @@ Historical feature note: version 1.0.233 separated simulation resolution from re
 
 ## Why this exists
 
-The solver grid controls physics: pressure projection, particle/grid transfers, collisions, and whitewater support fields.  The render surface is a visualization/export product and can be reconstructed at a different resolution from the particle set.  This mirrors the ST-FLIP paper's output path: the sharp render surface is reconstructed from temporarily re-synchronized particles, on a grid finer than the simulation grid, followed by smoothing/denoising.
+The solver grid controls physics: pressure projection, particle/grid transfers, collisions, and whitewater support fields.  The render surface is a visualization/export product and can be reconstructed at a different resolution from the particle set.  The sharp render surface is reconstructed from the particle set on a grid finer than the simulation grid, followed by smoothing/denoising.
 
 ## New controls
 
@@ -47,10 +47,6 @@ render_surface_extractor
 
 `surface_mesh()` extracts from the selected render surface.  OBJ export and cache writes therefore use the same mesh as the viewport.
 
-## ST-FLIP compatibility
-
-When ST-FLIP is enabled and **Resync Surface** is on, render surfacing uses the existing temporary re-synchronization path before particle splatting.  The simulation particle state remains time-jittered; only the output surface position buffer is re-synchronized.
-
 ## Recommended defaults
 
 ```text
@@ -65,7 +61,7 @@ Smooth Iterations: 1 for viewport, higher for export tests
 
 ## Release validation
 
-P0 consolidates surfacing and ST-FLIP acceptance into the installed-package NVIDIA GPU gate:
+P0 consolidates surfacing acceptance into the installed-package NVIDIA GPU gate:
 
 ```bash
 python ../tools/release/build_extension.py \
@@ -75,4 +71,4 @@ python ../tools/release/build_extension.py \
   --json-report dist/gpu-build-report.json
 ```
 
-The gate builds and inspects both split-platform extension archives, installs the selected archive into an isolated Blender profile, runs every test registered by `sim.validation` (including surface SDF parity and ST-FLIP boundedness), and advances a ten-frame preview simulation. The JSON reports under `dist/` are the release evidence. Historical benchmark JSON under `demo_outputs/` remains source documentation and is excluded from shipping archives.
+The gate builds and inspects both split-platform extension archives, installs the selected archive into an isolated Blender profile, runs every test registered by `sim.validation` (including surface SDF parity), and advances a ten-frame preview simulation. The JSON reports under `dist/` are the release evidence. Historical benchmark JSON under `demo_outputs/` remains source documentation and is excluded from shipping archives.

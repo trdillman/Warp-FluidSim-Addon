@@ -42,4 +42,4 @@ def test_simulation_validation_does_not_import_diagnostics():
 
     assert "diagnostics" not in source
     assert validation.VALIDATION_TESTS[-1] == validation.BENCHMARK_SCHEMA_TEST
-    assert len(validation.VALIDATION_TESTS) == 21
+    assert len(validation.VALIDATION_TESTS) == 20

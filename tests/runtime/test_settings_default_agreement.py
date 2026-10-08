@@ -82,7 +82,7 @@ def test_rna_defaults_match_solver_defaults():
         compared += 1
         if not _same(default, solver[name]):
             divergent.add(name)
-    assert compared > 100
+    assert compared > 90
     assert divergent == KNOWN_RNA_SOLVER_DIVERGENCES
 
 

@@ -37,8 +37,7 @@ class CheckpointSchema:
         required_scalars = {
             "frame", "sim_time", "leaf_count", "particle_count",
             "whitewater_count", "leaf_capacity", "particle_capacity",
-            "whitewater_capacity", "whitewater_emit_seed", "st_step_seed",
-            "st_previous_dt", "st_reference_mass_cached",
+            "whitewater_capacity", "whitewater_emit_seed",
             "whitewater_type_schema_version",
         }
         missing = required_scalars - set(scalars)
