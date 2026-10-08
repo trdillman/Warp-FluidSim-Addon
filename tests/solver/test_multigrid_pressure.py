@@ -1,7 +1,7 @@
 """Acceptance tests for multigrid-preconditioned CG (3.0 lane C, spec
 ``docs/specs/3.0/SPEC-multigrid-pressure.md``).
 
-These tests are written against the interface, before any kernel exists:
+The interface these tests pin:
 
 * ``PressureSolver.preconditioner`` is a plain attribute, ``"JACOBI"`` (the
   default) or ``"MULTIGRID"``.
@@ -15,22 +15,21 @@ These tests are written against the interface, before any kernel exists:
   ``solver.preconditioner = "MULTIGRID"`` (and any per-instance smoothing
   override), then ``build_rhs`` and ``build_preconditioner(voxel_type)``, and
   only then call ``_apply_mg_vcycle`` / ``solve_pcg``.
+* ``solve_pcg(..., check_every=None)``: JACOBI keeps the historical interval
+  of 25; MULTIGRID picks its own (5 for ``max_iterations=200``) so a handful
+  of V-cycles are not rounded up to 25. An explicit value is always honored.
 * Naming convention the source test relies on: every kernel the V-cycle
   launches is named ``k_mg_*`` (shared helpers such as ``k_apply_matrix`` may
-  also be launched; they are scanned too).
-
-Until the V-cycle exists, ``_apply_mg_vcycle`` is a stub that raises
-``NotImplementedError`` and ``solve_pcg`` ignores the attribute, so every
-acceptance test below fails cleanly (``NotImplementedError`` or an assertion).
-The few tests that pass on the stub are guards, not acceptance items:
-``test_scanner_*`` (the source scanner itself), ``test_mg_constants_*`` and
-``test_jacobi_*``.
+  also be launched; they are scanned too). Kernels that reach the iteration
+  through recorded launch commands are built in ``_prepare_update_cmds`` /
+  ``_prepare_pcg_commands``; the scanner covers those builders as well.
 """
 
 import ast
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -46,6 +45,7 @@ from fluidSim_warp_blender51.sim.constants import (  # noqa: E402
     VOXEL_FLUID,
     VOXEL_NONE,
 )
+from fluidSim_warp_blender51.sim.enums import ProjectNonDivergentSolver  # noqa: E402
 from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid  # noqa: E402
 from fluidSim_warp_blender51.sim.pressure import (  # noqa: E402
     MG_OMEGA,
@@ -425,6 +425,147 @@ def test_multigrid_velocity_agrees_with_jacobi(problem, record_property):
 
 
 # ---------------------------------------------------------------------------
+# 6b. Production entry and graph-key isolation
+# ---------------------------------------------------------------------------
+
+def _production_settings():
+    """The fields ``project_frame`` reads, at the production defaults
+    (``DEFAULT_PRESSURE_ITERATIONS`` = 200, ``DEFAULT_PRESSURE_TOLERANCE`` =
+    1e-5). 200 is what makes the MULTIGRID interval 5."""
+    return SimpleNamespace(
+        pressure_solver=int(ProjectNonDivergentSolver.PCG),
+        pressure_iterations=200,
+        pressure_tolerance=CONVERGE_TOL,
+        pressure_threshold=0.0,
+        count_stiffness=0.0,
+        particles_per_voxel=8.0,
+    )
+
+
+def _project_frame(problem, case):
+    counts = wp.zeros(problem.grid.voxel_capacity, dtype=wp.int32,
+                      device=problem.device)
+    return case.solver.project_frame(
+        case.vel, case.vtw, case.cvel, counts, _production_settings(),
+        max_gradient=1.0e6)
+
+
+def test_production_entry_uses_the_multigrid_check_interval(problem):
+    """``project_frame`` -> ``solve_pcg`` with NO explicit ``check_every``.
+
+    Every other MULTIGRID test passes ``check_every`` by hand. This one goes
+    through the call a real frame makes, so the interval override inside
+    ``pressure.py`` is what is under test: with the historical 25 a 13-iteration
+    solve would be quantised up to 25 (and the iterations would be ``>= 25``).
+    """
+    mg = problem.new_case("MULTIGRID")
+    status = _project_frame(problem, mg)
+    solver = mg.solver
+    print(f"project_frame MULTIGRID: it={solver.last_iterations} "
+          f"check_every={solver.last_pcg_check_every} "
+          f"mode={solver.last_pcg_execution_mode}")
+    assert status["converged"], status
+    assert solver.last_residual_squared < (
+        CONVERGE_TOL * CONVERGE_TOL * problem.full_n)
+    assert solver.last_pcg_check_every == 5
+    assert 0 < solver.last_iterations < 25, (
+        f"{solver.last_iterations} iterations: the MULTIGRID interval did not apply")
+    assert solver.last_pcg_execution_mode == "cuda_conditional", (
+        f"expected the captured conditional graph, got "
+        f"{solver.last_pcg_execution_mode!r} ({solver.last_pcg_native_error!r})")
+
+    # JACOBI through the same entry keeps today's behaviour: interval 25.
+    jacobi = problem.new_case("JACOBI")
+    status_j = _project_frame(problem, jacobi)
+    assert status_j["converged"], status_j
+    assert jacobi.solver.last_pcg_check_every == 25
+    assert jacobi.solver.last_iterations >= 25
+    assert jacobi.solver.last_iterations % 25 == 0   # quantised by the interval
+
+
+def test_graph_keys_isolate_the_preconditioner_on_one_solver(problem):
+    """JACOBI -> MULTIGRID -> JACOBI on ONE solver must never replay a graph
+    captured for the other preconditioner.
+
+    A MULTIGRID solve replaying JACOBI's cached graph would silently run the
+    Jacobi iteration (the Jacobi iteration count); a JACOBI solve replaying
+    the MULTIGRID graph would run V-cycles. Both graph caches key on the
+    preconditioner, so this holds for the conditional graphs a solve uses and
+    for the host-batched graphs of the fallback path.
+    """
+    m = problem.fluid_mask
+
+    def fresh_reference(preconditioner):
+        ref = problem.new_case(preconditioner)
+        ref.solver.solve_pcg(ref.vtw, 200, CONVERGE_TOL)
+        out = (ref.solver.last_iterations, ref.solver.pressure.numpy()[m].copy())
+        ref.solver.release()
+        return out
+
+    jacobi_its, jacobi_p = fresh_reference("JACOBI")
+    mg_its, mg_p = fresh_reference("MULTIGRID")
+    assert mg_its < jacobi_its, (jacobi_its, mg_its)   # distinguishable
+
+    case = problem.new_case("JACOBI")
+    solver = case.solver
+
+    def solve():
+        status = solver.solve_pcg(case.vtw, 200, CONVERGE_TOL)
+        assert status["converged"], status
+        assert solver.last_pcg_execution_mode == "cuda_conditional"
+        return solver.last_iterations, solver.pressure.numpy()[m].copy()
+
+    its, p = solve()                               # 1. JACOBI, graph captured
+    assert its == jacobi_its and np.array_equal(_bits(p), _bits(jacobi_p))
+    assert solver.last_pcg_check_every == 25
+
+    solver.preconditioner = "MULTIGRID"            # 2. same solver, MULTIGRID
+    solver.build_preconditioner(case.vtw)
+    its, p = solve()
+    assert its == mg_its, (
+        f"MULTIGRID solve ran {its} iterations on a solver that had a JACOBI "
+        f"graph cached; a fresh MULTIGRID solver needs {mg_its} "
+        f"(JACOBI needs {jacobi_its})")
+    assert np.array_equal(_bits(p), _bits(mg_p))
+    assert solver.last_pcg_check_every == 5
+
+    solver.preconditioner = "JACOBI"               # 3. back to JACOBI
+    solver.build_preconditioner(case.vtw)
+    its, p = solve()
+    assert its == jacobi_its
+    assert np.array_equal(_bits(p), _bits(jacobi_p)), (
+        "JACOBI after a MULTIGRID solve is not bitwise equal to a fresh JACOBI solve")
+    assert solver.last_pcg_check_every == 25
+
+    # Both captures coexist, told apart by key: Jacobi keys keep the original
+    # (work_n, batch, max_iterations) shape, MULTIGRID keys carry the tail.
+    keys = list(solver._pcg_conditional_graphs)
+    jacobi_keys = [k for k in keys if len(k) == 3]
+    mg_keys = [k for k in keys if len(k) > 3]
+    assert [k[1:] for k in jacobi_keys] == [(25, 200)], keys
+    assert len(mg_keys) == 1 and mg_keys[0][3] == "MG" and mg_keys[0][1:3] == (5, 200), keys
+
+    # The host-batched cache (fallback path) is keyed the same way.
+    full_n = solver._dim()
+    work_n = min(full_n, 1 << (solver._build_pressure_index(case.vtw) - 1).bit_length())
+    before = set(solver._pcg_graphs)
+    seen = {}
+    for kind in ("JACOBI", "MULTIGRID"):
+        solver.preconditioner = kind
+        solver.build_preconditioner(case.vtw)
+        solver._prepare_pcg_commands(work_n, case.vtw, solver.pressure)
+        solver.rz, solver.rz_new = solver._pcg_rz_a, solver._pcg_rz_b
+        solver._launch_pcg_batch(work_n, 2)
+        new = set(solver._pcg_graphs) - before - set(seen.values())
+        assert len(new) == 1, (kind, new)
+        seen[kind] = new.pop()
+    wp.synchronize_device(problem.device)
+    assert seen["JACOBI"] == (work_n, 2, 0)
+    assert seen["MULTIGRID"][:3] == (work_n, 2, 0) and seen["MULTIGRID"][3] == "MG"
+    solver.release()
+
+
+# ---------------------------------------------------------------------------
 # 7. Source test: no atomics, no host sync on the per-iteration path
 # ---------------------------------------------------------------------------
 
@@ -450,15 +591,33 @@ def _call_name(node):
     return None
 
 
-def _scan_vcycle(source, entry="_apply_mg_vcycle", cls="PressureSolver"):
-    """Statically scan everything ``entry`` can reach.
+# Not every kernel of an MG iteration is launched by the V-cycle's own code:
+# the x/r update and the compaction of z are recorded launch commands
+# (``fast_launch(..., record_cmd=True)``) built once in these methods and
+# replayed from ``_record_pcg_iterations`` inside the captured graph. The
+# scanner follows them too, so such a kernel cannot hide from the checks.
+RECORDED_CMD_BUILDERS = ("_prepare_update_cmds", "_prepare_pcg_commands")
+CAPTURED_RECORDERS = ("_record_pcg_iterations",)
+
+
+def _scan_vcycle(source, entry="_apply_mg_vcycle", cls="PressureSolver",
+                 builders=RECORDED_CMD_BUILDERS, recorders=CAPTURED_RECORDERS):
+    """Statically scan everything the captured MG iteration can reach.
+
+    ``entry`` and ``recorders`` are the code that runs while a graph is being
+    captured; the closure of their ``self.<method>(...)`` calls is scanned for
+    host syncs and for kernels. ``builders`` build the recorded launch commands
+    those methods replay, so the kernels they name are scanned for atomics too
+    (but not for syncs: they run at setup time, not per iteration). A builder
+    or recorder that the class does not define is skipped, so a source with no
+    recorded commands scans exactly like a plain V-cycle.
 
     Returns ``(methods, warp_funcs, atomic_hits, sync_hits)``:
-    ``methods`` is the closure of ``self.<method>(...)`` calls from ``entry``;
-    ``warp_funcs`` is every module-level ``@wp.kernel`` / ``@wp.func`` named in
-    those methods, plus (transitively) those named inside other warp functions;
-    ``atomic_hits`` lists ``(function, line, name)`` for atomic add/sub calls in
-    ``warp_funcs``; ``sync_hits`` lists host-sync calls in ``methods``.
+    ``methods`` is every scanned method; ``warp_funcs`` is every module-level
+    ``@wp.kernel`` / ``@wp.func`` named in them, plus (transitively) those
+    named inside other warp functions; ``atomic_hits`` lists
+    ``(function, line, name)`` for atomic add/sub calls in ``warp_funcs``;
+    ``sync_hits`` lists host-sync calls in the entry/recorder closure.
     """
     tree = ast.parse(source)
     module_warp = {n.name: n for n in tree.body
@@ -468,17 +627,25 @@ def _scan_vcycle(source, entry="_apply_mg_vcycle", cls="PressureSolver"):
     methods = {n.name: n for n in class_nodes[0].body if isinstance(n, ast.FunctionDef)}
     assert entry in methods, f"{cls}.{entry} not found"
 
-    reached_methods, stack = [], [entry]
-    while stack:
-        name = stack.pop()
-        if name in reached_methods:
-            continue
-        reached_methods.append(name)
-        for node in ast.walk(methods[name]):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "self" and node.func.attr in methods):
-                stack.append(node.func.attr)
+    def closure(roots):
+        reached, stack = [], list(roots)
+        while stack:
+            name = stack.pop()
+            if name in reached:
+                continue
+            reached.append(name)
+            for node in ast.walk(methods[name]):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "self" and node.func.attr in methods):
+                    stack.append(node.func.attr)
+        return reached
+
+    captured = closure([entry] + [n for n in recorders if n in methods])
+    reached_methods = list(captured)
+    for name in closure([n for n in builders if n in methods]):
+        if name not in reached_methods:
+            reached_methods.append(name)
 
     warp_funcs, stack = [], []
     for name in reached_methods:
@@ -500,27 +667,67 @@ def _scan_vcycle(source, entry="_apply_mg_vcycle", cls="PressureSolver"):
             if isinstance(node, ast.Call) and _call_name(node.func) in _ATOMIC_NAMES:
                 atomic_hits.append((name, node.lineno, _call_name(node.func)))
     sync_hits = []
-    for name in reached_methods:
+    for name in captured:
         for node in ast.walk(methods[name]):
             if isinstance(node, ast.Call) and _call_name(node.func) in _SYNC_NAMES:
                 sync_hits.append((name, node.lineno, _call_name(node.func)))
     return reached_methods, warp_funcs, atomic_hits, sync_hits
 
 
+def _methods_recording_cmds(source, cls="PressureSolver"):
+    """Names of the methods that build recorded launch commands
+    (a call with a ``record_cmd=`` keyword)."""
+    tree = ast.parse(source)
+    class_node = next(n for n in tree.body
+                      if isinstance(n, ast.ClassDef) and n.name == cls)
+    found = []
+    for method in class_node.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        for node in ast.walk(method):
+            if (isinstance(node, ast.Call)
+                    and any(kw.arg == "record_cmd" for kw in node.keywords)):
+                found.append(method.name)
+                break
+    return found
+
+
 def test_vcycle_launches_only_atomic_free_kernels_and_never_syncs():
-    methods, warp_funcs, atomic_hits, sync_hits = _scan_vcycle(
-        PRESSURE_SOURCE.read_text(encoding="utf-8"))
-    mg_kernels = sorted(n for n in warp_funcs if n.startswith("k_mg_"))
-    # The stub launches nothing; a real V-cycle must launch k_mg_* kernels.
-    assert mg_kernels, (
+    source = PRESSURE_SOURCE.read_text(encoding="utf-8")
+    # The V-cycle's own code launches k_mg_* kernels (entry point alone).
+    own_methods, own_funcs, _, _ = _scan_vcycle(source, builders=(), recorders=())
+    own_kernels = sorted(n for n in own_funcs if n.startswith("k_mg_"))
+    assert own_kernels, (
         "_apply_mg_vcycle (and the self.* helpers it calls: "
-        f"{methods}) reaches no k_mg_* kernel")
+        f"{own_methods}) reaches no k_mg_* kernel")
+
+    # The full scan: V-cycle + the captured recorder + the command builders.
+    methods, warp_funcs, atomic_hits, sync_hits = _scan_vcycle(source)
     assert not atomic_hits, (
         "atomic add/sub reachable from the V-cycle: "
         + ", ".join(f"{fn}:{line} {name}" for fn, line, name in atomic_hits))
     assert not sync_hits, (
         "host sync reachable from the V-cycle: "
         + ", ".join(f"{fn}:{line} {name}" for fn, line, name in sync_hits))
+
+
+def test_scan_covers_the_recorded_launch_commands_of_the_mg_iteration():
+    """The x/r update and the z compaction are recorded commands, not
+    ``fast_launch`` calls inside the V-cycle: the scan must still see them."""
+    source = PRESSURE_SOURCE.read_text(encoding="utf-8")
+    methods, warp_funcs, _, _ = _scan_vcycle(source)
+    for name in RECORDED_CMD_BUILDERS + CAPTURED_RECORDERS:
+        assert name in methods, f"{name} missing from the scan: {methods}"
+    for kernel in ("k_mg_update_xr_indexed", "k_mg_gather_z"):
+        assert kernel in warp_funcs, f"{kernel} is not covered by the scan"
+    # The V-cycle alone would not have seen them.
+    _, own_funcs, _, _ = _scan_vcycle(source, builders=(), recorders=())
+    assert "k_mg_update_xr_indexed" not in own_funcs
+    # No other method may build recorded commands without being scanned.
+    uncovered = [n for n in _methods_recording_cmds(source) if n not in methods]
+    assert not uncovered, (
+        f"methods building recorded launch commands but not scanned: {uncovered}; "
+        "add them to RECORDED_CMD_BUILDERS")
 
 
 _SYNTHETIC_BAD = '''
@@ -591,6 +798,92 @@ def test_scanner_passes_a_clean_vcycle():
     methods, funcs, atomics, syncs = _scan_vcycle(_SYNTHETIC_GOOD)
     assert set(funcs) == {"k_mg_good"}
     assert not atomics and not syncs
+
+
+# A V-cycle that itself is clean, inside an iteration that also replays two
+# recorded commands built elsewhere (as _pcg_update_cmd is). One of those
+# kernels has an atomic; the recorder also syncs the host.
+_SYNTHETIC_RECORDED = '''
+import warp as wp
+
+@wp.kernel
+def k_mg_cmd_bad(a: wp.array(dtype=float)):
+    wp.atomic_add(a, 0, 1.0)
+
+@wp.kernel
+def k_mg_cmd_good(a: wp.array(dtype=float)):
+    a[wp.tid()] = 1.0
+
+@wp.kernel
+def k_mg_vcycle_good(a: wp.array(dtype=float)):
+    a[wp.tid()] = 2.0
+
+@wp.kernel
+def k_unrelated(a: wp.array(dtype=float)):
+    wp.atomic_add(a, 0, 1.0)
+
+class PressureSolver:
+    def _apply_mg_vcycle(self, r, z):
+        fast_launch(k_mg_vcycle_good, dim=1, inputs=[r])
+
+    def _prepare_update_cmds(self, n, r):
+        self._cmd_bad = fast_launch(
+            k_mg_cmd_bad, dim=n, inputs=[r], device=self.device, record_cmd=True)
+        self._cmd_good = fast_launch(
+            k_mg_cmd_good, dim=n, inputs=[r], device=self.device, record_cmd=True)
+
+    def _prepare_extra_cmds(self, n, r):
+        self._cmd_other = fast_launch(
+            k_unrelated, dim=n, inputs=[r], device=self.device, record_cmd=True)
+
+    def _record_pcg_iterations(self, n):
+        self._apply_mg_vcycle(self.r, self.z)
+        self._cmd_bad.launch()
+        self._cmd_good.launch()
+        wp.synchronize_device(self.device)
+
+    def host_side(self):
+        return self.r.numpy()
+'''
+
+
+def test_scanner_follows_recorded_launch_commands_built_elsewhere():
+    # The V-cycle alone is clean: the recorded kernels are invisible to it.
+    methods, funcs, atomics, syncs = _scan_vcycle(
+        _SYNTHETIC_RECORDED, builders=(), recorders=())
+    assert set(methods) == {"_apply_mg_vcycle"}
+    assert set(funcs) == {"k_mg_vcycle_good"}
+    assert not atomics and not syncs
+
+    # With the builder, the atomic in a recorded kernel is found ...
+    methods, funcs, atomics, syncs = _scan_vcycle(
+        _SYNTHETIC_RECORDED, recorders=())
+    assert set(methods) == {"_apply_mg_vcycle", "_prepare_update_cmds"}
+    assert set(funcs) == {"k_mg_vcycle_good", "k_mg_cmd_bad", "k_mg_cmd_good"}
+    assert [(fn, name) for fn, _, name in atomics] == [("k_mg_cmd_bad", "atomic_add")]
+    assert not syncs     # builders run at setup time, they are not synced-checked
+
+    # ... and with the default (builder + recorder) the recorder's host sync is
+    # found too, while the unrelated host_side() method stays out of scope.
+    methods, funcs, atomics, syncs = _scan_vcycle(_SYNTHETIC_RECORDED)
+    assert set(methods) == {"_apply_mg_vcycle", "_prepare_update_cmds",
+                            "_record_pcg_iterations"}
+    assert [(fn, name) for fn, _, name in atomics] == [("k_mg_cmd_bad", "atomic_add")]
+    assert [(fn, name) for fn, _, name in syncs] == [
+        ("_record_pcg_iterations", "synchronize_device")]
+
+
+def test_scanner_flags_command_builders_it_does_not_cover():
+    recording = _methods_recording_cmds(_SYNTHETIC_RECORDED)
+    assert sorted(recording) == ["_prepare_extra_cmds", "_prepare_update_cmds"]
+    methods, *_ = _scan_vcycle(_SYNTHETIC_RECORDED)
+    uncovered = [n for n in recording if n not in methods]
+    assert uncovered == ["_prepare_extra_cmds"]
+    # Naming the extra builder brings its (atomic) kernel into the scan.
+    _, funcs, atomics, _ = _scan_vcycle(
+        _SYNTHETIC_RECORDED, builders=RECORDED_CMD_BUILDERS + ("_prepare_extra_cmds",))
+    assert "k_unrelated" in funcs
+    assert ("k_unrelated", "atomic_add") in [(fn, name) for fn, _, name in atomics]
 
 
 # ---------------------------------------------------------------------------
