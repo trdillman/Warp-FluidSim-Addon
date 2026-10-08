@@ -214,6 +214,22 @@ def test_offers_are_per_scene(tmp_path):
     assert cache_bake.rebake_offer(_scene(1)) is None
 
 
+def test_the_production_bake_delegate_forwards_rebake_from(monkeypatch):
+    seen = {}
+
+    def fake(*args, **kwargs):
+        seen.update(kwargs)
+        return "done"
+
+    monkeypatch.setattr(cache_bake, "run_synchronous", fake)
+
+    result = production_bake.run_synchronous(
+        "scene", end=9, resume=True, rebake_from=4)
+
+    assert result == "done"
+    assert seen["rebake_from"] == 4 and seen["resume"] is True
+
+
 def test_a_rebake_needs_a_cache_to_continue(tmp_path):
     with pytest.raises(ValueError, match="resume=True"):
         BakeRun(_scene(), rebake_from=4, backend=_Backend(tmp_path, _REBAKE_READY))

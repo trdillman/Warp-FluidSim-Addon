@@ -934,6 +934,7 @@ def run_synchronous(
     *,
     resume: bool = False,
     restart: bool = False,
+    rebake_from: int | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> BakeResult:
     """Compatibility delegate; ``cache_bake`` owns sequential execution."""
@@ -941,7 +942,7 @@ def run_synchronous(
 
     return run_cache_bake(
         scene, sess, start, end, resume=resume, restart=restart,
-        progress_callback=progress_callback)
+        rebake_from=rebake_from, progress_callback=progress_callback)
 
 
 class SignalCancellation:
