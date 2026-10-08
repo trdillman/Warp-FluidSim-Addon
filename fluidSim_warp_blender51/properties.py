@@ -70,7 +70,7 @@ LIQUID_ATTR_ITEMS = (
 PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
     ("AGE", "Age", "Color by particle age"),
     ("LIFE", "Life", "Color by particle life span"),
-    ("TIME_OFFSET", "ST Time Offset", "Color by experimental ST-FLIP time residual"),
+    ("TIME_OFFSET", "Time Offset", "Color by the per-particle time offset (always zero)"),
 )
 
 
