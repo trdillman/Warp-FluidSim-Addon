@@ -6,7 +6,7 @@ import importlib
 import sys
 import types
 from types import SimpleNamespace
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 
 def _bridge(monkeypatch):
@@ -41,7 +41,7 @@ def _bridge(monkeypatch):
 
 
 def _scene(*, voxel_size=0.1):
-    fs = SimpleNamespace(
+    fs = full_settings(
         live=True, cache_playback_enabled=False, status="",
         domain_object=None, voxel_size=voxel_size, leaf_capacity=64,
         max_particles=1000, auto_grow_particles=True,

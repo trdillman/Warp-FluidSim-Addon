@@ -460,9 +460,20 @@ def _configured_device():
     return str(configured_device())
 
 
+def _read_setting(owner, name):
+    """Read ``name`` straight off its owning settings group.
+
+    ``None`` only when there is no group to read from (a scene with no domain
+    object designated). A group that is present but does not declare the field
+    raises ``AttributeError``: that is a wrong-group read, and a default here
+    would hide it (defects #1, #3, #5).
+    """
+    return None if owner is None else getattr(owner, name)
+
+
 def _reset_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(_read_setting(_authoring_owner(scene_fs, domain_fs, name), name)))
               for name in sorted(_RESET_SCENE_FIELDS)]
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
@@ -470,7 +481,7 @@ def _reset_signature(scene):
         if pg is None:
             continue
         object_id = _stable_value(obj)
-        fields = tuple((name, _stable_value(getattr(pg, name, None)))
+        fields = tuple((name, _stable_value(getattr(pg, name)))
                        for name in sorted(_RESET_OBJECT_FIELDS))
         objects.append((object_id, fields))
     values.append(("objects", tuple(sorted(objects, key=repr))))
@@ -479,7 +490,7 @@ def _reset_signature(scene):
 
 def _reinit_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(_read_setting(_authoring_owner(scene_fs, domain_fs, name), name)))
               for name in sorted(_REINIT_SETTING_FIELDS)]
     # domain_object is the scene-level identity pointer (excluded from migration),
     # so it is always read from scene.fluidsim.
@@ -623,7 +634,7 @@ def _snapshot_object_reset_values(scene):
     for obj in getattr(scene, "objects", ()) or ():
         pg = getattr(obj, "fluidsim", None)
         if pg is not None:
-            result.append((obj, {name: _snapshot_value(getattr(pg, name, None))
+            result.append((obj, {name: _snapshot_value(getattr(pg, name))
                                  for name in _RESET_OBJECT_FIELDS}))
     return tuple(result)
 
@@ -636,13 +647,13 @@ def capture_applied_state(scene, sess=None, *, reset_only=False):
     state.current_reset_signature = reset_signature
     state.current_reinit_signature = reinit_signature
     state.reset_snapshot = {
-        name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
+        name: _snapshot_value(_read_setting(_authoring_owner(scene_fs, domain_fs, name), name))
         for name in _RESET_SCENE_FIELDS}
     state.object_reset_snapshot = _snapshot_object_reset_values(scene)
     if not reset_only:
         state.applied_reinit_signature = reinit_signature
         state.reinit_snapshot = {
-            name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
+            name: _snapshot_value(_read_setting(_authoring_owner(scene_fs, domain_fs, name), name))
             for name in _REINIT_SETTING_FIELDS
         }
         domain = active_domain_object(scene)
@@ -836,7 +847,7 @@ def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=F
     """Apply one registry-selected transition, including a structural effect draft."""
     from . import playback, production_bake
 
-    if getattr(scene.fluidsim, "cache_playback_enabled", False):
+    if scene.fluidsim.cache_playback_enabled:
         raise RuntimeError("Cache Preview is selected; switch to Live Preview before applying simulation changes")
     sess = session()
     if production_bake.bake_is_active(scene):
@@ -936,17 +947,16 @@ def revert_pending_values(scene):
         # revert of a domain-authored edit targets obj.fluidsim_domain.
         for name, value in state.reset_snapshot.items():
             owner = _authoring_owner(scene_fs, domain_fs, name)
-            if owner is not None and hasattr(owner, name):
+            if owner is not None:
                 setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
             pg = getattr(obj, "fluidsim", None)
             if pg is not None:
                 for name, value in values.items():
-                    if hasattr(pg, name):
-                        setattr(pg, name, value)
+                    setattr(pg, name, value)
         for name, value in state.reinit_snapshot.items():
             owner = _authoring_owner(scene_fs, domain_fs, name)
-            if owner is not None and hasattr(owner, name):
+            if owner is not None:
                 setattr(owner, name, value)
         domain = active_domain_object(scene)
         if domain is not None and state.domain_matrix_snapshot is not None:

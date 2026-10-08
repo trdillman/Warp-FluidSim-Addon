@@ -49,7 +49,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | field | tier | UI writes | consumer reads | runtime writes | UI reads | declared eff/auth | getattr defaults | verdict |
 |---|---|---|---|---|---|---|---:|---|
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene/scene | 0 | UI_STATE |
-| `quality` | REINITIALIZE | scene | scene | - | - | scene/scene | 1 | OK |
+| `quality` | REINITIALIZE | scene | scene | - | - | scene/scene | 0 | OK |
 | `live` | ADAPTER | - | scene | scene | scene | scene/scene | 6 | PUBLISHED |
 | `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene/scene | 1 | OK |
@@ -75,9 +75,9 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bubble_material` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `spray_material` | OUTPUT | scene | scene | - | - | scene/scene | 1 | OK |
 | `output_collection_name` | OUTPUT | scene | scene | scene | - | scene/scene | 1 | OK |
-| `setup_mode` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
+| `setup_mode` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene/scene | 0 | PUBLISHED |
 | `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
-| `active_preset_id` | AUTHORED_NEXT_RUN | - | scene | scene | scene | scene/scene | 0 | PUBLISHED |
+| `active_preset_id` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene/scene | 0 | PUBLISHED |
 | `cache_format` | AUTHORED_NEXT_RUN | - | - | - | - | scene/scene | 0 | UNOBSERVED |
 | `bake_start` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene/scene | 0 | OK |
 | `bake_end` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene/scene | 0 | OK |
@@ -92,7 +92,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `cache_enabled` | AUTHORED_NEXT_RUN | - | - | scene | - | scene/scene | 0 | INTERNAL |
 | `cache_path` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene/scene | 0 | OK |
 | `cache_compress` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 2 | OK |
-| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene/scene | 10 | PUBLISHED |
+| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene/scene | 9 | PUBLISHED |
 | `cache_use_custom_range` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene/scene | 2 | OK |
 | `cache_frame_start` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
 | `cache_frame_end` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene/scene | 0 | OK |
@@ -129,7 +129,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `min_substeps` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `max_substeps` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `gravity` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `use_scene_gravity` | LIVE | domain | domain | - | domain | domain/domain | 2 | OK |
+| `use_scene_gravity` | LIVE | domain | domain | - | domain | domain/domain | 0 | OK |
 | `voxel_size` | REINITIALIZE | domain | domain | - | - | domain/domain | 1 | OK |
 | `leaf_capacity` | REINITIALIZE | domain | domain | - | - | domain/domain | 0 | OK |
 | `topology_expand` | RESET | domain | domain | - | - | domain/domain | 0 | OK |
@@ -270,7 +270,7 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `playback_advanced_expanded` | UNOBSERVED | (never written either) |
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
-| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:791` |
+| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:803` |
 | `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:442`, `fluidSim_warp_blender51/blender/scene_bridge.py:409` |
 | `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:443`, `fluidSim_warp_blender51/blender/scene_bridge.py:411` |
 | `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:444`, `fluidSim_warp_blender51/blender/scene_bridge.py:413` |

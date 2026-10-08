@@ -19,7 +19,7 @@ import types
 from types import SimpleNamespace
 
 import pytest
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -981,7 +981,7 @@ def test_live_solver_settings_apply_without_resetting_particle_state(monkeypatch
     reset_calls = []
     monkeypatch.setattr(sess, "reset", lambda _scene: reset_calls.append("reset"))
     scene = SimpleNamespace(
-        fluidsim=split_settings(SimpleNamespace(flip_ratio=0.25, cfl=2.0, status="")),
+        fluidsim=split_settings(full_settings(flip_ratio=0.25, cfl=2.0, status="")),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
@@ -1004,7 +1004,7 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
-        fluidsim=split_settings(SimpleNamespace(
+        fluidsim=split_settings(full_settings(
             sample_type="NOT_A_REAL_ENUM", flip_ratio=0.2, status="Frame 8"
         )),
         use_gravity=False,
@@ -1050,7 +1050,7 @@ def test_live_gravity_uses_scene_or_custom_branch_without_reset(monkeypatch):
     sess = scene_bridge.session()
     sess.solver = SimpleNamespace(settings=settings, particles=object())
     scene = SimpleNamespace(
-        fluidsim=split_settings(SimpleNamespace(
+        fluidsim=split_settings(full_settings(
             gravity=(1.0, 2.0, 3.0), use_scene_gravity=True, status="stats"
         )),
         use_gravity=True,
@@ -1246,7 +1246,7 @@ def test_live_reconcile_is_bounded_after_registry_warmup(monkeypatch):
     sess = bridge.session()
     sess.solver = SimpleNamespace(settings=settings)
     scene = SimpleNamespace(
-        fluidsim=split_settings(SimpleNamespace(flip_ratio=0.2, cfl=2.0)),
+        fluidsim=split_settings(full_settings(flip_ratio=0.2, cfl=2.0)),
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
@@ -3219,7 +3219,7 @@ def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
                if not (kind == "whitewater" and key == "type")}
         for kind, names in OUTPUT_TOGGLE_NAMES.items()
     }
-    domain_group = SimpleNamespace(**{
+    domain_group = SimpleNamespace(export_attributes=True, **{
         name: False for names in toggles.values() for name in names})
     scene_group = SimpleNamespace(
         ui_mode="ADVANCED",
@@ -3270,7 +3270,8 @@ def test_runtime_recovery_button_is_labeled_and_status_not_truncated(monkeypatch
     monkeypatch.setattr(ui_scene, "activity_ui_state",
                         lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"})
     long_status = "Solver halted: " + "x" * 200
-    fs = SimpleNamespace(status=long_status, height_error="")
+    fs = SimpleNamespace(status=long_status, stat_step_ms=0.0, stat_substeps=0,
+                         stat_cfl_clamped=False)
     ctx = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
     panel = ui_scene.FLUIDSIM_PT_scene_control()
     panel.layout = _Layout()
@@ -3292,7 +3293,8 @@ def test_status_panel_names_the_loaded_build(monkeypatch):
                         lambda: (SimpleNamespace(), "cuda:0", True, "ready"))
     monkeypatch.setattr(ui_scene, "activity_ui_state",
                         lambda scene: {"id": "IDLE", "owns_scene": False, "label": "Idle", "icon": "PAUSE"})
-    fs = SimpleNamespace(status="", height_error="")
+    fs = SimpleNamespace(status="", stat_step_ms=0.0, stat_substeps=0,
+                         stat_cfl_clamped=False)
     panel = ui_scene.FLUIDSIM_PT_scene_control()
     panel.layout = _Layout()
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
@@ -3850,6 +3852,7 @@ def test_diagnostics_telemetry_consolidates_readouts(monkeypatch):
         stat_substep_limiter="CAPILLARY",
         stat_capillary_clamped=True,
         stat_surface_tension_message="",
+        stat_native_solver_message="",
         stat_whitewater_foam=1,
         stat_whitewater_bubbles=1,
         stat_whitewater_spray=1,

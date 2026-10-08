@@ -113,7 +113,7 @@ def _draw_capacity_plan(layout, scene):
     suggestions = tuple(getattr(plan, "suggestions", ()))
     if suggestions:
         layout.label(text="Verified options", icon="CHECKMARK")
-        visible = suggestions if getattr(fs, "capacity_show_alternatives", False) else suggestions[:1]
+        visible = suggestions if fs.capacity_show_alternatives else suggestions[:1]
         for suggestion in visible:
             box = layout.box()
             box.label(text=str(getattr(suggestion, "label", "Capacity option")))
@@ -146,7 +146,7 @@ def _draw_attribute_group(layout, fs, output_kind):
         even_rows=False,
         align=True,
     )
-    grid.active = bool(getattr(fs, "export_attributes", True))
+    grid.active = bool(fs.export_attributes)
     for key in OUTPUT_ATTRIBUTE_KEYS[output_kind]:
         if output_kind == "whitewater" and key == "type":
             grid.label(text="Type (always published)", icon="CHECKMARK")
@@ -156,23 +156,23 @@ def _draw_attribute_group(layout, fs, output_kind):
 
 def _surface_enabled(context):
     fs = _domain_owner(context)
-    return bool(fs is not None and getattr(fs, "surface_enabled", False))
+    return bool(fs is not None and fs.surface_enabled)
 
 
 def _whitewater_enabled(context):
     fs = _domain_owner(context)
-    return bool(fs is not None and getattr(fs, "whitewater_enabled", False))
+    return bool(fs is not None and fs.whitewater_enabled)
 
 
 def _advanced_visible(context):
     """True unless the user has chosen the Basic interface (D2 two-tier gate).
 
-    Fail-open: a missing settings group or `ui_mode` never hides a panel, so a
-    partially-initialised scene keeps the full surface rather than silently
-    dropping deep-config panels.
+    Fail-open on a missing settings group only: a scene with no FluidSim group
+    keeps the full surface rather than silently dropping deep-config panels.
+    ``ui_mode`` is a scene field, read directly.
     """
     fs = getattr(getattr(context, "scene", None), "fluidsim", None)
-    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+    return bool(fs is None or fs.ui_mode == "ADVANCED")
 
 
 def _timeline_playing(context) -> bool:
@@ -272,11 +272,11 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
 
         row = layout.row(align=True)
         row.label(text=state["label"], icon=state["icon"])
-        status = str(getattr(fs, "status", "") or "")
+        status = str(fs.status or "")
         if status:
             _draw_wrapped(layout, status)
-        height_error = str(
-            getattr(_domain_owner(context), "height_error", "") or "")
+        domain = _domain_owner(context)
+        height_error = str(domain.height_error or "") if domain is not None else ""
         if height_error:
             draw_status_message(layout, height_error, "ERROR")
 
@@ -293,9 +293,9 @@ class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
         # whether the CFL condition forced a clamp. Read-only status only —
         # transport lives in the 3D View launcher (FLUIDSIM_PT_viewport_status),
         # lifecycle in FLUIDSIM_PT_scene_lifecycle.
-        step_ms = float(getattr(fs, "stat_step_ms", 0.0) or 0.0)
-        substeps = int(getattr(fs, "stat_substeps", 0) or 0)
-        cfl_clamped = bool(getattr(fs, "stat_cfl_clamped", False))
+        step_ms = float(fs.stat_step_ms or 0.0)
+        substeps = int(fs.stat_substeps or 0)
+        cfl_clamped = bool(fs.stat_cfl_clamped)
         layout.label(
             text=f"{step_ms:.1f} ms · {substeps} substeps · CFL {'clamped' if cfl_clamped else 'ok'}",
             icon="TIME",
@@ -354,7 +354,7 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
         # meets them before any deep-config surface.
         layout.prop(fs, "ui_mode", expand=True)
         layout.prop(fs, "quality")
-        if getattr(fs, "setup_mode", ""):
+        if fs.setup_mode:
             layout.label(text=f"Current setup: {fs.setup_mode.replace('_', ' ').title()}", icon="MOD_FLUIDSIM")
         primary = layout.row(align=True)
         primary.scale_y = 1.25
@@ -1029,7 +1029,7 @@ def draw_cache_playback(layout, context):
     state = activity_ui_state(context.scene)
     if state["id"] == "CACHE_PLAYBACK":
         playing = bool(
-            getattr(context.scene.fluidsim, "live", False)
+            context.scene.fluidsim.live
             and _timeline_playing(context)
         )
         if playing:
@@ -1171,9 +1171,9 @@ class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
             ),
             title="Capillary Stability",
         )
-        if getattr(fs, "stat_surface_tension_message", ""):
+        if fs.stat_surface_tension_message:
             _draw_wrapped(layout, fs.stat_surface_tension_message, icon="INFO")
-        if getattr(fs, "stat_native_solver_message", ""):
+        if fs.stat_native_solver_message:
             _draw_wrapped(layout, fs.stat_native_solver_message, icon="ERROR")
         draw_readout_grid(
             layout,

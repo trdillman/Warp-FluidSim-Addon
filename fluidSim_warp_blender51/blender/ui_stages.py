@@ -105,7 +105,7 @@ def _prop(layout, scene, name, **kwargs):
 def _is_advanced(scene) -> bool:
     """Fail-open Basic/Advanced gate matching the Scene Properties panels."""
     fs = getattr(scene, "fluidsim", None)
-    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+    return bool(fs is None or fs.ui_mode == "ADVANCED")
 
 
 def draw_quality(layout, scene):
@@ -197,12 +197,12 @@ def draw_simulate_controls(layout, scene, domain):
     One drawing shared by the Simulate stage and the viewport-header popover, so
     both surfaces bind the same properties to the same owner.
     """
-    if getattr(domain, "sample_type", "FLIP") == "FLIP":
+    if domain.sample_type == "FLIP":
         _prop(layout, scene, "flip_ratio")
 
     viscosity = layout.column(align=True)
     _prop(viscosity, scene, "viscosity_enabled")
-    if domain.viscosity_enabled and not getattr(domain, "viscosity_from_particles", False):
+    if domain.viscosity_enabled and not domain.viscosity_from_particles:
         _prop(viscosity, scene, "viscosity_constant")
 
     tension = layout.column(align=True)
