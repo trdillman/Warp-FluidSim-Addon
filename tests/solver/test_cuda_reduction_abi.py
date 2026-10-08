@@ -65,7 +65,9 @@ def test_launch_supports_warp_115_and_116_cuda_abis(monkeypatch, arity):
     dot._max_blocks = 4
     dot._partials = SimpleNamespace(ptr=48)
     dot._ticket = SimpleNamespace(ptr=64)
-    array = SimpleNamespace(ptr=16)
+    # ``launch`` checks lengths on the host before it launches (REVIEW-038), so
+    # the double must say how many elements it holds.
+    array = SimpleNamespace(ptr=16, size=32)
 
     dot.launch(array, array, array, 32)
 
