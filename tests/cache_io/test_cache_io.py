@@ -98,7 +98,7 @@ def test_directory_without_a_cache_reads_nothing(tmp_path):
 def test_the_cache_module_no_longer_writes_format_1():
     from fluidSim_warp_blender51.io import cache
 
-    assert cache.CACHE_FORMAT_VERSION == 2
+    assert cache.CACHE_FORMAT_VERSION == 3
     for name in ("write_frame", "write_sequence_metadata", "compact_settings_segments"):
         assert not hasattr(cache, name), name
 

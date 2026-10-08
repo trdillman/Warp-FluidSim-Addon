@@ -66,8 +66,10 @@ def test_io_dependency_cache_import_and_hashing_need_no_blender_modules(monkeypa
             },
         },)
 
+        # Pinned for SCENE_KEY_VERSION "v2" (3.0); the 2.x "v1" digest was
+        # f66de3ed6fb1e4f4b669b86d393fabe0 and must never be produced again.
         assert cache.scene_key_from_records(settings, scene_objects) == (
-            "f66de3ed6fb1e4f4b669b86d393fabe0")
+            "10083efd8d9d730770aa80fd15616533")
         assert cache.source_signature_from_records(source_records) == (
             "a096363f31671213e0e1b0720033059b3e3cae8d1257c81cbd554ad5498eb217")
     finally:

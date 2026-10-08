@@ -87,3 +87,36 @@ Depends on: nothing. Must land before narrow band and transfer modes (they add p
 - GUI gate hash unchanged when cache v3 lands alone (the payload adds arrays; the demo
   artifact hash covers the simulation outputs, not the manifest; confirm which files the
   hash covers in `tools/run_production_gate.py` before claiming this).
+
+## Corrections found in implementation
+Added by lane B after implementing this spec. The text above is left as written.
+
+- Resume does a forward scan, not a backward walk: `cache_schema.first_changed_source_frame`
+  stamps each committed frame in order and returns the first that differs.
+- `ResumeDecision` has no `reason=` field. It is `ResumeDecision(allowed, resume_frame, code,
+  message, first_changed_frame=None)`. The refusal is `code == "SOURCE_ANIMATION_CHANGED"`.
+- Sparse SDF arrays: `liquid_sdf_sparse` is float32 `(N, 512)`, `liquid_sdf_leaf_coords` is
+  int32 `(N, 3)`, and `liquid_sdf_voxel_size` is a float32 scalar (0.0 when disabled).
+- `transfer_mode` and `particle_affine` are not written by lane B (they belong to lane G).
+  The manifest records `transfer_mode="FLIP"` until then. `narrow_band` is
+  `{"enabled": False, "band_voxels": 0.0}` until lane H fills it.
+- The frame writer is renamed `write_frame_v3_atomic`; the v2 name is gone. Callers outside
+  lane B that still use the old name or its keyword arguments must be updated.
+- `source_frame_stamp` is stored in every frame NPZ as well as the manifest, and the reader
+  checks the two agree.
+- There is no per-(object, frame) stamp memo. The resume scan stamps each frame once and the
+  bake stamps each frame once, so a memo had nothing to save.
+- The stamp covers `matrix_world` and geometry only. It excludes `properties`, `name_full`,
+  `library` and `role`, and does not depend on object order.
+- Resume signatures (scene key, settings, static source signature) are compared against
+  `manifest.frame_start`, not the frame the playhead is on. A change to a source at
+  `frame_start` itself surfaces as a signature mismatch (restart), not
+  `SOURCE_ANIMATION_CHANGED`.
+- `CacheManifestV2` stays as an alias of `CacheManifestV3` so older importers keep working.
+- Gate hash claim, checked: `analysis_report.json` is built by `tools/demos/analyze_demos.py`
+  from `artifacts/demo_cache/<scene>/frame_NNNN.npz` and `series.json`, which
+  `tools/demos/build_demo_scenes.py: run_scene` writes directly with `np.savez_compressed`
+  after `bpy.ops.fluidsim.step`. That path does not go through `io.cache`, the cache
+  manifest, stamps or checkpoints, so cache-v3 alone does not change it. The gate manifest
+  also hashes `artifacts/performance_budget/summary.json`. This was established by reading
+  the code; the GUI gate was not run.

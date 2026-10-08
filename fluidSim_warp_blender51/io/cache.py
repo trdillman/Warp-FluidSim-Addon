@@ -3,6 +3,11 @@
 The primary workflow is interactive viewport simulation; caching exists so
 users can optionally record a run to disk and reload it later. Frames are
 stored as compressed .npz files.
+
+Format 3 (FluidSim 3.0): every frame also records a stamp of every source and
+collider at that frame (``source_frame_stamp``) and carries the sparse
+``liquid_sdf_*`` arrays, which are empty until the narrow band is enabled. A
+2.x cache is refused, not read or migrated.
 """
 
 from __future__ import annotations
@@ -31,17 +36,27 @@ from ..sim.attributes import (
     validate_attribute_values,
 )
 from ..sim.whitewater_types import validate_type_values
+from .cache_schema import (
+    LEAF_DIM,
+    LEGACY_2X_CACHE_MESSAGE,
+    LEGACY_2X_FORMAT_VERSION,
+    LegacyCacheFormatError,
+)
 
-CACHE_FORMAT_VERSION = 2
-# Markers of a cache written by FluidSim 1.0 (format 1). 2.0 recognizes them
-# only to refuse the directory with a clear message; it reads format 2 only.
+CACHE_FORMAT_VERSION = 3
+# Markers of a cache written by FluidSim 1.0 (format 1). They are recognized
+# only to refuse the directory with a clear message. A 2.x directory (manifest
+# format 2) is recognized the same way and refused with LEGACY_2X_CACHE_MESSAGE;
+# only format 3 is read.
 LEGACY_SEQUENCE_METADATA = "fluidsim_sequence.json"
 LEGACY_FRAME_GLOB = "fluidsim_*.npz"
 LEGACY_CACHE_MESSAGE = (
     "This cache was written by FluidSim 1.0, which 2.0 cannot read. "
     "Free the cache and bake again.")
 
-SCENE_KEY_VERSION = "v1"
+# Folded into every scene key so that a key computed by 2.x ("v1") can never
+# equal one computed by 3.0, whatever the settings and sources are.
+SCENE_KEY_VERSION = "v2"
 # Settings that say where the solve runs, not what it computes: a cache baked
 # on cuda:0 replays correctly on cuda:1.
 _SCENE_KEY_IGNORED_SETTINGS = frozenset({
@@ -119,13 +134,45 @@ def source_signature_from_records(source_records) -> str:
     return h.hexdigest()
 
 
+def source_frame_stamp_from_records(source_records) -> str:
+    """Hash every source's identity, world matrix and geometry at one frame.
+
+    Unlike ``source_signature_from_records`` (taken once, at bake start, and
+    including settings-like ``properties``), the stamp is evaluated at a frame
+    and covers only what animation can change. ``properties``, display names,
+    library and role are excluded on purpose: they are static, and a rename
+    must not look like moved animation. The result does not depend on record
+    order.
+    """
+    parts = []
+    for record in source_records:
+        h = hashlib.sha256()
+        _digest(h, record["matrix_world"])
+        geometry = record["geometry"]
+        if geometry["kind"] == "MESH":
+            h.update(f"verts={geometry['vertex_count']}|".encode("utf-8"))
+            h.update(geometry["vertex_bytes"])
+            h.update(f"polys={geometry['polygon_count']}|".encode("utf-8"))
+        else:
+            h.update(
+                f"type={geometry['kind']}|points={geometry['point_count']}|".encode(
+                    "utf-8"))
+        parts.append((str(record["identity"]), h.hexdigest()))
+    outer = hashlib.sha256()
+    outer.update(b"fluidsim-source-frame-stamp-v1|")
+    for identity, digest in sorted(parts):
+        outer.update(f"{identity}|{digest}|".encode("utf-8"))
+    return outer.hexdigest()
+
+
 def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
-    """Return the cache-v2 identity bundle from adapter-produced records."""
+    """Return the cache identity bundle from adapter-produced records."""
     settings_signature = settings_record(settings)["signature"]
     source_signature = source_signature_from_records(source_records)
     digest = hashlib.sha256()
     digest.update(
-        f"settings={settings_signature}|sources={source_signature}".encode("utf-8")
+        f"scene-key={SCENE_KEY_VERSION}|settings={settings_signature}|"
+        f"sources={source_signature}".encode("utf-8")
     )
     return {
         "scene_key": digest.hexdigest(),
@@ -284,8 +331,72 @@ def validate_optional_attributes(
     return inventory
 
 
-def _frame_payload(frame, scene_key_value: str = ""):
-    """Validate and encode one materialized cache-frame payload."""
+LIQUID_SDF_KEYS = (
+    "liquid_sdf_sparse", "liquid_sdf_leaf_coords", "liquid_sdf_voxel_size")
+
+
+def empty_liquid_sdf() -> dict:
+    """The ``liquid_sdf_*`` arrays of a frame baked without a narrow band."""
+    return {
+        "liquid_sdf_sparse": np.zeros((0, LEAF_DIM ** 3), dtype=np.float32),
+        "liquid_sdf_leaf_coords": np.zeros((0, 3), dtype=np.int32),
+        "liquid_sdf_voxel_size": np.array(0.0, dtype=np.float32),
+    }
+
+
+def validate_liquid_sdf(payload, *, enabled: bool) -> None:
+    """Check the sparse liquid SDF against the manifest's narrow-band switch.
+
+    Enabled: at least one 8^3 leaf, a positive voxel size and finite values.
+    Disabled: all three arrays empty and the voxel size 0. Anything else is a
+    cache that disagrees with its own manifest.
+    """
+    missing = [name for name in LIQUID_SDF_KEYS if name not in payload]
+    if missing:
+        raise ValueError(f"cache frame is missing liquid_sdf arrays {missing}")
+    sparse = np.asarray(payload["liquid_sdf_sparse"])
+    coords = np.asarray(payload["liquid_sdf_leaf_coords"])
+    voxel = np.asarray(payload["liquid_sdf_voxel_size"])
+    leaf_volume = LEAF_DIM ** 3
+    if (sparse.ndim != 2 or sparse.shape[1] != leaf_volume
+            or sparse.dtype != np.float32):
+        raise ValueError(
+            f"liquid_sdf_sparse must be float32 with shape (N, {leaf_volume}); "
+            f"got {sparse.dtype} {tuple(sparse.shape)}")
+    if coords.ndim != 2 or coords.shape[1] != 3 or coords.dtype != np.int32:
+        raise ValueError(
+            "liquid_sdf_leaf_coords must be int32 with shape (N, 3); "
+            f"got {coords.dtype} {tuple(coords.shape)}")
+    if sparse.shape[0] != coords.shape[0]:
+        raise ValueError(
+            f"liquid_sdf leaf count mismatch: {sparse.shape[0]} sparse leaves "
+            f"but {coords.shape[0]} leaf coordinates")
+    if voxel.ndim != 0 or voxel.dtype.kind != "f":
+        raise ValueError("liquid_sdf_voxel_size must be a float scalar")
+    leaves = int(sparse.shape[0])
+    size = float(voxel)
+    if enabled:
+        if leaves < 1:
+            raise ValueError(
+                "liquid_sdf arrays are empty but the narrow band is enabled")
+        if not math.isfinite(size) or size <= 0.0:
+            raise ValueError("liquid_sdf_voxel_size must be > 0 and finite")
+        if not np.all(np.isfinite(sparse)):
+            raise ValueError("liquid_sdf_sparse contains non-finite values")
+    elif leaves or size != 0.0:
+        raise ValueError(
+            "liquid_sdf arrays must be empty (voxel size 0) when the narrow "
+            "band is disabled")
+
+
+def _frame_payload(frame, scene_key_value: str = "", *, liquid_sdf=None):
+    """Validate and encode one materialized cache-frame payload.
+
+    ``liquid_sdf`` is the sparse narrow-band SDF (the three ``liquid_sdf_*``
+    arrays); None means the frame was baked without a narrow band.
+    """
+    sdf = empty_liquid_sdf() if liquid_sdf is None else {
+        name: liquid_sdf[name] for name in LIQUID_SDF_KEYS}
     payload = {
         "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
         "settings_signature": np.array(frame.settings_signature),
@@ -329,6 +440,7 @@ def _frame_payload(frame, scene_key_value: str = ""):
             sort_keys=True, separators=(",", ":"))),
         "surface_attribute_transfer_method": np.array(
             SURFACE_TRANSFER_METHOD),
+        **sdf,
     }
     for output_kind, attributes in frame.output_attributes.items():
         for key, values in attributes.items():
@@ -414,28 +526,32 @@ def resolve_frame_range(
 
 
 def read_sequence_metadata(base_dir: str) -> dict | None:
-    # Cache-v2 keeps sequence metadata in its strict manifest. Present a small
-    # view for playback/UI callers while preserving manifest-authoritative
-    # frame discovery. Any other directory has no sequence metadata.
+    # The strict manifest holds the sequence metadata. Present a small view for
+    # playback/UI callers while preserving manifest-authoritative frame
+    # discovery. A 2.x manifest raises LegacyCacheFormatError (load_manifest
+    # refuses it); any other directory has no sequence metadata.
     from .cache_schema import load_manifest, manifest_path
 
-    v2 = load_manifest(manifest_path(base_dir))
-    if v2 is not None:
+    manifest = load_manifest(manifest_path(base_dir))
+    if manifest is not None:
         return {
-            "format_version": 2,
-            "frame_start": v2.frame_start,
-            "frame_end": v2.frame_end,
-            "frame_count": len(v2.frames),
+            "format_version": CACHE_FORMAT_VERSION,
+            "frame_start": manifest.frame_start,
+            "frame_end": manifest.frame_end,
+            "frame_count": len(manifest.frames),
             "source": "production_bake",
-            "scene_key": v2.scene_key,
-            "settings_signature": v2.settings_signature,
-            "source_signature": v2.source_signature,
-            "last_committed_frame": v2.last_committed_frame,
+            "scene_key": manifest.scene_key,
+            "settings_signature": manifest.settings_signature,
+            "source_signature": manifest.source_signature,
+            "last_committed_frame": manifest.last_committed_frame,
+            "transfer_mode": manifest.transfer_mode,
+            "narrow_band": dict(manifest.narrow_band),
+            "grid_spec": dict(manifest.grid_spec),
         }
     return None
 
 
-def _v2_frame_path(base_dir: str | os.PathLike[str], frame: int) -> Path:
+def _frame_path(base_dir: str | os.PathLike[str], frame: int) -> Path:
     return Path(base_dir) / "frames" / f"frame_{int(frame):06d}.npz"
 
 
@@ -475,20 +591,31 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
         raise
 
 
-def write_frame_v2_atomic(
+def write_frame_v3_atomic(
         base_dir: str | os.PathLike[str], frame_payload, frame: int, *,
         scene_key_value: str, settings_signature: str,
-        source_signature: str, effect_signature: str = "",
+        source_signature: str, source_frame_stamp: str,
+        effect_signature: str = "",
         effect_inventory=(), simulation_time: float = 0.0,
+        liquid_sdf=None, narrow_band_enabled: bool = False,
         compressed: bool = False) -> tuple[Path, str, int]:
-    """Write a strict cache-v2 frame before its manifest transaction commits."""
+    """Write a strict cache-v3 frame before its manifest transaction commits.
+
+    ``source_frame_stamp`` is required: it is stored in the frame and in the
+    manifest entry, and a reader rejects a frame whose two copies differ.
+    """
+    from .cache_schema import _require_sha256
+
     frame = int(frame)
     if frame_payload.settings_signature != str(settings_signature):
         raise ValueError(
             "cache-frame settings signature does not match sequence metadata"
         )
-    payload = _frame_payload(frame_payload, scene_key_value)
+    _require_sha256(source_frame_stamp, "source_frame_stamp")
+    payload = _frame_payload(frame_payload, scene_key_value, liquid_sdf=liquid_sdf)
+    validate_liquid_sdf(payload, enabled=bool(narrow_band_enabled))
     payload.update({
+        "source_frame_stamp": np.array(str(source_frame_stamp)),
         "frame": np.array(frame, dtype=np.int32),
         "solver_frame": np.array(frame_payload.frame, dtype=np.int32),
         "simulation_time": np.array(float(simulation_time), dtype=np.float64),
@@ -503,12 +630,12 @@ def write_frame_v2_atomic(
     if frame_payload.frame != frame:
         raise ValueError(
             f"solver frame {frame_payload.frame} does not match cache frame {frame}")
-    path = _v2_frame_path(base_dir, frame)
+    path = _frame_path(base_dir, frame)
     digest, size = _write_npz_atomic(path, payload, compressed=compressed)
     return path, digest, size
 
 
-def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
+def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
     from .cache_schema import load_manifest, manifest_path, verify_artifact
 
     manifest = load_manifest(manifest_path(base_dir))
@@ -528,31 +655,34 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
     try:
         loaded = np.load(path, allow_pickle=False)
     except (EOFError, OSError, ValueError, pickle.UnpicklingError, zipfile.BadZipFile) as exc:
-        raise ValueError(f"cache-v2 frame {frame} is corrupt: {exc}") from exc
+        raise ValueError(f"cache-v3 frame {frame} is corrupt: {exc}") from exc
     with loaded as data:
         required = {
             "format_version", "frame", "solver_frame", "simulation_time",
             "settings_signature", "source_signature", "scene_key",
+            "source_frame_stamp", *LIQUID_SDF_KEYS,
         }
         missing = required - set(data.files)
         if missing:
-            raise ValueError(f"cache-v2 frame {frame} is missing {sorted(missing)}")
+            raise ValueError(f"cache-v3 frame {frame} is missing {sorted(missing)}")
         if int(np.asarray(data["format_version"]).item()) != CACHE_FORMAT_VERSION:
-            raise ValueError(f"cache-v2 frame {frame} has the wrong format version")
+            raise ValueError(f"cache-v3 frame {frame} has the wrong format version")
         if int(np.asarray(data["frame"]).item()) != int(frame):
-            raise ValueError(f"cache-v2 frame {frame} has inconsistent frame metadata")
+            raise ValueError(f"cache-v3 frame {frame} has inconsistent frame metadata")
         if int(np.asarray(data["solver_frame"]).item()) != entry.solver_frame:
-            raise ValueError(f"cache-v2 frame {frame} solver-frame mismatch")
+            raise ValueError(f"cache-v3 frame {frame} solver-frame mismatch")
         if str(np.asarray(data["settings_signature"]).item()) != manifest.settings_signature:
-            raise ValueError(f"cache-v2 frame {frame} settings-signature mismatch")
+            raise ValueError(f"cache-v3 frame {frame} settings-signature mismatch")
         if str(np.asarray(data["source_signature"]).item()) != manifest.source_signature:
-            raise ValueError(f"cache-v2 frame {frame} source-signature mismatch")
+            raise ValueError(f"cache-v3 frame {frame} source-signature mismatch")
+        if str(np.asarray(data["source_frame_stamp"]).item()) != entry.source_frame_stamp:
+            raise ValueError(f"cache-v3 frame {frame} source_frame_stamp mismatch")
         frame_effect_signature = (
             str(np.asarray(data["effect_signature"]).item())
             if "effect_signature" in data.files else ""
         )
         if frame_effect_signature != manifest.effect_signature:
-            raise ValueError(f"cache-v2 frame {frame} effect-signature mismatch")
+            raise ValueError(f"cache-v3 frame {frame} effect-signature mismatch")
         try:
             frame_effect_inventory = (
                 json.loads(str(np.asarray(data["effect_inventory_json"]).item()))
@@ -560,32 +690,43 @@ def _read_v2_frame(base_dir: str, frame: int) -> dict | None:
             )
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError(
-                f"cache-v2 frame {frame} effect inventory is invalid: {exc}") from exc
+                f"cache-v3 frame {frame} effect inventory is invalid: {exc}") from exc
         if frame_effect_inventory != [dict(item) for item in manifest.effect_inventory]:
-            raise ValueError(f"cache-v2 frame {frame} effect-inventory mismatch")
+            raise ValueError(f"cache-v3 frame {frame} effect-inventory mismatch")
         result = {name: data[name] for name in data.files}
-    authoritative_payload_counts(result)
+    counts = authoritative_payload_counts(result)
+    validate_liquid_sdf(result, enabled=bool(manifest.narrow_band["enabled"]))
     validate_optional_attributes(result)
+    if counts["particles"]["positions"] != entry.particle_count:
+        raise ValueError(
+            f"cache-v3 frame {frame} particle_count mismatch: manifest "
+            f"{entry.particle_count}, payload {counts['particles']['positions']}")
+    if counts["whitewater"]["whitewater"] != entry.whitewater_count:
+        raise ValueError(
+            f"cache-v3 frame {frame} whitewater_count mismatch: manifest "
+            f"{entry.whitewater_count}, payload {counts['whitewater']['whitewater']}")
     return result
 
 
 def read_frame(base_dir: str, frame: int) -> dict | None:
-    """Read one committed cache-v2 frame; None when no cache holds it.
+    """Read one committed cache-v3 frame; None when no cache holds it.
 
-    A FluidSim 1.0 cache raises rather than reading as empty, so playback
-    tells the user to re-bake instead of reporting missing frames.
+    A FluidSim 1.0 or 2.x cache raises rather than reading as empty, so
+    playback tells the user to re-bake instead of reporting missing frames.
     """
     version = detect_cache_format(base_dir)
     if version == 1:
         raise ValueError(f"{LEGACY_CACHE_MESSAGE} ({base_dir})")
-    if version == 2:
-        return _read_v2_frame(base_dir, frame)
+    if version == LEGACY_2X_FORMAT_VERSION:
+        raise LegacyCacheFormatError()
+    if version == CACHE_FORMAT_VERSION:
+        return _read_v3_frame(base_dir, frame)
     return None
 
 
 def available_frames(base_dir: str) -> list:
-    """Committed cache-v2 frames; empty for any other directory."""
-    if detect_cache_format(base_dir) != 2:
+    """Committed cache-v3 frames; empty for any other directory (2.x too)."""
+    if detect_cache_format(base_dir) != CACHE_FORMAT_VERSION:
         return []
     from .cache_schema import load_manifest, manifest_path
 
@@ -594,14 +735,24 @@ def available_frames(base_dir: str) -> list:
 
 
 def detect_cache_format(base_dir: str | os.PathLike[str]) -> int:
-    """Return 2 for a cache-v2 directory, 1 for a FluidSim 1.0 cache, else 0.
+    """Return 3 for a current cache, 2 for a 2.x cache, 1 for a 1.0 cache, else 0.
 
-    Format 1 is detected only so callers can refuse it with
-    ``LEGACY_CACHE_MESSAGE``; nothing reads it.
+    Formats 1 and 2 are detected only so callers can refuse them with
+    ``LEGACY_CACHE_MESSAGE`` / ``LEGACY_2X_CACHE_MESSAGE``; nothing reads them.
+    A manifest that cannot be parsed counts as current, so ``load_manifest``
+    reports the precise problem rather than this function guessing.
     """
     base = Path(base_dir)
-    if (base / "fluidsim_cache.json").is_file():
-        return 2
+    manifest_file = base / "fluidsim_cache.json"
+    if manifest_file.is_file():
+        try:
+            value = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return CACHE_FORMAT_VERSION
+        if (isinstance(value, dict)
+                and value.get("format_version") == LEGACY_2X_FORMAT_VERSION):
+            return LEGACY_2X_FORMAT_VERSION
+        return CACHE_FORMAT_VERSION
     if (base / LEGACY_SEQUENCE_METADATA).is_file() or any(
             base.glob(LEGACY_FRAME_GLOB)):
         return 1

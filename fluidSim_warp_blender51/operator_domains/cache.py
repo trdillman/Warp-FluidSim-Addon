@@ -46,6 +46,8 @@ def _update_bake_rna(scene, controller) -> bool:
 class _FLUIDSIM_OT_production_bake_modal:
     resume_existing = False
     restart_existing = False
+    rebake = False
+    rebake_frame = 0
     _timer = None
     _run = None
     _window_manager = None
@@ -70,6 +72,7 @@ class _FLUIDSIM_OT_production_bake_modal:
                 context.scene,
                 resume=self.resume_existing,
                 restart=bool(self.restart_existing),
+                rebake_from=int(self.rebake_frame) if self.rebake else None,
             )
             self._run = run
             _update_bake_rna(run.scene, run.controller)
@@ -220,12 +223,40 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
 
 
 class FLUIDSIM_OT_bake_resume(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
-    """Resume from the last verified committed checkpoint"""
+    """Resume from the last verified committed checkpoint, or re-bake from a frame"""
 
     bl_idname = "fluidsim.bake_resume"
     bl_label = "Resume Production Bake"
     bl_options = {"REGISTER"}
     resume_existing = True
+    # "Re-bake from frame N": keep the frames before N, replace the rest. Offered
+    # when Resume was refused because a source or collider animation changed.
+    rebake: BoolProperty(
+        name="Re-bake From Frame",
+        default=False,
+        options={"SKIP_SAVE"},
+        description="Keep the baked frames before the chosen frame and bake from it onward",
+    )
+    rebake_frame: IntProperty(
+        name="Frame",
+        default=0,
+        min=-1048574,
+        max=1048574,
+        options={"SKIP_SAVE"},
+        description="First frame to bake again",
+    )
+
+    def invoke(self, context, _event):
+        if not self.rebake:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text=f"Re-bake From Frame {int(self.rebake_frame)}?", icon="ERROR")
+        layout.label(
+            text=f"Frames {int(self.rebake_frame)} onward in this cache are replaced.")
+        layout.label(text="Earlier frames are kept.", icon="INFO")
 
 
 class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):

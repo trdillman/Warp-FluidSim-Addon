@@ -1,8 +1,13 @@
-"""Strict cache-v2 manifest schema and durable atomic JSON transactions.
+"""Strict cache-v3 manifest schema and durable atomic JSON transactions.
 
 The manifest is the sole authority for playback and resume. Frame/checkpoint
 files that exist without a committed manifest entry are orphans and must never
 be treated as complete simulation state.
+
+Format 3 (FluidSim 3.0) adds, as required fields, the per-frame source stamp
+and particle counts plus the grid, transfer-mode, narrow-band, platform and
+source-schema facts of the bake. A format-2 manifest is refused with
+``LEGACY_2X_CACHE_MESSAGE``; nothing is defaulted or migrated.
 """
 
 from __future__ import annotations
@@ -11,17 +16,33 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
-FORMAT_VERSION = 2
+from .checkpoint import CHECKPOINT_FORMAT_VERSION
+
+FORMAT_VERSION = 3
+LEGACY_2X_FORMAT_VERSION = 2
+LEGACY_2X_CACHE_MESSAGE = (
+    "This cache was baked by FluidSim 2.x and cannot be played by 3.0. "
+    "Re-bake, or open it in 2.1.1.")
+SUPPORTED_TRANSFER_MODES = ("FLIP", "APIC")
+LEAF_DIM = 8
 MANIFEST_FILENAME = "fluidsim_cache.json"
 FRAME_DIRECTORY = "frames"
 CHECKPOINT_DIRECTORY = "checkpoints"
 LOG_DIRECTORY = "logs"
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class LegacyCacheFormatError(ValueError):
+    """A FluidSim 2.x cache directory: refused, never read or migrated."""
+
+    def __init__(self, message: str = LEGACY_2X_CACHE_MESSAGE):
+        super().__init__(message)
 
 
 def utc_now() -> str:
@@ -101,6 +122,79 @@ def _normalize_effect_inventory(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(result)
 
 
+def _require_exact_keys(value: Any, name: str, keys: tuple[str, ...]) -> Mapping:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    missing = set(keys) - set(value)
+    unknown = set(value) - set(keys)
+    if missing or unknown:
+        raise ValueError(
+            f"{name} keys are invalid; missing={sorted(missing)}, "
+            f"unknown={sorted(unknown)}")
+    return value
+
+
+def _require_bool(value: Any, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
+def _normalize_grid_spec(value: Any) -> dict[str, Any]:
+    """Canonical ``grid_spec``: the grid the bake resolved, as plain JSON."""
+    keys = ("resolution_divisions", "voxel_size", "domain_size", "leaf_dim")
+    value = _require_exact_keys(value, "grid_spec", keys)
+    divisions = _require_int(
+        value["resolution_divisions"], "grid_spec.resolution_divisions", minimum=1)
+    voxel_size = _require_finite_float(value["voxel_size"], "grid_spec.voxel_size")
+    if voxel_size <= 0.0:
+        raise ValueError("grid_spec.voxel_size must be > 0")
+    size = value["domain_size"]
+    if not isinstance(size, (list, tuple)) or len(size) != 3:
+        raise ValueError("grid_spec.domain_size must be three numbers")
+    domain_size = [
+        _require_finite_float(item, "grid_spec.domain_size") for item in size]
+    if any(item <= 0.0 for item in domain_size):
+        raise ValueError("grid_spec.domain_size must be > 0 on every axis")
+    leaf_dim = _require_int(value["leaf_dim"], "grid_spec.leaf_dim")
+    if leaf_dim != LEAF_DIM:
+        raise ValueError(f"grid_spec.leaf_dim must be {LEAF_DIM}")
+    return {
+        "resolution_divisions": divisions,
+        "voxel_size": voxel_size,
+        "domain_size": domain_size,
+        "leaf_dim": leaf_dim,
+    }
+
+
+def _normalize_narrow_band(value: Any) -> dict[str, Any]:
+    value = _require_exact_keys(value, "narrow_band", ("enabled", "band_voxels"))
+    enabled = _require_bool(value["enabled"], "narrow_band.enabled")
+    band_voxels = _require_finite_float(value["band_voxels"], "narrow_band.band_voxels")
+    if band_voxels < 0.0 or (enabled and band_voxels <= 0.0):
+        raise ValueError(
+            "narrow_band.band_voxels must be > 0 when the narrow band is enabled "
+            "and >= 0 otherwise")
+    return {"enabled": enabled, "band_voxels": band_voxels}
+
+
+def _normalize_platform(value: Any) -> dict[str, str]:
+    """Informational only: never part of any signature (bitwise identity is
+    per GPU/driver, and a cache must stay playable on another machine)."""
+    keys = ("os", "gpu_name", "driver", "warp")
+    value = _require_exact_keys(value, "platform", keys)
+    return {
+        name: _require_nonempty_string(value[name], f"platform.{name}")
+        for name in keys}
+
+
+def _require_transfer_mode(value: Any) -> str:
+    if value not in SUPPORTED_TRANSFER_MODES:
+        raise ValueError(
+            f"transfer_mode must be one of {', '.join(SUPPORTED_TRANSFER_MODES)}")
+    return value
+
+
 @dataclass(frozen=True)
 class FrameEntry:
     """One fully committed frame/checkpoint pair."""
@@ -117,6 +211,12 @@ class FrameEntry:
     simulation_time: float
     settings_signature: str
     source_signature: str
+    # Hash of every source/collider's identity, world matrix and evaluated
+    # geometry *at this frame*; the static source_signature above is taken once
+    # at bake start and cannot see animation. Resume compares these.
+    source_frame_stamp: str
+    whitewater_count: int
+    particle_count: int
 
     def validate(self, *, key: int | None = None) -> "FrameEntry":
         _require_int(self.frame, "frame")
@@ -139,6 +239,9 @@ class FrameEntry:
         _require_finite_float(self.simulation_time, "simulation_time")
         _require_nonempty_string(self.settings_signature, "settings_signature")
         _require_nonempty_string(self.source_signature, "source_signature")
+        _require_sha256(self.source_frame_stamp, "source_frame_stamp")
+        _require_int(self.whitewater_count, "whitewater_count", minimum=0)
+        _require_int(self.particle_count, "particle_count", minimum=0)
         return self
 
     @classmethod
@@ -158,8 +261,8 @@ class FrameEntry:
 
 
 @dataclass
-class CacheManifestV2:
-    """Strict manifest-authoritative cache-v2 state."""
+class CacheManifestV3:
+    """Strict manifest-authoritative cache-v3 state."""
 
     format_version: int
     checkpoint_format_version: int
@@ -172,6 +275,12 @@ class CacheManifestV2:
     checkpoint_interval: int
     created_at: str
     updated_at: str
+    # Required, no defaults: an unstamped manifest must not read as valid.
+    source_schema_version: int
+    transfer_mode: str
+    grid_spec: dict[str, Any]
+    narrow_band: dict[str, Any]
+    platform: dict[str, str]
     effect_signature: str = ""
     effect_inventory: tuple[dict[str, Any], ...] = ()
     frames: dict[int, FrameEntry] = field(default_factory=dict)
@@ -186,12 +295,17 @@ class CacheManifestV2:
         source_signature: str,
         frame_start: int,
         frame_end: int,
+        source_schema_version: int,
+        transfer_mode: str,
+        grid_spec: Mapping[str, Any],
+        narrow_band: Mapping[str, Any],
+        platform: Mapping[str, str],
         checkpoint_interval: int = 1,
-        checkpoint_format_version: int = 1,
+        checkpoint_format_version: int = CHECKPOINT_FORMAT_VERSION,
         effect_signature: str = "",
         effect_inventory: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
         timestamp: str | None = None,
-    ) -> "CacheManifestV2":
+    ) -> "CacheManifestV3":
         timestamp = timestamp or utc_now()
         manifest = cls(
             format_version=FORMAT_VERSION,
@@ -205,13 +319,18 @@ class CacheManifestV2:
             checkpoint_interval=checkpoint_interval,
             created_at=timestamp,
             updated_at=timestamp,
+            source_schema_version=source_schema_version,
+            transfer_mode=transfer_mode,
+            grid_spec=_normalize_grid_spec(grid_spec),
+            narrow_band=_normalize_narrow_band(narrow_band),
+            platform=_normalize_platform(platform),
             effect_signature=str(effect_signature),
             effect_inventory=_normalize_effect_inventory(effect_inventory),
             frames={},
         )
         return manifest.validate()
 
-    def validate(self) -> "CacheManifestV2":
+    def validate(self) -> "CacheManifestV3":
         if self.format_version != FORMAT_VERSION:
             raise ValueError(
                 f"unsupported cache format {self.format_version}; expected {FORMAT_VERSION}"
@@ -221,6 +340,15 @@ class CacheManifestV2:
             "checkpoint_format_version",
             minimum=1,
         )
+        if self.checkpoint_format_version != CHECKPOINT_FORMAT_VERSION:
+            raise ValueError(
+                f"checkpoint_format_version {self.checkpoint_format_version} cannot "
+                f"be read; expected {CHECKPOINT_FORMAT_VERSION}")
+        _require_int(self.source_schema_version, "source_schema_version", minimum=1)
+        _require_transfer_mode(self.transfer_mode)
+        _normalize_grid_spec(self.grid_spec)
+        _normalize_narrow_band(self.narrow_band)
+        _normalize_platform(self.platform)
         _require_nonempty_string(self.solver_version, "solver_version")
         _require_nonempty_string(self.scene_key, "scene_key")
         _require_nonempty_string(self.settings_signature, "settings_signature")
@@ -275,9 +403,29 @@ class CacheManifestV2:
     def last_committed_frame(self) -> int | None:
         return max(self.frames) if self.frames else None
 
+    def truncated_before(
+        self, frame: int, *, timestamp: str | None = None
+    ) -> "CacheManifestV3":
+        """Return a validated copy holding only the frames below ``frame``.
+
+        This is the manifest half of "Re-bake from frame N": the caller commits
+        the truncated manifest first, then deletes the stale frame/checkpoint
+        files, so a crash in between leaves only unreferenced orphans.
+        """
+        frame = _require_int(frame, "frame")
+        if frame < self.frame_start:
+            raise ValueError(
+                f"cannot truncate to frame {frame}, which is before the first "
+                f"frame {self.frame_start}")
+        kept = {key: entry for key, entry in self.frames.items() if key < frame}
+        if len(kept) == len(self.frames):
+            return self
+        return replace(
+            self, updated_at=timestamp or utc_now(), frames=kept).validate()
+
     def with_committed_frame(
         self, entry: FrameEntry, *, timestamp: str | None = None
-    ) -> "CacheManifestV2":
+    ) -> "CacheManifestV3":
         """Return a validated copy with exactly the next contiguous entry."""
         entry.validate()
         expected = (
@@ -308,9 +456,18 @@ class CacheManifestV2:
         return result
 
     @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "CacheManifestV2":
+    def from_dict(cls, value: Mapping[str, Any]) -> "CacheManifestV3":
         if not isinstance(value, Mapping):
             raise ValueError("cache manifest must be a JSON object")
+        # Decide on the version before the key check, so a 2.x manifest gets the
+        # re-bake message instead of a confusing "invalid cache manifest keys".
+        version = value.get("format_version")
+        if isinstance(version, int) and not isinstance(version, bool):
+            if version == LEGACY_2X_FORMAT_VERSION:
+                raise LegacyCacheFormatError()
+            if version != FORMAT_VERSION:
+                raise ValueError(
+                    f"unsupported cache format {version}; expected {FORMAT_VERSION}")
         expected = set(cls.__dataclass_fields__)
         optional = {"effect_signature", "effect_inventory"}
         actual = set(value)
@@ -341,7 +498,29 @@ class CacheManifestV2:
         kwargs["effect_inventory"] = _normalize_effect_inventory(
             value.get("effect_inventory", ())
         )
+        kwargs["grid_spec"] = _normalize_grid_spec(value["grid_spec"])
+        kwargs["narrow_band"] = _normalize_narrow_band(value["narrow_band"])
+        kwargs["platform"] = _normalize_platform(value["platform"])
         return cls(**kwargs, frames=frames).validate()
+
+
+# Importers written for 2.x still say CacheManifestV2; it is the same class.
+CacheManifestV2 = CacheManifestV3
+
+
+def first_changed_source_frame(
+    manifest: CacheManifestV3, current_stamp: Callable[[int], str]
+) -> int | None:
+    """Return the earliest committed frame whose source stamp no longer matches.
+
+    ``current_stamp(frame)`` must evaluate the scene at that frame. The scan is
+    forward and checks every committed frame: a keyframe that moved only in the
+    middle of the range is found even though the last frame still matches.
+    """
+    for frame in manifest.committed_frames:
+        if current_stamp(frame) != manifest.frames[frame].source_frame_stamp:
+            return frame
+    return None
 
 
 @dataclass(frozen=True)
@@ -350,13 +529,15 @@ class ResumeDecision:
     resume_frame: int | None
     code: str
     message: str
+    # Set with code SOURCE_ANIMATION_CHANGED: where "Re-bake from frame N" starts.
+    first_changed_frame: int | None = None
 
 
 def manifest_path(base_dir: Path | str) -> Path:
     return Path(base_dir) / MANIFEST_FILENAME
 
 
-def load_manifest(path: Path | str) -> CacheManifestV2 | None:
+def load_manifest(path: Path | str) -> CacheManifestV3 | None:
     path = Path(path)
     if not path.is_file():
         return None
@@ -364,7 +545,7 @@ def load_manifest(path: Path | str) -> CacheManifestV2 | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid cache manifest {path}: {exc}") from exc
-    return CacheManifestV2.from_dict(value)
+    return CacheManifestV3.from_dict(value)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -377,7 +558,7 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def write_manifest_atomic(path: Path | str, manifest: CacheManifestV2) -> None:
+def write_manifest_atomic(path: Path | str, manifest: CacheManifestV3) -> None:
     """Durably replace a manifest; no partially written JSON becomes visible."""
     path = Path(path)
     manifest.validate()
@@ -450,7 +631,7 @@ def verify_frame_entry(base_dir: Path | str, entry: FrameEntry) -> None:
 
 
 def verified_contiguous_frames(
-    base_dir: Path | str, manifest: CacheManifestV2
+    base_dir: Path | str, manifest: CacheManifestV3
 ) -> tuple[int, ...]:
     manifest.validate()
     verified: list[int] = []

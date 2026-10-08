@@ -198,7 +198,7 @@ def main():
         # payload was written.
         write_observations = []
         active_bake = ["first"]
-        original_cache_write = cache.write_frame_v2_atomic
+        original_cache_write = cache.write_frame_v3_atomic
 
         def observed_cache_write(base_dir, frame_payload, frame, **kwargs):
             solver_particles = len(frame_payload.positions)
@@ -237,7 +237,7 @@ def main():
             })
             return result
 
-        cache.write_frame_v2_atomic = observed_cache_write
+        cache.write_frame_v3_atomic = observed_cache_write
         check(
             "export cache sequence",
             bpy.ops.fluidsim.export_cache_sequence() == {"FINISHED"},
@@ -248,20 +248,29 @@ def main():
         output_publication.update_outputs = original_update_outputs
 
         metadata_path = os.path.join(cache_dir, "fluidsim_cache.json")
-        check("cache-v2 manifest exists", os.path.exists(metadata_path), metadata_path)
+        check("cache-v3 manifest exists", os.path.exists(metadata_path), metadata_path)
         if os.path.exists(metadata_path):
             with open(metadata_path, "r", encoding="utf-8") as handle:
                 metadata = json.load(handle)
             check(
-                "cache-v2 manifest range",
+                "cache-v3 manifest range",
                 (
-                    metadata.get("format_version") == 2
+                    metadata.get("format_version") == 3
                     and metadata.get("frame_start") == 1
                     and metadata.get("frame_end") == 3
                     and sorted(int(frame) for frame in metadata.get("frames", {}))
                     == [1, 2, 3]
                 ),
                 str(metadata),
+            )
+            stamps = [
+                metadata["frames"][str(frame)].get("source_frame_stamp", "")
+                for frame in (1, 2, 3)
+            ]
+            check(
+                "every committed frame records a source stamp",
+                all(len(stamp) == 64 for stamp in stamps),
+                str(stamps),
             )
 
         frame_paths = [
@@ -299,7 +308,7 @@ def main():
                 check(
                     f"frame {frame} snapshot payload",
                     (
-                        int(np.asarray(data["format_version"]).item()) == 2
+                        int(np.asarray(data["format_version"]).item()) == 3
                         and int(np.asarray(data["frame"]).item()) == frame
                         and int(np.asarray(data["solver_frame"]).item()) == frame
                         and len(positions) > 1_000
@@ -392,6 +401,8 @@ def main():
             "whitewater_status",
             "attribute_schema_version", "attribute_inventory_json",
             "surface_attribute_transfer_method",
+            "source_frame_stamp", "liquid_sdf_sparse", "liquid_sdf_leaf_coords",
+            "liquid_sdf_voxel_size",
         }
         schema_valid = bool(
             len(first_payload_schemas) == len(second_payload_schemas) == 3
@@ -509,7 +520,7 @@ def main():
             "production metadata independently records the sequential range",
             all(
                 (metadata or {}).get("source") == "production_bake"
-                and (metadata or {}).get("format_version") == 2
+                and (metadata or {}).get("format_version") == 3
                 and (metadata or {}).get("frame_start") == 1
                 and (metadata or {}).get("frame_end") == 3
                 and (metadata or {}).get("frame_count") == 3
@@ -565,7 +576,7 @@ def main():
         check("cache playback status", fs.status.startswith("Cache frame 3"), fs.status)
     finally:
         if original_cache_write is not None:
-            cache.write_frame_v2_atomic = original_cache_write
+            cache.write_frame_v3_atomic = original_cache_write
         if original_handle_frame_change is not None:
             playback.handle_frame_change = original_handle_frame_change
         if original_update_outputs is not None:
