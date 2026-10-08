@@ -12,7 +12,7 @@ against pure solver cost:
 - ``sync``: ``sync_scene_to_solver`` (sources + collider gather)
 - ``solve``: ``FluidSolver.step_frame``
 - ``view``: ``output_publication.update_outputs`` (readback + datablock update)
-- ``cache``: ``io.cache.write_frame_v2_atomic`` (only when ``--cache``)
+- ``cache``: ``io.cache.write_frame_v3_atomic`` (only when ``--cache``)
 
 Run:
     blender --background --python tools/profiling/profile_user_path.py -- \
@@ -1276,7 +1276,7 @@ def _prepare_profile_run(args, addon_utils, bmesh, bpy):
 
     import warp as wp
 
-    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.blender import cache_identity, output_publication
     from fluidSim_warp_blender51.io import cache as cache_io
 
     sess = scene_bridge.session()
@@ -1376,6 +1376,7 @@ def _prepare_profile_run(args, addon_utils, bmesh, bpy):
         "output_publication": output_publication,
         "scene_bridge": scene_bridge,
         "cache_io": cache_io,
+        "cache_identity": cache_identity,
         "CacheFramePayload": CacheFramePayload,
         "host_output_operation_counts": host_output_operation_counts,
         "surface_attribute_transfer_operation_counts": (
@@ -1409,6 +1410,7 @@ def _measure_profile_frames(args, bpy, run):
     sess = run["sess"]
     output_publication = run["output_publication"]
     cache_io = run["cache_io"]
+    cache_identity = run["cache_identity"]
     CacheFramePayload = run["CacheFramePayload"]
     rows = run["rows"]
     output_counts = run["output_counts"]
@@ -1425,6 +1427,19 @@ def _measure_profile_frames(args, bpy, run):
         dg = bpy.context.evaluated_depsgraph_get()
         scene_bridge.sync_scene_to_solver(scene, sess, dg)
         t1 = time.perf_counter()
+        source_frame_stamp = None
+        stamp_s = 0.0
+        if args.cache:
+            # A cache-v3 frame carries the stamp of the sources as evaluated at
+            # its frame, taken after frame_set and before the step exactly as a
+            # production bake does. Its time is a cache cost, so it is moved
+            # out of the sync/solve/view windows and added to cache_ms below.
+            ts = time.perf_counter()
+            source_frame_stamp = cache_identity.source_frame_stamp(
+                scene, dg, int(scene.frame_current))
+            stamp_s = time.perf_counter() - ts
+            t0 += stamp_s
+            t1 += stamp_s
         if solve_profiler is not None:
             solve_profiler.enable()
         stats = sess.solver.step_frame()
@@ -1447,16 +1462,18 @@ def _measure_profile_frames(args, bpy, run):
             tc = time.perf_counter()
             signature = cache_io.settings_record(sess.solver.settings)["signature"]
             # Frame file only, as a production bake writes it; no manifest.
-            cache_io.write_frame_v2_atomic(
+            cache_io.write_frame_v3_atomic(
                 bpy.path.abspath(scene.fluidsim.cache_path),
                 CacheFramePayload.capture(sess.solver, settings_signature=signature),
                 int(sess.solver.frame),
                 scene_key_value=sess.scene_key,
                 settings_signature=signature,
                 source_signature="",
+                source_frame_stamp=source_frame_stamp,
+                simulation_time=float(sess.solver.sim_time),
                 compressed=True,
             )
-            cache_ms = (time.perf_counter() - tc) * 1000.0
+            cache_ms = stamp_s * 1000.0 + (time.perf_counter() - tc) * 1000.0
         row = {
             "frame": f,
             "solver_frame": int(sess.solver.frame),
