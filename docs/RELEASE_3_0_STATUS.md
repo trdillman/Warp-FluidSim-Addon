@@ -11,6 +11,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 base: master + merge of release/2.1.0 | `94c79eb` | 2104 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | `archive/st-flip-final` tag (local) | `94c79eb` | | |
 | release/3.0 after lane D merge | `6ce6b33` | 2053 passed, 3 skipped (on D head `34528aa`; merge adds docs only) | `2cb4f781…3a73` (headless, equals master) |
+| release/3.0 after lanes E and B merge | `57c6540` | 2271 passed, 3 skipped (= 2053 + E 132 + B 86) | `2cb4f781…3a73` (headless, equals master) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -61,8 +62,9 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | Lane | Branch | Worktree | Head | Tests | Blocker | Next action |
 |---|---|---|---|---|---|---|
 | D st-flip-removal | `3.0/lane-d-stflip-removal` | `C:\Users\Tyler\wt\r30-d` | `34528aa` | 2053 passed, 3 skipped | | **merged** as `6ce6b33`; demo hash unchanged |
-| B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | base `94c79eb` | | | dispatched; rebases onto D at merge |
-| E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | base `94c79eb` | | | dispatched; rebases onto D at merge |
+| E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | `cd57eb1` | 2236 passed, 3 skipped | | **merged** as `dfb2d91` |
+| B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | `c391234` | 2190 passed, 3 skipped | | **merged** as `57c6540` |
+| B2 cache-v3 consumers | `3.0/lane-b2-cache-consumers` | `C:\Users\Tyler\wt\r30-b2` | base `57c6540` | | | dispatched (2.x refusal in cache manager, bake action, CLI; profiler writer; gate wiring; MANIFEST rows) |
 | A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | base `6ce6b33` | | | dispatched |
 | C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | base `6ce6b33` | | | dispatched, stop 1 (tests); orchestrator reviews before kernels |
 
@@ -75,6 +77,42 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 - Regenerate the ownership map after all Wave 0 merges and re-check
   `EXPECTED_FIELD_COUNT = 212`.
 - CHANGELOG entry for the ST-FLIP removal (written by the orchestrator at alpha.1).
+
+### Open items from lanes E and B
+
+- **Blender runs owed at the alpha.1 gate.**
+  - The GUI acceptance's new `gpu.offscreen` viewport check has never drawn on a real
+    GPU.
+  - The five Phase 2 source acceptance lanes have not run under the new `setup()` flow.
+  - B's acceptance scripts ran at `fc99915`, not on the merged tree.
+- **Unregister loops lane E did not own.**
+  - `blender/menus.py:107-111` has no guard at all.
+  - These are guarded only for `(RuntimeError, ValueError)`:
+    - `blender/effects.py:1130`, `blender/demo_gallery.py:386`, `preferences.py:194`,
+      `blender/effect_ui.py:962`, `blender/effect_workspace.py:930`;
+    - `properties.py:1657`, `ui_header.py:187`, `ui_physics.py:446`, `ui_stages.py:406`,
+      `ui_scene.py:1361`, `ui_object.py:336`.
+  - Candidate for a hygiene follow-up after lane A merges.
+- **REVIEW-027.** E read "sourcing count mismatch" as the direct-injection transaction
+  count checks plus the packet velocity/position check. The orchestrator accepts that
+  reading; no code has a check by that exact name.
+- **Order-dependent test, pre-existing.**
+  `tests/solver/test_pressure_st_and_graph_cache.py::test_native_pcg_module_unloads_on_pressure_solver_release`
+  fails in some hand-picked file lists. It passes in `tests/solver` and in the full suite.
+- **Cache v3 caveats from B.**
+  - Resume scans stamps forward with `frame_set` per frame, so its cost grows with the
+    number of baked frames.
+  - The stamp covers `matrix_world` and geometry. No test covers rigid-body-driven
+    colliders.
+- **Stale "cache-v2" text for lane K (docs).** `user_guide.md` 9, 23, 97, 363, 392, 484,
+  579, 583, 638, 757; `technical_report.md` 5, 48, 50, 255, 321, 506, 517;
+  `custom_effects.md` 91, 98; `resources/examples/README.md` 20. The owner's uncommitted
+  2.1.1 bump also touches the first lines of `user_guide.md` and `technical_report.md`.
+- **Lane A strings, edited by the orchestrator after A merges.**
+  - `properties.py:838`: relabel "Resumable Cache v2" and keep the identifier `V2`.
+  - `properties.py:852`.
+  - `tools/release/validate_examples_blender.py:118`, `validate_phase3_blender.py:318`,
+    `generate_examples.py:211`.
 
 Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. Each is
 `docs/specs/3.0/WORKER_BRIEF_TEMPLATE.md` filled in, with a shared environment section.
