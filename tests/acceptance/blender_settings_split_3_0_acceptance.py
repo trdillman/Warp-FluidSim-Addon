@@ -87,7 +87,7 @@ def dump_group(group):
 def dump_scene(scene):
     from fluidSim_warp_blender51.blender.scene_access import active_domain_settings
 
-    domain_object = getattr(scene.fluidsim, "domain_object", None)
+    domain_object = scene.fluidsim.domain_object
     settings = active_domain_settings(scene)
     return {
         "domain_object": None if domain_object is None else domain_object.name,
