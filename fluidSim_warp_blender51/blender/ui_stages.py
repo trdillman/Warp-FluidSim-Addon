@@ -7,8 +7,8 @@ that point in the work, so the common loop happens beside the viewport instead o
 in the Scene Properties tree. Everything else stays one click away through the
 existing Scene Properties panels; nothing is duplicated into a deep sidebar tree.
 
-Every control is bound to the group that actually owns it
-(:func:`~.pending_settings.setting_owner`), so an edit made here is the value the
+Every control is bound to the group that declares it
+(:func:`~.pending_settings.declaring_group`), so an edit made here is the value the
 solver reads.
 
 The Bake stage is the only home of Cache & Production Bake: the Scene tab no
@@ -22,7 +22,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat
-from .pending_settings import setting_owner
+from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimView3DPanel,
@@ -98,8 +98,8 @@ def _layout(panel):
 
 
 def _prop(layout, scene, name, **kwargs):
-    """Draw ``name`` on the group that owns it; skip it when that group lacks it."""
-    return draw_property(layout, setting_owner(scene, name), name, **kwargs)
+    """Draw ``name`` on the group that declares it; skip it when there is no group."""
+    return draw_property(layout, declaring_group(scene, name), name, **kwargs)
 
 
 def _is_advanced(scene) -> bool:

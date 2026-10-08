@@ -223,12 +223,11 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
         target = getattr(scene, "fluidsim", None)
     if target is None:
         raise ValueError("scene has no FluidSim settings")
-    # Not every preset field is authored on ``target``: scene-owned fields such
-    # as ``whitewater_output_mode`` and ``cache_compress`` stay on
-    # ``scene.fluidsim`` even when ``target`` is the migrated domain object --
-    # Output Publication and Production Cache Bake read them from there
-    # regardless of migration state. ``field_target`` lets callers resolve each
-    # key to its actual owner instead of writing every key to one group; when
+    # Not every preset field is declared on ``target``: scene-owned fields such
+    # as ``whitewater_output_mode`` and ``cache_compress`` are declared on
+    # ``scene.fluidsim``, and Output Publication and Production Cache Bake read
+    # them from there. ``field_target`` lets callers resolve each key to the
+    # group that declares it instead of writing every key to one group; when
     # omitted, SCENE_OWNED_SETTINGS keys route to ``scene.fluidsim`` and
     # everything else routes to ``target``.
     scene_settings = getattr(scene, "fluidsim", None)

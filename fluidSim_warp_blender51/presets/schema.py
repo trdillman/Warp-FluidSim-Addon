@@ -128,26 +128,51 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "checkpoint_interval": SettingSpec(int, 1, 100),
 }
 
-# Preset settings owned by the scene rather than the domain. Output
-# Publication and Production Cache Bake read these three straight off
-# ``scene.fluidsim`` regardless of migration state (see
-# blender/output_publication.py and blender/cache_bake.py), so a preset must
-# dispatch them there even when the rest of its payload targets the active
-# domain settings post-migration. See AGENTS.md's architecture-ownership
-# contract.
+# The settings owned by the scene group. The group that declares a setting
+# owns it: ``FLUIDSIM_PG_scene`` (``Scene.fluidsim``) holds exactly these names
+# and ``FLUIDSIM_PG_domain`` (``Object.fluidsim_domain``) holds every other
+# setting, with no name on both. Of the preset-eligible keys
+# (``SETTING_SPECS``) only ``whitewater_output_mode``, ``cache_compress`` and
+# ``checkpoint_interval`` are scene-owned: Output Publication and Production
+# Cache Bake read them straight off ``scene.fluidsim``, so a preset dispatches
+# them there and everything else to the active domain settings.
 #
-# This restates, for the preset layer only, the split declared by
-# ``blender/pending_settings.setting_owner()``. It is duplicated rather than
-# imported because ``presets/library.py`` must stay bpy-free -- importing
-# pending_settings would drag ``import bpy`` into the pure preset core -- and
-# library.apply_preset() falls back to this set only when no ``field_target``
-# resolver is supplied. The blender-side caller
-# (operator_domains/presets.py) always supplies one backed by
-# ``setting_owner``, and
-# tests/test_pending_settings_registry.py pins the two in exact agreement over
-# ``SETTING_SPECS``, so this cannot drift into a second opinion.
+# This is the one pure-Python copy of that partition. It exists because
+# ``presets/library.py`` must stay bpy-free, so it cannot read the class from
+# ``properties.py``. ``blender/pending_settings`` (signatures, ``declaring_group``)
+# and the staged sidebar read it from here.
+# ``tests/runtime/test_pending_settings_registry.py`` pins it equal to the
+# field set of ``FLUIDSIM_PG_scene``, so it cannot drift into a second opinion.
 SCENE_OWNED_SETTINGS = frozenset({
-    "whitewater_output_mode", "cache_compress", "checkpoint_interval",
+    "ui_mode", "quality", "live", "playback_advanced_expanded",
+    "max_frame_catchup", "domain_object", "capacity_show_alternatives",
+    "surface_advanced_expanded", "liquid_view_mode", "show_surface",
+    "show_particles", "show_whitewater", "particle_display_fraction",
+    "particle_display_scale", "surface_attribute_mode",
+    "particle_attribute_mode", "whitewater_attribute_mode",
+    "whitewater_output_mode", "whitewater_display_scale",
+    "whitewater_display_fraction", "surface_material", "particle_material",
+    "whitewater_material", "foam_material", "bubble_material",
+    "spray_material", "output_collection_name", "setup_mode",
+    "product_preset", "active_preset_id", "cache_format", "bake_start",
+    "bake_end", "checkpoint_interval", "bake_status", "bake_progress",
+    "bake_message", "show_overlay", "report_path", "benchmark_frames",
+    "benchmark_baseline", "cache_enabled", "cache_path", "cache_compress",
+    "cache_playback_enabled", "cache_use_custom_range", "cache_frame_start",
+    "cache_frame_end", "status", "stat_particles", "stat_voxels",
+    "stat_whitewater", "stat_whitewater_foam", "stat_whitewater_bubbles",
+    "stat_whitewater_spray", "stat_whitewater_invalid_types",
+    "stat_whitewater_required", "stat_whitewater_admitted",
+    "stat_whitewater_dropped", "stat_whitewater_policy",
+    "stat_whitewater_status", "stat_step_ms", "stat_substeps",
+    "stat_cfl_clamped", "stat_capillary_dt",
+    "stat_capillary_substeps_required", "stat_capillary_clamped",
+    "stat_substep_limiter", "stat_surface_tension_active_voxels",
+    "stat_surface_tension_max_curvature",
+    "stat_surface_tension_max_acceleration",
+    "stat_surface_tension_temporary_bytes",
+    "stat_surface_tension_submission_ms", "stat_surface_tension_status",
+    "stat_surface_tension_message", "stat_native_solver_message",
 })
 
 _TOP_LEVEL_KEYS = {

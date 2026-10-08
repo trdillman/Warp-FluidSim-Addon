@@ -12,7 +12,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat, output_publication, ui_object, ui_scene
-from .scene_access import active_domain_object, active_domain_settings
+from .scene_access import active_domain_object
 from .ui_common import FluidSimObjectPanel, active_object_role
 
 
@@ -65,13 +65,12 @@ def _physics_id(group: str, source_id: str) -> str:
     return f"FLUIDSIM_PT_physics_{group}_{suffix}"
 
 
-def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str],
-                        owner_redirect: bool = False):
+def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str]):
     """Mirror existing panels under the Physics root without copying state.
 
-    ``owner_redirect`` marks mirrors of panels that edit the domain group. The
-    source panels resolve that group themselves (``ui_scene._domain_owner``), so
-    the mirror only hides them while no domain object is designated.
+    The source panels resolve their settings group themselves (the domain
+    panels through ``ui_scene._domain_owner``), and the DOMAIN kind already
+    means a domain object is designated, so a mirror needs no redirect.
     """
     source_panels = tuple(source_panels)
     id_map = {
@@ -81,16 +80,7 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
     classes = []
 
     def draw_for(source_panel):
-        if not owner_redirect:
-            def draw(self, context):
-                return source_panel.draw(self, context)
-            return draw
-
         def draw(self, context):
-            # poll() already hides a redirected mirror without a domain; a
-            # direct draw() has no domain group to draw either.
-            if active_domain_settings(getattr(context, "scene", None)) is None:
-                return None
             return source_panel.draw(self, context)
         return draw
 
@@ -100,9 +90,6 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
             if not FluidSimPhysicsPanel.poll(context):
                 return False
             if physics_object_kind(context) not in accepted_kinds:
-                return False
-            if owner_redirect and active_domain_settings(
-                    getattr(context, "scene", None)) is None:
                 return False
             source_poll = getattr(source_panel, "poll", None)
             return bool(source_panel.poll(context)) if callable(source_poll) else True
@@ -236,7 +223,6 @@ DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     DOMAIN_SOURCE_PANELS,
     group="domain",
     accepted_kinds=frozenset({"DOMAIN"}),
-    owner_redirect=True,
 )
 
 SURFACE_SOURCE_PANELS = (

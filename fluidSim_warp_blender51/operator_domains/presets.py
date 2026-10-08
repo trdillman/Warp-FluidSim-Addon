@@ -15,23 +15,17 @@ _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
 def _preset_field_owner(scene):
-    """Resolve each preset field to the settings group that actually owns it.
+    """Resolve each preset field to the settings group that declares it.
 
-    Most preset fields feed the solver and are authored on the active domain
-    settings post-migration. A handful — display/output fields (e.g.
-    ``whitewater_output_mode``) and cache/bake authoring fields (e.g.
-    ``cache_compress``, ``checkpoint_interval``) — are always authored on
-    ``scene.fluidsim`` per the Pending Settings lifecycle registry, even on a
-    migrated scene. Writing/reading those through the domain target silently
-    no-ops the corresponding UI/output/bake behavior (see AGENTS.md:L21).
-
-    Delegates to ``pending_settings.setting_owner()``, the canonical owner of
-    the tier registry, rather than reconstructing the scene-vs-domain
-    partition here.
+    Most preset fields feed the solver and are declared on the active domain
+    settings. Output and cache-bake fields (``whitewater_output_mode``,
+    ``cache_compress``, ``checkpoint_interval``) are declared on
+    ``scene.fluidsim``. Writing or reading those through the domain target
+    raises. ``pending_settings.declaring_group()`` holds the partition.
     """
-    from ..blender.pending_settings import setting_owner
+    from ..blender.pending_settings import declaring_group
 
-    return lambda key: setting_owner(scene, key)
+    return lambda key: declaring_group(scene, key)
 
 
 class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):

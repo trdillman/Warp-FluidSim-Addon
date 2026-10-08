@@ -667,13 +667,13 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 
     Interface mode, the Quality tier, the domain designation, playback and
     cache plumbing, viewport/output presentation, and the read-only status
-    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. Apart from
-    their migration stamps, the two classes are disjoint, so reading a domain
-    setting off ``scene.fluidsim`` raises instead of returning a stale value.
-    The partition follows
-    ``pending_settings.setting_owner`` and is pinned by
-    tests/test_pending_settings_registry.py. Writing a domain setting here
-    raises too (see ``_reject_other_group_write``).
+    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. The two
+    classes are disjoint, so reading a domain setting off ``scene.fluidsim``
+    raises instead of returning a stale value. The class that declares a
+    setting owns it. ``presets.schema.SCENE_OWNED_SETTINGS`` is the bpy-free
+    copy of this class's field set, and
+    tests/runtime/test_pending_settings_registry.py pins the two equal. Writing
+    a domain setting here raises too (see ``_reject_other_group_write``).
     """
 
     def __setattr__(self, name, value):
