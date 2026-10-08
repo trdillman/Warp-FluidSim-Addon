@@ -314,6 +314,43 @@ class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
+def draw_cache_refusal(layout, context) -> None:
+    """Say why the cache on disk cannot be played or resumed, and what to do.
+
+    Two cases: a cache baked by FluidSim 2.x (its format is not read by 3.0), and
+    a Resume that was refused because a source or collider animation no longer
+    matches the frames already baked, which offers "Re-bake from frame N" with N
+    the first frame that differs.
+    """
+    from ..io.cache import LEGACY_2X_CACHE_MESSAGE, detect_cache_format
+    from . import ui_scene
+    from .cache_bake import rebake_offer
+    from .production_bake import bake_is_active
+
+    scene = context.scene
+    if bake_is_active(scene):
+        return
+    directory = ui_scene._cache_directory(scene)
+    if directory is not None and detect_cache_format(directory) == 2:
+        ui_scene._draw_wrapped(layout, LEGACY_2X_CACHE_MESSAGE, icon="ERROR")
+        return
+    frame = rebake_offer(scene)
+    if frame is not None:
+        ui_scene._draw_wrapped(
+            layout,
+            f"A source or collider animation changed from frame {frame}. "
+            "Frames before it still match.",
+            icon="ERROR",
+        )
+        operator = layout.operator(
+            "fluidsim.bake_resume",
+            text=f"Re-bake from Frame {frame}…",
+            icon="FILE_REFRESH",
+        )
+        operator.rebake = True
+        operator.rebake_frame = frame
+
+
 class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
     """Stage 4: bake the cache, play it back, and export from it."""
 
@@ -336,6 +373,7 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
         # One shared drawing of the bake state machine (start / resume / restart /
         # cancel, progress, runtime readiness).
         layout.separator()
+        draw_cache_refusal(layout, context)
         draw_cache_playback(layout, context)
         layout.separator()
         draw_cache_bake(layout, context)
