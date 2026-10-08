@@ -145,9 +145,9 @@ def main():
               and frame_two is not None and "settings_signature" in frame_one
               and "settings_signature" in frame_two)
         check(
-            "cache-v2 records a complete manifest transaction",
+            "cache-v3 records a complete manifest transaction",
             metadata is not None
-            and metadata.get("format_version") == 2
+            and metadata.get("format_version") == 3
             and metadata.get("frame_count") == 2
             and metadata.get("last_committed_frame") == 2
             and str(frame_one["settings_signature"])
