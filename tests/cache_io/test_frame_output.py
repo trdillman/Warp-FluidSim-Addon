@@ -908,7 +908,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path, monkeypatch):
         "whitewater_life", "whitewater_required", "whitewater_available",
         "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
         "whitewater_status", "whitewater_type", "attribute_schema_version",
-        "attribute_inventory_json", "surface_attribute_transfer_method"}
+        "attribute_inventory_json", "surface_attribute_transfer_method",
+        "liquid_sdf_sparse", "liquid_sdf_leaf_coords", "liquid_sdf_voxel_size"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
     for name in ("age", "life", "temperature", "viscosity", "density",
                  "time_offset", "whitewater", "whitewater_velocity",

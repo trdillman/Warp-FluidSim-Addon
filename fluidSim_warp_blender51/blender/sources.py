@@ -10,7 +10,11 @@ import numpy as np
 from ..sim.attributes import stable_source_id
 from .scene_inputs import persistent_source_key
 
-_handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+# Recorded in every cache-v3 manifest. Bump it when what a source or collider
+# contributes to a frame's identity changes, so older caches stop resuming.
+SOURCE_SCHEMA_VERSION = 1
+
+_handlers =getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
 

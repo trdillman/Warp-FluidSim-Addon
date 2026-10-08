@@ -13,7 +13,7 @@ from fluidsim_testpkg.blender.cache_manager import (
     validate_leaf_name,
 )
 from fluidsim_testpkg.io.cache_schema import (
-    CacheManifestV2,
+    CacheManifestV3,
     FrameEntry,
     manifest_path,
     write_manifest_atomic,
@@ -24,14 +24,23 @@ def _digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _make_cache(base: Path, frames: int = 2) -> CacheManifestV2:
-    manifest = CacheManifestV2.new(
-        solver_version="1.0.248",
+def _make_cache(base: Path, frames: int = 2) -> CacheManifestV3:
+    manifest = CacheManifestV3.new(
+        solver_version="3.0.0",
         scene_key="scene",
         settings_signature="settings",
         source_signature="sources",
         frame_start=1,
         frame_end=max(frames, 2),
+        source_schema_version=1,
+        transfer_mode="FLIP",
+        grid_spec={
+            "resolution_divisions": 64, "voxel_size": 0.0625,
+            "domain_size": [4.0, 4.0, 4.0], "leaf_dim": 8},
+        narrow_band={"enabled": False, "band_voxels": 0.0},
+        platform={
+            "os": "Windows-11", "gpu_name": "NVIDIA RTX", "driver": "560.94",
+            "warp": "1.17.0"},
         timestamp="2026-08-11T13:00:00Z",
         effect_signature="e" * 64,
         effect_inventory=({"instance_id": "effect-1", "effect_id": "test.vortex"},),
@@ -59,6 +68,9 @@ def _make_cache(base: Path, frames: int = 2) -> CacheManifestV2:
                 simulation_time=frame / 24.0,
                 settings_signature="settings",
                 source_signature="sources",
+                source_frame_stamp="c" * 64,
+                whitewater_count=0,
+                particle_count=1,
             ),
             timestamp=f"2026-08-11T13:00:0{frame}Z",
         )
