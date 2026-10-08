@@ -151,7 +151,9 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
 
         layout.operator(
             "fluidsim.open_scene_properties",
-            text="Open Full FluidSim Settings",
+            # The Scene tab holds scene-level state only (status, presets,
+            # outputs, diagnostics); the domain settings are in this tab.
+            text="Open Scene FluidSim Settings",
             icon="PROPERTIES",
         )
         if (
@@ -203,9 +205,17 @@ INPUT_PANEL_CLASSES = _make_panel_mirrors(
     accepted_kinds=frozenset({"NONE", "INPUT"}),
 )
 
+# The Scene tab no longer registers any of these (``ui_scene.SCENE_PANEL_CLASSES``
+# keeps only scene-owned panels), so this list is the only registered home of
+# the domain controls besides the staged sidebar. Height Fill, Persistent
+# Attributes and Profiling were Scene-tab-only before; they are mirrored here so
+# no domain control loses its only UI. Persistent Attributes and Profiling were
+# children of Scene panels that stay in the Scene tab, so the mirror makes them
+# top-level domain panels.
 DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_scene_domain,
     ui_scene.FLUIDSIM_PT_scene_capacity,
+    ui_scene.FLUIDSIM_PT_scene_height,
     ui_scene.FLUIDSIM_PT_scene_simulation,
     ui_scene.FLUIDSIM_PT_sim_time,
     ui_scene.FLUIDSIM_PT_sim_gravity,
@@ -218,6 +228,11 @@ DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_sim_forces,
     ui_scene.FLUIDSIM_PT_sim_dissipation,
     ui_scene.FLUIDSIM_PT_sim_attraction,
+    ui_scene.FLUIDSIM_PT_output_attributes,
+    ui_scene.FLUIDSIM_PT_attrs_surface,
+    ui_scene.FLUIDSIM_PT_attrs_particles,
+    ui_scene.FLUIDSIM_PT_attrs_whitewater,
+    ui_scene.FLUIDSIM_PT_diagnostics_profiling,
 )
 DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     DOMAIN_SOURCE_PANELS,

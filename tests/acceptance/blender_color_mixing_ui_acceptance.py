@@ -30,8 +30,8 @@ def main():
             "domain mixing toggle is not registered")
     require(hasattr(domain_settings, "species_mixing_rate"),
             "domain mixing strength is not registered")
-    require(hasattr(bpy.types, "FLUIDSIM_PT_sim_color_mixing"),
-            "current Scene Properties color-mixing panel is not registered")
+    require(not hasattr(bpy.types, "FLUIDSIM_PT_sim_color_mixing"),
+            "Scene Properties still registers the domain color-mixing panel")
     require(hasattr(bpy.types, "FLUIDSIM_PT_physics_domain_sim_color_mixing"),
             "current Physics Properties domain mirror is not registered")
     require(hasattr(bpy.types, "FLUIDSIM_PT_physics_input_object_source"),

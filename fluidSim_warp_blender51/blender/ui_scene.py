@@ -139,6 +139,10 @@ def _draw_capacity_plan(layout, scene):
 def _draw_attribute_group(layout, fs, output_kind):
     from ..sim.attributes import OUTPUT_ATTRIBUTE_KEYS, OUTPUT_TOGGLE_NAMES
 
+    if fs is None:
+        # No domain is designated (an output object can outlive its domain
+        # assignment), so there are no domain attribute toggles to draw.
+        return
     grid = layout.grid_flow(
         row_major=True,
         columns=2,
@@ -970,6 +974,9 @@ class FLUIDSIM_PT_output_attributes(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Persistent Attributes"
     bl_idname = "FLUIDSIM_PT_output_attributes"
     bl_parent_id = "FLUIDSIM_PT_scene_outputs"
+    # Top-level in the Physics mirror (its Scene parent is not mirrored), so it
+    # needs an explicit position below the simulation and surface groups.
+    bl_order = 80
     bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
@@ -1197,6 +1204,8 @@ class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Profiling"
     bl_idname = "FLUIDSIM_PT_diagnostics_profiling"
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
+    # Top-level in the Physics mirror (its Scene parent is not mirrored); last.
+    bl_order = 100
     bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
@@ -1262,6 +1271,10 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
         row.operator("fluidsim.export_frame", text="Export Current Frame…", icon="EXPORT")
 
 
+# The Scene tab registers only the panels that edit scene-owned settings or show
+# scene-level runtime state. Every domain setting is authored in the Physics tab
+# (``ui_physics`` mirrors the classes below) and in the staged sidebar; the
+# Scene tab no longer carries a second copy of those controls.
 SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
@@ -1269,6 +1282,23 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_scene_live_timeline,
     FLUIDSIM_PT_scene_setup,
     FLUIDSIM_PT_scene_presets,
+    FLUIDSIM_PT_scene_outputs,
+    FLUIDSIM_PT_output_display,
+    FLUIDSIM_PT_output_materials,
+    FLUIDSIM_PT_scene_diagnostics,
+    FLUIDSIM_PT_scene_runtime_stats,
+    FLUIDSIM_PT_diagnostics_benchmark,
+    FLUIDSIM_PT_diagnostics_report,
+)
+
+# Draw sources for domain settings. These classes are never registered under
+# the Scene tab: ``ui_physics._make_panel_mirrors`` builds the Physics-tab panels
+# from them, and each draws through ``_domain_owner`` so it edits
+# ``obj.fluidsim_domain``. Their ``bl_parent_id`` values name sibling sources
+# (and, for the three that formerly sat under a Scene-tab parent, a parent that
+# stays in the Scene tab); the mirror maps parents it does not mirror to the
+# Physics root.
+DOMAIN_DRAW_SOURCE_CLASSES = (
     FLUIDSIM_PT_scene_domain,
     FLUIDSIM_PT_scene_capacity,
     FLUIDSIM_PT_scene_height,
@@ -1293,18 +1323,11 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_whitewater_classification,
     FLUIDSIM_PT_whitewater_life,
     FLUIDSIM_PT_whitewater_dynamics,
-    FLUIDSIM_PT_scene_outputs,
-    FLUIDSIM_PT_output_display,
-    FLUIDSIM_PT_output_materials,
     FLUIDSIM_PT_output_attributes,
     FLUIDSIM_PT_attrs_surface,
     FLUIDSIM_PT_attrs_particles,
     FLUIDSIM_PT_attrs_whitewater,
-    FLUIDSIM_PT_scene_diagnostics,
-    FLUIDSIM_PT_scene_runtime_stats,
     FLUIDSIM_PT_diagnostics_profiling,
-    FLUIDSIM_PT_diagnostics_benchmark,
-    FLUIDSIM_PT_diagnostics_report,
 )
 
 

@@ -2812,6 +2812,103 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     assert domain_panel.poll(context) is False
 
 
+SCENE_TAB_PANEL_IDS = frozenset({
+    "FLUIDSIM_PT_scene_lifecycle",
+    "FLUIDSIM_PT_scene_control",
+    "FLUIDSIM_PT_scene_pending",
+    "FLUIDSIM_PT_scene_live_timeline",
+    "FLUIDSIM_PT_scene_setup",
+    "FLUIDSIM_PT_scene_presets",
+    "FLUIDSIM_PT_scene_outputs",
+    "FLUIDSIM_PT_output_display",
+    "FLUIDSIM_PT_output_materials",
+    "FLUIDSIM_PT_scene_diagnostics",
+    "FLUIDSIM_PT_scene_runtime_stats",
+    "FLUIDSIM_PT_diagnostics_benchmark",
+    "FLUIDSIM_PT_diagnostics_report",
+})
+
+
+def test_scene_tab_registers_only_scene_owned_panels(monkeypatch):
+    """The Scene tab holds scene-level state; domain controls are Physics-tab only.
+
+    ``SCENE_PANEL_CLASSES`` is the registered set, ``DOMAIN_DRAW_SOURCE_CLASSES``
+    the draw functions the Physics mirrors reuse. Registering a domain panel
+    under Scene again would put a second, unreachable-by-poll copy of every
+    domain control in a tab that has no domain context.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+
+    registered = {cls.bl_idname for cls in ui_scene.SCENE_PANEL_CLASSES}
+    draw_sources = {cls.bl_idname for cls in ui_scene.DOMAIN_DRAW_SOURCE_CLASSES}
+    assert registered == SCENE_TAB_PANEL_IDS
+    assert len(registered) == len(ui_scene.SCENE_PANEL_CLASSES)
+    assert len(draw_sources) == len(ui_scene.DOMAIN_DRAW_SOURCE_CLASSES) == 29
+    assert not registered & draw_sources
+
+    mirrored = {
+        cls.bl_idname
+        for cls in (
+            *ui_physics.DOMAIN_SOURCE_PANELS,
+            *ui_physics.SURFACE_SOURCE_PANELS,
+            *ui_physics.WHITEWATER_SOURCE_PANELS,
+        )
+    }
+    assert mirrored == draw_sources, (
+        "every unregistered domain draw source must be mirrored into Physics "
+        "Properties, and nothing else may be")
+
+
+def test_formerly_scene_only_domain_panels_are_physics_domain_mirrors(monkeypatch):
+    """Height Fill, Persistent Attributes and Profiling had no other UI.
+
+    The staged sidebar does not draw them, so removing them from the Scene tab
+    without a Physics home would strand ``height_*``, the ``attrs_*`` inventory
+    and ``profiling_*``. The two that were children of kept Scene panels become
+    top-level mirror panels with an explicit ``bl_order``.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+
+    by_source = {
+        cls.__name__: cls for cls in ui_physics.DOMAIN_PANEL_CLASSES
+    }
+    root = "FLUIDSIM_PT_physics_root"
+    height = by_source["FLUIDSIM_PT_physics_domain_scene_height"]
+    attributes = by_source["FLUIDSIM_PT_physics_domain_output_attributes"]
+    profiling = by_source["FLUIDSIM_PT_physics_domain_diagnostics_profiling"]
+    assert (height.bl_parent_id, height.bl_order) == (root, 30)
+    assert (attributes.bl_parent_id, attributes.bl_order) == (root, 80)
+    assert (profiling.bl_parent_id, profiling.bl_order) == (root, 100)
+    for child in ("surface", "particles", "whitewater"):
+        panel = by_source[f"FLUIDSIM_PT_physics_domain_attrs_{child}"]
+        assert panel.bl_parent_id == attributes.bl_idname
+    assert all(
+        cls.bl_context == "physics" for cls in by_source.values()
+    )
+
+
+def test_attribute_group_draws_nothing_without_a_designated_domain(monkeypatch):
+    """An output object outlives the domain assignment, so its Physics panel
+    reaches ``_draw_attribute_group`` with no domain settings group. That is the
+    one place a missing group is expected; it must draw nothing, not raise."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+
+    layout = _Layout()
+    ui_scene._draw_attribute_group(layout, None, "surface")
+    assert layout.props == []
+
+    # With a group the toggles are bound to it.
+    domain = _PermissiveSettings({"export_attributes": True})
+    layout = _Layout()
+    ui_scene._draw_attribute_group(layout, domain, "particles")
+    assert layout.prop_calls
+    assert all(call["data"] is domain for call in layout.prop_calls)
+
+
 def test_object_role_panel_leads_with_native_type_dropdown_then_batch_helpers(monkeypatch):
     """Role is a native Type dropdown; the tag operators become batch helpers (D6).
 
@@ -3485,7 +3582,7 @@ def test_advanced_sim_panels_require_an_authoritative_domain(monkeypatch):
         )
     )
     children = tuple(
-        cls for cls in ui_scene.SCENE_PANEL_CLASSES
+        cls for cls in ui_scene.DOMAIN_DRAW_SOURCE_CLASSES
         if getattr(cls, "bl_parent_id", "") == "FLUIDSIM_PT_scene_simulation"
     )
 
@@ -3556,6 +3653,15 @@ def test_basic_front_door_and_surrogates_are_present(monkeypatch):
     assert "export_attributes" in outputs.props
 
 
+def _authored_panel_classes(ui_scene):
+    """Every authored Scene-tab panel draw source: the registered scene-owned
+    panels plus the domain draw sources that now register only as Physics-tab
+    mirrors.  The panel-surface contracts below cover both, as they did when all
+    of them registered under Scene Properties."""
+    return tuple(ui_scene.SCENE_PANEL_CLASSES) + tuple(
+        ui_scene.DOMAIN_DRAW_SOURCE_CLASSES)
+
+
 def _default_visible_scene_panels(ui_scene, context):
     """Scene panels shown on first open with nothing expanded — the literal
     "default visible surface" (spec §11).  A panel qualifies when its own poll
@@ -3564,9 +3670,10 @@ def _default_visible_scene_panels(ui_scene, context):
     none of its properties until the user opens it).  This excludes the operational
     Cache/Diagnostics clusters and the deep-config panels that sit one expand
     away, leaving exactly the knobs a fresh Basic scene renders immediately."""
-    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    panels = _authored_panel_classes(ui_scene)
+    by_id = {cls.bl_idname: cls for cls in panels}
     visible = []
-    for cls in ui_scene.SCENE_PANEL_CLASSES:
+    for cls in panels:
         node = cls
         ok = True
         for _ in range(20):
@@ -3746,9 +3853,10 @@ def test_draw_readout_grid_emits_labels_not_props(monkeypatch):
 
 def _diagnostics_subtree_ids(ui_scene):
     """Ids of every Scene panel whose ancestor chain reaches Diagnostics."""
-    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    panels = _authored_panel_classes(ui_scene)
+    by_id = {cls.bl_idname: cls for cls in panels}
     under = set()
-    for cls in ui_scene.SCENE_PANEL_CLASSES:
+    for cls in panels:
         node = cls
         for _ in range(20):
             if node is None:
@@ -3817,7 +3925,7 @@ def test_no_control_panel_renders_a_stat_readback(monkeypatch):
 
     diagnostics = _diagnostics_subtree_ids(ui_scene)
     offenders = {}
-    for cls in ui_scene.SCENE_PANEL_CLASSES:
+    for cls in _authored_panel_classes(ui_scene):
         if cls.bl_idname in diagnostics:
             continue
         stats = _stat_property_renders(cls.draw)
@@ -3835,7 +3943,7 @@ def test_diagnostics_telemetry_consolidates_readouts(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
 
-    by_id = {cls.bl_idname: cls for cls in ui_scene.SCENE_PANEL_CLASSES}
+    by_id = {cls.bl_idname: cls for cls in _authored_panel_classes(ui_scene)}
     assert "FLUIDSIM_PT_whitewater_stats" not in by_id
     telemetry = by_id["FLUIDSIM_PT_scene_runtime_stats"]
     assert telemetry.bl_parent_id == "FLUIDSIM_PT_scene_diagnostics"
