@@ -8,13 +8,16 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | Ref | Commit | Suite | Demo artifact sha256 |
 |---|---|---|---|
 | master | `cc36403` | 2079 passed, 3 skipped | `2cb4f781…3a73` (GUI gate reference) |
-| release/3.0 base: master + merge of release/2.1.0 | `94c79eb` | 2104 passed, 3 skipped | pending headless bake |
+| release/3.0 base: master + merge of release/2.1.0 | `94c79eb` | 2104 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | `archive/st-flip-final` tag (local) | `94c79eb` | | |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
   `sim/` or `properties.py`.
 - Refactor merges must keep it identical.
+- The headless recompute is `C:\Users\Tyler\wt\demo_hash.ps1` in the throwaway worktree
+  `C:\Users\Tyler\wt\r30-hash`. On `94c79eb` it reproduced the GUI gate reference exactly,
+  so the headless hash stands in for the gate between milestones.
 
 ## Deviations from the plan
 
@@ -39,6 +42,18 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 5. **Lane E takes REVIEW-024 and REVIEW-025.** The plan's lane table gives them to E;
    one bullet suggests doing them with the split instead. E lands before A starts, so
    the split rebases on top.
+6. **`SPEC-settings-split-completion` is partly stale.** Checked on `94c79eb`:
+   - `FLUIDSIM_PG_scene` (76 fields) and `FLUIDSIM_PG_domain` (150) already share no
+     field. 2.0 (`625b937`) narrowed the scene group and dropped the pre-1.1 migration.
+   - So Phase 4 step 2 is done, and step 1 (a 3.0 migration operator) has nothing to
+     migrate. Lane A does not build it.
+   - Physics-tab domain panels are generated from the Scene-tab panel classes, so
+     "delete the Scene panels" becomes "stop registering them on the Scene tab".
+   - Phase 5 has one remaining wrong-group read, in an acceptance script.
+7. **`SPEC-multigrid-pressure`'s hook point is stale.** Production PCG fuses Jacobi into
+   three update kernels; `k_apply_preconditioner` was used only by the ST-FLIP solver.
+   Lane C's brief says so. The preconditioner setting (RNA, `SolverSettings`, migration)
+   is wired by the orchestrator after A and C merge, not by C.
 
 ## Lanes
 
@@ -47,8 +62,8 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | D st-flip-removal | `3.0/lane-d-stflip-removal` | `C:\Users\Tyler\wt\r30-d` | `94c79eb` | | | dispatched |
 | B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | `94c79eb` | | | dispatched |
 | E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | `94c79eb` | | | dispatched |
-| A split | | | | | waits for D | dispatch after D merges |
-| C multigrid | | | | | waits for D | dispatch after D merges |
+| A split + defaults | | | | | waits for D | brief ready; dispatch after D merges |
+| C multigrid | | | | | waits for D | brief ready (two stops: tests, then kernels); dispatch after D merges |
 
 Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. Each is
 `docs/specs/3.0/WORKER_BRIEF_TEMPLATE.md` filled in, with a shared environment section.
