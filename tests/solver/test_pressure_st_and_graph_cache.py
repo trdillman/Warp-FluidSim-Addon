@@ -1,4 +1,4 @@
-"""ST-FLIP PCG initialization and CUDA-graph cache regressions."""
+"""Pressure-solver CUDA-graph cache regressions."""
 
 import os
 import sys
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 wp = pytest.importorskip("warp")
 
 from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME, VOXEL_FLUID
-from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
+from fluidSim_warp_blender51.sim.fields import SparseGrid
 from fluidSim_warp_blender51.sim.pressure import PressureSolver
 
 
@@ -29,65 +29,6 @@ def _one_leaf_grid(device, mark=True):
     assert grid.finalize_topology() == (1 if mark else 0)
     assert grid.voxel_capacity == LEAF_VOLUME
     return grid
-
-
-def test_solve_pcg_st_zeroes_working_vectors_before_iterating(cuda_device):
-    """solve_pcg_st must not reduce over slots its initializer never wrote.
-
-    The launch dimension comes from the host leaf mirror while the kernels are
-    guarded by the device-side ``num_leaves``; when the two disagree the tail
-    slots keep the previous frame's values. solve_pcg zeroes the working set to
-    neutralize exactly that, and the ST path has to do the same.
-    """
-    grid = _one_leaf_grid(cuda_device, mark=False)
-    solver = PressureSolver(grid, cuda_device)
-    vel = MacVelocityField(grid)
-    voxel_type = wp.zeros(grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
-
-    # leftovers a previous frame's solve would have deposited
-    solver.pressure.fill_(7.0)
-    solver.r.fill_(3.0)
-    solver.z.fill_(5.0)
-    solver.p_dir.fill_(4.0)
-    solver.ap.fill_(2.0)
-
-    status = solver.solve_pcg_st(voxel_type, 8, 1.0e-6, vel)
-
-    assert status["converged"], status
-    assert solver.last_residual == 0.0
-    assert float(solver.pressure.numpy()[0]) == 0.0
-
-
-def test_solve_jacobi_st_reports_its_real_residual(cuda_device):
-    """REVIEW-004: ST Jacobi reported last_residual = -1.0 whatever happened.
-
-    Zero iterations leave pressure at 0, so the residual is exactly |rhs|;
-    iterating must then shrink it. Alternate cells are air (Dirichlet), so
-    every fluid cell has an air neighbour and the system is non-singular.
-    """
-    import numpy as np
-
-    grid = _one_leaf_grid(cuda_device)
-    solver = PressureSolver(grid, cuda_device)
-    vel = MacVelocityField(grid)
-    for weights in (vel.wu, vel.wv, vel.ww):
-        weights.fill_(1.0)
-    fluid = np.arange(grid.voxel_capacity) % 2 == 1
-    voxel_type = wp.array(
-        np.where(fluid, VOXEL_FLUID, 0).astype(np.int32), device=cuda_device)
-    rhs = wp.array(fluid.astype(np.float32), device=cuda_device)
-    solver.build_preconditioner_st(voxel_type, vel)
-
-    residuals = []
-    for iterations in (0, 20):
-        wp.copy(solver.rhs, rhs)
-        solver.solve_jacobi_st(voxel_type, iterations, vel)
-        assert solver.should_project_pressure()
-        residuals.append(solver.last_residual)
-
-    assert residuals[0] == pytest.approx(fluid.sum() ** 0.5, rel=1.0e-6)
-    assert 0.0 <= residuals[1] < 0.5 * residuals[0]
-    assert solver.last_residual_squared == pytest.approx(residuals[1] ** 2)
 
 
 def _prepared_solver(device):

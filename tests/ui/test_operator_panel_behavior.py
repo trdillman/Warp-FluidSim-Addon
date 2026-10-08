@@ -1024,22 +1024,9 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
 def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
-    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 
-    settings = SimpleNamespace(
-        particles_per_voxel=8.0,
-        spacetime_enabled=True,
-        spacetime_seed=1729,
-        spacetime_reference_mass=0.0,
-    )
-    spacetime = SpaceTimeState(
-        settings, SimpleNamespace(liquid_sampling=8.0, rest_particle_count=8)
-    )
-    spacetime.reference_mass_cached = 4.0
-    spacetime.calibrate_reference_mass = lambda: (_ for _ in ()).throw(
-        AssertionError("existing calibration should be density-rescaled")
-    )
-    solver = SimpleNamespace(settings=settings, particles=object(), spacetime=spacetime)
+    settings = SimpleNamespace(particles_per_voxel=8.0)
+    solver = SimpleNamespace(settings=settings, particles=object())
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
@@ -1052,7 +1039,6 @@ def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkey
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
     assert settings.particles_per_voxel == 8.0
-    assert solver.spacetime.reference_mass_cached == 4.0
     assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
     assert "particles_per_voxel" not in _pending_module()._LIVE_SETTING_FIELDS
 
@@ -1111,11 +1097,11 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     events = []
     solver = SimpleNamespace(
         device="cuda:0",
-        settings=SolverSettings(max_particles=4096, flip_ratio=0.95, spacetime_seed=1),
+        settings=SolverSettings(max_particles=4096, flip_ratio=0.95, max_substeps=2),
         particles=SimpleNamespace(capacity=4096),
         sourcing=SimpleNamespace(plans=(), last_apply_result={}),
         reset=lambda: events.append(
-            ("reset", solver.settings.flip_ratio, solver.settings.spacetime_seed)
+            ("reset", solver.settings.flip_ratio, solver.settings.max_substeps)
         ),
         set_source_batch=lambda descriptors=(), plans=(): events.append(
             ("sources", tuple(descriptors), tuple(plans))
@@ -1148,7 +1134,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     class Snapshot:
         frame_start = 3
         settings = SolverSettings(
-            device="cuda:0", max_particles=4096, flip_ratio=0.2, spacetime_seed=77
+            device="cuda:0", max_particles=4096, flip_ratio=0.2, max_substeps=3
         )
         capacity_plan = SimpleNamespace(blockers=())
         descriptors = ("source",)
@@ -1215,7 +1201,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         frame_start=3,
         fluidsim=SimpleNamespace(
             flip_ratio=0.2,
-            spacetime_seed=77,
+            max_substeps=3,
             snippets=[],
             status="",
             gravity=(0.0, 0.0, -4.0),
@@ -1240,7 +1226,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
     assert "old-release" in events
     assert sess.solver is candidate
     assert sess.solver.settings.flip_ratio == 0.2
-    assert sess.solver.settings.spacetime_seed == 77
+    assert sess.solver.settings.max_substeps == 3
     assert any(event[0] == "outputs" for event in events if isinstance(event, tuple))
     assert sess.start_frame == 3
     assert sess.cache_written_start is None
@@ -3501,7 +3487,7 @@ def test_advanced_sim_panels_require_an_authoritative_domain(monkeypatch):
         if getattr(cls, "bl_parent_id", "") == "FLUIDSIM_PT_scene_simulation"
     )
 
-    assert len(children) == 12
+    assert len(children) == 11
     assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(inactive) is False
     assert all(cls.poll(inactive) is False for cls in children)
     assert ui_scene.FLUIDSIM_PT_scene_simulation.poll(basic) is False

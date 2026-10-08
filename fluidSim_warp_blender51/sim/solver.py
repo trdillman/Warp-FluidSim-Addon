@@ -45,7 +45,6 @@ from .color_mixing import ColorMixTransport
 from .frame_features import FrameFeaturePhase, FrameFeatures
 from .frame_runtime import FrameStats, SubstepPolicy, select_substeps
 from .quality_contract import resolve_quality
-from .spacetime import SpaceTimeState
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
 from .whitewater import (
@@ -85,16 +84,12 @@ from .kernels_core import (
 from .kernels_fluid import (
     ForceFieldProxy,
     k_gather_grid_data,
-    k_gather_grid_data_spacetime,
-    k_spacetime_weights_to_phase_active,
     k_normalize_mac,
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
     k_apply_collider_material_to_grid,
     k_advect_particles,
-    k_advect_particles_spacetime,
-    k_resync_particle_positions_spacetime,
     k_forces_gravity,
     k_forces_proxy_fields,
     k_forces_directional,
@@ -500,22 +495,6 @@ class SolverSettings:
     count_stiffness: float = 0.0
     resolved_quality: object = dc_field(default=None, repr=False, compare=False)
 
-    # Spatiotemporal FLIP (ST-FLIP, Braun et al. 2026).
-    spacetime_enabled: bool = False
-    spacetime_jitter_strength: float = 1.0
-    spacetime_adaptive_jitter: bool = True
-    spacetime_phase_eta: float = 0.5
-    spacetime_phase_threshold: float = 0.5
-    spacetime_reference_mass: float = 0.0  # <=0 derives from particles_per_voxel
-    spacetime_variable_projection: bool = False
-    spacetime_liquid_density: float = 1.0
-    spacetime_gas_density: float = 0.0
-    spacetime_min_density: float = 0.05
-    spacetime_local_cfl: float = 1.0
-    spacetime_max_local_substeps: int = 64
-    spacetime_resync_surface: bool = True
-    spacetime_seed: int = 1729
-
     relax_enabled: bool = True
     relax_strength: float = 0.5
     relax_mode: int = int(RelaxMode.LOCAL_VOXEL)
@@ -771,7 +750,6 @@ class FluidSolver:
         self.sim_time = 0.0
         self.stats = FrameStats()
         self._whitewater_emit_seed = 12345
-        self.spacetime = SpaceTimeState(settings, self.quality)
         # Active-work launch bound for per-voxel kernels, refreshed after
         # every topology rebuild. Kernels guard on the device-side count, so
         # any dim >= the active voxel count is safe; dispatching only the
@@ -930,7 +908,6 @@ class FluidSolver:
         self.churn.zero()
         self.frame = 0
         self.sim_time = 0.0
-        self.spacetime.reset_for_run()
         settings = getattr(self, "settings", None)
         self.grid.begin_topology()
         self.grid.finalize_topology()
@@ -1004,7 +981,6 @@ class FluidSolver:
                 "particle_capacity": int(self.particles.capacity),
                 "whitewater_capacity": int(self.whitewater.capacity),
                 "whitewater_emit_seed": int(self._whitewater_emit_seed),
-                **self.spacetime.checkpoint_scalars(),
                 "next_particle_uid": int(self.particles.next_uid),
                 "particle_optional_channels": ",".join(
                     self.particles.optional_channels),
@@ -1074,7 +1050,6 @@ class FluidSolver:
         self.frame = int(scalars["frame"])
         self.sim_time = float(scalars["sim_time"])
         self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
-        self.spacetime.restore_checkpoint_scalars(scalars)
         self._rebuild_transient_state_after_restore()
         self.assert_checkpoint_invariants()
 
@@ -1128,7 +1103,7 @@ class FluidSolver:
                 raise ValueError("restored particle UIDs are invalid")
             if int(self.particles.next_uid) <= int(np.max(uid)):
                 raise ValueError("restored next_particle_uid is not monotonic")
-        if not math.isfinite(self.sim_time) or not self.spacetime.timing_is_finite():
+        if not math.isfinite(self.sim_time):
             raise ValueError("restored timing state is non-finite")
         return True
 
@@ -1216,24 +1191,7 @@ class FluidSolver:
     def render_surface_extractor(self): return self.surface.render_extractor
 
     def _surface_positions(self):
-        s = self.settings
-        p = self.particles
-        if s.spacetime_enabled and s.spacetime_resync_surface:
-            g = self.grid
-            fast_launch(
-                k_resync_particle_positions_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max)],
-                outputs=[p._position2], device=self.device,
-            )
-            return p._position2
-        return p.position
+        return self.particles.position
 
 
     def _phase(self, name):
@@ -1419,43 +1377,27 @@ class FluidSolver:
     def _source(self, dt):
         return self.sourcing.apply(dt)
 
-    def _p2g(self, dt=None):
+    def _p2g(self):
         g = self.grid
         p = self.particles
-        st = self.settings
         # Gather, not scatter: one thread per active voxel pulls its own
         # contributions out of the sorted bins built by _index_particles.
         # The scatter kernels stay registered as the faithful reference, but
         # their float wp.atomic_add sums in thread-arrival order and makes the
         # whole bake irreproducible; see k_gather_grid_data.
         nv = self._nvox
-        if st.spacetime_enabled:
-            prev_dt = self.spacetime.gather_dt(dt)
-            fast_launch(
-                k_gather_grid_data_spacetime, dim=nv,
-                inputs=[p.position, p.velocity, p.time_offset,
-                        g.leaf_table, g.leaf_coords, g.num_leaves,
-                        g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, prev_dt,
-                        self.voxel_counts.data, self.bins.starts,
-                        self.bins.indices],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
-        else:
-            fast_launch(
-                k_gather_grid_data, dim=nv,
-                inputs=[p.position, p.velocity,
-                        g.leaf_table, g.leaf_coords, g.num_leaves,
-                        g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size,
-                        self.voxel_counts.data, self.bins.starts,
-                        self.bins.indices],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
+        fast_launch(
+            k_gather_grid_data, dim=nv,
+            inputs=[p.position, p.velocity,
+                    g.leaf_table, g.leaf_coords, g.num_leaves,
+                    g.voxels_dim, g.leaves_dim,
+                    g.origin, g.voxel_size,
+                    self.voxel_counts.data, self.bins.starts,
+                    self.bins.indices],
+            outputs=[self.vel.u, self.vel.v, self.vel.w,
+                     self.vel.wu, self.vel.wv, self.vel.ww],
+            device=self.device,
+        )
         fast_launch(
             k_normalize_mac, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
@@ -1464,22 +1406,11 @@ class FluidSolver:
             device=self.device,
         )
         # Particle/phase accumulators -> voxel activity (fluid mask).
-        if st.spacetime_enabled:
-            fast_launch(
-                k_spacetime_weights_to_phase_active, dim=self._nvox,
-                inputs=[self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.voxel_type.data, g.leaf_table, g.leaf_coords,
-                        g.voxels_dim, g.leaves_dim, g.num_leaves,
-                        self.spacetime.reference_mass(), st.spacetime_phase_eta,
-                        st.spacetime_phase_threshold],
-                outputs=[self.density.data], device=self.device,
-            )
-        else:
-            fast_launch(
-                k_particle_to_grid_active, dim=self._nvox,
-                inputs=[self.voxel_counts.data, g.num_leaves],
-                outputs=[self.voxel_type.data], device=self.device,
-            )
+        fast_launch(
+            k_particle_to_grid_active, dim=self._nvox,
+            inputs=[self.voxel_counts.data, g.num_leaves],
+            outputs=[self.voxel_type.data], device=self.device,
+        )
         # Splat viscosity attribute when requested.
         st = self.settings
         if st.viscosity_enabled and st.viscosity_from_particles:
@@ -1665,7 +1596,6 @@ class FluidSolver:
 
     def _pressure(self, dt):
         s = self.settings
-        st_projection = bool(s.spacetime_enabled and s.spacetime_variable_projection)
         status = self.pressure_solver.project_frame(
             self.vel,
             self.voxel_type.data,
@@ -1673,8 +1603,6 @@ class FluidSolver:
             self.voxel_counts.data,
             s,
             max_gradient=self._cfl_speed_limit(dt),
-            reference_mass=(self.spacetime.reference_mass()
-                            if st_projection else None),
             pressure_source=lambda: self.sourcing.apply_pressure_sources(dt),
         )
         self.stats.pressure_iterations = status["iterations"]
@@ -1753,39 +1681,19 @@ class FluidSolver:
             outputs=[p.velocity], device=self.device,
         )
 
-        if s.spacetime_enabled:
-            step_seed = self.spacetime.advance_seed()
-            fast_launch(
-                k_advect_particles_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, dt, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                        1 if s.open_boundaries else 0,
-                        step_seed, s.spacetime_jitter_strength,
-                        1 if s.spacetime_adaptive_jitter else 0,
-                        s.spacetime_local_cfl, int(s.spacetime_max_local_substeps)],
-                outputs=[p.alive], device=self.device,
-            )
-            self.spacetime.record_step(dt)
-        else:
-            fast_launch(
-                k_advect_particles, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, dt, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                        1 if s.open_boundaries else 0],
-                outputs=[p.alive], device=self.device,
-            )
+        fast_launch(
+            k_advect_particles, dim=self._np_dim(),
+            inputs=[p.position, p.velocity, p.count,
+                    self.vel.u, self.vel.v, self.vel.w,
+                    self.vel.wu, self.vel.wv, self.vel.ww,
+                    self.collision_sdf.data, self.collision_vel,
+                    self.collision_friction, self.collision_restitution,
+                    g.leaf_table, g.voxels_dim, g.leaves_dim,
+                    g.origin, g.voxel_size, dt, int(s.trace_mode),
+                    wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
+                    1 if s.open_boundaries else 0],
+            outputs=[p.alive], device=self.device,
+        )
 
     def _new_color_mixing(self):
         if not bool(getattr(self.settings, "species_enabled", False)):
@@ -2125,7 +2033,7 @@ class FluidSolver:
                     # invalidate explicitly before the capillary force reads it.
                     self.surface.invalidate_solver_sdf()
             with self._phase("p2g"):
-                self._p2g(dt)
+                self._p2g()
             self._save_velocities()
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_TRANSFER, self, time_ctx)

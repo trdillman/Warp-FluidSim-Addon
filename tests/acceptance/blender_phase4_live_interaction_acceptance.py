@@ -61,8 +61,6 @@ def main():
     domain_settings.surface_enabled = False
     fs.show_surface = False
     fs.show_particles = False
-    domain_settings.spacetime_enabled = True
-    domain_settings.spacetime_reference_mass = 0.0
     domain_settings.particles_per_voxel = 8
 
     result = bpy.ops.fluidsim.initialize()
@@ -74,7 +72,6 @@ def main():
 
     solver = sess.solver
     particle_state = solver.particles
-    initial_reference = solver.spacetime.reference_mass_cached
     t0 = time.perf_counter()
     domain_settings.flip_ratio = 0.35
     domain_settings.gravity = (0.0, 0.0, -3.0)
@@ -99,11 +96,9 @@ def main():
           and solver.particles is particle_state)
     sampling_pending = pending_settings.pending_presentation(scene)
     check("liquid sampling stages Reset without mutating live rest density",
-          initial_reference > 0.0
-          and solver.settings.particles_per_voxel == 8
-          and abs(solver.spacetime.reference_mass_cached - initial_reference) < 1.0e-6
+          solver.settings.particles_per_voxel == 8
           and sampling_pending["action"] == "RESET_PENDING",
-          f"{initial_reference} -> {solver.spacetime.reference_mass_cached}; {sampling_pending}")
+          f"{sampling_pending}")
     check("sampling Reset change can be discarded",
           bpy.ops.fluidsim.revert_pending() == {"FINISHED"}
           and domain_settings.particles_per_voxel == 8)

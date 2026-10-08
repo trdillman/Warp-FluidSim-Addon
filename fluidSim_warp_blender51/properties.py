@@ -580,7 +580,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         description="Set the viscosity attribute on emitted particles; higher values make those particles contribute thicker behavior when particle viscosity is enabled")
     density: FloatProperty(
         name="Density Attribute", default=1.0, min=0.0,
-        description="Set the density attribute on emitted particles, not physical liquid mass; higher or lower values affect density-based visualization and ST-FLIP weighting",
+        description="Set the density attribute on emitted particles, not physical liquid mass; higher or lower values affect density-based visualization",
         update=_request_sync)
     source_color: FloatVectorProperty(
         name="Source Color", size=4, subtype="COLOR",
@@ -1190,57 +1190,6 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Count Stiffness", default=0.0, min=0.0, soft_max=4.0,
         update=_request_live,
         description="Scale anti-clumping pressure derived from particle counts; higher values separate crowded particles more strongly, while zero disables this correction")
-
-    # Spatiotemporal FLIP (experimental)
-    spacetime_enabled: BoolProperty(
-        name="Enable ST-FLIP (Experimental)", default=False, update=_request_reset,
-        description="Enable the experimental spatiotemporal FLIP path for large time steps; disable to use the standard FLIP path; changing this resets the solver")
-    spacetime_jitter_strength: FloatProperty(
-        name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_live,
-        description="Scale ST-FLIP temporal sampling jitter; higher values spread samples more strongly, lower values reduce variation, and zero disables jitter")
-    spacetime_adaptive_jitter: BoolProperty(
-        name="Adaptive Jitter", default=True, update=_request_live,
-        description="Enable to reduce or expand jitter from local flow conditions; disable to use the fixed Jitter value everywhere")
-    spacetime_phase_eta: FloatProperty(
-        name="Phase Eta", default=0.5, min=0.01, soft_max=2.0, update=_request_live,
-        description="Set the ST-FLIP phase-correction response; higher values correct phase differences more aggressively, while lower values preserve more temporal variation")
-    spacetime_phase_threshold: FloatProperty(
-        name="Phase Threshold", default=0.5, min=0.0, max=1.0,
-        update=_request_live,
-        description="Set the phase difference that triggers correction; higher values correct only larger mismatches, while lower values correct more particles")
-    spacetime_reference_mass: FloatProperty(
-        name="Reference Mass", default=0.0, min=0.0, soft_max=64.0,
-        update=_request_reset,
-        description="Override the ST-FLIP reference particle mass; higher values make each reference sample heavier, while zero derives mass from liquid density and voxel sampling")
-    spacetime_variable_projection: BoolProperty(
-        name="Variable Projection (Experimental)", default=False, update=_request_live,
-        description="Enable density-weighted variable-coefficient pressure projection for ST-FLIP; disable to use the standard constant-coefficient projection")
-    spacetime_liquid_density: FloatProperty(
-        name="Liquid Density", default=1.0, min=1.0e-6, soft_max=10.0,
-        update=_request_live,
-        description="Set liquid density used by variable projection; higher values increase liquid inertia relative to gas, while lower values reduce the contrast")
-    spacetime_gas_density: FloatProperty(
-        name="Gas Density", default=0.0, min=0.0, soft_max=1.0,
-        update=_request_live,
-        description="Set background gas density for variable projection; higher values strengthen gas coupling, while zero treats gas as negligible")
-    spacetime_min_density: FloatProperty(
-        name="Min Density", default=0.05, min=1.0e-6, soft_max=1.0,
-        update=_request_live,
-        description="Clamp the minimum density used by variable projection; higher values improve conditioning but blur density contrast, while lower values preserve contrast with greater numerical risk")
-    spacetime_local_cfl: FloatProperty(
-        name="Local CFL", default=1.0, min=0.0, soft_max=4.0,
-        update=_request_live,
-        description="Set the local ST-FLIP travel limit per substep; lower values create more local substeps for accuracy, while higher values permit larger, cheaper steps")
-    spacetime_max_local_substeps: IntProperty(
-        name="Max Local Substeps", default=64, min=1, max=256,
-        update=_request_live,
-        description="Cap ST-FLIP local temporal subdivisions; higher values handle faster motion more accurately at greater cost, while lower values can clamp local integration")
-    spacetime_resync_surface: BoolProperty(
-        name="Resync Surface", default=True, update=_request_surface_refresh,
-        description="Enable to rebuild surface state after ST-FLIP temporal resynchronization; disable to save work but allow visible surface lag")
-    spacetime_seed: IntProperty(
-        name="Seed", default=1729, min=0, max=2147483647, update=_request_reset,
-        description="Set the deterministic ST-FLIP jitter sequence; changing it produces a different sampling pattern without changing overall strength")
 
     # Pressure
     pressure_solver: EnumProperty(

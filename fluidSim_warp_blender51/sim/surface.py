@@ -291,8 +291,7 @@ class SurfacePipeline:
                 int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
                 int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6), int(s.surface_erode_iterations),
                 round(float(s.surface_erode_strength), 6), int(s.surface_smooth_type), int(s.surface_smooth_iterations),
-                round(float(s.surface_smooth_strength), 6), bool(getattr(s, "spacetime_enabled", False)),
-                bool(getattr(s, "spacetime_resync_surface", True)), self.topology_generation)
+                round(float(s.surface_smooth_strength), 6), self.topology_generation)
 
     def build_key(self):
         solver = self.solver

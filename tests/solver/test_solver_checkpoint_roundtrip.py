@@ -53,6 +53,8 @@ def test_checkpoint_round_trips_into_a_fresh_solver(cuda_device):
             source.step_frame()
 
         saved = source.export_checkpoint_state()
+        # Space-time FLIP is removed; its scalars must not come back.
+        assert not any(key.startswith("st_") for key in saved["scalars"])
         assert saved["scalars"]["particle_count"] == len(points)
         assert saved["scalars"]["frame"] == 3
         assert saved["scalars"]["sim_time"] > 0.0

@@ -505,18 +505,12 @@ def test_host_frame_owns_live_surface_publication_cadence():
 
 def test_solver_reset_invalidates_frame_zero_host_snapshot():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
-    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 
     calls = {}
     solver = FluidSolver.__new__(FluidSolver)
     solver.frame = 0
     solver._host_frame_cache = None
-    solver.settings = SimpleNamespace(
-        spacetime_seed=0,
-        spacetime_reference_mass=0.0,
-        spacetime_enabled=False,
-    )
-    solver.spacetime = SpaceTimeState(solver.settings, None)
+    solver.settings = SimpleNamespace()
     solver.particles = SimpleNamespace(
         clear=lambda: None, host_count=1, refresh_host_count=lambda: 1,
         position=_Array([[1, 2, 3]], calls, "positions"),

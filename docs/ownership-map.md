@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 156 | UI writes exactly where the consumer reads |
+| OK | 142 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -34,11 +34,11 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **226** | |
+| **total** | **212** | |
 
 ## Mirror redirection
 
-`owner_redirect=True` (15 source panels): FLUIDSIM_PT_scene_capacity, FLUIDSIM_PT_scene_domain, FLUIDSIM_PT_scene_simulation, FLUIDSIM_PT_sim_attraction, FLUIDSIM_PT_sim_color_mixing, FLUIDSIM_PT_sim_dissipation, FLUIDSIM_PT_sim_forces, FLUIDSIM_PT_sim_gravity, FLUIDSIM_PT_sim_limits, FLUIDSIM_PT_sim_pressure, FLUIDSIM_PT_sim_relax, FLUIDSIM_PT_sim_spacetime, FLUIDSIM_PT_sim_surface_tension, FLUIDSIM_PT_sim_time, FLUIDSIM_PT_sim_viscosity
+`owner_redirect=True` (14 source panels): FLUIDSIM_PT_scene_capacity, FLUIDSIM_PT_scene_domain, FLUIDSIM_PT_scene_simulation, FLUIDSIM_PT_sim_attraction, FLUIDSIM_PT_sim_color_mixing, FLUIDSIM_PT_sim_dissipation, FLUIDSIM_PT_sim_forces, FLUIDSIM_PT_sim_gravity, FLUIDSIM_PT_sim_limits, FLUIDSIM_PT_sim_pressure, FLUIDSIM_PT_sim_relax, FLUIDSIM_PT_sim_surface_tension, FLUIDSIM_PT_sim_time, FLUIDSIM_PT_sim_viscosity
 
 Mirrored **without** redirect (9): FLUIDSIM_PT_scene_surface, FLUIDSIM_PT_scene_whitewater, FLUIDSIM_PT_surface_filters, FLUIDSIM_PT_surface_reconstruct, FLUIDSIM_PT_surface_resolution, FLUIDSIM_PT_whitewater_classification, FLUIDSIM_PT_whitewater_dynamics, FLUIDSIM_PT_whitewater_emission, FLUIDSIM_PT_whitewater_life
 
@@ -161,20 +161,6 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `attraction_strength` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `attraction_max_distance` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `count_stiffness` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_enabled` | RESET | domain | domain | - | domain | domain/domain | 0 | OK |
-| `spacetime_jitter_strength` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_adaptive_jitter` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_phase_eta` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_phase_threshold` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_reference_mass` | RESET | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_variable_projection` | LIVE | domain | domain | - | domain | domain/domain | 0 | OK |
-| `spacetime_liquid_density` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_gas_density` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_min_density` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_local_cfl` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_max_local_substeps` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_resync_surface` | AUTHORED_NEXT_RUN | domain | domain | - | - | domain/domain | 0 | OK |
-| `spacetime_seed` | RESET | domain | domain | - | - | domain/domain | 0 | OK |
 | `pressure_solver` | LIVE | domain | domain | - | domain | domain/domain | 0 | OK |
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain/domain | 0 | OK |

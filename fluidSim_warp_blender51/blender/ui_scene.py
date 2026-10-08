@@ -477,8 +477,6 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
             enabled.append("Surface tension")
         if fs.species_enabled:
             enabled.append("Color mixing")
-        if fs.spacetime_enabled:
-            enabled.append("ST-FLIP")
         layout.label(text="Active: " + (", ".join(enabled) if enabled else "Base liquid solver"))
 
 
@@ -669,47 +667,6 @@ class FLUIDSIM_PT_sim_attraction(_FluidSimSimulationPanel, bpy.types.Panel):
         if fs.attraction_enabled:
             layout.prop(fs, "attraction_strength")
             layout.prop(fs, "attraction_max_distance")
-
-
-class FLUIDSIM_PT_sim_spacetime(_FluidSimSimulationPanel, bpy.types.Panel):
-    bl_label = "Spatiotemporal Processing"
-    bl_idname = "FLUIDSIM_PT_sim_spacetime"
-    bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = _layout(self)
-        fs = _domain_owner(context)
-        layout.prop(fs, "spacetime_enabled")
-        if not fs.spacetime_enabled:
-            return
-        draw_property_grid(
-            layout,
-            fs,
-            (
-                "spacetime_seed",
-                "spacetime_reference_mass",
-                "spacetime_jitter_strength",
-                "spacetime_adaptive_jitter",
-                "spacetime_phase_eta",
-                "spacetime_phase_threshold",
-                "spacetime_local_cfl",
-                "spacetime_max_local_substeps",
-            ),
-        )
-        layout.prop(fs, "spacetime_variable_projection")
-        if fs.spacetime_variable_projection:
-            draw_property_grid(
-                layout,
-                fs,
-                (
-                    "spacetime_liquid_density",
-                    "spacetime_gas_density",
-                    "spacetime_min_density",
-                ),
-            )
-        if fs.surface_enabled:
-            layout.prop(fs, "spacetime_resync_surface")
 
 
 class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
@@ -1327,7 +1284,6 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_sim_forces,
     FLUIDSIM_PT_sim_dissipation,
     FLUIDSIM_PT_sim_attraction,
-    FLUIDSIM_PT_sim_spacetime,
     FLUIDSIM_PT_scene_surface,
     FLUIDSIM_PT_surface_resolution,
     FLUIDSIM_PT_surface_reconstruct,

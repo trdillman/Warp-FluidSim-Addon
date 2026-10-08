@@ -66,11 +66,11 @@ def test_legacy_ownership_adapter_preserves_physics_and_effective_output_work():
 
 def test_reference_adapter_does_not_substitute_historical_defaults():
     owner = SimpleNamespace(bl_rna=SimpleNamespace(properties={
-        "spacetime_variable_projection": None, "export_attributes": None}),
-        spacetime_variable_projection=True, export_attributes=False)
-    translate_reference_settings(owner, {"spacetime_variable_projection": False,
+        "surface_tension_enabled": None, "export_attributes": None}),
+        surface_tension_enabled=True, export_attributes=False)
+    translate_reference_settings(owner, {"surface_tension_enabled": False,
                                         "export_attributes": False}, {}, apply_values=True)
-    assert owner.spacetime_variable_projection is False
+    assert owner.surface_tension_enabled is False
 
 
 @pytest.mark.parametrize("legacy", [False, True])

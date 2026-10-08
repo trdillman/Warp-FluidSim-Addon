@@ -67,7 +67,7 @@ PANEL_IDS = [
     "FLUIDSIM_PT_sim_color_mixing", "FLUIDSIM_PT_sim_relax",
     "FLUIDSIM_PT_sim_limits", "FLUIDSIM_PT_sim_forces",
     "FLUIDSIM_PT_sim_dissipation", "FLUIDSIM_PT_sim_attraction",
-    "FLUIDSIM_PT_sim_spacetime", "FLUIDSIM_PT_scene_surface",
+    "FLUIDSIM_PT_scene_surface",
     "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
     "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",

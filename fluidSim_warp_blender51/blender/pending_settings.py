@@ -78,12 +78,7 @@ _LIVE_REGISTRY_FIELDS = frozenset({
     "omnidirectional_force_radius", "force_diffusion", "dissipation_enabled",
     "dissipation_attribute", "dissipation_rate", "dissipation_target",
     "attraction_enabled", "attraction_strength", "attraction_max_distance",
-    "count_stiffness", "spacetime_jitter_strength",
-    "spacetime_adaptive_jitter", "spacetime_phase_eta",
-    "spacetime_phase_threshold", "spacetime_variable_projection",
-    "spacetime_liquid_density", "spacetime_gas_density",
-    "spacetime_min_density", "spacetime_local_cfl",
-    "spacetime_max_local_substeps", "pressure_solver",
+    "count_stiffness", "pressure_solver",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
     "viscosity_enabled", "viscosity_solver", "viscosity_constant",
     "viscosity_from_particles", "viscosity_iterations",
@@ -127,7 +122,6 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 })
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
-    "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
     "surface_tension_enabled", "species_enabled",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
@@ -144,7 +138,7 @@ _REINITIALIZE_REGISTRY_FIELDS = frozenset({
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "report_path", "benchmark_frames",
-    "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
+    "benchmark_baseline", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",
     "active_preset_id", "product_preset", "setup_mode",
@@ -219,23 +213,16 @@ _SCENE_OWNED_FIELDS = frozenset({"quality", "domain_object"})
 # The mirror image: fields sitting in a scene-owned TIER whose every consumer
 # reads the DOMAIN group. Tier answers "what does changing this require?" and
 # ownership answers "which datablock holds it?"; the two are orthogonal, and
-# for these the tier default gives the wrong datablock:
+# for this one the tier default gives the wrong datablock:
 #   height_error              -- PRESENTATION (a status string; changing it
 #                                triggers no solver action, so the tier is
 #                                right). But scene_inputs.validate_height_source
 #                                writes it on the domain group (5 sites) and
 #                                ui_scene draws it from _domain_owner(context),
 #                                so nothing ever reads the scene copy.
-#   spacetime_resync_surface  -- AUTHORED_NEXT_RUN (correctly: the surface
-#                                refresh callback does not push it into a live
-#                                solver). But it is a domain solver setting:
-#                                ui_scene draws it on the domain group and
-#                                solver_settings.apply_scene_settings consumes
-#                                it from the group the caller passes, which is
-#                                always active_domain_settings.
-# Phase 1 repointed both sets of call sites without moving the declaration, so
-# until now setting_owner() disagreed with all 11 of them.
-_DOMAIN_OWNED_FIELDS = frozenset({"height_error", "spacetime_resync_surface"})
+# Phase 1 repointed those call sites without moving the declaration, so until
+# now setting_owner() disagreed with all 5 of them.
+_DOMAIN_OWNED_FIELDS = frozenset({"height_error"})
 
 
 def _scene_owned(name):
@@ -314,11 +301,6 @@ _HOT_SETTING_FIELDS = frozenset({
     "force_diffusion", "dissipation_enabled", "dissipation_attribute",
     "dissipation_rate", "dissipation_target", "attraction_enabled",
     "attraction_strength", "attraction_max_distance", "count_stiffness",
-    "spacetime_jitter_strength", "spacetime_adaptive_jitter",
-    "spacetime_phase_eta", "spacetime_phase_threshold",
-    "spacetime_variable_projection", "spacetime_liquid_density",
-    "spacetime_gas_density", "spacetime_min_density",
-    "spacetime_local_cfl", "spacetime_max_local_substeps",
     "pressure_solver", "pressure_iterations", "pressure_tolerance",
     "pressure_threshold", "viscosity_enabled", "viscosity_solver",
     "viscosity_constant", "viscosity_from_particles",
@@ -338,7 +320,6 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
-    "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
     "export_attributes",
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
@@ -703,7 +684,7 @@ def _setting_targets(fields):
 
 
 def _apply_realtime_solver_settings(scene, sess: Session | None = None):
-    """Atomically push live settings and refresh ST-FLIP derived state."""
+    """Atomically push live settings into the running solver."""
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
@@ -717,23 +698,13 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
         target: getattr(settings, target)
         for target in targets if hasattr(settings, target)
     }
-    old_ppv = getattr(settings, "particles_per_voxel", None)
-    spacetime = getattr(solver, "spacetime", None)
-    old_reference = getattr(spacetime, "reference_mass_cached", None)
-    if spacetime is not None:
-        spacetime.remember_calibration()
     try:
         _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
                               quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
-        new_ppv = getattr(settings, "particles_per_voxel", None)
-        if old_ppv != new_ppv and spacetime is not None:
-            spacetime.rescale_for_density()
     except Exception:
         for target, value in previous.items():
             setattr(settings, target, value)
-        if old_reference is not None:
-            spacetime.reference_mass_cached = old_reference
         raise
     return True
 

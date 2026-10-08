@@ -77,71 +77,6 @@ def bounded_pressure_gradient(p_hi: float, p_lo: float, inv_h: float, limit: flo
     return wp.clamp(g, -limit, limit)
 
 
-
-@wp.func
-def st_phase_from_mass(weight_sum: float, reference_mass: float, eta_phi: float) -> float:
-    denom = wp.max(reference_mass * wp.max(eta_phi, 1.0e-6), 1.0e-8)
-    x = weight_sum / denom
-    if x <= 0.0:
-        return 0.0
-    return wp.min(wp.sqrt(x), 1.0)
-
-
-@wp.func
-def st_face_beta(
-    axis: wp.int32,
-    flat: wp.int32,
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-) -> float:
-    weight = wu[flat]
-    if axis == 1:
-        weight = wv[flat]
-    elif axis == 2:
-        weight = ww[flat]
-    phi = st_phase_from_mass(weight, reference_mass, eta_phi)
-    rho = rho_liquid * phi + rho_gas * (1.0 - phi)
-    return 1.0 / wp.max(rho, wp.max(eps_rho, 1.0e-8))
-
-
-@wp.func
-def st_beta_for_cell_face(
-    tid: wp.int32,
-    ijk: wp.vec3i,
-    axis: wp.int32,
-    step: wp.int32,
-    leaf_table: wp.array(dtype=wp.int32),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-) -> float:
-    face_flat = tid
-    if step > 0:
-        face_ijk = wp.vec3i(ijk[0], ijk[1], ijk[2])
-        if axis == 0:
-            face_ijk = wp.vec3i(ijk[0] + 1, ijk[1], ijk[2])
-        elif axis == 1:
-            face_ijk = wp.vec3i(ijk[0], ijk[1] + 1, ijk[2])
-        else:
-            face_ijk = wp.vec3i(ijk[0], ijk[1], ijk[2] + 1)
-        face_flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, face_ijk)
-    if face_flat < 0:
-        return 0.0
-    return st_face_beta(axis, face_flat, wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-
 # Divergence + matrix helpers
 
 
@@ -416,151 +351,6 @@ def k_jacobi_iteration(
     x_out[tid] = acc * inv_diag[tid]
 
 
-
-
-# ST-FLIP variable-coefficient pressure matrix from space-time accumulators
-
-
-@wp.kernel
-def k_compute_inverse_diagonal_st(
-    voxel_type: wp.array(dtype=wp.int32),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    inv_diag: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
-        inv_diag[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    diag = float(0.0)
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                diag += st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-    if diag > 0.0:
-        inv_diag[tid] = 1.0 / diag
-    else:
-        inv_diag[tid] = 0.0
-
-
-@wp.kernel
-def k_apply_matrix_st(
-    x: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    ax: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
-        ax[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    acc = float(0.0)
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                beta = st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-                acc += beta * x[tid]
-                if n >= 0:
-                    nvt = voxel_type[n]
-                    if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
-                        acc -= beta * x[n]
-    ax[tid] = acc
-
-
-@wp.kernel
-def k_jacobi_iteration_st(
-    x_in: wp.array(dtype=float),
-    rhs: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    x_out: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
-        x_out[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    acc = rhs[tid]
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0 and n >= 0:
-                nvt = voxel_type[n]
-                if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
-                    beta = st_beta_for_cell_face(
-                        tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                        wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-                    acc += beta * x_in[n]
-    x_out[tid] = acc * inv_diag[tid]
 
 # PCG scalar update kernels (device-resident alpha/beta)
 
@@ -1098,90 +888,6 @@ def k_project(
 
 
 
-
-@wp.kernel
-def k_project_st(
-    x: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    wu_mass: wp.array(dtype=float),
-    wv_mass: wp.array(dtype=float),
-    ww_mass: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    voxel_size: float,
-    max_gradient: float,
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    collision_vel: wp.array(dtype=wp.vec3),
-    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
-    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
-):
-    """Variable-coefficient ST-FLIP projection.
-
-    Uses beta_f = 1/max(rho(phi_f), eps_rho), with phi_f read from the same
-    face P2G accumulators used for velocity normalization.  This is the folded
-    q=p*dt discretization of Eq. (14)-(16) in the add-on's pressure units.
-    """
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    vt = voxel_type[tid]
-    inv_h = 1.0 / voxel_size
-    here_fluid = (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0
-    here_solid = (vt & VOXEL_COLLISION) != 0
-    limit = wp.max(max_gradient, 1.0e-6)
-    x_here = float(0.0)
-    if here_fluid:
-        x_here = finite_pressure_value(x[tid])
-    for axis in range(3):
-        n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
-        n_fluid = wp.int32(0)
-        n_solid = wp.int32(0)
-        x_n = float(0.0)
-        if n >= 0:
-            nvt = voxel_type[n]
-            if (nvt & VOXEL_COLLISION) != 0:
-                n_solid = 1
-            elif (nvt & VOXEL_FLUID) != 0:
-                n_fluid = 1
-                x_n = finite_pressure_value(x[n])
-        else:
-            n_solid = 1
-        if here_solid or n_solid != 0:
-            vel_c = wp.vec3(0.0, 0.0, 0.0)
-            if here_solid:
-                vel_c = collision_vel[tid]
-            elif n >= 0:
-                vel_c = collision_vel[n]
-            if axis == 0:
-                u[tid] = vel_c[0]
-                wu[tid] = solid_face_weight(wu[tid], here_solid, n_solid)
-            elif axis == 1:
-                v[tid] = vel_c[1]
-                wv[tid] = solid_face_weight(wv[tid], here_solid, n_solid)
-            else:
-                w[tid] = vel_c[2]
-                ww[tid] = solid_face_weight(ww[tid], here_solid, n_solid)
-        elif here_fluid or n_fluid != 0:
-            beta = st_face_beta(axis, tid, wu_mass, wv_mass, ww_mass,
-                                reference_mass, eta_phi,
-                                rho_liquid, rho_gas, eps_rho)
-            g = bounded_pressure_gradient(beta * x_here, beta * x_n, inv_h, limit)
-            if axis == 0:
-                u[tid] = u[tid] - g
-            elif axis == 1:
-                v[tid] = v[tid] - g
-            else:
-                w[tid] = w[tid] - g
-
-
 @wp.kernel
 def k_expand_velocity_into_collision(
     u_in: wp.array(dtype=float), v_in: wp.array(dtype=float), w_in: wp.array(dtype=float),
@@ -1325,19 +1031,12 @@ register_fn(k_apply_matrix,
             "fluidSimProjectNonDivergentApplyMatrix16",
             "fluidSimProjectNonDivergentApplyMatrix32",
             strategy="tiled")
-register_fn(k_compute_inverse_diagonal_st,
-            "fluidSimProjectNonDivergentPreConditionerSpatiotemporal")
-register_fn(k_apply_matrix_st,
-            "fluidSimProjectNonDivergentApplyMatrixSpatiotemporal")
 for _w in (2, 4, 8, 16, 32):
     register_fn(k_jacobi_iteration,
                 f"fluidSimProjectNonDivergentJacobi{_w}_original",
                 f"fluidSimProjectNonDivergentJacobi{_w}_optimizedUnroll",
                 strategy="tiled",
                 notes="unroll-width variants collapse to one kernel")
-register_fn(k_jacobi_iteration_st,
-            "fluidSimProjectNonDivergentJacobiSpatiotemporal",
-            strategy="tiled")
 register_fn(k_initialize_pcg, "fluidSimProjectNonDivergentInitializePcg")
 register_fn(k_compute_alpha, "fluidSimProjectNonDivergentComputeAlpha")
 register_fn(k_update_xr, "fluidSimProjectNonDivergentUpdateXR")
@@ -1367,7 +1066,6 @@ register_fn(k_sample_down_residual, "fluidSimProjectNonDivergentSampleDown",
             notes="No call sites; no restriction/prolongation V-cycle is "
                   "wired into this module despite the kernel name.")
 register_fn(k_project, "fluidSimProjectNonDivergentProject")
-register_fn(k_project_st, "fluidSimProjectNonDivergentProjectSpatiotemporal")
 register_fn(k_expand_velocity_into_collision,
             "fluidSimProjectNonDivergentExpandVelocityIntoCollision",
             notes="No call sites in this module.")
@@ -1761,7 +1459,7 @@ class PressureSolver:
 
     def project_frame(self, velocity, voxel_type, collision_velocity,
                       voxel_counts, settings, *, max_gradient,
-                      reference_mass=None, pressure_source=None):
+                      pressure_source=None):
         """Build, solve, and safely apply one pressure projection."""
         resolved_quality = getattr(settings, "resolved_quality", None)
         rest_count = (resolved_quality.rest_particle_count
@@ -1772,37 +1470,9 @@ class PressureSolver:
             rest_count=rest_count,
             count_stiffness=settings.count_stiffness,
         )
-        st_projection = bool(
-            settings.spacetime_enabled
-            and settings.spacetime_variable_projection)
-        if reference_mass is None:
-            configured_mass = float(settings.spacetime_reference_mass)
-            reference_mass = (
-                configured_mass
-                if configured_mass > 0.0 and math.isfinite(configured_mass)
-                else max(1.0, float(rest_count)))
-        st_args = {
-            "reference_mass": reference_mass,
-            "eta_phi": settings.spacetime_phase_eta,
-            "rho_liquid": settings.spacetime_liquid_density,
-            "rho_gas": settings.spacetime_gas_density,
-            "eps_rho": settings.spacetime_min_density,
-        }
-        if st_projection:
-            self.build_preconditioner_st(voxel_type, velocity, **st_args)
-        else:
-            self.build_preconditioner(voxel_type)
+        self.build_preconditioner(voxel_type)
         if int(settings.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
-            if st_projection:
-                self.solve_jacobi_st(
-                    voxel_type, settings.pressure_iterations, velocity,
-                    **st_args)
-            else:
-                self.solve_jacobi(voxel_type, settings.pressure_iterations)
-        elif st_projection:
-            self.solve_pcg_st(
-                voxel_type, settings.pressure_iterations,
-                settings.pressure_tolerance, velocity, **st_args)
+            self.solve_jacobi(voxel_type, settings.pressure_iterations)
         else:
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
@@ -1816,14 +1486,9 @@ class PressureSolver:
             return self.last_status
         if settings.pressure_threshold > 0.0:
             self.apply_threshold(settings.pressure_threshold)
-        if st_projection:
-            self.project_st(
-                velocity, voxel_type, collision_velocity,
-                max_gradient=max_gradient, **st_args)
-        else:
-            self.project(
-                velocity, voxel_type, collision_velocity,
-                max_gradient=max_gradient)
+        self.project(
+            velocity, voxel_type, collision_velocity,
+            max_gradient=max_gradient)
         return self.last_status
 
     def build_rhs(self, vel, voxel_type, collision_vel, voxel_counts,
@@ -1852,196 +1517,6 @@ class PressureSolver:
                     g.leaves_dim, g.num_leaves, self.inv_diag],
             device=self.device,
         )
-
-
-
-    def build_preconditioner_st(self, voxel_type, vel, reference_mass=8.0,
-                                eta_phi=0.5, rho_liquid=1.0,
-                                rho_gas=0.0, eps_rho=0.05):
-        g = self.grid
-        fast_launch(
-            k_compute_inverse_diagonal_st, dim=self._dim(),
-            inputs=[voxel_type, vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, reference_mass, eta_phi,
-                    rho_liquid, rho_gas, eps_rho, self.inv_diag],
-            device=self.device,
-        )
-
-    def solve_jacobi_st(self, voxel_type, iterations, vel, reference_mass=8.0,
-                        eta_phi=0.5, rho_liquid=1.0, rho_gas=0.0,
-                        eps_rho=0.05):
-        g = self.grid
-        n = self._dim()
-        src, dst = self.pressure, self.pressure_tmp
-        src[:n].zero_()
-        for _ in range(iterations):
-            fast_launch(
-                k_jacobi_iteration_st, dim=n,
-                inputs=[src, self.rhs, voxel_type, self.inv_diag,
-                        vel.wu, vel.wv, vel.ww,
-                        g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                        g.num_leaves, reference_mass, eta_phi,
-                        rho_liquid, rho_gas, eps_rho, dst],
-                device=self.device,
-            )
-            src, dst = dst, src
-        if src is not self.pressure:
-            wp.copy(self.pressure, src, count=n)
-        self.last_iterations = iterations
-        # Same fix as solve_jacobi: report the real residual instead of a
-        # -1.0 placeholder, measured against the ST variable-coefficient
-        # operator this solve actually used (measure_residual() applies the
-        # constant-coefficient one).
-        residual = self._measure_residual_st(
-            voxel_type, vel, reference_mass, eta_phi, rho_liquid, rho_gas,
-            eps_rho)
-        self.last_residual = residual if math.isfinite(residual) else math.inf
-        self.last_residual_squared = (
-            residual * residual if math.isfinite(residual) else math.inf)
-        self._set_pressure_status(
-            PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
-        return self.last_status
-
-    def _measure_residual_st(self, voxel_type, vel, reference_mass, eta_phi,
-                             rho_liquid, rho_gas, eps_rho):
-        """L2 norm of (rhs - A_st*pressure); one readback, like measure_residual()."""
-        import numpy as _np
-
-        g = self.grid
-        n = self._dim()
-        self.ap[:n].zero_()
-        fast_launch(
-            k_apply_matrix_st, dim=n,
-            inputs=[self.pressure, voxel_type, self.inv_diag,
-                    vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, reference_mass, eta_phi,
-                    rho_liquid, rho_gas, eps_rho, self.ap],
-            device=self.device,
-        )
-        r = self.rhs[:n].numpy() - self.ap[:n].numpy()
-        return float(_np.linalg.norm(r))
-
-    def solve_pcg_st(self, voxel_type, max_iterations, tolerance, vel,
-                     reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                     rho_gas=0.0, eps_rho=0.05, check_every=25):
-        """PCG solve for the ST-FLIP variable-coefficient pressure matrix."""
-        g = self.grid
-        n = self._dim()
-        x = self.pressure
-        self._zero_pcg_vectors(n, x, zero_x0=True)
-        fast_launch(
-            k_initialize_pcg, dim=n,
-            inputs=[self.rhs, self.x0, self.inv_diag,
-                    self.pressure_indices, self._pressure_count, 0,
-                    g.num_leaves,
-                    x, self.r, self.z, self.p_dir,
-                    self._pcg_compact_r, self._pcg_compact_z],
-            device=self.device,
-        )
-        check_every = max(1, int(check_every))
-        tol_sq = tolerance * tolerance * max(1, n)
-        status = PRESSURE_STATUS_MAX_ITERATIONS
-        failure = "max_iterations"
-        pressure_valid = False
-        wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
-        wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-        last_checked_res = float(self.residual.numpy()[0])
-        res_sq = last_checked_res
-        it = 0
-        if not math.isfinite(last_checked_res):
-            status = PRESSURE_STATUS_INVALID
-            failure = "non_finite_residual"
-        elif last_checked_res < tol_sq:
-            status = PRESSURE_STATUS_CONVERGED
-            failure = PRESSURE_STATUS_CONVERGED
-            pressure_valid = True
-        while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
-            batch = min(check_every, max_iterations - it)
-            for _ in range(batch):
-                fast_launch(
-                    k_apply_matrix_st, dim=n,
-                    inputs=[self.p_dir, voxel_type, self.inv_diag,
-                            vel.wu, vel.wv, vel.ww,
-                            g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                            g.num_leaves, reference_mass, eta_phi,
-                            rho_liquid, rho_gas, eps_rho, self.ap],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
-                fast_launch(k_compute_alpha, dim=1,
-                          inputs=[self.rz, self.p_ap, self.alpha],
-                          device=self.device)
-                fast_launch(
-                    k_update_xr, dim=n,
-                    inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
-                            x, self.r],
-                    device=self.device,
-                )
-                fast_launch(
-                    k_apply_preconditioner, dim=n,
-                    inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
-                fast_launch(k_compute_beta, dim=1,
-                          inputs=[self.rz_new, self.rz, self.beta],
-                          device=self.device)
-                fast_launch(
-                    k_update_p, dim=n,
-                    inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
-                    device=self.device,
-                )
-                wp.copy(self.rz, self.rz_new)
-                it += 1
-            wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-            fast_launch(k_pack_pcg_stats, dim=1,
-                      inputs=[self.residual, self.rz, self.p_ap,
-                              self.pcg_stats],
-                      device=self.device)
-            stats = self.pcg_stats.numpy()
-            res_sq = float(stats[0])
-            rz_cur = float(stats[1])
-            p_ap_cur = float(stats[2])
-            if (not math.isfinite(res_sq) or not math.isfinite(rz_cur)
-                    or not math.isfinite(p_ap_cur)):
-                status = PRESSURE_STATUS_INVALID
-                failure = "non_finite_residual"
-            elif res_sq < tol_sq:
-                status = PRESSURE_STATUS_CONVERGED
-                failure = PRESSURE_STATUS_CONVERGED
-                pressure_valid = True
-            elif (rz_cur < -1.0e-20 or abs(rz_cur) < 1.0e-30
-                    or abs(p_ap_cur) < 1.0e-30):
-                status = PRESSURE_STATUS_SINGULAR
-                failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
-            else:
-                last_checked_res = res_sq
-        self.last_iterations = it
-        if not math.isfinite(res_sq):
-            status = PRESSURE_STATUS_INVALID
-            failure = "non_finite_residual"
-            res_sq = math.inf
-        self.last_residual_squared = res_sq
-        self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
-        # A finite stalled/iteration-limited solution is useful best effort:
-        # projecting it reduces divergence. The previous fail-open path
-        # discarded all progress, zeroed pressure, and advected the completely
-        # unprojected velocity field. Singular/non-finite systems remain
-        # fail-closed because their pressure field is not trustworthy.
-        pressure_valid = pressure_valid or (
-            math.isfinite(res_sq)
-            and status in (PRESSURE_STATUS_MAX_ITERATIONS,
-                           PRESSURE_STATUS_STALLED)
-        )
-        if not pressure_valid:
-            self.pressure[:n].zero_()
-        self._set_pressure_status(status, failure, pressure_valid)
-        return self.last_status
 
     def coarse_initial_guess(self, voxel_type, iterations=32):
         """Electrostatic leaf-aggregate long-range guess (multigrid path)."""
@@ -2328,22 +1803,6 @@ class PressureSolver:
             device=self.device,
         )
 
-
-
-    def project_st(self, vel, voxel_type, collision_vel, max_gradient=1.0e6,
-                   reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                   rho_gas=0.0, eps_rho=0.05):
-        g = self.grid
-        fast_launch(
-            k_project_st, dim=self._dim(),
-            inputs=[self.pressure, voxel_type, vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, g.voxel_size, max_gradient,
-                    reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho,
-                    collision_vel,
-                    vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
-            device=self.device,
-        )
 
     def project(self, vel, voxel_type, collision_vel, max_gradient=1.0e6):
         g = self.grid

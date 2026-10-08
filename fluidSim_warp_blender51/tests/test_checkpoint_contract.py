@@ -27,7 +27,7 @@ def _payload() -> CheckpointPayload:
             "whitewater_velocity": np.zeros((0, 3), dtype=np.float32),
             "whitewater_type": np.zeros(0, dtype=np.int32),
         },
-        scalars={"whitewater_emit_seed": 12345, "st_step_seed": 1729},
+        scalars={"whitewater_emit_seed": 12345},
         source_state={"initial_fired": ["Emitter"], "emit_seed": 77},
     )
 

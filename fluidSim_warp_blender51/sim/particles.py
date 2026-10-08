@@ -170,7 +170,8 @@ class ParticleSystem:
         # Kernels receive stable typed placeholders when a channel is disabled.
         self._dummy_vec4 = wp.zeros(1, dtype=wp.vec4, device=device)
         self._dummy_int = wp.zeros(1, dtype=wp.int32, device=device)
-        # ST-FLIP residual: delta_t = t_global - t_particle.
+        # Per-particle time residual channel. Always zero since the removal of
+        # ST-FLIP; kept because it is a public cache/checkpoint/effects channel.
         self.time_offset = wp.zeros(n, dtype=float, device=device)
         self._position2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._velocity2 = wp.zeros(n, dtype=wp.vec3, device=device)
@@ -209,7 +210,7 @@ class ParticleSystem:
         raise KeyError(name)
 
     def attr(self, name: str) -> wp.array:
-        if name in {"time_offset", "st_time_offset"}:
+        if name == "time_offset":
             return self.time_offset
         if name in self.attrs:
             return self.attrs[name]

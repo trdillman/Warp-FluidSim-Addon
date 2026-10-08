@@ -28,7 +28,7 @@ need the real `bpy` use `pytest.importorskip("bpy")` and skip under a plain inte
 | `test_ownership_map.py` | 1 | Pins `docs/ownership-map.md`. Stays at the root because `tools/ownership_map.py` writes that path into the generated doc |
 | `support/` | 2 | Shared helpers (not tests) |
 | `validation/` | 7 | Sparse-grid / transfer / pressure / viscosity numerical validation |
-| `solver/` | 21 | Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitewater) |
+| `solver/` | 19 | Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater) |
 | `runtime/` | 30 | Add-on runtime logic that runs without Blender: settings, capacity, scene bridge, checkpoints, Warp discovery |
 | `sources/` | 16 | Fluid sources, sinks and force regions |
 | `surface/` | 7 | Render-surface (SDF) pipeline and viewport point-cloud output |
@@ -39,7 +39,7 @@ need the real `bpy` use `pytest.importorskip("bpy")` and skip under a plain inte
 | `demos/` | 2 | Demo scene geometry and demo-analysis acceptance criteria |
 | `repo/` | 5 | Repository, packaging and release-surface contracts |
 | `acceptance/` | 43 | Blender scripts (NOT pytest): see below |
-| `scripts/` | 6 | Headless/smoke scripts (NOT pytest): see below |
+| `scripts/` | 3 | Headless/smoke scripts (NOT pytest): see below |
 
 ## Rules for this folder
 
@@ -75,7 +75,7 @@ Sparse-grid / transfer / pressure / viscosity numerical validation. `test_valida
 
 ## `solver/`
 
-Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitewater).
+Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater).
 
 | File | Covers | Needs |
 |---|---|---|
@@ -88,12 +88,10 @@ Solver kernels and contracts (CUDA kernels, ST-FLIP, pressure, viscosity, whitew
 | `test_particle_capacity_growth.py` | Particle buffer auto-growth policy and limits. | - |
 | `test_particles_per_voxel_cap.py` | REVIEW-005: one liquid-occupancy ceiling, not six copies of the literal 64. | - |
 | `test_pressure_projection_regressions.py` | Focused pressure projection safety regressions. | CUDA |
-| `test_pressure_st_and_graph_cache.py` | ST-FLIP PCG initialization and CUDA-graph cache regressions. | CUDA |
+| `test_pressure_st_and_graph_cache.py` | PCG initialization and CUDA-graph cache regressions. | CUDA |
+| `test_solver_checkpoint_roundtrip.py` | A real solver's exported checkpoint restores into a fresh solver, and the checkpoint scalars carry no removed-feature keys. | CUDA |
 | `test_solver_collaborator_contract.py` | Sub-solvers read only the pinned private solver attributes; the surface-transfer slot is public. | - |
-| `test_spacetime.py` | SpaceTime FLIP state: calibration goldens, reference-mass ladder, checkpoint scalars, leaf import. | - |
 | `test_sparse_leaf_grid_contract.py` | Regression guard for the live sparse tiled leaf-grid wording contract. | - |
-| `test_stflip_experimental_defaults.py` | ST-FLIP ships as Experimental and Variable Projection is off by default. | - |
-| `test_stflip_kernel_boundary_regressions.py` | Focused contracts for ST-FLIP transfer behavior at support/grid boundaries. | - |
 | `test_validation_releases_native_leases.py` | Every GPU self-validation must return its native CUDA kernel leases. | CUDA |
 | `test_viscosity_active_work_regressions.py` | Focused viscosity active-work regressions. | CUDA |
 | `test_viscosity_conditional_pcg_cuda.py` | Device-evaluated viscosity PCG convergence check (CUDA conditional graph). | CUDA |
@@ -322,14 +320,11 @@ Not collected by pytest (no `test_` prefix). Each is run as `blender --backgroun
 
 ## `scripts/` (non-pytest)
 
-Plain Python scripts run inside Blender (headless) or directly. `smoke_core.py` and `smoke_solver.py` are run by the production gate as plain scripts; the `headless_*` scripts are manual ST-FLIP/surface acceptance runs invoked with Blender.
+Plain Python scripts run inside Blender (headless) or directly. `smoke_core.py` and `smoke_solver.py` are run by the production gate as plain scripts; the `headless_*` script is a manual surface acceptance run invoked with Blender.
 
 
 | Script | Does | Needs |
 |---|---|---|
-| `headless_spatiotemporal_validation.py` | Headless ST-FLIP validation for Blender + Warp. | Blender/Warp; CUDA |
-| `headless_stflip_benchmark.py` | Headless ST-FLIP benchmark/acceptance run for Blender + Warp. | Blender/Warp; CUDA |
-| `headless_stflip_timeline_viewport.py` | Timeline/viewport acceptance for ST-FLIP Blender integration. | Blender/Warp; - |
 | `headless_surface_resolution_pipeline.py` | Headless surfacing-resolution acceptance for Blender + Warp. | Blender/Warp; CUDA |
 | `smoke_core.py` | Headless smoke test of core (non-solver) modules. | Blender/Warp; CUDA |
 | `smoke_solver.py` | Headless smoke test: full solver pipeline on CUDA (dam break in a box). | Blender/Warp; - |
