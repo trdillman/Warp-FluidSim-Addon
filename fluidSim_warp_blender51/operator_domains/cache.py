@@ -190,7 +190,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
         name="Restart Existing Cache",
         default=False,
         options={"SKIP_SAVE"},
-        description="Delete only FluidSim cache-v2 artifacts before baking",
+        description="Delete only FluidSim cache artifacts before baking",
     )
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
@@ -304,7 +304,7 @@ class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
-    """Remove only files not referenced by the committed cache-v2 manifest"""
+    """Remove only files not referenced by the committed cache manifest"""
 
     bl_idname = "fluidsim.cache_remove_orphans"
     bl_label = "Remove Cache Orphans"

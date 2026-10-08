@@ -446,7 +446,7 @@ def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
         })
 
 
-def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
+def test_cache_playback_classifies_whitewater_types(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2)
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
@@ -1159,7 +1159,7 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
     assert sess.frame_stats[-1] == {"frame": 1001}
 
 
-def test_live_step_never_writes_legacy_cache(monkeypatch):
+def test_live_step_never_writes_a_cache_frame(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.cache_enabled = True
@@ -1181,11 +1181,11 @@ def test_live_step_never_writes_legacy_cache(monkeypatch):
     writes = []
     from fluidSim_warp_blender51.io import cache
 
-    for writer in ("write_frame", "write_frame_v2_atomic"):
-        monkeypatch.setattr(
-            cache, writer,
-            lambda *_args, **_kwargs: writes.append(scene.frame_current),
-            raising=False)
+    # The one frame writer there is. It must exist (no raising=False): a spy on
+    # a name the module no longer has would pass whatever the step wrote.
+    monkeypatch.setattr(
+        cache, "write_frame_v3_atomic",
+        lambda *_args, **_kwargs: writes.append(scene.frame_current))
     monkeypatch.setattr(cache, "settings_record", lambda _settings: {})
 
     scene_bridge.step_frame(

@@ -28,17 +28,17 @@ need the real `bpy` use `pytest.importorskip("bpy")` and skip under a plain inte
 | `test_ownership_map.py` | 1 | Pins `docs/ownership-map.md`. Stays at the root because `tools/ownership_map.py` writes that path into the generated doc |
 | `support/` | 2 | Shared helpers (not tests) |
 | `validation/` | 7 | Sparse-grid / transfer / pressure / viscosity numerical validation |
-| `solver/` | 19 | Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater) |
-| `runtime/` | 30 | Add-on runtime logic that runs without Blender: settings, capacity, scene bridge, checkpoints, Warp discovery |
+| `solver/` | 21 | Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater) |
+| `runtime/` | 31 | Add-on runtime logic that runs without Blender: settings, capacity, scene bridge, checkpoints, Warp discovery |
 | `sources/` | 16 | Fluid sources, sinks and force regions |
 | `surface/` | 7 | Render-surface (SDF) pipeline and viewport point-cloud output |
-| `cache_io/` | 5 | Cache IO and output publication |
+| `cache_io/` | 10 | Cache IO and output publication |
 | `ui/` | 13 | Operators, panels, guided setup and artist workflows tested against a stub `bpy` |
-| `gate/` | 7 | Production-gate and performance-budget machinery (the gate itself is `tools/run_production_gate.py`) |
+| `gate/` | 9 | Production-gate and performance-budget machinery (the gate itself is `tools/run_production_gate.py`) |
 | `perf/` | 11 | Benchmark, profiler and playback-performance tooling contracts |
 | `demos/` | 2 | Demo scene geometry and demo-analysis acceptance criteria |
-| `repo/` | 5 | Repository, packaging and release-surface contracts |
-| `acceptance/` | 43 | Blender scripts (NOT pytest): see below |
+| `repo/` | 6 | Repository, packaging and release-surface contracts |
+| `acceptance/` | 45 | Blender scripts (NOT pytest): see below |
 | `scripts/` | 3 | Headless/smoke scripts (NOT pytest): see below |
 
 ## Rules for this folder
@@ -83,6 +83,7 @@ Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater).
 | `test_collision_sdf_gradient.py` | REVIEW-017: collider normals at the edge of the sparse topology. | CUDA |
 | `test_color_mixing.py` | Color-mixing kernels and per-particle color/attribute transfer. | CUDA |
 | `test_cuda_reduction_abi.py` | Argument/ABI contract of the CUDA reduction kernels. | - |
+| `test_cuda_dot_product_length_checks.py` | REVIEW-038: ``CudaDotProduct`` rejects a short array with a ``ValueError`` before any launch (the native launch is replaced by a recorder). | - |
 | `test_cuda_reduction_active_count.py` | Device-counted dot product: a graph-capturable reduction whose length is read from ``num_leaves`` at launch instead of being baked into the launch. | CUDA |
 | `test_force_subsystem_contracts.py` | Regression contracts for the force settings and dispatch seam. | - |
 | `test_particle_capacity_growth.py` | Particle buffer auto-growth policy and limits. | - |
@@ -91,6 +92,7 @@ Solver kernels and contracts (CUDA kernels, pressure, viscosity, whitewater).
 | `test_pressure_st_and_graph_cache.py` | PCG initialization and CUDA-graph cache regressions. | CUDA |
 | `test_solver_checkpoint_roundtrip.py` | A real solver's exported checkpoint restores into a fresh solver, and the checkpoint scalars carry no removed-feature keys. | CUDA |
 | `test_solver_collaborator_contract.py` | Sub-solvers read only the pinned private solver attributes; the surface-transfer slot is public. | - |
+| `test_solver_error_paths.py` | REVIEW-027: the solver's device, reduction-launch and sourcing-count error paths each give an actionable message. | - |
 | `test_sparse_leaf_grid_contract.py` | Regression guard for the live sparse tiled leaf-grid wording contract. | - |
 | `test_validation_releases_native_leases.py` | Every GPU self-validation must return its native CUDA kernel leases. | CUDA |
 | `test_viscosity_active_work_regressions.py` | Focused viscosity active-work regressions. | CUDA |
@@ -134,6 +136,7 @@ Add-on runtime logic that runs without Blender: settings, capacity, scene bridge
 | `test_slowdown_telemetry.py` | Regression tests for slowdown diagnostics and reset cache behavior. | - |
 | `test_solver_settings_projection.py` | Focused contracts for owned Blender-to-solver value projection. | - |
 | `test_topology_transaction.py` | Behavioral contracts for transactional sparse topology and leaf-demand quality. | - |
+| `test_unregister_resilience.py` | REVIEW-013: ``operators.unregister`` and ``panels.unregister`` continue past a class that will not unregister and name it. | - |
 | `test_warp_discovery.py` | Regression coverage for the explicit external-Warp developer override. | - |
 
 ## `sources/`
@@ -179,11 +182,16 @@ Cache IO and output publication. Named `cache_io`, not `io`, so it cannot shadow
 
 | File | Covers | Needs |
 |---|---|---|
+| `test_backend_refused_start.py` | A start refused inside ``ProductionBakeBackend.initialize`` (2.x cache, existing data, changed animation) leaves the artist's live toggle on. | - |
+| `test_bake_stage_refusal.py` | What the Bake stage says for a 2.x cache and for a Resume refused because a source or collider animation changed ("Re-bake from frame N"). | - |
 | `test_cache_io.py` | Cache write/read round trip and sequence layout. | - |
+| `test_cache_v3.py` | Cache v3 (SPEC-cache-v3): required manifest/frame fields, 2.x cache and v1 checkpoint refusal, source-stamp purity, first-changed-frame resume scan. | - |
 | `test_frame_output.py` | Host-frame readback and live/cache payload assembly (some tests import `bpy`, skipped without). | CUDA, some tests need `bpy` |
 | `test_io_dependency_contract.py` | Dependency-direction contracts for low-level cache IO. | - |
 | `test_io_path_policy.py` | Cache path policy (relative/absolute, safe locations). | - |
 | `test_output_publication_buffers.py` | Exercise publication against Blender RNA's bulk-buffer contract. | - |
+| `test_resume_rebake.py` | Resume refusal and "Re-bake from frame N" through ``BakeRun`` and ``BakeController``. | - |
+| `test_source_frame_stamp.py` | The per-frame source stamp moves with a transform or geometry and not with a rename, a panel setting or the frame number. | - |
 
 ## `ui/`
 
@@ -213,7 +221,9 @@ Production-gate and performance-budget machinery (the gate itself is `tools/run_
 |---|---|---|
 | `test_demo_budget_runner.py` | Fresh-child failure propagation and the release lane's fixed contract. | - |
 | `test_gate_marker_and_playback_validation.py` | Production-gate positive-marker and playback-report truth contracts. | - |
+| `test_offscreen_view3d.py` | The GUI acceptance's offscreen viewport check (`acceptance/_offscreen_view3d.py`): pixel counting and draw orchestration against a recording stand-in for `bpy`/`gpu`. | - |
 | `test_performance_budget.py` | Focused tests for the production performance-budget evidence reducer. | - |
+| `test_phase2_acceptance_setup.py` | REVIEW-025: importing the Phase 2 source acceptance helper has no side effects; its work sits behind an explicit ``setup()``. | - |
 | `test_production_gate_coverage.py` | Every Blender acceptance script is run by the production gate or excused. | - |
 | `test_production_gate_semantics.py` | Meaning of each production-gate check (pass/fail rules). | - |
 | `test_production_gate_truthfulness.py` | The gate cannot report PASS on missing or stale evidence. | - |
@@ -256,13 +266,14 @@ Repository, packaging and release-surface contracts.
 | `test_cuda_device_fixture.py` | Regression gate for the shared ``cuda_device`` fixture (no GPU required). | CUDA |
 | `test_extension_manifest.py` | Blender extension manifest contents. | - |
 | `test_install_local.py` | Host-side checks for tools/release/install_local.py (no Blender needed). | - |
+| `test_profiling_tools_cache_api.py` | Every name `tools/profiling/*.py` reads from the cache modules exists, and the cached user-path profile writes a v3 frame. | - |
 | `test_release_1_0_253_integration.py` | Integration contract for the current release surface. | - |
 
 ## `acceptance/` (non-pytest Blender scripts)
 
-Not collected by pytest (no `test_` prefix). Each is run as `blender --background --factory-startup --python <script>` and prints a `...-PASS` marker that the gate checks. They need Blender 5.1+, the add-on's bundled Warp, and for most a CUDA GPU. `_phase2_source_acceptance_common.py` is a shared helper (not a script to run).
+Not collected by pytest (no `test_` prefix). Each is run as `blender --background --factory-startup --python <script>` and prints a `...-PASS` marker that the gate checks. They need Blender 5.1+, the add-on's bundled Warp, and for most a CUDA GPU. `_phase2_source_acceptance_common.py` and `_offscreen_view3d.py` are shared helpers (not scripts to run).
 
-### Run by the production gate (32)
+### Run by the production gate (33)
 
 | Script | Proves |
 |---|---|
@@ -271,6 +282,7 @@ Not collected by pytest (no `test_` prefix). Each is run as `blender --backgroun
 | `blender_attribute_viz_acceptance.py` | Background acceptance for viewport attribute visualization modes. |
 | `blender_background_acceptance.py` | Blender --background acceptance test for the FluidSim Warp add-on. |
 | `blender_cache_export_pipeline.py` | Blender --background gate for cache sequence export and playback. |
+| `blender_cache_v3_stamp_acceptance.py` | Blender/CUDA acceptance: cache v3 stamps every frame's sources and colliders; a changed animation refuses Resume and offers "Re-bake from frame N"; a 2.x manifest is refused. |
 | `blender_capacity_planner_acceptance.py` | Real CUDA acceptance for fail-closed source-capacity transactions. |
 | `blender_chromatic_vortex_containment_acceptance.py` | Prove the chromatic-vortex demo starts inside a real vessel collider. |
 | `blender_closed_domain_stability_acceptance.py` | CUDA regression for closed-domain drift and artificial energy growth. |
@@ -317,6 +329,8 @@ Not collected by pytest (no `test_` prefix). Each is run as `blender --backgroun
 ### Helper
 
 `_phase2_source_acceptance_common.py`: shared quantitative implementation used by the five source acceptance scripts above.
+
+`_offscreen_view3d.py`: draws the 3D view into a `gpu.offscreen` buffer and counts the pixels that differ from the background; used by `blender_gui_acceptance.py` in place of a window screenshot. Its pure half is tested by `gate/test_offscreen_view3d.py`.
 
 ## `scripts/` (non-pytest)
 

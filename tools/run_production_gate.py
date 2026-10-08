@@ -49,7 +49,7 @@ if os.name == "nt":
         DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe"
 else:
     DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
-    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python\bin\python.exe"
+    DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe"
     if not os.path.exists(DEFAULT_BLENDER_EXE):
         DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
         DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
@@ -69,6 +69,7 @@ BLENDER_FAILURE_MARKERS = (
     "GUI-ACCEPTANCE-FAIL",
     "GUI-PLAYBACK-PROBE-FAIL",
     "DEMO-BLEND-CHECK-FAIL",
+    "CACHE-V3-STAMP-ACCEPTANCE-FAIL",
 )
 CANONICAL_DEMO_SCENES = (
     "dam_break",
@@ -107,6 +108,7 @@ BACKGROUND_ACCEPTANCE = (
     ("tests/acceptance/blender_animated_cache_playback_acceptance.py",
      "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
 )
 # Source acceptance scripts that write a JSON report: (capability, marker).
 SOURCE_REPORT_ACCEPTANCE = (
@@ -466,6 +468,7 @@ def _production_main(argv=None):
         "tests/acceptance/blender_viewport_2frame_gate.py",
         "tests/acceptance/blender_pre_bridge_file_acceptance.py",
         "tests/acceptance/_phase2_source_acceptance_common.py",
+        "tests/acceptance/_offscreen_view3d.py",
         *(script for script, _ in BACKGROUND_ACCEPTANCE),
         *(f"tests/acceptance/blender_{capability}_acceptance.py"
           for capability, _ in SOURCE_REPORT_ACCEPTANCE),
