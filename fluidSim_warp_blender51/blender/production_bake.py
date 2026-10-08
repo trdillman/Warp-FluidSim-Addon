@@ -1,4 +1,4 @@
-"""Transactional cache-v2 production bake controller and Blender backend.
+"""Transactional cache-v3 production bake controller and Blender backend.
 
 The pure state machine performs at most one frame transaction per ``tick``.
 Blender-specific scene/session work is confined to ``ProductionBakeBackend``.
@@ -10,14 +10,18 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from pathlib import Path
+import platform as _platform
+import re
 import shutil
 import signal
 from typing import Callable
 
 from ..io.cache_schema import (
-    CacheManifestV2,
+    CacheManifestV3,
     FrameEntry,
+    LegacyCacheFormatError,
     ResumeDecision,
+    first_changed_source_frame,
     load_manifest,
     manifest_path,
     verified_contiguous_frames,
@@ -43,6 +47,15 @@ class BakeStatus(str, Enum):
     CANCELLED = "CANCELLED"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
+
+
+class ResumeRefused(ValueError):
+    """A resume was not allowed; ``decision`` says why (and, for a changed
+    animation, which frame a re-bake would start from)."""
+
+    def __init__(self, decision: ResumeDecision):
+        super().__init__(f"{decision.code}: {decision.message}")
+        self.decision = decision
 
 
 @dataclass(frozen=True)
@@ -71,6 +84,7 @@ class BakeController:
         self.error = ""
         self._resume = False
         self._restart = False
+        self._rebake_from: int | None = None
         self._cancel_requested = False
         self._reserved_cache_path: Path | None = None
 
@@ -98,22 +112,29 @@ class BakeController:
         self.error = ""
         self._resume = False
         self._restart = bool(restart)
+        self._rebake_from = None
         self._cancel_requested = False
         self.status = BakeStatus.INITIALIZING
 
-    def resume(self, scene, *, end: int | None = None) -> None:
+    def resume(
+        self, scene, *, end: int | None = None, rebake_from: int | None = None
+    ) -> None:
+        """Continue a cache, or with ``rebake_from`` replace it from that frame."""
         if self.status in {
             BakeStatus.INITIALIZING,
             BakeStatus.RUNNING,
             BakeStatus.CANCELLING,
         }:
             raise RuntimeError("a production bake is already active")
-        decision = self.backend.resume_decision(scene)
+        if rebake_from is None:
+            decision = self.backend.resume_decision(scene)
+        else:
+            decision = self.backend.resume_decision(scene, rebake_from=rebake_from)
         if not decision.allowed or decision.resume_frame is None:
-            raise ValueError(f"{decision.code}: {decision.message}")
+            raise ResumeRefused(decision)
         manifest = self.backend.load_manifest(scene)
         if manifest is None:
-            raise ValueError("NO_CACHE: no cache-v2 manifest exists")
+            raise ValueError("NO_CACHE: no cache manifest exists")
         self.frame_start = manifest.frame_start
         self.frame_end = int(manifest.frame_end if end is None else end)
         if self.frame_end < decision.resume_frame:
@@ -127,6 +148,7 @@ class BakeController:
         self.error = ""
         self._resume = True
         self._restart = False
+        self._rebake_from = None if rebake_from is None else int(rebake_from)
         self._cancel_requested = False
         self.status = BakeStatus.INITIALIZING
 
@@ -144,12 +166,19 @@ class BakeController:
         """Advance one transition/frame; return a suggested timer delay."""
         try:
             if self.status is BakeStatus.INITIALIZING:
+                # Only a re-bake passes the extra argument, so a backend that
+                # predates it keeps working for every other bake.
+                extra = (
+                    {} if self._rebake_from is None
+                    else {"rebake_from": self._rebake_from}
+                )
                 result = self.backend.initialize(
                     scene,
                     self.frame_start,
                     self.frame_end,
                     resume=self._resume,
                     restart=self._restart,
+                    **extra,
                 )
                 if self._resume and isinstance(result, int):
                     self.next_frame = result
@@ -311,14 +340,50 @@ def cache_path_is_active(path: Path | str) -> bool:
     )
 
 
+def _platform_record(solver) -> dict[str, str]:
+    """Describe where the cache was baked; informational, never in a signature."""
+    from ..runtime.warp_runtime import probe_runtime
+
+    probe = probe_runtime()
+    alias = str(getattr(solver, "device", "") or "")
+    devices = {device.alias: device for device in probe.cuda_devices}
+    device = devices.get(alias) or next(iter(devices.values()), None)
+    driver = int(probe.cuda_driver_version or 0)
+    return {
+        "os": _platform.platform() or "unknown",
+        "gpu_name": (device.name if device is not None else "") or "unknown",
+        # CUDA driver API version (12090 -> "12.9"), as Warp reports it.
+        "driver": f"{driver // 1000}.{(driver % 1000) // 10}" if driver else "unknown",
+        "warp": probe.warp_version or "unknown",
+    }
+
+
+def _grid_spec_record(quality) -> dict[str, object]:
+    """The grid the solver resolved, as the manifest records it.
+
+    ``resolution_divisions`` is the cell count along the longest domain axis
+    (``max(unpadded_voxel_dimensions)``); the Resolution Divisions work (lane I)
+    replaces this derivation with the authored value.
+    """
+    return {
+        "resolution_divisions": int(max(quality.unpadded_voxel_dimensions)),
+        "voxel_size": float(quality.voxel_size),
+        "domain_size": [float(value) for value in quality.domain_size],
+        "leaf_dim": 8,
+    }
+
+
+_FRAME_FILE_RE = re.compile(r"^(?:frame|checkpoint)_(\d+)\.npz")
+
+
 class ProductionBakeBackend:
-    """Blender/session adapter for one-frame cache-v2 transactions."""
+    """Blender/session adapter for one-frame cache-v3 transactions."""
 
     def __init__(self, *, checkpoint_interval: int = 1, compressed: bool = False):
         self.checkpoint_interval = max(1, int(checkpoint_interval))
         self.compressed = bool(compressed)
         self.base_dir = Path()
-        self.manifest: CacheManifestV2 | None = None
+        self.manifest: CacheManifestV3 | None = None
         self.signatures: dict[str, str] = {}
         self.effect_signature = ""
         self.effect_inventory: tuple[dict[str, object], ...] = ()
@@ -340,7 +405,7 @@ class ProductionBakeBackend:
         bpy = self._bpy()
         return Path(bpy.path.abspath(scene.fluidsim.cache_path)).resolve()
 
-    def load_manifest(self, scene) -> CacheManifestV2 | None:
+    def load_manifest(self, scene) -> CacheManifestV3 | None:
         return load_manifest(manifest_path(self.cache_path(scene)))
 
     @staticmethod
@@ -352,15 +417,27 @@ class ProductionBakeBackend:
             return False
         return cached_parts[:2] == current_parts[:2]
 
-    def resume_decision(self, scene) -> ResumeDecision:
+    def resume_decision(
+        self, scene, *, rebake_from: int | None = None
+    ) -> ResumeDecision:
+        """Whether the cache can continue, or with ``rebake_from`` restart there.
+
+        A plain resume continues after the last committed frame and is refused
+        with ``SOURCE_ANIMATION_CHANGED`` when any committed frame was baked
+        from a different animation of a source or collider; the decision then
+        names the first such frame. ``rebake_from=N`` keeps the frames below N
+        (which must still match the animation) and bakes N onward.
+        """
         base = self.cache_path(scene)
         try:
             manifest = load_manifest(manifest_path(base))
+        except LegacyCacheFormatError as exc:
+            return ResumeDecision(False, None, "CACHE_FORMAT_2X", str(exc))
         except ValueError as exc:
             return ResumeDecision(False, None, "MANIFEST_INVALID", str(exc))
         if manifest is None:
             return ResumeDecision(
-                False, None, "NO_CACHE", "No cache-v2 manifest exists to resume"
+                False, None, "NO_CACHE", "No cache manifest exists to resume"
             )
         if not self._compatible_solver_version(
             manifest.solver_version, VERSION_STRING
@@ -403,6 +480,23 @@ class ProductionBakeBackend:
                     code,
                     f"Current {key.replace('_', ' ')} does not match the cache",
                 )
+        target = None if rebake_from is None else int(rebake_from)
+        if target is not None:
+            last_committed = manifest.last_committed_frame
+            newest = (
+                manifest.frame_start if last_committed is None
+                else last_committed + 1
+            )
+            if not manifest.frame_start <= target <= newest:
+                return ResumeDecision(
+                    False,
+                    None,
+                    "REBAKE_FRAME_INVALID",
+                    f"Cannot re-bake from frame {target}: this cache can be "
+                    f"re-baked from frames {manifest.frame_start} to {newest}",
+                )
+            # Everything below is judged on the frames that survive.
+            manifest = manifest.truncated_before(target)
         try:
             verified_contiguous_frames(base, manifest)
             for frame in manifest.committed_frames:
@@ -426,12 +520,28 @@ class ProductionBakeBackend:
                     )
         except ValueError as exc:
             return ResumeDecision(False, None, "CACHE_INTEGRITY_FAILURE", str(exc))
+        changed = self._first_changed_frame(scene, manifest)
+        if changed is not None:
+            if target is not None:
+                message = (
+                    f"Cannot re-bake from frame {target}: the animation of a "
+                    f"source or collider already differs at frame {changed}"
+                )
+            else:
+                message = (
+                    "The animation of a source or collider changed since this "
+                    f"cache was baked; the first changed frame is {changed}. "
+                    f"Re-bake from frame {changed}, or restart the bake"
+                )
+            return ResumeDecision(
+                False, None, "SOURCE_ANIMATION_CHANGED", message,
+                first_changed_frame=changed)
         last = manifest.last_committed_frame
         if last is None:
             return ResumeDecision(
                 True,
                 manifest.frame_start,
-                "EMPTY_CACHE",
+                "EMPTY_CACHE" if target is None else "REBAKE_READY",
                 f"Resume will start at frame {manifest.frame_start}",
             )
         if last >= manifest.frame_end:
@@ -441,12 +551,53 @@ class ProductionBakeBackend:
                 "ALREADY_COMPLETE",
                 f"Cache is already complete through frame {manifest.frame_end}",
             )
+        if target is not None:
+            return ResumeDecision(
+                True,
+                last + 1,
+                "REBAKE_READY",
+                f"Keep frames {manifest.frame_start} to {last} and re-bake "
+                f"from frame {last + 1}",
+            )
         return ResumeDecision(
             True,
             last + 1,
             "RESUME_READY",
             f"Resume from verified checkpoint {last}; next frame is {last + 1}",
         )
+
+    def _first_changed_frame(self, scene, manifest: CacheManifestV3) -> int | None:
+        """First committed frame whose sources are no longer what was baked.
+
+        Walks the committed frames forward on the scene, so it leaves the
+        playhead where it found it. The scene's pose at a frame is not
+        independent of the frames evaluated before it for rigid-body or other
+        simulated sources, which is why this is a forward walk from the start.
+        """
+        if not manifest.frames:
+            return None
+        from . import playback
+
+        original = int(scene.frame_current)
+
+        def current(frame: int) -> str:
+            if int(scene.frame_current) != frame:
+                scene.frame_set(frame)
+            return self._stamp_now(scene, frame)
+
+        with playback.suppress_frame_handlers():
+            try:
+                return first_changed_source_frame(manifest, current)
+            finally:
+                if int(scene.frame_current) != original:
+                    scene.frame_set(original)
+
+    def _stamp_now(self, scene, frame: int) -> str:
+        """Stamp of the sources as the scene stands, which must be at ``frame``."""
+        from . import cache_identity
+
+        return cache_identity.source_frame_stamp(
+            scene, self._bpy().context.evaluated_depsgraph_get(), frame)
 
     def _signatures_at(self, scene, frame: int) -> dict[str, str]:
         """Scene identity evaluated at the bake's reference frame.
@@ -517,11 +668,14 @@ class ProductionBakeBackend:
         *,
         resume: bool = False,
         restart: bool = False,
+        rebake_from: int | None = None,
     ) -> int | None:
         from . import playback, scene_bridge
 
         if self._initialized:
             raise RuntimeError("production bake backend is already initialized")
+        if rebake_from is not None and not resume:
+            raise ValueError("a re-bake continues an existing cache; pass resume=True")
         self._snapshot_live_state(scene)
         scene.fluidsim.live = False
         self.base_dir = self.cache_path(scene)
@@ -531,39 +685,46 @@ class ProductionBakeBackend:
         from .effects import effect_identity
         self.effect_signature, self.effect_inventory = effect_identity(scene)
 
+        stale_from = None
         if resume:
-            decision = self.resume_decision(scene)
+            decision = (
+                self.resume_decision(scene) if rebake_from is None
+                else self.resume_decision(scene, rebake_from=rebake_from)
+            )
             if not decision.allowed or decision.resume_frame is None:
-                raise ValueError(f"{decision.code}: {decision.message}")
+                raise ResumeRefused(decision)
             self.manifest = load_manifest(manifest_path(self.base_dir))
             if self.manifest is None:
-                raise ValueError("cache-v2 manifest disappeared during resume")
+                raise ValueError("cache manifest disappeared during resume")
             if self.manifest.effect_signature != self.effect_signature:
                 raise ValueError("EFFECT_SIGNATURE_MISMATCH: cache effect identity changed")
+            if rebake_from is not None:
+                # In memory only: the truncated manifest is committed below,
+                # once the solver is restored, so a failure before that point
+                # leaves the cache exactly as it was.
+                stale_from = int(rebake_from)
+                self.manifest = self.manifest.truncated_before(stale_from)
         else:
-            existing = load_manifest(manifest_path(self.base_dir))
+            try:
+                existing = load_manifest(manifest_path(self.base_dir))
+            except LegacyCacheFormatError:
+                # A 2.x cache cannot be continued, only replaced.
+                if not restart:
+                    raise
+                existing = None
             if existing is not None and not restart:
                 raise ValueError(
-                    "cache-v2 data already exists; use Resume or explicit Restart")
+                    "cache data already exists; use Resume or explicit Restart")
             if restart:
                 self._clear_for_restart(self.base_dir)
-            self.manifest = CacheManifestV2.new(
-                solver_version=VERSION_STRING,
-                scene_key=self.signatures["scene_key"],
-                settings_signature=self.signatures["settings_signature"],
-                source_signature=self.signatures["source_signature"],
-                frame_start=int(start),
-                frame_end=int(end),
-                checkpoint_interval=self.checkpoint_interval,
-                effect_signature=self.effect_signature,
-                effect_inventory=self.effect_inventory,
-            )
-            write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
 
         with playback.suppress_frame_handlers():
             self.sess.initialize(scene, depsgraph=depsgraph)
             self.sess.start_frame = int(start)
             self.sess.sync_scene(scene, depsgraph)
+            if not resume:
+                self.manifest = self._new_manifest(int(start), int(end))
+                write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
             if resume:
                 last = self.manifest.last_committed_frame
                 if last is not None:
@@ -578,14 +739,56 @@ class ProductionBakeBackend:
                         expected_effect_signature=self.manifest.effect_signature,
                     )
                     restore_solver(self.sess.solver, payload)
+                else:
+                    # Nothing to restore from (a re-bake from the first frame,
+                    # or a cache with no committed frame): start from rest.
+                    self.sess.solver.frame = self.manifest.frame_start - 1
                 next_frame = (
                     self.manifest.frame_start if last is None else last + 1
                 )
             else:
                 self.sess.solver.frame = int(start) - 1
                 next_frame = int(start)
+        if stale_from is not None:
+            self._discard_stale_frames(stale_from)
         self._initialized = True
         return next_frame
+
+    def _new_manifest(self, start: int, end: int) -> CacheManifestV3:
+        from .sources import SOURCE_SCHEMA_VERSION
+
+        return CacheManifestV3.new(
+            solver_version=VERSION_STRING,
+            scene_key=self.signatures["scene_key"],
+            settings_signature=self.signatures["settings_signature"],
+            source_signature=self.signatures["source_signature"],
+            frame_start=start,
+            frame_end=end,
+            checkpoint_interval=self.checkpoint_interval,
+            effect_signature=self.effect_signature,
+            effect_inventory=self.effect_inventory,
+            source_schema_version=SOURCE_SCHEMA_VERSION,
+            transfer_mode="FLIP",
+            grid_spec=_grid_spec_record(self.sess.solver.quality),
+            narrow_band={"enabled": False, "band_voxels": 0.0},
+            platform=_platform_record(self.sess.solver),
+        )
+
+    def _discard_stale_frames(self, first_stale: int) -> None:
+        """Commit the truncated manifest, then delete the frames it dropped.
+
+        The manifest goes first: a crash in between leaves unreferenced files,
+        which every reader ignores, never a manifest naming deleted files.
+        """
+        write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
+        for directory in ("frames", "checkpoints"):
+            folder = self.base_dir / directory
+            if not folder.is_dir():
+                continue
+            for path in folder.iterdir():
+                match = _FRAME_FILE_RE.match(path.name)
+                if match is not None and int(match.group(1)) >= first_stale:
+                    path.unlink()
 
     def step_and_commit(self, scene, frame: int) -> FrameEntry:
         from . import playback, scene_bridge
@@ -605,6 +808,9 @@ class ProductionBakeBackend:
 
         with playback.suppress_frame_handlers():
             scene.frame_set(frame)
+            # The stamp describes the sources this frame is simulated against:
+            # taken after frame_set and before the step.
+            source_frame_stamp = self._stamp_now(scene, frame)
             self.sess.sync_scene(
                 scene, self._bpy().context.evaluated_depsgraph_get())
             scene_bridge.step_frame(
@@ -624,16 +830,18 @@ class ProductionBakeBackend:
             self.sess.solver,
             settings_signature=self.manifest.settings_signature,
         )
-        frame_path, frame_digest, frame_size = cache.write_frame_v2_atomic(
+        frame_path, frame_digest, frame_size = cache.write_frame_v3_atomic(
             self.base_dir,
             frame_payload,
             frame,
             scene_key_value=self.manifest.scene_key,
             settings_signature=self.manifest.settings_signature,
             source_signature=self.manifest.source_signature,
+            source_frame_stamp=source_frame_stamp,
             effect_signature=self.effect_signature,
             effect_inventory=self.effect_inventory,
             simulation_time=float(self.sess.solver.sim_time),
+            narrow_band_enabled=bool(self.manifest.narrow_band["enabled"]),
             compressed=self.compressed,
         )
         checkpoint = capture_solver(
@@ -664,6 +872,9 @@ class ProductionBakeBackend:
             simulation_time=checkpoint.sim_time,
             settings_signature=self.manifest.settings_signature,
             source_signature=self.manifest.source_signature,
+            source_frame_stamp=source_frame_stamp,
+            whitewater_count=len(frame_payload.whitewater),
+            particle_count=len(frame_payload.positions),
         )
         # The copied manifest is committed last. If this replacement fails,
         # both final artifacts remain uncommitted orphans and are ignored.

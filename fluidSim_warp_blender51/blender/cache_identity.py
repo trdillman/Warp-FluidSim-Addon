@@ -130,6 +130,28 @@ def source_signature(scene, depsgraph=None) -> str:
     return source_signature_from_records(_source_records(scene, depsgraph))
 
 
+def source_frame_stamp(scene, depsgraph, frame) -> str:
+    """Return the stamp of every source and collider as evaluated at ``frame``.
+
+    The source signature is taken once, at bake start, so a collider that only
+    moves on frame 40 leaves it unchanged. The stamp is taken per frame and
+    covers what animation can change (world matrix and evaluated geometry).
+
+    The caller sets the frame and passes the depsgraph evaluated at it: this
+    function reads the scene as it is and raises rather than hash another
+    frame's state under ``frame``'s name.
+    """
+    from ..io.cache import source_frame_stamp_from_records
+
+    frame = int(frame)
+    current = int(scene.frame_current)
+    if current != frame:
+        raise ValueError(
+            f"source_frame_stamp({frame}) needs the scene at frame {frame}, "
+            f"but it is at frame {current}; call scene.frame_set first")
+    return source_frame_stamp_from_records(_source_records(scene, depsgraph))
+
+
 def settings_signature(scene) -> str:
     """Return the cache-v2 settings signature alone.
 

@@ -134,6 +134,32 @@ def _protect_restart_cache(cache_path: Path | str) -> _RestartCacheProtection:
     return protection
 
 
+# Scene identity -> the frame "Re-bake from frame N" would start at. Recorded
+# when a Resume is refused because a source or collider animation changed, and
+# dropped when the next bake starts. Memory only, and only a pointer for the
+# Bake stage: clicking it asks the cache again, so a stale value cannot re-bake
+# frames that still match.
+_REBAKE_OFFERS: dict[int, int] = {}
+
+
+def rebake_offer(scene) -> int | None:
+    """The frame a refused Resume offers to re-bake from, if there is one."""
+    return _REBAKE_OFFERS.get(scene_identity(scene))
+
+
+def clear_rebake_offer(scene) -> None:
+    _REBAKE_OFFERS.pop(scene_identity(scene), None)
+
+
+def _record_resume_refusal(scene_key: int, error: BaseException) -> None:
+    decision = getattr(error, "decision", None)
+    frame = getattr(decision, "first_changed_frame", None)
+    if getattr(decision, "code", None) == "SOURCE_ANIMATION_CHANGED" and frame is not None:
+        _REBAKE_OFFERS[scene_key] = int(frame)
+    elif decision is not None:
+        _REBAKE_OFFERS.pop(scene_key, None)
+
+
 class BakeRun:
     """One Production Cache Bake, from lease to release.
 
@@ -159,10 +185,14 @@ class BakeRun:
         end: int | None = None,
         resume: bool = False,
         restart: bool = False,
+        rebake_from: int | None = None,
         progress_callback: Callable[[dict], None] | None = None,
         backend=None,
     ):
         from . import production_bake
+
+        if rebake_from is not None and not resume:
+            raise ValueError("a re-bake continues an existing cache; pass resume=True")
 
         fs = scene.fluidsim
         if backend is None:
@@ -178,7 +208,11 @@ class BakeRun:
         end = int(fs.bake_end if end is None else end)
         try:
             if resume:
-                self.controller.resume(scene, end=end)
+                if rebake_from is None:
+                    self.controller.resume(scene, end=end)
+                else:
+                    self.controller.resume(
+                        scene, end=end, rebake_from=int(rebake_from))
             else:
                 start = int(fs.bake_start if start is None else start)
                 self.controller.start(scene, start, end, restart=restart)
@@ -187,7 +221,9 @@ class BakeRun:
             production_bake.register_active_bake(scene, self.controller)
             if restart:
                 self._restart_cache = _protect_restart_cache(cache_path)
-        except BaseException:
+            _REBAKE_OFFERS.pop(self.scene_key, None)
+        except BaseException as exc:
+            _record_resume_refusal(self.scene_key, exc)
             try:
                 self.abandon("Production bake could not start")
             finally:
@@ -281,6 +317,7 @@ def run_synchronous(
     *,
     resume: bool = False,
     restart: bool = False,
+    rebake_from: int | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ):
     """Run the authoritative sequential cache transaction to a terminal state."""
@@ -288,7 +325,7 @@ def run_synchronous(
 
     run = BakeRun(
         scene, start=start, end=end, resume=resume, restart=restart,
-        progress_callback=progress_callback)
+        rebake_from=rebake_from, progress_callback=progress_callback)
     try:
         while not run.finished:
             run.tick()
