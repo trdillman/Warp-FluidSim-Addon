@@ -243,6 +243,21 @@ class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
                 reset.operator("fluidsim.reset", text="Reset Simulation", icon="FILE_REFRESH")
 
 
+class FLUIDSIM_PT_scene_live_timeline(FluidSimScenePanel, bpy.types.Panel):
+    bl_label = "Live Timeline Recovery"
+    bl_idname = "FLUIDSIM_PT_scene_live_timeline"
+    bl_parent_id = "FLUIDSIM_PT_scene_lifecycle"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return FluidSimScenePanel.poll(context) and _advanced_visible(context)
+
+    def draw(self, context):
+        layout = _layout(self)
+        layout.prop(context.scene.fluidsim, "max_frame_catchup")
+
+
 class FLUIDSIM_PT_scene_control(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Status & Runtime"
     bl_idname = "FLUIDSIM_PT_scene_control"
@@ -323,17 +338,6 @@ class FLUIDSIM_PT_scene_pending(FluidSimScenePanel, bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
         row.operator("fluidsim.revert_pending", text="Revert Pending Values", icon="LOOP_BACK")
-
-
-class FLUIDSIM_PT_scene_live_timeline(FluidSimScenePanel, bpy.types.Panel):
-    bl_label = "Live Timeline Recovery"
-    bl_idname = "FLUIDSIM_PT_scene_live_timeline"
-    bl_parent_id = "FLUIDSIM_PT_scene_control"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = _layout(self)
-        layout.prop(context.scene.fluidsim, "max_frame_catchup")
 
 
 class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):

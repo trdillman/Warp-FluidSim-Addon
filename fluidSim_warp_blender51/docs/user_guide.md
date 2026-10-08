@@ -148,8 +148,9 @@ The root panels appear in this fixed order.
 Shows one derived activity state: **Idle**, **Live Preview**, **Cache Playback**,
 or **Production Bake**. It also shows runtime/device readiness and the actions
 valid for the current state. Pause, Resume, Restart, Cancel, and Clear Error
-remain available when relevant. Manual Initialize, Release, Reset, and stepping
-controls are retained in the default-closed **Advanced > Lifecycle** panel.
+remain available when relevant. Manual Initialize, Release, Reset, stepping
+controls, and **Live Timeline Recovery** (which owns the bounded catch-up frame limit)
+are retained in the default-closed **Advanced > Lifecycle** panel.
 
 Children:
 
@@ -159,7 +160,6 @@ Children:
   destructive valid transition and confirms only when progress will be lost.
 - **Runtime Statistics** appears when this scene owns the solver or its cache
   playback is active.
-- **Live Timeline Recovery** owns the bounded catch-up frame limit.
 
 #### Setup
 
@@ -314,6 +314,14 @@ Restart and Apply Changes; below it four stages hold the settings:
 
 Each control has one home, and every stage edits the same `Scene.fluidsim` /
 domain-object owners as Scene and Physics Properties.
+
+**Demo Gallery.** A collapsed **Demo Gallery** shelf above the stages lists the
+four demos (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex). Hover a
+button for what the demo shows; click it to append that demo as a new scene and
+switch to it. Your current scene stays in the file, untouched (switch back with
+the scene selector in the top bar), and any running preview on it is released
+first. The demo files ship inside the extension, so the shelf works in an
+installed build as well as in a repository checkout.
 
 **FluidSim header popover.** The 3D View header carries a **FluidSim** button.
 It opens a floating panel with the live loop — the status line, Preview / Pause /

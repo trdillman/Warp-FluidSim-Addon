@@ -37,6 +37,8 @@ EXPECTED_PRESETS = {
     "stylized_high_tension",
 }
 SUCCESS_MARKER = "FLUIDSIM_SMOKE_OK"
+# Gallery order; build_extension.DEMO_IDS stages the same files.
+DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex")
 
 
 @wp.kernel
@@ -123,6 +125,7 @@ def _assert_packaged_entry_points(extension_root: Path) -> None:
         extension_root / "resources" / "examples" / "06_custom_effects_stack.blend",
         extension_root / "resources" / "examples" / "07_warp_code_authoring.blend",
         extension_root / "resources" / "geometry_nodes" / "fluidsim_render_nodes.blend",
+        *(extension_root / "resources" / "demos" / f"{demo_id}.blend" for demo_id in DEMO_IDS),
     )
     missing = [str(path.relative_to(extension_root)) for path in required if not path.is_file()]
     if missing:
@@ -579,6 +582,32 @@ def _assert_custom_effects(module: str) -> dict[str, object]:
         "imported_effect_id": imported_definition.effect_id,
     }
 
+def _assert_demo_gallery(module: str, extension_root: Path) -> dict[str, object]:
+    """The installed gallery must find the bundled demos and open one."""
+    gallery = importlib.import_module(f"{module}.blender.demo_gallery")
+    available = tuple(gallery.available_demo_ids())
+    if available != DEMO_IDS:
+        raise AssertionError(f"installed Demo Gallery found {available}, expected {DEMO_IDS}")
+    bundled = (extension_root / "resources" / "demos").resolve()
+    for demo_id in DEMO_IDS:
+        path = gallery.resolve_demo_blend_path(demo_id)
+        if path is None or Path(path).resolve().parent != bundled:
+            raise AssertionError(f"demo {demo_id} did not resolve to the bundled copy: {path}")
+    if not hasattr(bpy.types, "FLUIDSIM_PT_demo_gallery"):
+        raise AssertionError("installed Demo Gallery panel is not registered")
+    scenes_before = len(bpy.data.scenes)
+    _require_finished(
+        "open bundled Crown Splash demo",
+        bpy.ops.fluidsim.load_demo(demo_id="crown_splash"),
+    )
+    if len(bpy.data.scenes) != scenes_before + 1:
+        raise AssertionError("opening a bundled demo did not add its scene")
+    if not bpy.context.scene.render.filepath.startswith("//"):
+        raise AssertionError(
+            f"opened demo renders to a foreign path: {bpy.context.scene.render.filepath}")
+    return {"available": list(available), "opened": "crown_splash"}
+
+
 def _assert_save_reopen_persistence(module: str) -> Path:
     profile = Path(os.environ["BLENDER_USER_DATAFILES"]).resolve().parent
     path = profile / f"phase5-workflow-{os.getpid()}.blend"
@@ -648,6 +677,8 @@ def main() -> None:
     _enable_and_verify(module)
     _assert_phase2_scene_state(module)
     _require_finished("wm.save_userpref", bpy.ops.wm.save_userpref())
+    # Last scene-changing check: opening a demo switches the active scene.
+    demo_gallery = _assert_demo_gallery(module, extension_root)
 
     runtime = importlib.import_module(f"{module}.runtime.warp_runtime")
     probe = runtime.probe_runtime(force=True)
@@ -682,6 +713,7 @@ def main() -> None:
             "phase5_surface_tension": phase5,
             "properties_ui": properties_ui,
             "custom_effects": custom_effects,
+            "demo_gallery": demo_gallery,
             "preset_library": presets,
             "saved_blend": str(blend_path),
             "cuda_available": probe.available,

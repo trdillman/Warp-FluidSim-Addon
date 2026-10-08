@@ -14,3 +14,6 @@ p0-environment-report.json
 wheels/*.whl
 
 release-environment-report.json
+
+# Staged from <repo>/demos by tools/release/build_extension.py at build time.
+resources/demos/

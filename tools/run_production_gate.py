@@ -106,6 +106,7 @@ BACKGROUND_ACCEPTANCE = (
     ("tests/acceptance/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_animated_cache_playback_acceptance.py",
      "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
 )
 # Source acceptance scripts that write a JSON report: (capability, marker).
 SOURCE_REPORT_ACCEPTANCE = (

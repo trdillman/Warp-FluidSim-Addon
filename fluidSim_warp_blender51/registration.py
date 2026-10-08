@@ -45,6 +45,7 @@ STEPS: tuple[Step, ...] = (
     Step("Warp Code workspace", "blender.effect_workspace", "register", "unregister"),
     Step("Physics Properties UI", "blender.ui_physics", "register", "unregister"),
     Step("viewport workflow stages", "blender.ui_stages", "register", "unregister"),
+    Step("demo gallery", "blender.demo_gallery", "register", "unregister"),
     Step("viewport header popover", "blender.ui_header", "register", "unregister"),
     Step("Add-menu domain entry", "blender.menus", "register", "unregister"),
     Step("source migration handlers", "blender.sources",

@@ -231,6 +231,10 @@ Linux runtime, hosted CI, or an eventual integrated release commit.
 - Narrow-band particles; resolution divisions instead of voxel size.
 - Pressure-field sourcing; multigrid.
 
+These were triaged into the 3.0 plan on 2026-10-07: see `docs/RELEASE_3_0_PLAN.md`
+and the per-item specs in `docs/specs/3.0/`. ST-FLIP is proposed for removal, not
+promotion; Species v2 and pressure sourcing stay out of 3.0.
+
 ## 5. Process notes for whoever picks this up
 
 - The GUI gate (`tools/run_production_gate.py --include-gui`) is the only
