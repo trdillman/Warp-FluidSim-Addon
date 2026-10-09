@@ -33,6 +33,47 @@ def _layout(panel):
     return layout
 
 
+def resolution_readout(scene) -> tuple[str, ...]:
+    """Read-only lines for the effective cell size and padded grid.
+
+    The cell size is derived (longest domain axis / Resolution Divisions, then the
+    Quality tier), so the artist is shown what the solver will use. Empty when it
+    cannot be resolved (no domain, or a bounds read that fails).
+    """
+    try:
+        from ..sim.quality_contract import (
+            AuthoredQualitySettings,
+            resolve_quality,
+            scale_quality_value,
+        )
+        from .solver_settings import domain_bounds, scene_quality_fidelity
+
+        fs = active_domain_settings(scene)
+        if fs is None:
+            return ()
+        quality = resolve_quality(
+            AuthoredQualitySettings(voxel_size=scale_quality_value(
+                "voxel_size", float(fs.voxel_size), scene_quality_fidelity(scene))),
+            domain_bounds(scene))
+    except Exception:  # a label must never break panel drawing
+        return ()
+    nx, ny, nz = quality.padded_voxel_dimensions
+    lines = [
+        f"Cell size: {quality.voxel_size:.4g} m",
+        f"Grid: {nx} x {ny} x {nz} cells",
+    ]
+    lines.extend(d for d in quality.diagnostics if d.startswith("resolution capped"))
+    return tuple(lines)
+
+
+def draw_resolution_readout(layout, scene) -> None:
+    for line in resolution_readout(scene):
+        if line.startswith("resolution"):
+            layout.label(text=line, icon="ERROR")
+        else:
+            layout.label(text=line)
+
+
 def _domain_owner(context):
     """Return the settings datablock the active domain's controls must edit.
 
@@ -404,7 +445,7 @@ class FLUIDSIM_PT_scene_domain(FluidSimScenePanel, bpy.types.Panel):
             layout,
             owner,
             (
-                "voxel_size",
+                "resolution_divisions",
                 "particles_per_voxel",
                 "max_particles",
                 "auto_grow_particles",
@@ -412,6 +453,7 @@ class FLUIDSIM_PT_scene_domain(FluidSimScenePanel, bpy.types.Panel):
                 "open_boundaries",
             ),
         )
+        draw_resolution_readout(layout, context.scene)
 
 
 class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):

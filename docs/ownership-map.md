@@ -22,19 +22,19 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 143 | UI writes exactly where the consumer reads |
+| OK | 142 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 29 | the runtime publishes it where its reader looks |
+| PUBLISHED | 30 | the runtime publishes it where its reader looks |
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
-| WRITE_ONLY | 0 | UI writes it; no consumer read resolved statically |
+| WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **213** | |
+| **total** | **214** | |
 
 ## Mirrored panels
 
@@ -128,7 +128,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `max_substeps` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `gravity` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `use_scene_gravity` | LIVE | domain | domain | - | domain | domain | 0 | OK |
-| `voxel_size` | REINITIALIZE | domain | domain | - | - | domain | 1 | OK |
+| `resolution_divisions` | REINITIALIZE | domain | - | domain | - | domain | 0 | WRITE_ONLY |
+| `voxel_size` | REINITIALIZE | - | domain | domain | domain | domain | 1 | PUBLISHED |
 | `leaf_capacity` | REINITIALIZE | domain | domain | - | - | domain | 0 | OK |
 | `topology_expand` | RESET | domain | domain | - | - | domain | 0 | OK |
 | `open_boundaries` | RESET | domain | domain | - | - | domain | 0 | OK |
@@ -269,7 +270,7 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `playback_advanced_expanded` | UNOBSERVED | (never written either) |
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
-| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:803` |
+| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:820` |
 | `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:442`, `fluidSim_warp_blender51/blender/scene_bridge.py:409` |
 | `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:443`, `fluidSim_warp_blender51/blender/scene_bridge.py:411` |
 | `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:444`, `fluidSim_warp_blender51/blender/scene_bridge.py:413` |

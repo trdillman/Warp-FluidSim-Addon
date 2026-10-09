@@ -362,7 +362,7 @@ def _grid_spec_record(quality) -> dict[str, object]:
     """The grid the solver resolved, as the manifest records it.
 
     ``resolution_divisions`` is the cell count along the longest domain axis
-    (``max(unpadded_voxel_dimensions)``); the Resolution Divisions work (lane I)
+    (``max(unpadded_voxel_dimensions)``); the Resolution Divisions work (lane G)
     replaces this derivation with the authored value.
     """
     return {

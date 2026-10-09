@@ -1007,6 +1007,44 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 # Domain-level settings
 
 
+def _domain_longest_axis(group) -> float:
+    """Longest world-space AABB edge of the domain object that owns ``group``.
+
+    Mirrors ``blender.solver_settings.domain_bounds`` (``matrix_world`` applied to
+    ``bound_box``) and falls back to the default domain box with no object.
+    """
+    from .blender.solver_settings import DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN
+
+    obj = getattr(group, "id_data", None)
+    corners = getattr(obj, "bound_box", None)
+    matrix = getattr(obj, "matrix_world", None)
+    if corners is None or matrix is None:
+        return max(hi - lo for lo, hi in zip(DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX))
+    from mathutils import Vector
+
+    world = [matrix @ Vector(corner) for corner in corners]
+    return max(
+        max(getattr(c, axis) for c in world) - min(getattr(c, axis) for c in world)
+        for axis in ("x", "y", "z"))
+
+
+def _get_voxel_size(self) -> float:
+    from .sim.quality_contract import voxel_size_for_divisions
+
+    return voxel_size_for_divisions(
+        self.resolution_divisions, _domain_longest_axis(self))
+
+
+def _set_voxel_size(self, value) -> None:
+    from .sim.quality_contract import divisions_for_voxel_size
+
+    self.resolution_divisions = divisions_for_voxel_size(
+        value, _domain_longest_axis(self))
+
+
+_MIN_VOXEL_SIZE = 1.0e-4
+
+
 class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     """Per-domain solver settings, bound to ``Object.fluidsim_domain``.
 
@@ -1046,11 +1084,14 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Enable to use the scene gravity vector; disable to use the custom Gravity value below")
 
     # Domain / sparse grid
-    voxel_size: FloatProperty(
-        name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
-        subtype="DISTANCE",
+    resolution_divisions: IntProperty(
+        name="Resolution Divisions", default=64, min=8, soft_min=16, soft_max=512,
         update=_request_rebuild,
-        description="Set simulation-grid cell size in world units; smaller values capture finer detail but allocate more leaves, particles, VRAM, and compute, while larger values simulate more coarsely and cheaply")
+        description="Set the number of simulation-grid cells along the longest domain axis; higher values capture finer detail but allocate more leaves, particles, VRAM, and compute, while resizing the domain changes the cell size and not the cell count")
+    voxel_size: FloatProperty(
+        name="Voxel Size", min=_MIN_VOXEL_SIZE, precision=4, subtype="DISTANCE",
+        get=_get_voxel_size, set=_set_voxel_size,
+        description="Effective simulation-grid cell size in world units, derived as the longest domain axis divided by Resolution Divisions; writing it sets the divisions that give the nearest cell size")
     leaf_capacity: IntProperty(
         name="Leaf Capacity", default=8192, min=64, max=262144,
         update=_request_rebuild,

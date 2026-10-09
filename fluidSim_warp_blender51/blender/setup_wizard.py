@@ -324,6 +324,21 @@ def _fit_domain(scene, domain, bounds) -> None:
     scene.fluidsim.domain_object = domain
 
 
+def _fit_domain_keeping_voxel(context, scene, domain, domain_fs, bounds, voxel_size) -> None:
+    """Fit the domain, then keep the cell size the bounds were aligned to.
+
+    The cell size is derived from the domain's longest axis, so resizing the box
+    changes it. Writing ``voxel_size`` back re-derives the divisions that give the
+    wizard's grid. The world matrix must be current first, because the derivation
+    reads it.
+    """
+    _fit_domain(scene, domain, bounds)
+    view_layer = getattr(context, "view_layer", None)
+    if view_layer is not None:
+        view_layer.update()
+    domain_fs.voxel_size = voxel_size
+
+
 def _tag_source_mesh(obj, *, continuous: bool) -> None:
     from . import sources
 
@@ -748,13 +763,15 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
                 if bool(domain_fs.use_scene_gravity)
                 else tuple(domain_fs.gravity)
             )
+            wizard_voxel = float(domain_fs.voxel_size)
             bounds = compute_domain_bounds(
                 selected,
-                float(domain_fs.voxel_size),
+                wizard_voxel,
                 gravity=gravity,
                 depsgraph=context.evaluated_depsgraph_get(),
             )
-            _fit_domain(scene, domain, bounds)
+            _fit_domain_keeping_voxel(
+                context, scene, domain, domain_fs, bounds, wizard_voxel)
             if mode == "QUICK_CONTAINER":
                 minimum, maximum = bounds
                 # The wizard seeds the same height fields the Height panel edits, so

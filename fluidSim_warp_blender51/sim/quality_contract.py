@@ -18,6 +18,27 @@ from .enums import SurfaceResolutionMode
 MIN_VOXEL_SIZE = 1.0e-4
 MIN_SURFACE_FRACTION = 1.0 / 16.0
 MAX_LIQUID_SAMPLING = 64.0
+MIN_RESOLUTION_DIVISIONS = 8
+# ``size / voxel_size`` is rounded up to whole cells. A voxel size that went
+# through float32 (a Blender FloatProperty) can sit a few parts in 1e8 below the
+# exact ``longest / divisions``, which would otherwise ceil to divisions + 1 and
+# pad a whole extra leaf. float32 epsilon is 6e-8; 1e-6 absorbs it with margin
+# while still counting any real overshoot above 1 ppm of a cell.
+CELL_COUNT_TOLERANCE = 1.0e-6
+
+
+def voxel_size_for_divisions(divisions: float, domain_size: float) -> float:
+    """Cell size that puts ``divisions`` cells along an axis of ``domain_size``."""
+    divisions = max(float(divisions), float(MIN_RESOLUTION_DIVISIONS))
+    return float(domain_size) / divisions
+
+
+def divisions_for_voxel_size(voxel_size: float, domain_size: float) -> int:
+    """Whole divisions (>= 8) along ``domain_size`` that best match ``voxel_size``."""
+    voxel_size = float(voxel_size)
+    if not math.isfinite(voxel_size) or voxel_size <= 0.0:
+        raise ValueError("voxel size must be finite and positive")
+    return max(MIN_RESOLUTION_DIVISIONS, int(round(float(domain_size) / voxel_size)))
 
 # Scene-level Quality tier -> speed<->fidelity multiplier. FINAL refines,
 # DRAFT coarsens; PREVIEW and CUSTOM defer to the authored values verbatim so
@@ -203,14 +224,21 @@ def resolve_quality(authored_quality: AuthoredQualitySettings | Any,
         raise ValueError("domain maximum must be greater than minimum on every axis")
 
     diagnostics: list[str] = []
+    clamped_voxel = False
     voxel_size = float(authored_quality.voxel_size)
     if not math.isfinite(voxel_size) or voxel_size <= 0.0:
         raise ValueError("voxel size must be finite and positive")
     if voxel_size < MIN_VOXEL_SIZE:
-        diagnostics.append(f"voxel size clamped to {MIN_VOXEL_SIZE:g}")
         voxel_size = MIN_VOXEL_SIZE
+        clamped_voxel = True
 
-    unpadded = tuple(max(1, int(math.ceil(value / voxel_size))) for value in size)
+    unpadded = tuple(
+        max(1, int(math.ceil(value / voxel_size * (1.0 - CELL_COUNT_TOLERANCE))))
+        for value in size)
+    if clamped_voxel:
+        diagnostics.append(
+            f"resolution capped at {max(unpadded)} divisions by minimum cell "
+            f"size {MIN_VOXEL_SIZE:g}")
     padded = tuple(max(LEAF_DIM, _align(value, LEAF_DIM)) for value in unpadded)
     leaves = tuple(value // LEAF_DIM for value in padded)
 

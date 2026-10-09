@@ -54,6 +54,7 @@ class SettingSpec:
 # require a reviewed schema addition and tests before a preset can assign them.
 SETTING_SPECS: dict[str, SettingSpec] = {
     "voxel_size": SettingSpec(float, 0.005, 10.0),
+    "resolution_divisions": SettingSpec(int, 8, 1024),
     "leaf_capacity": SettingSpec(int, 64, 262_144),
     "topology_expand": SettingSpec(int, 0, 4),
     "max_particles": SettingSpec(int, 1_024, 50_000_000),
