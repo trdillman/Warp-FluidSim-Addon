@@ -86,6 +86,12 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   session for the 33 background acceptance scripts with standalone rerun of any non-pass
   (alembic export reruns: it expects Warp not yet loaded), per-step timing and a
   `--quick` tier (QUICK-GATE-PASS in 351 s on the gate branch).
+- **3x GUI gate on `5a2ce80`: 3/3 FULL-PRODUCTION-GATE-PASS (2026-10-09).** Run3a measured
+  the budget (PERFORMANCE-BUDGET-PASS; host ratio crown 0.66, dam 0.71, paddle 0.71,
+  chromatic 0.95; 1690 s total, budget 1127 s); run3b/run3c reused it (553 s, 543 s).
+  Demo analysis report sha256 `8baa886c018245f3ea9187933b7d4108891a79998de861da24578e113efbbaf3`
+  reproduced by all three: the 3.0 reference. Run3c's rebuilt crown_splash/dam_break
+  blends are committed with this note (compressed-byte drift only).
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
