@@ -25,7 +25,7 @@ def test_source_manifest_remains_installable_on_proven_compatibility_targets():
     manifest = _manifest()
 
     assert release_version.BLENDER_MIN_VERSION == (5, 2, 0)
-    assert release_version.VERSION_STRING == "2.1.0"
+    assert release_version.VERSION_STRING == "3.0.0"
     supported = getattr(release_version, "SUPPORTED_PLATFORMS", None)
     assert supported == ("windows-x64", "linux-x64")
     assert tuple(manifest["platforms"]) == supported
