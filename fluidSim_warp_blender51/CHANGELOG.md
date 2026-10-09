@@ -102,6 +102,8 @@ checkpoint.
   its particles with no radius.
 - Capacity Options that coarsen the resolution apply again: they now suggest whole
   Resolution Divisions, never finer than the size they were costed at.
+- Demos opened from the Demo Gallery keep their authored resolution instead of
+  the default 64 divisions.
 - Add-on unregistration finishes past a class that refuses to unregister and
   names it, instead of stopping at the first failure.
 - `CudaDotProduct` checks array lengths before a launch.

@@ -40,6 +40,14 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   domain before writing settings and restores divisions exactly on rollback.
   `MEMORY-SAFETY-GATE-PASS` and `CAPACITY-PLANNER-ACCEPTANCE-PASS` on 5.2.
   Suite 2479 passed, 3 skipped, 1 xfailed; demo hash `8baa886c…baf3` unchanged.
+- **Gate retry on `1f90bfd`:** Blender exited -1 at the start of the phase3 validator with
+  no output (the validator then passed alone, so treated as a one-off crash). The next
+  retry failed in `blender_demo_gallery_acceptance.py`: appended demos came in at 64
+  divisions (dam_break 0.0875 instead of 0.03), because G's migration runs on
+  `load_post` only. The gallery now migrates the appended scene;
+  `DEMO-GALLERY-ACCEPTANCE-PASS`, suite 2480 passed, 3 skipped, 1 xfailed.
+  Appending a pre-3.0 domain by hand (File > Append) still skips the migration and is
+  an open item.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches

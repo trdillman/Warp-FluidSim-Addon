@@ -342,6 +342,33 @@ def test_load_demo_cancels_cleanly_when_the_file_is_missing(monkeypatch):
     assert released == []  # nothing is torn down before the file is confirmed
 
 
+def test_load_demo_migrates_the_appended_scene(monkeypatch, tmp_path):
+    """Appending skips load_post, so the gallery runs the 3.0 migration itself."""
+    blend = tmp_path / "dam_break.blend"
+    blend.write_bytes(b"")
+    imported = SimpleNamespace(name="Scene", frame_start=1, frame_current=7,
+                               render=SimpleNamespace(filepath=""))
+
+    class _Library:
+        def __enter__(self):
+            return SimpleNamespace(scenes=["Scene"]), self.data_to
+
+        def __exit__(self, *_exc):
+            self.data_to.scenes = [imported]
+
+        data_to = SimpleNamespace(scenes=[])
+
+    fake_bpy = SimpleNamespace(data=SimpleNamespace(
+        scenes={}, libraries=SimpleNamespace(load=lambda *_a, **_k: _Library())))
+    migrated = []
+    monkeypatch.setattr(demo_gallery, "bpy", fake_bpy)
+    monkeypatch.setattr(demo_gallery, "resolve_demo_blend_path", lambda _id: blend)
+    monkeypatch.setattr(demo_gallery, "_migrate_appended_scene", migrated.append)
+    result, _reports = _run_operator("dam_break")
+    assert result == {"FINISHED"}
+    assert migrated == [imported]
+
+
 def test_unique_scene_name_avoids_collisions(monkeypatch):
     own = object()
     scenes = {"Dam Break (Demo)": object(), "Dam Break (Demo) 2": object(), "Mine": own}

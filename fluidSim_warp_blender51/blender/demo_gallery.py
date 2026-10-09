@@ -280,6 +280,7 @@ class FLUIDSIM_OT_load_demo(_Operator):
         # Rename to clean descriptive title (e.g. "Dam Break (Demo)")
         desired_title = demo.get("scene_title", demo["title"])
         imported_scene.name = _unique_scene_name(desired_title, imported_scene)
+        _migrate_appended_scene(imported_scene)
 
         # Activate the new scene in the active window
         if hasattr(context, "window") and context.window is not None:
@@ -301,6 +302,18 @@ class FLUIDSIM_OT_load_demo(_Operator):
             f"Opened {demo['title']} in new scene '{imported_scene.name}' ({scene_note})",
         )
         return {"FINISHED"}
+
+
+def _migrate_appended_scene(scene) -> None:
+    """Run the pre-3.0 domain migration on an appended scene.
+
+    ``load_post`` migrates files that are opened, not data appended from a
+    library, so a demo saved before Resolution Divisions would otherwise come in
+    at the default 64 divisions instead of its authored voxel size.
+    """
+    from .file_compat import migrate_domain_resolution
+
+    migrate_domain_resolution(objects=tuple(scene.objects), scenes=(scene,))
 
 
 def _demo_icon_kwargs(demo_id: str, pcoll) -> dict[str, Any]:
