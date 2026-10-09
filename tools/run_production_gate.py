@@ -122,6 +122,8 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_vdb_writer_acceptance.py":
+        "lane I spike: pure writer needs no add-on; run headless on demand (prints VDB_WRITER_OK)",
     "tests/acceptance/blender_artist_bake_deleted_scene_acceptance.py":
         "needs a real GUI modal bake; exits silently in --background",
     "tests/acceptance/blender_artist_bake_gui_acceptance.py":
