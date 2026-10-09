@@ -179,6 +179,10 @@ def resource_snapshot(device_name: str) -> dict:
     return snapshot
 
 
+# phi, phi_tmp, splat, six velocity planes, ones, class, demand, offsets: 13 words.
+NARROW_BAND_BYTES_PER_VOXEL = 56
+
+
 def _value(settings, name, default):
     if isinstance(settings, dict):
         return settings.get(name, default)
@@ -243,6 +247,8 @@ def estimate_solver_bytes(settings) -> int:
             leaves * LEAF_VOLUME
             * (SURFACE_TENSION_BYTES_PER_VOXEL + SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL)
         )
+    if bool(_value(settings, "narrow_band_enabled", False)):
+        estimate += leaves * LEAF_VOLUME * NARROW_BAND_BYTES_PER_VOXEL
     if surface_enabled:
         estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL
     if surface_enabled and abs(surface_h - sim_h) > 1.0e-8:

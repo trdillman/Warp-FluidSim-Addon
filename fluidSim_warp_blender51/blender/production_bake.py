@@ -359,6 +359,39 @@ def _platform_record(solver) -> dict[str, str]:
     }
 
 
+def _liquid_sdf_arrays(solver, enabled: bool):
+    """The frame's ``liquid_sdf_*`` arrays: the solver's persistent phi when on."""
+    if not enabled:
+        return None
+    import numpy as np
+
+    band = getattr(solver, "narrow_band", None)
+    if band is None:
+        raise RuntimeError("narrow band is enabled but the solver has no band state")
+    coords, phi = band.leaf_phi()
+    if getattr(solver.stats, "narrow_band_reseed_overflow", False):
+        print(
+            f"[fluidsim] frame {int(solver.frame)}: narrow-band reseed hit the "
+            "particle capacity; the band is under-seeded", flush=True)
+    return {
+        "liquid_sdf_sparse": phi,
+        "liquid_sdf_leaf_coords": coords,
+        "liquid_sdf_voxel_size": np.array(
+            float(solver.grid.voxel_size), dtype=np.float32),
+    }
+
+
+def _narrow_band_record(settings) -> dict[str, object]:
+    """The manifest's ``narrow_band`` block, read from the solver settings."""
+    enabled = bool(getattr(settings, "narrow_band_enabled", False))
+    return {
+        "enabled": enabled,
+        "band_voxels": (
+            float(getattr(settings, "narrow_band_voxels", 0.0))
+            if enabled else 0.0),
+    }
+
+
 def _grid_spec_record(quality) -> dict[str, object]:
     """The grid the solver resolved, as the manifest records it.
 
@@ -776,7 +809,7 @@ class ProductionBakeBackend:
             transfer_mode=ParticleSampleType(
                 int(self.sess.solver.settings.sample_type)).name,
             grid_spec=_grid_spec_record(self.sess.solver.quality),
-            narrow_band={"enabled": False, "band_voxels": 0.0},
+            narrow_band=_narrow_band_record(self.sess.solver.settings),
             platform=_platform_record(self.sess.solver),
         )
 
@@ -848,6 +881,8 @@ class ProductionBakeBackend:
             effect_inventory=self.effect_inventory,
             simulation_time=float(self.sess.solver.sim_time),
             narrow_band_enabled=bool(self.manifest.narrow_band["enabled"]),
+            liquid_sdf=_liquid_sdf_arrays(
+                self.sess.solver, bool(self.manifest.narrow_band["enabled"])),
             compressed=self.compressed,
         )
         checkpoint = capture_solver(

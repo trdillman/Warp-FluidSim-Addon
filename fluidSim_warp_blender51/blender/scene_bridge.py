@@ -378,6 +378,7 @@ class Session:
             self.frame_stats.pop(0)
         fs.stat_particles = stats.active_particles
         fs.stat_voxels = stats.active_voxels
+        fs.stat_liquid_voxels = int(getattr(stats, "liquid_voxels", 0))
         fs.stat_whitewater = stats.whitewater_particles
         fs.stat_whitewater_foam = int(getattr(stats, "whitewater_foam", 0))
         fs.stat_whitewater_bubbles = int(

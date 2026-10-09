@@ -17,8 +17,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 PACKAGE_NAME = "fluidSim_warp_blender51"
 
-# Computed on the unchanged base (cfff382) before the settings model moved.
-PINNED_SIGNATURE = "e2a87bf9cad04ed471fbb78cd049ba8315d12bf6e68ae8a677654ce21e9f8d38"
+# Computed on the unchanged base (cfff382) before the settings model moved;
+# re-pinned when lane J added narrow_band_enabled/narrow_band_voxels (every
+# SolverSettings field is part of the signature, so existing caches re-bake).
+PINNED_SIGNATURE = "f812a312f5c45196d3e4709a368d9e6df192b633115c652e13a205d8c9d1f606"
 
 _SCRIPT = r'''
 import importlib

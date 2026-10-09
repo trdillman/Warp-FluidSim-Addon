@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import traceback
 
 from ..sim import constants as C
+from ..sim import narrow_band
 from .scene_access import active_domain_settings
 from .scene_inputs import SceneInputs
 from .solver_settings import build_settings, domain_transform
@@ -397,6 +398,11 @@ class SimulationAdmission:
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
         settings = build_settings(scene)
+        if bool(getattr(settings, "narrow_band_enabled", False)):
+            reasons = narrow_band.scene_blocking_reasons(
+                settings, getattr(scene, "objects", ()))
+            if reasons:
+                raise RuntimeError(narrow_band.refusal_message(reasons))
         if runtime_capacity is not None:
             settings = replace(settings, max_particles=int(runtime_capacity))
         resources = vram_snapshot(settings.device)

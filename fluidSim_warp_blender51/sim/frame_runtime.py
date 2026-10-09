@@ -132,6 +132,10 @@ class FrameStats:
     initialized_voxels: int = 0
     total_voxels: int = 0
     active_particles: int = 0
+    #: Grid voxels flagged liquid; only populated while narrow-band FLIP is on.
+    liquid_voxels: int = 0
+    #: Set once a narrow-band reseed was clipped by the particle capacity.
+    narrow_band_reseed_overflow: bool = False
     total_particles: int = 0
     whitewater_particles: int = 0
     whitewater_foam: int = 0
@@ -185,6 +189,8 @@ class FrameStats:
             "initializedVoxels": self.initialized_voxels,
             "totalVoxels": self.total_voxels,
             "activeParticles": self.active_particles,
+            "liquidVoxels": self.liquid_voxels,
+            "narrowBandReseedOverflow": self.narrow_band_reseed_overflow,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
             "whitewaterFoam": self.whitewater_foam,

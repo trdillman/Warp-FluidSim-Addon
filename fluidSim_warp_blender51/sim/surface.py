@@ -490,6 +490,9 @@ class SurfacePipeline:
             self.nvox = solver._nvox
         else:
             grid.begin_topology(); grid.mark_points(positions, solver.particles.count, solver._np_dim())
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.mark_render_leaves(grid)
             grid.expand(max(1, int(getattr(solver.settings, "topology_expand", 1))))
             grid.finalize_topology(sync=True)
             self.nvox = max(1, grid.active_voxel_count)
@@ -539,6 +542,9 @@ class SurfacePipeline:
             self.build_sdf(
                 solver.grid, self.sdf, self.tmp, solver._nvox, positions,
                 float(s.voxel_size))
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.union_into_solver_sdf(self.sdf)
         except Exception as exc:  # noqa: BLE001 - dependency boundary
             self.solver_sdf_key = None
             self.solver_sdf_error = f"Simulation liquid SDF unavailable: {exc}"
@@ -565,6 +571,9 @@ class SurfacePipeline:
             self.nvox = solver._nvox
         else:
             self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size))
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.union_into_render_sdf(self.grid, self.render_sdf)
         self.built_key = self.build_key()
         self.invalidate()
         return True

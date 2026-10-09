@@ -501,6 +501,12 @@ _CHECKPOINT_FIELD_NAMES = (
 )
 
 
+_NARROW_BAND_CHECKPOINT_FIELDS = (
+    "narrow_band.phi", "narrow_band.nb_u", "narrow_band.nb_v",
+    "narrow_band.nb_w",
+)
+
+
 def _resolve_attr(root, dotted_name: str):
     value = root
     for component in dotted_name.split("."):
@@ -510,6 +516,9 @@ def _resolve_attr(root, dotted_name: str):
 
 class FluidSolver:
     """GPU-resident FLIP/PIC liquid solver."""
+
+    # Class default so solver stand-ins built without __init__ read as "mode off".
+    narrow_band = None
 
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
@@ -640,6 +649,11 @@ class FluidSolver:
         # active region instead of the full allocation keeps kernel cost
         # proportional to live work (see TASK-POLICY-DRIFT-002).
         self._nvox = 1
+        # Narrow-band FLIP state (None unless the mode is on; see narrow_band_state).
+        self.narrow_band = None
+        if getattr(settings, "narrow_band_enabled", False):
+            from .narrow_band_state import NarrowBand
+            self.narrow_band = NarrowBand(self)
 
     # Host configuration
 
@@ -809,6 +823,8 @@ class FluidSolver:
         self._sync_affine_mode()
         self.color_mixing = self._new_color_mixing()
         self.whitewater.clear()
+        if self.narrow_band is not None:
+            self.narrow_band.reset()
         self.churn.zero()
         self.frame = 0
         self.sim_time = 0.0
@@ -824,6 +840,12 @@ class FluidSolver:
             if surface_tension is not None:
                 surface_tension.reset()
         self._host_frame_cache = None
+
+    def _checkpoint_field_names(self):
+        """Persistent grid fields; narrow-band adds its own only when on."""
+        if self.narrow_band is None:
+            return _CHECKPOINT_FIELD_NAMES
+        return _CHECKPOINT_FIELD_NAMES + _NARROW_BAND_CHECKPOINT_FIELDS
 
     def export_checkpoint_state(self):
         """Synchronize once and return host-owned deterministic restart state.
@@ -869,10 +891,13 @@ class FluidSolver:
                 self.particles.attrs[name].numpy()[:particle_count],
                 dtype=np.float32)
         arrays.update(self.particles.checkpoint_arrays(particle_count))
-        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+        for dotted_name in self._checkpoint_field_names():
             arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
                 _resolve_attr(self, dotted_name).numpy()[:active_voxels])
 
+        if self.narrow_band is not None:
+            arrays["narrow_band_seed_state"] = np.asarray(
+                [self.narrow_band.reseed_epoch], dtype=np.uint32)
         return {
             "arrays": arrays,
             "scalars": {
@@ -901,7 +926,7 @@ class FluidSolver:
             particle_attributes=tuple(self.particles.ATTR_NAMES),
             optional_particle_channels=tuple(
                 self.particles.optional_channels),
-            field_names=_CHECKPOINT_FIELD_NAMES,
+            field_names=self._checkpoint_field_names(),
             whitewater_type_schema_version=WHITEWATER_TYPE_SCHEMA_VERSION,
         )
         return schema.validate(state)
@@ -921,7 +946,7 @@ class FluidSolver:
 
         self.grid.restore_topology(arrays["grid_leaf_coords"])
         active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
-        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+        for dotted_name in self._checkpoint_field_names():
             target = _resolve_attr(self, dotted_name)
             target.zero_()
             if active_voxels:
@@ -955,6 +980,10 @@ class FluidSolver:
         self.frame = int(scalars["frame"])
         self.sim_time = float(scalars["sim_time"])
         self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
+        if self.narrow_band is not None:
+            seed_state = np.asarray(
+                arrays.get("narrow_band_seed_state", ()), dtype=np.uint32)
+            self.narrow_band.restore_seed_state(seed_state)
         self._rebuild_transient_state_after_restore()
         self.assert_checkpoint_invariants()
 
@@ -1113,6 +1142,8 @@ class FluidSolver:
         g.begin_topology()
         g.mark_points(self.particles.position, self.particles.count,
                       self._np_dim())
+        if self.narrow_band is not None:
+            self.narrow_band.mark_leaves()
         for src in self.sources:
             if not self.sourcing.legacy_descriptor_requires_topology(src):
                 continue
@@ -1171,6 +1202,8 @@ class FluidSolver:
             outputs=[self.churn_tmp.data], device=self.device,
         )
         self.churn.data, self.churn_tmp.data = self.churn_tmp.data, self.churn.data
+        if self.narrow_band is not None:
+            self.narrow_band.remap(self.old_leaf_table)
         return g.active_leaf_count
 
     # Per-substep phases
@@ -1662,7 +1695,14 @@ class FluidSolver:
                     g.origin, g.voxel_size],
             outputs=[p.alive], device=self.device,
         )
+        nb = self.narrow_band
+        if nb is not None:
+            nb.update_phi(dt)
+            nb.kill_interior()
         p.compact(count_hint=np_dim)
+        if nb is not None:
+            self._index_particles()
+            nb.reseed(nb._substep_index)
 
     def _relax(self):
         s = self.settings
@@ -1938,6 +1978,8 @@ class FluidSolver:
         self._whitewater_launch_bound = self.whitewater.host_count
         for substep_index in range(substeps):
             time_ctx["substep_index"] = substep_index
+            if self.narrow_band is not None:
+                self.narrow_band._substep_index = substep_index
             self.features.run(
                 FrameFeaturePhase.BEFORE_EMISSION, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
@@ -1957,7 +1999,11 @@ class FluidSolver:
             with self._phase("indexing"):
                 self._index_particles()
             with self._phase("sourcing"):
+                if self.narrow_band is not None:
+                    self.narrow_band.credit_interior_counts()
                 emitted = self._source(dt)
+                if self.narrow_band is not None:
+                    self.narrow_band.release_interior_counts()
                 # Re-count after emission so P2G activity sees new particles.
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:
@@ -1969,6 +2015,8 @@ class FluidSolver:
                     self.surface.invalidate_solver_sdf()
             with self._phase("p2g"):
                 self._p2g()
+            if self.narrow_band is not None:
+                self.narrow_band.prepare_grid(dt)
             self._save_velocities()
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_TRANSFER, self, time_ctx)
@@ -2051,6 +2099,9 @@ class FluidSolver:
         st.initialized_voxels = self.grid.voxel_capacity
         st.total_voxels = self.grid.total_voxels()
         st.active_particles = self.particles.refresh_host_count()
+        if self.narrow_band is not None:
+            st.liquid_voxels = self.narrow_band.end_frame()
+            st.narrow_band_reseed_overflow = self.narrow_band.reseed_overflow
         st.total_particles = self.particles.capacity
         st.whitewater_particles = whitewater_particles
         st.whitewater_foam = whitewater_types["foam"]

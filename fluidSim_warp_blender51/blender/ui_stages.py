@@ -23,6 +23,7 @@ import bpy
 
 from . import file_compat
 from ..panels import PLAYBACK_ONLY_TEXT
+from ..sim import narrow_band
 from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
@@ -55,6 +56,7 @@ SIMULATE_READOUTS = (
     ("stat_substeps", "Substeps"),
     ("stat_particles", "Particles"),
     ("stat_voxels", "Voxels"),
+    ("stat_liquid_voxels", "Liquid voxels"),
     ("stat_cfl_clamped", "CFL clamped"),
 )
 LOOK_PROPS = (
@@ -123,6 +125,26 @@ def draw_quality(layout, scene):
     return _prop(layout, scene, "quality")
 
 
+def draw_narrow_band(layout, scene, domain):
+    """The Narrow-Band Particles toggle, greyed with its reasons when blocked.
+
+    A toggle that is already on stays usable so a blocked setup can always be
+    switched back off.
+    """
+    if not hasattr(domain, "narrow_band_enabled"):
+        return
+    reasons = narrow_band.scene_blocking_reasons(
+        domain, getattr(scene, "objects", ()))
+    enabled = bool(domain.narrow_band_enabled)
+    column = layout.column(align=True)
+    column.enabled = enabled or not reasons
+    _prop(column, scene, "narrow_band_enabled")
+    if enabled:
+        _prop(column, scene, "narrow_band_voxels")
+    for reason in reasons:
+        layout.label(text=reason, icon="INFO")
+
+
 def draw_guided_setup_buttons(layout, *, primary_scale: float = 1.3):
     row = layout.row(align=True)
     row.scale_y = primary_scale
@@ -167,6 +189,7 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
         for name in SETUP_DOMAIN_PROPS:
             _prop(column, scene, name)
         draw_resolution_readout(layout, scene)
+        draw_narrow_band(layout, scene, domain)
 
 
 class FLUIDSIM_STAGE_PT_setup_advanced(FluidSimStagePanel, bpy.types.Panel):
