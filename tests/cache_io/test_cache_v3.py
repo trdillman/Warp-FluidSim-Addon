@@ -191,7 +191,7 @@ def test_new_fields_have_no_defaults():
     [
         ("source_schema_version", 0, "source_schema_version"),
         ("source_schema_version", True, "source_schema_version"),
-        ("transfer_mode", "PIC", "transfer_mode"),
+        ("transfer_mode", "ASFLIP", "transfer_mode"),
         ("transfer_mode", "", "transfer_mode"),
         ("grid_spec", {**GRID_SPEC, "leaf_dim": 16}, "leaf_dim"),
         ("grid_spec", {**GRID_SPEC, "resolution_divisions": 0}, "resolution_divisions"),
