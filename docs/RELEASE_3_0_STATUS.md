@@ -22,6 +22,14 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lane L merge | `90d13ba` | 2416 passed, 3 skipped, 1 xfailed (H's xfail now passes, +2 pin tests) | `8baa886c…baf3` (unchanged, as a pure move must be) |
 | release/3.0 after lane K merge + 3.0.0 alpha bump | `21bc7c4` | 2416 passed, 3 skipped, 1 xfailed | `8baa886c…baf3` on `800b0ca` (the build label is not in the artifact) |
 | release/3.0 after lane J merge | `2952a95` | 2471 passed, 3 skipped, 1 xfailed | `8baa886c…baf3` on J's head `5bb8d6f` (narrow band off is bitwise unchanged); merged tree: see the next row |
+| release/3.0 after the zero-size-domain fix | `6cf4b24` | 2472 passed, 3 skipped, 1 xfailed | `8baa886c…baf3` (merged tree, headless) |
+
+- **Gate run 1 (on `6206978`) failed** in `validate_phase3_blender.py`. The
+  `phase3_points_f12.png` render was uniform (std 0.0016). Bisect: pass at `b54f1e2`, fail
+  from G's merge `b4c9dc5`. Cause: G derives `voxel_size` from the domain's bounding box,
+  and the probe's domain is an empty mesh, so the derived voxel size, and with it the point
+  radius, was 0. Fixed in `6cf4b24` (a zero-size domain falls back to the default box);
+  the probe passes and the demo hash is unchanged. The gate restarts from run 1.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches

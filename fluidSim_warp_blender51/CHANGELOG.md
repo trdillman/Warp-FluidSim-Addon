@@ -98,6 +98,8 @@ checkpoint.
 
 - A float32 cell size no longer pads an extra leaf per axis (for example 64
   divisions padding to 72).
+- A domain whose mesh has no size no longer derives a zero voxel size, which drew
+  its particles with no radius.
 - Add-on unregistration finishes past a class that refuses to unregister and
   names it, instead of stopping at the first failure.
 - `CudaDotProduct` checks array lengths before a launch.
