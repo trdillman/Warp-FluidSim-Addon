@@ -47,10 +47,27 @@ at candidate `9f440a73c9326bfaa910dec1e4948413290b90d3` passed lint, tests,
 all three CPU validators, package build/install/smoke/uninstall, and all six
 isolated Linux Blender 5.2 installer checks. Both mandatory artifact uploads
 failed because GitHub artifact storage quota was exhausted. CI remains failed;
-no upload gate was waived and no old artifacts were deleted. The subsequent
-test-selection/cancellation correction requires its own CI result.
+no upload gate was waived and no old artifacts were deleted. Latest reviewed source candidate `557d764d81b3b76f03e5e860341a6c0cb85cb4d0`
+repeated all validation and package checks successfully in
+[run 37933282104](https://github.com/trdillman/liquid_warp_blender51_port/actions/runs/37933282104);
+only the two mandatory artifact uploads failed. Independent source review
+reported no remaining substantive findings at that candidate. All five
+existing inline review threads are resolved. This bounded approval does not
+waive Windows/CUDA/GUI or artifact gates.
 
-The isolated Windows Blender 5.2 installer checks are still in progress. The isolated
+The isolated Windows Blender 5.2 installer lane passed **6 tests in 2,008.21s**
+with CUDA hidden: offline refusal, fresh installation/idempotency/loaded repair,
+foreign-copy refusal, corrupted-owned-copy repair/restart, explicit local helper,
+and authorized external override/version rejection/opt-in revocation.
+
+This Windows fixture package was built before later test, workflow and documentation
+commits. SHA-256 comparison confirmed its preferences, discovery, installer,
+runtime probe, prewarm and registration modules match reviewed source candidate
+`557d764d81b3b76f03e5e860341a6c0cb85cb4d0` byte for byte. The retained local
+`isolated-package-runtime-identity.json` records that bounded identity;
+this is not final-package or GPU/GUI qualification. Hosted CI built the reviewed
+candidate itself. Task-start and end-task storage checks exited successfully;
+passing receipts and failed-attempt evidence are retained. The isolated
 installer lane hides CUDA to avoid competing with other local GPU work; it
 cannot qualify solver execution, viewport behavior or GPU performance.
 
