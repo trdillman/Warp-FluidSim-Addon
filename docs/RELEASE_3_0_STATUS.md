@@ -17,6 +17,8 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lane A2 merge | `6b0abbd` | 2357 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane I merge | `aae0607` | 2364 passed, 3 skipped | not recomputed (no `sim/` or `properties.py` change) |
 | release/3.0 after lane H merge + gate entry | `b54f1e2` | 2374 passed, 3 skipped, 1 xfailed | not recomputed (no `sim/` or `properties.py` change) |
+| release/3.0 after lane G merge | `b4c9dc5` | 2388 passed, 3 skipped, 1 xfailed | **`8baa886c…baf3`** (2/2 headless). Changed by G by design; all 21 demo checks pass |
+| release/3.0 after lane F merge | `cfff382` | 2413 passed, 3 skipped, 2 xfailed | `8baa886c…baf3`, equal to G, so APIC leaves FLIP byte-identical |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -73,10 +75,13 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | `37b2315` | 2071 passed, 3 skipped | | **merged** as `881b0ab`; JACOBI stays the default, so the demo hash is unchanged |
 | A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | `5cc031d` | | | **merged** as `cc21cc7`, fixups `582ccbc`; shipped-scene settings dump identical to base |
 | A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | `697f342` | 2357 passed, 3 skipped | | **merged** as `6b0abbd`; JACOBI default, demo hash unchanged |
-| F APIC | `3.0/lane-f-apic` | `C:\Users\Tyler\wt\r30-f` | stop 1 `491f81e` | red tests as designed | | stop 1 accepted with changes; implementing |
+| F APIC | `3.0/lane-f-apic` | `C:\Users\Tyler\wt\r30-f` | `5307eb9` | 2338 passed, 3 skipped, 1 xfailed (lane) | | **PARTIAL**, **merged** as `cfff382`. The first head `b14b3ad` changed FLIP bits (hash `6a579cd4…`), so it was pulled back out; the fix gives APIC its own kernels. The 0.98 angular-momentum gate is a strict xfail; APIC keeps 0.939 vs FLIP 0.940 because the loss is in the shared free-surface path. Enforced instead: APIC > 0.90 and > PIC + 0.25 |
 | H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | `b322950` | 1 strict xfail (Warp-free signature) | settings signature imports Warp | **PARTIAL**, **merged** as `2eb067e` + gate entry `b54f1e2`; `ALEMBIC_EXPORT_OK` on Blender 5.2 with CUDA hidden (21 checks, bbox error 0) |
 | I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | `8ebb281` | 2319 passed + gate fix | | **KEEP**, **merged** as `aae0607` (2 of 3 attempts; Blender 5.2 meshes a sphere within 0.05 voxel). Not wired to export; wiring waits for lane J's `liquid_sdf_*` data (check cell-centre `origin` then) |
-| G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | `c3e2d48` | 2371 passed, 3 skipped | | **PARTIAL**: demo dims decision taken (below); finishing the acceptance expectation and a voxel-snap table for the acceptance scripts |
+| G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | `2bc4a91` | 2371 passed, 3 skipped (lane) | | **PARTIAL→accepted**, **merged** as `b4c9dc5`. `RESOLUTION_DIVISIONS_OK` on 5.2 (merged tree). About 19 acceptance scripts now snap `voxel_size` to whole divisions (table in lane report); the GUI gate covers them |
+| L Warp-free signature | `3.0/lane-l-warpfree-signature` | `C:\Users\Tyler\wt\r30-l` | base `cfff382` | | | dispatched (follow-up to H; must merge before J edits `sim/solver.py`) |
+| J narrow-band | | | | | | spec being verified against `cfff382` before brief |
+| K docs | | | | | | brief next |
 
 ### Wave 1 deviations
 
