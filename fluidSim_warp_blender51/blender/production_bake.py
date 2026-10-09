@@ -34,6 +34,7 @@ from ..io.checkpoint import (
     restore_solver,
     write_checkpoint_atomic,
 )
+from ..sim.enums import ParticleSampleType
 from ..version import VERSION_STRING
 from .scene_access import scene_identity
 
@@ -772,7 +773,8 @@ class ProductionBakeBackend:
             effect_signature=self.effect_signature,
             effect_inventory=self.effect_inventory,
             source_schema_version=SOURCE_SCHEMA_VERSION,
-            transfer_mode="FLIP",
+            transfer_mode=ParticleSampleType(
+                int(self.sess.solver.settings.sample_type)).name,
             grid_spec=_grid_spec_record(self.sess.solver.quality),
             narrow_band={"enabled": False, "band_voxels": 0.0},
             platform=_platform_record(self.sess.solver),

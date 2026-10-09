@@ -60,7 +60,7 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "max_particles": SettingSpec(int, 1_024, 50_000_000),
     "auto_grow_particles": SettingSpec(bool),
     "particles_per_voxel": SettingSpec(int, 0, 64),
-    "sample_type": SettingSpec(str, choices=("PIC", "FLIP")),
+    "sample_type": SettingSpec(str, choices=("PIC", "FLIP", "APIC")),
     "flip_ratio": SettingSpec(float, 0.0, 1.0),
     "trace_mode": SettingSpec(
         str,

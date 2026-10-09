@@ -24,6 +24,10 @@ SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL = 28
 RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
+# APIC affine matrix: one float32 mat33 (36 B) in the live buffer plus one in the
+# compaction double buffer (ParticleSystem._affine2) = 72 B per particle slot.
+# Charged only while the transfer mode is APIC.
+AFFINE_BYTES_PER_PARTICLE = 72
 WHITEWATER_BYTES = 76
 WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
 # Live table + candidate table + candidate flag/expand scratch (int32 each).
@@ -207,6 +211,13 @@ def _surface_dense_voxels(settings, h: float) -> int:
     return int(dims[0] * dims[1] * dims[2])
 
 
+def affine_bytes_per_particle(settings) -> int:
+    """Extra bytes per particle slot for the current transfer mode."""
+    # ParticleSampleType.APIC == 2; a plain int avoids importing sim.enums here.
+    return AFFINE_BYTES_PER_PARTICLE if int(
+        _value(settings, "sample_type", 1)) == 2 else 0
+
+
 def estimate_solver_bytes(settings) -> int:
     """Return a deliberately conservative peak-device-memory estimate."""
     leaf_cells = _domain_leaf_cells(settings)
@@ -217,7 +228,8 @@ def estimate_solver_bytes(settings) -> int:
         BASE_BYTES
         + leaves * LEAF_VOLUME * SIM_BYTES_PER_VOXEL
         + particles * (
-            PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID)
+            PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID
+            + affine_bytes_per_particle(settings))
         + whitewater * WHITEWATER_BYTES
         + leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
         + leaves * TOPOLOGY_COORD_BYTES_PER_LEAF

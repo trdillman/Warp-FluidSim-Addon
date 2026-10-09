@@ -36,6 +36,110 @@ from .registry import register, register_fn
 
 # Particle -> grid (P2G)
 
+# APIC guards (voxel units; see apic_affine_row).
+APIC_AXIS_EPS = 1.0e-3
+APIC_DET_EPS = 1.0e-12
+
+
+@wp.func
+def apic_velocity_delta(
+    c: wp.mat33, row: int, rx: float, ry: float, rz: float, h: float
+) -> float:
+    """Affine velocity at offset r (voxels) from the particle, in m/s.
+
+    ``c`` is stored in world units (1/s), so ``c . (r h)`` is a velocity.
+    """
+    return h * (c[row, 0] * rx + c[row, 1] * ry + c[row, 2] * rz)
+
+
+@wp.func
+def apic_affine_row(
+    data: wp.array(dtype=float),
+    weight: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    vp: wp.vec3,
+    axis: int,
+    h: float,
+) -> wp.vec3:
+    """Row ``axis`` of the APIC matrix C (1/s) for one particle.
+
+    Same stencil, same valid-face mask and same renormalisation as
+    ``sample_mac_component`` so APIC and PIC agree at the free surface.  With
+    r_i = x_i - x_p in voxels, wt_i the renormalised hat weights, v = sum
+    wt_i u_i and m = sum wt_i r_i::
+
+        B = sum wt_i (u_i - v) r_i        D = sum wt_i r_i r_i^T - m m^T
+        C_row = B D^-1 / h
+
+    The centring (v, m) makes this the weighted least-squares fit of
+    u ~ v + C r, so a partial stencil reproduces a linear field exactly.  For
+    a full hat stencil m = 0 and D = diag(f_k (1 - f_k)): the textbook
+    B D^-1 with a per-particle D.
+
+    Guards (voxel units, h = 1):
+      * axis k is dropped (C_k = 0, the rest solved) when D_kk < 1e-3.  That
+        is a particle within about 1e-3 voxel of a face plane, where D_kk
+        shrinks like f and the float32 noise of B (~1e-7 |u|) divided by it
+        would be amplified without bound; at 1e-3 the amplification is capped
+        near 1e-4 |u| per voxel.
+      * the whole row is zero when det(D) of what remains < 1e-12, the spec's
+        1e-12 h^6 with h = 1: a stencil too thin to define a gradient.
+    """
+    off = wp.vec3(0.5, 0.5, 0.5)
+    if axis == 0:
+        off = wp.vec3(0.0, 0.5, 0.5)
+    elif axis == 1:
+        off = wp.vec3(0.5, 0.0, 0.5)
+    else:
+        off = wp.vec3(0.5, 0.5, 0.0)
+    q = vp - off
+    base = voxel_floor(q)
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    wsum = float(0.0)
+    usum = float(0.0)
+    msum = wp.vec3(0.0, 0.0, 0.0)
+    ur = wp.vec3(0.0, 0.0, 0.0)
+    rr = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                wgt = wx * wy * wz
+                if flat >= 0 and weight[flat] > 0.0:
+                    r = wp.vec3(float(dx) - f[0], float(dy) - f[1], float(dz) - f[2])
+                    ui = data[flat]
+                    wsum += wgt
+                    usum += wgt * ui
+                    msum += wgt * r
+                    ur += (wgt * ui) * r
+                    rr += wgt * wp.outer(r, r)
+    if wsum <= 1.0e-8:
+        return wp.vec3(0.0, 0.0, 0.0)
+    inv = 1.0 / wsum
+    vmean = usum * inv
+    m = msum * inv
+    b = ur * inv - vmean * m
+    d = rr * inv - wp.outer(m, m)
+    # Drop degenerate axes: identity row/column, zero right-hand side.
+    for k in range(3):
+        if d[k, k] < APIC_AXIS_EPS:
+            for j in range(3):
+                d[k, j] = 0.0
+                d[j, k] = 0.0
+            d[k, k] = 1.0
+            b[k] = 0.0
+    if wp.determinant(d) < APIC_DET_EPS:
+        return wp.vec3(0.0, 0.0, 0.0)
+    c = wp.inverse(d) * b
+    return c / h
+
+
 
 @wp.kernel
 def k_particle_set_grid_data(
@@ -90,6 +194,73 @@ def k_particle_set_grid_data(
                             wp.atomic_add(wv, flat, wgt)
                         else:
                             wp.atomic_add(w, flat, wgt * comp)
+                            wp.atomic_add(ww, flat, wgt)
+
+
+@wp.kernel
+def k_particle_set_grid_data_apic(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    affine: wp.array(dtype=wp.mat33),
+    sample_type: wp.int32,
+    count: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+):
+    """fluidSimParticleSetGridData: staggered trilinear velocity scatter."""
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    vp = world_to_voxel(positions[tid], origin, voxel_size)
+    vel = velocities[tid]
+    apic = sample_type == 2
+    cmat = affine[wp.where(apic, tid, 0)]
+    for axis in range(3):
+        off = wp.vec3(0.5, 0.5, 0.5)
+        if axis == 0:
+            off = wp.vec3(0.0, 0.5, 0.5)
+        elif axis == 1:
+            off = wp.vec3(0.5, 0.0, 0.5)
+        else:
+            off = wp.vec3(0.5, 0.5, 0.0)
+        q = vp - off
+        base = voxel_floor(q)
+        f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+        comp = vel[axis]
+        for dz in range(2):
+            for dy in range(2):
+                for dx in range(2):
+                    ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                    flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                    if flat >= 0:
+                        wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                        wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                        wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                        wgt = wx * wy * wz
+                        cval = wp.where(
+                            apic,
+                            comp + apic_velocity_delta(
+                                cmat, axis, float(dx) - f[0],
+                                float(dy) - f[1], float(dz) - f[2],
+                                voxel_size),
+                            comp)
+                        if axis == 0:
+                            wp.atomic_add(u, flat, wgt * cval)
+                            wp.atomic_add(wu, flat, wgt)
+                        elif axis == 1:
+                            wp.atomic_add(v, flat, wgt * cval)
+                            wp.atomic_add(wv, flat, wgt)
+                        else:
+                            wp.atomic_add(w, flat, wgt * cval)
                             wp.atomic_add(ww, flat, wgt)
 
 
@@ -209,6 +380,159 @@ def k_gather_grid_data(
                             wz = wp.where(dz == 1, f[2], 1.0 - f[2])
                             wgt = wx * wy * wz
                             sw += wgt * vel[2]
+                            sww += wgt
+    u[tid] = su
+    v[tid] = sv
+    w[tid] = sw
+    wu[tid] = swu
+    wv[tid] = swv
+    ww[tid] = sww
+
+
+@wp.kernel
+def k_gather_grid_data_apic(
+    positions: wp.array(dtype=wp.vec3),
+    velocities: wp.array(dtype=wp.vec3),
+    affine: wp.array(dtype=wp.mat33),
+    sample_type: wp.int32,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    voxel_counts: wp.array(dtype=wp.int32),
+    bin_starts: wp.array(dtype=wp.int32),
+    bin_indices: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+):
+    """Deterministic P2G: the transpose of :func:`k_particle_set_grid_data`.
+
+    One thread owns one active voxel and pulls every contribution addressed to
+    it, instead of every particle pushing into shared accumulators with
+    ``wp.atomic_add``.  Float addition is not associative, so the scatter's sum
+    depends on thread arrival order and no two runs of the same bake agree
+    bitwise; the gather sums in a fixed order and is reproducible.
+
+    The neighbourhood is exact rather than conservative.  MAC face offsets have
+    components in {0, 0.5}, so ``base = floor(vp - off)`` is either ``c`` or
+    ``c - 1`` per component for a particle binned at ``c = floor(vp)``, and the
+    scatter's targets are ``base + d`` for ``d`` in {0, 1}.  Every target
+    therefore lies within one voxel of ``c``, and sweeping the 3x3x3 bin
+    neighbourhood visits every particle that can reach this voxel -- no more,
+    no fewer.  Each term is recomputed with the identical expressions the
+    scatter uses, so only the summation order differs.
+
+    One semantic difference: a particle whose own voxel is outside the domain
+    or unallocated is absent from the bins and so contributes nothing here,
+    where the scatter would still deposit into any allocated neighbour.  The
+    same particles are already excluded from ``voxel_counts`` and from
+    relaxation, and topology is rebuilt from the live particle set before every
+    transfer, so the set is empty in practice.
+    """
+    apic = sample_type == 2
+    tid = wp.tid()
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    su = float(0.0)
+    sv = float(0.0)
+    sw = float(0.0)
+    swu = float(0.0)
+    swv = float(0.0)
+    sww = float(0.0)
+    for nz in range(-1, 2):
+        for ny in range(-1, 2):
+            for nx in range(-1, 2):
+                nflat = voxel_flat_index(
+                    leaf_table, voxels_dim, leaves_dim,
+                    wp.vec3i(ijk[0] + nx, ijk[1] + ny, ijk[2] + nz),
+                )
+                if nflat >= 0:
+                    start = bin_starts[nflat]
+                    for s in range(voxel_counts[nflat]):
+                        p = bin_indices[start + s]
+                        vp = world_to_voxel(positions[p], origin, voxel_size)
+                        vel = velocities[p]
+                        # APIC adds C (x_i - x_p) to the face momentum; the
+                        # where() selects the untouched velocity otherwise, so
+                        # PIC/FLIP carry the exact same bits as before.
+                        cmat = affine[wp.where(apic, p, 0)]
+                        # The three MAC faces are unrolled by hand so each
+                        # one carries its own constant offset; a loop over
+                        # the axis index would have to select the offset
+                        # vector and the velocity component at run time.
+                        q = vp - wp.vec3(0.0, 0.5, 0.5)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            cu = wp.where(
+                                apic,
+                                vel[0] + apic_velocity_delta(
+                                    cmat, 0, float(dx) - f[0],
+                                    float(dy) - f[1], float(dz) - f[2],
+                                    voxel_size),
+                                vel[0])
+                            su += wgt * cu
+                            swu += wgt
+                        q = vp - wp.vec3(0.5, 0.0, 0.5)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            cv = wp.where(
+                                apic,
+                                vel[1] + apic_velocity_delta(
+                                    cmat, 1, float(dx) - f[0],
+                                    float(dy) - f[1], float(dz) - f[2],
+                                    voxel_size),
+                                vel[1])
+                            sv += wgt * cv
+                            swv += wgt
+                        q = vp - wp.vec3(0.5, 0.5, 0.0)
+                        base = voxel_floor(q)
+                        dx = ijk[0] - base[0]
+                        dy = ijk[1] - base[1]
+                        dz = ijk[2] - base[2]
+                        ok = dx >= 0 and dx <= 1 and dy >= 0 and dy <= 1
+                        if ok and dz >= 0 and dz <= 1:
+                            f = q - wp.vec3(
+                                float(base[0]), float(base[1]), float(base[2]))
+                            wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                            wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                            wz = wp.where(dz == 1, f[2], 1.0 - f[2])
+                            wgt = wx * wy * wz
+                            cw = wp.where(
+                                apic,
+                                vel[2] + apic_velocity_delta(
+                                    cmat, 2, float(dx) - f[0],
+                                    float(dy) - f[1], float(dz) - f[2],
+                                    voxel_size),
+                                vel[2])
+                            sw += wgt * cw
                             sww += wgt
     u[tid] = su
     v[tid] = sv
@@ -463,6 +787,60 @@ def k_staggered_field_to_particle(
     v_new = sample_mac_velocity(u, v, w, wu, wv, ww, leaf_table, voxels_dim, leaves_dim, vp)
     if sample_type == 0:
         velocities[tid] = v_new
+    else:
+        v_old_s = sample_mac_velocity(
+            u_old, v_old, w_old, wu, wv, ww, leaf_table, voxels_dim, leaves_dim, vp
+        )
+        v_flip = velocities[tid] + (v_new - v_old_s)
+        velocities[tid] = flip_ratio * v_flip + (1.0 - flip_ratio) * v_new
+
+
+@wp.kernel
+def k_staggered_field_to_particle_apic(
+    positions: wp.array(dtype=wp.vec3),
+    count: wp.array(dtype=wp.int32),
+    u: wp.array(dtype=float),
+    v: wp.array(dtype=float),
+    w: wp.array(dtype=float),
+    wu: wp.array(dtype=float),
+    wv: wp.array(dtype=float),
+    ww: wp.array(dtype=float),
+    u_old: wp.array(dtype=float),
+    v_old: wp.array(dtype=float),
+    w_old: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    voxel_size: float,
+    sample_type: wp.int32,  # ParticleSampleType: 0 PIC, 1 FLIP, 2 APIC
+    flip_ratio: float,
+    velocities: wp.array(dtype=wp.vec3),
+    affine: wp.array(dtype=wp.mat33),
+):
+    """fluidSimStaggeredVectorFieldToParticle: PIC/FLIP velocity update.
+
+    ``u_old`` holds the pre-force/projection grid velocity so the FLIP path
+    adds the grid delta; the PIC path replaces with the new grid velocity.
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    vp = world_to_voxel(positions[tid], origin, voxel_size)
+    v_new = sample_mac_velocity(u, v, w, wu, wv, ww, leaf_table, voxels_dim, leaves_dim, vp)
+    if sample_type == 0:
+        velocities[tid] = v_new
+    elif sample_type == 2:
+        # APIC: the PIC value plus the local affine matrix (world units).
+        velocities[tid] = v_new
+        r0 = apic_affine_row(
+            u, wu, leaf_table, voxels_dim, leaves_dim, vp, 0, voxel_size)
+        r1 = apic_affine_row(
+            v, wv, leaf_table, voxels_dim, leaves_dim, vp, 1, voxel_size)
+        r2 = apic_affine_row(
+            w, ww, leaf_table, voxels_dim, leaves_dim, vp, 2, voxel_size)
+        affine[tid] = wp.mat33(
+            r0[0], r0[1], r0[2], r1[0], r1[1], r1[2], r2[0], r2[1], r2[2])
     else:
         v_old_s = sample_mac_velocity(
             u_old, v_old, w_old, wu, wv, ww, leaf_table, voxels_dim, leaves_dim, vp
