@@ -32,6 +32,7 @@ def _stub_gate(monkeypatch, commands=None):
     monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda *_args: None)
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence", lambda: {})
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: None)
     monkeypatch.setattr(run_production_gate, "_print_gate_metadata", lambda *_args: None)
     return labels
 
@@ -75,8 +76,8 @@ def test_gate_validates_release_kernels_on_cuda(monkeypatch):
         assert command[command.index("--expected-warp-root") + 1] == "warp-root"
 
 
-def _write_passing_budget(monkeypatch, tmp_path, status=""):
-    """A passing summary for HEAD abc123; ``status`` is git's porcelain output."""
+def _write_passing_budget(monkeypatch, tmp_path, status="", diff="", head="abc123"):
+    """A passing summary measured on abc123; ``status``/``diff`` are git's output."""
     artifact = tmp_path / "artifacts" / "demo_analysis" / "analysis_report.json"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("{}", encoding="utf-8")
@@ -102,7 +103,7 @@ def _write_passing_budget(monkeypatch, tmp_path, status=""):
     monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
     monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
     monkeypatch.setattr(run_production_gate, "_git_text",
-                        lambda *args: status if args[0] == "status" else "abc123")
+                        lambda *args: {"status": status, "diff": diff}.get(args[0], head))
     monkeypatch.setattr(run_production_gate, "_fluidsim_version", lambda: "9.9.9")
     return manifest
 
@@ -120,22 +121,52 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     assert data["gate_verdict"] == "FULL-PRODUCTION-GATE-PASS"
     assert data["performance_artifact_sha256"]
     assert data["performance_budget_reused"] is False
+    assert data["performance_budget_measured_at"] == "abc123"
 
 
-def test_reuse_budget_skips_the_measurement_and_records_it(monkeypatch, capsys):
+def test_gate_reuses_a_budget_that_still_covers_the_sources(monkeypatch, capsys):
+    """By default a budget measured with the same budget sources is not re-measured."""
     commands, validations, manifests = {}, [], []
     _stub_gate(monkeypatch, commands)
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: "abc123def4567")
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence",
                         lambda **kwargs: validations.append(kwargs) or {})
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest",
                         lambda *args: manifests.append(args))
 
-    assert run_production_gate.main(["--include-gui", "--reuse-budget"]) == 0
+    assert run_production_gate.main(["--include-gui"]) == 0
 
     assert "paired demo performance budget" not in commands
     assert validations == [{"reuse": True}]
     assert manifests[0][2] is True
-    assert "FULL-PRODUCTION-GATE-PASS" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "reused: measured on abc123def456" in out
+    assert "FULL-PRODUCTION-GATE-PASS" in out
+
+
+def test_measure_budget_forces_a_fresh_measurement(monkeypatch):
+    commands = {}
+    _stub_gate(monkeypatch, commands)
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: "abc123")
+
+    assert run_production_gate.main(["--measure-budget"]) == 0
+    assert "paired demo performance budget" in commands
+
+
+def test_reuse_budget_fails_instead_of_measuring(monkeypatch):
+    import pytest
+    commands = {}
+    _stub_gate(monkeypatch, commands)
+
+    with pytest.raises(RuntimeError, match="no passing performance budget covers"):
+        run_production_gate.main(["--reuse-budget"])
+    assert "paired demo performance budget" not in commands
+
+
+def test_budget_flags_are_exclusive(capsys):
+    import pytest
+    with pytest.raises(SystemExit):
+        run_production_gate.main(["--reuse-budget", "--measure-budget"])
 
 
 def test_reused_budget_survives_rebuilt_demo_bytes(monkeypatch, tmp_path):
@@ -158,13 +189,35 @@ def test_reused_budget_rejects_modified_sources(monkeypatch, tmp_path):
         run_production_gate._validate_performance_evidence(reuse=True)
 
 
-def test_reused_budget_must_belong_to_this_head(monkeypatch, tmp_path):
+def test_fresh_budget_must_belong_to_this_head(monkeypatch, tmp_path):
     import pytest
-    _write_passing_budget(monkeypatch, tmp_path)
-    monkeypatch.setattr(run_production_gate, "_git_text",
-                        lambda *args: "" if args[0] == "status" else "def456")
+    _write_passing_budget(monkeypatch, tmp_path, head="def456")
     with pytest.raises(RuntimeError, match="for this HEAD"):
+        run_production_gate._validate_performance_evidence()
+
+
+def test_budget_from_an_earlier_commit_is_reused_when_sources_are_unchanged(monkeypatch, tmp_path):
+    """A docs- or blends-only commit keeps the measured budget."""
+    _write_passing_budget(monkeypatch, tmp_path, head="def456")
+    assert run_production_gate._validate_performance_evidence(reuse=True)["gitHead"] == "abc123"
+    assert run_production_gate._reusable_budget_head() == "abc123"
+
+
+def test_budget_from_an_earlier_commit_is_rejected_when_sources_changed(monkeypatch, tmp_path):
+    import pytest
+    _write_passing_budget(monkeypatch, tmp_path, head="def456",
+                          diff="fluidSim_warp_blender51/solver.py")
+    assert run_production_gate._reusable_budget_head() is None
+    with pytest.raises(RuntimeError, match="solver.py"):
         run_production_gate._validate_performance_evidence(reuse=True)
+
+
+def test_budget_sources_exclude_documentation():
+    sources = run_production_gate._BUDGET_SOURCES
+    assert ":(exclude)*.md" in sources
+    assert ":(exclude)fluidSim_warp_blender51/docs" in sources
+    assert "fluidSim_warp_blender51" in sources and not any(
+        source.startswith("demos") for source in sources)
 
 
 def test_performance_budget_runs_in_headless_and_full_gate(monkeypatch):
@@ -320,7 +373,7 @@ def test_quick_tier_skips_evidence_lanes(monkeypatch, capsys):
 
 def test_quick_tier_refuses_release_flags():
     import pytest
-    for flag in ("--include-gui", "--reuse-budget"):
+    for flag in ("--include-gui", "--reuse-budget", "--measure-budget"):
         with pytest.raises(SystemExit):
             run_production_gate.main(["--quick", flag])
 

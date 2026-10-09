@@ -506,25 +506,58 @@ def _fluidsim_version():
     return _version_constant("VERSION_STRING")
 
 
-# Sources the budget inventory binds, minus the demo blends every gate rebuilds.
+# Sources the budget trials execute, minus the demo blends every gate rebuilds
+# and the documentation, which cannot change a timing. This orchestrator is
+# not run by a trial, and a reuse re-evaluates the raw runs with the current
+# tools/performance_budget.py, so gate-only edits keep the measured budget.
 _BUDGET_SOURCES = (
     "fluidSim_warp_blender51", "tools/repo_addon_loader.py", "tools/benchmark_demo_trial.py",
-    "tools/benchmark_versions.py", "tools/performance_budget.py", "tools/run_production_gate.py",
+    "tools/benchmark_versions.py", "tools/performance_budget.py",
+    ":(exclude)*.md", ":(exclude)fluidSim_warp_blender51/docs",
 )
+PERFORMANCE_SUMMARY = Path("artifacts") / "performance_budget" / "summary.json"
+
+
+def _budget_sources_changed_since(measured_head):
+    """Budget sources that differ from the measured commit, committed or not."""
+    if not measured_head:
+        return "no measured commit recorded"
+    committed = _git_text("diff", "--name-only", measured_head, "HEAD", "--", *_BUDGET_SOURCES)
+    uncommitted = _git_text("status", "--porcelain", "--", *_BUDGET_SOURCES)
+    return "\n".join(part for part in (committed, uncommitted) if part)
+
+
+def _reusable_budget_head():
+    """The commit whose passing budget still covers HEAD, or None to measure.
+
+    Timing depends on the add-on, the benchmark tools and the demo inputs, not
+    on documentation or rebuilt demo bytes, so a summary measured on an earlier
+    commit stays valid until one of ``_BUDGET_SOURCES`` changes.
+    """
+    try:
+        report = json.loads((ROOT / PERFORMANCE_SUMMARY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if report.get("passed") is not True or _budget_sources_changed_since(report.get("gitHead")):
+        return None
+    return report["gitHead"]
 
 
 def _validate_performance_evidence(reuse=False):
     from tools.benchmark_versions import REFERENCE_COMMITS, _inventory
     from tools.performance_budget import evaluate_budget
-    performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
+    performance = ROOT / PERFORMANCE_SUMMARY
     report = json.loads(performance.read_text(encoding="utf-8"))
-    if report.get("passed") is not True or report.get("gitHead") != _git_text("rev-parse", "HEAD"):
+    if report.get("passed") is not True or (
+            not reuse and report.get("gitHead") != _git_text("rev-parse", "HEAD")):
         raise RuntimeError("missing passing performance budget evidence for this HEAD")
     if reuse:
         # A rebuilt demo blend differs in compressed bytes only, so a reused
-        # comparison binds the commit and the unmodified sources instead.
-        if _git_text("status", "--porcelain", "--", *_BUDGET_SOURCES):
-            raise RuntimeError("sources changed since the reused performance comparison")
+        # comparison binds the measured commit and unchanged budget sources.
+        changed = _budget_sources_changed_since(report.get("gitHead"))
+        if changed:
+            raise RuntimeError(
+                f"sources changed since the reused performance comparison:\n{changed}")
     elif report.get("candidateInventorySha256") != _inventory(ROOT):
         raise RuntimeError("source or demo bytes changed after the performance comparison")
     recomputed = evaluate_budget(report.get("runs"))
@@ -562,7 +595,7 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
+    performance = ROOT / PERFORMANCE_SUMMARY
     manifest = {
         "gate_run_at": _dt.datetime.now(_dt.UTC).isoformat(),
         "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
@@ -577,6 +610,7 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
         "performance_artifact_sha256": hashlib.sha256(performance.read_bytes()).hexdigest(),
         "performance_reference_commits": report["referenceCommits"],
         "performance_budget_reused": bool(reuse_budget),
+        "performance_budget_measured_at": report["gitHead"],
     }
     GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
@@ -618,14 +652,21 @@ def _production_main(argv=None):
         help="fast tier for localized changes: hygiene, Python/CUDA checks, release validators "
              "and the acceptance batch; no demo rebuild, GUI or budget, and no manifest",
     )
-    parser.add_argument(
+    budget = parser.add_mutually_exclusive_group()
+    budget.add_argument(
         "--reuse-budget",
         action="store_true",
-        help="reuse this commit's passing performance budget instead of re-measuring it",
+        help="fail instead of measuring when no passing budget covers the current budget sources "
+             "(by default the gate reuses one when it can and measures otherwise)",
+    )
+    budget.add_argument(
+        "--measure-budget",
+        action="store_true",
+        help="re-measure the performance budget even when a passing one still covers the sources",
     )
     args = parser.parse_args(argv)
-    if args.quick and (args.include_gui or args.reuse_budget):
-        parser.error("--quick cannot be combined with --include-gui or --reuse-budget")
+    if args.quick and (args.include_gui or args.reuse_budget or args.measure_budget):
+        parser.error("--quick cannot be combined with --include-gui or a budget option")
     blender_exe = os.environ.get("BLENDER_EXE", DEFAULT_BLENDER_EXE)
     blender_py = os.environ.get("BLENDER_PY", DEFAULT_BLENDER_PY)
     include_gui = not args.quick and (
@@ -801,10 +842,15 @@ def _production_main(argv=None):
         ), env=env)
     # Run after demo rebuilds and GUI probes, so the budget covers the final
     # delivered saved files, not the pre-build inputs.
-    if args.reuse_budget:
+    measured_head = None if args.measure_budget else _reusable_budget_head()
+    if args.reuse_budget and measured_head is None:
+        raise RuntimeError("--reuse-budget: no passing performance budget covers the current "
+                           "budget sources; run without it to measure")
+    reuse_budget = measured_head is not None
+    if reuse_budget:
         _validate_performance_evidence(reuse=True)
         print("\n== paired demo performance budget ==")
-        print("reused: artifacts/performance_budget/summary.json passed for this HEAD")
+        print(f"reused: measured on {measured_head[:12]}; no budget source changed since")
     else:
         _run("paired demo performance budget", [
             blender_py, "tools/benchmark_versions.py", "--demo-budget",
@@ -815,7 +861,7 @@ def _production_main(argv=None):
         _validate_performance_evidence()
     if include_gui:
         _write_gate_manifest(
-            blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), args.reuse_budget)
+            blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), reuse_budget)
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
         print("\nHEADLESS-GATE-PASS")

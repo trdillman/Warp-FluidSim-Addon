@@ -48,8 +48,9 @@ Facts that explain results:
 
 ## 1. Carry-over work (must do)
 
-1. **GUI gate.** Three consecutive full-production-gate passes and the new
-   reference hash. TBD (orchestrator)
+1. **GUI gate.** One full-production-gate pass on the release commit whose demo
+   hash matches the recorded reference (scoped validation, `docs/RELEASING.md`).
+   TBD (orchestrator)
 2. **ABBA performance run** against 2.1.x. TBD (orchestrator)
 3. **Beta re-baseline.** Decide whether Multigrid and APIC become defaults, and
    re-baseline the demo hash if they do. Today Jacobi and FLIP are the defaults and

@@ -89,11 +89,27 @@ It prints `FULL-PRODUCTION-GATE-PASS` when it succeeds. It then writes
 Every run deletes the old manifest first, and only a passing `--include-gui`
 run writes a new one.
 
-The release needs three consecutive passes on the same commit. Only the first
-one measures the paired performance budget (about ten minutes of fresh Blender
-trials). Run the other two with `--reuse-budget`: they reuse that passing
-summary, fail unless it belongs to HEAD and the add-on and benchmark sources
-are unmodified, and record `performance_budget_reused: true` in the manifest.
+Validation is scoped to what changed. The release needs one passing
+`--include-gui` run on the release commit, and its `demo_artifact_sha256` must
+match the reference recorded for that line (a different hash means simulation
+results changed and needs an explanation, not a rerun). Demo bakes are bitwise
+deterministic since d2a6b6d, so repeating the run proves nothing new; the old
+three-consecutive-passes rule is retired.
+
+The paired performance budget (about twenty minutes of Blender trials) is only
+measured when it has to be. By default the gate reuses
+`artifacts/performance_budget/summary.json` when it passed and no budget
+source changed since the commit it measured: the add-on (minus its docs and
+Markdown), `tools/repo_addon_loader.py`, the benchmark tools and the budget evaluator.
+Documentation, rebuilt demo blends and test-only commits therefore keep the
+measured budget. The manifest records `performance_budget_reused` and
+`performance_budget_measured_at`. `--measure-budget` forces a fresh
+measurement; `--reuse-budget` fails instead of measuring.
+
+For changes that do not touch solver or simulation output, run the focused
+tests for the area (for example `tests/gate` for gate tooling) or `--quick`;
+a full gate is only needed for the release commit or a change to simulation
+results.
 
 `--quick` is the tier for localized changes: hygiene, the Python and CUDA
 checks, the release validators and the background acceptance scripts, ending

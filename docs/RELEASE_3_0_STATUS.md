@@ -92,6 +92,13 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   Demo analysis report sha256 `8baa886c018245f3ea9187933b7d4108891a79998de861da24578e113efbbaf3`
   reproduced by all three: the 3.0 reference. Run3c's rebuilt crown_splash/dam_break
   blends are committed with this note (compressed-byte drift only).
+- **Scoped validation (owner decision 2026-10-09).** The three-consecutive-passes rule
+  is retired: one `--include-gui` pass whose demo hash matches the reference is release
+  evidence. The gate now reuses a passing budget by default whenever no budget source
+  (add-on minus docs/Markdown, loader, benchmark tools, budget evaluator) changed since the
+  measured commit, so docs/blends/test commits skip the ~19 min budget; `--measure-budget`
+  forces it. Localized changes get focused tests or `--quick`. The budget measured on
+  `5a2ce80` covers `fad2e6e` and this commit.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -186,7 +193,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 ### Wave 1 deviations
 
 - **Wave 1 started before the alpha.1 gate.** The plan only needs A and B merged; the
-  alpha.1 gate (3× GUI, ABBA) runs on the merged tree once Wave 1 merges settle.
+  alpha.1 gate (one GUI pass, ABBA if needed) runs on the merged tree once Wave 1 merges settle.
 - **Defaults held for the hash.** APIC ships with FLIP still the default; multigrid ships
   with JACOBI. Both flip at the beta re-baseline, so each hash change is attributable.
 - **Lane F (APIC).** `sample_type` gains `APIC = 2` (no rename, no ASFLIP). LIVE tier
@@ -320,6 +327,6 @@ Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. E
 
 | Milestone | Contents | Gate | State |
 |---|---|---|---|
-| alpha.1 | Wave 0 (A–E) | 3× GUI gate, ABBA perf | in progress |
+| alpha.1 | Wave 0 (A–E) | 1 GUI gate (hash match), ABBA perf if budget sources changed | in progress |
 | alpha.2 | Wave 1 (F–I) | | not started |
 | beta | Wave 2 (J, K), multigrid re-baseline | | not started |

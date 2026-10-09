@@ -161,7 +161,8 @@ gate re-baseline into beta per the milestone table.
 2. After each merge touching `sim/` or `properties.py`: one headless demo bake of all
    four demos, hash compared to the expected attribution (refactor waves must match the
    previous hash exactly).
-3. Milestone close: 3× GUI gate, ABBA perf pairs, re-baseline commit with before/after
+3. Milestone close: one GUI gate pass matching the recorded hash (scoped validation, see
+   `docs/RELEASING.md`), ABBA perf pairs only if budget sources changed, re-baseline commit with before/after
    hashes in the message, `max_crown_height` evidence rebind.
 4. Decide I (VDB) at day 3. Decide ASFLIP at F's close based on remaining budget.
 5. Keep one task record (`docs/RELEASE_3_0_PLAN.md` status block or a sibling

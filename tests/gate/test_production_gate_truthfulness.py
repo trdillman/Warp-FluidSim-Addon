@@ -29,6 +29,7 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
     monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda *_args: None)
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence", lambda: {})
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: None)
     monkeypatch.setattr(
         run_production_gate, "_check_certified_warp", lambda _python, _env: "warp-root")
     monkeypatch.setenv("BLENDER_EXE", "blender")
@@ -105,6 +106,7 @@ def test_production_gate_include_gui_requires_foreground_gui_acceptance(
     monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda *_args: None)
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence", lambda: {})
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: None)
     monkeypatch.setattr(
         run_production_gate, "_check_certified_warp", lambda _python, _env: "warp-root")
     monkeypatch.setenv("BLENDER_EXE", "blender")
