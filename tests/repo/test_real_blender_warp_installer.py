@@ -15,9 +15,11 @@ Covers:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -27,16 +29,26 @@ TOOLS_RELEASE = ROOT / "tools" / "release"
 ADDON_ROOT = ROOT / "fluidSim_warp_blender51"
 
 
+@lru_cache(maxsize=1)
 def _find_blender() -> Path | None:
-    candidate = os.environ.get("BLENDER") or shutil.which("blender")
-    if candidate and Path(candidate).is_file():
-        return Path(candidate).resolve()
-    for default in (
-        Path("/usr/local/bin/blender"),
-        Path("/opt/blender-5.2.0-linux-x64/blender"),
-    ):
-        if default.is_file():
-            return default
+    configured = os.environ.get("BLENDER")
+    candidates = (
+        configured or shutil.which("blender"),
+        "/usr/local/bin/blender",
+        "/opt/blender-5.2.0-linux-x64/blender",
+    )
+    for candidate in candidates:
+        if not candidate or not Path(candidate).is_file():
+            continue
+        result = subprocess.run(
+            [str(candidate), "--version"], capture_output=True, text=True,
+            check=False, timeout=30,
+        )
+        match = re.search(r"Blender (\d+)\.(\d+)\.(\d+)", result.stdout)
+        if result.returncode == 0 and match and match.groups() == ("5", "2", "0"):
+            return Path(candidate).resolve()
+        if configured:
+            pytest.fail(f"BLENDER must identify certified Blender 5.2.0: {result.stdout}")
     return None
 
 

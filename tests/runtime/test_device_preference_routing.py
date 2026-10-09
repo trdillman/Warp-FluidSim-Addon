@@ -122,6 +122,7 @@ def test_refresh_operators_tolerate_missing_transient_preferences(monkeypatch):
 def test_refresh_runtime_does_not_write_missing_preferences(monkeypatch):
     preferences = _install_bpy_stub(monkeypatch, prefs=None)
     probe = SimpleNamespace(
+        available=True,
         cuda_devices=(SimpleNamespace(alias="cuda:0"),))
     monkeypatch.setattr(
         preferences, "probe_runtime", lambda force=False: probe)
@@ -144,6 +145,7 @@ def test_the_runtime_status_reports_the_device_actually_in_use(monkeypatch):
 
     probed = []
     probe = SimpleNamespace(
+        available=True,
         cuda_devices=(SimpleNamespace(alias="cuda:3"),))
     monkeypatch.setattr(
         preferences, "probe_runtime", lambda force=False: probe)
