@@ -56,7 +56,14 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   `Get-Process blender | Stop-Process -Force`, killing every Blender on the machine
   (exit -1 = .NET `Process.Kill`; each kill left an orphan `blender_<pid>` temp dir and no
   crash file; its session ran the kill at 11:36–11:37, one minute before the first crash).
-  Flagged as a separate task. Gate runs need that session idle. The gate's rebuilt `crown_splash`/`dam_break` blends were committed as
+  Flagged as a separate task. `wt_gate.ps1 -ExeName blender_fsgate.exe` now runs a
+  hardlink of the same Blender under another process name. That run (`fcfb91a`, run2c)
+  passed every Blender check, but the budget was `invalid`: a candidate trial could not
+  allocate 3 MB of host memory while an unrelated `graft build` (node) held 30+ GB of
+  commit (5.4 of 119 GB free). **Gate blocked until the machine is quiet.**
+  Rebuilt blend bytes differ on every gate run (compressed; already seen on Linux in
+  2.1), so blends are restored to HEAD before each run and the qualifying run's blends
+  get committed (`docs/QUALIFIED_DEMO_INPUTS.md` note, `f851bfd`). The gate's rebuilt `crown_splash`/`dam_break` blends were committed as
   `fb530b6` (crown_splash build whitewater peak 5346 → 5529); demo hash unchanged.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
