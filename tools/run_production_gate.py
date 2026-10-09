@@ -122,6 +122,8 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_resolution_divisions_acceptance.py":
+        "headless, no GPU; prints RESOLUTION_DIVISIONS_OK (lane G, run by hand until the gate lists it)",
     "tests/acceptance/blender_artist_bake_deleted_scene_acceptance.py":
         "needs a real GUI modal bake; exits silently in --background",
     "tests/acceptance/blender_artist_bake_gui_acceptance.py":

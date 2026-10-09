@@ -2215,6 +2215,7 @@ def _stage_context(
     domain_settings = SimpleNamespace(
         sample_type="FLIP",
         voxel_size=0.037,
+        resolution_divisions=64,
         particles_per_voxel=8,
         max_particles=1_000_000,
         auto_grow_particles=False,
@@ -2757,6 +2758,7 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     domain_settings = SimpleNamespace(
         domain_object=None,
         voxel_size=0.037,
+        resolution_divisions=64,
         particles_per_voxel=12,
         max_particles=1_234_567,
         auto_grow_particles=True,
@@ -2795,8 +2797,8 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     panel.layout = _Layout()
     panel.draw(context)
 
-    voxel = [call for call in panel.layout.prop_calls if call["name"] == "voxel_size"]
-    assert voxel, "domain panel did not draw voxel_size"
+    voxel = [call for call in panel.layout.prop_calls if call["name"] == "resolution_divisions"]
+    assert voxel, "domain panel did not draw resolution_divisions"
     assert voxel[0]["data"] is domain_settings, (
         "Physics domain panel must edit obj.fluidsim_domain (the owner the solver "
         "reads), not the stale scene.fluidsim copy"
@@ -3016,6 +3018,7 @@ def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
         return SimpleNamespace(
             domain_object=None,
             voxel_size=voxel,
+            resolution_divisions=64,
             particles_per_voxel=8,
             max_particles=1000,
             auto_grow_particles=False,
@@ -3035,7 +3038,7 @@ def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
     panel.layout = _Layout()
     panel.draw(context)
 
-    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "resolution_divisions"]
     assert voxel and voxel[0]["data"] is settings_a, (
         "domain settings must edit the designated domain object's fluidsim_domain"
     )
@@ -3048,7 +3051,7 @@ def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
     scene_settings.domain_object = domain_b
     panel.layout = _Layout()
     panel.draw(context)
-    voxel = [c for c in panel.layout.prop_calls if c["name"] == "voxel_size"]
+    voxel = [c for c in panel.layout.prop_calls if c["name"] == "resolution_divisions"]
     assert voxel and voxel[0]["data"] is settings_b, (
         "switching the designated domain must re-target the Scene domain settings"
     )

@@ -1089,7 +1089,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_rebuild,
         description="Set the number of simulation-grid cells along the longest domain axis; higher values capture finer detail but allocate more leaves, particles, VRAM, and compute, while resizing the domain changes the cell size and not the cell count")
     voxel_size: FloatProperty(
-        name="Voxel Size", min=_MIN_VOXEL_SIZE, precision=4, subtype="DISTANCE",
+        name="Voxel Size", default=0.05, min=_MIN_VOXEL_SIZE, precision=4, subtype="DISTANCE",
         get=_get_voxel_size, set=_set_voxel_size,
         description="Effective simulation-grid cell size in world units, derived as the longest domain axis divided by Resolution Divisions; writing it sets the divisions that give the nearest cell size")
     leaf_capacity: IntProperty(
