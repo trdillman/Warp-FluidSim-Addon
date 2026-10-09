@@ -171,7 +171,7 @@ def write_level_set_vdb(path, leaf_values, leaf_coords, voxel_size, *,
         values, tree, voxel_size, origin, bg, str(grid_name))
 
     header = b"".join((
-        struct.pack("<i", _MAGIC),
+        struct.pack("<q", _MAGIC),
         struct.pack("<I", FILE_VERSION),
         struct.pack("<II", *LIBRARY_VERSION),
         struct.pack("<b", 1),                               # has grid offsets
