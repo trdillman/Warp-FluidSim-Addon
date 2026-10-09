@@ -48,6 +48,16 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   `DEMO-GALLERY-ACCEPTANCE-PASS`, suite 2480 passed, 3 skipped, 1 xfailed.
   Appending a pre-3.0 domain by hand (File > Append) still skips the migration and is
   an open item.
+- **Gate retry on `cc8d23d`:** every Blender check passed; the performance budget came back
+  `invalid` because one 1.0.255 *baseline* trial (chromatic_vortex b1 s2) exited -1 1.6 s
+  after reading its blend. The run on `fb530b6` then died the same way in the demo gallery
+  acceptance. **Cause (not this repo):** the astrophysical-warp project's
+  `tools/aw-window-walk/launch-blender.ps1` / `run-probe.ps1` run
+  `Get-Process blender | Stop-Process -Force`, killing every Blender on the machine
+  (exit -1 = .NET `Process.Kill`; each kill left an orphan `blender_<pid>` temp dir and no
+  crash file; its session ran the kill at 11:36–11:37, one minute before the first crash).
+  Flagged as a separate task. Gate runs need that session idle. The gate's rebuilt `crown_splash`/`dam_break` blends were committed as
+  `fb530b6` (crown_splash build whitewater peak 5346 → 5529); demo hash unchanged.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
