@@ -147,6 +147,8 @@ SOURCE_REPORT_ACCEPTANCE = (
 MANUAL_BLENDER_PROBES = {
     "tests/acceptance/blender_vdb_writer_acceptance.py":
         "lane I spike: pure writer needs no add-on; run headless on demand (prints VDB_WRITER_OK)",
+    "tests/acceptance/blender_defaults_epoch_acceptance.py":
+        "headless, no GPU; prints DEFAULTS_EPOCH_OK (lane M, run by hand until the gate lists it)",
     "tests/acceptance/blender_resolution_divisions_acceptance.py":
         "headless, no GPU; prints RESOLUTION_DIVISIONS_OK (lane G, run by hand until the gate lists it)",
     "tests/acceptance/blender_artist_bake_deleted_scene_acceptance.py":

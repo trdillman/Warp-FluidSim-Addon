@@ -139,7 +139,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `auto_grow_particles` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `particle_growth_failure_policy` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `particles_per_voxel` | RESET | domain | domain | - | - | domain | 1 | OK |
-| `sample_type` | LIVE | domain | domain | - | domain | domain | 0 | OK |
+| `sample_type` | LIVE | domain | domain | domain | domain | domain | 0 | OK |
 | `flip_ratio` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `trace_mode` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `relax_enabled` | LIVE | domain | domain | - | domain | domain | 0 | OK |
@@ -164,7 +164,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
-| `pressure_preconditioner` | LIVE | domain | domain | - | - | domain | 0 | OK |
+| `pressure_preconditioner` | LIVE | domain | domain | domain | - | domain | 0 | OK |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |

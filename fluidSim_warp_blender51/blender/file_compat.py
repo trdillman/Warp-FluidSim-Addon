@@ -104,6 +104,7 @@ def migrate_domain_resolution(objects=None, scenes=None) -> int:
     from ..properties import _domain_longest_axis
     from ..sim.quality_contract import divisions_for_voxel_size
     from . import pending_settings
+    from .scene_access import active_domain_object
 
     data = getattr(bpy, "data", None)
     objects = getattr(data, "objects", ()) if objects is None else objects
@@ -135,9 +136,107 @@ def migrate_domain_resolution(objects=None, scenes=None) -> int:
     return len(pending)
 
 
+#: Object custom property that marks a domain as authored under the 3.0 defaults.
+#: Blender stores a property only once it is set, so an untouched old domain and an
+#: untouched new domain look the same on disk. The stamp tells them apart: a new
+#: domain gets it at designation; a domain that has data but no stamp is old and
+#: has its pre-3.0 defaults written out explicitly. Bump only with a new set of
+#: changed defaults (and add that set to ``_LEGACY_DOMAIN_DEFAULTS``).
+DEFAULTS_EPOCH_KEY = "fluidsim_defaults_epoch"
+DEFAULTS_EPOCH = 1
+#: What an unstamped (pre-3.0) domain used for the settings whose default changed.
+_LEGACY_DOMAIN_DEFAULTS = (("sample_type", "FLIP"), ("pressure_preconditioner", "JACOBI"))
+
+
+def _has_epoch(obj) -> bool:
+    try:
+        return obj.get(DEFAULTS_EPOCH_KEY) is not None
+    except (AttributeError, TypeError, ReferenceError):
+        return False
+
+
+def stamp_new_domain(obj) -> bool:
+    """Mark ``obj`` as a domain authored under the current defaults.
+
+    Called when an object is designated as a scene's domain. An object that already
+    stores domain settings, or already has a stamp, is not touched: its settings
+    are real and the load migration (or the stamp it has) already decided its
+    defaults. Returns True when the stamp was written.
+    """
+    if obj is None or _has_epoch(obj):
+        return False
+    stored = _stored_scene_group(obj, "fluidsim_domain")
+    if stored is not None and len(stored) > 0:
+        return False
+    try:
+        obj[DEFAULTS_EPOCH_KEY] = DEFAULTS_EPOCH
+    except (AttributeError, TypeError, ReferenceError):
+        return False
+    return True
+
+
+def migrate_domain_defaults(objects=None, scenes=None) -> int:
+    """Pin the pre-3.0 defaults onto domains authored before the stamp existed.
+
+    3.0 changed the default Transfer to APIC. A domain without the stamp that is
+    either a scene's designated domain or already stores domain settings was made
+    before that, so it gets ``FLIP`` and ``JACOBI`` written explicitly (only for
+    keys it does not already store) and then the stamp: its look does not change.
+    Idempotent. Returns the number of domains migrated.
+    """
+    from contextlib import ExitStack
+
+    from . import pending_settings
+    from .scene_access import active_domain_object
+
+    data = getattr(bpy, "data", None)
+    objects = list(getattr(data, "objects", ()) if objects is None else objects)
+    scenes = tuple(getattr(data, "scenes", ()) if scenes is None else scenes)
+    candidates = list(objects)
+    for scene in scenes:
+        designated = active_domain_object(scene)
+        if designated is not None:
+            candidates.append(designated)
+    pending, seen = [], set()
+    for obj in candidates:
+        if id(obj) in seen or _has_epoch(obj):
+            continue
+        seen.add(id(obj))
+        stored = _stored_scene_group(obj, "fluidsim_domain")
+        designated = any(
+            active_domain_object(s) is obj
+            for s in scenes)
+        if not designated and (stored is None or len(stored) == 0):
+            continue
+        group = getattr(obj, "fluidsim_domain", None)
+        if group is not None:
+            pending.append((obj, group, stored))
+    with ExitStack() as stack:
+        for scene in scenes:
+            stack.enter_context(pending_settings.suppress_callbacks(scene))
+        for obj, group, stored in pending:
+            for name, value in _LEGACY_DOMAIN_DEFAULTS:
+                if stored is None or name not in stored:
+                    setattr(group, name, value)
+            obj[DEFAULTS_EPOCH_KEY] = DEFAULTS_EPOCH
+    return len(pending)
+
+
+def migrate_loaded_domains(objects=None, scenes=None) -> None:
+    """Run every load-time domain migration."""
+    migrate_domain_resolution(objects=objects, scenes=scenes)
+    migrate_domain_defaults(objects=objects, scenes=scenes)
+
+
+@persistent
+def _on_blend_import(_arg=None):
+    """File > Append and Link bypass ``load_post``; migrate what came in."""
+    migrate_loaded_domains()
+
+
 @persistent
 def _on_load_post(_arg):
-    migrate_domain_resolution()
+    migrate_loaded_domains()
     for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
         if has_unmigrated_snippets(scene):
             print(f"FluidSim: scene {scene.name!r}: {UNMIGRATED_SNIPPETS_MESSAGE}")
@@ -151,16 +250,20 @@ def register_handlers():
                         "load_post", None)
     if load_post is not None:
         load_post.append(_on_load_post)
+    import_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
+                          "blend_import_post", None)
+    if import_post is not None:
+        import_post.append(_on_blend_import)
     try:
-        migrate_domain_resolution()  # the file that is already open
+        migrate_loaded_domains()  # the file that is already open
     except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
         pass
 
 
 def unregister_handlers():
-    load_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
-                        "load_post", None)
-    if load_post is None:
-        return
-    while _on_load_post in load_post:
-        load_post.remove(_on_load_post)
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    for name, fn in (("load_post", _on_load_post),
+                     ("blend_import_post", _on_blend_import)):
+        registry = getattr(handlers, name, None)
+        while registry is not None and fn in registry:
+            registry.remove(fn)

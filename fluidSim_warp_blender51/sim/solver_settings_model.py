@@ -40,7 +40,7 @@ class SolverSettings:
     max_substeps: int = 4
 
     gravity: tuple = C.DEFAULT_GRAVITY
-    sample_type: int = int(ParticleSampleType.FLIP)
+    sample_type: int = int(ParticleSampleType.APIC)
     flip_ratio: float = C.DEFAULT_FLIP_RATIO
     trace_mode: int = int(TraceMode.RK3)
     max_speed: float = 0.0                    # 0 disables the speed limit

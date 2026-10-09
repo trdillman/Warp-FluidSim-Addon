@@ -305,15 +305,15 @@ class FLUIDSIM_OT_load_demo(_Operator):
 
 
 def _migrate_appended_scene(scene) -> None:
-    """Run the pre-3.0 domain migration on an appended scene.
+    """Run the pre-3.0 domain migrations (resolution, defaults) on an appended scene.
 
     ``load_post`` migrates files that are opened, not data appended from a
     library, so a demo saved before Resolution Divisions would otherwise come in
     at the default 64 divisions instead of its authored voxel size.
     """
-    from .file_compat import migrate_domain_resolution
+    from .file_compat import migrate_loaded_domains
 
-    migrate_domain_resolution(objects=tuple(scene.objects), scenes=(scene,))
+    migrate_loaded_domains(objects=tuple(scene.objects), scenes=(scene,))
 
 
 def _demo_icon_kwargs(demo_id: str, pcoll) -> dict[str, Any]:

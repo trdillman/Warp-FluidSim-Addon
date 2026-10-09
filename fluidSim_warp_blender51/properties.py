@@ -181,6 +181,15 @@ def _request_rebuild(self, context):
     _request_scene_update(context, SceneUpdate.REBUILD)
 
 
+def _on_domain_object_changed(self, context):
+    """Stamp a newly designated domain with the current defaults epoch."""
+    from .blender.file_compat import stamp_new_domain
+    from .blender.scene_access import active_domain_object
+
+    stamp_new_domain(active_domain_object(self.id_data))
+    _request_rebuild(self, context)
+
+
 def _request_reset(self, context):
     from .blender.pending_settings import SceneUpdate
 
@@ -706,7 +715,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
             "Higher values preserve more dropped playback frames but can stall Blender longer; lower values stop sooner and report desynchronization instead of silently running the simulation in slow motion"))
     domain_object: PointerProperty(
         name="Domain", type=bpy.types.Object,
-        update=_request_rebuild,
+        update=_on_domain_object_changed,
         description="Select the object whose bounding box defines the simulation domain; changing it rebuilds grid bounds and capacity requirements")
 
     capacity_show_alternatives: BoolProperty(
@@ -1151,7 +1160,9 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_reset,
         description="Set authoritative liquid rest density and inherited source occupancy; changing it requires Reset, while zero disables inherited liquid emission")
     sample_type: EnumProperty(
-        name="Transfer", items=_items(ParticleSampleType), default="FLIP",
+        # 3.0 default. A domain made before 3.0 is pinned to FLIP on load by
+        # blender/file_compat.migrate_domain_defaults (see DEFAULTS_EPOCH_KEY).
+        name="Transfer", items=_items(ParticleSampleType), default="APIC",
         update=_request_live,
         description="Choose the particle/grid velocity-transfer method; PIC is smoother and more dissipative, FLIP preserves motion and can be noisier, and APIC keeps rotation and swirl with little noise at 72 bytes of extra memory per particle")
     flip_ratio: FloatProperty(
@@ -1255,8 +1266,10 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Tolerance", default=1.0e-5, min=0.0, precision=8,
         update=_request_live,
         description="Set the pressure residual required for early convergence; lower values demand a more accurate solve and may take longer, while higher values stop sooner")
-    # Default is JACOBI, not the spec's MULTIGRID: the multigrid speed targets are
-    # unmeasured and the demo hash must hold until the beta re-baseline. See
+    # Default is JACOBI, not the spec's MULTIGRID. Measured on dam_break (frames
+    # 2-48, tol 1e-5, APIC): Multigrid needs ~10x fewer iterations (5 vs 50) but
+    # each solve is ~2.5x SLOWER (~4.8 ms vs ~1.9-2.4 ms), missing the spec's
+    # ">=1.5x faster per solve" gate. See docs/RELEASE_3_0_HANDOFF.md item 3 and
     # docs/specs/3.0/SPEC-multigrid-pressure.md, "Settings".
     pressure_preconditioner: EnumProperty(
         name="Preconditioner",

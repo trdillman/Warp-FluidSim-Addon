@@ -18,9 +18,10 @@ REPO = Path(__file__).resolve().parents[2]
 PACKAGE_NAME = "fluidSim_warp_blender51"
 
 # Computed on the unchanged base (cfff382) before the settings model moved;
-# re-pinned when lane J added narrow_band_enabled/narrow_band_voxels (every
+# re-pinned when lane J added narrow_band_enabled/narrow_band_voxels and when lane M
+# made APIC the SolverSettings default sample_type (every
 # SolverSettings field is part of the signature, so existing caches re-bake).
-PINNED_SIGNATURE = "f812a312f5c45196d3e4709a368d9e6df192b633115c652e13a205d8c9d1f606"
+PINNED_SIGNATURE = "0b31a036dcb46967b35013de7609200e2f897b0d132c46880ce3095a6adc3b65"
 
 _SCRIPT = r'''
 import importlib
