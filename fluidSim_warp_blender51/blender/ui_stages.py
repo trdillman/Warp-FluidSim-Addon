@@ -22,6 +22,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat
+from ..panels import PLAYBACK_ONLY_TEXT
 from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
@@ -79,6 +80,14 @@ BAKE_STORAGE_PROPS = (
 )
 _SURFACE_VIEW_MODES = frozenset({"SURFACE", "SURFACE_PARTICLES"})
 _PARTICLE_VIEW_MODES = frozenset({"PARTICLES", "SURFACE_PARTICLES"})
+
+
+def _playback_only() -> bool:
+    """True when Warp/CUDA cannot run, read through the probe the bake draws use."""
+    from . import ui_scene
+
+    probe = ui_scene._runtime_ui_state()[0]
+    return probe is not None and not probe.available
 
 
 class FluidSimStagePanel(FluidSimView3DPanel):
@@ -231,13 +240,20 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first.", icon="INFO")
             return
 
-        draw_simulate_controls(layout, scene, domain)
+        body = layout
+        if _playback_only():
+            layout.label(text=PLAYBACK_ONLY_TEXT, icon="ERROR")
+            layout.label(text="Simulation needs a CUDA GPU; baked caches still play.")
+            body = layout.column()
+            body.enabled = False
 
-        layout.separator()
+        draw_simulate_controls(body, scene, domain)
+
+        body.separator()
         draw_readout_grid(
-            layout, scene.fluidsim, SIMULATE_READOUTS, title="Live Readout"
+            body, scene.fluidsim, SIMULATE_READOUTS, title="Live Readout"
         )
-        layout.operator(
+        body.operator(
             "fluidsim.open_scene_properties",
             text="All Simulation Settings…",
             icon="PROPERTIES",
@@ -368,6 +384,19 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first to bake.", icon="INFO")
             return
 
+        if _playback_only():
+            # No solver here: load a cache, play it, export from it. Baking and
+            # solver-driven export need CUDA, so they are not offered.
+            layout.separator()
+            layout.label(text=PLAYBACK_ONLY_TEXT, icon="ERROR")
+            draw_cache_refusal(layout, context)
+            draw_cache_playback(layout, context)
+            layout.separator()
+            layout.operator(
+                "fluidsim.export_alembic",
+                text="Export Surface as Alembic…", icon="EXPORT")
+            return
+
         _prop(layout, scene, "export_attributes")
 
         # One shared drawing of the bake state machine (start / resume / restart /
@@ -379,9 +408,13 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
         draw_cache_bake(layout, context)
 
         layout.separator()
-        layout.operator(
+        export = layout.column(align=True)
+        export.operator(
             "fluidsim.export_frame", text="Export Current Frame…", icon="EXPORT"
         )
+        export.operator(
+            "fluidsim.export_alembic",
+            text="Export Surface as Alembic…", icon="EXPORT")
 
 
 class FLUIDSIM_STAGE_PT_bake_storage(FluidSimStagePanel, bpy.types.Panel):
