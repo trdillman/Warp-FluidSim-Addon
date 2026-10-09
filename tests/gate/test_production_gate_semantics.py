@@ -75,7 +75,8 @@ def test_gate_validates_release_kernels_on_cuda(monkeypatch):
         assert command[command.index("--expected-warp-root") + 1] == "warp-root"
 
 
-def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
+def _write_passing_budget(monkeypatch, tmp_path, status=""):
+    """A passing summary for HEAD abc123; ``status`` is git's porcelain output."""
     artifact = tmp_path / "artifacts" / "demo_analysis" / "analysis_report.json"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("{}", encoding="utf-8")
@@ -100,8 +101,14 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     manifest = tmp_path / "artifacts" / "production_gate_manifest.json"
     monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
     monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
-    monkeypatch.setattr(run_production_gate, "_git_text", lambda *_args: "abc123")
+    monkeypatch.setattr(run_production_gate, "_git_text",
+                        lambda *args: status if args[0] == "status" else "abc123")
     monkeypatch.setattr(run_production_gate, "_fluidsim_version", lambda: "9.9.9")
+    return manifest
+
+
+def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
+    manifest = _write_passing_budget(monkeypatch, tmp_path)
 
     run_production_gate._write_gate_manifest("blender-exe", "1.17.0")
 
@@ -112,6 +119,52 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     assert data["git_head"] == "abc123"
     assert data["gate_verdict"] == "FULL-PRODUCTION-GATE-PASS"
     assert data["performance_artifact_sha256"]
+    assert data["performance_budget_reused"] is False
+
+
+def test_reuse_budget_skips_the_measurement_and_records_it(monkeypatch, capsys):
+    commands, validations, manifests = {}, [], []
+    _stub_gate(monkeypatch, commands)
+    monkeypatch.setattr(run_production_gate, "_validate_performance_evidence",
+                        lambda **kwargs: validations.append(kwargs) or {})
+    monkeypatch.setattr(run_production_gate, "_write_gate_manifest",
+                        lambda *args: manifests.append(args))
+
+    assert run_production_gate.main(["--include-gui", "--reuse-budget"]) == 0
+
+    assert "paired demo performance budget" not in commands
+    assert validations == [{"reuse": True}]
+    assert manifests[0][2] is True
+    assert "FULL-PRODUCTION-GATE-PASS" in capsys.readouterr().out
+
+
+def test_reused_budget_survives_rebuilt_demo_bytes(monkeypatch, tmp_path):
+    manifest = _write_passing_budget(monkeypatch, tmp_path)
+    (tmp_path / "demos").mkdir()
+    (tmp_path / "demos" / "dam_break.blend").write_bytes(b"rebuilt")
+
+    import pytest
+    with pytest.raises(RuntimeError, match="bytes changed"):
+        run_production_gate._validate_performance_evidence()
+    run_production_gate._write_gate_manifest("blender-exe", "1.17.0", True)
+
+    assert json.loads(manifest.read_text(encoding="utf-8"))["performance_budget_reused"] is True
+
+
+def test_reused_budget_rejects_modified_sources(monkeypatch, tmp_path):
+    import pytest
+    _write_passing_budget(monkeypatch, tmp_path, status=" M fluidSim_warp_blender51/solver.py")
+    with pytest.raises(RuntimeError, match="sources changed"):
+        run_production_gate._validate_performance_evidence(reuse=True)
+
+
+def test_reused_budget_must_belong_to_this_head(monkeypatch, tmp_path):
+    import pytest
+    _write_passing_budget(monkeypatch, tmp_path)
+    monkeypatch.setattr(run_production_gate, "_git_text",
+                        lambda *args: "" if args[0] == "status" else "def456")
+    with pytest.raises(RuntimeError, match="for this HEAD"):
+        run_production_gate._validate_performance_evidence(reuse=True)
 
 
 def test_performance_budget_runs_in_headless_and_full_gate(monkeypatch):
@@ -247,3 +300,91 @@ def test_gate_accepts_the_certified_warp(monkeypatch):
     monkeypatch.setattr(run_production_gate, "_warp_root", lambda *_args: "site")
 
     assert run_production_gate._check_certified_warp("blender-py", {}) == "site"
+
+
+def test_quick_tier_skips_evidence_lanes(monkeypatch, capsys):
+    commands = {}
+    _stub_gate(monkeypatch, commands)
+
+    assert run_production_gate.main(["--quick"]) == 0
+
+    out = capsys.readouterr().out
+    assert "QUICK-GATE-PASS" in out
+    assert "GATE-PASS\n" not in out.replace("QUICK-GATE-PASS\n", "")
+    assert any(label.startswith("Blender acceptance batch") or label.endswith("_acceptance.py")
+               for label in commands)
+    for skipped in ("demo analysis", "demo blend checks", "interactive GUI acceptance",
+                    "paired demo performance budget"):
+        assert skipped not in commands
+
+
+def test_quick_tier_refuses_release_flags():
+    import pytest
+    for flag in ("--include-gui", "--reuse-budget"):
+        with pytest.raises(SystemExit):
+            run_production_gate.main(["--quick", flag])
+
+
+def test_acceptance_batch_covers_every_background_script():
+    scripts = [script for _label, script, _args, _marker in run_production_gate._acceptance_entries()]
+    assert len(scripts) == len(set(scripts))
+    assert set(scripts) == (
+        {script for script, _ in run_production_gate.BACKGROUND_ACCEPTANCE}
+        | {script for _l, script, _r, _m in run_production_gate.REPORT_ACCEPTANCE}
+        | {f"tests/acceptance/blender_{cap}_acceptance.py"
+           for cap, _ in run_production_gate.SOURCE_REPORT_ACCEPTANCE})
+
+
+def test_batch_reruns_alone_every_script_it_did_not_pass(monkeypatch, tmp_path):
+    entries = [("a", "tests/acceptance/blender_a.py", (), "A-PASS"),
+               ("b", "tests/acceptance/blender_b.py", ("--json-out", "x.json"), "B-PASS"),
+               ("c", "tests/acceptance/blender_c.py", (), "C-PASS")]
+    calls = []
+
+    def fake_run(label, command, env=None, reject_output=False, expect_marker=None):
+        calls.append((label, command, reject_output, expect_marker))
+        if label.startswith("Blender acceptance batch"):
+            # a passed, b failed, c never ran (crash).
+            (tmp_path / "artifacts" / "gate_batch" / "results.json").write_text(json.dumps([
+                {"script": "tests/acceptance/blender_a.py", "passed": True, "seconds": 1.0},
+                {"script": "tests/acceptance/blender_b.py", "passed": False, "seconds": 2.0},
+            ]))
+            import subprocess
+            raise subprocess.CalledProcessError(3, command)
+
+    monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
+    monkeypatch.setattr(run_production_gate, "_run", fake_run)
+    run_production_gate._run_acceptance_batch("blender", {}, entries)
+
+    reruns = [(label, command[-3:], reject, marker) for label, command, reject, marker in calls[1:]]
+    assert reruns == [
+        ("b", ["--", "--json-out", "x.json"], True, "B-PASS"),
+        ("c", ["--factory-startup", "--python", "tests/acceptance/blender_c.py"], True, "C-PASS"),
+    ]
+
+
+def test_parallel_steps_print_in_order_and_raise_the_first_failure(monkeypatch, capsys):
+    import subprocess
+    import sys as _sys
+
+    import pytest
+    steps = [
+        ("slow ok", [_sys.executable, "-c", "import time; time.sleep(0.3); print('one')"], {}),
+        ("fails", [_sys.executable, "-c", "raise SystemExit(4)"], {}),
+        ("fast ok", [_sys.executable, "-c", "print('three')"], {}),
+    ]
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        run_production_gate._run_parallel(steps)
+    assert exc.value.returncode == 4
+    out = capsys.readouterr().out
+    assert out.index("== slow ok ==") < out.index("one") < out.index("== fails ==") \
+        < out.index("== fast ok ==") < out.index("three")
+
+
+def test_every_step_reports_its_wall_time(monkeypatch, capsys):
+    import sys as _sys
+    run_production_gate.STEP_TIMES.clear()
+    run_production_gate._run("tiny", [_sys.executable, "-c", "print('hi')"],
+                             expect_marker="hi")
+    assert [label for label, _ in run_production_gate.STEP_TIMES] == ["tiny"]
+    assert "[time] tiny:" in capsys.readouterr().out

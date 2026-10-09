@@ -37,6 +37,7 @@ def _scripts_launched_by_blender_calls():
 def _gate_run_scripts():
     return (
         {script for script, _ in gate.BACKGROUND_ACCEPTANCE}
+        | {script for _label, script, _report, _marker in gate.REPORT_ACCEPTANCE}
         | {f"tests/acceptance/blender_{cap}_acceptance.py" for cap, _ in gate.SOURCE_REPORT_ACCEPTANCE}
         | _scripts_launched_by_blender_calls()
     )
@@ -93,11 +94,17 @@ def test_release_blender_validator_markers_and_arguments_match_their_scripts():
 def test_gated_scripts_are_syntax_checked():
     """The py_compile step covers every script the gate launches."""
     tree = ast.parse(GATE_PATH.read_text(encoding="utf-8"))
+    def first_value(node):
+        # ``_run("python syntax", ...)`` or a parallel step ``("python syntax", [...], {...})``
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_run" and node.args:
+            return getattr(node.args[0], "value", None)
+        if isinstance(node, ast.Tuple) and node.elts:
+            return getattr(node.elts[0], "value", None)
+        return None
+
     compiled_source = next(
         ast.get_source_segment(GATE_PATH.read_text(encoding="utf-8"), node)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_run"
-        and node.args and getattr(node.args[0], "value", None) == "python syntax"
+        for node in ast.walk(tree) if first_value(node) == "python syntax"
     )
     assert "BACKGROUND_ACCEPTANCE" in compiled_source
     assert "SOURCE_REPORT_ACCEPTANCE" in compiled_source

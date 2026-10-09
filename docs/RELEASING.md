@@ -87,7 +87,25 @@ It prints `FULL-PRODUCTION-GATE-PASS` when it succeeds. It then writes
 - the sha256 of the demo analysis report
 
 Every run deletes the old manifest first, and only a passing `--include-gui`
-run writes a new one. If the manifest's commit is not the tagged commit, the
+run writes a new one.
+
+The release needs three consecutive passes on the same commit. Only the first
+one measures the paired performance budget (about ten minutes of fresh Blender
+trials). Run the other two with `--reuse-budget`: they reuse that passing
+summary, fail unless it belongs to HEAD and the add-on and benchmark sources
+are unmodified, and record `performance_budget_reused: true` in the manifest.
+
+`--quick` is the tier for localized changes: hygiene, the Python and CUDA
+checks, the release validators and the background acceptance scripts, ending
+in `QUICK-GATE-PASS` (about six minutes). It skips the demo rebuild, GUI lanes
+and budget, writes no manifest and is never release evidence. In every tier
+the independent Python checks run in parallel, and the background acceptance
+scripts share one Blender session (`tools/gate/run_blender_batch.py`); any
+script that does not pass there is rerun alone, and that run decides. Every
+step prints its wall time, summarised at the end and in
+`artifacts/gate_timing.json`.
+
+If the manifest's commit is not the tagged commit, the
 gate has not been run for this release. The demo report hash only changes when
 simulation results change. After a solver or Warp change a new hash is
 expected; otherwise, a changed hash needs an explanation before release.

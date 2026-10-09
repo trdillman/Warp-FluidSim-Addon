@@ -11,6 +11,18 @@ Control surface
 - Default: headless/background validation only, ending in HEADLESS-GATE-PASS.
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
+- --reuse-budget: skip the paired performance budget and reuse the passing
+  summary a previous run wrote for this same commit. Speed is a property of the
+  code, so repeat runs that only prove reproducibility need not re-measure it.
+  It fails unless that summary is bound to HEAD and the add-on and benchmark
+  sources are unmodified; the manifest records the reuse.
+- --quick: fast tier for localized changes (QUICK-GATE-PASS). Skips the demo
+  rebuild/analysis, GUI lanes and performance budget; never release evidence.
+- Background acceptance scripts share one Blender session
+  (tools/gate/run_blender_batch.py); any script that does not pass there is
+  rerun alone, and that run decides. Independent Python checks run in
+  parallel. Every step prints its wall time, summarised at the end and in
+  artifacts/gate_timing.json.
 - BLENDER_EXE, BLENDER_PY, and PYTEST_PATH override runtime resolution.
 - Warp comes from PYTHONPATH. Every lane runs with PYTHONNOUSERSITE=1 and
   Blender lanes pass --python-use-system-env (Blender 5.2 ignores PYTHONPATH
@@ -37,6 +49,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +125,13 @@ BACKGROUND_ACCEPTANCE = (
      "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
+)
+# Acceptance scripts that take --json-out: (label, script, report path, marker).
+REPORT_ACCEPTANCE = (
+    ("Phase 3 source UI acceptance", "tests/acceptance/blender_phase3_source_ui_acceptance.py",
+     "artifacts/phase3_source_ui_acceptance.json", "PHASE3-SOURCE-UI-ACCEPTANCE-PASS"),
+    ("source capacity planner acceptance", "tests/acceptance/blender_capacity_planner_acceptance.py",
+     "artifacts/capacity_planner_acceptance.json", "CAPACITY-PLANNER-ACCEPTANCE-PASS"),
 )
 # Source acceptance scripts that write a JSON report: (capability, marker).
 SOURCE_REPORT_ACCEPTANCE = (
@@ -250,9 +272,18 @@ def _run(label, command, env=None, reject_output=False, expect_marker=None):
     text is therefore insufficient: every Blender lane must emit its explicit
     success marker.
     """
-    print(f"\n== {label} ==")
-    print(" ".join(str(x) for x in command))
-    capture = reject_output or expect_marker is not None
+    _emit(f"\n== {label} ==\n" + " ".join(str(x) for x in command) + "\n")
+    start = time.perf_counter()
+    try:
+        _run_step(label, command, env, reject_output, expect_marker)
+    finally:
+        seconds = time.perf_counter() - start
+        STEP_TIMES.append((label, round(seconds, 1)))
+        _emit(f"[time] {label}: {seconds:.1f}s\n")
+
+
+def _run_step(label, command, env, reject_output, expect_marker):
+    capture = reject_output or expect_marker is not None or _buffered()
     if not capture:
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         return
@@ -268,16 +299,143 @@ def _run(label, command, env=None, reject_output=False, expect_marker=None):
     )
     output = result.stdout or ""
     if output:
-        print(output, end="" if output.endswith("\n") else "\n")
+        _emit(output if output.endswith("\n") else output + "\n")
     if result.returncode:
         raise subprocess.CalledProcessError(result.returncode, command)
+    if not reject_output and expect_marker is None:
+        return
     for marker in BLENDER_FAILURE_MARKERS:
         if marker in output:
             raise subprocess.CalledProcessError(1, command)
     if expect_marker is not None and expect_marker not in output:
-        print(
-            f"Missing required success marker {expect_marker!r} from {label}")
+        _emit(f"Missing required success marker {expect_marker!r} from {label}\n")
         raise subprocess.CalledProcessError(1, command)
+
+
+# Per-step wall time, printed as it happens and summarised when the gate ends.
+STEP_TIMES = []
+_GATE_START = time.perf_counter()
+_LOCAL = threading.local()
+
+
+def _buffered():
+    return getattr(_LOCAL, "parts", None) is not None
+
+
+def _emit(text):
+    """Print, or keep the text for a parallel step to print in order later."""
+    parts = getattr(_LOCAL, "parts", None)
+    if parts is None:
+        print(text, end="", flush=True)
+    else:
+        parts.append(text)
+
+
+def _run_parallel(steps, max_workers=4):
+    """Run independent ``(label, command, kwargs)`` steps concurrently.
+
+    Each step's output is printed whole, in the listed order, once all have
+    finished; the first failing step (in that order) is then re-raised.
+    """
+    def work(step):
+        label, command, kwargs = step
+        _LOCAL.parts = []
+        try:
+            _run(label, command, **kwargs)
+            return _LOCAL.parts, None
+        except BaseException as exc:  # noqa: BLE001 - re-raised below, in order
+            return _LOCAL.parts, exc
+        finally:
+            _LOCAL.parts = None
+
+    start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        outcomes = list(pool.map(work, steps))
+    first_error = None
+    for parts, error in outcomes:
+        print("".join(parts), end="", flush=True)
+        first_error = first_error or error
+    seconds = time.perf_counter() - start
+    STEP_TIMES.append((f"parallel group ({len(steps)} steps, wall)", round(seconds, 1)))
+    print(f"[time] parallel group of {len(steps)} steps: {seconds:.1f}s wall", flush=True)
+    if first_error is not None:
+        raise first_error
+
+
+def _run_acceptance_batch(blender_exe, env, entries):
+    """Run ``(label, script, args, marker)`` entries in one Blender session.
+
+    A script that does not pass inside the batch, or that the batch never
+    reached, is rerun alone exactly as before batching; that standalone run
+    decides its verdict.
+    """
+    out = ROOT / "artifacts" / "gate_batch"
+    out.mkdir(parents=True, exist_ok=True)
+    spec_path, results_path = out / "spec.json", out / "results.json"
+    results_path.unlink(missing_ok=True)
+    spec_path.write_text(json.dumps({
+        "failure_markers": list(BLENDER_FAILURE_MARKERS),
+        "entries": [{"script": script, "args": list(args), "marker": marker}
+                    for _label, script, args, marker in entries],
+    }, indent=2), encoding="utf-8")
+    try:
+        _run(f"Blender acceptance batch ({len(entries)} scripts)", _blender(
+            blender_exe, "--background", "--factory-startup", "--python",
+            "tools/gate/run_blender_batch.py", "--", str(spec_path), str(results_path),
+        ), env=env, expect_marker="BATCH-COMPLETE")
+    except subprocess.CalledProcessError as exc:
+        print(f"acceptance batch ended early ({exc}); unfinished scripts run alone")
+    try:
+        results = json.loads(results_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        results = []
+    passed = {item["script"] for item in results if item.get("passed") is True}
+    for item in results:
+        STEP_TIMES.append((f"  batch: {item['script']}", item.get("seconds")))
+    for label, script, args, marker in entries:
+        if script in passed:
+            continue
+        print(f"\nbatch did not pass {script}; rerunning it alone")
+        _run(label, _blender(blender_exe, "--background", "--factory-startup", "--python",
+                             script, *(("--", *args) if args else ())),
+             env=env, reject_output=True, expect_marker=marker)
+
+
+def _acceptance_entries():
+    """Every background acceptance script as ``(label, script, args, marker)``."""
+    entries = [(script, script, (), marker) for script, marker in BACKGROUND_ACCEPTANCE]
+    for label, script, report, marker in REPORT_ACCEPTANCE:
+        entries.append((label, script, ("--json-out", os.path.abspath(report)), marker))
+    for capability, marker in SOURCE_REPORT_ACCEPTANCE:
+        entries.append((
+            f"{capability} acceptance", f"tests/acceptance/blender_{capability}_acceptance.py",
+            ("--json-out", os.path.abspath(f"artifacts/phase2_source_acceptance/{capability}.json")),
+            marker))
+    return entries
+
+
+def _print_quick_pass():
+    print("\nQUICK-GATE-PASS")
+    print("Quick tier: no demo rebuild/analysis, GUI lanes or performance budget; "
+          "not release evidence and writes no manifest.")
+
+
+def _print_timing():
+    if not STEP_TIMES:
+        return
+    total = time.perf_counter() - _GATE_START
+    print("\n== gate step timing ==")
+    for label, seconds in STEP_TIMES:
+        print(f"{seconds if seconds is not None else '?':>8}s  {label}")
+    print(f"{round(total, 1):>8}s  total wall time")
+    try:
+        path = ROOT / "artifacts" / "gate_timing.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([{"step": label, "seconds": seconds}
+                                    for label, seconds in STEP_TIMES], indent=2) + "\n",
+                        encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _check_no_tracked_npz():
@@ -348,14 +506,26 @@ def _fluidsim_version():
     return _version_constant("VERSION_STRING")
 
 
-def _validate_performance_evidence():
+# Sources the budget inventory binds, minus the demo blends every gate rebuilds.
+_BUDGET_SOURCES = (
+    "fluidSim_warp_blender51", "tools/repo_addon_loader.py", "tools/benchmark_demo_trial.py",
+    "tools/benchmark_versions.py", "tools/performance_budget.py", "tools/run_production_gate.py",
+)
+
+
+def _validate_performance_evidence(reuse=False):
     from tools.benchmark_versions import REFERENCE_COMMITS, _inventory
     from tools.performance_budget import evaluate_budget
     performance = ROOT / "artifacts" / "performance_budget" / "summary.json"
     report = json.loads(performance.read_text(encoding="utf-8"))
     if report.get("passed") is not True or report.get("gitHead") != _git_text("rev-parse", "HEAD"):
         raise RuntimeError("missing passing performance budget evidence for this HEAD")
-    if report.get("candidateInventorySha256") != _inventory(ROOT):
+    if reuse:
+        # A rebuilt demo blend differs in compressed bytes only, so a reused
+        # comparison binds the commit and the unmodified sources instead.
+        if _git_text("status", "--porcelain", "--", *_BUDGET_SOURCES):
+            raise RuntimeError("sources changed since the reused performance comparison")
+    elif report.get("candidateInventorySha256") != _inventory(ROOT):
         raise RuntimeError("source or demo bytes changed after the performance comparison")
     recomputed = evaluate_budget(report.get("runs"))
     if not recomputed["passed"]:
@@ -386,8 +556,8 @@ def _validate_performance_evidence():
     return report
 
 
-def _write_gate_manifest(blender_exe, warp_version=None):
-    report = _validate_performance_evidence()
+def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
+    report = _validate_performance_evidence(reuse=True) if reuse_budget else _validate_performance_evidence()
     artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
@@ -406,6 +576,7 @@ def _write_gate_manifest(blender_exe, warp_version=None):
         "performance_artifact": "artifacts/performance_budget/summary.json",
         "performance_artifact_sha256": hashlib.sha256(performance.read_bytes()).hexdigest(),
         "performance_reference_commits": report["referenceCommits"],
+        "performance_budget_reused": bool(reuse_budget),
     }
     GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
@@ -416,8 +587,14 @@ def main(argv=None):
     """Run storage regressions/reports around the unchanged production gate."""
     from tools.storage_hygiene.integration import production_storage
 
+    global _GATE_START
+    _GATE_START = time.perf_counter()
+    STEP_TIMES.clear()
     with production_storage(ROOT):
-        return _production_main(argv)
+        try:
+            return _production_main(argv)
+        finally:
+            _print_timing()
 
 
 def _production_main(argv=None):
@@ -435,19 +612,34 @@ def _production_main(argv=None):
         action="store_true",
         help="also run tests/acceptance/blender_gui_acceptance.py and report full production proof",
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="fast tier for localized changes: hygiene, Python/CUDA checks, release validators "
+             "and the acceptance batch; no demo rebuild, GUI or budget, and no manifest",
+    )
+    parser.add_argument(
+        "--reuse-budget",
+        action="store_true",
+        help="reuse this commit's passing performance budget instead of re-measuring it",
+    )
     args = parser.parse_args(argv)
+    if args.quick and (args.include_gui or args.reuse_budget):
+        parser.error("--quick cannot be combined with --include-gui or --reuse-budget")
     blender_exe = os.environ.get("BLENDER_EXE", DEFAULT_BLENDER_EXE)
     blender_py = os.environ.get("BLENDER_PY", DEFAULT_BLENDER_PY)
-    include_gui = args.include_gui or os.environ.get("FLUIDSIM_FULL_GUI_ACCEPTANCE") == "1"
+    include_gui = not args.quick and (
+        args.include_gui or os.environ.get("FLUIDSIM_FULL_GUI_ACCEPTANCE") == "1")
     env = _env()
 
-    _clear_gate_manifest()
+    if not args.quick:  # a quick run is no evidence, so it leaves a full run's manifest alone
+        _clear_gate_manifest()
     _print_gate_metadata(blender_exe, blender_py, include_gui, env)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()
     warp_root = _check_certified_warp(blender_py, env)
-    _run("python syntax", [
+    python_checks = [("python syntax", [
         blender_py, "-m", "py_compile",
         "tools/profiling/profile_gpu_solver.py",
         "tools/profiling/profile_user_path.py",
@@ -481,22 +673,23 @@ def _production_main(argv=None):
           for capability, _ in SOURCE_REPORT_ACCEPTANCE),
         *(f"tools/release/validate_{check}_blender.py"
           for check, _, _ in RELEASE_BLENDER_VALIDATORS),
-    ], env=env)
-    _run("pytest CUDA regressions", [
+        "tools/gate/run_blender_batch.py",
+    ], {"env": env})]
+    python_checks.append(("pytest CUDA regressions", [
         blender_py, "-m", "pytest",
         "tests/solver/test_pressure_projection_regressions.py",
         "tests/cache_io/test_cache_io.py",
         "tests/cache_io/test_io_path_policy.py",
         "-q",
-    ], env=env)
+    ], {"env": env}))
     for script in (
         "tests/scripts/smoke_core.py",
         "tests/scripts/smoke_solver.py",
         "tests/validation/test_solver_validation.py",
         "tests/validation/test_validation.py",
     ):
-        _run(script, [blender_py, script], env=env)
-    _run("GPU profiler smoke", [
+        python_checks.append((script, [blender_py, script], {"env": env}))
+    python_checks.append(("GPU profiler smoke", [
         blender_py, "tools/profiling/profile_gpu_solver.py",
         "--device", "cuda:0",
         "--frames", "3",
@@ -506,16 +699,18 @@ def _production_main(argv=None):
         "--max-particles", "100000",
         "--max-whitewater", "50000",
         "--no-surface",
-    ], env=env)
+    ], {"env": env}))
     # Hosted CI runs these on Warp CPU; the release gate is where they run on CUDA.
     for check in RELEASE_WARP_VALIDATORS:
-        _run(f"{check} kernels on CUDA", [
+        python_checks.append((f"{check} kernels on CUDA", [
             blender_py, f"tools/release/validate_{check}_warp.py",
             "--expected-warp-root", warp_root,
             "--device", "cuda:0",
             "--report-json",
             os.path.abspath(f"artifacts/release_validation/{check}-warp-cuda-validation.json"),
-        ], env=env)
+        ], {"env": env}))
+    # Independent processes; each one's output is printed whole, in this order.
+    _run_parallel(python_checks)
     for check, inputs, success_marker in RELEASE_BLENDER_VALIDATORS:
         _run(
             f"{check} release validation in Blender",
@@ -524,33 +719,10 @@ def _production_main(argv=None):
             reject_output=True,
             expect_marker=success_marker,
         )
-    for script, success_marker in BACKGROUND_ACCEPTANCE:
-        _run(
-            script,
-            _blender(blender_exe, "--background", "--factory-startup", "--python", script),
-            env=env,
-            reject_output=True,
-            expect_marker=success_marker,
-        )
-    _run(
-        "Phase 3 source UI acceptance",
-        _blender(blender_exe, "--background", "--factory-startup", "--python",
-                 "tests/acceptance/blender_phase3_source_ui_acceptance.py", "--", "--json-out",
-                 os.path.abspath("artifacts/phase3_source_ui_acceptance.json")),
-        env=env, reject_output=True, expect_marker="PHASE3-SOURCE-UI-ACCEPTANCE-PASS")
-    _run(
-        "source capacity planner acceptance",
-        _blender(blender_exe, "--background", "--factory-startup", "--python",
-                 "tests/acceptance/blender_capacity_planner_acceptance.py", "--", "--json-out",
-                 os.path.abspath("artifacts/capacity_planner_acceptance.json")),
-        env=env, reject_output=True, expect_marker="CAPACITY-PLANNER-ACCEPTANCE-PASS")
-    for capability, success_marker in SOURCE_REPORT_ACCEPTANCE:
-        _run(
-            f"{capability} acceptance",
-            _blender(blender_exe, "--background", "--factory-startup", "--python",
-                     f"tests/acceptance/blender_{capability}_acceptance.py", "--", "--json-out",
-                     os.path.abspath(f"artifacts/phase2_source_acceptance/{capability}.json")),
-            env=env, reject_output=True, expect_marker=success_marker)
+    _run_acceptance_batch(blender_exe, env, _acceptance_entries())
+    if args.quick:
+        _print_quick_pass()
+        return 0
     for scene_name in CANONICAL_DEMO_SCENES:
         _run(f"demo cache build {scene_name}", _blender(
             blender_exe,
@@ -629,16 +801,21 @@ def _production_main(argv=None):
         ), env=env)
     # Run after demo rebuilds and GUI probes, so the budget covers the final
     # delivered saved files, not the pre-build inputs.
-    _run("paired demo performance budget", [
-        blender_py, "tools/benchmark_versions.py", "--demo-budget",
-        "--blender", blender_exe, "--candidate-root", str(ROOT),
-        "--trials", "8", "--frames", "48",
-        "--out-dir", "artifacts/performance_budget",
-    ], env=env, expect_marker="PERFORMANCE-BUDGET-PASS")
-    _validate_performance_evidence()
+    if args.reuse_budget:
+        _validate_performance_evidence(reuse=True)
+        print("\n== paired demo performance budget ==")
+        print("reused: artifacts/performance_budget/summary.json passed for this HEAD")
+    else:
+        _run("paired demo performance budget", [
+            blender_py, "tools/benchmark_versions.py", "--demo-budget",
+            "--blender", blender_exe, "--candidate-root", str(ROOT),
+            "--trials", "8", "--frames", "48",
+            "--out-dir", "artifacts/performance_budget",
+        ], env=env, expect_marker="PERFORMANCE-BUDGET-PASS")
+        _validate_performance_evidence()
     if include_gui:
         _write_gate_manifest(
-            blender_exe, _version_constant("CERTIFIED_WARP_VERSION"))
+            blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), args.reuse_budget)
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
         print("\nHEADLESS-GATE-PASS")
