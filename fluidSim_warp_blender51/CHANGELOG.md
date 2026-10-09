@@ -100,6 +100,8 @@ checkpoint.
   divisions padding to 72).
 - A domain whose mesh has no size no longer derives a zero voxel size, which drew
   its particles with no radius.
+- Capacity Options that coarsen the resolution apply again: they now suggest whole
+  Resolution Divisions, never finer than the size they were costed at.
 - Add-on unregistration finishes past a class that refuses to unregister and
   names it, instead of stopping at the first failure.
 - `CudaDotProduct` checks array lengths before a launch.

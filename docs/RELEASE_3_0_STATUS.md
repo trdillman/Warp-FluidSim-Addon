@@ -30,6 +30,16 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   and the probe's domain is an empty mesh, so the derived voxel size, and with it the point
   radius, was 0. Fixed in `6cf4b24` (a zero-size domain falls back to the default box);
   the probe passes and the demo hash is unchanged. The gate restarts from run 1.
+- **Gate retry on `b873f10` failed** in `validate_properties_ui_blender.py`, which still
+  expected the Voxel Size control G replaced. `d04adf5` expects Resolution Divisions.
+- **Gate retry on `d04adf5` failed** in `blender_memory_safety_gate.py`. The capacity
+  planner proposed off-lattice voxel sizes; the divisions setter rounded them (sometimes
+  finer than costed) and the strict read-back refused the option. Lane G2
+  (`3.0/lane-g2-capacity`, `C:\Users\Tyler\wt\r30-g2`) fixed it as `1c57ffe`, merged by
+  fast-forward. Suggestions snap coarser onto whole divisions; the apply path resizes the
+  domain before writing settings and restores divisions exactly on rollback.
+  `MEMORY-SAFETY-GATE-PASS` and `CAPACITY-PLANNER-ACCEPTANCE-PASS` on 5.2.
+  Suite 2479 passed, 3 skipped, 1 xfailed; demo hash `8baa886c…baf3` unchanged.
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
