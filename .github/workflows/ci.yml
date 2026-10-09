@@ -83,7 +83,7 @@ jobs:
     needs: checks
     # A report-upload infrastructure failure must not suppress package checks.
     # Failed validation still skips this job; upload failures keep CI red.
-    if: ${{ always() && needs.checks.outputs.validation_passed == 'true' }}
+    if: ${{ !cancelled() && needs.checks.outputs.validation_passed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

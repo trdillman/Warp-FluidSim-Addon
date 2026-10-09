@@ -32,8 +32,10 @@ ADDON_ROOT = ROOT / "fluidSim_warp_blender51"
 @lru_cache(maxsize=1)
 def _find_blender() -> Path | None:
     configured = os.environ.get("BLENDER")
-    candidates = (
-        configured or shutil.which("blender"),
+    if configured and not Path(configured).is_file():
+        pytest.fail(f"BLENDER executable does not exist: {configured}")
+    candidates = (configured,) if configured else (
+        shutil.which("blender"),
         "/usr/local/bin/blender",
         "/opt/blender-5.2.0-linux-x64/blender",
     )
@@ -50,6 +52,16 @@ def _find_blender() -> Path | None:
         if configured:
             pytest.fail(f"BLENDER must identify certified Blender 5.2.0: {result.stdout}")
     return None
+
+
+def test_explicit_missing_blender_fails(monkeypatch, tmp_path):
+    monkeypatch.setenv("BLENDER", str(tmp_path / "missing-blender"))
+    _find_blender.cache_clear()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="BLENDER executable does not exist"):
+            _find_blender()
+    finally:
+        _find_blender.cache_clear()
 
 
 @pytest.fixture(scope="module")
