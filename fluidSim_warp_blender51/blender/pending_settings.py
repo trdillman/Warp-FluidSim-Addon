@@ -132,7 +132,8 @@ _RESET_REGISTRY_FIELDS = frozenset({
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
+    "domain_object", "voxel_size", "resolution_divisions", "leaf_capacity",
+    "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
     # The scene-level Quality tier rescales solver knobs (voxel size, substeps,
     # iterations, particles), so a change re-derives grid allocation: rebuild.
@@ -299,8 +300,8 @@ _SURFACE_SETTING_FIELDS = frozenset({
 
 
 _REINIT_SETTING_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity", "max_particles",
-    "max_whitewater", "profiling_enabled", "profiling_sync",
+    "domain_object", "voxel_size", "resolution_divisions", "leaf_capacity",
+    "max_particles", "max_whitewater", "profiling_enabled", "profiling_sync",
     # Scene-level Quality tier, authored and read on scene.fluidsim, so editing
     # it flags a pending rebuild.
     "quality",

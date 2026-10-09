@@ -89,8 +89,55 @@ def draw_pre_bridge_warning(layout, scene) -> None:
     box.label(text="Open and re-save this file in FluidSim 1.1 first.")
 
 
+def migrate_domain_resolution(objects=None, scenes=None) -> int:
+    """Give a pre-3.0 domain object the Resolution Divisions its voxel size implied.
+
+    Before 3.0 the grid was authored as an absolute ``voxel_size``. It is now
+    derived from ``resolution_divisions``, so a domain group that stores a
+    ``voxel_size`` and no ``resolution_divisions`` gets
+    ``round(longest axis / voxel_size)``. The legacy value is read from the stored
+    raw group, which keeps keys the class no longer stores. Idempotent: a group
+    that already stores divisions is left alone. Returns the number migrated.
+    """
+    from contextlib import ExitStack
+
+    from ..properties import _domain_longest_axis
+    from ..sim.quality_contract import divisions_for_voxel_size
+    from . import pending_settings
+
+    data = getattr(bpy, "data", None)
+    objects = getattr(data, "objects", ()) if objects is None else objects
+    scenes = getattr(data, "scenes", ()) if scenes is None else scenes
+    # A freshly loaded object's matrix_world is not evaluated yet (it reads as
+    # identity), and the longest axis is measured from it.
+    for scene in scenes:
+        for view_layer in getattr(scene, "view_layers", ()):
+            view_layer.update()
+    pending = []
+    for obj in objects:
+        stored = _stored_scene_group(obj, "fluidsim_domain")
+        try:
+            if stored is None or "resolution_divisions" in stored or (
+                    "voxel_size" not in stored):
+                continue
+            voxel = float(stored["voxel_size"])
+        except (AttributeError, TypeError, ValueError):
+            continue
+        group = getattr(obj, "fluidsim_domain", None)
+        if group is not None and voxel > 0.0:
+            pending.append((group, voxel))
+    with ExitStack() as stack:
+        for scene in scenes:
+            stack.enter_context(pending_settings.suppress_callbacks(scene))
+        for group, voxel in pending:
+            group.resolution_divisions = divisions_for_voxel_size(
+                voxel, _domain_longest_axis(group))
+    return len(pending)
+
+
 @persistent
 def _on_load_post(_arg):
+    migrate_domain_resolution()
     for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
         if has_unmigrated_snippets(scene):
             print(f"FluidSim: scene {scene.name!r}: {UNMIGRATED_SNIPPETS_MESSAGE}")
@@ -104,6 +151,10 @@ def register_handlers():
                         "load_post", None)
     if load_post is not None:
         load_post.append(_on_load_post)
+    try:
+        migrate_domain_resolution()  # the file that is already open
+    except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
+        pass
 
 
 def unregister_handlers():

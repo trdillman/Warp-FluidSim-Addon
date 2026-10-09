@@ -118,6 +118,18 @@ def make_domain(scene, lo, hi, name):
     return dom
 
 
+def set_resolution(ds, lo, hi, voxel_size):
+    """Author the grid as Resolution Divisions along the longest domain axis.
+
+    ``voxel_size`` is the cell size the demo was tuned at; it is converted to the
+    nearest whole divisions so the saved scene states its resolution explicitly.
+    """
+    from fluidSim_warp_blender51.sim.quality_contract import divisions_for_voxel_size
+
+    ds.resolution_divisions = divisions_for_voxel_size(
+        voxel_size, max(hi[i] - lo[i] for i in range(3)))
+
+
 def domain_settings(scene):
     """Return the designated domain object's settings group.
 
@@ -382,7 +394,7 @@ def build_dam_break():
     lo, hi = cove.DOMAIN_LO, cove.DOMAIN_HI
     make_domain(scene, lo, hi, "DamBreak Domain")
     ds = domain_settings(scene)
-    ds.voxel_size = cove.VOXEL
+    set_resolution(ds, lo, hi, cove.VOXEL)
     ds.max_particles = 600_000
     ds.min_substeps = 1
     ds.max_substeps = 16
@@ -518,7 +530,7 @@ def build_crown_splash():
     lo, hi = (0.0, 0.0, 0.0), (0.8, 0.8, 0.5)
     make_domain(scene, lo, hi, "CrownSplash Domain")
     ds = domain_settings(scene)
-    ds.voxel_size = 0.01
+    set_resolution(ds, lo, hi, 0.01)
     ds.max_particles = 600_000
     ds.min_substeps = 1
     ds.max_substeps = 24
@@ -652,7 +664,7 @@ def build_paddle_stir():
     lo, hi = (-0.60, -0.60, 0.0), (0.60, 0.60, 0.90)
     make_domain(scene, lo, hi, "PaddleStir Domain")
     ds = domain_settings(scene)
-    ds.voxel_size = voxel
+    set_resolution(ds, lo, hi, voxel)
     ds.max_particles = 900_000
     ds.min_substeps = 1
     ds.max_substeps = 24

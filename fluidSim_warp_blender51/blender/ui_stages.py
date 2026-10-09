@@ -35,11 +35,12 @@ from .ui_scene import (
     draw_cache_bake,
     draw_cache_manage,
     draw_cache_playback,
+    draw_resolution_readout,
 )
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
-SETUP_DOMAIN_PROPS = ("voxel_size", "particles_per_voxel")
+SETUP_DOMAIN_PROPS = ("resolution_divisions", "particles_per_voxel")
 SIMULATE_PROPS = (
     "flip_ratio",
     "viscosity_enabled",
@@ -165,6 +166,7 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
         column = layout.column(align=True)
         for name in SETUP_DOMAIN_PROPS:
             _prop(column, scene, name)
+        draw_resolution_readout(layout, scene)
 
 
 class FLUIDSIM_STAGE_PT_setup_advanced(FluidSimStagePanel, bpy.types.Panel):
