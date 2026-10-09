@@ -99,6 +99,11 @@ class SolverSettings:
     species_enabled: bool = False
     species_mixing_rate: float = 8.0
 
+    # Opt-in narrow-band FLIP: particles only within ``narrow_band_voxels``
+    # cells of the surface.  The solver ignores both until the kernels land.
+    narrow_band_enabled: bool = False
+    narrow_band_voxels: float = 3.0
+
     surface_enabled: bool = True
     particle_radius_scale: float = 1.2
     surface_splat_radius: int = 2

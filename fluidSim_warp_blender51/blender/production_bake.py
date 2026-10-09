@@ -359,6 +359,17 @@ def _platform_record(solver) -> dict[str, str]:
     }
 
 
+def _narrow_band_record(settings) -> dict[str, object]:
+    """The manifest's ``narrow_band`` block, read from the solver settings."""
+    enabled = bool(getattr(settings, "narrow_band_enabled", False))
+    return {
+        "enabled": enabled,
+        "band_voxels": (
+            float(getattr(settings, "narrow_band_voxels", 0.0))
+            if enabled else 0.0),
+    }
+
+
 def _grid_spec_record(quality) -> dict[str, object]:
     """The grid the solver resolved, as the manifest records it.
 
@@ -776,7 +787,7 @@ class ProductionBakeBackend:
             transfer_mode=ParticleSampleType(
                 int(self.sess.solver.settings.sample_type)).name,
             grid_spec=_grid_spec_record(self.sess.solver.quality),
-            narrow_band={"enabled": False, "band_voxels": 0.0},
+            narrow_band=_narrow_band_record(self.sess.solver.settings),
             platform=_platform_record(self.sess.solver),
         )
 

@@ -132,6 +132,8 @@ class FrameStats:
     initialized_voxels: int = 0
     total_voxels: int = 0
     active_particles: int = 0
+    #: Grid voxels flagged liquid; 0 until narrow-band support lands.
+    liquid_voxels: int = 0
     total_particles: int = 0
     whitewater_particles: int = 0
     whitewater_foam: int = 0
@@ -185,6 +187,7 @@ class FrameStats:
             "initializedVoxels": self.initialized_voxels,
             "totalVoxels": self.total_voxels,
             "activeParticles": self.active_particles,
+            "liquidVoxels": self.liquid_voxels,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
             "whitewaterFoam": self.whitewater_foam,

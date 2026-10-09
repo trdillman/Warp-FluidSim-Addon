@@ -432,6 +432,7 @@ def play_cache_frame(sess, scene, frame=None):
         fs.stat_whitewater_invalid_types = int(np.count_nonzero(
             (values < 0) | (values > 2)))
     fs.stat_voxels = 0
+    fs.stat_liquid_voxels = 0
     fs.stat_step_ms = 0.0
     fs.stat_substeps = 0
     fs.stat_cfl_clamped = False

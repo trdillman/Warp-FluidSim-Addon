@@ -125,6 +125,7 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
     "surface_tension_enabled", "species_enabled",
+    "narrow_band_enabled", "narrow_band_voxels",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",
@@ -154,7 +155,8 @@ _PRESENTATION_FIELDS = frozenset({
     "ui_mode",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
-    "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
+    "stat_voxels", "stat_liquid_voxels", "stat_whitewater", "stat_step_ms",
+    "stat_substeps",
     "stat_cfl_clamped", "stat_whitewater_admitted",
     "stat_whitewater_dropped", "stat_whitewater_policy",
     "stat_whitewater_required", "stat_whitewater_status",
@@ -280,6 +282,7 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "narrow_band_enabled", "narrow_band_voxels",
     "export_attributes",
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })

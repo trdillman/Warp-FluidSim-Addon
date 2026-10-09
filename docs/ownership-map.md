@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 142 | UI writes exactly where the consumer reads |
+| OK | 144 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -32,9 +32,9 @@ Two directions of flow exist, and a field uses one or the other:
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
-| INTERNAL | 7 | written outside the UI; no resolved reader |
+| INTERNAL | 8 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **214** | |
+| **total** | **217** | |
 
 ## Mirrored panels
 
@@ -97,6 +97,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `status` | PRESENTATION | - | scene | scene | scene | scene | 3 | PUBLISHED |
 | `stat_particles` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
 | `stat_voxels` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
+| `stat_liquid_voxels` | PRESENTATION | - | - | scene | - | scene | 0 | INTERNAL |
 | `stat_whitewater` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
 | `stat_whitewater_foam` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_whitewater_bubbles` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
@@ -165,10 +166,10 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_preconditioner` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
-| `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 0 | OK |
+| `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `viscosity_constant` | LIVE | domain | domain | - | - | domain | 0 | OK |
-| `viscosity_from_particles` | LIVE | domain | domain | - | domain | domain | 0 | OK |
+| `viscosity_from_particles` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `surface_tension_enabled` | RESET | domain | domain | - | domain | domain | 0 | OK |
@@ -177,8 +178,10 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `surface_tension_band_voxels` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `surface_tension_safety` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `surface_tension_smoothing_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
-| `species_enabled` | RESET | domain | domain | - | domain | domain | 0 | OK |
+| `species_enabled` | RESET | domain | domain | - | domain | domain | 1 | OK |
 | `species_mixing_rate` | LIVE | domain | domain | - | - | domain | 0 | OK |
+| `narrow_band_enabled` | RESET | domain | domain | - | domain | domain | 0 | OK |
+| `narrow_band_voxels` | RESET | domain | domain | - | - | domain | 0 | OK |
 | `surface_enabled` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
 | `particle_radius_scale` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_splat_radius` | SURFACE | domain | domain | - | - | domain | 0 | OK |
@@ -232,7 +235,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `height_error` | PRESENTATION | - | - | domain | domain | domain | 0 | PUBLISHED |
 | `height_velocity` | RESET | domain | domain | - | - | domain | 0 | OK |
 | `height_emit_particles` | RESET | domain | domain | - | - | domain | 0 | OK |
-| `export_attributes` | RESET | domain | domain | - | domain | domain | 0 | OK |
+| `export_attributes` | RESET | domain | domain | - | domain | domain | 1 | OK |
 | `surface_attribute_velocity` | RESET | - | domain | - | - | domain | 0 | READ_ONLY |
 | `surface_attribute_speed` | RESET | - | domain | - | - | domain | 0 | READ_ONLY |
 | `surface_attribute_vorticity` | RESET | - | domain | - | - | domain | 0 | READ_ONLY |
@@ -271,10 +274,11 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:820` |
-| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:442`, `fluidSim_warp_blender51/blender/scene_bridge.py:409` |
-| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:443`, `fluidSim_warp_blender51/blender/scene_bridge.py:411` |
-| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:444`, `fluidSim_warp_blender51/blender/scene_bridge.py:413` |
-| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:445`, `fluidSim_warp_blender51/blender/scene_bridge.py:415` |
-| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:446`, `fluidSim_warp_blender51/blender/scene_bridge.py:417` |
-| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:447`, `fluidSim_warp_blender51/blender/scene_bridge.py:419` |
+| `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:435`, `fluidSim_warp_blender51/blender/scene_bridge.py:381` |
+| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:443`, `fluidSim_warp_blender51/blender/scene_bridge.py:410` |
+| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:444`, `fluidSim_warp_blender51/blender/scene_bridge.py:412` |
+| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:445`, `fluidSim_warp_blender51/blender/scene_bridge.py:414` |
+| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:446`, `fluidSim_warp_blender51/blender/scene_bridge.py:416` |
+| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:447`, `fluidSim_warp_blender51/blender/scene_bridge.py:418` |
+| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:448`, `fluidSim_warp_blender51/blender/scene_bridge.py:420` |
 

@@ -927,6 +927,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     stat_voxels: IntProperty(
         default=0,
         description="Latest measured count of active sparse-grid voxels in the solver")
+    stat_liquid_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of grid voxels flagged as liquid, including narrow-band interior voxels that hold no particles")
     stat_whitewater: IntProperty(
         default=0,
         description="Latest measured count of active whitewater (foam/bubble/spray) particles")
@@ -1322,6 +1325,15 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Mixing Strength", default=8.0, min=0.0, soft_max=40.0,
         update=_request_live,
         description="Control how quickly nearby liquid particle colors approach their local mixture; zero preserves source colors")
+
+    # Narrow-band particles (Setup stage; solver support lands in a later stop)
+    narrow_band_enabled: BoolProperty(
+        name="Narrow-Band Particles", default=False, update=_request_reset,
+        description="Keep particles only near the liquid surface and carry the deep interior on the grid, which needs far fewer particles in deep water; blocked by color mixing, viscosity from particles, scalar field sources and attribute export, and resets the solver")
+    narrow_band_voxels: FloatProperty(
+        name="Band Width", default=3.0, min=1.0, soft_min=2.0, soft_max=6.0,
+        update=_request_reset,
+        description="Set how many simulation voxels below the liquid surface keep particles; narrower bands save more particles but can make the surface pop below 2 voxels, and above 6 there is little saving")
 
     # Surface
     surface_enabled: BoolProperty(

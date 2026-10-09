@@ -86,6 +86,8 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "surface_tension_band_voxels": SettingSpec(float, 0.5, 8.0),
     "surface_tension_safety": SettingSpec(float, 0.05, 1.0),
     "surface_tension_smoothing_iterations": SettingSpec(int, 0, 8),
+    "narrow_band_enabled": SettingSpec(bool),
+    "narrow_band_voxels": SettingSpec(float, 1.0, 16.0),
     "surface_enabled": SettingSpec(bool),
     "surface_resolution_mode": SettingSpec(
         str, choices=("SIMULATION", "MULTIPLIER", "CUSTOM")
@@ -161,6 +163,7 @@ SCENE_OWNED_SETTINGS = frozenset({
     "benchmark_baseline", "cache_enabled", "cache_path", "cache_compress",
     "cache_playback_enabled", "cache_use_custom_range", "cache_frame_start",
     "cache_frame_end", "status", "stat_particles", "stat_voxels",
+    "stat_liquid_voxels",
     "stat_whitewater", "stat_whitewater_foam", "stat_whitewater_bubbles",
     "stat_whitewater_spray", "stat_whitewater_invalid_types",
     "stat_whitewater_required", "stat_whitewater_admitted",
