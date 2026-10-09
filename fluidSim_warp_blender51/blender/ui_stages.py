@@ -59,6 +59,18 @@ SIMULATE_READOUTS = (
     ("stat_liquid_voxels", "Liquid voxels"),
     ("stat_cfl_clamped", "CFL clamped"),
 )
+# Only narrow-band mode counts liquid voxels; elsewhere the readout stays at 0.
+NARROW_BAND_READOUTS = frozenset({"stat_liquid_voxels"})
+
+
+def simulate_readouts(domain) -> tuple[tuple[str, str], ...]:
+    """The Live Readout rows for ``domain``; narrow-band rows only when it is on."""
+    if getattr(domain, "narrow_band_enabled", False):
+        return SIMULATE_READOUTS
+    return tuple(pair for pair in SIMULATE_READOUTS
+                 if pair[0] not in NARROW_BAND_READOUTS)
+
+
 LOOK_PROPS = (
     "liquid_view_mode",
     "surface_enabled",
@@ -276,7 +288,7 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
 
         body.separator()
         draw_readout_grid(
-            body, scene.fluidsim, SIMULATE_READOUTS, title="Live Readout"
+            body, scene.fluidsim, simulate_readouts(domain), title="Live Readout"
         )
         body.operator(
             "fluidsim.open_scene_properties",

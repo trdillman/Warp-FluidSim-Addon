@@ -78,3 +78,16 @@ def test_an_already_enabled_blocked_toggle_stays_usable_so_it_can_be_turned_off(
 
     assert layout.drawn_enabled("narrow_band_enabled") is True
     assert narrow_band.REASON_COLOR_MIXING in _label_texts(layout)
+
+
+def test_liquid_voxels_readout_is_shown_only_in_narrow_band_mode(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    def names(enabled):
+        domain = type("Domain", (), {"narrow_band_enabled": enabled})()
+        return [name for name, _label in ui_stages.simulate_readouts(domain)]
+
+    assert "stat_liquid_voxels" not in names(False)
+    assert "stat_liquid_voxels" in names(True)
+    assert names(True) == [name for name, _label in ui_stages.SIMULATE_READOUTS]
