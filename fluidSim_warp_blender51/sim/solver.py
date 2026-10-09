@@ -517,6 +517,9 @@ def _resolve_attr(root, dotted_name: str):
 class FluidSolver:
     """GPU-resident FLIP/PIC liquid solver."""
 
+    # Class default so solver stand-ins built without __init__ read as "mode off".
+    narrow_band = None
+
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
         self.quality = resolve_quality(
