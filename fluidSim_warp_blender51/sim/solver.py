@@ -508,6 +508,8 @@ class SolverSettings:
     pressure_iterations: int = C.DEFAULT_PRESSURE_ITERATIONS
     pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
     pressure_threshold: float = 0.0
+    # "JACOBI" or "MULTIGRID" (sim.pressure.PRECONDITIONER_*); PCG only.
+    pressure_preconditioner: str = "JACOBI"
 
     viscosity_enabled: bool = False
     viscosity_solver: int = int(ViscositySolverEnum.PCG)
@@ -1596,6 +1598,8 @@ class FluidSolver:
 
     def _pressure(self, dt):
         s = self.settings
+        # Live edits mutate self.settings in place; re-read before every solve.
+        self.pressure_solver.preconditioner = s.pressure_preconditioner
         status = self.pressure_solver.project_frame(
             self.vel,
             self.voxel_type.data,

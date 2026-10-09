@@ -386,6 +386,6 @@ def unregister():
     for cls in reversed(PANEL_CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
     cleanup_preview_icons()

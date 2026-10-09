@@ -108,4 +108,7 @@ def unregister():
     add_menu = getattr(bpy.types, "VIEW3D_MT_add", None)
     if add_menu is not None:
         add_menu.remove(draw_add_menu)
-    bpy.utils.unregister_class(FLUIDSIM_OT_add_domain)
+    try:
+        bpy.utils.unregister_class(FLUIDSIM_OT_add_domain)
+    except Exception as exc:  # noqa: BLE001 - report and keep walking
+        print(f"FluidSim: could not unregister FLUIDSIM_OT_add_domain: {exc!r}")

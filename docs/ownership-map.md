@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 142 | UI writes exactly where the consumer reads |
+| OK | 143 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 7 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **212** | |
+| **total** | **213** | |
 
 ## Mirrored panels
 
@@ -162,6 +162,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
+| `pressure_preconditioner` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
