@@ -35,6 +35,16 @@ from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 FAILURES = []
 DEMOS = ("dam_break", "paddle_stir", "crown_splash", "chromatic_vortex")
+# Padded dims each shipped demo must have after migration. Three equal the
+# pre-3.0 dims. crown_splash's shipped 88,88,56 came from a pre-3.0 float32 ceil
+# artifact (0.8000000119 / 0.00999999978 = 80.0000030 -> 81 cells -> pad to 88);
+# the CELL_COUNT_TOLERANCE fix removes it, so the grid is 80,80,56.
+EXPECTED_NEW_DIMS = {
+    "dam_break": (192, 72, 56),
+    "paddle_stir": (104, 104, 80),
+    "crown_splash": (80, 80, 56),
+    "chromatic_vortex": (32, 32, 32),
+}
 
 
 def check(name, condition, detail=""):
@@ -193,8 +203,11 @@ def demo_table():
         print(f"DEMO_TABLE {name} | {stored!r} | {longest!r} | "
               f"{group.resolution_divisions} | {derived!r} | {equal} | "
               f"{old_dims} | {new_dims}", flush=True)
-        check(f"{name}: migrated padded dims equal the stored ones",
-              old_dims == new_dims, (old_dims, new_dims))
+        check(f"{name}: migrated padded dims are the expected ones",
+              new_dims == EXPECTED_NEW_DIMS[name], (old_dims, new_dims))
+        if name != "crown_splash":
+            check(f"{name}: migrated padded dims equal the stored ones",
+                  old_dims == new_dims, (old_dims, new_dims))
         check(f"{name}: migration ran again is a no-op",
               file_compat.migrate_domain_resolution() == 0)
 
