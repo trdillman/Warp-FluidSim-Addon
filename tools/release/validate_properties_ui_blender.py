@@ -530,7 +530,9 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
         for event in draws[domain_mirror]
         if event["kind"] == "prop"
     }
-    if not {"voxel_size", "particles_per_voxel", "max_particles"}.issubset(scene_props):
+    # Resolution Divisions replaced the Voxel Size control (voxel_size is derived).
+    if not {"resolution_divisions", "particles_per_voxel", "max_particles"}.issubset(
+            scene_props):
         raise AssertionError(f"Domain panel omitted primary controls: {sorted(scene_props)}")
     def _operators(panel_id):
         return {
