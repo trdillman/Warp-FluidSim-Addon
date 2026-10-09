@@ -13,8 +13,7 @@ Three things defeat a textual search:
 1.  ``_make_panel_mirrors`` in ``blender/ui_physics.py`` re-draws Scene panels
     under Physics Properties.  A control's datablock is whatever its draw
     binds -- ``context.scene.fluidsim`` or ``ui_scene._domain_owner`` -- in
-    either tab; ``owner_redirect=True`` only hides the domain mirrors while no
-    domain object is designated.  The map records which panels are mirrored.
+    either tab.  The map records which panels are mirrored.
 2.  Consumers rarely name the datablock.  ``solver_settings.build_settings``
     resolves ``active_domain_settings(scene)`` and passes it as ``fs`` into
     ``apply_scene_settings``, so the read sites that matter are a parameter
@@ -66,11 +65,11 @@ DRAW_HELPERS = {
     "draw_property": (1, 2, False),
     "draw_property_grid": (1, 2, True),
 }
-# Stage helpers that draw ``setting_owner(scene, field)``: the control edits
-# whichever group owns the field, so the write is bound to the field's declared
-# effective owner (resolved in build_map). Value = field_argument_index.
+# Stage helpers that draw ``declaring_group(scene, field)``: the control edits
+# whichever group declares the field, so the write is bound to the field's
+# declaring class (resolved in build_map). Value = field_argument_index.
 OWNER_RESOLVED_DRAW_HELPERS = {"_prop": 2}
-EFFECTIVE_OWNER = "effective"
+DECLARED_OWNER = "declared"
 # Read-only telemetry rendering: reads the group, never edits it.
 READOUT_HELPERS = {"draw_readout_grid": (1, 2)}
 
@@ -111,27 +110,22 @@ def _install_bpy_stub():
     sys.modules["mathutils"] = mathutils
 
 
-def declared_scopes(fields):
-    """Query the shipped declarations for effective and authoring ownership."""
+def declared_owners(fields):
+    """The declaring class of every field, and each field's lifecycle tier.
+
+    The class that declares a setting owns it, and no setting is declared on
+    both ``FLUIDSIM_PG_scene`` and ``FLUIDSIM_PG_domain``.  The owner is read
+    from those declarations in ``properties.py`` and never from a second table,
+    so the map cannot agree with a table that has drifted from the classes.
+    """
+    owners = field_owners()
     _install_bpy_stub()
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
     from fluidSim_warp_blender51.blender import pending_settings as P
-    from fluidSim_warp_blender51.presets import schema as preset_schema
 
-    domain_group = SimpleNamespace(_label=DOMAIN)
-    domain_object = SimpleNamespace(fluidsim_domain=domain_group)
-    scene_group = SimpleNamespace(_label=SCENE, domain_object=domain_object)
-    scene = SimpleNamespace(fluidsim=scene_group)
-
-    effective, authoring = {}, {}
-    for name in fields:
-        effective[name] = getattr(P.setting_owner(scene, name), "_label", "?")
-        authoring[name] = getattr(
-            P._authoring_owner(scene_group, domain_group, name), "_label", "?"
-        )
     tiers = {n: t.value for n, t in P.SETTING_TRANSITION_REGISTRY.items()}
-    return effective, authoring, tiers, frozenset(preset_schema.SCENE_OWNED_SETTINGS)
+    return {name: owners.get(name, "?") for name in fields}, tiers
 
 
 # --------------------------------------------------------------------------
@@ -161,6 +155,31 @@ def annotated_fields():
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     ]
     return list(dict.fromkeys(fields))
+
+
+def field_owners():
+    """``{field: SCENE | DOMAIN}`` by the class that declares it.
+
+    Raises when a field is declared on both classes: the owner would then have
+    two answers, which is the state the split removed.
+    """
+    path = os.path.join(PKG_ROOT, "properties.py")
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=path)
+    kinds = {"FLUIDSIM_PG_scene": SCENE, "FLUIDSIM_PG_domain": DOMAIN}
+    owners = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ClassDef) and node.name in kinds):
+            continue
+        for statement in node.body:
+            if (isinstance(statement, ast.AnnAssign)
+                    and isinstance(statement.target, ast.Name)):
+                name = statement.target.id
+                if name in owners:
+                    raise ValueError(
+                        f"{name} is declared on both settings classes")
+                owners[name] = kinds[node.name]
+    return owners
 
 
 # --------------------------------------------------------------------------
@@ -415,7 +434,7 @@ def _classify_accesses(node, env, fields, table_names, func):
             target = node.args[field_index]
             if isinstance(target, ast.Constant) and target.value in fields:
                 func.writes.append(
-                    (target.value, EFFECTIVE_OWNER, node.lineno, name)
+                    (target.value, DECLARED_OWNER, node.lineno, name)
                 )
 
     # Read-only telemetry rendering
@@ -620,11 +639,11 @@ def build_functions(fields):
 # Mirror handling
 # --------------------------------------------------------------------------
 
-def redirected_source_panels():
-    """Panel class names whose draw is re-run against the domain group.
+def mirrored_source_panels():
+    """Panel class names whose draw is re-run under the Physics tab.
 
     Parsed out of ``blender/ui_physics.py`` rather than hardcoded, so that
-    adding or removing ``owner_redirect=True`` shows up in the map.
+    adding or removing a mirrored panel shows up in the map.
     """
     path = os.path.join(PKG_ROOT, "blender", "ui_physics.py")
     with open(path, encoding="utf-8") as handle:
@@ -645,7 +664,7 @@ def redirected_source_panels():
                         names.append(element.id)
                 tuples[target.id] = names
 
-    redirected, mirrored = set(), set()
+    mirrored = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or _call_name(node) != "_make_panel_mirrors":
             continue
@@ -661,16 +680,8 @@ def redirected_source_panels():
             names = tuples.get(source.attr, [])
         else:
             names = []
-        is_redirect = any(
-            keyword.arg == "owner_redirect"
-            and isinstance(keyword.value, ast.Constant)
-            and bool(keyword.value.value)
-            for keyword in node.keywords
-        )
         mirrored.update(names)
-        if is_redirect:
-            redirected.update(names)
-    return redirected, mirrored
+    return mirrored
 
 
 # --------------------------------------------------------------------------
@@ -681,8 +692,8 @@ def build_map():
     fields = annotated_fields()
     field_set = frozenset(fields)
     functions, by_name, module_files = build_functions(field_set)
-    effective, authoring, tiers, preset_scene_owned = declared_scopes(fields)
-    redirected, mirrored = redirected_source_panels()
+    owners, tiers = declared_owners(fields)
+    mirrored = mirrored_source_panels()
 
     writes = defaultdict(set)      # field -> {(kind, module, line, via)}
     reads = defaultdict(set)
@@ -700,8 +711,8 @@ def build_map():
         ui_write_kinds, ui_sites = set(), []
         other_write_kinds, other_write_sites = set(), []
         for kind, module, location, line, via, is_ui in writes.get(field, ()):
-            if kind == EFFECTIVE_OWNER:
-                kind = effective.get(field)
+            if kind == DECLARED_OWNER:
+                kind = owners.get(field)
                 if kind not in (SCENE, DOMAIN):
                     kind = None
             if is_ui and via in (
@@ -743,11 +754,9 @@ def build_map():
             "ui_read": ui_read_kinds,
             "ui_read_sites": sorted(ui_read_sites),
             "defaulted_reads": defaulted_reads,
-            "effective": effective.get(field, "?"),
-            "authoring": authoring.get(field, "?"),
-            "preset_scene_owned": field in preset_scene_owned,
+            "owner": owners.get(field, "?"),
         })
-    return rows, redirected, mirrored
+    return rows, mirrored
 
 
 def classify(row):
@@ -818,7 +827,7 @@ def classify(row):
 FAULT_VERDICTS = ("BROKEN", "MIRROR_ONLY", "PUBLISHED_BROKEN")
 
 
-def render(rows, redirected, mirrored):
+def render(rows, mirrored):
     verdicts = defaultdict(list)
     for row in rows:
         verdict, _reason = classify(row)
@@ -863,9 +872,9 @@ def render(rows, redirected, mirrored):
                  "producing end of the telemetry direction.")
     lines.append("- **UI reads** -- datablock a panel displays read-only "
                  "(`draw_readout_grid`); the consuming end of that direction.")
-    lines.append("- **Declared: effective / authoring** -- what "
-                 "`pending_settings.setting_owner()` and `_authoring_owner()` "
-                 "currently claim.")
+    lines.append("- **Declared owner** -- the class that declares the field "
+                 "(`FLUIDSIM_PG_scene` or `FLUIDSIM_PG_domain`). Each field "
+                 "has exactly one.")
     lines.append("- **`getattr` defaults** -- how many consumer reads pass a "
                  "default and would therefore swallow the `AttributeError` the "
                  "split is meant to raise (Phase 3).")
@@ -910,23 +919,16 @@ def render(rows, redirected, mirrored):
     lines.append(f"| **total** | **{len(rows)}** | |")
     lines.append("")
 
-    redirect_note = ", ".join(sorted(redirected)) or "(none)"
-    no_redirect = sorted(mirrored - redirected)
-    lines.append("## Mirror redirection")
+    lines.append("## Mirrored panels")
     lines.append("")
     lines.append(
-        f"`owner_redirect=True` ({len(redirected)} source panels): {redirect_note}"
-    )
-    lines.append("")
-    lines.append(
-        f"Mirrored **without** redirect ({len(no_redirect)}): "
-        + (", ".join(no_redirect) or "(none)")
+        f"Source panels mirrored under Physics Properties ({len(mirrored)}): "
+        + (", ".join(sorted(mirrored)) or "(none)")
     )
     lines.append("")
     lines.append(
         "A mirror re-runs its source panel's draw unchanged, so every control "
-        "writes the same datablock in both tabs. `owner_redirect=True` only "
-        "hides a mirror while no domain object is designated."
+        "writes the same datablock in both tabs."
     )
     lines.append("")
 
@@ -934,7 +936,7 @@ def render(rows, redirected, mirrored):
     lines.append("")
     lines.append(
         "| field | tier | UI writes | consumer reads | runtime writes | "
-        "UI reads | declared eff/auth | getattr defaults | verdict |"
+        "UI reads | declared owner | getattr defaults | verdict |"
     )
     lines.append("|---|---|---|---|---|---|---|---:|---|")
     for row in rows:
@@ -943,7 +945,7 @@ def render(rows, redirected, mirrored):
         read = ", ".join(sorted(row["read"])) or "-"
         runtime_write = ", ".join(sorted(row["other_write"])) or "-"
         ui_read = ", ".join(sorted(row["ui_read"])) or "-"
-        declared = f"{row['effective']}/{row['authoring']}"
+        declared = row["owner"]
         flag = "**" if verdict in FAULT_VERDICTS else ""
         lines.append(
             f"| `{row['field']}` | {row['tier']} | {ui_write} | {read} | "
@@ -1010,8 +1012,8 @@ def main(argv=None):
                         help="print verdict counts without writing the file")
     args = parser.parse_args(argv)
 
-    rows, redirected, mirrored = build_map()
-    rendered = render(rows, redirected, mirrored)
+    rows, mirrored = build_map()
+    rendered = render(rows, mirrored)
 
     counts = defaultdict(int)
     for row in rows:

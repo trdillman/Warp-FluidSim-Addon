@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from fluidSim_warp_blender51.sim.solver import SolverSettings
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 
 def test_selected_projection_owns_vectors_and_maps_alias_and_enum():
@@ -68,8 +68,9 @@ def test_build_settings_returns_only_owned_domain_gravity_and_device(monkeypatch
     mathutils.Vector = tuple
     monkeypatch.setitem(sys.modules, "mathutils", mathutils)
     scene = SimpleNamespace(
-        fluidsim=split_settings(SimpleNamespace(
+        fluidsim=split_settings(full_settings(
             domain_object=None,
+            quality="PREVIEW",
             use_scene_gravity=False,
             gravity=[1, 2, 3],
             directional_force=[4, 5, 6],

@@ -834,6 +834,7 @@ def test_height_source_translation_preserves_scene_settings(monkeypatch):
     _install_scene_bridge_stubs(monkeypatch)
     sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")
     scene = SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
+        quality="PREVIEW",
         height_enabled=True,
         height_base=1.25,
         height_back_mode="FLAT",
@@ -901,6 +902,7 @@ def test_height_source_reads_from_migrated_domain_object(monkeypatch):
     scene = SimpleNamespace(fluidsim=SimpleNamespace(
         schema_version=1,
         domain_object=domain_obj,
+        quality="PREVIEW",
         # Stale mirror values that must be ignored post-migration:
         height_enabled=True,
         height_base=1.25,

@@ -427,7 +427,7 @@ def _assert_phase5_surface_tension(module: str) -> dict[str, object]:
     required = tension.required_capillary_substeps(frame_dt, stable_dt)
     if stable_dt <= 0.0 or required < 1:
         raise AssertionError("installed capillary stability helper returned invalid data")
-    panel_registered = hasattr(bpy.types, "FLUIDSIM_PT_sim_surface_tension")
+    panel_registered = hasattr(bpy.types, "FLUIDSIM_PT_physics_domain_sim_surface_tension")
     if not panel_registered:
         raise AssertionError("installed Phase-5 surface-tension panel is not registered")
     # Restore the default smoke preset so established Phase-2 persistence
@@ -453,8 +453,8 @@ def _assert_phase5_surface_tension(module: str) -> dict[str, object]:
 def _assert_properties_ui() -> dict[str, object]:
     expected = {
         "FLUIDSIM_PT_scene_control": ("PROPERTIES", "scene"),
-        "FLUIDSIM_PT_scene_domain": ("PROPERTIES", "scene"),
-        "FLUIDSIM_PT_sim_surface_tension": ("PROPERTIES", "scene"),
+        "FLUIDSIM_PT_physics_domain_scene_domain": ("PROPERTIES", "physics"),
+        "FLUIDSIM_PT_physics_domain_sim_surface_tension": ("PROPERTIES", "physics"),
         "FLUIDSIM_PT_object_role": ("PROPERTIES", "object"),
         "FLUIDSIM_PT_custom_effects": ("PROPERTIES", "scene"),
         "FLUIDSIM_PT_effect_packages": ("PROPERTIES", "scene"),

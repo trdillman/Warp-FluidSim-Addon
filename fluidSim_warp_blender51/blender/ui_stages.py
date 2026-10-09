@@ -7,8 +7,8 @@ that point in the work, so the common loop happens beside the viewport instead o
 in the Scene Properties tree. Everything else stays one click away through the
 existing Scene Properties panels; nothing is duplicated into a deep sidebar tree.
 
-Every control is bound to the group that actually owns it
-(:func:`~.pending_settings.setting_owner`), so an edit made here is the value the
+Every control is bound to the group that declares it
+(:func:`~.pending_settings.declaring_group`), so an edit made here is the value the
 solver reads.
 
 The Bake stage is the only home of Cache & Production Bake: the Scene tab no
@@ -22,7 +22,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat
-from .pending_settings import setting_owner
+from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimView3DPanel,
@@ -98,14 +98,14 @@ def _layout(panel):
 
 
 def _prop(layout, scene, name, **kwargs):
-    """Draw ``name`` on the group that owns it; skip it when that group lacks it."""
-    return draw_property(layout, setting_owner(scene, name), name, **kwargs)
+    """Draw ``name`` on the group that declares it; skip it when there is no group."""
+    return draw_property(layout, declaring_group(scene, name), name, **kwargs)
 
 
 def _is_advanced(scene) -> bool:
     """Fail-open Basic/Advanced gate matching the Scene Properties panels."""
     fs = getattr(scene, "fluidsim", None)
-    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+    return bool(fs is None or fs.ui_mode == "ADVANCED")
 
 
 def draw_quality(layout, scene):
@@ -197,12 +197,12 @@ def draw_simulate_controls(layout, scene, domain):
     One drawing shared by the Simulate stage and the viewport-header popover, so
     both surfaces bind the same properties to the same owner.
     """
-    if getattr(domain, "sample_type", "FLIP") == "FLIP":
+    if domain.sample_type == "FLIP":
         _prop(layout, scene, "flip_ratio")
 
     viscosity = layout.column(align=True)
     _prop(viscosity, scene, "viscosity_enabled")
-    if domain.viscosity_enabled and not getattr(domain, "viscosity_from_particles", False):
+    if domain.viscosity_enabled and not domain.viscosity_from_particles:
         _prop(viscosity, scene, "viscosity_constant")
 
     tension = layout.column(align=True)

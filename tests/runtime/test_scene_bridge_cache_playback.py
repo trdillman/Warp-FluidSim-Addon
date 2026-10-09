@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -82,7 +82,7 @@ def _scene(frame=7, *, playback=True):
         frame_start=1,
         frame_end=10,
         objects=(),
-        fluidsim=split_settings(SimpleNamespace(
+        fluidsim=split_settings(full_settings(
             live=True,
             cache_playback_enabled=playback,
             cache_use_custom_range=False,

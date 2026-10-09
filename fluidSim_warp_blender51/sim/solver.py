@@ -477,7 +477,7 @@ class SolverSettings:
     trace_mode: int = int(TraceMode.RK3)
     max_speed: float = 0.0                    # 0 disables the speed limit
     speed_limit_behavior: int = 0
-    speed_limit_percent: float = 0.1
+    speed_limit_percent: float = 0.5
     directional_force: tuple = (0.0, 0.0, 0.0)
     omnidirectional_force_center: tuple = (0.0, 0.0, 0.0)
     omnidirectional_force_strength: float = 0.0
@@ -511,7 +511,7 @@ class SolverSettings:
 
     viscosity_enabled: bool = False
     viscosity_solver: int = int(ViscositySolverEnum.PCG)
-    viscosity_constant: float = 0.0
+    viscosity_constant: float = 0.05
     viscosity_iterations: int = C.DEFAULT_VISCOSITY_ITERATIONS
     viscosity_tolerance: float = C.DEFAULT_VISCOSITY_TOLERANCE
     viscosity_from_particles: bool = False
@@ -584,7 +584,7 @@ class SolverSettings:
     whitewater_attribute_type: bool = True
 
     whitewater_enabled: bool = False
-    churn_decay: float = 1.0
+    churn_decay: float = 2.0
     churn_gain: float = 1.0
     ww_churn_threshold: float = 0.5
     ww_emission_rate: float = 2.0
@@ -599,10 +599,10 @@ class SolverSettings:
     ww_foam_preservation: float = 0.0
     ww_foam_density_influence: float = 0.0
     ww_foam_life_multiplier: float = 1.0
-    ww_bubble_drag: float = 8.0
+    ww_bubble_drag: float = 4.0
     ww_bubble_buoyancy: float = 1.0
     ww_bubble_life_multiplier: float = 1.0
-    ww_spray_drag: float = 0.5
+    ww_spray_drag: float = 0.2
     ww_spray_gravity_scale: float = 1.0
     ww_spray_life_multiplier: float = 1.0
 

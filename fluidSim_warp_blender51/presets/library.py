@@ -223,12 +223,11 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
         target = getattr(scene, "fluidsim", None)
     if target is None:
         raise ValueError("scene has no FluidSim settings")
-    # Not every preset field is authored on ``target``: scene-owned fields such
-    # as ``whitewater_output_mode`` and ``cache_compress`` stay on
-    # ``scene.fluidsim`` even when ``target`` is the migrated domain object --
-    # Output Publication and Production Cache Bake read them from there
-    # regardless of migration state. ``field_target`` lets callers resolve each
-    # key to its actual owner instead of writing every key to one group; when
+    # Not every preset field is declared on ``target``: scene-owned fields such
+    # as ``whitewater_output_mode`` and ``cache_compress`` are declared on
+    # ``scene.fluidsim``, and Output Publication and Production Cache Bake read
+    # them from there. ``field_target`` lets callers resolve each key to the
+    # group that declares it instead of writing every key to one group; when
     # omitted, SCENE_OWNED_SETTINGS keys route to ``scene.fluidsim`` and
     # everything else routes to ``target``.
     scene_settings = getattr(scene, "fluidsim", None)
@@ -249,12 +248,11 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
     try:
         for key, value in preset.settings.items():
             setattr(resolve(key), key, value)
-        # ``active_preset_id`` drives the panel's "Applied:" feedback, which reads
-        # the scene-level group. Write it there when present, else fall back to the
-        # value target (covers scenes/tests without a separate ``scene.fluidsim``).
-        feedback = scene_settings if scene_settings is not None else target
-        if hasattr(feedback, "active_preset_id"):
-            feedback.active_preset_id = preset.id
+        # ``active_preset_id`` is a scene field and drives the panel's "Applied:"
+        # feedback, which reads the scene-level group. It is never written to the
+        # value ``target`` (the domain group, which does not declare it).
+        if scene_settings is not None:
+            scene_settings.active_preset_id = preset.id
     except Exception:
         for key, value in previous.items():
             try:

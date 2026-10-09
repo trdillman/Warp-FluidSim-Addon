@@ -15,7 +15,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from fluidSim_warp_blender51.sim.solver import SolverSettings
-from settings_doubles import setting, split_settings
+from settings_doubles import (
+    domain_group, full_settings, scene_group, setting, split_settings)
 
 
 def _build_settings(scene):
@@ -70,8 +71,9 @@ def _install_scene_bridge_stubs(monkeypatch):
 
 
 def _scene():
-    fs = SimpleNamespace(
+    fs = full_settings(
         domain_object=None,
+        quality="PREVIEW",
         voxel_size=0.1,
         leaf_capacity=64,
         topology_expand=1,
@@ -108,8 +110,6 @@ def _scene():
         relax_enabled=True,
         relax_strength=0.5,
         relax_mode="LOCAL_VOXEL",
-        restitution=0.0,
-        friction=0.0,
         pressure_solver="PCG",
         pressure_iterations=80,
         pressure_tolerance=1.0e-5,
@@ -318,16 +318,17 @@ def test_build_settings_reads_domain_fields_from_migrated_object(monkeypatch):
         solver_settings, "domain_bounds",
         lambda scene: ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)))
 
-    domain_group = SimpleNamespace(
+    group = domain_group(
         voxel_size=0.02, max_particles=9_000_000,
         use_scene_gravity=False, gravity=(0.0, 0.0, -3.0))
-    domain_obj = SimpleNamespace(fluidsim_domain=domain_group)
+    domain_obj = SimpleNamespace(fluidsim_domain=group)
+    scene_fs = scene_group(domain_object=domain_obj, quality="PREVIEW")
+    # Stale mirror values the solver must NOT read post-migration.
+    vars(scene_fs).update(
+        schema_version=1, voxel_size=0.5, max_particles=1,
+        use_scene_gravity=True, gravity=(0.0, 0.0, 0.0))
     scene = SimpleNamespace(
-        fluidsim=SimpleNamespace(
-            schema_version=1, domain_object=domain_obj,
-            # Stale mirror values the solver must NOT read post-migration.
-            voxel_size=0.5, max_particles=1,
-            use_scene_gravity=True, gravity=(0.0, 0.0, 0.0)),
+        fluidsim=scene_fs,
         render=SimpleNamespace(fps=24, fps_base=1),
         use_gravity=True, gravity=(0.0, 0.0, -9.81))
 

@@ -393,10 +393,18 @@ def _selected_meshes(context):
     )
 
 
-def _record_attributes(journal, owner, names) -> None:
+def _record_attributes(journal, owner, names, *, optional: bool = True) -> None:
+    """Record ``names`` on ``owner`` so the journal can restore them.
+
+    ``optional=True`` is for Blender-native attributes (``Object.display_type``
+    and friends), where an attribute missing on an unusual ID type is skipped.
+    Settings fields go through ``_record_settings``: a name the settings group
+    does not declare is a wrong-group read and must raise instead of silently
+    leaving the field out of the rollback.
+    """
     values = {}
     for name in names:
-        if not hasattr(owner, name):
+        if optional and not hasattr(owner, name):
             continue
         value = getattr(owner, name)
         if hasattr(value, "copy") and not hasattr(value, "as_pointer"):
@@ -408,6 +416,10 @@ def _record_attributes(journal, owner, names) -> None:
             setattr(owner, name, value)
 
     journal.record(restore)
+
+
+def _record_settings(journal, group, names) -> None:
+    _record_attributes(journal, group, names, optional=False)
 
 
 _MISSING = object()
@@ -516,7 +528,7 @@ def _record_selected_state(journal, selected) -> None:
     for obj in selected:
         _record_object_links(journal, obj)
         _record_attributes(journal, obj, ("display_type", "hide_render"))
-        _record_attributes(journal, obj.fluidsim, setting_names)
+        _record_settings(journal, obj.fluidsim, setting_names)
 
 
 def _record_domain_state(journal, domain, preset_fields, mode) -> None:
@@ -527,7 +539,7 @@ def _record_domain_state(journal, domain, preset_fields, mode) -> None:
     fields = list(preset_fields)
     if mode == "QUICK_CONTAINER":
         fields.extend(("height_enabled", "height_emission_mode", "height_base"))
-    _record_attributes(journal, domain.fluidsim_domain, fields)
+    _record_settings(journal, domain.fluidsim_domain, fields)
 
 
 def _record_output_state(journal, obj, property_keys):
@@ -632,7 +644,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         scene_fields.extend(
             key for key in preset.settings if key in library.SCENE_OWNED_SETTINGS
         )
-    _record_attributes(journal, scene.fluidsim, scene_fields)
+    _record_settings(journal, scene.fluidsim, scene_fields)
     _record_selected_state(journal, selected)
     try:
         owner_id, _root, inputs, outputs, helpers, collection_names = (
@@ -733,7 +745,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
             domain_fs = domain.fluidsim_domain
             gravity = (
                 tuple(scene.gravity)
-                if bool(getattr(domain_fs, "use_scene_gravity", True))
+                if bool(domain_fs.use_scene_gravity)
                 else tuple(domain_fs.gravity)
             )
             bounds = compute_domain_bounds(
@@ -791,9 +803,8 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         scene.fluidsim.cache_enabled = False
         scene.fluidsim.bake_start = int(scene.frame_start)
         scene.fluidsim.bake_end = int(scene.frame_end)
-        if hasattr(scene.fluidsim, "setup_mode"):
-            scene.fluidsim.setup_mode = mode
-        if hasattr(scene.fluidsim, "active_preset_id") and applied is not None:
+        scene.fluidsim.setup_mode = mode
+        if applied is not None:
             scene.fluidsim.active_preset_id = applied.preset_id
         capacity = _capacity_summary(scene)
         message = (
