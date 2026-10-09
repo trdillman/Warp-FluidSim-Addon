@@ -65,6 +65,27 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   2.1), so blends are restored to HEAD before each run and the qualifying run's blends
   get committed (`docs/QUALIFIED_DEMO_INPUTS.md` note, `f851bfd`). The gate's rebuilt `crown_splash`/`dam_break` blends were committed as
   `fb530b6` (crown_splash build whitewater peak 5346 → 5529); demo hash unchanged.
+- **Gate run2d (`ebaf9ef`, after graft closed):** the whole gate process tree vanished at
+  14:25:50 during the paddle_stir budget trials (no exit line, summary `incomplete`, no
+  kill found in other sessions). Suspected: the launching tool shell's job object. Gates
+  now launch through WMI (`orch\scratch\launch_gate_wmi.ps1`), outside any tool shell.
+- **Budget once per commit (user decision 2026-10-09).** The 3 consecutive passes now
+  measure the performance budget on the first run only; runs 2 and 3 pass
+  `--reuse-budget`, which reuses that summary only for the same HEAD with unmodified
+  add-on/benchmark sources and records the reuse in the manifest. Saves ~10 min per run.
+- **Gate run2e (`ebaf9ef`):** every Blender check passed; the budget, reached cleanly for
+  the first time, was `invalid` on comparison contract, not speed: 3.0's new settings
+  (narrow band, preconditioner) and removed ST-FLIP settings were unknown to the
+  comparator, and Resolution Divisions snaps crown_splash/dam_break grids (crown_splash
+  88x88x56 -> 80x80x56 padded, dam_break 188 -> 187 voxels on x). Owner decision
+  2026-10-09: compare per frame, allowing only a one-voxel lattice snap and recording it
+  (`latticeSnap`); the new/removed settings are neutral only while their switches are off.
+  Replaying run2e's 64 trials: pass, host ratio crown 0.65 (cell ratio 0.83), dam 0.60,
+  paddle 0.81, chromatic 0.91.
+- **Gate speed-ups:** parallel Python checks (64 s wall for 10 steps), one batched Blender
+  session for the 33 background acceptance scripts with standalone rerun of any non-pass
+  (alembic export reruns: it expects Warp not yet loaded), per-step timing and a
+  `--quick` tier (QUICK-GATE-PASS in 351 s on the gate branch).
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
