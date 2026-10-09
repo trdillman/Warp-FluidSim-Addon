@@ -1,5 +1,118 @@
 # Changelog
 
+## 3.0.0 — unreleased
+
+See `docs/migrating_to_3_0.md` for what happens to a 2.x file, cache and
+checkpoint.
+
+### Upgrade notes
+
+- **Caches must be baked again.** Cache format 3 is the only format 3.0
+  reads. A 2.x cache is refused with "This cache was baked by FluidSim 2.x and
+  cannot be played by 3.0. Re-bake, or open it in 2.1.1." and is never
+  migrated. Solver checkpoints are format 2, so a 2.x checkpoint is refused as
+  well.
+- **Voxel Size is replaced by Resolution Divisions** (cells along the longest
+  domain axis, default 64). A `.blend` saved before 3.0 is migrated on load:
+  its divisions are `round(longest axis / voxel size)`, so the cell size moves
+  to the nearest whole division. Resizing the domain now changes the cell size,
+  not the cell count. New domains use 64 divisions (0.0625 m on the 4 m default
+  box, previously 0.05 m).
+- **A cell size that went through float32 no longer pads an extra leaf.** Some
+  saved scenes get a smaller grid for the same settings and need a re-bake.
+  The crown_splash demo grid changes from 88 × 88 × 56 to 80 × 80 × 56 cells,
+  and dam_break's cell size from 0.03 m to 0.02995 m (187 divisions, same
+  dimensions). The demo reference hash changes with them.
+- **ST-FLIP (Spatiotemporal FLIP, Variable Projection) is removed.** See
+  Removed.
+- **The Scene tab shows only scene settings.** Every domain setting is on the
+  Physics tab; saved values are unchanged.
+
+### Added
+
+- **Resolution Divisions** replaces the authored Voxel Size in Setup and in the
+  Physics tab. The effective cell size and padded grid are shown read-only.
+  `voxel_size` stays as a derived property: writing it sets the nearest whole
+  divisions.
+- **APIC (affine particle-in-cell)** as a third **Transfer** mode beside PIC and
+  FLIP. It keeps swirl and rotation that PIC averages away. It uses its own
+  transfer kernels and costs 72 bytes per particle only while selected. FLIP
+  stays the default.
+- **Multigrid pressure preconditioner.** Pressure > Preconditioner (shown for
+  the PCG solver) chooses Jacobi or Multigrid. Multigrid is a symmetric,
+  atomic-free V-cycle inside the existing CUDA graph and needed 13 PCG
+  iterations against 123 for Jacobi on a 32³ obstacle test. Jacobi stays the
+  default and is bitwise unchanged.
+- **Export Surface as Alembic** in the Bake & Export stage. It writes the liquid
+  surface of a verified baked cache as a mesh sequence through Blender's
+  exporter and restores your playback state afterwards. It exports the surface
+  mesh only, not particles or whitewater.
+- **Playback only mode.** With Warp loaded but no CUDA device, the extension
+  enables, loads, plays and exports caches. The UI says "Playback only — CUDA
+  unavailable", the Simulate stage is disabled and baking is hidden.
+- **Cache format 3.** Every frame records a stamp of every source and collider
+  as evaluated at that frame. Resume refuses when an animation changed after
+  the bake and names the first changed frame; **Re-bake from Frame N** keeps the
+  frames before it and bakes the rest. The Bake stage explains a refused 2.x
+  cache. The manifest also records the grid, transfer mode, platform and source
+  schema, and each frame carries empty sparse `liquid_sdf_*` arrays.
+- **Checkpoint format 2** reserves the `particle_affine` and
+  `narrow_band_seed_state` slots.
+
+### Changed
+
+- Bake manifests record the real transfer mode (PIC, FLIP or APIC) instead of
+  always FLIP.
+- Switching Transfer between FLIP and APIC mid-simulation is allowed. Importing
+  a checkpoint from the other mode drops or zero-fills the affine data without
+  error.
+- The Resumable Cache format is labelled "Resumable Cache" instead of "v2" (the
+  saved identifier is unchanged, so old files still resolve).
+- **Open Full Settings** opens the Physics tab when a domain is active.
+- `SolverSettings` defaults now equal the Blender property defaults
+  (`viscosity_constant` 0.05, `ww_bubble_drag` 4.0, `ww_spray_drag` 0.2,
+  `speed_limit_percent` 0.5, `churn_decay` 2.0). Blender scenes always passed
+  the property value, so only code that builds `SolverSettings()` directly sees
+  a difference.
+- Kernel prewarm is skipped when the runtime probe reports no CUDA.
+
+### Removed
+
+- **ST-FLIP.** The Spatiotemporal FLIP solver, its 14 settings, the
+  Spatiotemporal Processing panel, its kernels, its validation gate and its
+  checkpoint scalars are gone. A saved scene that had ST-FLIP on opens without
+  it and simulates with the ordinary pressure projection; re-bake it.
+
+### Fixed
+
+- A float32 cell size no longer pads an extra leaf per axis (for example 64
+  divisions padding to 72).
+- Add-on unregistration finishes past a class that refuses to unregister and
+  names it, instead of stopping at the first failure.
+- `CudaDotProduct` checks array lengths before a launch.
+- A refused bake start restores the Live flag.
+
+### Internal
+
+- `io/vdb_writer.py` is a pure-Python OpenVDB level-set writer that Blender 5.2
+  loads as a Volume. It is not connected to bake, cache or the UI.
+
+### Known limitations
+
+- APIC retains 0.939 of a spinning disc's angular momentum over 100 frames
+  (PIC 0.596, FLIP 0.940). Most of the loss is in the shared free-surface path,
+  not in APIC.
+- APIC and the Multigrid preconditioner are opt-in in this build. FLIP and
+  Jacobi remain the defaults.
+- The cache frame stamp covers each source's world matrix and geometry.
+  Collider motion driven by rigid-body simulation is not tested.
+- Resume checks every baked frame's stamp with `frame_set`, so its start-up
+  cost grows with the number of baked frames.
+- Points and whitewater are not exported to Alembic: Blender 5.2's exporter
+  writes only an empty transform for a point cloud.
+- The Time Offset colour mode has nothing to show: the channel it read was
+  fed by ST-FLIP and is now always zero.
+
 ## 2.1.0 — staged sidebar, collider walls that slide and grip, faster viscosity
 
 ### Upgrade notes
