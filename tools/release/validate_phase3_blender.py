@@ -315,7 +315,7 @@ def validate(module_name: str, work_dir: Path) -> dict:
             "surface_verts": surface_verts,
             "surface_tris": surface_tris,
             # A Phase-3 attribute-schema-v1 frame: the oldest attribute
-            # layout a cache-v2 frame can carry.
+            # layout a cache frame can carry.
             "attribute_schema_version": np.array(1, dtype=np.int32),
             "attribute_inventory_json": np.array(json.dumps(
                 {

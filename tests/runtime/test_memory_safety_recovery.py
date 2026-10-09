@@ -223,10 +223,15 @@ def addon(monkeypatch):
 def _scene(*, alternatives=False, status=""):
     return SimpleNamespace(
         fluidsim=SimpleNamespace(
+            # The capacity panel is Advanced-tier; the real default is BASIC.
+            ui_mode="ADVANCED",
             capacity_show_alternatives=alternatives,
             status=status,
             leaf_capacity=262_144,
             max_particles=8_000_000,
+            stat_step_ms=0.0,
+            stat_substeps=0,
+            stat_cfl_clamped=False,
         )
     )
 
@@ -255,7 +260,7 @@ def _draw_capacity_panel(addon, monkeypatch, scene, plan):
     monkeypatch.setattr(
         addon.ui_scene,
         "active_domain_settings",
-        lambda _scene: SimpleNamespace(auto_grow_particles=False),
+        lambda _scene: SimpleNamespace(auto_grow_particles=False, height_error=""),
     )
     context = SimpleNamespace(scene=scene)
     panel = addon.ui_scene.FLUIDSIM_PT_scene_capacity()

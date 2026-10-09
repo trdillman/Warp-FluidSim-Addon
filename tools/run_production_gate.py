@@ -142,6 +142,8 @@ MANUAL_BLENDER_PROBES = {
         "profile-safe visible review via tools/gate/launch_profile_safe_addon_review.py",
     "tests/acceptance/blender_performance_playback_benchmark.py":
         "separate foreground handler/visibility evidence; the mandatory saved-demo budget runs via tools/benchmark_versions.py",
+    "tests/acceptance/blender_settings_split_3_0_acceptance.py":
+        "dumps shipped scenes' domain settings to JSON for base/branch comparison; needs an output path argument",
 }
 RELEASE_WARP_VALIDATORS = ("phase4", "phase5", "custom_effects")
 # tools/release/validate_{check}_blender.py: (check, inputs, success marker).

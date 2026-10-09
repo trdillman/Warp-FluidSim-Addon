@@ -835,7 +835,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     # Production bake
     cache_format: EnumProperty(
         name="Cache Format",
-        items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
+        # The "V2" identifier is kept so saved .blend files still resolve; the
+        # bake writes cache format v3.
+        items=(("V2", "Resumable Cache", "Transactional frame cache with deterministic restart checkpoints"),),
         default="V2",
         description="Choose the on-disk cache layout used for production bakes",
     )
@@ -849,7 +851,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     )
     checkpoint_interval: IntProperty(
         name="Checkpoint Interval", default=1, min=1, max=100,
-        description="Checkpoint cadence; current cache-v2 production guarantees commit one restart checkpoint per frame",
+        description="Checkpoint cadence; production bakes commit one restart checkpoint per frame",
     )
     bake_status: EnumProperty(
         name="Bake Status",
