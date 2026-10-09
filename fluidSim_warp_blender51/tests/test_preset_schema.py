@@ -43,7 +43,7 @@ def test_voxel_size_type_range_and_finite_contract(value):
 
 def test_enum_identifier_is_strict():
     with pytest.raises(ValueError, match="must be one of"):
-        PresetV1.from_dict(_payload(settings={"sample_type": "APIC"}))
+        PresetV1.from_dict(_payload(settings={"sample_type": "ASFLIP"}))
 
 
 def test_phase4_whitewater_controls_are_allow_listed():

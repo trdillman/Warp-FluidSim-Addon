@@ -84,10 +84,12 @@ from .kernels_core import (
 from .kernels_fluid import (
     ForceFieldProxy,
     k_gather_grid_data,
+    k_gather_grid_data_apic,
     k_normalize_mac,
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
+    k_staggered_field_to_particle_apic,
     k_apply_collider_material_to_grid,
     k_advect_particles,
     k_forces_gravity,
@@ -1442,10 +1444,18 @@ class FluidSolver:
         # their float wp.atomic_add sums in thread-arrival order and makes the
         # whole bake irreproducible; see k_gather_grid_data.
         nv = self._nvox
+        # PIC/FLIP keep the original kernel untouched (bit-identical); APIC has
+        # its own variant so no APIC arithmetic can reach the shared path.
+        if self._apic_active():
+            gather_kernel = k_gather_grid_data_apic
+            head = [p.position, p.velocity, p.affine_for_kernels(),
+                    int(self.settings.sample_type)]
+        else:
+            gather_kernel = k_gather_grid_data
+            head = [p.position, p.velocity]
         fast_launch(
-            k_gather_grid_data, dim=nv,
-            inputs=[p.position, p.velocity,
-                    p.affine_for_kernels(), int(self.settings.sample_type),
+            gather_kernel, dim=nv,
+            inputs=[*head,
                     g.leaf_table, g.leaf_coords, g.num_leaves,
                     g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size,
@@ -1733,8 +1743,11 @@ class FluidSolver:
         g = self.grid
         s = self.settings
         p = self.particles
+        apic = self._apic_active()
         fast_launch(
-            k_staggered_field_to_particle, dim=self._np_dim(),
+            k_staggered_field_to_particle_apic if apic
+            else k_staggered_field_to_particle,
+            dim=self._np_dim(),
             inputs=[p.position, p.count,
                     self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1742,7 +1755,8 @@ class FluidSolver:
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size,
                     int(s.sample_type), s.flip_ratio],
-            outputs=[p.velocity, p.affine_for_kernels()],
+            outputs=([p.velocity, p.affine_for_kernels()] if apic
+                     else [p.velocity]),
             device=self.device,
         )
 

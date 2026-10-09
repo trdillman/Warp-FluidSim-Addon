@@ -31,7 +31,7 @@ voxel_counts = wp.zeros(g.voxel_capacity, dtype=wp.int32, device=dev)
 collision_vel = wp.zeros(g.voxel_capacity, dtype=wp.vec3, device=dev)
 
 wp.launch(kernels_fluid.k_particle_set_grid_data, dim=5000,
-          inputs=[pos, velp, wp.zeros(1, dtype=wp.mat33, device=dev), 1, cnt, g.leaf_table, g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
+          inputs=[pos, velp, cnt, g.leaf_table, g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
                   vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww], device=dev)
 wp.launch(kernels_fluid.k_normalize_mac, dim=g.voxel_capacity,
           inputs=[vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww, g.num_leaves], device=dev)
