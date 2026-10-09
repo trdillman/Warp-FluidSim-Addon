@@ -54,8 +54,14 @@ Facts that explain results:
 3. **Beta re-baseline.** Decide whether Multigrid and APIC become defaults, and
    re-baseline the demo hash if they do. Today Jacobi and FLIP are the defaults and
    the user guide describes both as opt-in. TBD (orchestrator)
-4. **Lane J (narrow band).** Not documented. The cache writes empty `liquid_sdf_*`
-   arrays until it lands, and the VDB writer waits for its data. TBD (orchestrator)
+4. **Lane J (narrow band).** Merged as `2952a95` (opt-in, off by default; results
+   with it off are bitwise unchanged and the demo hash stays `8baa886c…baf3`).
+   2471 passed, 3 skipped, 1 xfailed at the merge. The settings signature is
+   re-pinned to `f812a312…f606` (two new settings); the ownership map has 217
+   rows. With narrow band on, frames carry `liquid_sdf_*` data; the VDB writer
+   is still not wired to it. The Liquid voxels readout shows only in
+   narrow-band mode (`0d39abc`). CHANGELOG lines under Added, Upgrade notes and
+   Known limitations.
 5. **Lane L (Warp-free cache signature).** Merged as `90d13ba`. `SolverSettings`
    lives in `sim/solver_settings_model.py` (re-exported from `sim/solver.py`); the
    settings signature is pinned to `e2a87bf9…8d38` and unchanged; the strict xfail is

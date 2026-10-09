@@ -25,6 +25,8 @@ checkpoint.
   dimensions). The demo reference hash changes with them.
 - **ST-FLIP (Spatiotemporal FLIP, Variable Projection) is removed.** See
   Removed.
+- **The settings signature changed** when Narrow-Band Particles was added, so
+  caches baked by an earlier 3.0 alpha build must be baked again.
 - **The Scene tab shows only scene settings.** Every domain setting is on the
   Physics tab; saved values are unchanged.
 
@@ -56,6 +58,15 @@ checkpoint.
   frames before it and bakes the rest. The Bake stage explains a refused 2.x
   cache. The manifest also records the grid, transfer mode, platform and source
   schema, and each frame carries empty sparse `liquid_sdf_*` arrays.
+- **Narrow-Band Particles** (Setup stage, off by default). Particles are kept
+  only within **Band Width** voxels (default 3) of the liquid surface and the
+  deep interior is carried on the grid. A 16 × 16 × 32 test tank needed 8×
+  fewer particles (49,152 to 6,144) with the same column height under
+  Multigrid. The toggle is greyed with the reason when color mixing,
+  viscosity from particles, a scalar field source or attribute export is on,
+  and Initialize refuses such a setup. While it is on, baked frames carry the
+  liquid surface SDF, checkpoints save the level set, and the Live Readout
+  shows Liquid voxels. With it off, results are bitwise unchanged.
 - **Checkpoint format 2** reserves the `particle_affine` and
   `narrow_band_seed_state` slots.
 
@@ -112,6 +123,11 @@ checkpoint.
   cost grows with the number of baked frames.
 - Points and whitewater are not exported to Alembic: Blender 5.2's exporter
   writes only an empty transform for a point cloud.
+- Under the default Jacobi preconditioner a deep liquid column settles about
+  a third lower than it should within 30 frames, with or without narrow band.
+  Use the Multigrid preconditioner where hydrostatic depth matters.
+- If a narrow-band reseed needs more particles than Max Particles allows, the
+  band is left under-seeded and the bake prints a notice to the console.
 - The Time Offset colour mode has nothing to show: the channel it read was
   fed by ST-FLIP and is now always zero.
 
