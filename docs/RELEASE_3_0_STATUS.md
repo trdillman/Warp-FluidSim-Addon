@@ -14,6 +14,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lanes E and B merge | `57c6540` | 2271 passed, 3 skipped (= 2053 + E 132 + B 86) | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lanes B2 and C merge | `881b0ab` | 2307 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane A merge + fixups | `582ccbc` | 2313 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
+| release/3.0 after lane A2 merge | `6b0abbd` | 2357 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -69,7 +70,31 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | B2 cache-v3 consumers | `3.0/lane-b2-cache-consumers` | `C:\Users\Tyler\wt\r30-b2` | `d3cbe3e` | 2289 passed, 3 skipped | | **merged** as `fcc6357`; cache-v3 Blender acceptance passed on `881b0ab` |
 | C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | `37b2315` | 2071 passed, 3 skipped | | **merged** as `881b0ab`; JACOBI stays the default, so the demo hash is unchanged |
 | A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | `5cc031d` | | | **merged** as `cc21cc7`, fixups `582ccbc`; shipped-scene settings dump identical to base |
-| A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | base `582ccbc` | | | dispatched (see below) |
+| A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | `697f342` | 2357 passed, 3 skipped | | **merged** as `6b0abbd`; JACOBI default, demo hash unchanged |
+| F APIC | `3.0/lane-f-apic` | `C:\Users\Tyler\wt\r30-f` | stop 1 `491f81e` | red tests as designed | | stop 1 accepted with changes; implementing |
+| H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | base `34d6b67` | | | running |
+| I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | base `34d6b67` | | | running (KEEP or KILL) |
+| G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | base `6b0abbd` | | | dispatched |
+
+### Wave 1 deviations
+
+- **Wave 1 started before the alpha.1 gate.** The plan only needs A and B merged; the
+  alpha.1 gate (3× GUI, ABBA) runs on the merged tree once Wave 1 merges settle.
+- **Defaults held for the hash.** APIC ships with FLIP still the default; multigrid ships
+  with JACOBI. Both flip at the beta re-baseline, so each hash change is attributable.
+- **Lane F (APIC).** `sample_type` gains `APIC = 2` (no rename, no ASFLIP). LIVE tier
+  with a lazily zeroed affine channel. Stop-1 review changed two things: a cross-mode
+  checkpoint import drops or zero-fills the affine instead of raising, and the memory
+  estimate must match real allocations. It added tests that the affine follows its
+  particle through reorder and compaction.
+- **Lane H scope.** It exports the SURFACE mesh only. Cache playback needs live mode plus
+  `cache_playback_enabled`, not live off. `register()` was already Warp-free.
+- **Lane I.** It writes the surface level set only. There is no velocity grid, because
+  the cache stores no MAC field.
+- **Lane G design.** `voxel_size` stays as a derived get/set RNA property over the new
+  `resolution_divisions`; it is not deleted. The tier is REINIT, not RESET. Domain
+  resize is already in the REINIT signature. Migration runs on load. The demos are
+  measured, not re-saved. Fixed a ceil rounding trap that could pad 64 divisions to 72.
 
 ### Open items from lane D
 
@@ -116,7 +141,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 
 ### Open items from lane A
 
-- **Lane A2 (dispatched on `582ccbc`).**
+- **Lane A2 (merged as `6b0abbd`).**
   - Wire the preconditioner setting: RNA enum (JACOBI default, MULTIGRID),
     `SolverSettings` field, `build_settings` projection, pressure panel, pending-settings
     classification.
