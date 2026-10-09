@@ -107,6 +107,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   - Both changes are accepted. G merges on its own, after F's FLIP hash is proven
     identical, so any demo-hash change is attributable to G. It becomes part of the
     alpha.2 re-baseline the plan already schedules.
+
 ### Open items from lane H
 
 - **Warp-free settings signature (owner: orchestrator, after F and G merge).**
