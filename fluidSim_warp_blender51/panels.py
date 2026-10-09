@@ -72,9 +72,24 @@ def _status_note(state) -> str:
     return "No simulation loaded; Preview starts one."
 
 
-def runtime_ui_state():
-    """``(ready, message)`` for the configured CUDA device."""
+PLAYBACK_ONLY_TEXT = "Playback only — CUDA unavailable"
+
+
+def playback_only() -> bool:
+    """True when Warp/CUDA cannot run: caches still load, play and export."""
     probe = probe_runtime()
+    return probe is not None and not probe.available
+
+
+def runtime_ui_state():
+    """``(ready, message)`` for the configured CUDA device.
+
+    Without a usable Warp/CUDA runtime the message is the fixed playback-only
+    notice; the probe's own reason is drawn beneath it by the status strip.
+    """
+    probe = probe_runtime()
+    if probe is not None and not probe.available:
+        return False, PLAYBACK_ONLY_TEXT
     return runtime_status_for_device(configured_device(), probe=probe)
 
 
@@ -151,6 +166,8 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
         row = runtime.row(align=True)
         row.label(text=runtime_message, icon="CHECKMARK" if runtime_ready else "ERROR")
         row.operator("fluidsim.refresh_runtime_probe", text="", icon="FILE_REFRESH")
+        if playback_only():
+            runtime.label(text=probe_runtime().message)
 
         draw_transport(layout, context, state, runtime_ready)
         draw_pending_apply(layout, scene)
