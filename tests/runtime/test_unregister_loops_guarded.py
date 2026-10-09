@@ -29,6 +29,7 @@ _LOOPS = {
     "blender.ui_stages": "STAGE_PANEL_CLASSES",
     "blender.ui_scene": "SCENE_PANEL_CLASSES",
     "blender.ui_object": "OBJECT_PANEL_CLASSES",
+    "blender.interchange": "CLASSES",
     "blender.menus": None,
 }
 

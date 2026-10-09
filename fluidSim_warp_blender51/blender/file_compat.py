@@ -135,6 +135,36 @@ def migrate_domain_resolution(objects=None, scenes=None) -> int:
     return len(pending)
 
 
+def migrate_removed_particle_color_mode(scenes=None) -> int:
+    """Send a scene that stored the removed Time Offset particle colour mode to ``NONE``.
+
+    ``TIME_OFFSET`` was the last ``particle_attribute_mode`` item. Blender keeps
+    an enum as its integer index, so after the item was removed a stored index
+    past the end of the list reads back as an empty string, which no colour
+    branch recognizes. Such a scene is set back to ``NONE`` (Material).
+    Idempotent. Returns the number of scenes changed.
+    """
+    from ..properties import PARTICLE_ATTR_ITEMS
+    from . import pending_settings
+
+    scenes = getattr(getattr(bpy, "data", None), "scenes", ()) if scenes is None else scenes
+    stale = []
+    for scene in scenes:
+        stored = _stored_scene_group(scene)
+        try:
+            index = None if stored is None else stored.get("particle_attribute_mode")
+            if index is None or int(index) < len(PARTICLE_ATTR_ITEMS):
+                continue
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if getattr(scene, "fluidsim", None) is not None:
+            stale.append(scene)
+    for scene in stale:
+        with pending_settings.suppress_callbacks(scene):
+            scene.fluidsim.particle_attribute_mode = "NONE"
+    return len(stale)
+
+
 @persistent
 def _on_load_post(_arg):
     migrate_domain_resolution()
@@ -143,6 +173,7 @@ def _on_load_post(_arg):
             print(f"FluidSim: scene {scene.name!r}: {UNMIGRATED_SNIPPETS_MESSAGE}")
         elif is_pre_bridge_scene(scene):
             print(f"FluidSim: scene {scene.name!r}: {PRE_BRIDGE_MESSAGE}")
+    migrate_removed_particle_color_mode()
 
 
 def register_handlers():

@@ -131,8 +131,9 @@ Experimental.
 - A saved scene that had ST-FLIP enabled opens without it. The scene simulates with
   the ordinary pressure projection, so the result differs from the ST-FLIP
   result. Re-bake it.
-- The Time Offset colour mode has nothing to show. It read a channel that only
-  ST-FLIP filled, and that channel is now always zero.
+- The Time Offset particle colour mode is removed. It read a channel that only
+  ST-FLIP filled, and that channel is now always zero. A scene that used it opens
+  with the particle colour set to Material.
 - To keep working with ST-FLIP, stay on 2.1.x.
 
 ## 4. Playback only mode
