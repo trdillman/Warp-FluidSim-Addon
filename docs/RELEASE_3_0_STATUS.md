@@ -12,6 +12,8 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | `archive/st-flip-final` tag (local) | `94c79eb` | | |
 | release/3.0 after lane D merge | `6ce6b33` | 2053 passed, 3 skipped (on D head `34528aa`; merge adds docs only) | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lanes E and B merge | `57c6540` | 2271 passed, 3 skipped (= 2053 + E 132 + B 86) | `2cb4f781…3a73` (headless, equals master) |
+| release/3.0 after lanes B2 and C merge | `881b0ab` | 2307 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
+| release/3.0 after lane A merge + fixups | `582ccbc` | 2313 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -64,9 +66,10 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | D st-flip-removal | `3.0/lane-d-stflip-removal` | `C:\Users\Tyler\wt\r30-d` | `34528aa` | 2053 passed, 3 skipped | | **merged** as `6ce6b33`; demo hash unchanged |
 | E hygiene | `3.0/lane-e-hygiene` | `C:\Users\Tyler\wt\r30-e` | `cd57eb1` | 2236 passed, 3 skipped | | **merged** as `dfb2d91` |
 | B cache-v3 | `3.0/lane-b-cache-v3` | `C:\Users\Tyler\wt\r30-b` | `c391234` | 2190 passed, 3 skipped | | **merged** as `57c6540` |
-| B2 cache-v3 consumers | `3.0/lane-b2-cache-consumers` | `C:\Users\Tyler\wt\r30-b2` | base `57c6540` | | | dispatched (2.x refusal in cache manager, bake action, CLI; profiler writer; gate wiring; MANIFEST rows) |
-| A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | base `6ce6b33` | | | dispatched |
-| C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | stop 1 `53fbfe0` | stop 1: 9 failed, 4 passed (as designed); existing solver/perf 372 passed | | stop-1 tests accepted; stop 2 (kernels) running |
+| B2 cache-v3 consumers | `3.0/lane-b2-cache-consumers` | `C:\Users\Tyler\wt\r30-b2` | `d3cbe3e` | 2289 passed, 3 skipped | | **merged** as `fcc6357`; cache-v3 Blender acceptance passed on `881b0ab` |
+| C multigrid | `3.0/lane-c-multigrid` | `C:\Users\Tyler\wt\r30-c` | `37b2315` | 2071 passed, 3 skipped | | **merged** as `881b0ab`; JACOBI stays the default, so the demo hash is unchanged |
+| A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | `5cc031d` | | | **merged** as `cc21cc7`, fixups `582ccbc`; shipped-scene settings dump identical to base |
+| A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | base `582ccbc` | | | dispatched (see below) |
 
 ### Open items from lane D
 
@@ -108,11 +111,23 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   579, 583, 638, 757; `technical_report.md` 5, 48, 50, 255, 321, 506, 517;
   `custom_effects.md` 91, 98; `resources/examples/README.md` 20. The owner's uncommitted
   2.1.1 bump also touches the first lines of `user_guide.md` and `technical_report.md`.
-- **Lane A strings, edited by the orchestrator after A merges.**
-  - `properties.py:838`: relabel "Resumable Cache v2" and keep the identifier `V2`.
-  - `properties.py:852`.
-  - `tools/release/validate_examples_blender.py:118`, `validate_phase3_blender.py:318`,
-    `generate_examples.py:211`.
+- ~~Lane A strings~~ done in `582ccbc` (enum relabelled "Resumable Cache", identifier
+  `V2` kept).
+
+### Open items from lane A
+
+- **Lane A2 (dispatched on `582ccbc`).**
+  - Wire the preconditioner setting: RNA enum (JACOBI default, MULTIGRID),
+    `SolverSettings` field, `build_settings` projection, pressure panel, pending-settings
+    classification.
+  - "Open Full Settings" buttons (`fluidsim.open_scene_properties`) should open the
+    Physics tab when a domain is active, now that domain panels live only there.
+  - Guard the unregister loops listed above.
+  - Rename the stale test name at `tests/.../test_effect_cache_contract.py:130`.
+- Three non-Blender `SolverSettings` users now get the unified defaults; check them at
+  alpha.1.
+- `setting_owner` docs still describe the pre-split ownership.
+- Delete the `lane-a-base` export (about 12 MiB) once alpha.1 passes.
 
 ### Lane C stop-1 review (accepted)
 
