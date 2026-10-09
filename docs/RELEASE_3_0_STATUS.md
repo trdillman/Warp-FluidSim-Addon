@@ -80,8 +80,35 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | `8ebb281` | 2319 passed + gate fix | | **KEEP**, **merged** as `aae0607` (2 of 3 attempts; Blender 5.2 meshes a sphere within 0.05 voxel). Not wired to export; wiring waits for lane J's `liquid_sdf_*` data (check cell-centre `origin` then) |
 | G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | `2bc4a91` | 2371 passed, 3 skipped (lane) | | **PARTIAL→accepted**, **merged** as `b4c9dc5`. `RESOLUTION_DIVISIONS_OK` on 5.2 (merged tree). About 19 acceptance scripts now snap `voxel_size` to whole divisions (table in lane report); the GUI gate covers them |
 | L Warp-free signature | `3.0/lane-l-warpfree-signature` | `C:\Users\Tyler\wt\r30-l` | base `cfff382` | | | dispatched (follow-up to H; must merge before J edits `sim/solver.py`) |
-| J narrow-band | | | | | | spec being verified against `cfff382` before brief |
-| K docs | | | | | | brief next |
+| J narrow-band | | | | | | brief written (`r30_briefs/lane-j.md`), **staged: stop 1** (design note, strict-xfail acceptance tests, settings/blocker/stat wiring, no kernels). Dispatches after L merges |
+| K docs | `3.0/lane-k-docs` | `C:\Users\Tyler\wt\r30-k` | base `b1e064b` | | | dispatched (CHANGELOG 3.0.0, `migrating_to_3_0.md`, user guide, technical report, handoff skeleton; J and L excluded) |
+
+### Wave 2 deviations
+
+- **Lane J spec is wrong at its core (verified on `cfff382`).**
+  - Topology is rebuilt every substep from particle positions.
+  - `VOXEL_FLUID` comes from per-cell particle counts.
+  - So the spec's "phi from `VOXEL_FLUID`" is circular. Once the interior particles are
+    killed, the interior leaves its leaves and FLUID flags, and the liquid collapses to
+    the band.
+  - The lane must carry a persistent, advected liquid level set and interior grid
+    velocity across the rebuild, as `churn` is carried today.
+  - The particle-splat SDF also feeds surface tension and whitewater typing, not just
+    the render surface.
+  - Top-up sources would refill the interior.
+  - The "Manual rebuild reads phi from cache" item has no consumer.
+  - So J runs test-first in two stops. The orchestrator reviews the design note and
+    tests before any kernel lands. Demos are enabled by the orchestrator in a separate
+    commit.
+- **Disk incident, 2026-10-09.** Stray background `python -` heredocs left by lanes F,
+  H and I fell into a REPL error loop and wrote about 10 GB of tracebacks to the session
+  TEMP task directory. Free space fell to 30 GB.
+  - The processes were stopped and the junk logs truncated.
+  - The stray commands also left post-merge edits in the lane worktrees: a duplicate
+    `Step` in r30-h `registration.py` (reverted), and a test docstring in r30-f
+    (reverted by F).
+  - The merged tree was unaffected.
+  - `_env.md` now forbids stdin interpreters.
 
 ### Wave 1 deviations
 
