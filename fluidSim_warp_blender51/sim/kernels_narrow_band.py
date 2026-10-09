@@ -447,8 +447,9 @@ def k_nb_reseed_demand(
     collision_sdf: wp.array(dtype=float),
     voxel_counts: wp.array(dtype=wp.int32),
     num_leaves: wp.array(dtype=wp.int32),
-    target: int,
     min_depth: float,
+    trigger: int,
+    fill: int,
     demand: wp.array(dtype=wp.int32),
 ):
     """Particles a band cell is short of.
@@ -456,6 +457,14 @@ def k_nb_reseed_demand(
     Only cells at least ``min_depth`` below the surface are topped up: the
     surface layer itself is owned by the particles that define it, so
     reseeding there would inflate the volume.
+
+    Only a cell with fewer than ``trigger`` particles (an empty cell, as when
+    the band moves into ground the interior kill had cleared) is filled, and
+    only to ``fill``.  Topping every sparse cell up to the full density is a
+    ratchet: nothing ever removes the surplus where the flow converges, so a
+    spreading liquid whose full-band particles dilute would be re-densified
+    until the count passed the full band's (dam_break: 50k, 237k, then the
+    600k cap against a constant 256k).
     """
     tid = wp.tid()
     demand[tid] = 0
@@ -464,8 +473,8 @@ def k_nb_reseed_demand(
     if cls[tid] != 1 or phi[tid] > -min_depth or collision_sdf[tid] < 0.0:
         return
     have = voxel_counts[tid]
-    if have * 2 < target:
-        demand[tid] = target - have
+    if have < trigger:
+        demand[tid] = wp.max(fill - have, 0)
 
 
 @wp.kernel

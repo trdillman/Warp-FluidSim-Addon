@@ -53,6 +53,9 @@ _SEED_MASK = 0x7FFFFFFF
 # Added to interior voxel counts around sourcing; far above any emit_rate.
 INTERIOR_COUNT_CREDIT = 1 << 16
 
+# A band cell holding fewer particles than this is reseeded (an empty cell).
+RESEED_TRIGGER = 1
+
 
 class NarrowBand:
     """Persistent level set, interior velocity and the band reseed machinery."""
@@ -294,8 +297,8 @@ class NarrowBand:
         fast_launch(
             k_nb_reseed_demand, dim=nv,
             inputs=[self.cls, self.phi, sv.collision_sdf.data,
-                    sv.voxel_counts.data, g.num_leaves, target,
-                    g.voxel_size],
+                    sv.voxel_counts.data, g.num_leaves,
+                    g.voxel_size, RESEED_TRIGGER, max(1, target // 2)],
             outputs=[self.demand], device=dev)
         wp.utils.array_scan(self.demand[:nv], self.offsets[:nv], inclusive=False)
         fast_launch(
