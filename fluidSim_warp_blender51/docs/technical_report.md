@@ -185,7 +185,7 @@ Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 ---
 
 ### Particle-grid transfer: PIC, FLIP, APIC
-`ParticleSampleType` has PIC, FLIP (default) and APIC (`= 2`). APIC runs its own
+`ParticleSampleType` has PIC, FLIP and APIC (`= 2`, the default for new domains; domains made before 3.0 are pinned to FLIP on load, see `file_compat.migrate_domain_defaults`). APIC runs its own
 `*_apic` kernels (P2G and G2P); the PIC/FLIP kernels are unchanged, so FLIP
 results are bitwise identical to the build before APIC. Each particle carries a
 3x3 affine matrix (`mat33`, 36 B), double buffered for compaction, so 72 B per

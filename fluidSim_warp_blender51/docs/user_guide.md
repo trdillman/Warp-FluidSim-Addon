@@ -222,9 +222,9 @@ The root summarizes active solver features. Children are:
 **Transfer** chooses how velocity moves between particles and the grid:
 
 - **PIC** — smooth and dissipative.
-- **FLIP** (default) — keeps motion and can be noisier. **FLIP Ratio** appears
+- **FLIP** — keeps motion and can be noisier. **FLIP Ratio** appears
   only for FLIP and blends PIC and FLIP updates.
-- **APIC** — each particle also carries a 3 × 3 affine matrix (its local
+- **APIC** (default for new domains) — each particle also carries a 3 × 3 affine matrix (its local
   rotation and shear), so swirl and spin survive the trip through the grid
   instead of being averaged away.
 
@@ -244,7 +244,7 @@ three share. Try APIC on your own scene before relying on it.
 ##### Preconditioner
 
 For the PCG pressure solver, **Preconditioner** chooses **Jacobi** (default) or
-**Multigrid**. It is opt-in in this build. Multigrid applies one multigrid
+**Multigrid**. Multigrid is still opt-in: on the dam_break demo it needs about 10 times fewer iterations but each solve is slower. Multigrid applies one multigrid
 V-cycle per iteration: each iteration costs more, and far fewer are needed on
 large or finely resolved domains (13 against 123 iterations on a 32³ obstacle
 test). Whether it is faster per frame depends on the scene, so measure your own

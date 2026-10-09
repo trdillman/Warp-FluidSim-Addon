@@ -52,9 +52,18 @@ Facts that explain results:
    hash matches the recorded reference (scoped validation, `docs/RELEASING.md`).
    TBD (orchestrator)
 2. **ABBA performance run** against 2.1.x. TBD (orchestrator)
-3. **Beta re-baseline.** Decide whether Multigrid and APIC become defaults, and
-   re-baseline the demo hash if they do. Today Jacobi and FLIP are the defaults and
-   the user guide describes both as opt-in. TBD (orchestrator)
+3. **Beta re-baseline (lane M, `3.0/lane-m-defaults`).** APIC is now the default
+   Transfer for new domains; domains made before this change are pinned to FLIP and
+   JACOBI on load, File > Append and the Demo Gallery (`fluidsim_defaults_epoch`
+   object stamp, `file_compat.migrate_domain_defaults`). **Multigrid stays opt-in:**
+   on dam_break (frames 2-48, tol 1e-5, APIC) it needs 5 against 50 median PCG
+   iterations (10x fewer) but ~4.8 ms against ~1.9-2.4 ms per solve (about 2.5x
+   slower), missing the spec's 1.5x-faster gate. **Narrow band stays off in
+   dam_break:** it was 1.4x slower per frame and grew to the 600k particle cap
+   (256k full-band). Both are owner decisions. New demo hash
+   `c7542ea19d7d7df6db97051f9a05760c9f5514bd01f7ee3bfabea88678f796a4` (2 runs, 21/21
+   demo checks). The committed `demos/*.blend` were not re-saved: they read as
+   pre-3.0 (FLIP/JACOBI) until the owner re-saves them from the builder.
 4. **Lane J (narrow band).** Merged as `2952a95` (opt-in, off by default; results
    with it off are bitwise unchanged and the demo hash stays `8baa886c…baf3`).
    2471 passed, 3 skipped, 1 xfailed at the merge. The settings signature is
