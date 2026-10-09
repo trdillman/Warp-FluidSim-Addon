@@ -56,7 +56,7 @@ def _evaluate(node, names):
 def _solver_defaults():
     """Every ``SolverSettings`` field that has a plain default, evaluated: literals,
     ``C.DEFAULT_*`` constants and ``int(SomeEnum.MEMBER)`` expressions alike."""
-    tree = _tree("sim/solver.py")
+    tree = _tree("sim/solver_settings_model.py")
     names = _names(tree)
     defaults = {}
     for item in _class(tree, "SolverSettings").body:

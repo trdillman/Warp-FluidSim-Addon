@@ -170,7 +170,7 @@ def validate_setting_registry():
     global _SETTING_REGISTRY_VALIDATED
     if _SETTING_REGISTRY_VALIDATED:
         return
-    from ..sim.solver import SolverSettings
+    from ..sim.solver_settings_model import SolverSettings
 
     targets = {SETTING_ALIASES.get(name, name) for name in DIRECT_SETTING_FIELDS}
     targets.update(SETTING_ALIASES.get(target, target)
@@ -272,7 +272,7 @@ def normalize_domain_boundary_settings(settings):
 def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
-    from ..sim.solver import SolverSettings
+    from ..sim.solver_settings_model import SolverSettings
 
     fs = active_domain_settings(scene)
     settings = SolverSettings()

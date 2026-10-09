@@ -141,23 +141,20 @@ def test_registration_table_reaches_warp_through_no_top_level_import():
 
 # ------------------------------------------------ known gap, pinned loudly ----
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="cache_identity.settings_signature -> solver_settings.build_settings "
-           "imports sim.solver (Warp) at call time, and play_cache_frame calls it "
-           "for every frame via _check_cache_scene_key. Harmless while Warp is "
-           "importable (CUDA absent); an unimportable Warp breaks cache playback. "
-           "The fix belongs to playback/cache_identity/solver_settings.")
 def test_playback_signature_check_does_not_import_warp():
     source = (PACKAGE / "blender" / "solver_settings.py").read_text(encoding="utf-8")
     build = next(
         node for node in ast.parse(source).body
         if isinstance(node, ast.FunctionDef) and node.name == "build_settings")
     imported = [
-        ast.unparse(node) for node in ast.walk(build)
+        (node.module or "") if isinstance(node, ast.ImportFrom)
+        else ",".join(alias.name for alias in node.names)
+        for node in ast.walk(build)
         if isinstance(node, (ast.Import, ast.ImportFrom))
     ]
-    assert not any("sim.solver" in text or "warp" in text for text in imported), imported
+    assert not any(
+        name.split(".")[-1] == "solver" or name.split(".")[0] == "warp"
+        for name in imported), imported
 
 
 # --------------------------------------- masked-import playback (subprocess) ----
