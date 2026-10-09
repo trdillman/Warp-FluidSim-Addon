@@ -17,7 +17,7 @@ the repository root for the reserved demo definition.
 | `01_live_pour.blend` | Continuous inflow, Preview Water, basin collider | Low; intended for live blocking |
 | `02_moving_collider_splash.blend` | Initial fill and animated velocity-transferring collider | Medium; Production Water settings |
 | `03_viscous_honey.blend` | Honey preset and implicit viscosity | High; viscosity increases solve cost |
-| `04_whitewater_bake_resume.blend` | Typed foam/bubble/spray with combined + separate outputs and cache-v2 bake range | High; intended for production bake/resume |
+| `04_whitewater_bake_resume.blend` | Typed foam/bubble/spray with combined + separate outputs and cache-v3 bake range | High; intended for production bake/resume |
 | `05_custom_effects_vortex.blend` | Static Vortex Force before/after validation fixture with controller and supplied-Warp numerical evidence | Low; review only, no live domain or solver playback |
 | `06_custom_effects_stack.blend` | Static ordered-effect fixture with analytic energy comparison | Low; review only, no live domain or solver playback |
 | `07_warp_code_authoring.blend` | Static Warp Code package/trust review scene | Low; authoring evidence only, no live domain or solver playback |
