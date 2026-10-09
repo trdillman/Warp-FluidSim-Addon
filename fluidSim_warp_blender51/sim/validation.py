@@ -281,7 +281,7 @@ def test_g2p_sampling(device):
                 grid.leaf_table, grid.voxels_dim, grid.leaves_dim,
                 grid.origin, grid.voxel_size,
                 0, 1.0],  # PIC
-        outputs=[psys.velocity], device=device,
+        outputs=[psys.velocity, psys.affine_for_kernels()], device=device,
     )
     v = psys.velocity.numpy()[:n]
     err = np.abs(v - np.array([1.0, 2.0, 3.0], dtype=np.float32)).max()

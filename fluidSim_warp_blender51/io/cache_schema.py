@@ -29,7 +29,7 @@ LEGACY_2X_FORMAT_VERSION = 2
 LEGACY_2X_CACHE_MESSAGE = (
     "This cache was baked by FluidSim 2.x and cannot be played by 3.0. "
     "Re-bake, or open it in 2.1.1.")
-SUPPORTED_TRANSFER_MODES = ("FLIP", "APIC")
+SUPPORTED_TRANSFER_MODES = ("PIC", "FLIP", "APIC")
 LEAF_DIM = 8
 MANIFEST_FILENAME = "fluidsim_cache.json"
 FRAME_DIRECTORY = "frames"

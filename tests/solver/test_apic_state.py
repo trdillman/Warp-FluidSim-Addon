@@ -90,13 +90,42 @@ def test_flip_checkpoint_leaves_particle_affine_empty(cuda_device):
         source.release()
 
 
-def test_apic_checkpoint_is_refused_by_a_flip_solver(cuda_device):
-    """The affine payload never lands silently in a solver that cannot use it."""
-    source, _ = _spinning_state(cuda_device, ParticleSampleType.APIC)
+def test_flip_solver_imports_an_apic_checkpoint_and_drops_the_affine(cuda_device):
+    """Cross-mode import never raises; a FLIP solver has no use for the affine."""
+    source, count = _spinning_state(cuda_device, ParticleSampleType.APIC)
     target = FluidSolver(_settings(cuda_device, ParticleSampleType.FLIP))
     try:
-        with pytest.raises(ValueError, match="affine"):
-            target.import_checkpoint_state(source.export_checkpoint_state())
+        saved = source.export_checkpoint_state()
+        target.import_checkpoint_state(saved)
+
+        assert not target.particles.affine_allocated
+        again = target.export_checkpoint_state()
+        assert np.asarray(again["arrays"]["particle_affine"]).shape == (0, 9)
+        np.testing.assert_array_equal(
+            again["arrays"]["particle_position"],
+            saved["arrays"]["particle_position"])
+        np.testing.assert_array_equal(
+            again["arrays"]["particle_velocity"],
+            saved["arrays"]["particle_velocity"])
+        target.step_frame()
+        assert np.all(np.isfinite(target.particles.velocity.numpy()[:count]))
+    finally:
+        target.release()
+        source.release()
+
+
+def test_apic_solver_imports_a_flip_checkpoint_with_zero_affine(cuda_device):
+    """A FLIP checkpoint has no affine: an APIC solver starts it at zero."""
+    source, count = _spinning_state(cuda_device, ParticleSampleType.FLIP)
+    target = FluidSolver(_settings(cuda_device, ParticleSampleType.APIC))
+    try:
+        target.import_checkpoint_state(source.export_checkpoint_state())
+
+        assert target.particles.affine_allocated
+        assert not np.any(target.particles.affine.numpy())
+        target.step_frame()
+        assert np.all(np.isfinite(target.particles.velocity.numpy()[:count]))
+        assert np.all(np.isfinite(target.particles.affine.numpy()[:count]))
     finally:
         target.release()
         source.release()
@@ -113,3 +142,14 @@ def test_memory_estimate_charges_the_affine_channel():
 def test_sample_type_values_are_stable_kernel_arguments():
     assert [(m.name, int(m)) for m in ParticleSampleType] == [
         ("PIC", 0), ("FLIP", 1), ("APIC", 2)]
+
+
+def test_growth_plan_charges_the_extra_particle_bytes():
+    from fluidSim_warp_blender51.sim.particle_capacity import plan_particle_growth
+
+    kwargs = dict(gpu_total_bytes=10 << 30, gpu_free_bytes=10 << 30)
+    plain = plan_particle_growth(1000, 5000, **kwargs)
+    apic = plan_particle_growth(
+        1000, 5000, extra_particle_bytes=AFFINE_BYTES_PER_PARTICLE, **kwargs)
+    assert apic.peak_allocation_bytes - plain.peak_allocation_bytes == (
+        AFFINE_BYTES_PER_PARTICLE * apic.target)

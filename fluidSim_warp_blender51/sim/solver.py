@@ -343,6 +343,40 @@ def k_sanitize_mac_velocity(
 
 
 @wp.kernel
+def k_apic_clamp_affine(
+    velocities: wp.array(dtype=wp.vec3),
+    affine: wp.array(dtype=wp.mat33),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    max_speed: float,
+):
+    """APIC companion of the speed clamp in :func:`k_sanitize_particles`.
+
+    Runs just before it, on the same unclamped velocity, and rescales the
+    affine matrix by the factor the clamp will apply to the velocity so a
+    clamped particle keeps its direction of motion and its affine shape in
+    proportion.  A non-finite matrix is zeroed (zero affine is always valid).
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    if alive[tid] == 0:
+        return
+    c = affine[tid]
+    finite = True
+    for i in range(3):
+        for j in range(3):
+            if wp.isnan(c[i, j]) or wp.isinf(c[i, j]):
+                finite = False
+    if not finite:
+        affine[tid] = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return
+    speed = wp.length(velocities[tid])
+    if speed > max_speed:
+        affine[tid] = c * (max_speed / speed)
+
+
+@wp.kernel
 def k_sanitize_particles(
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -701,6 +735,7 @@ class FluidSolver:
             settings.max_particles, self.device,
             persistent_particle_channels(settings))
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
+        self._sync_affine_mode()
         self.whitewater = WhitewaterSystem(
             settings.max_whitewater, self.device,
             candidate_capacity=settings.max_particles)
@@ -808,9 +843,27 @@ class FluidSolver:
         """Update launch-time Custom Effect values without replacing solver state."""
         return self.features.update_runtime_bindings(instances)
 
+    def _apic_active(self) -> bool:
+        return int(getattr(self.settings, "sample_type", ParticleSampleType.FLIP)
+                   ) == int(ParticleSampleType.APIC)
+
+    def _sync_affine_mode(self):
+        """Make the affine channel match the live transfer mode.
+
+        ``sample_type`` is a live setting.  APIC allocates the channel lazily
+        (zeroed, which is a valid state); leaving APIC frees it, so nothing
+        stale can leak back in when APIC is selected again.
+        """
+        if self._apic_active():
+            self.particles.ensure_affine()
+        elif getattr(self.particles, "affine", None) is not None:
+            self.particles.release_affine()
+
     def ensure_particle_capacity(self, required: int):
         """Atomically grow particle/binner storage while preserving solver state."""
-        from .memory_safety import release_cuda_memory, vram_snapshot
+        from .memory_safety import (
+            affine_bytes_per_particle, release_cuda_memory, vram_snapshot,
+        )
         from .particle_capacity import (
             ParticleGrowthResult, plan_particle_growth,
         )
@@ -834,6 +887,7 @@ class FluidSolver:
             current, required,
             gpu_total_bytes=int(resources.get("gpu_total_bytes", 0)),
             gpu_free_bytes=int(resources.get("gpu_free_bytes", 0)),
+            extra_particle_bytes=affine_bytes_per_particle(self.settings),
         )
         if not plan.allowed:
             result = ParticleGrowthResult(
@@ -903,6 +957,7 @@ class FluidSolver:
                 sourcing.replace_particle_storage(self.particles)
             del old_particles
         self.particles.clear()
+        self._sync_affine_mode()
         self.color_mixing = self._new_color_mixing()
         self.whitewater.clear()
         self.churn.zero()
@@ -1006,6 +1061,7 @@ class FluidSolver:
         """Restore into a newly initialized, signature-compatible solver."""
         arrays, scalars, counts = self._validate_checkpoint_state(state)
         particle_count = counts["particle_count"]
+        self._sync_affine_mode()
         if particle_count > self.particles.capacity:
             growth = self.ensure_particle_capacity(particle_count)
             if str(getattr(growth, "status", "")) not in {
@@ -1389,6 +1445,7 @@ class FluidSolver:
         fast_launch(
             k_gather_grid_data, dim=nv,
             inputs=[p.position, p.velocity,
+                    p.affine_for_kernels(), int(self.settings.sample_type),
                     g.leaf_table, g.leaf_coords, g.num_leaves,
                     g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size,
@@ -1658,6 +1715,12 @@ class FluidSolver:
         safe_dt = max(float(dt), 1.0e-8)
         max_speed = max(s.cfl * g.voxel_size / safe_dt * 2.0, 50.0)
         p = self.particles
+        if self._apic_active() and p.affine_allocated:
+            fast_launch(
+                k_apic_clamp_affine, dim=self._np_dim(),
+                inputs=[p.velocity, p.affine, p.alive, p.count, max_speed],
+                device=self.device,
+            )
         fast_launch(
             k_sanitize_particles, dim=self._np_dim(),
             inputs=[p.position, p.velocity, p.alive, p.count, max_speed,
@@ -1665,7 +1728,8 @@ class FluidSolver:
             device=self.device,
         )
 
-    def _g2p_advect(self, dt):
+    def _g2p_transfer(self):
+        """Grid -> particle velocity update (PIC / FLIP / APIC); no advection."""
         g = self.grid
         s = self.settings
         p = self.particles
@@ -1678,8 +1742,15 @@ class FluidSolver:
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size,
                     int(s.sample_type), s.flip_ratio],
-            outputs=[p.velocity], device=self.device,
+            outputs=[p.velocity, p.affine_for_kernels()],
+            device=self.device,
         )
+
+    def _g2p_advect(self, dt):
+        g = self.grid
+        s = self.settings
+        p = self.particles
+        self._g2p_transfer()
 
         fast_launch(
             k_advect_particles, dim=self._np_dim(),
@@ -1975,6 +2046,7 @@ class FluidSolver:
         """Advance one display frame (interactive playback entry point)."""
         s = self.settings
         t_start = _time.perf_counter()
+        self._sync_affine_mode()
         frame_dt = s.time_scale / s.frame_rate
         if self.profiler is not None:
             self.profiler.begin_frame()

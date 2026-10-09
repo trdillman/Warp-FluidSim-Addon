@@ -71,6 +71,7 @@ def plan_particle_growth(
     gpu_total_bytes: int,
     gpu_free_bytes: int,
     hard_limit: int = MAX_AUTO_PARTICLES,
+    extra_particle_bytes: int = 0,
 ) -> ParticleGrowthPlan:
     """Guard an atomic grow-copy-swap against the live free-memory budget.
 
@@ -84,7 +85,8 @@ def plan_particle_growth(
     target = growth_target(current, required, hard_limit=hard_limit)
     budget = int(safe_memory_budget(gpu_total_bytes, gpu_free_bytes))
     peak = int(target * (
-        PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID))
+        PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID
+        + max(0, int(extra_particle_bytes))))
     if required <= current:
         return ParticleGrowthPlan(
             current, required, current, 0, budget, True, "already sufficient")

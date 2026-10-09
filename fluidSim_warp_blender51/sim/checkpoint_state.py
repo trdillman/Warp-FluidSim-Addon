@@ -104,6 +104,13 @@ class CheckpointSchema:
         if np.asarray(arrays["grid_old_leaf_table"]).shape != (
                 self.leaf_table_cells,):
             raise ValueError("grid_old_leaf_table has the wrong shape")
+        if "particle_affine" in arrays:
+            # Optional: empty (0, 9) means "no affine state" (non-APIC writer).
+            affine = np.asarray(arrays["particle_affine"])
+            if affine.ndim != 2 or affine.shape[1] != 9 or affine.shape[0] not in (
+                    0, counts["particle_count"]):
+                raise ValueError(
+                    "particle_affine shape does not match particle_count")
         active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
         for dotted_name in self.field_names:
             key = f"field_{dotted_name.replace('.', '_')}"
