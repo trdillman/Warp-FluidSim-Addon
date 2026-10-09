@@ -339,3 +339,38 @@ re-based on grid velocity or the swirl tolerance is re-derived.
    Acceptable?
 4. `FrameStats.narrow_band_reseed_overflow` is new stats surface. Wanted in the gate
    output?
+
+### 13. As built (stop 2) and deviations from the notes above
+
+Stop-1 questions 1-4 were answered: the producer lands, the render-grid union kernel
+is in scope, the checkpoint gains the four `field_narrow_band_*` arrays (only when the
+mode is on), and the overflow stat is a solver-side `FrameStats` field.
+
+Deviations from sections 1-10:
+
+- The stateful class is `NarrowBand` in `sim/narrow_band_state.py` (the pure helpers
+  in `sim/narrow_band.py` may not import bpy or warp).
+- Union rule: `phi` is used only where `phi < -h`; otherwise the particle splat wins.
+  Where `phi_adv < -pin_depth` it is kept as is; `pin_depth = max(1, band - 1) * h`
+  (not `(band + 1) * h`, which left air holes between the kill depth `band * h` and the
+  pin depth). A cell inside the splat but not yet pinned gets `-limit` and is refined by
+  `ceil(band) + 2` inward Eikonal sweeps. Solid cells get `+limit`.
+- The Eikonal sweep ignores solid and unallocated neighbours (a wall is not a free
+  surface).
+- Reseed RNG key is `wp.rand_init(seed, flat * 64 + k)`; target density is capped at 64
+  per voxel; demand only for band cells with `phi <= -h` and `count * 2 < ppv`.
+- Source top-up guard (section 7) is a reversible count credit
+  (`k_nb_adjust_interior_counts`) around `_source`, not an edit of the source kernels.
+- Interior velocity is advected at the start of the substep (`prepare_grid`) and `phi`
+  is updated at the end (`update_phi`, in `_lifecycle` before `compact`).
+- The render grid, when different from the solver grid, gets
+  `k_nb_mark_render_leaves` in `rebuild_topology` and `k_nb_union_into_render_sdf`
+  after `build_sdf`.
+- Checkpoint: the reserved `narrow_band_seed_state` slot holds `[reseed_epoch]`
+  (uint32); written only when the mode is on.
+- Cache: `production_bake._liquid_sdf_arrays` writes `NarrowBand.leaf_phi()` as the
+  `liquid_sdf_*` arrays and logs a reseed overflow.
+- Memory estimate adds 56 bytes per allocated voxel when the mode is on.
+- Known limit: under the default Jacobi preconditioner the full-band column itself
+  compresses (0.75 to about 0.56 in 30 frames); the hydrostatic acceptance runs under
+  Multigrid.
