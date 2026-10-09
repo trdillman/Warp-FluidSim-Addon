@@ -16,6 +16,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lane A merge + fixups | `582ccbc` | 2313 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane A2 merge | `6b0abbd` | 2357 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane I merge | `aae0607` | 2364 passed, 3 skipped | not recomputed (no `sim/` or `properties.py` change) |
+| release/3.0 after lane H merge + gate entry | `b54f1e2` | 2374 passed, 3 skipped, 1 xfailed | not recomputed (no `sim/` or `properties.py` change) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -73,9 +74,9 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | A split + defaults | `3.0/lane-a-split-defaults` | `C:\Users\Tyler\wt\r30-a` | `5cc031d` | | | **merged** as `cc21cc7`, fixups `582ccbc`; shipped-scene settings dump identical to base |
 | A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | `697f342` | 2357 passed, 3 skipped | | **merged** as `6b0abbd`; JACOBI default, demo hash unchanged |
 | F APIC | `3.0/lane-f-apic` | `C:\Users\Tyler\wt\r30-f` | stop 1 `491f81e` | red tests as designed | | stop 1 accepted with changes; implementing |
-| H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | base `34d6b67` | | | running |
+| H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | `b322950` | 1 strict xfail (Warp-free signature) | settings signature imports Warp | **PARTIAL**, **merged** as `2eb067e` + gate entry `b54f1e2`; `ALEMBIC_EXPORT_OK` on Blender 5.2 with CUDA hidden (21 checks, bbox error 0) |
 | I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | `8ebb281` | 2319 passed + gate fix | | **KEEP**, **merged** as `aae0607` (2 of 3 attempts; Blender 5.2 meshes a sphere within 0.05 voxel). Not wired to export; wiring waits for lane J's `liquid_sdf_*` data (check cell-centre `origin` then) |
-| G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | base `6b0abbd` | | | dispatched |
+| G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | `c3e2d48` | 2371 passed, 3 skipped | | **PARTIAL**: demo dims decision taken (below); finishing the acceptance expectation and a voxel-snap table for the acceptance scripts |
 
 ### Wave 1 deviations
 
@@ -96,6 +97,34 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
   `resolution_divisions`; it is not deleted. The tier is REINIT, not RESET. Domain
   resize is already in the REINIT signature. Migration runs on load. The demos are
   measured, not re-saved. Fixed a ceil rounding trap that could pad 64 divisions to 72.
+
+- **Lane G demo grids (decided by the orchestrator, 2026-10-09).**
+  - The spec wants each migrated demo to keep its padded dims. crown_splash cannot: the
+    shipped 88,88,56 came from a float32 ceil artifact (0.8000000119 / 0.00999999978 =
+    80.0000030 → 81 cells), which the required rounding tolerance fixes. It is now 80,80,56.
+  - dam_break's 5.6 m axis is not a whole number of 0.03 m cells, so 187 divisions give
+    0.02995 m. Its dims are unchanged.
+  - Both changes are accepted. G merges on its own, after F's FLIP hash is proven
+    identical, so any demo-hash change is attributable to G. It becomes part of the
+    alpha.2 re-baseline the plan already schedules.
+### Open items from lane H
+
+- **Warp-free settings signature (owner: orchestrator, after F and G merge).**
+  - Opening a cache with no importable Warp still fails. The chain is
+    `playback._check_cache_scene_key` → `cache_identity.settings_signature` →
+    `solver_settings.build_settings` → `sim.solver.SolverSettings`, and `sim/solver.py`
+    imports Warp.
+  - With Warp importable but no CUDA device (the common case), playback-only works.
+    The Alembic acceptance proves that.
+  - Fix: move the `SolverSettings` dataclass into a Warp-free module and re-export it
+    from `sim/solver.py`. Then remove the strict xfail
+    `test_playback_signature_check_does_not_import_warp`.
+  - Held until F and G merge, because F edits `sim/solver.py` and both may touch
+    `SolverSettings`.
+- POINTCLOUD Alembic export writes only an empty transform on 5.2, so particles are out of
+  scope. Blender 5.2's `alembic_export` has no `visible_objects_only`.
+- Restoring a scene that started with live on during export is untested: it needs CUDA.
+  Cover it in the GUI gate run.
 
 ### Open items from lane D
 
