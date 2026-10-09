@@ -23,7 +23,9 @@
 ### Compatibility
 
 - The certified Warp version (1.17.0, CUDA 12 build) is unchanged.
-- Solver numerics and cache compatibility are unchanged from 2.1.0.
+- The installation change itself does not alter solver numerics or cache
+  compatibility; the reconciled candidate still requires its own runtime
+  qualification.
 - Existing 2.1.0 installations with bundled Warp continue to work until this
   zip is installed; then press **Install Warp**.
 
