@@ -62,13 +62,16 @@ def apply_suggestion(settings, domain, changes, *, build_settings, on_transform_
     domain_min = changes.pop("domain_min", None)
     domain_max = changes.pop("domain_max", None)
     old_values = {name: getattr(settings, name) for name in changes if hasattr(settings, name)}
+    # ``voxel_size`` is derived from whole ``resolution_divisions`` over the
+    # domain's longest axis, so it must be written against the NEW domain and the
+    # divisions are snapshotted to restore exactly (restoring the derived value
+    # would be computed against whichever domain size is current).
+    old_divisions = getattr(settings, "resolution_divisions", None)
     old_transform = None if domain is None else (tuple(domain.location), tuple(domain.dimensions))
     changed = []
     try:
-        for name, value in changes.items():
-            _write_and_verify(settings, name, value)
-            changed.append(name)
-        if domain_min is not None or domain_max is not None:
+        resized = domain_min is not None or domain_max is not None
+        if resized:
             authored = build_settings()
             _resize_domain(
                 domain,
@@ -76,12 +79,23 @@ def apply_suggestion(settings, domain, changes, *, build_settings, on_transform_
                 domain_max if domain_max is not None else authored.domain_max,
                 on_transform_changed,
             )
+        for name, value in changes.items():
+            _write_and_verify(settings, name, value)
+            changed.append(name)
+        if resized:
             changed.append("domain bounds")
     except Exception as exc:  # noqa: BLE001
-        for name, value in old_values.items():
-            setattr(settings, name, value)
         if old_transform is not None:
             domain.location, domain.dimensions = old_transform
+            if on_transform_changed is not None:
+                try:
+                    on_transform_changed()
+                except Exception:  # noqa: BLE001
+                    pass
+        for name, value in old_values.items():
+            setattr(settings, name, value)
+        if old_divisions is not None:
+            settings.resolution_divisions = old_divisions
         raise CapacityApplyError(str(exc)) from exc
     return changed
 

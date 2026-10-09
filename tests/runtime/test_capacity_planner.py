@@ -5,8 +5,14 @@ import numpy as np
 from fluidSim_warp_blender51.sim.capacity_planner import (
     CapacityVerdict,
     DemandQuality,
+    _snap_voxel_coarser,
     plan_initialization,
     suggest_configurations,
+)
+from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
+from fluidSim_warp_blender51.sim.quality_contract import (
+    MIN_RESOLUTION_DIVISIONS,
+    voxel_size_for_divisions,
 )
 
 
@@ -212,3 +218,81 @@ def test_scene_signature_is_stable_for_equivalent_inputs_and_changes_with_demand
 
     assert first.scene_signature == same.scene_signature
     assert first.scene_signature != changed.scene_signature
+
+
+# --- suggestions stay on the resolution-divisions lattice ----------------------
+
+
+def _lattice_divisions(voxel_size, longest):
+    divisions = round(longest / voxel_size)
+    assert abs(voxel_size - longest / divisions) < 1e-12
+    return divisions
+
+
+def _sweep_suggestions(authored, footprints, key):
+    """Yield (suggestion, plan) for ``key`` across a sweep of live budgets."""
+    unit = 1024**2
+    for free_mib in range(64, 8192, 64):
+        res = {"gpu_total_bytes": 16 * 1024**3, "gpu_free_bytes": free_mib * unit}
+        plan = plan_initialization(authored, footprints, (), (), res)
+        for item in suggest_configurations(plan, authored):
+            if item.key == key:
+                yield item, plan
+
+
+def test_coarser_resolution_is_on_the_divisions_lattice_and_never_finer():
+    authored = settings(
+        domain_max=(40.0, 20.0, 10.0), voxel_size=0.25, max_particles=1,
+        leaf_capacity=64)
+    footprints = (Footprint("src", 50_000, DemandQuality.UPPER_BOUND, ((1, 1, 1),)),)
+    longest = 40.0
+    base_divisions = 160
+
+    found = list(_sweep_suggestions(authored, footprints, "coarser_resolution"))
+
+    assert found
+    for item, plan in found:
+        voxel = item.changes["voxel_size"]
+        divisions = _lattice_divisions(voxel, longest)
+        assert voxel == voxel_size_for_divisions(divisions, longest)
+        assert MIN_RESOLUTION_DIVISIONS <= divisions < base_divisions
+        assert voxel > 0.25
+        candidate = dict(authored, **item.changes)
+        assert item.estimated_bytes == (
+            int(estimate_solver_bytes(candidate)) + plan.staging_bytes
+            + candidate["leaf_capacity"] * 512 * 4 + plan.additional_transaction_bytes)
+        assert item.estimated_bytes <= item.budget_bytes
+
+
+def test_balanced_voxel_is_lattice_snapped_for_the_tightened_domain():
+    authored = settings(
+        domain_max=(32.0, 32.0, 32.0), voxel_size=0.2, max_particles=1,
+        leaf_capacity=64)
+    footprints = (Footprint("center", 2, DemandQuality.UPPER_BOUND, ((10, 10, 10),)),)
+
+    found = list(_sweep_suggestions(authored, footprints, "balanced"))
+
+    assert found
+    for item, _plan in found:
+        lo = item.changes.get("domain_min", authored["domain_min"])
+        hi = item.changes.get("domain_max", authored["domain_max"])
+        longest = max(h - l for l, h in zip(lo, hi))
+        voxel = item.changes["voxel_size"]
+        divisions = _lattice_divisions(voxel, longest)
+        assert voxel == voxel_size_for_divisions(divisions, longest)
+        assert voxel >= 0.2 * (1 - 1e-9)  # never finer than the authored voxel
+        if divisions > MIN_RESOLUTION_DIVISIONS:
+            assert voxel >= 0.2 * 1.10 * (1 - 1e-9)  # never finer than the costed 10%
+
+
+def test_snap_rounds_toward_fewer_divisions_and_respects_the_minimum():
+    assert _snap_voxel_coarser(0.3, 10.0) == 10.0 / 33
+    assert _snap_voxel_coarser(0.25, 10.0) == 10.0 / 40  # exact lattice point kept
+    assert _snap_voxel_coarser(5.0, 10.0) == 10.0 / MIN_RESOLUTION_DIVISIONS
+
+
+def test_a_domain_already_at_minimum_divisions_offers_no_coarser_resolution():
+    authored = settings(voxel_size=1.0, max_particles=1, leaf_capacity=8)  # 8 divisions
+    footprints = (Footprint("src", 50_000, DemandQuality.UPPER_BOUND, ((0, 0, 0),)),)
+
+    assert not list(_sweep_suggestions(authored, footprints, "coarser_resolution"))

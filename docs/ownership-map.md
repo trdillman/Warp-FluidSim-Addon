@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 144 | UI writes exactly where the consumer reads |
+| OK | 145 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -30,7 +30,7 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
-| WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
+| WRITE_ONLY | 0 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 8 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
@@ -129,7 +129,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `max_substeps` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `gravity` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `use_scene_gravity` | LIVE | domain | domain | - | domain | domain | 0 | OK |
-| `resolution_divisions` | REINITIALIZE | domain | - | domain | - | domain | 0 | WRITE_ONLY |
+| `resolution_divisions` | REINITIALIZE | domain | domain | domain | - | domain | 1 | OK |
 | `voxel_size` | REINITIALIZE | - | domain | domain | domain | domain | 1 | PUBLISHED |
 | `leaf_capacity` | REINITIALIZE | domain | domain | - | - | domain | 0 | OK |
 | `topology_expand` | RESET | domain | domain | - | - | domain | 0 | OK |

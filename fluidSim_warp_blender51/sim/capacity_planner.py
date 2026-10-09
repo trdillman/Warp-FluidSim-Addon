@@ -19,7 +19,12 @@ import numpy as np
 
 from . import constants as C
 from .memory_safety import estimate_solver_bytes, safe_memory_budget
-from .quality_contract import resolve_quality
+from .quality_contract import (
+    MIN_RESOLUTION_DIVISIONS,
+    divisions_for_voxel_size,
+    resolve_quality,
+    voxel_size_for_divisions,
+)
 from .surface_tension_math import required_sdf_splat_radius_voxels, required_topology_expand_leaves
 
 
@@ -606,6 +611,22 @@ def _tightened_domain_suggestion(
     )
 
 
+def _longest_axis(candidate: Mapping[str, Any]) -> float:
+    return max(float(hi) - float(lo) for lo, hi in
+               zip(candidate["domain_min"], candidate["domain_max"]))
+
+
+def _snap_voxel_coarser(target: float, longest: float) -> float:
+    """Voxel size on the resolution-divisions lattice, never finer than ``target``.
+
+    The domain stores whole divisions, so only ``longest / n`` can be applied
+    exactly; rounding down to fewer divisions keeps the costed size a bound.
+    """
+    divisions = max(MIN_RESOLUTION_DIVISIONS,
+                    math.floor(longest / target * (1.0 + 1.0e-9)))
+    return voxel_size_for_divisions(divisions, longest)
+
+
 def _coarser_resolution_suggestion(
         plan: CapacityPlan,
         base: Mapping[str, Any],
@@ -613,8 +634,15 @@ def _coarser_resolution_suggestion(
     """Find the first bounded coarser-resolution candidate within budget."""
     candidate = dict(base)
     original_h = max(1.0e-4, float(candidate.get("voxel_size") or 0.1))
+    longest = _longest_axis(candidate)
+    base_divisions = divisions_for_voxel_size(original_h, longest)
+    if base_divisions <= MIN_RESOLUTION_DIVISIONS:
+        return None
     for step in range(1, 33):
-        candidate["voxel_size"] = original_h * (1.05 ** step)
+        snapped = _snap_voxel_coarser(original_h * (1.05 ** step), longest)
+        if divisions_for_voxel_size(snapped, longest) >= base_divisions:
+            continue
+        candidate["voxel_size"] = snapped
         candidate["max_particles"] = max(
             int(candidate.get("max_particles") or 0),
             int(plan.particle_demand.value or 0),
@@ -653,7 +681,10 @@ def _balanced_suggestion(
         return None
     balanced = dict(tightened)
     original_h = max(1.0e-4, float(base.get("voxel_size") or 0.1))
-    balanced["voxel_size"] = original_h * 1.10
+    snapped = _snap_voxel_coarser(original_h * 1.10, _longest_axis(balanced))
+    if snapped < original_h * (1.0 - 1.0e-9):
+        return None  # minimum divisions on the tightened domain would be finer
+    balanced["voxel_size"] = snapped
     balanced["leaf_capacity"] = max(
         int(plan.leaf_demand.value or 0),
         min(int(base["leaf_capacity"]), math.prod(_leaf_dims(balanced))))

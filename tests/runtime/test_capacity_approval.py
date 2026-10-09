@@ -17,6 +17,10 @@ import pytest
 
 from fluidSim_warp_blender51.blender import capacity_approval
 from fluidSim_warp_blender51.blender.capacity_approval import CapacityApplyError, apply_suggestion
+from fluidSim_warp_blender51.sim.quality_contract import (
+    divisions_for_voxel_size,
+    voxel_size_for_divisions,
+)
 
 
 class _Settings:
@@ -319,3 +323,80 @@ def test_the_module_is_a_leaf_that_never_imports_blender_or_the_add_on():
             assert node.level == 0, "no relative (add-on) imports"
             imported.add((node.module or "").split(".")[0])
     assert imported <= {"__future__", "math"}
+
+
+# --- derived voxel_size (resolution divisions over the domain's longest axis) ---
+
+
+class _DerivedSettings:
+    """Models properties.py: voxel_size = longest axis / whole divisions."""
+
+    def __init__(self, domain, divisions):
+        object.__setattr__(self, "_domain", domain)
+        object.__setattr__(self, "resolution_divisions", divisions)
+        object.__setattr__(self, "bl_rna", SimpleNamespace(properties={}))
+
+    @property
+    def voxel_size(self):
+        return voxel_size_for_divisions(self.resolution_divisions, max(self._domain.dimensions))
+
+    @voxel_size.setter
+    def voxel_size(self, value):
+        object.__setattr__(
+            self,
+            "resolution_divisions",
+            divisions_for_voxel_size(value, max(self._domain.dimensions)),
+        )
+
+
+def test_a_lattice_voxel_round_trips_through_a_derived_voxel_setting():
+    domain = _domain(dimensions=(10.0, 4.0, 4.0))
+    settings = _DerivedSettings(domain, 100)
+    target = voxel_size_for_divisions(77, 10.0)
+
+    changed = _apply(settings, domain, {"voxel_size": target})
+
+    assert changed == ["voxel_size"]
+    assert settings.resolution_divisions == 77
+
+
+def test_bounds_and_voxel_are_costed_against_the_resized_domain():
+    domain = _domain(dimensions=(10.0, 10.0, 10.0))
+    settings = _DerivedSettings(domain, 100)
+    # Costed against the NEW 4 m longest axis; against the old 10 m it would
+    # round to a different divisions count and fail the strict read-back.
+    target = voxel_size_for_divisions(30, 4.0)
+
+    changed = _apply(
+        settings,
+        domain,
+        {"voxel_size": target, "domain_min": (-2, -2, -2), "domain_max": (2, 2, 2)},
+    )
+
+    assert changed == ["voxel_size", "domain bounds"]
+    assert settings.resolution_divisions == 30
+    assert settings.voxel_size == target
+
+
+def test_a_failed_bounds_and_voxel_option_restores_divisions_and_transform():
+    domain = _domain(dimensions=(10.0, 10.0, 10.0))
+    settings = _DerivedSettings(domain, 100)
+    before = settings.voxel_size
+
+    def refresh_fails_after_resize(calls=[]):
+        calls.append(1)
+        if len(calls) == 1:
+            return
+        raise RuntimeError("view layer is gone")
+
+    with pytest.raises(CapacityApplyError):
+        _apply(
+            settings,
+            domain,
+            {"voxel_size": 0.1, "domain_min": (-2, -2, -2), "domain_max": (2, 2, 2), "bogus": 1},
+            on_transform_changed=refresh_fails_after_resize,
+        )
+
+    assert settings.resolution_divisions == 100
+    assert settings.voxel_size == before
+    assert domain.dimensions == (10.0, 10.0, 10.0)
