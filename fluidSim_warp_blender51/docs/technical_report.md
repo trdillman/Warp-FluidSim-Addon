@@ -2,7 +2,7 @@
 
 FluidSim Warp 2.1.0 targets Blender 5.2.0 or newer around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
-Production Bake adds a separate, manifest-authoritative cache-v2 transaction and
+Production Bake adds a separate, manifest-authoritative cache-v3 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
 - Extension ID: `fluidsim_warp` · manifest/runtime version `2.1.0`
@@ -45,9 +45,10 @@ fluidsim_warp/
 │   ├── effect_ui.py              artist-facing Custom Effects workflow
 │   └── effect_workspace.py       developer Warp Code workspace
 ├── io/
-│   ├── cache_schema.py           strict cache-v2 manifest schema
-│   ├── checkpoint.py             strict pickle-free checkpoint I/O
-│   └── cache.py                  cache-v1 reader plus v2 frame adapter
+│   ├── cache_schema.py           strict cache-v3 manifest schema
+│   ├── checkpoint.py             strict pickle-free checkpoint I/O (format 2)
+│   ├── vdb_writer.py             OpenVDB level-set writer (not wired in)
+│   └── cache.py                  cache-v3 frame writer/reader; refuses v1 and v2
 ├── sim/
 │   ├── attributes.py             authoritative output/cache schema
 │   ├── whitewater_types.py       stable type enum and host policy
@@ -156,6 +157,22 @@ from host-read counts; profiler timers collected.
 - **Project** subtracts the pressure gradient from the MAC field and applies
   collision velocities. `last_iterations` / `last_residual` recorded for stats.
 
+### Multigrid-preconditioned PCG (`sim/pressure.py`, opt-in)
+`pcg_preconditioner = MULTIGRID` replaces the Jacobi preconditioner inside the
+same PCG loop (default stays Jacobi). `_apply_mg_vcycle` applies one symmetric
+V-cycle per iteration:
+
+- 4 levels per 8³ leaf (8³, 4³, 2³, 1³), so no cross-leaf coupling is coarsened.
+- 2 pre- and 2 post-smoothing sweeps of damped Jacobi (omega 0.67), 16 sweeps on
+  the coarsest level.
+- Restriction is 0.25 × the gathered sum of the children; prolongation is
+  piecewise-constant. Both are gathers: the cycle is atomic-free.
+- The cycle is captured in the CUDA conditional graph with the rest of the PCG
+  loop.
+
+Measured on the 32³ test problem: 13 PCG iterations against 123 with Jacobi. A
+per-frame speed-up has not been measured.
+
 ### Viscosity (`sim/viscosity.py`, `ViscositySolver`)
 - Explicit smoothing (`smooth`) or implicit PCG (`solve`, `use_pcg=True`).
 - Viscosity field is either a global constant (`viscosity_constant`) or splatted
@@ -166,6 +183,28 @@ from host-read counts; profiler timers collected.
 Both solvers operate only on fluid/solid voxels via the voxel-type mask.
 
 ---
+
+### Particle-grid transfer: PIC, FLIP, APIC
+`ParticleSampleType` has PIC, FLIP (default) and APIC (`= 2`). APIC runs its own
+`*_apic` kernels (P2G and G2P); the PIC/FLIP kernels are unchanged, so FLIP
+results are bitwise identical to the build before APIC. Each particle carries a
+3x3 affine matrix (`mat33`, 36 B), double buffered for compaction, so 72 B per
+particle, allocated only when APIC is selected (`ensure_affine`). Angular
+momentum retained in the probe: PIC 0.596, FLIP 0.940, APIC 0.939. APIC does not
+beat FLIP there because the loss is in the shared free-surface path; the
+enforced gate is APIC > 0.90 and > PIC + 0.25. Only momentum was measured;
+reduced visual noise is not claimed.
+
+### Resolution Divisions (`sim/quality_contract.py`)
+The grid is authored as `resolution_divisions` cells along the longest domain
+axis (default 64, minimum 8). The cell size is `longest axis / divisions`;
+`voxel_size` is a derived get/set property (set rounds to the nearest division).
+Cell counts per axis use `ceil(extent / cell * (1 - CELL_COUNT_TOLERANCE))` with
+`CELL_COUNT_TOLERANCE = 1e-6`: a float32 cell size sits a few parts in 1e8 low,
+and an unguarded `ceil` added a whole cell and then an 8³ leaf of padding. The
+grid is padded to whole leaves. Files saved by 2.x migrate on load
+(`round(longest axis / voxel size)`, minimum 8). Changing divisions is a REINIT
+tier setting.
 
 ## 5. Surface & Whitewater
 
@@ -252,17 +291,32 @@ output converts physical velocity to displacement per scene frame and is
 published as Blender `velocity`; physical velocity remains
 `fluidsim_velocity`.
 
-Cache-v2 frame payloads include `attribute_schema_version`, an ordered JSON
+Cache-v3 frame payloads include `attribute_schema_version`, an ordered JSON
 inventory, and `surface_attribute_transfer_method`. Phase-4 schema version 2
 requires `whitewater_type` and validates int32 values against the stable enum.
 Read and publication paths fail closed on missing fields, wrong shape/type/domain,
 non-finite values, misalignment, invalid UID data, or reserved type values.
-Phase-3 schema-v1 frames retain playback compatibility as combined legacy-
-unclassified output. Checkpoints additionally carry
+Attribute-schema-v1 frames (no whitewater type) are still accepted by the frame
+validator and publish as combined legacy-unclassified output, but no 3.0 bake
+writes them and 2.x caches are refused outright. Checkpoints additionally carry
 `whitewater_type_schema_version=1`; older checkpoints are intentionally not
 resumable because deterministic type-transition state cannot be inferred.
 
 ---
+
+### Cache format 3 and checkpoint format 2 (`io/cache_schema.py`, `io/checkpoint.py`)
+- The manifest `FORMAT_VERSION` is 3. 1.0 and 2.x caches raise
+  `LegacyCacheFormatError`; 2.x carries `LEGACY_2X_CACHE_MESSAGE`. The headless
+  bake maps it to exit code 14. Nothing is migrated.
+- Each frame records `source_frame_stamp`: a sha256 over the world matrix and
+  evaluated geometry of every source and collider at that frame. Resume compares
+  stamps and refuses at the first mismatch with `SOURCE_ANIMATION_CHANGED`; the
+  UI offers Re-bake from Frame N.
+- `liquid_sdf_*` arrays are written empty until the narrow band lands.
+- Checkpoint format 2 always stores two reserved slots: `particle_affine`
+  (float32, (N, 9); reserved for the APIC matrix) and
+  `narrow_band_seed_state` (uint32). A checkpoint without them is rejected, and
+  format 1 reports "unsupported checkpoint format 1; expected 2".
 
 ## 6. Kernel Registry & Dispatch Contract
 
@@ -318,7 +372,7 @@ and After Particle Update. Cadence is Every Substep, Once Per Frame, or
 Initialization. Particle-only effects do not force topology rebuilds; active-
 voxel and SDF/collision consumers request only their declared prerequisites.
 
-Cache-v2 manifests, frames, checkpoints, production-bake reports, headless
+Cache-v3 manifests, frames, checkpoints, production-bake reports, headless
 reports, and support reports include `effect_signature` and
 `effect_inventory`. Production admission recomputes the current Text datablock
 and controller snapshots instead of trusting stored update-callback state.
@@ -478,8 +532,8 @@ probe case and reports the authored clamp to 8. CPU execution proves code paths;
 `cuda:0` execution is required for release certification.
 
 `tools/release/validate_properties_ui_blender.py` runs in Blender 5.1 rather than
-treating source strings as UI proof. It draws 49 authored surfaces, validates
-one collapsed root plus 51 View3D mirrors with exact poll/draw parity, exercises
+treating source strings as UI proof. It draws every authored surface, validates
+the collapsed root plus each View3D and Physics mirror with exact poll/draw parity, exercises
 domain/input contexts and all six output kinds in Physics Properties, revalidates
 guarded domain/output actions, covers ten role/geometry configurations, then
 saves/reopens and unregisters/re-registers the extension. Installed-package
@@ -500,10 +554,10 @@ and promoted demo evidence are recorded below the baseline.
 | Python compilation | Passed |
 | Source/release verification | Passed; seven example scenes, three durable Custom Effects renders, eight built-ins, and no bundled Blender/Warp payload |
 | Blender host | **5.1.0 Windows x64**; GUI acceptance passed **40/40** and saved-demo timeline playback passed |
-| Native UI gate | Passed: 49 authored draws, 51 delegated View3D mirrors under one collapsed root, domain/input/six-output Physics contexts, guarded actions, ten role cases, save/reopen, and registration cleanup |
+| Native UI gate | Passed (1.0.255 counts: 49 authored draws, 51 delegated View3D mirrors under one collapsed root; 3.0 changed the panel set, so those counts no longer apply), domain/input/six-output Physics contexts, guarded actions, ten role cases, save/reopen, and registration cleanup |
 | Warp/runtime | External Warp **1.16.0**, CUDA `cuda:0`, NVIDIA GeForce RTX 4080 SUPER |
 | P5 analytic kernel proof | Inward droplet force, finite normals/curvature/acceleration, curvature clamp, 2× coefficient scaling, collision exclusion, MAC integration, scratch lifecycle, and real solver-limiter selection/clamp passed |
-| Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remain; resume remains manifest/settings-signature strict |
+| Cache/checkpoint behavior | P5 adds no persistent stochastic state; cache-v1 and older cache-v2 playback remained in 1.0.255 (3.0 refuses both); resume remains manifest/settings-signature strict |
 | Installed package lifecycle | **Passed** twice from the final 1.0.255 Windows archive in clean profiles on Blender 5.1.0 with external Warp 1.16.0; registration cycled twice per run, Custom Effects applied, CUDA was detected, and the builder reported `release_ready=true` |
 | Installed headless no-CUDA exit | **Passed (rerun 2026-09-24, master `b5e0050` plus the signal-restore fix).** The rebuilt 1.0.255 Windows archive was installed into a clean profile on Blender 5.1.0 with external Warp 1.16.0 and `CUDA_VISIBLE_DEVICES=-1` (an empty value does not hide devices on Windows). `release/run_headless_bake.py` on `dam_break` exited `12`, wrote an atomic report, committed **0 frames**, left no cache frames, and the package was removed cleanly. The same rerun found that every CLI bake crashed on exit restoring a C-level signal handler; fixed in `blender/production_bake.py` |
 | Custom Effects Python suite | Strict schema, fields, fingerprints, trust, JIT, sandbox, runtime, packages, cache, policy, UI-source, and static validation-example contracts passed |
@@ -514,7 +568,7 @@ and promoted demo evidence are recorded below the baseline.
 | Interactive user path | **Passed**: 7.785 ms mean viewport publication, 23.353 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |
 
 The GUI-inclusive production gate proves the current Windows source, Blender
-registration/lifecycle, CUDA solver invariants, cache-v2 workflow, demo playback,
+registration/lifecycle, CUDA solver invariants, cache workflow (v2 in 1.0.255), demo playback,
 and bounded interactive publication. GPU results are physical/schema/lifecycle
 bounds. Since `d2a6b6d` the dam_break and crown_splash bakes are bitwise
 reproducible run-to-run on one device. Mesh and compiled-source emitters and
