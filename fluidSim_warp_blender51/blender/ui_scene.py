@@ -524,6 +524,7 @@ class FLUIDSIM_PT_sim_pressure(_FluidSimSimulationPanel, bpy.types.Panel):
         layout.prop(fs, "pressure_solver")
         layout.prop(fs, "pressure_iterations")
         if fs.pressure_solver == "PCG":
+            layout.prop(fs, "pressure_preconditioner")
             layout.prop(fs, "pressure_tolerance")
         layout.prop(fs, "pressure_threshold")
 
@@ -1340,5 +1341,5 @@ def unregister():
     for cls in reversed(SCENE_PANEL_CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

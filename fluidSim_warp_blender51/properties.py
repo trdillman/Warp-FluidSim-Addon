@@ -1206,6 +1206,17 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Tolerance", default=1.0e-5, min=0.0, precision=8,
         update=_request_live,
         description="Set the pressure residual required for early convergence; lower values demand a more accurate solve and may take longer, while higher values stop sooner")
+    # Default is JACOBI, not the spec's MULTIGRID: the multigrid speed targets are
+    # unmeasured and the demo hash must hold until the beta re-baseline. See
+    # docs/specs/3.0/SPEC-multigrid-pressure.md, "Settings".
+    pressure_preconditioner: EnumProperty(
+        name="Preconditioner",
+        items=[
+            ("JACOBI", "Jacobi", "Use the diagonal preconditioner; the cheapest per iteration, but it needs more iterations on large or finely resolved domains"),
+            ("MULTIGRID", "Multigrid", "Use a multigrid V-cycle preconditioner; each iteration costs more but far fewer are needed on large or finely resolved domains"),
+        ],
+        default="JACOBI", update=_request_live,
+        description="Choose the preconditioner for the PCG pressure solver; Multigrid can converge in fewer iterations on large domains, while Jacobi is cheaper per iteration. Used only by the PCG solver")
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
         update=_request_live,
@@ -1608,7 +1619,5 @@ def unregister():
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            # Already unregistered (e.g. a partially-rolled-back register()):
-            # unregister() must remain safe to call on a partial state.
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

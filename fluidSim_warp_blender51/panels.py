@@ -13,24 +13,48 @@ from .preferences import configured_device
 from .runtime.warp_runtime import probe_runtime, runtime_status_for_device
 
 
-class FLUIDSIM_OT_open_scene_properties(bpy.types.Operator):
-    """Focus an existing Properties editor on Scene Properties."""
+def _properties_target(context) -> str:
+    """Properties tab that holds the FluidSim controls for the current selection.
 
+    Domain settings live in the Physics tab, but only when the active object is
+    the scene's designated domain; otherwise the scene-owned panels (Scene) are
+    the useful target.
+    """
+    from .blender.scene_access import active_domain_object
+
+    scene = getattr(context, "scene", None)
+    active = getattr(context, "active_object", None)
+    if scene is not None and active is not None:
+        domain = active_domain_object(scene)
+        if domain is not None and domain == active:
+            return "PHYSICS"
+    return "SCENE"
+
+
+class FLUIDSIM_OT_open_scene_properties(bpy.types.Operator):
+    """Focus an existing Properties editor on the FluidSim settings."""
+
+    # The id predates the Physics-tab move; it stays so saved keymaps and UI resolve.
     bl_idname = "fluidsim.open_scene_properties"
-    bl_label = "Open FluidSim Scene Properties"
-    bl_description = "Focus an existing Properties editor on Scene Properties"
+    bl_label = "Open Full Settings"
+    bl_description = (
+        "Focus an existing Properties editor on the FluidSim settings: the Physics tab "
+        "when the Fluid Domain is active, otherwise the Scene tab"
+    )
 
     def execute(self, context):
+        target = _properties_target(context)
+        tab = "Physics" if target == "PHYSICS" else "Scene"
         screen = getattr(context, "screen", None)
         areas = getattr(screen, "areas", ()) if screen is not None else ()
         for area in areas:
             if area.type == "PROPERTIES":
-                area.spaces.active.context = "SCENE"
-                self.report({"INFO"}, "FluidSim controls are in Scene Properties")
+                area.spaces.active.context = target
+                self.report({"INFO"}, f"FluidSim controls are in {tab} Properties")
                 return {"FINISHED"}
         self.report(
             {"WARNING"},
-            "No Properties editor is open; change any editor to Properties, then choose Scene",
+            f"No Properties editor is open; change any editor to Properties, then choose {tab}",
         )
         return {"CANCELLED"}
 

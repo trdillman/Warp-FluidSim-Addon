@@ -127,7 +127,7 @@ def test_production_bake_binds_effect_identity_to_every_transaction_surface():
         assert token in source
 
 
-def test_cache_v2_frame_payload_carries_effect_identity():
+def test_cache_frame_payload_carries_effect_identity():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]

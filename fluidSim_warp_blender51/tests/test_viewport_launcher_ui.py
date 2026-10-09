@@ -87,7 +87,7 @@ def test_scene_properties_shortcut_uses_an_existing_properties_area():
     block = _block(source, "FLUIDSIM_OT_open_scene_properties")
     assert 'bl_idname = "fluidsim.open_scene_properties"' in block
     assert 'area.type == "PROPERTIES"' in block
-    assert 'area.spaces.active.context = "SCENE"' in block
+    assert 'area.spaces.active.context = target' in block
     assert "No Properties editor is open" in block
 
 
