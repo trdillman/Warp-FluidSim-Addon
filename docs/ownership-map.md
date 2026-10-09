@@ -61,7 +61,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `particle_display_scale` | OUTPUT | scene | scene | - | - | scene | 5 | OK |
 | `surface_attribute_mode` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
-| `particle_attribute_mode` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
+| `particle_attribute_mode` | OUTPUT | scene | scene | scene | - | scene | 0 | OK |
 | `whitewater_attribute_mode` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `whitewater_output_mode` | OUTPUT | scene | scene | - | scene | scene | 5 | OK |
 | `whitewater_display_scale` | OUTPUT | scene | scene | - | - | scene | 11 | OK |

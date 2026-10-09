@@ -93,6 +93,8 @@ checkpoint.
   Spatiotemporal Processing panel, its kernels, its validation gate and its
   checkpoint scalars are gone. A saved scene that had ST-FLIP on opens without
   it and simulates with the ordinary pressure projection; re-bake it.
+- **Time Offset colour mode.** It read a channel only ST-FLIP filled, so it
+  always showed zero. A scene saved with it opens with Material colouring.
 
 ### Fixed
 
@@ -134,8 +136,6 @@ checkpoint.
   Use the Multigrid preconditioner where hydrostatic depth matters.
 - If a narrow-band reseed needs more particles than Max Particles allows, the
   band is left under-seeded and the bake prints a notice to the console.
-- The Time Offset colour mode has nothing to show: the channel it read was
-  fed by ST-FLIP and is now always zero.
 
 ## 2.1.0 — staged sidebar, collider walls that slide and grip, faster viscosity
 

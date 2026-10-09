@@ -837,10 +837,6 @@ def _particle_values(solver, mode, positions, velocities=None, indices=None,
             if indices is not None:
                 velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
-    if mode == "TIME_OFFSET":
-        values = (host.particle_attr("time_offset") if host is not None else
-                  solver.particles.time_offset.numpy()[:solver.particles.host_count])
-        return values[indices] if indices is not None else values
     if mode == "COLOR":
         values = (host.particle_attr("color") if host is not None else
                   solver.particles.attr("color").numpy()[:solver.particles.host_count])

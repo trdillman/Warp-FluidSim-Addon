@@ -162,6 +162,8 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | L Warp-free signature | `3.0/lane-l-warpfree-signature` | `C:\Users\Tyler\wt\r30-l` | `b769a65` | 2416 passed + 3 skipped + 1 xfailed | | **merged** as `90d13ba`. Signature pinned `e2a87bf9…8d38` (unchanged on base and head). L stopped PARTIAL on 3 tests that ast-parse `sim/solver.py` for `SolverSettings`; the orchestrator repointed them (`b769a65`) |
 | J narrow-band | `3.0/lane-j-narrow-band` | `C:\Users\Tyler\wt\r30-j` | base `90d13ba` | | | Stop 1 `b38d017` (2455 passed, 3 skipped, 6 xfailed; ownership map 214 → 217) **accepted**. Stop 2 `5bb8d6f` **merged** as `2952a95` (2471 passed, 3 skipped, 1 xfailed). Orchestrator follow-up `0d39abc`: the Liquid voxels readout shows only in narrow-band mode. Stop 2 measured 8.0× fewer particles under Multigrid (7.6× under Jacobi), column height 0.74217 full band against 0.74218 narrow band, hydrostatic pressure within 1%, bitwise determinism. Decisions: the settings-signature re-pin is accepted (3.0 unreleased); stop 1 is not merged alone (its toggle would do nothing); the overflow counter is solver-side only; the column test runs under Multigrid. **Finding:** the full-band 16×16×32 column at rest sinks from 0.75 to 0.558 in 30 frames (about 34% compression) under the default Jacobi pressure solve. Stop 2 confirmed it is the Jacobi solve, not narrow band (Jacobi full band 0.558, narrow 0.550; Multigrid holds 0.742); this supports making Multigrid the default at the beta |
 | K docs | `3.0/lane-k-docs` | `C:\Users\Tyler\wt\r30-k` | `feb8ba1` | 2412 + 1 expected red | | **merged** as `9e8912c`. The red test (CHANGELOG must lead with `version.py`) was closed by the 3.0.0 alpha bump `800b0ca` + `21bc7c4`. Technical-report "49/51 surfaces" count is undeterminable headless; prose generalised, needs the Blender validator at the gate. L's CHANGELOG line added by the orchestrator |
+| M defaults + re-baseline | `3.0/lane-m-defaults` | `C:\Users\Tyler\wt\r30-m` | base `2c4032a` | | | dispatched: measure Multigrid (≥3× iterations, ≥1.5× per solve) and narrow band on dam_break first; new domains APIC + Multigrid, stored pre-change domains migrate to FLIP + Jacobi; narrow band on dam_break; new demo hash |
+| N hygiene follow-ups | `3.0/lane-n-hygiene2` | `C:\Users\Tyler\wt\r30-n` | `ea1961d` | 2506 passed, 3 skipped, 1 xfailed (ownership map regenerated after) | | **merged**. 11 of 12 listed loops were already guarded; the Add-menu remove (`menus.py`) and `interchange.py` now keep walking. Time Offset removed: Blender stores the enum index, so a stale index read back as `''`; a load migration sets it to Material (probe on 5.2). The stale test name was accurate; unchanged |
 
 ### Wave 2 deviations
 
@@ -327,6 +329,7 @@ Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. E
 
 | Milestone | Contents | Gate | State |
 |---|---|---|---|
-| alpha.1 | Wave 0 (A–E) | 1 GUI gate (hash match), ABBA perf if budget sources changed | in progress |
-| alpha.2 | Wave 1 (F–I) | | not started |
-| beta | Wave 2 (J, K), multigrid re-baseline | | not started |
+| alpha.1 | Wave 0 (A–E) | 1 GUI gate (hash match), ABBA perf if budget sources changed | **passed** on `5a2ce80` (gate includes Waves 1–2) |
+| alpha.2 | Wave 1 (F–I) | | lanes merged; gate passed on `5a2ce80` with FLIP/Jacobi defaults |
+| beta | Wave 2 (J, K), defaults switch + re-baseline | 1 GUI gate, `--measure-budget` | lanes J, K merged; lane M (APIC + Multigrid defaults, narrow band on dam_break, new hash) and lane N (hygiene) dispatched 2026-10-09 from `2c4032a` |
+| 3.0.0 | channel `alpha` → stable, tag, publish | owner authorization | not started |

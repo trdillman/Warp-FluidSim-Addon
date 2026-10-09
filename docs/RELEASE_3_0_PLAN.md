@@ -72,8 +72,9 @@ CUDA. Spec: `SPEC-interchange-export.md`.
 
 ## Sequence and acceptance
 
-Every milestone must pass the existing reproducible GUI gate three times with identical
-hashes (`tools/run_production_gate.py --include-gui`, see
+Every milestone must pass the existing reproducible GUI gate once with a hash matching
+its recorded reference (scoped validation, `docs/RELEASING.md`; the earlier three-pass
+rule is retired) (`tools/run_production_gate.py --include-gui`, see
 `memory: full-gui-gate-run-procedure`) and a paired ABBA step-time comparison against
 2.1.1 on paddle_stir and crown_splash (median of frames 2–48, n≥6 pairs).
 

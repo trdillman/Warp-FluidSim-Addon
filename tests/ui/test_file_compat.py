@@ -129,3 +129,28 @@ def test_setup_and_physics_panels_draw_the_warning():
     for name in ("ui_scene.py", "ui_physics.py"):
         assert "file_compat.draw_pre_bridge_warning(layout" in (
             blender / name).read_text(encoding="utf-8"), name
+
+
+def _particle_mode_scene(stored_index):
+    seen = {}
+
+    class _Group:
+        def __setattr__(self, name, value):
+            seen[name] = value
+
+    scene = SimpleNamespace(
+        name="Scene", fluidsim=_Group(),
+        bl_system_properties_get=lambda: {"fluidsim": {"particle_attribute_mode": stored_index}})
+    return scene, seen
+
+
+def test_removed_time_offset_particle_mode_falls_back_to_none(monkeypatch):
+    file_compat = _file_compat(monkeypatch)
+    from fluidSim_warp_blender51.properties import PARTICLE_ATTR_ITEMS
+
+    assert "TIME_OFFSET" not in [item[0] for item in PARTICLE_ATTR_ITEMS]
+    stale, stale_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS))
+    valid, valid_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS) - 1)
+    assert file_compat.migrate_removed_particle_color_mode([stale, valid]) == 1
+    assert stale_seen == {"particle_attribute_mode": "NONE"}
+    assert valid_seen == {}
