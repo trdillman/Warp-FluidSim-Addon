@@ -56,16 +56,15 @@ Facts that explain results:
    the user guide describes both as opt-in. TBD (orchestrator)
 4. **Lane J (narrow band).** Not documented. The cache writes empty `liquid_sdf_*`
    arrays until it lands, and the VDB writer waits for its data. TBD (orchestrator)
-5. **Lane L (Warp-free cache signature).** Not documented. TBD (orchestrator)
-6. **Release steps** (version bump, manifest, archive, tag, publication).
-   TBD (orchestrator)
+5. **Lane L (Warp-free cache signature).** Merged as `90d13ba`. `SolverSettings`
+   lives in `sim/solver_settings_model.py` (re-exported from `sim/solver.py`); the
+   settings signature is pinned to `e2a87bf9…8d38` and unchanged; the strict xfail is
+   gone. CHANGELOG line under Fixed.
+6. **Release steps.** Version bump to 3.0.0 (alpha channel) done in `800b0ca`
+   (`version.py` and the manifest). Archive, tag and publication: TBD (orchestrator)
 
 ## 2. Open items from the lanes
 
-- **Warp-free settings signature (lane L).** Opening a cache with no importable
-  Warp still fails because `sim/solver.py` imports Warp. Playback-only works when
-  Warp loads but no CUDA device exists. Fix: move `SolverSettings` into a Warp-free
-  module and remove the strict xfail.
 - POINTCLOUD Alembic export writes only an empty transform on Blender 5.2, so
   particle export is out of scope.
 - Restoring a scene that started with live on during an Alembic export is

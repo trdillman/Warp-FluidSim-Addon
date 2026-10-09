@@ -19,6 +19,8 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lane H merge + gate entry | `b54f1e2` | 2374 passed, 3 skipped, 1 xfailed | not recomputed (no `sim/` or `properties.py` change) |
 | release/3.0 after lane G merge | `b4c9dc5` | 2388 passed, 3 skipped, 1 xfailed | **`8baa886c…baf3`** (2/2 headless). Changed by G by design; all 21 demo checks pass |
 | release/3.0 after lane F merge | `cfff382` | 2413 passed, 3 skipped, 2 xfailed | `8baa886c…baf3`, equal to G, so APIC leaves FLIP byte-identical |
+| release/3.0 after lane L merge | `90d13ba` | 2416 passed, 3 skipped, 1 xfailed (H's xfail now passes, +2 pin tests) | `8baa886c…baf3` (unchanged, as a pure move must be) |
+| release/3.0 after lane K merge + 3.0.0 alpha bump | `21bc7c4` | 2416 passed, 3 skipped, 1 xfailed | `8baa886c…baf3` on `800b0ca` (the build label is not in the artifact) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -79,9 +81,9 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | `b322950` | 1 strict xfail (Warp-free signature) | settings signature imports Warp | **PARTIAL**, **merged** as `2eb067e` + gate entry `b54f1e2`; `ALEMBIC_EXPORT_OK` on Blender 5.2 with CUDA hidden (21 checks, bbox error 0) |
 | I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | `8ebb281` | 2319 passed + gate fix | | **KEEP**, **merged** as `aae0607` (2 of 3 attempts; Blender 5.2 meshes a sphere within 0.05 voxel). Not wired to export; wiring waits for lane J's `liquid_sdf_*` data (check cell-centre `origin` then) |
 | G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | `2bc4a91` | 2371 passed, 3 skipped (lane) | | **PARTIAL→accepted**, **merged** as `b4c9dc5`. `RESOLUTION_DIVISIONS_OK` on 5.2 (merged tree). About 19 acceptance scripts now snap `voxel_size` to whole divisions (table in lane report); the GUI gate covers them |
-| L Warp-free signature | `3.0/lane-l-warpfree-signature` | `C:\Users\Tyler\wt\r30-l` | base `cfff382` | | | dispatched (follow-up to H; must merge before J edits `sim/solver.py`) |
-| J narrow-band | | | | | | brief written (`r30_briefs/lane-j.md`), **staged: stop 1** (design note, strict-xfail acceptance tests, settings/blocker/stat wiring, no kernels). Dispatches after L merges |
-| K docs | `3.0/lane-k-docs` | `C:\Users\Tyler\wt\r30-k` | base `b1e064b` | | | dispatched (CHANGELOG 3.0.0, `migrating_to_3_0.md`, user guide, technical report, handoff skeleton; J and L excluded) |
+| L Warp-free signature | `3.0/lane-l-warpfree-signature` | `C:\Users\Tyler\wt\r30-l` | `b769a65` | 2416 passed + 3 skipped + 1 xfailed | | **merged** as `90d13ba`. Signature pinned `e2a87bf9…8d38` (unchanged on base and head). L stopped PARTIAL on 3 tests that ast-parse `sim/solver.py` for `SolverSettings`; the orchestrator repointed them (`b769a65`) |
+| J narrow-band | `3.0/lane-j-narrow-band` | `C:\Users\Tyler\wt\r30-j` | base `90d13ba` | | | **dispatched: stop 1** (design note, strict-xfail acceptance tests, settings/blocker/stat wiring, no kernels). Orchestrator review before stop 2 |
+| K docs | `3.0/lane-k-docs` | `C:\Users\Tyler\wt\r30-k` | `feb8ba1` | 2412 + 1 expected red | | **merged** as `9e8912c`. The red test (CHANGELOG must lead with `version.py`) was closed by the 3.0.0 alpha bump `800b0ca` + `21bc7c4`. Technical-report "49/51 surfaces" count is undeterminable headless; prose generalised, needs the Blender validator at the gate. L's CHANGELOG line added by the orchestrator |
 
 ### Wave 2 deviations
 

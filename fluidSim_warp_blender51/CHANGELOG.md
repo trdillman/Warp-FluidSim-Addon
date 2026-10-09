@@ -91,6 +91,8 @@ checkpoint.
   names it, instead of stopping at the first failure.
 - `CudaDotProduct` checks array lengths before a launch.
 - A refused bake start restores the Live flag.
+- Opening a baked cache no longer needs Warp to be importable. The cache settings
+  signature is unchanged, so existing 3.0 caches stay valid.
 
 ### Internal
 
