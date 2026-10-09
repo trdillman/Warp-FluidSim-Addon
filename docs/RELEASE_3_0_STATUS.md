@@ -15,6 +15,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | release/3.0 after lanes B2 and C merge | `881b0ab` | 2307 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane A merge + fixups | `582ccbc` | 2313 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
 | release/3.0 after lane A2 merge | `6b0abbd` | 2357 passed, 3 skipped | `2cb4f781…3a73` (headless, equals master) |
+| release/3.0 after lane I merge | `aae0607` | 2364 passed, 3 skipped | not recomputed (no `sim/` or `properties.py` change) |
 
 - Demo artifact = `artifacts/demo_analysis/analysis_report.json`, the file the production
   gate hashes. The orchestrator recomputes it headless after every merge that touches
@@ -73,7 +74,7 @@ each dispatch, merge and gate. Newest state wins; history lives in git.
 | A2 preconditioner wiring | `3.0/lane-a2-preconditioner` | `C:\Users\Tyler\wt\r30-a2` | `697f342` | 2357 passed, 3 skipped | | **merged** as `6b0abbd`; JACOBI default, demo hash unchanged |
 | F APIC | `3.0/lane-f-apic` | `C:\Users\Tyler\wt\r30-f` | stop 1 `491f81e` | red tests as designed | | stop 1 accepted with changes; implementing |
 | H Alembic + playback-only | `3.0/lane-h-export` | `C:\Users\Tyler\wt\r30-h` | base `34d6b67` | | | running |
-| I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | base `34d6b67` | | | running (KEEP or KILL) |
+| I VDB spike | `3.0/lane-i-vdb-spike` | `C:\Users\Tyler\wt\r30-i` | `8ebb281` | 2319 passed + gate fix | | **KEEP**, **merged** as `aae0607` (2 of 3 attempts; Blender 5.2 meshes a sphere within 0.05 voxel). Not wired to export; wiring waits for lane J's `liquid_sdf_*` data (check cell-centre `origin` then) |
 | G resolution divisions | `3.0/lane-g-divisions` | `C:\Users\Tyler\wt\r30-g` | base `6b0abbd` | | | dispatched |
 
 ### Wave 1 deviations
