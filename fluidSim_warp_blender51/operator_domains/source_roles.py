@@ -14,46 +14,6 @@ from . import common as _runtime
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
     """Turn selected mesh geometry into a runnable FluidSim setup"""
 
@@ -281,7 +241,7 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _bridge().session().active:
+        if not _runtime._bridge().session().active:
             cls.poll_message_set("Initialize the solver before injecting points")
             return False
         obj = getattr(context, "active_object", None)
@@ -296,7 +256,7 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        bridge = _bridge()
+        bridge = _runtime._bridge()
         sess = bridge.session()
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")

@@ -90,8 +90,13 @@ def _require_managed_cache_directory(path: Path | str) -> Path:
     return base
 
 
+# What a Production Bake restart replaces inside a cache folder, and nothing else.
+RESTART_MANAGED_ENTRIES = ("fluidsim_cache.json", "frames", "checkpoints", "logs")
+
+
 def require_restartable_cache_directory(
-        path: Path | str, entries: tuple[str, ...]) -> Path:
+        path: Path | str,
+        entries: tuple[str, ...] = RESTART_MANAGED_ENTRIES) -> Path:
     """Refuse a restart that would replace data FluidSim did not write.
 
     Restart replaces ``entries`` (``frames``, ``logs``...).  Those names are

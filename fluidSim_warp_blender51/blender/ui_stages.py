@@ -23,7 +23,7 @@ import bpy
 
 from . import file_compat
 from .pending_settings import setting_owner
-from .scene_bridge import active_domain_settings
+from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimView3DPanel,
     draw_property,

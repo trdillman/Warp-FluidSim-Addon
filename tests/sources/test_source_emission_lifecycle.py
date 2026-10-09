@@ -10,6 +10,11 @@ These tests encode the source-emission truth contract:
   representation ``SourceShapeSourceMode`` (FIELD/PARTICLES).
 """
 
+import importlib
+import sys
+import types
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -166,7 +171,7 @@ def _step(solver, frames=1):
 
 def test_initial_fill_fires_once_and_does_not_replenish_after_drain():
     solver = FluidSolver(_settings(max_substeps=2))
-    solver.set_sources([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
+    solver.set_source_batch([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
 
     _step(solver, frames=1)
     # The source fired exactly once this run.
@@ -186,7 +191,8 @@ def test_initial_fill_fires_once_and_does_not_replenish_after_drain():
 
 def test_continuous_inflow_replenishes_after_drain():
     solver = FluidSolver(_settings(max_substeps=2))
-    solver.set_sources([_box_source(emission_mode=SourceEmissionMode.CONTINUOUS_INFLOW)])
+    solver.set_source_batch(
+        [_box_source(emission_mode=SourceEmissionMode.CONTINUOUS_INFLOW)])
 
     _step(solver, frames=1)
     # Continuous sources never enter the fired set.
@@ -205,7 +211,7 @@ def test_continuous_inflow_replenishes_after_drain():
 
 def test_initial_fill_rearms_only_on_reset():
     solver = FluidSolver(_settings(max_substeps=1))
-    solver.set_sources([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
+    solver.set_source_batch([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
     _step(solver, frames=1)
     assert solver.sourcing._initial_fired == {"bucket"}
 
@@ -214,7 +220,7 @@ def test_initial_fill_rearms_only_on_reset():
     assert solver.sourcing._initial_fired == set()
 
     # Re-applied sources fire again after reset.
-    solver.set_sources([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
+    solver.set_source_batch([_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL)])
     _step(solver, frames=1)
     assert solver.sourcing._initial_fired == {"bucket"}
     assert _count_in_box(solver) > 0
@@ -226,7 +232,7 @@ def test_initial_fill_emit_total_is_independent_of_substep_count():
     counts = {}
     for substeps in (1, 4):
         solver = FluidSolver(_settings(max_substeps=substeps))
-        solver.set_sources(
+        solver.set_source_batch(
             [_box_source(emission_mode=SourceEmissionMode.INITIAL_FILL,
                          emit_rate=8.0)])
         _step(solver, frames=1)
@@ -324,7 +330,7 @@ def test_height_fill_still_applies_alongside_compiled_plan_sources():
     solver.set_height_source(HeightSourceDesc(
         enabled=True, base_height=0.4, back_mode=1,
         emit_particles=True, emission_mode=SourceEmissionMode.INITIAL_FILL))
-    solver.set_source_plans((SourcePlan(
+    solver.set_source_batch(native_plans=(SourcePlan(
         SourceKey("direct-points"), SourceOperation.LIQUID,
         SourceLifecycle.DIRECT_APPEND, SourceEvaluationCadence.STATIC,
         PointRegionPlan(np.array(((-0.1, 0.0, 0.7),), np.float32)),
@@ -395,6 +401,79 @@ def test_mixed_source_batch_owns_each_representation_once():
     solver.release()
 
 
+def _mixed_scene_inputs(legacy, plans):
+    """Scene-input double yielding one legacy descriptor and native plans."""
+    class Inputs:
+        device = None
+
+        def begin_sync(self):
+            return 1
+
+        def gather_sources(self, _scene, _depsgraph, **_kwargs):
+            return [legacy]
+
+        def gather_source_plans(self, _scene, _depsgraph=None):
+            return plans
+
+        def gather_colliders(self, _scene, _depsgraph=None, **_kwargs):
+            return []
+
+        def gather_force_fields(self, _scene, _depsgraph=None):
+            return []
+
+        def gather_height_source(self, _scene, _depsgraph=None):
+            return sourcing.HeightSourceDesc()
+
+    return Inputs()
+
+
+def _scene_bridge_with_stub_bpy(monkeypatch):
+    fake_bpy = types.ModuleType("bpy")
+    fake_bpy.context = SimpleNamespace(
+        preferences=SimpleNamespace(addons={}),
+        evaluated_depsgraph_get=lambda: None)
+    fake_bpy.app = SimpleNamespace(handlers=SimpleNamespace(
+        frame_change_pre=[], playback_pre=[], playback_post=[],
+        persistent=lambda fn: fn))
+    fake_mathutils = types.ModuleType("mathutils")
+    fake_mathutils.Vector = lambda value: value
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+    monkeypatch.setitem(sys.modules, "mathutils", fake_mathutils)
+    name = "fluidSim_warp_blender51.blender.scene_bridge"
+    sys.modules.pop(name, None)
+    module = importlib.import_module(name)
+    # Registered through monkeypatch so the stub-bound module is dropped on exit.
+    monkeypatch.setitem(sys.modules, name, module)
+    return module
+
+
+def test_session_sync_installs_legacy_and_native_sources_together(monkeypatch):
+    """A scene mixing an ordinary emitter with a native plan keeps both."""
+    scene_bridge = _scene_bridge_with_stub_bpy(monkeypatch)
+    solver = FluidSolver(_settings(max_substeps=1))
+    legacy = _box_source(
+        emission_mode=SourceEmissionMode.INITIAL_FILL, source_id="legacy-sync")
+    pressure = SourcePlan(
+        SourceKey("native-pressure"), SourceOperation.PRESSURE,
+        SourceLifecycle.EVERY_FRAME, SourceEvaluationCadence.STATIC,
+        AnalyticRegionPlan(
+            shape=SourceShapeShape.BOX, position=(0.0, 0.0, 0.75),
+            half_extents=(0.2, 0.2, 0.2)),
+        PayloadPlan(kind=SourcePayloadKind.PRESSURE, pressure=4.0),
+    )
+    session = scene_bridge.Session()
+    scene = SimpleNamespace()
+    session.solver = solver
+    session.scene_inputs = _mixed_scene_inputs(legacy, (pressure,))
+    session.scene_identity = scene_bridge.scene_identity(scene)
+    try:
+        session.sync_scene(scene)
+        assert solver.sourcing.sources == [legacy]
+        assert solver.sourcing.plans == (pressure,)
+    finally:
+        solver.release()
+
+
 def test_zero_liquid_plan_stays_armed_while_field_plan_remains_active():
     solver = FluidSolver(_settings(max_substeps=1))
     zero = SourcePlan(
@@ -415,7 +494,7 @@ def test_zero_liquid_plan_stays_armed_while_field_plan_remains_active():
             half_extents=(0.2, 0.2, 0.2)),
         PayloadPlan(kind=SourcePayloadKind.PRESSURE, pressure=3.0),
     )
-    solver.set_source_plans((zero, pressure))
+    solver.set_source_batch(native_plans=(zero, pressure))
 
     _step(solver)
 
@@ -486,13 +565,13 @@ def test_direct_point_append_is_once_per_runtime_and_rearms_on_reset():
         PointRegionPlan(np.array(((-0.1, 0.0, 0.7), (0.1, 0.0, 0.7)), np.float32)),
         PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
     )
-    solver.set_source_plans((plan,))
+    solver.set_source_batch(native_plans=(plan,))
     _step(solver)
     assert solver.particles.refresh_host_count() == 2
     _step(solver)
     assert solver.particles.refresh_host_count() == 2
     solver.reset()
-    solver.set_source_plans((plan,))
+    solver.set_source_batch(native_plans=(plan,))
     _step(solver)
     assert solver.particles.refresh_host_count() == 2
     solver.release()
@@ -519,7 +598,7 @@ def test_zero_count_direct_append_does_not_mask_an_earlier_emission():
         PointRegionPlan(np.zeros((0, 3), np.float32)),
         PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
     )
-    solver.set_source_plans((filled, empty))
+    solver.set_source_batch(native_plans=(filled, empty))
     _step(solver)
     assert solver.particles.refresh_host_count() == 2
     assert solver.sourcing.last_apply_result["emitted"] == 2
@@ -552,7 +631,7 @@ def test_capacity_gated_liquid_source_stays_armed():
             half_extents=(0.3, 0.3, 0.25)),
         PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
     )
-    solver.set_source_plans((direct, box))
+    solver.set_source_batch(native_plans=(direct, box))
     _step(solver)
     assert solver.particles.refresh_host_count() == 0
     assert str(direct.stable_id) not in solver.sourcing._initial_fired
@@ -579,7 +658,7 @@ def test_aggregate_direct_append_exact_fit_commits_every_source():
         PointRegionPlan(np.array(((0.1, 0.0, 0.7), (0.2, 0.0, 0.7)), np.float32)),
         PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES),
     )
-    solver.set_source_plans((first, second))
+    solver.set_source_batch(native_plans=(first, second))
 
     _step(solver)
 
@@ -595,7 +674,7 @@ def test_legacy_initial_fill_over_capacity_is_zero_commit_and_retryable():
     settings = _settings(max_substeps=1)
     settings.max_particles = 8
     solver = FluidSolver(settings)
-    solver.set_sources([_box_source(
+    solver.set_source_batch([_box_source(
         emission_mode=SourceEmissionMode.INITIAL_FILL,
         source_id="legacy-overflow", emit_rate=6.0)])
     seed = solver.sourcing._emit_seed
@@ -610,7 +689,7 @@ def test_legacy_initial_fill_over_capacity_is_zero_commit_and_retryable():
     assert solver.sourcing._emit_seed == seed
 
     # Retry the same stable lifecycle after an explicit smaller configuration.
-    solver.set_sources([SourceShapeDesc(
+    solver.set_source_batch([SourceShapeDesc(
         enabled=True, shape=SourceShapeShape.BOX,
         stype=SourceShapeType.SOURCE,
         mode=SourceShapeSourceMode.PARTICLES,
@@ -642,7 +721,7 @@ def test_legacy_mesh_over_capacity_is_rejected_before_commit():
         support_winding_number=True,
     )
     solver = FluidSolver(settings)
-    solver.set_sources([MeshSourceDesc(
+    solver.set_source_batch([MeshSourceDesc(
         mesh=mesh, vertices=vertices, triangles=triangles,
         aabb_min=tuple(vertices.min(axis=0)),
         aabb_max=tuple(vertices.max(axis=0)),

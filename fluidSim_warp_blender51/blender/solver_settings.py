@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import sys
 
+from .scene_access import active_domain_object, active_domain_settings
+
 
 # Canonical fallback domain used when no domain object is designated. The
 # migration create-branch builds an object spanning exactly this box so that
@@ -95,7 +97,7 @@ _SETTING_REGISTRY_VALIDATED = False
 
 def domain_bounds(scene) -> tuple:
     """Return plain host tuples for the authored domain's world AABB."""
-    obj = scene.fluidsim.domain_object
+    obj = active_domain_object(scene)
     if obj is None:
         return DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX
     from mathutils import Vector
@@ -110,7 +112,7 @@ def domain_bounds(scene) -> tuple:
 
 def domain_transform(scene):
     """Capture the domain transform as owned scalar tuples."""
-    obj = getattr(scene.fluidsim, "domain_object", None)
+    obj = active_domain_object(scene)
     matrix = getattr(obj, "matrix_world", None)
     if matrix is None:
         return None
@@ -235,10 +237,6 @@ def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
 
 
 def apply_gravity(scene, settings):
-    # Lazy import: scene_bridge -> simulation_admission -> solver_settings is a
-    # top-level cycle, so the active-domain accessor is pulled at call time.
-    from .scene_bridge import active_domain_settings
-
     fs = active_domain_settings(scene)
     _require_domain_group(fs)
     if not hasattr(fs, "gravity"):
@@ -262,7 +260,6 @@ def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
     from ..sim.solver import SolverSettings
-    from .scene_bridge import active_domain_settings
 
     fs = active_domain_settings(scene)
     settings = SolverSettings()

@@ -14,6 +14,7 @@ import bpy
 
 from ..version import VERSION_STRING
 from . import file_compat
+from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimScenePanel,
     activity_ui_state,
@@ -44,8 +45,6 @@ def _domain_owner(context):
     ``None`` when no domain object is designated; panels that draw domain
     settings poll on :func:`_domain_visible`.
     """
-    from .scene_bridge import active_domain_settings
-
     return active_domain_settings(getattr(context, "scene", None))
 
 

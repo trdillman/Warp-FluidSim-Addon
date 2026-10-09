@@ -14,46 +14,6 @@ from . import common as _runtime
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
-def _bridge():
-    return _runtime._bridge()
-
-
-def _configured_device():
-    return _runtime._configured_device()
-
-
-def _mutation_poll(cls, context):
-    return _runtime._mutation_poll(cls, context)
-
-
-def _owned_capacity_plan(scene):
-    return _runtime._owned_capacity_plan(scene)
-
-
-def _owned_capacity_signature(scene, plan):
-    return _runtime._owned_capacity_signature(scene, plan)
-
-
-def _pending():
-    return _runtime._pending()
-
-
-def _resolved_cache_path(scene):
-    return _runtime._resolved_cache_path(scene)
-
-
-def _runtime_poll(cls):
-    return _runtime._runtime_poll(cls)
-
-
-def _scene_identity_token(scene):
-    return _runtime._scene_identity_token(scene)
-
-
-def _solver_settings():
-    return _runtime._solver_settings()
-
-
 def _preset_field_owner(scene):
     """Resolve each preset field to the settings group that actually owns it.
 
@@ -84,7 +44,7 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
     def execute(self, context):
         from ..presets import library
         from ..blender import pending_settings
-        from ..blender.scene_bridge import active_domain_settings
+        from ..blender.scene_access import active_domain_settings
 
         identifier = str(context.scene.fluidsim.product_preset or "")
         target = active_domain_settings(context.scene)
@@ -114,7 +74,7 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
         # stale so REINIT_PENDING immediately reappears after a preset that
         # touched a reinit-tier field (see AGENTS.md:L21).
         if result.requires_reset:
-            sess = _bridge().session()
+            sess = _runtime._bridge().session()
             owns_scene = getattr(sess, "owns_scene", lambda _scene: sess.active)
             if owns_scene(context.scene):
                 try:
@@ -166,7 +126,7 @@ class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
 
     def execute(self, context):
         from ..presets import library
-        from ..blender.scene_bridge import active_domain_settings
+        from ..blender.scene_access import active_domain_settings
 
         source = active_domain_settings(context.scene)
         if source is None:

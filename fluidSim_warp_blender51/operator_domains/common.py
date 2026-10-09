@@ -63,18 +63,6 @@ def _resolved_cache_path(scene) -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def _scene_identity_token(scene):
-    pointer = getattr(scene, "as_pointer", None)
-    if callable(pointer):
-        try:
-            value = int(pointer())
-            if value:
-                return str(value)
-        except (TypeError, ValueError, ReferenceError):
-            pass
-    return str(id(scene))
-
-
 def _owned_capacity_plan(scene):
     bridge = _bridge()
     getter = getattr(bridge, "capacity_plan_for_scene", None)

@@ -81,6 +81,10 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
         d.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
+    for key in ("PYTHONPATH", "PYTHONHOME", "FLUIDSIM_ALLOW_EXTERNAL_WARP",
+                "FLUIDSIM_TEST_EXTERNAL_RUNTIME"):
+        env.pop(key, None)
+    env["PYTHONNOUSERSITE"] = "1"
     env.update({
         "BLENDER_USER_CONFIG": str(config_dir),
         "BLENDER_USER_SCRIPTS": str(scripts_dir),
@@ -439,3 +443,82 @@ print('EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED')
     )
     assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
     assert 'EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED' in result.stdout
+
+
+def test_authorized_external_override_keeps_controls_in_real_blender(tmp_path, built_package):
+    """A configured external copy stays visible without becoming installer-owned."""
+    blender = _find_blender()
+    env = _setup_isolated_blender(tmp_path, built_package)
+    seed = """
+import bpy
+bpy.context.preferences.system.use_online_access = True
+assert bpy.ops.fluidsim.install_warp() == {'FINISHED'}
+print('OVERRIDE-SEED-INSTALLED')
+"""
+    result = subprocess.run(
+        [str(blender), '--background', '--factory-startup', '--python-exit-code', '1',
+         '--python-expr', _factory_script(seed)],
+        env=env, capture_output=True, text=True, check=False, timeout=600,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'OVERRIDE-SEED-INSTALLED' in result.stdout
+    # Move only this disposable fixture's owned installation, never user files.
+    roots = list(Path(env["BLENDER_USER_EXTENSIONS"]).rglob("warp/__init__.py"))
+    assert len(roots) == 1
+    external = tmp_path / "external-runtime"
+    shutil.move(str(roots[0].parents[1]), str(external))
+    env["FLUIDSIM_ALLOW_EXTERNAL_WARP"] = "1"
+    env["FLUIDSIM_TEST_EXTERNAL_RUNTIME"] = str(external)
+    script = """
+import bpy, importlib, os
+from types import SimpleNamespace
+module = 'bl_ext.test_repo.fluidsim_warp'
+preferences = importlib.import_module(module + '.preferences')
+installer = importlib.import_module(module + '.warp_installer')
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+prefs = bpy.context.preferences.addons[module].preferences
+prefs.developer_warp_path = os.environ['FLUIDSIM_TEST_EXTERNAL_RUNTIME']
+assert bpy.ops.fluidsim.refresh_runtime_probe() == {'FINISHED'}
+probe = runtime.probe_runtime()
+assert probe.warp_version == '1.17.0', probe
+assert installer.owned_install_status() is None
+assert 'does not own' in installer.foreign_warp_block_reason()
+calls = []
+class Layout:
+    def box(self): return self
+    def row(self, **kwargs): return self
+    def label(self, **kwargs): calls.append(('label', kwargs.get('text')))
+    def prop(self, owner, name, **kwargs): calls.append(('prop', name))
+    def operator(self, name, **kwargs):
+        calls.append(('operator', name))
+        return SimpleNamespace(force_reinstall=False)
+view = SimpleNamespace(layout=Layout(), developer_warp_path=prefs.developer_warp_path)
+preferences.FLUIDSIM_AP_preferences.draw(view, bpy.context)
+assert ('prop', 'device') in calls, calls
+assert ('operator', 'fluidsim.refresh_runtime_probe') in calls, calls
+assert ('label', 'Remove the other Warp copy first') not in calls, calls
+
+# The UI exception never relaxes the native runtime version admission gate.
+import warp
+version = warp.__version__
+warp.__version__ = '1.16.0'
+rejected = runtime.probe_runtime(force=True)
+assert not rejected.available and 'unsupported Warp version' in rejected.last_error, rejected
+warp.__version__ = version
+runtime.probe_runtime(force=True)
+
+# Revoking authorization immediately restores the normal foreign-copy UI.
+os.environ.pop('FLUIDSIM_ALLOW_EXTERNAL_WARP')
+calls.clear()
+preferences.FLUIDSIM_AP_preferences.draw(view, bpy.context)
+assert ('label', 'Remove the other Warp copy first') in calls, calls
+assert ('prop', 'device') not in calls, calls
+print('AUTHORIZED-EXTERNAL-OVERRIDE-CONTROLS-VERIFIED')
+"""
+    result = subprocess.run(
+        [str(blender), '--background', '--factory-startup', '--python-exit-code', '1',
+         '--python-expr', _factory_script(script)],
+        env=env, capture_output=True, text=True, check=False, timeout=600,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'AUTHORIZED-EXTERNAL-OVERRIDE-CONTROLS-VERIFIED' in result.stdout

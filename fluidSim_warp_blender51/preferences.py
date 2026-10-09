@@ -13,6 +13,7 @@ from .runtime.warp_runtime import (
     runtime_status_for_device,
 )
 from .version import CERTIFIED_WARP_VERSION
+from .warp_discovery import developer_override_active
 from .warp_installer import (
     foreign_warp_block_reason,
     get_installed_warp_info,
@@ -88,6 +89,10 @@ def _refresh_runtime(prefs):
     if prefs is not None and aliases and getattr(prefs, "device", "") not in aliases:
         prefs.device = aliases[0]
     selected = configured_device()
+    if probe.available:
+        from .runtime.prewarm_timer import register_timer
+
+        register_timer()
     return probe, runtime_status_for_device(selected, probe=probe)
 
 
@@ -199,8 +204,11 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="Runtime", icon="GPU")
 
+        active_override = developer_override_active(
+            str(getattr(self, "developer_warp_path", "") or "")
+        )
         blocked = foreign_warp_block_reason()
-        foreign = bool(blocked) and (
+        foreign = not active_override and bool(blocked) and (
             "does not own" in blocked or "user site-packages" in blocked
         )
         if foreign:
@@ -214,7 +222,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         else:
             warp_installed, warp_info = get_installed_warp_info()
             status = owned_install_status()
-            if not warp_installed or status is None:
+            if not active_override and (not warp_installed or status is None):
                 row = box.row()
                 row.alert = True
                 row.label(text="Warp is not installed", icon="ERROR")
@@ -228,7 +236,11 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                     )
                 )
             else:
-                box.label(text=warp_info)
+                if active_override:
+                    box.label(text="External Warp (authorized developer override)")
+                    status = None  # External code is never an owned repair target.
+                else:
+                    box.label(text=warp_info)
                 box.prop(self, "device")
                 probe = probe_runtime()
                 selected = configured_device()

@@ -51,7 +51,7 @@ def test_effect_evidence_is_published_only_after_successful_admission(monkeypatc
         applied_state_capture=lambda *a, **kw: None, reset_settings_apply=lambda *a: None,
         effect_builder=lambda s: ('changed',) if failure == 'stale' else ('captured',),
         effect_publisher=publish)
-    monkeypatch.setattr(owner, '_preflight', lambda *a, **kw: (snapshot, {}, None))
+    monkeypatch.setattr(owner, '_preflight', lambda *a, **kw: (snapshot, None))
     def prepare(*args):
         if failure == 'configure':
             raise RuntimeError('configure failed')

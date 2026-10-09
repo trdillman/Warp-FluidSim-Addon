@@ -257,7 +257,7 @@ class SourcePipeline(CompiledSourceExecution):
         self.last_post_p2g_apply_count = 0
         # Per-source initial-fill armed state, keyed by the stable descriptor
         # ``source_id`` (Blender object name). Persists across per-frame
-        # ``set_sources`` calls; cleared by ``reset`` (Initialize/Reset).
+        # ``set_source_batch`` calls; cleared by ``reset`` (Initialize/Reset).
         self._initial_fired: set[str] = set()
         from .source_regions import SourceCompiler
 
@@ -382,20 +382,6 @@ class SourcePipeline(CompiledSourceExecution):
         self._shape_array = None
         self._emit_shape_array = None
         self._emit_shape_key = None
-
-    def set_plans(self, plans):
-        """Compatibility seam: native plans replace all legacy descriptors."""
-        self.set_source_batch(SourceBatch(native_plans=tuple(plans)))
-
-    def set_sources(self, sources):
-        """Compatibility seam: descriptors replace all native plans."""
-        from .source_regions import SourcePlan
-
-        values = tuple(sources)
-        if values and all(isinstance(value, SourcePlan) for value in values):
-            self.set_plans(values)
-        else:
-            self.set_source_batch(SourceBatch(legacy_descriptors=values))
 
     def required_leaf_boxes(self):
         """World-space plan bounds used by solver topology marking."""

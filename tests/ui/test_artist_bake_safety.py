@@ -424,10 +424,11 @@ class _ModalBackend:
 class _ModalController:
     instances = []
 
-    def __init__(self, *, backend):
+    def __init__(self, *, backend, progress_callback=None):
         from fluidSim_warp_blender51.blender.production_bake import BakeStatus
 
         self.backend = backend
+        self.progress_callback = progress_callback
         self.status = BakeStatus.IDLE
         self.progress = 0.0
         self.message = ""
@@ -615,10 +616,12 @@ def test_removed_scene_restore_failure_still_removes_timer_and_reservation(
     controller = _ModalController.instances[-1]
     scene.removed = True
     fake_bpy.data.scenes.clear()
+    from fluidSim_warp_blender51.blender import cache_bake
+
     monkeypatch.setattr(
-        operator._restart_cache,
+        cache_bake._RestartCacheProtection,
         "restore",
-        lambda: (_ for _ in ()).throw(OSError("restore blocked")),
+        lambda _self: (_ for _ in ()).throw(OSError("restore blocked")),
     )
 
     assert operator.modal(

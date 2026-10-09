@@ -197,7 +197,7 @@ def test_copy_bake_command_targets_shipped_runner_at_extension_root(monkeypatch,
     source_runner = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51/release/run_headless_bake.py"
     runner.write_bytes(source_runner.read_bytes())
     monkeypatch.setattr(rendering, "__file__", str(operator_file))
-    monkeypatch.setattr(rendering, "_configured_device", lambda: "cuda:3")
+    monkeypatch.setattr(rendering._runtime, "_configured_device", lambda: "cuda:3")
     fake_bpy.data = SimpleNamespace(filepath=str(tmp_path / "saved scene.blend"))
     fake_bpy.app = SimpleNamespace(binary_path=str(tmp_path / "Blender 5.2/blender.exe"))
     fake_bpy.path = SimpleNamespace(abspath=lambda path: path)
@@ -552,9 +552,6 @@ class _Layout:
 def test_capacity_dialog_never_displays_scene_mirror_fallback(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")
-    session_operators = sys.modules[
-        "fluidSim_warp_blender51.operator_domains.session"
-    ]
     domain_settings = SimpleNamespace()
     scene = SimpleNamespace(
         fluidsim=SimpleNamespace(
@@ -563,7 +560,7 @@ def test_capacity_dialog_never_displays_scene_mirror_fallback(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        session_operators,
+        operators._operator_runtime,
         "_solver_settings",
         lambda: SimpleNamespace(build_settings=lambda _scene: SimpleNamespace()),
     )
@@ -792,6 +789,85 @@ def test_capacity_option_refuses_without_designated_domain(monkeypatch):
     assert fs.status == "Capacity option cannot apply without a designated domain"
 
 
+def _capacity_bounds_scene(monkeypatch, domain_overrides=None):
+    """An operator, scene and domain for an option that resizes the domain."""
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    suggestion = SimpleNamespace(
+        key="shrink",
+        label="Tighten the domain",
+        changes={"max_particles": 4_000_000, "domain_min": (0.0, 0.0, 0.0), "domain_max": (2.0, 2.0, 2.0)},
+        estimated_bytes=1024,
+        budget_bytes=2048,
+    )
+    plan = SimpleNamespace(scene_signature="scene-v1", suggestions=(suggestion,), blockers=())
+    domain_settings = _RnaPropertyGroup(CAPACITY_RNA, max_particles=2_000_000, leaf_capacity=8192)
+    domain = SimpleNamespace(
+        fluidsim_domain=domain_settings,
+        location=(0.0, 0.0, 0.0),
+        dimensions=(4.0, 4.0, 4.0),
+        rotation_euler=(0.0, 0.0, 0.0),
+        parent=None,
+    )
+    for name, value in (domain_overrides or {}).items():
+        setattr(domain, name, value)
+    fs = SimpleNamespace(domain_object=domain, status="Capacity warning")
+    scene = SimpleNamespace(fluidsim=fs)
+    initialized = []
+    bridge = SimpleNamespace(
+        session=lambda: SimpleNamespace(capacity_plan=plan),
+        refresh_capacity_plan=lambda actual: plan,
+        clear_error=lambda actual: None,
+        initialize_session=lambda actual: (
+            initialized.append(actual)
+            or SimpleNamespace(solver=SimpleNamespace(device="cuda:0"))
+        ),
+    )
+    monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
+    monkeypatch.setattr(
+        operators._operator_runtime,
+        "_solver_settings",
+        lambda: SimpleNamespace(
+            build_settings=lambda _scene: SimpleNamespace(
+                domain_min=(0.0, 0.0, 0.0), domain_max=(9.0, 9.0, 9.0)
+            )
+        ),
+    )
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(invoke_props_dialog=lambda actual, width: {"RUNNING_MODAL"}),
+    )
+    op = operators.FLUIDSIM_OT_apply_capacity_suggestion()
+    op.suggestion_key = "shrink"
+    assert op.invoke(context, None) == {"RUNNING_MODAL"}
+    return op, context, domain, domain_settings, fs, initialized
+
+
+def test_capacity_option_resizes_the_domain_then_retries(monkeypatch):
+    op, context, domain, domain_settings, fs, initialized = _capacity_bounds_scene(monkeypatch)
+
+    assert op.execute(context) == {"FINISHED"}
+
+    assert domain_settings.max_particles == 4_000_000
+    assert domain.location == (1.0, 1.0, 1.0)
+    assert domain.dimensions == (2.0, 2.0, 2.0)
+    assert initialized == [context.scene]
+
+
+def test_capacity_option_that_cannot_resize_the_domain_changes_nothing(monkeypatch):
+    op, context, domain, domain_settings, fs, initialized = _capacity_bounds_scene(
+        monkeypatch, {"parent": object()}
+    )
+
+    assert op.execute(context) == {"CANCELLED"}
+
+    assert domain_settings.max_particles == 2_000_000
+    assert (domain.location, domain.dimensions) == ((0.0, 0.0, 0.0), (4.0, 4.0, 4.0))
+    assert initialized == []
+    assert fs.status.startswith("Capacity option was not applied:")
+    assert "unparented" in fs.status
+
+
 def test_panels_set_greyout_before_drawing_into_a_sub_layout(monkeypatch):
     """Guard the assumption `_Layout` is built on.
 
@@ -948,19 +1024,22 @@ def test_live_setting_errors_are_atomic_contained_and_visible(monkeypatch):
 def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkeypatch):
     _install_bpy_stub(monkeypatch)
     scene_bridge = _reload_module("fluidSim_warp_blender51.blender.scene_bridge")
+    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
+
     settings = SimpleNamespace(
         particles_per_voxel=8.0,
         spacetime_enabled=True,
+        spacetime_seed=1729,
         spacetime_reference_mass=0.0,
     )
-    solver = SimpleNamespace(
-        settings=settings,
-        particles=object(),
-        _st_reference_mass_cached=4.0,
+    spacetime = SpaceTimeState(
+        settings, SimpleNamespace(liquid_sampling=8.0, rest_particle_count=8)
     )
-    solver._calibrate_st_reference_mass = lambda: (_ for _ in ()).throw(
+    spacetime.reference_mass_cached = 4.0
+    spacetime.calibrate_reference_mass = lambda: (_ for _ in ()).throw(
         AssertionError("existing calibration should be density-rescaled")
     )
+    solver = SimpleNamespace(settings=settings, particles=object(), spacetime=spacetime)
     sess = scene_bridge.session()
     sess.solver = solver
     scene = SimpleNamespace(
@@ -968,12 +1047,12 @@ def test_liquid_sampling_is_reset_tier_and_does_not_mutate_live_reference(monkey
         use_gravity=False,
         gravity=(0.0, 0.0, -9.81),
     )
-    sess.scene_identity = scene_bridge._scene_identity(scene)
+    sess.scene_identity = scene_bridge.scene_identity(scene)
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.LIVE)
 
     assert settings.particles_per_voxel == 8.0
-    assert solver._st_reference_mass_cached == 4.0
+    assert solver.spacetime.reference_mass_cached == 4.0
     assert "particles_per_voxel" in _pending_module()._RESET_SETTING_FIELDS
     assert "particles_per_voxel" not in _pending_module()._LIVE_SETTING_FIELDS
 
@@ -1038,8 +1117,9 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         reset=lambda: events.append(
             ("reset", solver.settings.flip_ratio, solver.settings.spacetime_seed)
         ),
-        set_sources=lambda values: events.append(("sources", tuple(values))),
-        set_source_plans=lambda values: events.append(("plans", tuple(values))),
+        set_source_batch=lambda descriptors=(), plans=(): events.append(
+            ("sources", tuple(descriptors), tuple(plans))
+        ),
         set_colliders=lambda values: events.append(("colliders", tuple(values))),
         set_force_fields=lambda values: events.append(("forces", tuple(values))),
         set_height_source=lambda value: events.append(("height", value)),
@@ -1100,7 +1180,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
 
     def preflight(_owner, _scene, **kwargs):
         preflight_calls.append(kwargs)
-        return snapshot, {"safe": True}, None
+        return snapshot, None
 
     monkeypatch.setattr(
         simulation_admission.SimulationAdmission, "_preflight", preflight
@@ -1623,11 +1703,12 @@ def test_modal_bake_registers_and_clears_deep_production_ownership(
     operator.restart_existing = False
 
     assert operator.execute(context) == {"RUNNING_MODAL"}
-    assert production_bake.active_bake(scene) is operator._controller
+    controller = production_bake.active_bake(scene)
+    assert controller is operator._run.controller
     assert production_bake.cache_path_is_active(tmp_path / "cache")
 
-    operator._controller.status = production_bake.BakeStatus.COMPLETE
-    operator._controller.message = "Production bake complete"
+    controller.status = production_bake.BakeStatus.COMPLETE
+    controller.message = "Production bake complete"
     assert operator._finish(context) == {"FINISHED"}
     assert production_bake.active_bake(scene) is None
 
@@ -1639,7 +1720,7 @@ def test_solver_mutation_operators_are_disabled_during_production_bake(monkeypat
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
     context = SimpleNamespace(scene=scene)
-    operators._bridge().session().solver = object()
+    operators._operator_runtime._bridge().session().solver = object()
     controller = SimpleNamespace(status=production_bake.BakeStatus.RUNNING)
     production_bake.register_active_bake(scene, controller)
     monkeypatch.setattr(operators._operator_runtime, "_runtime_poll", lambda _cls: True)
@@ -2906,7 +2987,7 @@ def test_capacity_suggestion_poll_and_dialog_are_scene_owned(monkeypatch):
     )
     first = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
     second = SimpleNamespace(fluidsim=SimpleNamespace(max_particles=8))
-    bridge.session()._set_capacity_plan(first, plan)
+    bridge.session().set_capacity_plan(first, plan)
     monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
 
     assert (
@@ -2968,7 +3049,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
         particles=SimpleNamespace(capacity=65_536),
         device="cuda:0",
     )
-    sess.scene_identity = bridge._scene_identity(scene)
+    sess.scene_identity = bridge.scene_identity(scene)
     from fluidSim_warp_blender51.blender import simulation_admission
 
     monkeypatch.setattr(
@@ -2990,7 +3071,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
     )
     planned = []
 
-    def plan_scene(_scene, settings, _resources, *, additional_transaction_bytes=0):
+    def plan_scene(_scene, settings, _resources, *, depsgraph=None, additional_transaction_bytes=0):
         capacity = int(settings.max_particles)
         planned.append((capacity, additional_transaction_bytes))
         suggestion = SimpleNamespace(
@@ -3013,7 +3094,7 @@ def test_capacity_dialog_rechecks_grown_pool_reinitialize_with_authored_model(
 
     monkeypatch.setattr(sess._admission(), "_plan_scene", plan_scene)
     original = plan_scene(scene, SimpleNamespace(max_particles=1024), {}).capacity_plan
-    sess._set_capacity_plan(scene, original, operation="REINITIALIZE")
+    sess.set_capacity_plan(scene, original, operation="REINITIALIZE")
     expected_signature = sess.capacity_plan_signature_for_scene(scene)
     initialized = []
     monkeypatch.setattr(
@@ -3058,7 +3139,7 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     )
     fs = SimpleNamespace(max_particles=8, status="")
     scene = SimpleNamespace(fluidsim=fs)
-    bridge.session()._set_capacity_plan(scene, original)
+    bridge.session().set_capacity_plan(scene, original)
     monkeypatch.setattr(operators._operator_runtime, "_bridge", lambda: bridge)
     context = SimpleNamespace(
         scene=scene,
@@ -3072,7 +3153,7 @@ def test_capacity_dialog_rechecks_same_scene_signature_before_mutation(monkeypat
     monkeypatch.setattr(
         bridge,
         "refresh_capacity_plan",
-        lambda actual: bridge.session()._set_capacity_plan(actual, changed),
+        lambda actual: bridge.session().set_capacity_plan(actual, changed),
     )
 
     assert op.execute(context) == {"CANCELLED"}
@@ -3556,10 +3637,6 @@ def test_basic_mode_default_surface_is_within_budget(monkeypatch):
     fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
     fake_bridge.current_error = lambda scene: ""
     fake_bridge.capacity_plan_for_scene = lambda scene: None
-    # Domain panels read their settings owner through the bridge, which resolves
-    # the designated domain object's group like the real active_domain_settings.
-    fake_bridge.active_domain_settings = (
-        lambda scene: scene.fluidsim.domain_object.fluidsim_domain)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
     )

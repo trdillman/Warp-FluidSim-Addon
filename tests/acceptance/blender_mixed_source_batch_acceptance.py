@@ -165,7 +165,7 @@ def main():
                 shape=SourceShapeShape.BOX, position=(0.0, 0.0, 0.75),
                 half_extents=(0.2, 0.2, 0.2)),
             PayloadPlan(kind=SourcePayloadKind.PRESSURE, pressure=4.0))
-        solver.set_source_plans((zero, field))
+        solver.set_source_batch(native_plans=(zero, field))
         solver.step_frame()
         assert solver.particles.refresh_host_count() == 0
         assert "zero-liquid" not in solver.sourcing._initial_fired

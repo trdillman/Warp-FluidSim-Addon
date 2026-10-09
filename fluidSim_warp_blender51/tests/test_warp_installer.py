@@ -830,3 +830,79 @@ def test_warp_loaded_from_shared_extensions_local_is_flagged_as_foreign(tmp_path
     assert "which FluidSim does not own" in reason
     assert str(shared_local) in reason
 
+
+@pytest.mark.parametrize("authorized,matching,expected_controls", [
+    (True, True, True),
+    (False, True, False),
+    (True, False, False),
+])
+def test_preferences_external_override_requires_authorized_loaded_path(
+    tmp_path, monkeypatch, authorized, matching, expected_controls,
+):
+    from fluidSim_warp_blender51 import warp_discovery
+
+    preferences, _ = _operator(monkeypatch)
+    external = tmp_path / "external"
+    (external / "warp").mkdir(parents=True)
+    init = external / "warp" / "__init__.py"
+    init.write_text("__version__ = '1.17.0'\n", encoding="utf-8")
+    monkeypatch.setenv("FLUIDSIM_ALLOW_EXTERNAL_WARP", "1" if authorized else "0")
+    # Apply through the real developer entry point, including the authorization check.
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    warp_discovery.enable_developer_override(str(external))
+    loaded = types.ModuleType("warp")
+    loaded.__file__ = str(init if matching else tmp_path / "other" / "warp" / "__init__.py")
+    monkeypatch.setitem(sys.modules, "warp", loaded)
+    monkeypatch.setattr(preferences, "foreign_warp_block_reason",
+                        lambda: "Warp loaded from a directory which FluidSim does not own")
+    monkeypatch.setattr(preferences, "get_installed_warp_info", lambda: (False, ""))
+    monkeypatch.setattr(preferences, "owned_install_status", lambda: None)
+    probe = SimpleNamespace(last_error="", module_file=loaded.__file__, warp_version="1.17.0")
+    monkeypatch.setattr(preferences, "probe_runtime", lambda: probe)
+    monkeypatch.setattr(preferences, "configured_device", lambda: "cuda:0")
+    monkeypatch.setattr(preferences, "runtime_status_for_device",
+                        lambda _device, *, probe: (True, "CUDA ready"))
+    calls = []
+
+    class Layout:
+        def box(self):
+            return self
+        def row(self, **kwargs):
+            return self
+        def label(self, **kwargs):
+            calls.append(("label", kwargs.get("text")))
+        def prop(self, owner, name, **kwargs):
+            calls.append(("prop", name))
+        def operator(self, name, **kwargs):
+            calls.append(("operator", name))
+            return SimpleNamespace(force_reinstall=False)
+
+    prefs = preferences.FLUIDSIM_AP_preferences.__new__(preferences.FLUIDSIM_AP_preferences)
+    prefs.developer_warp_path = str(external)
+    prefs.layout = Layout()
+    prefs.draw(None)
+
+    assert (("prop", "device") in calls) is expected_controls
+    assert (("operator", "fluidsim.refresh_runtime_probe") in calls) is expected_controls
+    assert (("label", "Remove the other Warp copy first") in calls) is not expected_controls
+
+
+def test_refresh_available_runtime_reschedules_deferred_prewarm(monkeypatch):
+    from fluidSim_warp_blender51.runtime import prewarm_timer
+
+    preferences, _ = _operator(monkeypatch)
+    registered = []
+    monkeypatch.setattr(sys.modules["bpy"].app, "timers", SimpleNamespace(
+        is_registered=lambda callback: callback in registered,
+        register=lambda callback, **kwargs: registered.append(callback),
+    ), raising=False)
+    probe = SimpleNamespace(available=True, cuda_devices=())
+    monkeypatch.setattr(preferences, "probe_runtime", lambda **kwargs: probe)
+    monkeypatch.setattr(preferences, "configured_device", lambda: "cuda:0")
+    monkeypatch.setattr(preferences, "runtime_status_for_device",
+                        lambda _device, *, probe: (True, "ready"))
+
+    preferences._refresh_runtime(None)
+    preferences._refresh_runtime(None)
+
+    assert registered == [prewarm_timer._background_prewarm]

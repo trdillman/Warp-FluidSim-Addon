@@ -117,7 +117,7 @@ jobs:
           libegl1 libgl1 libsm6 libxi6 libxkbcommon0 libxrender1 libxxf86vm1 libxfixes3
       - name: Restore the locked Warp wheels
         # The extension zip does not contain Warp. Smoke setup installs the
-        # locked wheel into the isolated extensions/.local directory after
+        # locked wheel into the isolated extension-owned user directory after
         # verifying it against tools/release/wheels.lock.json.
         uses: actions/cache@v6
         with:
@@ -131,6 +131,8 @@ jobs:
           --skip-python-checks --skip-lint
           --smoke-platform linux-x64
           --json-report dist/linux-build-report.json
+      - name: Verify real Blender Warp installation and repair
+        run: python -m pytest -q tests/repo/test_real_blender_warp_installer.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:

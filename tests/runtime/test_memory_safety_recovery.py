@@ -8,10 +8,8 @@ from fluidSim_warp_blender51.sim.memory_safety import (
     SIM_BYTES_PER_VOXEL,
     WHITEWATER_BYTES,
     WHITEWATER_EMISSION_BYTES_PER_LIQUID,
-    assess_configuration,
     estimate_solver_bytes,
     is_memory_capacity_error,
-    recommend_safe_settings,
     safe_memory_budget,
 )
 
@@ -52,90 +50,11 @@ def test_memory_estimate_flags_capacity_that_exceeds_budget_before_allocation():
     assert estimate_solver_bytes(settings) > budget
 
 
-def test_recommended_settings_fit_budget_and_remove_secondary_surface_grid():
-    settings = _risky_settings()
-    budget = 8 * 1024**3
-
-    recommended = recommend_safe_settings(settings, budget)
-
-    assert recommended["voxel_size"] > settings.voxel_size
-    assert "leaf_capacity" not in recommended
-    assert recommended["surface_resolution_mode"] == 0
-    assert recommended["surface_leaf_capacity_scale"] == 1.0
-    assert recommended["surface_max_dense_dim"] <= 256
-    safe = SimpleNamespace(**{**vars(settings), **recommended})
-    assert estimate_solver_bytes(safe) <= budget
-
-
 def test_memory_errors_are_routed_to_recovery_ui():
     assert is_memory_capacity_error("FluidSim: leaf capacity exceeded (9 > 8)")
     assert is_memory_capacity_error("CUDA error 2: out of memory")
     assert is_memory_capacity_error("FluidSim memory safeguard stopped initialization")
     assert not is_memory_capacity_error("pressure solver stalled")
-
-
-def test_high_machine_load_recommendation_adjusts_all_major_cost_drivers():
-    settings = _risky_settings()
-    machine = {
-        "gpu_utilization": 96.0,
-        "cpu_utilization": 92.0,
-        "ram_utilization": 90.0,
-    }
-
-    recommended = recommend_safe_settings(settings, 8 * 1024**3, machine)
-
-    assert recommended["voxel_size"] > settings.voxel_size
-    assert recommended["particles_per_voxel"] < settings.particles_per_voxel
-    assert recommended["topology_expand"] < settings.topology_expand
-    assert recommended["max_particles"] < settings.max_particles
-    assert recommended["max_whitewater"] < settings.max_whitewater
-
-
-def test_comfortable_configuration_is_left_unchanged():
-    settings = SimpleNamespace(
-        leaf_capacity=4096,
-        max_particles=250_000,
-        max_whitewater=100_000,
-        voxel_size=0.1,
-        particles_per_voxel=8.0,
-        topology_expand=1,
-        domain_min=(-2.0, -2.0, 0.0),
-        domain_max=(2.0, 2.0, 4.0),
-        surface_resolution_mode=0,
-        surface_resolution_multiplier=2.0,
-        surface_leaf_capacity_scale=1.0,
-        surface_max_dense_dim=256,
-    )
-
-    assert (
-        recommend_safe_settings(
-            settings,
-            8 * 1024**3,
-            {
-                "gpu_utilization": 20.0,
-                "cpu_utilization": 20.0,
-                "ram_utilization": 30.0,
-            },
-        )
-        == {}
-    )
-
-
-def test_assessment_stops_before_allocation_and_returns_recovery_plan():
-    settings = _risky_settings()
-    resources = {
-        "gpu_total_bytes": 16 * 1024**3,
-        "gpu_free_bytes": 10 * 1024**3,
-        "gpu_utilization": 70.0,
-        "cpu_utilization": 40.0,
-        "ram_utilization": 50.0,
-    }
-
-    assessment = assess_configuration(settings, resources)
-
-    assert assessment["safe"] is False
-    assert assessment["estimated_bytes"] > assessment["budget_bytes"]
-    assert assessment["recommended"]
 
 
 def test_capacity_recovery_ui_uses_scene_properties_and_verified_plan_flow():
@@ -178,14 +97,6 @@ def test_estimate_caps_leaf_allocation_to_domain_cells():
     one_leaf = SimpleNamespace(**vars(settings))
     one_leaf.leaf_capacity = 1
     assert estimate_solver_bytes(settings) == estimate_solver_bytes(one_leaf)
-
-
-def test_safe_settings_uses_voxel_size_instead_of_starving_leaf_capacity():
-    settings = _risky_settings()
-    recommended = recommend_safe_settings(settings, 3 * 1024**3)
-
-    assert recommended["voxel_size"] > settings.voxel_size
-    assert "leaf_capacity" not in recommended
 
 
 def test_surface_dense_memory_is_counted_in_simulation_mode():

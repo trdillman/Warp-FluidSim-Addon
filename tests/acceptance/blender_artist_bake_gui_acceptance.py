@@ -146,16 +146,22 @@ def _finish(passed):
     return None
 
 
-def _begin_failure(exc):
-    from fluidSim_warp_blender51.operator_domains import cache as cache_operators
+def _active_controller():
+    """The modal operator's registered running bake, or None."""
+    from fluidSim_warp_blender51.blender import production_bake
 
+    bakes = production_bake.active_bakes()
+    return bakes[0][1] if bakes else None
+
+
+def _begin_failure(exc):
     STATE["report"]["error"] = "".join(
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
     STATE["report"]["scene_b_before"] = STATE.get("scene_b_before")
     if STATE.get("scene_b") is not None:
         STATE["report"]["scene_b_at_failure"] = _scene_b_snapshot(STATE["scene_b"])
-    active = cache_operators._ACTIVE_BAKE
+    active = _active_controller()
     if active is not None:
         active.request_cancel()
         STATE["phase"] = "failure_wait"
@@ -167,11 +173,10 @@ def _begin_failure(exc):
 def start(report_path):
     """Schedule the real modal bake ownership probe in the current GUI."""
     from fluidSim_warp_blender51.blender import effects, production_bake, scene_bridge
-    from fluidSim_warp_blender51.operator_domains import cache as cache_operators
 
     if STATE.get("phase") not in {None, "done"}:
         raise RuntimeError("Artist bake GUI acceptance is already scheduled")
-    if cache_operators._ACTIVE_BAKE is not None:
+    if _active_controller() is not None:
         raise RuntimeError("A Production Bake is already active")
 
     scene_a = bpy.context.scene
@@ -273,7 +278,6 @@ def start(report_path):
 
 def _tick():
     from fluidSim_warp_blender51.blender import production_bake
-    from fluidSim_warp_blender51.operator_domains import cache as cache_operators
 
     scene_a = STATE["scene_a"]
     scene_b = STATE["scene_b"]
@@ -281,7 +285,7 @@ def _tick():
     try:
         phase = STATE["phase"]
         if phase == "failure_wait":
-            if cache_operators._ACTIVE_BAKE is None:
+            if _active_controller() is None:
                 return _finish(False)
             if time.monotonic() >= STATE["failure_deadline"]:
                 STATE["report"]["error"] += "\nTimed out waiting for failed bake cleanup"
@@ -313,7 +317,7 @@ def _tick():
             STATE["phase"] = "wait_running"
             return 0.05
 
-        controller = cache_operators._ACTIVE_BAKE
+        controller = _active_controller()
         if phase == "wait_running":
             _check("modal bake remains active", controller is not None)
             if controller.status.value != "RUNNING":
@@ -354,11 +358,11 @@ def _tick():
             return 0.05
 
         if phase == "wait_cancelled":
-            if cache_operators._ACTIVE_BAKE is not None:
+            if controller is not None:
                 return 0.05
             _check("scene A active bake registration released", production_bake.active_bake(scene_a) is None)
             _check("temporary cache path reservation released", not production_bake.cache_path_is_active(STATE["cache_path"]))
-            _check("operator active-scene reference released", cache_operators._ACTIVE_BAKE_SCENE is None)
+            _check("no running bake remains registered", not production_bake.active_bakes())
             _check("scene B stayed unchanged through cancellation", _scene_b_snapshot(scene_b) == STATE["scene_b_before"])
             STATE["cancelled_snapshot"] = {
                 "frame": int(scene_a.frame_current),

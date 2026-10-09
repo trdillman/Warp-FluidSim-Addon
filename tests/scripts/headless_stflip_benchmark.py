@@ -169,7 +169,7 @@ def _analyze(solver, settings):
         "pressure_status": solver.pressure_solver.last_pressure_status,
         "pressure_residual": float(solver.pressure_solver.last_residual),
         "substeps_last": int(solver.stats.substeps),
-        "m0_reference": float(solver._st_reference_mass()),
+        "m0_reference": float(solver.spacetime.reference_mass()),
     }
 
 

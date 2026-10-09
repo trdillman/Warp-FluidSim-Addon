@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+from fluidSim_warp_blender51 import registration
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -228,11 +230,10 @@ def test_stop_and_release_actions_do_not_depend_on_runtime_readiness():
 
 
 def test_root_registration_includes_scene_and_object_properties_modules():
-    source = (ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert "ui_scene.register" in source
-    assert "ui_scene.unregister" in source
-    assert "ui_object.register" in source
-    assert "ui_object.unregister" in source
+    registered = {
+        step.module for step in registration.STEPS if step.register and step.unregister
+    }
+    assert {"blender.ui_scene", "blender.ui_object"} <= registered
 
 
 def test_transport_exposes_complete_state_dependent_artist_actions():

@@ -322,7 +322,7 @@ def test_source_shapes(device):
 
     solver = FluidSolver(settings)
     try:
-        solver.set_sources([src])
+        solver.set_source_batch([src])
         solver.step_frame()
         n = solver.particles.refresh_host_count()
         if n == 0:
@@ -717,7 +717,7 @@ def test_collision_sink_bits(device):
 
     solver = FluidSolver(settings)
     try:
-        solver.set_sources([box, sink])
+        solver.set_source_batch([box, sink])
         solver.step_frame()
 
         types = solver.voxel_type.data.numpy()
@@ -773,9 +773,9 @@ def test_divergence_reduction(device):
 
     solver = FluidSolver(settings)
     try:
-        solver.set_sources([src])
+        solver.set_source_batch([src])
         solver.step_frame()
-        solver.set_sources([])
+        solver.set_source_batch()
         for _ in range(2):
             solver.step_frame()
 
@@ -1001,10 +1001,10 @@ def test_whitewater(device):
 
     solver = FluidSolver(settings)
     try:
-        solver.set_sources([src])
+        solver.set_source_batch([src])
         for _ in range(3):
             solver.step_frame()
-        solver.set_sources([])
+        solver.set_source_batch()
 
         churn_max = 0.0
         ww_count = 0
@@ -1072,7 +1072,7 @@ def test_spatiotemporal_flip(device):
 
     solver = FluidSolver(settings)
     try:
-        ref_mass = float(solver._st_reference_mass())
+        ref_mass = float(solver.spacetime.reference_mass())
         ref_expected = float(settings.particles_per_voxel)
         ref_ok = bool(
             np.isfinite(ref_mass)
