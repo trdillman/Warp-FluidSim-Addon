@@ -45,7 +45,7 @@ def test_phase5_solver_settings_and_projection_are_declared():
         "surface_tension_safety",
         "surface_tension_smoothing_iterations",
     }
-    assert fields <= _class_annotations(ROOT / "sim" / "solver.py", "SolverSettings")
+    assert fields <= _class_annotations(ROOT / "sim" / "solver_settings_model.py", "SolverSettings")
     assert fields <= set(solver_settings.DIRECT_SETTING_FIELDS)
     tree = ast.parse((ROOT / "blender" / "pending_settings.py").read_text(encoding="utf-8"))
     assignments = {}
