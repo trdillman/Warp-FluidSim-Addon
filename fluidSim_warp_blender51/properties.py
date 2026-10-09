@@ -1014,21 +1014,26 @@ def _domain_longest_axis(group) -> float:
     """Longest world-space AABB edge of the domain object that owns ``group``.
 
     Mirrors ``blender.solver_settings.domain_bounds`` (``matrix_world`` applied to
-    ``bound_box``) and falls back to the default domain box with no object.
+    ``bound_box``) and falls back to the default domain box with no object or a
+    zero-size one (an empty mesh), so the derived voxel size never becomes 0.
     """
+    import math
+
     from .blender.solver_settings import DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN
 
+    default = max(hi - lo for lo, hi in zip(DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX))
     obj = getattr(group, "id_data", None)
     corners = getattr(obj, "bound_box", None)
     matrix = getattr(obj, "matrix_world", None)
     if corners is None or matrix is None:
-        return max(hi - lo for lo, hi in zip(DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX))
+        return default
     from mathutils import Vector
 
     world = [matrix @ Vector(corner) for corner in corners]
-    return max(
+    longest = max(
         max(getattr(c, axis) for c in world) - min(getattr(c, axis) for c in world)
         for axis in ("x", "y", "z"))
+    return longest if math.isfinite(longest) and longest > 0.0 else default
 
 
 def _get_voxel_size(self) -> float:

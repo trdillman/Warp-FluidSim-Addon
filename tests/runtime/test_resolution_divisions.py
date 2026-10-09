@@ -157,6 +157,12 @@ def test_voxel_size_is_derived_and_written_through_divisions(monkeypatch):
     # No object: the default 4 x 4 x 4 domain.
     bare = SimpleNamespace(resolution_divisions=64, id_data=None)
     assert properties._get_voxel_size(bare) == 4.0 / 64
+    # A zero-size object (an empty mesh) also uses the default box, so the
+    # derived voxel size, and the point radius drawn from it, never reach 0.
+    empty = SimpleNamespace(bound_box=[(0.0, 0.0, 0.0)] * 8,
+                            matrix_world=Matrix((1.0, 1.0, 1.0)))
+    flat = SimpleNamespace(resolution_divisions=64, id_data=empty)
+    assert properties._get_voxel_size(flat) == 4.0 / 64
 
 
 def test_wizard_restores_its_voxel_after_the_domain_is_resized():
