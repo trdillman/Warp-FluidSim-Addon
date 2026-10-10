@@ -999,6 +999,32 @@ def k_mg_inverse_diagonal(
         inv_diag[tid] = 0.0
 
 
+@wp.func
+def mg_work_cell(
+    tid: wp.int32,
+    shift: wp.int32,
+    use_idx: wp.int32,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+) -> wp.int32:
+    """Cell a work thread owns at a level, or -1 when it owns none.
+
+    ``use_idx != 0`` walks a compact list of active cells (the pressure
+    solver's unknown index at the finest level, where only a few percent of
+    the allocated cells are unknowns); otherwise one thread per cell."""
+    if use_idx != 0:
+        if tid >= count[0]:
+            return -1
+        cell = indices[tid]
+        if cell >= (num_leaves[0] << (3 * shift)):
+            return -1
+        return cell
+    if tid >= (num_leaves[0] << (3 * shift)):
+        return -1
+    return tid
+
+
 @wp.kernel
 def k_mg_smooth_zero(
     b: wp.array(dtype=float),
@@ -1007,11 +1033,14 @@ def k_mg_smooth_zero(
     omega: float,
     num_leaves: wp.array(dtype=wp.int32),
     shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
     x_out: wp.array(dtype=float),
 ):
     """First damped-Jacobi sweep from x = 0: ``x = omega * b / diag``."""
-    tid = wp.tid()
-    if tid >= (num_leaves[0] << (3 * shift)):
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
         return
     inv = inv_diag[tid]
     if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
@@ -1032,11 +1061,14 @@ def k_mg_smooth(
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
     shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
     x_out: wp.array(dtype=float),
 ):
     """One damped-Jacobi sweep: ``x_out = x_in + omega * (b - A x_in) / diag``."""
-    tid = wp.tid()
-    if tid >= (num_leaves[0] << (3 * shift)):
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
         return
     inv = inv_diag[tid]
     if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
@@ -1047,7 +1079,7 @@ def k_mg_smooth(
 
 
 @wp.kernel
-def k_mg_residual_restrict(
+def k_mg_residual(
     x: wp.array(dtype=float),
     b: wp.array(dtype=float),
     vtype: wp.array(dtype=wp.int32),
@@ -1056,11 +1088,38 @@ def k_mg_residual_restrict(
     leaf_coords: wp.array(dtype=wp.vec3i),
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    res_out: wp.array(dtype=float),
+):
+    """``res_out = b - A x`` at active unknowns (``k_mg_restrict_sum`` reads
+    only those, so other cells need no clearing). Kept apart from the
+    restriction so the stencil is evaluated once per fine cell by many threads
+    instead of eight times by one thread."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
+        return
+    if mg_unknown(vtype[tid]) == 0 or inv_diag[tid] == 0.0:
+        res_out[tid] = 0.0
+        return
+    ax = mg_apply_a(x, vtype, inv_diag, tid, shift, leaf_table, leaf_coords, leaves_dim)
+    res_out[tid] = b[tid] - ax
+
+
+@wp.kernel
+def k_mg_restrict_sum(
+    res: wp.array(dtype=float),
+    fine_vtype: wp.array(dtype=wp.int32),
+    fine_inv_diag: wp.array(dtype=float),
+    num_leaves: wp.array(dtype=wp.int32),
     fine_shift: int,
     coarse_b: wp.array(dtype=float),
 ):
-    """``coarse_b = 0.25 * sum over the 8 children of (b - A x)``: a gather,
-    one thread per coarse cell, children visited in a fixed order."""
+    """``coarse_b = 0.25 * sum over the 8 children of res``: a gather, one
+    thread per coarse cell, children visited in a fixed order. Only active
+    fine unknowns contribute."""
     tid = wp.tid()
     coarse_shift = fine_shift - 1
     cell_shift = 3 * coarse_shift
@@ -1079,42 +1138,74 @@ def k_mg_residual_restrict(
             for a in range(2):
                 child = (base + (2 * ci + a) + ((2 * cj + bb) << fine_shift)
                          + ((2 * ck + c) << (2 * fine_shift)))
-                if mg_unknown(vtype[child]) == 1:
-                    if inv_diag[child] != 0.0:
-                        ax = mg_apply_a(x, vtype, inv_diag, child, fine_shift,
-                                        leaf_table, leaf_coords, leaves_dim)
-                        acc += b[child] - ax
+                if mg_unknown(fine_vtype[child]) == 1:
+                    if fine_inv_diag[child] != 0.0:
+                        acc += res[child]
     coarse_b[tid] = 0.25 * acc
 
 
-@wp.kernel
-def k_mg_prolong_add(
+@wp.func
+def mg_prolonged(
     x: wp.array(dtype=float),
     e: wp.array(dtype=float),
+    inv_diag: wp.array(dtype=float),
+    cell: wp.int32,
+    shift: wp.int32,
+) -> float:
+    """``(x + P e)[cell]``: piecewise-constant prolongation from the parent
+    coarse cell, applied where ``inv_diag != 0`` (active unknowns) only."""
+    xv = x[cell]
+    if inv_diag[cell] != 0.0:
+        d = shift - 1
+        cell_shift = 3 * shift
+        slot = cell >> cell_shift
+        local = cell & ((1 << cell_shift) - 1)
+        mask = (1 << shift) - 1
+        i = local & mask
+        j = (local >> shift) & mask
+        k = local >> (2 * shift)
+        parent = (slot << (3 * d)) + (i >> 1) + ((j >> 1) << d) + ((k >> 1) << (2 * d))
+        xv = xv + e[parent]
+    return xv
+
+
+@wp.kernel
+def k_mg_smooth_prolong(
+    x_in: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    b: wp.array(dtype=float),
     vtype: wp.array(dtype=wp.int32),
     inv_diag: wp.array(dtype=float),
+    omega: float,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
-    fine_shift: int,
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    x_out: wp.array(dtype=float),
 ):
-    """``x += P e`` in place: piecewise-constant prolongation from the parent
-    coarse cell, applied to active fluid unknowns only."""
-    tid = wp.tid()
-    cell_shift = 3 * fine_shift
-    if tid >= (num_leaves[0] << cell_shift):
+    """First post-smoothing sweep with the coarse-grid correction folded in:
+    one damped-Jacobi sweep from ``x_in + P e``, which is never stored. Same
+    arithmetic as a separate prolongation followed by ``k_mg_smooth``."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
         return
-    if mg_unknown(vtype[tid]) == 0:
+    inv = inv_diag[tid]
+    if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
+        x_out[tid] = 0.0
         return
-    if inv_diag[tid] == 0.0:
-        return
-    d = fine_shift - 1
-    slot = tid >> cell_shift
-    local = tid & ((1 << cell_shift) - 1)
-    mask = (1 << fine_shift) - 1
-    i = local & mask
-    j = (local >> fine_shift) & mask
-    k = local >> (2 * fine_shift)
-    parent = (slot << (3 * d)) + (i >> 1) + ((j >> 1) << d) + ((k >> 1) << (2 * d))
-    x[tid] = x[tid] + e[parent]
+    xc = mg_prolonged(x_in, e, inv_diag, tid, shift)
+    acc = (1.0 / inv) * xc
+    for axis in range(3):
+        for step in range(-1, 2, 2):
+            n = mg_cell_neighbor(tid, shift, axis, step, leaf_table, leaf_coords, leaves_dim)
+            if n >= 0:
+                if mg_unknown(vtype[n]) == 1:
+                    acc -= mg_prolonged(x_in, e, inv_diag, n, shift)
+    x_out[tid] = xc + omega * inv * (b[tid] - acc)
 
 
 @wp.kernel
@@ -1450,10 +1541,13 @@ register_fn(k_pressure_scale, "fluidSimPressureScale")
 # Host-orchestrated solver driver (GPU-resident state)
 
 
-class _MGView(namedtuple("_MGView", "shift vtype inv_diag b x t")):
+class _MGView(namedtuple(
+        "_MGView", "shift vtype inv_diag b x t dim use_idx indices count")):
     """One level of a V-cycle: cell types, inverse diagonal, right-hand side,
     solution, and the ping-pong temporary. Level 0 aliases the caller's
-    arrays; coarse levels alias ``_MGLevel`` storage."""
+    arrays; coarse levels alias ``_MGLevel`` storage. ``dim`` is the launch
+    dim of the level's work kernels; with ``use_idx`` they walk the compact
+    cell list ``indices`` (device count ``count``) instead of every cell."""
 
     __slots__ = ()
 
@@ -1564,6 +1658,8 @@ class PressureSolver:
         self._mg_levels = None
         self._mg_voxel_type = None
         self._mg_leaf_n = 0
+        self._mg_work_n = 0
+        self._mg_graphs = OrderedDict()
         self.last_pcg_check_every = 0
         self._pcg_apply_cmd = None
         self._pcg_update_cmd = None
@@ -1665,6 +1761,7 @@ class PressureSolver:
         self._pcg_dot = None
         self._pcg_graphs.clear()
         self._pcg_conditional_graphs.clear()
+        self._mg_graphs.clear()
         if dot is not None:
             dot.release()
 
@@ -1701,7 +1798,7 @@ class PressureSolver:
         """
         if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
             return ("MG", self._mg_leaf_n, self._mg_pre_smooth,
-                    self._mg_post_smooth)
+                    self._mg_post_smooth, MG_COARSE_SWEEPS)
         return ()
 
     def _set_pcg_cmd_dims(self, work_n):
@@ -1952,15 +2049,27 @@ class PressureSolver:
     def _build_mg_hierarchy(self, voxel_type):
         """(Re)build the coarse cell types and inverse diagonals for
         ``voxel_type``. Level 0 is the pressure solver's own ``voxel_type`` and
-        ``inv_diag``; levels 1.. are derived from it, one level at a time."""
+        ``inv_diag``; levels 1.. are derived from it, one level at a time.
+
+        The six launches are replayed from a captured graph once the launch
+        dims (a power-of-two leaf bucket) repeat: they only depend on device
+        data, so a rebuild per pressure solve is one graph launch, not six
+        host-side launches."""
         g = self.grid
-        levels = self._ensure_mg_levels()
+        self._ensure_mg_levels()
+        if self._mg_voxel_type is not voxel_type:
+            self._mg_graphs.clear()
         self._mg_voxel_type = voxel_type
         self._mg_leaf_n = min(
             g.capacity, 1 << (max(1, g.active_leaf_count) - 1).bit_length())
+        self._launch_mg_cached(("hier", self._mg_leaf_n),
+                               lambda: self._record_mg_hierarchy(voxel_type))
+
+    def _record_mg_hierarchy(self, voxel_type):
+        g = self.grid
         src = voxel_type
         for level in range(1, MG_LEVELS):
-            lv = levels[level]
+            lv = self._mg_levels[level]
             fast_launch(
                 k_mg_build_types, dim=self._mg_dim(lv.shift),
                 inputs=[src, lv.shift, g.num_leaves, lv.vtype],
@@ -1974,16 +2083,58 @@ class PressureSolver:
             )
             src = lv.vtype
 
+    def _launch_mg_cached(self, key, record):
+        """Run ``record`` (a fixed launch sequence) as a cached CUDA graph.
+
+        The first call per key runs eagerly (loading the kernels); the second
+        captures and replays; later calls only replay. CPU devices and a
+        failed capture fall back to the eager launches."""
+        graphs = self._mg_graphs
+        entry = graphs.get(key)
+        if entry is not None and entry is not True and entry is not False:
+            graphs.move_to_end(key)
+            wp.capture_launch(entry)
+            return
+        if (entry is False or not wp.get_device(self.device).is_cuda):
+            record()
+            return
+        if entry is None:
+            # Modules are loaded by the eager pass; capturing cold kernels
+            # would race the module load.
+            if len(graphs) >= self._PCG_GRAPH_CAPACITY:
+                graphs.popitem(last=False)
+            graphs[key] = True
+            record()
+            return
+        try:
+            wp.synchronize_device(self.device)
+            with wp.ScopedCapture(device=self.device) as capture:
+                record()
+        except Exception:
+            graphs[key] = False
+            record()
+            return
+        graphs[key] = capture.graph
+        wp.capture_launch(capture.graph)
+
     def _mg_level_views(self, r, z):
         """Per-level ``_MGView``s for one V-cycle. Level 0 solves ``A z = r``
         on the caller's arrays with ``pressure_tmp`` as its ping-pong partner,
         so the fine level costs no extra memory."""
         levels = self._mg_levels
+        g = self.grid
+        # Inside the PCG start graph the fine level walks the compact unknown
+        # list (``_mg_work_n`` launch threads); a direct call walks all cells.
+        work_n = self._mg_work_n
         views = [_MGView(MG_FINE_SHIFT, self._mg_voxel_type, self.inv_diag,
-                         r, z, self.pressure_tmp)]
+                         r, z, self.pressure_tmp,
+                         work_n if work_n else self._mg_dim(MG_FINE_SHIFT),
+                         1 if work_n else 0,
+                         self.pressure_indices, self._pressure_count)]
         for lv in levels[1:]:
             views.append(_MGView(lv.shift, lv.vtype, lv.inv_diag, lv.b, lv.x,
-                                 lv.t))
+                                 lv.t, self._mg_dim(lv.shift), 0,
+                                 self.pressure_indices, self._pressure_count))
         return views
 
     def _mg_sweeps(self, lv, bufs, done, count):
@@ -1992,22 +2143,22 @@ class PressureSolver:
         writes ``bufs[(k - 1) & 1]``, and the very first one starts from a
         zero guess. Returns the new sweep count."""
         g = self.grid
-        dim = self._mg_dim(lv.shift)
         for _ in range(count):
             if done == 0:
                 fast_launch(
-                    k_mg_smooth_zero, dim=dim,
+                    k_mg_smooth_zero, dim=lv.dim,
                     inputs=[lv.b, lv.vtype, lv.inv_diag, MG_OMEGA,
-                            g.num_leaves, lv.shift, bufs[0]],
+                            g.num_leaves, lv.shift, lv.use_idx, lv.indices,
+                            lv.count, bufs[0]],
                     device=self.device,
                 )
             else:
                 fast_launch(
-                    k_mg_smooth, dim=dim,
+                    k_mg_smooth, dim=lv.dim,
                     inputs=[bufs[(done - 1) & 1], lv.b, lv.vtype, lv.inv_diag,
                             MG_OMEGA, g.leaf_table, g.leaf_coords,
-                            g.leaves_dim, g.num_leaves, lv.shift,
-                            bufs[done & 1]],
+                            g.leaves_dim, g.num_leaves, lv.shift, lv.use_idx,
+                            lv.indices, lv.count, bufs[done & 1]],
                     device=self.device,
                 )
             done += 1
@@ -2029,22 +2180,48 @@ class PressureSolver:
         bufs = (lv.x, lv.t) if (pre + post) & 1 else (lv.t, lv.x)
         done = self._mg_sweeps(lv, bufs, 0, pre)
         cur = bufs[(done - 1) & 1]
+        # The other ping-pong buffer is free until the first post sweep, so
+        # it holds the fine residual between the two restriction kernels.
+        res = bufs[done & 1]
         coarse = views[level + 1]
         fast_launch(
-            k_mg_residual_restrict, dim=self._mg_dim(coarse.shift),
+            k_mg_residual, dim=lv.dim,
             inputs=[cur, lv.b, lv.vtype, lv.inv_diag, g.leaf_table,
                     g.leaf_coords, g.leaves_dim, g.num_leaves, lv.shift,
+                    lv.use_idx, lv.indices, lv.count, res],
+            device=self.device,
+        )
+        fast_launch(
+            k_mg_restrict_sum, dim=coarse.dim,
+            inputs=[res, lv.vtype, lv.inv_diag, g.num_leaves, lv.shift,
                     coarse.b],
             device=self.device,
         )
         self._mg_vcycle_level(views, level + 1)
+        # First post sweep applies the coarse correction on the fly.
         fast_launch(
-            k_mg_prolong_add, dim=self._mg_dim(lv.shift),
-            inputs=[cur, coarse.x, lv.vtype, lv.inv_diag, g.num_leaves,
-                    lv.shift],
+            k_mg_smooth_prolong, dim=lv.dim,
+            inputs=[cur, coarse.x, lv.b, lv.vtype, lv.inv_diag, MG_OMEGA,
+                    g.leaf_table, g.leaf_coords, g.leaves_dim, g.num_leaves,
+                    lv.shift, lv.use_idx, lv.indices, lv.count,
+                    bufs[done & 1]],
             device=self.device,
         )
-        self._mg_sweeps(lv, bufs, done, post)
+        self._mg_sweeps(lv, bufs, done + 1, post - 1)
+
+    def _record_mg_start(self, work_n):
+        g = self.grid
+        self._mg_work_n = work_n
+        try:
+            self._apply_mg_vcycle(self.r, self.z)
+        finally:
+            self._mg_work_n = 0
+        fast_launch(
+            k_mg_gather_z, dim=work_n,
+            inputs=[self.z, self.pressure_indices, self._pressure_count,
+                    g.num_leaves, 1, self.p_dir, self._pcg_compact_z],
+            device=self.device,
+        )
 
     def _apply_mg_vcycle(self, r, z):
         """Apply one symmetric V-cycle: ``z = M^-1 r`` on full-layout arrays.
@@ -2305,13 +2482,9 @@ class PressureSolver:
         if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
             # z0 = M^-1 r0 replaces the Jacobi z the initializer wrote, and
             # p0 = z0 (the compaction also feeds the r.z reduction below).
-            self._apply_mg_vcycle(self.r, self.z)
-            fast_launch(
-                k_mg_gather_z, dim=work_n,
-                inputs=[self.z, self.pressure_indices, self._pressure_count,
-                        g.num_leaves, 1, self.p_dir, self._pcg_compact_z],
-                device=self.device,
-            )
+            self._launch_mg_cached(
+                ("start", work_n) + self._pcg_graph_key_tail(),
+                lambda: self._record_mg_start(work_n))
         check_every = self._resolve_check_every(check_every, max_iterations)
         self.last_pcg_check_every = check_every
         tol_sq = tolerance * tolerance * max(1, full_n)
