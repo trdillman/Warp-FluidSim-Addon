@@ -21,6 +21,9 @@ import bpy
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
+_deferred_imports = {}
+_migrating_imports = False
+
 PRE_BRIDGE_MESSAGE = (
     "Saved before FluidSim 1.1: domain settings were not carried over. "
     "Open and re-save this file in FluidSim 1.1 first")
@@ -89,7 +92,7 @@ def draw_pre_bridge_warning(layout, scene) -> None:
     box.label(text="Open and re-save this file in FluidSim 1.1 first.")
 
 
-def migrate_domain_resolution(objects=None, scenes=None) -> int:
+def migrate_domain_resolution(objects=None, scenes=None, *, _evaluate_views=True) -> int:
     """Give a pre-3.0 domain object the Resolution Divisions its voxel size implied.
 
     Before 3.0 the grid was authored as an absolute ``voxel_size``. It is now
@@ -110,11 +113,14 @@ def migrate_domain_resolution(objects=None, scenes=None) -> int:
     scenes = getattr(data, "scenes", ()) if scenes is None else scenes
     # A freshly loaded object's matrix_world is not evaluated yet (it reads as
     # identity), and the longest axis is measured from it.
-    for scene in scenes:
-        for view_layer in getattr(scene, "view_layers", ()):
-            view_layer.update()
+    if _evaluate_views:
+        for scene in scenes:
+            for view_layer in getattr(scene, "view_layers", ()):
+                view_layer.update()
     pending = []
     for obj in objects:
+        if getattr(obj, "library", None) is not None:
+            continue
         stored = _stored_scene_group(obj, "fluidsim_domain")
         try:
             if stored is None or "resolution_divisions" in stored or (
@@ -125,6 +131,12 @@ def migrate_domain_resolution(objects=None, scenes=None) -> int:
             continue
         group = getattr(obj, "fluidsim_domain", None)
         if group is not None and voxel > 0.0:
+            if getattr(obj, "users_scene", None) == ():
+                # Library-load can return an unlinked object. Its matrix_world
+                # is still identity, including transformed parents. Preserve
+                # the raw voxel size until Blender evaluates its first scene.
+                _deferred_imports[obj.as_pointer()] = obj
+                continue
             pending.append((group, voxel))
     with ExitStack() as stack:
         for scene in scenes:
@@ -176,12 +188,83 @@ def _on_load_post(_arg):
     migrate_removed_particle_color_mode()
 
 
+@persistent
+def _on_blend_import_post(context):
+    """Migrate only newly appended local IDs, never links or re-used data.
+
+    Blender supplies dependent objects in import_items as well as the root
+    Scene/Collection. Do not sweep bpy.data: a later append must not rewrite
+    an existing domain or library data.
+    """
+    if "LINK" in getattr(context, "options", ()):
+        return
+    objects = []
+    imported_scenes = []
+    scenes = []
+    for item in getattr(context, "import_items", ()):
+        if getattr(item, "append_action", "UNSET") not in {"MAKE_LOCAL", "COPY_LOCAL"}:
+            continue
+        data = getattr(item, "id", None)
+        if data is None or getattr(data, "library", None) is not None:
+            continue
+        if hasattr(data, "fluidsim_domain"):
+            objects.append(data)
+            for scene in getattr(data, "users_scene", ()):
+                if scene not in scenes:
+                    scenes.append(scene)
+        elif hasattr(data, "view_layers"):
+            imported_scenes.append(data)
+            if data not in scenes:
+                scenes.append(data)
+    if objects or imported_scenes:
+        migrate_domain_resolution(objects=objects, scenes=scenes)
+        migrate_removed_particle_color_mode(scenes=imported_scenes)
+
+
+@persistent
+def _on_compat_load_pre(_arg):
+    _deferred_imports.clear()
+
+
+@persistent
+def _on_imported_domain_update(scene, _depsgraph):
+    """Resolve only queued, newly linked domains after dependency evaluation."""
+    global _migrating_imports
+    if _migrating_imports or not _deferred_imports:
+        return
+    _migrating_imports = True
+    try:
+        for key, obj in tuple(_deferred_imports.items()):
+            try:
+                if obj.library is not None:
+                    _deferred_imports.pop(key, None)
+                    continue
+                if scene not in obj.users_scene:
+                    continue
+                migrate_domain_resolution(objects=(obj,), scenes=(scene,),
+                                          _evaluate_views=False)
+                _deferred_imports.pop(key, None)
+            except ReferenceError:  # removed before ever being linked
+                _deferred_imports.pop(key, None)
+    finally:
+        _migrating_imports = False
+
+
+_COMPAT_HANDLERS = (
+    ("load_post", _on_load_post),
+    ("blend_import_post", _on_blend_import_post),
+    ("load_pre", _on_compat_load_pre),
+    ("depsgraph_update_post", _on_imported_domain_update),
+)
+
+
 def register_handlers():
     unregister_handlers()
-    load_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
-                        "load_post", None)
-    if load_post is not None:
-        load_post.append(_on_load_post)
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    for name, callback in _COMPAT_HANDLERS:
+        callbacks = getattr(handlers, name, None)
+        if callbacks is not None:
+            callbacks.append(callback)
     try:
         migrate_domain_resolution()  # the file that is already open
     except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
@@ -189,9 +272,10 @@ def register_handlers():
 
 
 def unregister_handlers():
-    load_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
-                        "load_post", None)
-    if load_post is None:
-        return
-    while _on_load_post in load_post:
-        load_post.remove(_on_load_post)
+    _deferred_imports.clear()
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    for name, callback in _COMPAT_HANDLERS:
+        callbacks = getattr(handlers, name, None)
+        if callbacks is not None:
+            while callback in callbacks:
+                callbacks.remove(callback)

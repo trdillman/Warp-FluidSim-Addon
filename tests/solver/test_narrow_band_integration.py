@@ -25,7 +25,7 @@ class _StandInBand:
 
 def _stand_in_solver(*, band, overflow=False):
     return SimpleNamespace(
-        narrow_band=band, frame=3, grid=SimpleNamespace(voxel_size=0.03125),
+        narrow_band=band, frame=3, grid=SimpleNamespace(voxel_size=0.03125, origin=(-1.25, 0.5, -0.75)),
         stats=SimpleNamespace(narrow_band_reseed_overflow=overflow))
 
 
@@ -35,7 +35,9 @@ def test_producer_returns_none_when_the_mode_is_off():
 
 def test_producer_arrays_pass_the_cache_validator():
     arrays = _liquid_sdf_arrays(_stand_in_solver(band=_StandInBand()), True)
-    assert set(arrays) == set(cache.LIQUID_SDF_KEYS)
+    assert set(arrays) == set(cache.LIQUID_SDF_KEYS) | {"liquid_sdf_origin"}
+    np.testing.assert_array_equal(arrays["liquid_sdf_origin"],
+                                  np.array([-1.25, 0.5, -0.75], dtype=np.float32))
     cache.validate_liquid_sdf(arrays, enabled=True)
     assert arrays["liquid_sdf_sparse"].shape == (2, 512)
     assert float(arrays["liquid_sdf_voxel_size"]) == pytest.approx(0.03125)

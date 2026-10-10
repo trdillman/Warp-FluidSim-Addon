@@ -82,3 +82,8 @@ The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex
 - `dam_break` is a rocky cove: its mesh colliders (dam abutments, cove terrain, sea stack, jetty), the visual training walls and apron, the reservoir and the domain all come from `tools/demos/dam_break_cove.py`, which the builder, `analyze_demos.py` and `check_demo_blends.py` share.
 - Verify saved demo files with `blender --background --python tools/demos/check_demo_blends.py`, then analyze outputs with `python tools/demos/analyze_demos.py` and expect `DEMO-ANALYSIS-PASS (21/21)`. `tools/demos/analyze_demos.py` parses `sys.argv` directly, so run it under plain `python`, never through `blender --background --python`.
 - For moving-collider (rotating/translating obstacle) changes, build and analyze `paddle_stir`: `blender --background --python tools/demos/build_demo_scenes.py -- paddle_stir`, then `python tools/demos/analyze_demos.py paddle_stir`. It is opt-in and outside the canonical 21/21 set, so the bare analyzer run is unaffected. The current rebuilt demo is expected to report `DEMO-ANALYSIS-PASS (10/10)`; treat any failing check as a regression.
+
+
+## Unreleased post-3.0 review candidate
+
+The Append/VDB implementation and evidence boundary are in `docs/POST_3_0_VERIFICATION.md`. Read it before merging or qualifying this candidate. New baked SDF origin metadata is optional within cache v3; do not invent an origin for legacy caches. Jacobi work in this task is diagnosis only: the single-check experiment is not a production repair or permission to change simulation defaults. The published release and its qualification record remain unchanged.

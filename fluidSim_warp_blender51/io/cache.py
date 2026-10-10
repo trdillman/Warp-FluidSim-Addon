@@ -357,6 +357,13 @@ def validate_liquid_sdf(payload, *, enabled: bool) -> None:
     sparse = np.asarray(payload["liquid_sdf_sparse"])
     coords = np.asarray(payload["liquid_sdf_leaf_coords"])
     voxel = np.asarray(payload["liquid_sdf_voxel_size"])
+    # Optional additive metadata: old v3 frames remain readable. The corner
+    # origin (not a cell-centre offset) is bound by the frame checksum.
+    if "liquid_sdf_origin" in payload:
+        origin = np.asarray(payload["liquid_sdf_origin"])
+        if (origin.shape != (3,) or origin.dtype != np.float32
+                or not np.all(np.isfinite(origin))):
+            raise ValueError("liquid_sdf_origin must be a finite float32 vector of shape (3,)")
     leaf_volume = LEAF_DIM ** 3
     if (sparse.ndim != 2 or sparse.shape[1] != leaf_volume
             or sparse.dtype != np.float32):
@@ -397,6 +404,8 @@ def _frame_payload(frame, scene_key_value: str = "", *, liquid_sdf=None):
     """
     sdf = empty_liquid_sdf() if liquid_sdf is None else {
         name: liquid_sdf[name] for name in LIQUID_SDF_KEYS}
+    if liquid_sdf is not None and "liquid_sdf_origin" in liquid_sdf:
+        sdf["liquid_sdf_origin"] = liquid_sdf["liquid_sdf_origin"]
     payload = {
         "format_version": np.array(CACHE_FORMAT_VERSION, dtype=np.int32),
         "settings_signature": np.array(frame.settings_signature),

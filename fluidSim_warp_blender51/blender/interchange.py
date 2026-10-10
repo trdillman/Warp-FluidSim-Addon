@@ -286,7 +286,91 @@ class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (FLUIDSIM_OT_export_alembic,)
+def plan_vdb_export(scene, frame_start=0, frame_end=0):
+    """Export the verified bake without touching a live solver or the timeline."""
+    from ..io import cache_vdb_export
+
+    if production_bake.bake_is_active(scene):
+        raise ExportRefused("A production bake is running. Wait for it or cancel it.")
+    frames = available_frames(scene)
+    start = int(frame_start) or frames[0]
+    end = int(frame_end) or frames[-1]
+    if start > end or start < frames[0] or end > frames[-1]:
+        raise ExportRefused("The VDB export range is outside the Storage & Range cached frames.")
+    base = bpy.path.abspath(scene.fluidsim.cache_path)
+    try:
+        return cache_vdb_export.plan_export(base, frame_start=start, frame_end=end)
+    except cache_vdb_export.LegacyOriginRequired as exc:
+        from .scene_access import active_domain_object
+        from .solver_settings import build_settings
+
+        if active_domain_object(scene) is None:
+            raise ExportRefused(str(exc)) from exc
+        for layer in scene.view_layers:
+            layer.update()
+        try:
+            return cache_vdb_export.plan_export(base, build_settings(scene),
+                frame_start=start, frame_end=end)
+        except (ValueError, OSError) as legacy_exc:
+            raise ExportRefused(str(legacy_exc)) from legacy_exc
+    except (ValueError, OSError) as exc:
+        raise ExportRefused(str(exc)) from exc
+
+
+class FLUIDSIM_OT_export_vdb(bpy.types.Operator):
+    """Export a baked liquid level set to a new OpenVDB sequence folder"""
+
+    bl_idname = "fluidsim.export_vdb"
+    bl_label = "Export Liquid Level Set as VDB"
+    bl_options = {"REGISTER"}
+
+    directory: StringProperty(name="Parent Folder", subtype="DIR_PATH")
+    sequence_name: StringProperty(name="Sequence Folder", default="fluidsim_vdb",
+        description="New folder created under the selected parent; existing folders are never replaced")
+    frame_start: IntProperty(name="Start", default=0, min=0,
+        description="First exported frame; 0 uses Storage & Range")
+    frame_end: IntProperty(name="End", default=0, min=0,
+        description="Last exported frame; 0 uses Storage & Range")
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "scene", None) is not None
+
+    def _plan(self, context):
+        try:
+            return plan_vdb_export(context.scene, self.frame_start, self.frame_end)
+        except (ExportRefused, ValueError, OSError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return None
+
+    def invoke(self, context, event):
+        if self._plan(context) is None:
+            return {"CANCELLED"}
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        from ..io.cache_vdb_export import export_sequence
+
+        name = self.sequence_name.strip()
+        if not self.directory or not name or name in {".", ".."} or any(
+                c in name for c in ("/", "\\", ":")):
+            self.report({"ERROR"}, "Choose a parent folder and a single new sequence folder name.")
+            return {"CANCELLED"}
+        plan = self._plan(context)
+        if plan is None:
+            return {"CANCELLED"}
+        destination = Path(bpy.path.abspath(self.directory)) / name
+        try:
+            paths = export_sequence(plan, destination)
+        except Exception as exc:  # noqa: BLE001 - present file/validation failures
+            self.report({"ERROR"}, f"VDB export failed: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Exported {len(paths)} liquid level-set frames to {destination / 'frames'}")
+        return {"FINISHED"}
+
+
+CLASSES = (FLUIDSIM_OT_export_alembic, FLUIDSIM_OT_export_vdb)
 
 
 def register():

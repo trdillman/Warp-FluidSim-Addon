@@ -376,6 +376,7 @@ def _liquid_sdf_arrays(solver, enabled: bool):
     return {
         "liquid_sdf_sparse": phi,
         "liquid_sdf_leaf_coords": coords,
+        "liquid_sdf_origin": np.asarray(tuple(solver.grid.origin), dtype=np.float32),
         "liquid_sdf_voxel_size": np.array(
             float(solver.grid.voxel_size), dtype=np.float32),
     }

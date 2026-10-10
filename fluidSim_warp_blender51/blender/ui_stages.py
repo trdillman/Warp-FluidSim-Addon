@@ -432,6 +432,9 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
             layout.operator(
                 "fluidsim.export_alembic",
                 text="Export Surface as Alembic…", icon="EXPORT")
+            layout.operator(
+                "fluidsim.export_vdb",
+                text="Export Liquid Level Set as VDB...", icon="EXPORT")
             return
 
         _prop(layout, scene, "export_attributes")
@@ -452,6 +455,9 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
         export.operator(
             "fluidsim.export_alembic",
             text="Export Surface as Alembic…", icon="EXPORT")
+        export.operator(
+            "fluidsim.export_vdb",
+            text="Export Liquid Level Set as VDB...", icon="EXPORT")
 
 
 class FLUIDSIM_STAGE_PT_bake_storage(FluidSimStagePanel, bpy.types.Panel):

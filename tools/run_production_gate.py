@@ -97,6 +97,9 @@ GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 GATE_BLENDER_USER_EXTENSIONS = ROOT / "artifacts" / "gate_blender_user_extensions"
 # Background Blender acceptance scripts that take no arguments: (script, marker).
 BACKGROUND_ACCEPTANCE = (
+    ("tests/acceptance/blender_append_migration_acceptance.py", "APPEND-MIGRATION-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_vdb_production_bake_acceptance.py", "VDB-PRODUCTION-BAKE-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_cache_vdb_export_acceptance.py", "CACHE-VDB-EXPORT-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_export_pipeline.py", "CACHE-EXPORT-PIPELINE-PASS"),
     ("tests/acceptance/blender_memory_safety_gate.py", "MEMORY-SAFETY-GATE-PASS"),
     ("tests/acceptance/blender_handler_persistence_gate.py", "HANDLER-PERSISTENCE-GATE-PASS"),
