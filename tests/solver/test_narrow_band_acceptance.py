@@ -104,9 +104,11 @@ def test_reseeding_is_bitwise_deterministic(cuda_device):
 
 def test_particle_count_never_exceeds_capacity_and_overflow_is_reported(
         cuda_device):
-    # One particle per voxel, 12 layers, capacity exactly that many and no
-    # growth: the three-voxel band wants eight per voxel, so it cannot fit.
-    points = lattice(fill_height=0.375, per_axis=1)
+    # One particle per voxel, 8 layers, capacity exactly that many and no
+    # growth: topping the three-voxel band up to four per voxel wants nine
+    # layers of particles but the interior kill frees only five, so it cannot
+    # fit.
+    points = lattice(fill_height=0.25, per_axis=1)
     cap = len(points)
     solver = FluidSolver(settings(
         cuda_device, narrow_band=True, max_particles=cap,

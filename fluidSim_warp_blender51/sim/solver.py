@@ -897,7 +897,8 @@ class FluidSolver:
 
         if self.narrow_band is not None:
             arrays["narrow_band_seed_state"] = np.asarray(
-                [self.narrow_band.reseed_epoch], dtype=np.uint32)
+                [self.narrow_band.reseed_epoch, int(self.narrow_band.owed.numpy()[0])],
+                dtype=np.uint32)
         return {
             "arrays": arrays,
             "scalars": {

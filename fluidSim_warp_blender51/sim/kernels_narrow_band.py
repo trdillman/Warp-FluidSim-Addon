@@ -430,14 +430,16 @@ def k_nb_kill_interior(
     voxel_size: float,
     kill_depth: float,
     alive: wp.array(dtype=wp.int32),
+    killed: wp.array(dtype=wp.int32),
 ):
     tid = wp.tid()
     if tid >= count[0]:
         return
     ijk = voxel_floor(world_to_voxel(position[tid], origin, voxel_size))
     flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
-    if flat >= 0 and phi[flat] < -kill_depth:
+    if flat >= 0 and phi[flat] < -kill_depth and alive[tid] != 0:
         alive[tid] = 0
+        wp.atomic_add(killed, 0, 1)
 
 
 @wp.kernel
@@ -447,8 +449,9 @@ def k_nb_reseed_demand(
     collision_sdf: wp.array(dtype=float),
     voxel_counts: wp.array(dtype=wp.int32),
     num_leaves: wp.array(dtype=wp.int32),
-    target: int,
     min_depth: float,
+    trigger: int,
+    fill: int,
     demand: wp.array(dtype=wp.int32),
 ):
     """Particles a band cell is short of.
@@ -456,6 +459,14 @@ def k_nb_reseed_demand(
     Only cells at least ``min_depth`` below the surface are topped up: the
     surface layer itself is owned by the particles that define it, so
     reseeding there would inflate the volume.
+
+    Only a cell with fewer than ``trigger`` particles (an empty cell, as when
+    the band moves into ground the interior kill had cleared) is filled, and
+    only to ``fill``.  Topping every sparse cell up to the full density is a
+    ratchet: nothing ever removes the surplus where the flow converges, so a
+    spreading liquid whose full-band particles dilute would be re-densified
+    until the count passed the full band's (dam_break: 50k, 237k, then the
+    600k cap against a constant 256k).
     """
     tid = wp.tid()
     demand[tid] = 0
@@ -464,8 +475,8 @@ def k_nb_reseed_demand(
     if cls[tid] != 1 or phi[tid] > -min_depth or collision_sdf[tid] < 0.0:
         return
     have = voxel_counts[tid]
-    if have * 2 < target:
-        demand[tid] = target - have
+    if have < trigger:
+        demand[tid] = wp.max(fill - have, 0)
 
 
 @wp.kernel
@@ -474,21 +485,29 @@ def k_nb_reseed_reserve(
     offsets: wp.array(dtype=wp.int32),
     n: int,
     capacity: int,
+    owed: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
     slot_base: wp.array(dtype=wp.int32),
     slot_limit: wp.array(dtype=wp.int32),
     nb_overflow: wp.array(dtype=wp.int32),
 ):
-    """Reserve the reseed block; a clipped request raises the overflow flag."""
+    """Reserve the reseed block.
+
+    A request clipped by the buffer raises the overflow flag. ``owed`` counts
+    the particles the band killed and has not yet replaced: reseeding moves
+    liquid mass from the interior to the surface, it never creates any, so it
+    stops there without raising the flag.
+    """
     base = count[0]
     total = offsets[n - 1] + demand[n - 1]
     room = wp.max(0, capacity - base)
-    admitted = wp.min(total, room)
+    admitted = wp.min(wp.min(total, room), wp.max(0, owed[0]))
     slot_base[0] = base
     slot_limit[0] = admitted
     if total > room:
         nb_overflow[0] = 1
     count[0] = base + admitted
+    owed[0] = owed[0] - admitted
 
 
 @wp.kernel
