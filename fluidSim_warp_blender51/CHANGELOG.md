@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 — unreleased
+## 3.0.0 — Resolution Divisions, cache format 3, APIC, Multigrid and narrow band
 
 See `docs/migrating_to_3_0.md` for what happens to a 2.x file, cache and
 checkpoint.
@@ -86,6 +86,9 @@ checkpoint.
   the property value, so only code that builds `SolverSettings()` directly sees
   a difference.
 - Kernel prewarm is skipped when the runtime probe reports no CUDA.
+- A Multigrid pressure solve is about 1.85× faster: the start V-cycle and the
+  coarse-level setup replay from CUDA graphs, and the finest level visits only
+  pressure unknowns. Results are bitwise unchanged.
 
 ### Removed
 
@@ -110,6 +113,10 @@ checkpoint.
   names it, instead of stopping at the first failure.
 - `CudaDotProduct` checks array lengths before a launch.
 - A refused bake start restores the Live flag.
+- Narrow-Band Particles no longer grows the particle count past the full band
+  on spreading liquid (dam_break reached the 600k cap against 256k). Reseeding
+  fills only nearly empty band cells, to half the authored density, and never
+  adds more particles than the band removed from the interior.
 - Opening a baked cache no longer needs Warp to be importable. The cache settings
   signature is unchanged, so existing 3.0 caches stay valid.
 
@@ -123,8 +130,17 @@ checkpoint.
 - APIC retains 0.939 of a spinning disc's angular momentum over 100 frames
   (PIC 0.596, FLIP 0.940). Most of the loss is in the shared free-surface path,
   not in APIC.
-- APIC and the Multigrid preconditioner are opt-in in this build. FLIP and
-  Jacobi remain the defaults.
+- APIC, the Multigrid preconditioner and Narrow-Band Particles stay opt-in;
+  FLIP, Jacobi and the full band remain the defaults. Measured on dam_break:
+  - APIC costs about 8% less per substep than FLIP but keeps more energy, so
+    splashes move faster and it takes about 35% more substeps (frames about
+    1.26× as long).
+  - Multigrid needs about 10× fewer iterations, but a solve takes about 1.34×
+    as long as Jacobi (2.07 against 1.54 ms), and about 1.9× at twice the
+    Resolution Divisions.
+  - Narrow band saves particles on deep, calm volumes. On splashy scenes that
+    turn into thin sheets it saves few and is slower (dam_break about 1.4–1.6×
+    per frame).
 - The cache frame stamp covers each source's world matrix and geometry.
   Collider motion driven by rigid-body simulation is not tested.
 - Resume checks every baked frame's stamp with `frame_set`, so its start-up
