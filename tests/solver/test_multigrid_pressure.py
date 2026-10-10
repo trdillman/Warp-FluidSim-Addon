@@ -309,6 +309,32 @@ def test_vcycle_capture_replays_bitwise_identical(problem, cuda_device):
             f"graph replay {replay} differs from the uncaptured V-cycle")
 
 
+def test_compact_fine_level_matches_full_walk_bitwise(problem, cuda_device):
+    """The PCG start graph walks the compact unknown list at the finest level
+    (``_mg_work_n``); at every pressure unknown that must equal the plain
+    one-thread-per-cell walk bit for bit, even over a garbage-filled z."""
+    case = problem.new_case("MULTIGRID")
+    solver = case.solver
+    m = problem.fluid_mask
+    count = solver._build_pressure_index(case.vtw)
+    assert count == int(m.sum())
+    r = wp.array(problem.random_unknowns(401), dtype=float, device=cuda_device)
+    z_full = wp.array(np.full(problem.grid.voxel_capacity, GARBAGE, dtype=np.float32),
+                      dtype=float, device=cuda_device)
+    z_compact = wp.array(np.full(problem.grid.voxel_capacity, GARBAGE, dtype=np.float32),
+                         dtype=float, device=cuda_device)
+    solver._apply_mg_vcycle(r, z_full)
+    solver._mg_work_n = 1 << (count - 1).bit_length()
+    try:
+        solver._apply_mg_vcycle(r, z_compact)
+    finally:
+        solver._mg_work_n = 0
+    wp.synchronize_device(cuda_device)
+    full = z_full.numpy()[m]
+    assert np.all(np.isfinite(full)) and _norm(full) > 0.0
+    assert np.array_equal(_bits(z_compact.numpy()[m]), _bits(full))
+
+
 # ---------------------------------------------------------------------------
 # 5. Determinism
 # ---------------------------------------------------------------------------
