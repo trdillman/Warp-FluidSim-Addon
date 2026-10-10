@@ -46,8 +46,12 @@ Replace the shared one-check monotonicity assumption with a justified stagnation
 
 ## Evidence
 
-Root: `F:/FluidSim-post30-20261010/evidence/`.
-`jacobi-diagnostic.json` contains raw frame/solve data; SHA-256 `2d5f46241bf1fcc4f35c188ee91fe1034e7a65dfb10884f505dcd7878442db22`.
+The raw evidence folder (`F:/FluidSim-post30-20261010/evidence/`) was retired
+on 2026-10-10 after the fix merged; the files below are no longer available.
+`jacobi-summary.json` and `jacobi-history.json` survive on tag
+`archive/post30-diagnosis-20261010` under `docs/evidence/post30/`, and the
+probe is `tools/diagnostics/diagnose_resting_column.py`.
+`jacobi-diagnostic.json` contained raw frame/solve data; SHA-256 `2d5f46241bf1fcc4f35c188ee91fe1034e7a65dfb10884f505dcd7878442db22`.
 `jacobi-diagnostic.log` records actual CUDA module/device execution.
 `jacobi-summary.json` extracts reason counts from the original dictionary-string status field without changing raw measurements.
 `diagnose_resting_column-initial.py` is the actual measured probe; the checked-in probe only simplifies later status reporting. `jacobi-stop-history.log` records the source-history search. All solver files still match 04d732a.
