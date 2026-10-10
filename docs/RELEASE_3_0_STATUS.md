@@ -334,5 +334,5 @@ Lane briefs are under `C:\Users\Tyler\wt\r30_briefs\`, outside the repository. E
 |---|---|---|---|
 | alpha.1 | Wave 0 (A–E) | 1 GUI gate (hash match), ABBA perf if budget sources changed | **passed** on `5a2ce80` (gate includes Waves 1–2) |
 | alpha.2 | Wave 1 (F–I) | | lanes merged; gate passed on `5a2ce80` with FLIP/Jacobi defaults |
-| beta | Wave 2 (J, K), defaults switch + re-baseline | 1 GUI gate, `--measure-budget` | lanes J, K merged; lane M (APIC + Multigrid defaults, narrow band on dam_break, new hash) and lane N (hygiene) dispatched 2026-10-09 from `2c4032a` |
-| 3.0.0 | channel `alpha` → stable, tag, publish | owner authorization | not started |
+| beta | Wave 2 (J, K), defaults switch + re-baseline | 1 GUI gate, `--measure-budget` | lanes J, K, N merged; perf lanes O (APIC, no change), P (Multigrid 1.85×, merged) and Q (narrow-band runaway, merged) missed their targets, so the owner kept FLIP, Jacobi and full band as defaults (2026-10-09). Lane M (defaults switch) dropped, not merged |
+| 3.0.0 | channel `alpha` → stable, tag, publish | owner authorization | channel stable in `448b286`; 1 GUI gate FULL-PRODUCTION-GATE-PASS on `448b286` with re-measured budget (PERFORMANCE-BUDGET-PASS, 8 trials) and demo hash `8baa886c…baf3` (log `C:\Users\Tyler\wt\logs\gate_r30_448b286.log`). Lane R (narrow-band ghost liquid, opt-in only) in progress. Tag and publish await owner authorization |
