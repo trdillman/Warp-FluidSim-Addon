@@ -805,6 +805,46 @@ def test_pcg_keeps_finite_best_effort_solution_projectable(cuda_device):
     assert np.any(np.abs(solver.pressure.numpy()) > 0.0)
 
 
+@pytest.mark.parametrize("conditional", [True, False], ids=["cuda_conditional", "host_batched"])
+def test_pcg_stalls_only_after_a_window_without_a_new_best_residual(
+        cuda_device, monkeypatch, conditional):
+    """A sealed fluid pocket with a non-zero-mean RHS has no solution.
+
+    Its residual never improves on the initial one, so the solve must stall
+    after exactly ``PCG_STALL_WINDOW`` iterations: not at the first rising
+    check (a transient rise is normal CG behaviour, see the resting-column
+    test), and not by running the whole iteration budget.
+    """
+    from fluidSim_warp_blender51.sim import pressure
+
+    if not conditional:
+        monkeypatch.setattr(wp, "is_conditional_graph_supported", lambda: False)
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_COLLISION, dtype=np.int32)
+    voxel_type[:128] = VOXEL_FLUID
+    voxel_type_wp = wp.zeros(
+        grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    rng = np.random.default_rng(7)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[:128] = (rng.normal(size=128) + 0.5).astype(np.float32)
+    _copy_float(solver.rhs, rhs, cuda_device)
+    solver.build_preconditioner(voxel_type_wp)
+
+    budget = 2000
+    status = solver.solve_pcg(
+        voxel_type_wp, max_iterations=budget, tolerance=1.0e-6,
+        check_every=25)
+
+    expected_mode = "cuda_conditional" if conditional else "host_batched"
+    if conditional and solver.last_pcg_execution_mode != expected_mode:
+        pytest.skip("CUDA conditional graphs are unavailable here")
+    assert solver.last_pcg_execution_mode == expected_mode
+    assert status["reason"] == "stalled", status
+    assert solver.last_iterations == pressure.PCG_STALL_WINDOW
+
+
 def test_sanitize_mac_velocity_zeroes_non_finite_faces_and_clamps_speed(cuda_device):
     grid = _one_leaf_grid(cuda_device)
     vel = MacVelocityField(grid)

@@ -1,5 +1,14 @@
 # Jacobi-preconditioned PCG: resting-column diagnosis
 
+> **Fixed** on branch `fix/pcg-stall-termination`: a PCG solve now stalls only
+> after `PCG_STALL_WINDOW` (100) iterations without a new best residual, in
+> both the CUDA-conditional and host-batched paths (`sim/pressure.py`). On the
+> tank below, default Jacobi now holds height99 at 0.7421877 with 30/30 solves
+> converged (first solve: 75 iterations). Regressions:
+> `test_both_preconditioners_hold_the_full_band_column` and
+> `test_pcg_stalls_only_after_a_window_without_a_new_best_residual`. The
+> probe is `tools/diagnostics/diagnose_resting_column.py`.
+
 ## Result and scope
 
 Confirmed shared-path termination defect on 04d732a, not a new narrow-band-only failure and not a 200-iteration budget shortage. Production solver code and FLIP/Jacobi/full-band defaults are unchanged in this task. The diagnostic control is not a proposed production patch or speed optimization.

@@ -71,6 +71,14 @@ PRESSURE_STATUS_CODES = {
     PRESSURE_STATUS_INVALID: 6,
 }
 
+# A PCG solve is "stalled" only when this many iterations pass without the
+# residual improving on the best value seen in the solve. The CG residual
+# 2-norm is not monotone: on a resting Jacobi column it rises ~1.3x by
+# iteration 25 and then converges. Comparing each check to the previous one
+# stopped those solves at iteration 25 and projected an unconverged pressure,
+# sinking the column ~25% in 30 frames (docs/JACOBI_COLUMN_DIAGNOSIS_20261010.md).
+PCG_STALL_WINDOW = 100
+
 # Multigrid-preconditioned CG (lane C). The PCG preconditioner is selected by
 # the plain attribute ``PressureSolver.preconditioner``. A symmetric V-cycle
 # needs equal pre/post smoothing counts and the same smoother on both sides,
@@ -635,7 +643,9 @@ def k_prepare_pcg_conditional_loop(
         reason = 1
     condition[0] = keep_going
     iterations[0] = 0
+    # [0] best residual of this solve, [1] the iteration that reached it
     last_residual[0] = res_sq
+    last_residual[1] = 0.0
     stats[0] = res_sq
     stats[1] = rz[0]
     stats[2] = 0.0
@@ -655,6 +665,7 @@ def k_finish_pcg_conditional_batch(
     last_residual: wp.array(dtype=float),
     batch: int,
     max_iterations: int,
+    stall_window: int,
     tolerance_squared: wp.array(dtype=float),
     stats: wp.array(dtype=float),
 ):
@@ -671,13 +682,16 @@ def k_finish_pcg_conditional_batch(
         reason = 1
     elif rz_value < -1.0e-20 or wp.abs(rz_value) < 1.0e-30 or wp.abs(p_ap_value) < 1.0e-30:
         reason = 2
-    elif res_sq >= last_residual[0] * (1.0 - 1.0e-6):
-        reason = 3
-    elif iteration >= max_iterations:
-        reason = 5
     else:
-        keep_going = 1
-        last_residual[0] = res_sq
+        if res_sq < last_residual[0] * (1.0 - 1.0e-6):
+            last_residual[0] = res_sq
+            last_residual[1] = float(iteration)
+        if iteration - int(last_residual[1]) >= stall_window:
+            reason = 3
+        elif iteration >= max_iterations:
+            reason = 5
+        else:
+            keep_going = 1
     condition[0] = keep_going
     iterations[0] = iteration
     stats[0] = res_sq
@@ -1650,7 +1664,7 @@ class PressureSolver:
         self.pcg_stats = wp.zeros(5, dtype=float, device=device)
         self._pcg_condition = wp.zeros(1, dtype=wp.int32, device=device)
         self._pcg_iterations = wp.zeros(1, dtype=wp.int32, device=device)
-        self._pcg_last_checked_res = wp.zeros(1, dtype=float, device=device)
+        self._pcg_last_checked_res = wp.zeros(2, dtype=float, device=device)
         self._pcg_tol_sq = wp.zeros(1, dtype=float, device=device)
         self._pcg_voxel_type = None
         self._pcg_cmd_kind = None
@@ -1891,7 +1905,8 @@ class PressureSolver:
                     inputs=[self.residual, self._pcg_rz_b, self._pcg_rz_a,
                             self.p_ap, self._pcg_condition,
                             self._pcg_iterations, self._pcg_last_checked_res,
-                            batch, max_iterations, self._pcg_tol_sq,
+                            batch, max_iterations,
+                            self._pcg_stall_window(batch), self._pcg_tol_sq,
                             self.pcg_stats],
                     device=self.device,
                 )
@@ -2403,6 +2418,15 @@ class PressureSolver:
             PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
         return self.last_status
 
+    @staticmethod
+    def _pcg_stall_window(check_every):
+        """Iterations without a new best residual that count as a stall.
+
+        Never shorter than one check interval, so a stall always needs at
+        least one checkpoint that failed to improve on the best residual.
+        """
+        return max(PCG_STALL_WINDOW, int(check_every))
+
     def _resolve_check_every(self, check_every, max_iterations):
         """Residual-check interval of one ``solve_pcg``.
 
@@ -2497,7 +2521,9 @@ class PressureSolver:
         wp.utils.array_inner(
             self._pcg_compact_r, self._pcg_compact_r,
             out=self.residual, count=work_n)
-        last_checked_res = 0.0
+        best_res = 0.0
+        best_it = 0
+        stall_window = self._pcg_stall_window(check_every)
         res_sq = 0.0
         it = 0
         use_conditional = (
@@ -2541,12 +2567,12 @@ class PressureSolver:
                 failure = "max_iterations"
         else:
             self.last_pcg_execution_mode = "host_batched"
-            last_checked_res = float(self.residual.numpy()[0])
-            res_sq = last_checked_res
-            if not math.isfinite(last_checked_res):
+            best_res = float(self.residual.numpy()[0])
+            res_sq = best_res
+            if not math.isfinite(best_res):
                 status = PRESSURE_STATUS_INVALID
                 failure = "non_finite_residual"
-            elif last_checked_res < tol_sq:
+            elif best_res < tol_sq:
                 status = PRESSURE_STATUS_CONVERGED
                 failure = PRESSURE_STATUS_CONVERGED
                 pressure_valid = True
@@ -2582,11 +2608,14 @@ class PressureSolver:
                     or abs(p_ap_cur) < 1.0e-30):
                 status = PRESSURE_STATUS_SINGULAR
                 failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
             else:
-                last_checked_res = res_sq
+                # mirrors k_finish_pcg_conditional_batch
+                if res_sq < best_res * (1.0 - 1.0e-6):
+                    best_res = res_sq
+                    best_it = it
+                if it - best_it >= stall_window:
+                    status = PRESSURE_STATUS_STALLED
+                    failure = "stalled"
         self.last_iterations = it
         if not math.isfinite(res_sq):
             status = PRESSURE_STATUS_INVALID

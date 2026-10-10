@@ -366,9 +366,7 @@ def _min_iterations(problem, preconditioner, tol, limit=512):
 
     ``check_every == max_iterations == m`` runs exactly one batch of m
     iterations and classifies once, so the count is not quantised by the
-    production check interval. (A small ``check_every`` is not used for
-    Jacobi: the CG residual 2-norm is non-monotone and the stall rule
-    ``res_sq >= last * (1 - 1e-6)`` falsely reports "stalled".)
+    production check interval.
     """
     tol_sq = tol * tol * problem.full_n
 

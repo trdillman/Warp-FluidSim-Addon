@@ -5,12 +5,12 @@ particles per cell, stepped 30 frames.  Every test compares the narrow-band
 run against the full-band (mode off) run of the same tank.
 
 The column test runs both tanks with the Multigrid pressure preconditioner.
-Under the default Jacobi preconditioner the full-band column itself
-compresses from 0.75 to about 0.56 within 30 frames (the pressure solve does
-not converge in its iteration budget), so Jacobi cannot serve as the
-hydrostatic reference; ``test_multigrid_holds_the_full_band_column`` pins that
-finding and ``test_column_height_matches_under_the_default_preconditioner``
-keeps the narrow-vs-full comparison under Jacobi as well.
+``test_both_preconditioners_hold_the_full_band_column`` pins that the default
+Jacobi preconditioner holds the column too: before the PCG stall rule was
+fixed, Jacobi solves stopped at iteration 25 and the column sank from 0.75 to
+about 0.56 within 30 frames (docs/JACOBI_COLUMN_DIAGNOSIS_20261010.md).
+``test_column_height_matches_under_the_default_preconditioner`` keeps the
+narrow-vs-full comparison under Jacobi as well.
 """
 
 from __future__ import annotations
@@ -60,17 +60,21 @@ def test_column_at_rest_matches_full_band_surface_and_hydrostatic_pressure(
         banded.release()
 
 
-def test_multigrid_holds_the_full_band_column(cuda_device):
-    """Measured finding: Multigrid keeps the column near its 0.75 fill."""
-    heights = {}
-    for name, extra in (("JACOBI", {}), ("MULTIGRID", MULTIGRID)):
+def test_both_preconditioners_hold_the_full_band_column(cuda_device):
+    """A resting column keeps its 0.75 fill under Jacobi and Multigrid PCG.
+
+    The Jacobi residual rises ~1.3x by the first check (iteration 25) and then
+    converges; a stall rule that compared adjacent checks stopped there and
+    the column sank to ~0.56. The final solve must also report converged.
+    """
+    for extra in ({}, MULTIGRID):
         solver = run_tank(cuda_device, narrow_band=False, **extra)
         try:
-            heights[name] = surface_height(solver)
+            assert surface_height(solver) > 0.72, extra
+            status = solver.pressure_solver.last_status
+            assert status["reason"] == "converged", (extra, status)
         finally:
             solver.release()
-    assert heights["MULTIGRID"] > 0.72
-    assert heights["JACOBI"] < 0.6 < heights["MULTIGRID"]
 
 
 def test_column_height_matches_under_the_default_preconditioner(cuda_device):
@@ -81,8 +85,8 @@ def test_column_height_matches_under_the_default_preconditioner(cuda_device):
         full.release()
     banded = run_tank(cuda_device, narrow_band=True)
     try:
-        # Both columns compress under Jacobi; the band must not change how
-        # much (a particle-free interior would sag or hold by a different amount).
+        # The band must not change how the column holds (a particle-free
+        # interior would sag or hold by a different amount).
         assert abs(surface_height(banded) - full_height) <= 0.5 * H
     finally:
         banded.release()
