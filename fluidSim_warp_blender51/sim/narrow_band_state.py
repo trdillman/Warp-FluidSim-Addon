@@ -53,8 +53,9 @@ _SEED_MASK = 0x7FFFFFFF
 # Added to interior voxel counts around sourcing; far above any emit_rate.
 INTERIOR_COUNT_CREDIT = 1 << 16
 
-# A band cell holding fewer particles than this is reseeded (an empty cell).
-RESEED_TRIGGER = 1
+# A band cell holding fewer particles than this is reseeded (a sparse cell).
+# Reseeding is also capped by the particles the band has killed (``owed``).
+RESEED_TRIGGER = 2
 
 
 class NarrowBand:
@@ -97,6 +98,7 @@ class NarrowBand:
         self.reseed_overflow = False
         self.reseed_epoch = 0
         self.liquid_voxels = 0
+        self.owed = wp.zeros(1, dtype=wp.int32, device=dev)
         self._substep_index = 0
         self._check_particle_channels()
 
@@ -111,10 +113,12 @@ class NarrowBand:
         self.reseed_overflow = False
         self.reseed_epoch = 0
         self.liquid_voxels = 0
+        self.owed.zero_()
 
     def restore_seed_state(self, seed_state):
         """Reload the checkpointed reseed epoch (empty means a fresh start)."""
         self.reseed_epoch = int(seed_state[0]) if len(seed_state) else 0
+        self.owed.fill_(int(seed_state[1]) if len(seed_state) > 1 else 0)
 
     # Guards
 
@@ -282,7 +286,7 @@ class NarrowBand:
             inputs=[p.position, p.count, self.phi, g.leaf_table,
                     g.voxels_dim, g.leaves_dim, g.origin, g.voxel_size,
                     self.band],
-            outputs=[p.alive], device=sv.device)
+            outputs=[p.alive, self.owed], device=sv.device)
 
     def reseed(self, substep_index):
         """Top the band back up to the authored density, deterministically."""
@@ -303,7 +307,7 @@ class NarrowBand:
         wp.utils.array_scan(self.demand[:nv], self.offsets[:nv], inclusive=False)
         fast_launch(
             k_nb_reseed_reserve, dim=1,
-            inputs=[self.demand, self.offsets, nv, p.capacity, p.count],
+            inputs=[self.demand, self.offsets, nv, p.capacity, self.owed, p.count],
             outputs=[self.slot_base, self.slot_limit, self.overflow_flag],
             device=dev)
         seed = (sv.frame * _SEED_FRAME + int(substep_index) * _SEED_SUBSTEP
