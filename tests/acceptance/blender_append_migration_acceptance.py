@@ -19,7 +19,7 @@ def main(output_dir=None):
         root = Path(__file__).resolve().parents[2]
         sys.path.insert(0, str(root))
         from tools.repo_addon_loader import enable_repo_addon
-        enable_repo_addon()
+        enable_repo_addon(str(root), default_set=True, persistent=False)
     import fluidSim_warp_blender51 as addon
     from fluidSim_warp_blender51.blender import file_compat
     from fluidSim_warp_blender51.blender.menus import create_domain_object
