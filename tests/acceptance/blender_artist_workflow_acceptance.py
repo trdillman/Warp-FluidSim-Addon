@@ -87,7 +87,7 @@ def _tick():
             sess = scene_bridge.session()
             phase = STATE['phase']
             if phase == 'start':
-                _check('draft Preview succeeds', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
+                _check('native Play starts draft simulation', bpy.ops.screen.animation_play() == {'FINISHED'} and scene.fluidsim.live)
                 _check('Blender playback started', window.screen.is_animation_playing)
                 if STATE['with_effect']:
                     _check('effect evidence applied automatically', bool(scene.fluidsim_effects.applied_signature))
@@ -118,7 +118,7 @@ def _tick():
                     _check('edited parameter reaches runtime binding', abs(
                         entries[0].instance.effective_parameter_values()[param.key]
                         - param.float_value) < 1e-6)
-                _check('Resume succeeds', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
+                _check('native Play resumes after Pause', bpy.ops.screen.animation_play() == {'FINISHED'} and scene.fluidsim.live)
                 STATE['phase'] = 'resume'
             elif phase == 'resume' and scene.frame_current >= STATE['frame'] + 3:
                 STATE['report']['frames'].append(scene.frame_current)
@@ -127,7 +127,7 @@ def _tick():
                 STATE['report']['particles'] = sess.solver.particles.refresh_host_count()
                 STATE['report']['effect_calls'] = {s.effect_id: s.calls for s in sess.solver.effects.stats.values()}
                 _check('structural edit added', bpy.ops.fluidsim.effect_add(effect_id='fluidsim.planar_split') == {'FINISHED'})
-                _check('structural edit pauses simulation', not scene.fluidsim.live and not window.screen.is_animation_playing)
+                _check('structural edit keeps playing', scene.fluidsim.live and window.screen.is_animation_playing)
                 frame = scene.frame_current
                 try:
                     result = bpy.ops.fluidsim.apply_changes()
@@ -137,7 +137,7 @@ def _tick():
                 _check('explicit apply succeeds', bpy.ops.fluidsim.apply_changes(allow_restart=True) == {'FINISHED'})
                 _check('Apply restarts at start frame paused', scene.frame_current == scene.frame_start and not window.screen.is_animation_playing)
                 _check('Apply installs current stack', not effects.production_blocking_reason(scene))
-                _check('Preview before explicit restart', bpy.ops.fluidsim.preview_start() == {'FINISHED'})
+                _check('native Play before explicit restart', bpy.ops.screen.animation_play() == {'FINISHED'} and scene.fluidsim.live)
                 STATE['phase'] = 'restart_progress'
             elif phase == 'restart_progress' and scene.frame_current >= scene.frame_start + 3:
                 _check('Restart test has real progress', sess.solver.frame >= 3)

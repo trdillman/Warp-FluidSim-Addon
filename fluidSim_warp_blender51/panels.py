@@ -66,10 +66,10 @@ def _status_note(state) -> str:
     if state["id"] in {"PRODUCTION_BAKE", "CACHE_PLAYBACK"}:
         return ""
     if state["owns_scene"]:
-        return "Simulation loaded; Resume Preview continues it."
+        return "Simulation loaded; Play continues it."
     if session().active:
         return "Another scene is using the solver."
-    return "No simulation loaded; Preview starts one."
+    return "No simulation loaded; Play starts one."
 
 
 PLAYBACK_ONLY_TEXT = "Playback only — CUDA unavailable"
@@ -94,38 +94,25 @@ def runtime_ui_state():
 
 
 def draw_transport(layout, context, state, runtime_ready):
-    """Preview / Pause / Resume / Cancel for the current activity, plus Restart.
+    """Play / Pause / Cancel for the current activity, plus Restart.
 
+    Play is Blender's own timeline play: the playback handler arms and admits
+    the simulation, so there is no separate Preview step to pass through.
+    ``runtime_ready`` does not gate Play: cache playback and plain timeline
+    playback need no GPU, and a live-admission failure reports in the status.
     Shared by the sidebar strip and the viewport-header popover so both surfaces
     follow the same activity state machine.
     """
-    scene = context.scene
     controls = layout.column(align=True)
     activity = state["id"]
     screen = getattr(context, "screen", None)
-    playing = bool(
-        getattr(scene.fluidsim, "live", False)
-        and screen is not None
-        and getattr(screen, "is_animation_playing", False)
-    )
+    playing = bool(screen is not None and getattr(screen, "is_animation_playing", False))
     if activity == "PRODUCTION_BAKE":
         controls.operator("fluidsim.bake_cancel", text="Cancel Production Bake", icon="CANCEL")
-    elif activity == "CACHE_PLAYBACK":
-        controls.operator(
-            "fluidsim.preview_pause" if playing else "fluidsim.cache_preview_start",
-            text="Pause Cache Preview" if playing else "Resume Cache Preview",
-            icon="PAUSE" if playing else "PLAY",
-        )
     elif playing:
-        controls.operator("fluidsim.preview_pause", text="Pause Preview", icon="PAUSE")
+        controls.operator("fluidsim.preview_pause", text="Pause", icon="PAUSE")
     else:
-        live = controls.column(align=True)
-        live.enabled = runtime_ready
-        live.operator(
-            "fluidsim.preview_start",
-            text="Resume Preview" if state["owns_scene"] else "Preview",
-            icon="PLAY",
-        )
+        controls.operator("screen.animation_play", text="Play", icon="PLAY")
 
     if state["owns_scene"] and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
         controls.operator(

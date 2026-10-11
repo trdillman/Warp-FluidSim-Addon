@@ -1,6 +1,6 @@
 """Viewport-header surfaces for the FluidSim workflow.
 
-A "FluidSim" popover in the 3D View header gives the live loop (Preview / Pause /
+A "FluidSim" popover in the 3D View header gives the live loop (Play / Pause /
 Restart, Quality, the physics an artist tunes while watching) without opening the
 sidebar, and a button that opens a dedicated FluidSim workspace.
 

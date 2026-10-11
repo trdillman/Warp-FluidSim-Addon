@@ -36,8 +36,8 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
     )
     preset_id: StringProperty(default="", options={"SKIP_SAVE"})
     start_preview: BoolProperty(
-        name="Start Preview",
-        description="Start timeline preview after the scene is configured",
+        name="Start Playback",
+        description="Start timeline playback after the scene is configured",
         default=False,
         options={"SKIP_SAVE"},
     )

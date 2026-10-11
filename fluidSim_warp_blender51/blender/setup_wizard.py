@@ -826,7 +826,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         capacity = _capacity_summary(scene)
         message = (
             f"{mode.replace('_', ' ').title()} configured from {len(selected)} selected "
-            f"mesh object(s); use Start Preview to simulate"
+            f"mesh object(s); press Play to simulate"
         )
         result = SetupResult(
             mode=mode,

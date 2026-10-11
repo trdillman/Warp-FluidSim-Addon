@@ -244,12 +244,12 @@ def test_transport_exposes_complete_state_dependent_artist_actions():
         source, "FLUIDSIM_PT_viewport_status"
     )
     block = source.split("def draw_transport", 1)[1].split("def draw_pending_apply", 1)[0]
-    assert 'activity == "CACHE_PLAYBACK"' in block
     assert 'activity == "PRODUCTION_BAKE"' in block
-    assert 'getattr(scene.fluidsim, "live", False)' in block
-    assert 'operator("fluidsim.preview_pause", text="Pause Preview"' in block
-    assert '"fluidsim.cache_preview_start"' in block
-    assert '"fluidsim.preview_start"' in block
+    assert 'operator("fluidsim.preview_pause", text="Pause"' in block
+    assert 'operator("screen.animation_play", text="Play"' in block
+    # Retired: the Preview/Resume gate that had to re-arm playback.
+    assert '"fluidsim.preview_start"' not in block
+    assert '"fluidsim.cache_preview_start"' not in block
     assert '"fluidsim.restart_simulation"' in block
     assert '"fluidsim.bake_cancel"' in block
     assert 'text="Cancel Production Bake"' in block

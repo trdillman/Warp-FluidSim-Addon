@@ -497,8 +497,8 @@ def _run_phase(phase, scene):
         _draw_all_panels_smoke("addon enabled, solver inactive")
         _assert_panel_state(
             "FLUIDSIM_PT_viewport_status",
-            "Basic Preview action",
-            operator_id="fluidsim.preview_start",
+            "Basic Play action",
+            operator_id="screen.animation_play",
         )
         _assert_panel_state(
             "FLUIDSIM_PT_header_popover",
@@ -643,8 +643,8 @@ def _run_phase(phase, scene):
         scene.fluidsim_effects.items[-1].enabled = False
         _assert_panel_state(
             "FLUIDSIM_PT_custom_effects",
-            "Basic effect Preview action",
-            operator_id="fluidsim.preview_start",
+            "Basic effect Play action",
+            operator_id="screen.animation_play",
         )
         _assert_panel_state(
             "FLUIDSIM_PT_custom_effects",
@@ -701,8 +701,12 @@ def _run_phase(phase, scene):
         STATE["frame_at_play"] = scene.frame_current
         STATE["solver_frame_at_play"] = sess.solver.frame
         STATE["t_play_start"] = time.perf_counter()
-        result = bpy.ops.fluidsim.preview_start()
-        check("Preview starts", result == {"FINISHED"} and fs.live,
+        # Blender's own Play must arm and admit the simulation by itself:
+        # there is no Preview step in front of timeline playback any more.
+        fs.live = False
+        with bpy.context.temp_override(**_view3d_override()):
+            result = bpy.ops.screen.animation_play()
+        check("native Play arms simulation", result == {"FINISHED"} and fs.live,
               scene.fluidsim.status)
         owner_windows = [
             window for window in bpy.context.window_manager.windows

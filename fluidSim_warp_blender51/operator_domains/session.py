@@ -493,7 +493,7 @@ class _PreviewStart(_RestartConfirmation):
     """Prepare the current simulation and start Blender playback"""
 
     bl_idname = "fluidsim.preview_start"
-    bl_label = "Preview"
+    bl_label = "Play"
     _cache_preview = False
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
@@ -535,7 +535,7 @@ class _PreviewStart(_RestartConfirmation):
 
 class FLUIDSIM_OT_preview_start(_PreviewStart, bpy.types.Operator):
     bl_idname = "fluidsim.preview_start"
-    bl_label = "Preview"
+    bl_label = "Play"
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
 
@@ -543,7 +543,7 @@ class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
     """Validate the cached frame and start Blender playback"""
 
     bl_idname = "fluidsim.cache_preview_start"
-    bl_label = "Preview Cache"
+    bl_label = "Play Cache"
     _cache_preview = True
 
     @classmethod
@@ -563,7 +563,11 @@ class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
 
 
 class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
-    """Pause playback, keeping the current simulation and frame"""
+    """Pause playback, keeping the current simulation and frame.
+
+    Disarming lets the paused timeline be scrubbed without stepping or
+    resetting the solver; Play (or the spacebar) re-arms and resumes it.
+    """
 
     bl_idname = "fluidsim.preview_pause"
     bl_label = "Pause"
@@ -574,7 +578,7 @@ class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
                 if context.window.screen.is_animation_playing:
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             context.scene.fluidsim.live = False
-            context.scene.fluidsim.status = "Preview paused"
+            context.scene.fluidsim.status = "Paused - press Play to resume"
             return {"FINISHED"}
         except Exception as exc:
             context.scene.fluidsim.live = False

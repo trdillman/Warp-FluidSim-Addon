@@ -1445,7 +1445,7 @@ def test_playback_pre_replaces_session_owned_by_another_scene(monkeypatch):
     assert calls == [scene]
 
 
-def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
+def test_playback_pre_arms_a_paused_domain_scene_without_a_preview_step(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2, playback=False)
     scene.fluidsim.live = False
@@ -1453,9 +1453,25 @@ def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
     calls = _count_initialize(monkeypatch, sess)
 
     scene_bridge.playback._on_playback_pre(scene)
+
+    # Timeline Play is the preview: it arms and admits the simulation itself.
+    assert scene.fluidsim.live is True
+    assert calls == [scene]
+
+
+def test_playback_pre_does_not_allocate_without_a_domain(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    scene.fluidsim.live = False
+    scene.fluidsim.domain_object = None
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge.playback._on_playback_pre(scene)
     scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
-    # Pressing play on a non-live scene must not build a GPU solver.
+    # Plain animation playback in a scene with no domain never builds a solver.
+    assert scene.fluidsim.live is False
     assert calls == []
 
 

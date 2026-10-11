@@ -1,7 +1,7 @@
 """Staged workflow shelves for the 3D View sidebar: Setup, Simulate, Look, Bake.
 
 The status/transport strip (``FLUIDSIM_PT_viewport_status``) stays pinned at the
-top of the FluidSim tab with Preview/Pause and Apply Changes. Below it, one
+top of the FluidSim tab with Play/Pause and Apply Changes. Below it, one
 top-level panel per stage holds the handful of controls an artist reaches for at
 that point in the work, so the common loop happens beside the viewport instead of
 in the Scene Properties tree. Everything else stays one click away through the
@@ -160,7 +160,7 @@ def draw_narrow_band(layout, scene, domain):
 def draw_guided_setup_buttons(layout, *, primary_scale: float = 1.3):
     row = layout.row(align=True)
     row.scale_y = primary_scale
-    preview = row.operator("fluidsim.setup_scene", text="Set Up & Preview…", icon="PLAY")
+    preview = row.operator("fluidsim.setup_scene", text="Set Up & Play…", icon="PLAY")
     preview.start_preview = True
     only = layout.operator("fluidsim.setup_scene", text="Set Up Only…", icon="MOD_FLUIDSIM")
     only.start_preview = False

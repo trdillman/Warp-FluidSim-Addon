@@ -50,9 +50,8 @@ def test_viewport_status_uses_derived_activity_and_artist_actions():
     assert 'pending["visible"]' not in pending_apply
     block = strip + transport + pending_apply
     for operator_id in (
-        "fluidsim.preview_start",
+        "screen.animation_play",
         "fluidsim.preview_pause",
-        "fluidsim.cache_preview_start",
         "fluidsim.apply_changes",
         "fluidsim.restart_simulation",
         "fluidsim.bake_cancel",

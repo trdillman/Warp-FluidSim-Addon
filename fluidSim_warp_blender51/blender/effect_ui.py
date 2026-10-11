@@ -266,7 +266,7 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
         )
         effects.add_instance_to_scene(context.scene, instance)
         context.scene.fluidsim_effects.selected_library_effect = definition.effect_id
-        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then Preview.")
+        self.report({"INFO"}, f"Added {definition.name}. Set parameters, then press Play.")
         return {"FINISHED"}
 
 
@@ -833,12 +833,12 @@ class FLUIDSIM_PT_custom_effects(bpy.types.Panel):
         item = _active_effect(context.scene)
         if item is None:
             box = layout.box()
-            box.label(text="Add an effect, adjust its controls, then press Preview.", icon="INFO")
+            box.label(text="Add an effect, adjust its controls, then press Play.", icon="INFO")
             return
 
         _draw_selected_effect(layout, item)
         actions = layout.row(align=True)
-        actions.operator("fluidsim.preview_start", text="Preview", icon="PLAY")
+        actions.operator("screen.animation_play", text="Play", icon="PLAY")
         actions.operator("fluidsim.apply_changes", text="Apply Changes", icon="CHECKMARK")
         _draw_status(layout, context.scene, stack, item)
 

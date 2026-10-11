@@ -772,6 +772,7 @@ def refresh_stack_state(scene):
         stack.draft_signature = signature
         store = trust_store_for_scene(scene)
         blocking = []
+        revoked_running = False
         instances_by_id = {instance.instance_id: instance for instance in instances}
         for pg in stack.items:
             instance = instances_by_id[str(pg.instance_id)]
@@ -786,6 +787,7 @@ def refresh_stack_state(scene):
             elif trust not in {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}:
                 pg.status = "UNTRUSTED"
                 blocking.append(f"{pg.display_name}: exact source is not trusted")
+                revoked_running = revoked_running or bool(pg.applied_fingerprint)
             elif pg.runtime_error:
                 pg.status = "RUNTIME_ERROR"
                 blocking.append(f"{pg.display_name}: {pg.runtime_error}")
@@ -807,10 +809,12 @@ def refresh_stack_state(scene):
             else "DIRTY" if stack.applied_signature else "DRAFT"
         )
         stack.blocking_reason = "; ".join(blocking)
-        if signature != stack.applied_signature or blocking:
-            from .playback import pause_preview_for_changes
+        # Playback keeps running the admitted stack: drafts apply on rewind or
+        # Apply Changes. Only revoked trust in running code stops the solver.
+        if revoked_running:
+            from .playback import stop_revoked_effects
 
-            pause_preview_for_changes(scene)
+            stop_revoked_effects(scene)
         return signature, inventory
     except Exception as exc:
         stack.status = "INVALID"

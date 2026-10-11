@@ -53,13 +53,15 @@ first: 2.0 opens only files saved by 1.1.0 or later.
 
 After selecting one or more mesh objects, the shortest workflow is:
 
-1. Open **Scene Properties → Setup**, click **Set Up & Preview…**, choose
+1. Open **Scene Properties → Setup**, click **Set Up & Play…**, choose
    **Quick Liquid** and a product preset, then confirm.
 2. FluidSim performs runtime and capacity preflight, prepares the solver and
    outputs, and starts Blender timeline playback.
 
-The compact **3D View → FluidSim** status panel exposes Preview, Pause/Resume,
-Apply Changes, and Restart shortcuts. Below it, the Setup, Simulate, Look and
+The compact **3D View → FluidSim** status panel exposes Play/Pause,
+Apply Changes, and Restart shortcuts. Play is Blender's own timeline play: the
+spacebar or the Timeline's play button starts and resumes the simulation
+directly, with no separate Preview step. Below it, the Setup, Simulate, Look and
 Bake & Export stages hold the controls for each step (see *3D View FluidSim workflow* in section 3). Object roles and per-input controls remain
 in **Object Properties** and also appear contextually in **Physics Properties**.
 
@@ -123,7 +125,7 @@ Manual setup remains available for authored pipelines:
    values describe the active object.
 4. Choose a product preset under **Scene Properties → Setup → Product Presets**
    or edit Simulation Physics directly.
-5. Review **Capacity & Safety**, then use **Preview** or Production Bake as
+5. Review **Capacity & Safety**, then press **Play** or use Production Bake as
    appropriate.
 
 Guided and manual workflows use the same object roles and solver settings; the
@@ -170,7 +172,7 @@ Children:
 
 #### Setup
 
-**Set Up & Preview…** configures the selected objects and starts real timeline
+**Set Up & Play…** configures the selected objects and starts real timeline
 playback. **Set Up Only…** stops after configuration. **Product Presets** applies
 built-in or user presets and reports the active preset identity.
 
@@ -259,8 +261,9 @@ of Scene Properties. The root contains four groups:
    remove.
 2. **Selected Effect** — artist-facing description, typed parameters, controller
    objects, frame window, and cadence.
-3. **Preview / Apply Changes** — prepares eligible draft effects through the
-   production admission path without a separate compile step.
+3. **Play / Apply Changes** — Play runs the simulation; Apply Changes prepares
+   eligible draft effects through the production admission path without a
+   separate compile step. Drafts also apply on rewind to the start frame.
 4. **Status** — trust, current draft/applied divergence, production admission,
    compile evidence, and the applied SHA-256 identity.
 
@@ -306,8 +309,8 @@ in Advanced mode. Hidden compatibility aliases do not appear.
 
 The root owns the resolved Cache Path. Children are:
 
-- **Playback** — Preview, Pause, or Resume Cache; this starts the actual Blender
-  timeline and does not allocate a live solver.
+- **Playback** — Play Cache starts the actual Blender timeline from the cache
+  and does not allocate a live solver; Pause and Play (or the spacebar) resume it.
 - **Shared Playback / Export Range** — optional playback/export range.
 - **Storage** — compression and checkpoint interval.
 - **Production Bake** — authored bake range, progress, one mutually exclusive
@@ -356,7 +359,7 @@ selection does not appear in scene panels.
 ### 3D View FluidSim workflow
 
 The **3D View → FluidSim** sidebar tab follows the order you work in. A pinned
-strip at the top shows activity, runtime readiness, Preview / Pause / Resume /
+strip at the top shows activity, runtime readiness, Play / Pause /
 Restart and Apply Changes; below it four stages hold the settings:
 
 1. **Setup** — interface level, Quality, presets, Domain, Resolution Divisions,
@@ -364,7 +367,7 @@ Restart and Apply Changes; below it four stages hold the settings:
 2. **Simulate** — flip ratio, viscosity, surface tension, scene gravity, and the
    live readout.
 3. **Look** — view mode, surface, whitewater, particle display and Materials.
-4. **Bake & Export** — cache folder, Preview Cache, Production Bake, Export
+4. **Bake & Export** — cache folder, Play Cache, Production Bake, Export
    Current Frame and Export Surface as Alembic, with **Storage & Range** and
    **Manage Cache** shelves.
 
@@ -380,8 +383,8 @@ first. The demo files ship inside the extension, so the shelf works in an
 installed build as well as in a repository checkout.
 
 **FluidSim header popover.** The 3D View header carries a **FluidSim** button.
-It opens a floating panel with the live loop — the status line, Preview / Pause /
-Resume / Restart, Apply Changes when an edit is waiting, Quality and the
+It opens a floating panel with the live loop — the status line, Play / Pause /
+Restart, Apply Changes when an edit is waiting, Quality and the
 physics you tune while watching (flip ratio, viscosity, surface tension, scene
 gravity). It draws the same functions as the sidebar, so the two never differ.
 With no domain yet it offers Guided Setup instead. Use it when the sidebar is
@@ -517,10 +520,11 @@ levels:
 
 1. Click **Add Effect** and select **Vortex Force**.
 2. Move the created Vortex controller and adjust Strength, Radius, and Falloff.
-3. Click **Preview**. FluidSim prepares the draft effect, solver, and outputs,
-   then starts timeline playback.
-4. Use **Apply Changes** after later edits; it confirms only when the required
-   transition discards current preview progress.
+3. Press **Play** (or the spacebar). FluidSim prepares the draft effect, solver,
+   and outputs as timeline playback starts.
+4. Later edits never pause playback. They apply on the next Play when nothing
+   would be lost, on rewind to the start frame, or through **Apply Changes**,
+   which confirms only when the transition discards current progress.
 
 The Advanced-only Test Draft action performs static validation, forces real
 Warp JIT compilation, runs
@@ -798,7 +802,7 @@ preserving the initialized solver. No partial source batch is committed.
 
 The compact **3D View → FluidSim** launcher remains reachable without becoming
 a second settings surface. It shows solver activity, runtime readiness, the
-valid Preview, Pause/Resume, Apply Changes, or Restart action, pending-change
+valid Play/Pause, Apply Changes, or Restart action, pending-change
 count, and a shortcut to Scene Properties. The viewport overlay remains
 informational only.
 

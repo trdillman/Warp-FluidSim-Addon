@@ -1,4 +1,4 @@
-"""Preview and cache playback policy for Blender timeline events.
+"""Live and cache playback policy for Blender timeline events.
 
 This module owns timeline interpretation, live/cache selection, pre-playback
 admission, re-entry and render-restore suppression, and the two persistent
@@ -221,13 +221,59 @@ def prepare_live_preview(scene, *, depsgraph=None, allow_restart=False):
         raise
 
 
-def pause_preview_for_changes(scene):
-    """Stop this scene's advancement after an incompatible authoring edit."""
-    fs = scene.fluidsim
-    if not fs.live or getattr(fs, "cache_playback_enabled", False):
+def arm_timeline_playback(scene, *, depsgraph=None):
+    """Make Blender's own Play the preview: arm, admit, and apply safe edits.
+
+    There is no separate Preview step.  Pressing Play (spacebar, timeline, or
+    the panel's Play button) on a scene with a domain or an armed cache drives
+    the simulation.  Edits that would discard progress stay pending and apply
+    on rewind or through Apply Changes; everything else applies here.
+    """
+    from . import pending_settings, production_bake
+    from .scene_access import active_domain_object
+
+    fs = getattr(scene, "fluidsim", None) if scene is not None else None
+    if fs is None or production_bake.bake_is_active(scene):
         return
-    fs.live = False
-    fs.status = "Preview paused: apply changes or resume to prepare the edited effects"
+    cache_mode = bool(getattr(fs, "cache_playback_enabled", False))
+    if not fs.live:
+        if not cache_mode and active_domain_object(scene) is None:
+            return
+        sess = _bridge().session()
+        if not cache_mode and sess.active and not sess.owns_scene(scene):
+            fs.status = "Another scene owns the solver; release it from that scene first"
+            return
+        with suppress_mode_transitions():
+            fs.live = True
+        fs.status = "Playing"
+    if cache_mode:
+        return
+    ensure_session_before_frames(scene, "playback")
+    sess = _bridge().session()
+    if not sess.owns_scene(scene):
+        return
+    try:
+        if pending_settings.changes_require_restart(scene):
+            fs.status = "Edits pending: rewind to the start frame or Apply Changes to use them"
+            return
+        pending_settings.apply_changes(scene, depsgraph=depsgraph)
+    except Exception as exc:  # noqa: BLE001 - never break playback
+        sess.set_error(scene, repr(exc))
+        fs.status = f"Pending changes could not apply: {exc}"
+
+
+def stop_revoked_effects(scene):
+    """Stop the solver running effect code whose trust was just revoked.
+
+    Ordinary effect edits never pause playback; revoked trust is the exception
+    because the admitted stack would keep executing that code.  Releasing the
+    session means the next Play re-admits, and admission refuses untrusted
+    effects with an actionable message.
+    """
+    sess = _bridge().session()
+    fs = scene.fluidsim
+    if not sess.owns_scene(scene) or getattr(fs, "cache_playback_enabled", False):
+        return
     manager = getattr(bpy.context, "window_manager", None)
     for window in getattr(manager, "windows", ()):
         if window.scene == scene and window.screen.is_animation_playing:
@@ -235,7 +281,12 @@ def pause_preview_for_changes(scene):
                 with bpy.context.temp_override(window=window, screen=window.screen):
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             except RuntimeError as exc:
-                fs.status = f"Simulation paused; timeline could not pause: {exc}"
+                print(f"FluidSim: timeline could not pause: {exc}")
+    with suppress_mode_transitions():
+        fs.live = False
+    sess.release(scene)
+    fs.status = ("Stopped: a running effect is no longer trusted. "
+                 "Trust or remove it, then press Play")
 
 
 def prepare_cache_preview(scene):
@@ -581,7 +632,10 @@ def arm_render_frame_restore(frame):
 
 @persistent
 def _on_playback_pre(scene, *_args):
-    ensure_session_before_frames(scene, "playback")
+    try:
+        arm_timeline_playback(scene)
+    except Exception as exc:  # noqa: BLE001 - never break playback
+        print(f"FluidSim playback arm failed: {exc!r}")
 
 
 @persistent

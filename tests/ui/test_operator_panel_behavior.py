@@ -2129,19 +2129,20 @@ def test_viewport_launcher_is_a_pinned_status_strip_not_a_settings_shelf(monkeyp
 
     texts = [label["text"] for label in layout.labels]
     assert "Idle" in texts
-    assert "No simulation loaded; Preview starts one." in texts
-    preview = _operator(layout, "fluidsim.preview_start")
-    assert preview["text"] == "Preview"
-    assert preview["enabled"] is True
+    assert "No simulation loaded; Play starts one." in texts
+    play = _operator(layout, "screen.animation_play")
+    assert play["text"] == "Play"
+    assert play["enabled"] is True
+    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
     assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
 
 
 def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
-    """`Solver not owned by this scene` was jargon; say what Preview will do."""
+    """`Solver not owned by this scene` was jargon; say what Play will do."""
     _panels, layout = _draw_launcher(monkeypatch, owns_scene=True, label="Live Ready")
     texts = [label["text"] for label in layout.labels]
-    assert "Simulation loaded; Resume Preview continues it." in texts
-    assert _operator(layout, "fluidsim.preview_start")["text"] == "Resume Preview"
+    assert "Simulation loaded; Play continues it." in texts
+    assert _operator(layout, "screen.animation_play")["text"] == "Play"
     assert _operator(layout, "fluidsim.restart_simulation")["text"] == "Restart Simulation"
 
     _panels, layout = _draw_launcher(monkeypatch, session_active=True)
@@ -2166,37 +2167,39 @@ def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
         assert not any("not owned" in label["text"] for label in layout.labels)
 
 
-def test_viewport_launcher_keeps_preview_present_but_greyed_when_not_ready(monkeypatch):
+def test_viewport_launcher_play_is_never_gated_by_runtime_readiness(monkeypatch):
+    # Timeline play (and cache playback) needs no GPU; live admission reports
+    # its own failure in the status line instead of greying out Play.
     _panels, layout = _draw_launcher(monkeypatch, runtime_ready=False, owns_scene=True)
     op_ids = [op["id"] for op in layout.operators]
-    assert "fluidsim.preview_start" in op_ids
+    assert "screen.animation_play" in op_ids
     assert "fluidsim.step" not in op_ids
-    assert _operator(layout, "fluidsim.preview_start")["enabled"] is False
+    assert _operator(layout, "screen.animation_play")["enabled"] is True
 
 
 def test_viewport_launcher_transport_follows_the_activity(monkeypatch):
     _panels, layout = _draw_launcher(monkeypatch, playing=True)
     pause = _operator(layout, "fluidsim.preview_pause")
-    assert pause["text"] == "Pause Preview"
-    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+    assert pause["text"] == "Pause"
+    assert "screen.animation_play" not in {op["id"] for op in layout.operators}
 
     _panels, layout = _draw_launcher(
         monkeypatch, state_id="CACHE_PLAYBACK", label="Cache Playback Ready"
     )
-    resume = _operator(layout, "fluidsim.cache_preview_start")
-    assert resume["text"] == "Resume Cache Preview"
+    assert _operator(layout, "screen.animation_play")["text"] == "Play"
+    assert "fluidsim.cache_preview_start" not in {op["id"] for op in layout.operators}
     assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
 
     _panels, layout = _draw_launcher(
         monkeypatch, state_id="CACHE_PLAYBACK", label="Playing Cache", playing=True
     )
-    assert _operator(layout, "fluidsim.preview_pause")["text"] == "Pause Cache Preview"
+    assert _operator(layout, "fluidsim.preview_pause")["text"] == "Pause"
 
     _panels, layout = _draw_launcher(
         monkeypatch, state_id="PRODUCTION_BAKE", label="Baking", owns_scene=True
     )
     assert _operator(layout, "fluidsim.bake_cancel")["text"] == "Cancel Production Bake"
-    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+    assert "screen.animation_play" not in {op["id"] for op in layout.operators}
 
 
 def test_viewport_launcher_offers_apply_changes_only_when_something_is_pending(monkeypatch):
@@ -4340,7 +4343,7 @@ def test_header_popover_draws_the_stage_controls_bound_to_their_owners(monkeypat
         assert type(call_data) is type(drawn[name]), name
 
     operators = {op["id"] for op in layout.operators}
-    assert {"fluidsim.preview_start", "fluidsim.open_workspace"} <= operators
+    assert {"screen.animation_play", "fluidsim.open_workspace"} <= operators
     assert "fluidsim.apply_changes" not in operators
     assert any(label["text"] == "Idle" for label in layout.labels)
 
@@ -4360,23 +4363,23 @@ def test_header_popover_without_a_domain_offers_guided_setup_only(monkeypatch):
     assert not layout.props
     ids = [op["id"] for op in layout.operators]
     assert ids.count("fluidsim.setup_scene") == 2
-    assert not {"fluidsim.preview_start", "fluidsim.apply_changes"} & set(ids)
+    assert not {"screen.animation_play", "fluidsim.apply_changes"} & set(ids)
     assert any("domain" in label["text"].lower() for label in layout.labels)
 
 
 def test_header_popover_follows_the_activity_and_the_runtime(monkeypatch):
     _env, layout, *_ = _draw_header_popover(monkeypatch, runtime_ready=False)
     assert any("no CUDA" in label["text"] for label in layout.labels)
-    assert _operator(layout, "fluidsim.preview_start")["enabled"] is False
+    assert _operator(layout, "screen.animation_play")["enabled"] is True
 
     _env, layout, *_ = _draw_header_popover(
         monkeypatch, state_id="PRODUCTION_BAKE", owns_scene=True
     )
     assert _operator(layout, "fluidsim.bake_cancel")["text"] == "Cancel Production Bake"
-    assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
+    assert "screen.animation_play" not in {op["id"] for op in layout.operators}
 
     _env, layout, *_ = _draw_header_popover(monkeypatch, owns_scene=True)
-    assert _operator(layout, "fluidsim.preview_start")["text"] == "Resume Preview"
+    assert _operator(layout, "screen.animation_play")["text"] == "Play"
     assert "fluidsim.restart_simulation" in {op["id"] for op in layout.operators}
 
 
@@ -4396,7 +4399,7 @@ def test_header_popover_hides_the_workspace_button_inside_the_workspace(monkeypa
 
     _env, layout, *_ = _draw_header_popover(monkeypatch, workspace_name="FluidSim")
     assert "fluidsim.open_workspace" not in {op["id"] for op in layout.operators}
-    assert "fluidsim.preview_start" in {op["id"] for op in layout.operators}
+    assert "screen.animation_play" in {op["id"] for op in layout.operators}
 
 
 def _run_open_workspace(env):

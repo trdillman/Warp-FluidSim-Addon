@@ -1,6 +1,6 @@
 """Workflow-oriented FluidSim panels for Blender Scene Properties.
 
-Transport (Preview/Pause/Restart) is the 3D View launcher, and Cache &
+Transport (Play/Pause/Restart) is the 3D View launcher, and Cache &
 Production Bake is the sidebar's Bake & Export stage; neither is repeated here.
 The cache draw functions below are shared with that stage.
 """
@@ -280,7 +280,7 @@ class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
             danger = layout.column(align=True)
             danger.alert = True
             release = danger.column(align=True)
-            release.label(text="Frees the GPU solver; Preview can allocate it again.", icon="X")
+            release.label(text="Frees the GPU solver; Play can allocate it again.", icon="X")
             release.operator("fluidsim.release", text="Release Solver", icon="X")
             if state["id"] not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
                 reset = danger.column(align=True)
@@ -404,7 +404,7 @@ class FLUIDSIM_PT_scene_setup(FluidSimScenePanel, bpy.types.Panel):
         primary = layout.row(align=True)
         primary.scale_y = 1.25
         setup_preview = primary.operator(
-            "fluidsim.setup_scene", text="Set Up & Preview…", icon="PLAY"
+            "fluidsim.setup_scene", text="Set Up & Play…", icon="PLAY"
         )
         setup_preview.start_preview = True
         setup_only = layout.operator(
@@ -1077,25 +1077,15 @@ class FLUIDSIM_PT_attrs_whitewater(FluidSimScenePanel, bpy.types.Panel):
 # (ui_stages.py), which calls these draw functions. They stay here because they
 # share this module's runtime/cache helpers and the test seams that patch them.
 def draw_cache_playback(layout, context):
-    """Preview-from-cache action; never allocates the solver."""
+    """Play-from-cache action; never allocates the solver."""
     state = activity_ui_state(context.scene)
     if state["id"] == "CACHE_PLAYBACK":
-        playing = bool(
-            context.scene.fluidsim.live
-            and _timeline_playing(context)
-        )
-        if playing:
-            layout.operator(
-                "fluidsim.preview_pause", text="Pause Cache Preview", icon="PAUSE"
-            )
+        if _timeline_playing(context):
+            layout.operator("fluidsim.preview_pause", text="Pause", icon="PAUSE")
         else:
-            layout.operator(
-                "fluidsim.cache_preview_start",
-                text="Resume Cache Preview",
-                icon="PLAY",
-            )
+            layout.operator("screen.animation_play", text="Play", icon="PLAY")
     else:
-        layout.operator("fluidsim.cache_preview_start", text="Preview Cache", icon="PLAY")
+        layout.operator("fluidsim.cache_preview_start", text="Play Cache", icon="PLAY")
     layout.label(text="Cache playback does not allocate the solver.", icon="INFO")
 
 

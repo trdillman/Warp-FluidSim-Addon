@@ -105,9 +105,13 @@ def test_revoked_trust_pauses_and_cannot_publish_hot_bindings(monkeypatch, tmp_p
     signature = scene.fluidsim_effects.applied_signature
     bindings = []
     solver = SimpleNamespace(update_custom_effect_runtime_bindings=lambda instances: bindings.append(instances) or True)
-    monkeypatch.setattr(scene_bridge, 'session', lambda: SimpleNamespace(active=True, owns_scene=lambda s: True, solver=solver))
+    released = []
+    monkeypatch.setattr(scene_bridge, 'session', lambda: SimpleNamespace(
+        active=True, owns_scene=lambda s: not released, solver=solver,
+        release=lambda s: released.append(s)))
     effects.untrust_effect(scene, 0)
     assert not scene.fluidsim.live
+    assert released == [scene]
     assert scene.fluidsim_effects.applied_signature == signature
     assert not effects._try_live_parameter_update(scene)
     assert not bindings

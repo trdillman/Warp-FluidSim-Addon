@@ -61,6 +61,7 @@ def test_start_is_idempotent_and_pause_preserves_frame(monkeypatch):
     assert op.execute(context) == {'FINISHED'}
     assert calls.count('play') == 1
     assert ops.FLUIDSIM_OT_preview_pause().execute(context) == {'FINISHED'}
+    # Pause disarms so scrubbing cannot step the solver; Play re-arms it.
     assert not context.scene.fluidsim.live
     assert not context.screen.is_animation_playing
     assert context.scene.frame_current == 12
@@ -172,18 +173,51 @@ def test_failed_apply_remains_paused(monkeypatch):
     assert calls == ['pause']
 
 
-def test_structural_change_pauses_only_the_affected_scene(monkeypatch):
+def test_revoked_trust_stops_only_the_affected_scene(monkeypatch):
     bpy, ops, context, calls = preview_fixture(monkeypatch)
     from fluidSim_warp_blender51.blender import playback
     context.scene.fluidsim.live = True
     context.screen.is_animation_playing = True
     foreign = SimpleNamespace(scene=object(), screen=SimpleNamespace(is_animation_playing=True))
     context.window_manager = SimpleNamespace(windows=[foreign, context.window])
-    playback.pause_preview_for_changes(context.scene)
+    sess = SimpleNamespace(owns_scene=lambda s: s is context.scene,
+                           release=lambda s: calls.append('release'))
+    monkeypatch.setattr(playback, '_bridge', lambda: SimpleNamespace(session=lambda: sess))
+    playback.stop_revoked_effects(context.scene)
     assert not context.scene.fluidsim.live
     assert not context.screen.is_animation_playing
     assert foreign.screen.is_animation_playing
-    assert calls == ['pause']
+    assert calls == ['pause', 'release']
+
+
+def test_timeline_play_arms_and_applies_safe_edits(monkeypatch):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import pending_settings, playback, production_bake
+    scene = context.scene
+    scene.fluidsim.domain_object = object()
+    sess = SimpleNamespace(active=True, owns_scene=lambda s: True)
+    monkeypatch.setattr(playback, '_bridge', lambda: SimpleNamespace(session=lambda: sess))
+    monkeypatch.setattr(production_bake, 'bake_is_active', lambda s: False)
+    monkeypatch.setattr(pending_settings, 'apply_changes', lambda s, **kw: calls.append('apply'))
+    playback.arm_timeline_playback(scene)
+    assert scene.fluidsim.live
+    assert calls == ['apply']
+
+
+def test_timeline_play_keeps_progress_when_edits_need_a_restart(monkeypatch):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import pending_settings, playback, production_bake
+    scene = context.scene
+    scene.fluidsim.domain_object = object()
+    sess = SimpleNamespace(active=True, owns_scene=lambda s: True)
+    monkeypatch.setattr(playback, '_bridge', lambda: SimpleNamespace(session=lambda: sess))
+    monkeypatch.setattr(production_bake, 'bake_is_active', lambda s: False)
+    monkeypatch.setattr(pending_settings, 'changes_require_restart', lambda s: True)
+    monkeypatch.setattr(pending_settings, 'apply_changes', lambda s, **kw: calls.append('apply'))
+    playback.arm_timeline_playback(scene)
+    assert scene.fluidsim.live
+    assert calls == []
+    assert 'rewind' in scene.fluidsim.status
 
 
 def test_invalid_cache_preview_does_not_release_live_solver(monkeypatch):
