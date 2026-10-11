@@ -1,20 +1,28 @@
 # Changelog
 
-> **Unreleased (after 3.0.0):**
->
-> - **Fixed: resting liquid slowly sank under the default pressure solver.**
->   The Jacobi-preconditioned pressure solve gave up as "stalled" the first
->   time its residual rose between two checks (iteration 25), which is normal
->   conjugate-gradient behaviour, and projected an unconverged pressure. A
->   resting tank lost about 25% of its height in 30 frames. A solve now
->   stalls only after 100 iterations without a new best residual. The bug
->   predates 3.0 (it is in 2.0 and 2.1). Simulation results change, so caches
->   should be baked again; solves that used to stop early now run to
->   convergence and can take longer.
-> - **Fixed: File > Append of a pre-3.0 domain** now converts its voxel size to
->   Resolution Divisions, as opening the file already did.
-> - **New: Export Liquid Level Set as VDB** (Bake stage) writes a baked
->   narrow-band cache as an OpenVDB sequence.
+## 3.1.0 — Play drives the simulation, VDB export, pressure-solve fix
+
+- **Changed: Play is the preview.** The Preview / Resume Preview button is
+  gone. Blender's own Play (spacebar, Timeline, or the panel's Play button)
+  starts and resumes the simulation on any scene with a domain. Pausing,
+  editing an effect, or applying changes no longer leaves the spacebar
+  playing the animation without simulating. Edits that would discard
+  progress stay pending until you rewind to the start frame or use Apply
+  Changes. Revoking trust in a running effect still stops the solver.
+  Preview Cache and Set Up & Preview are now Play Cache and Set Up & Play.
+- **Fixed: resting liquid slowly sank under the default pressure solver.**
+  The Jacobi-preconditioned pressure solve gave up as "stalled" the first
+  time its residual rose between two checks (iteration 25), which is normal
+  conjugate-gradient behaviour, and projected an unconverged pressure. A
+  resting tank lost about 25% of its height in 30 frames. A solve now
+  stalls only after 100 iterations without a new best residual. The bug
+  predates 3.0 (it is in 2.0 and 2.1). Simulation results change, so caches
+  should be baked again; solves that used to stop early now run to
+  convergence and can take longer.
+- **Fixed: File > Append of a pre-3.0 domain** now converts its voxel size to
+  Resolution Divisions, as opening the file already did.
+- **New: Export Liquid Level Set as VDB** (Bake stage) writes a baked
+  narrow-band cache as an OpenVDB sequence.
 
 ## 3.0.0 — Resolution Divisions, cache format 3, APIC, Multigrid and narrow band
 

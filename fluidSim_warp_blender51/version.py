@@ -1,6 +1,6 @@
 """Canonical FluidSim release identity."""
 
-VERSION = (3, 0, 0)
+VERSION = (3, 1, 0)
 VERSION_STRING = ".".join(str(part) for part in VERSION)
 EXTENSION_ID = "fluidsim_warp"
 BUILD_CHANNEL = "stable"
