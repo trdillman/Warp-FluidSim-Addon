@@ -191,7 +191,11 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
 
         preset = layout.row(align=True)
         _prop(preset, scene, "product_preset", text="")
-        preset.operator("fluidsim.apply_product_preset", text="Apply", icon="PRESET")
+        apply_col = preset.row(align=True)
+        apply_col.enabled = fs.product_preset not in {"", "NONE"}
+        apply_col.operator("fluidsim.apply_product_preset", text="Apply", icon="PRESET")
+        if fs.active_preset_id:
+            layout.label(text=f"Applied: {fs.active_preset_id}", icon="CHECKMARK")
 
         if domain is None:
             return

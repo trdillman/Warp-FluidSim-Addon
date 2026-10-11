@@ -35,9 +35,14 @@ def _class(tree, name):
 
 def _names(tree):
     """Names a default expression may use: the constants module (as ``C`` and
-    ``_C``) and the enum classes the file imports from ``sim/enums.py``."""
+    ``_C``), the enum classes the file imports from ``sim/enums.py`` and the
+    file's own module-level literal constants."""
     names = {"C": C, "_C": C, "int": int, "float": float}
     for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant)):
+            names[node.targets[0].id] = node.value.value
         if (isinstance(node, ast.ImportFrom) and node.level
                 and node.module in ("enums", "sim.enums")):
             for alias in node.names:

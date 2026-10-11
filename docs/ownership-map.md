@@ -74,7 +74,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `spray_material` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `output_collection_name` | OUTPUT | scene | scene | scene | - | scene | 1 | OK |
 | `setup_mode` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
-| `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
+| `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene | 0 | OK |
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `cache_format` | AUTHORED_NEXT_RUN | - | - | - | - | scene | 0 | UNOBSERVED |
 | `bake_start` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene | 0 | OK |

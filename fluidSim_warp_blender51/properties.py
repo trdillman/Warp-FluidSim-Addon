@@ -287,6 +287,17 @@ def _on_cache_playback_changed(self, context):
 # cache so the returned items stay alive.
 _PRODUCT_PRESET_ITEMS = []
 
+# Without a placeholder default, Blender shows the first discovered preset and it
+# looks applied out of the box. Saved .blend files store the enum's integer value,
+# which used to be the preset's list position, so presets keep numbers 0..n-1 and
+# the placeholder takes a number outside that range.
+PRODUCT_PRESET_NONE = "NONE"
+PRODUCT_PRESET_NONE_NUMBER = 1_000_000
+_PRODUCT_PRESET_PLACEHOLDER = (
+    PRODUCT_PRESET_NONE, "Choose a preset…", "No preset selected; nothing has been applied",
+    "NONE", PRODUCT_PRESET_NONE_NUMBER,
+)
+
 
 def _product_preset_items(_self, _context):
     global _PRODUCT_PRESET_ITEMS
@@ -294,20 +305,23 @@ def _product_preset_items(_self, _context):
         from .presets.library import discover_presets
 
         records = discover_presets()
-        items = [
+        items = [_PRODUCT_PRESET_PLACEHOLDER] + [
             (
                 f"{record.source}:{record.preset.id}",
                 record.preset.name,
                 f"{record.preset.description} Cost: {record.preset.performance_cost}. "
                 f"Scale: {record.preset.expected_scale}.",
+                "NONE",
+                number,
             )
-            for record in records
+            for number, record in enumerate(records)
         ]
     except Exception as exc:  # invalid user data must not break RNA drawing
-        items = [("BUILTIN:preview_water", "Preview Water", f"Preset scan failed: {exc}")]
-    _PRODUCT_PRESET_ITEMS = items or [
-        ("BUILTIN:preview_water", "Preview Water", "Fast live-preview defaults")
-    ]
+        items = [
+            _PRODUCT_PRESET_PLACEHOLDER,
+            ("BUILTIN:preview_water", "Preview Water", f"Preset scan failed: {exc}", "NONE", 0),
+        ]
+    _PRODUCT_PRESET_ITEMS = items
     return _PRODUCT_PRESET_ITEMS
 
 
@@ -823,6 +837,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     product_preset: EnumProperty(
         name="Preset",
         items=_product_preset_items,
+        default=PRODUCT_PRESET_NONE_NUMBER,
         description="Apply a validated built-in or user FluidSim preset",
     )
     active_preset_id: StringProperty(

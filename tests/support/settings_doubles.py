@@ -56,6 +56,9 @@ def _property_default(call):
         member = re.fullmatch(r"\w+\.(\w+)\.name", text)
         if member:
             return member.group(1)
+        if text == "PRODUCT_PRESET_NONE_NUMBER":
+            # A dynamic enum's numeric default reads back as its item identifier.
+            return "NONE"
         raise LookupError(f"cannot evaluate property default {text!r}")
     if kind == "FloatVectorProperty":
         size = keywords.get("size")

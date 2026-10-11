@@ -91,3 +91,25 @@ def test_liquid_voxels_readout_is_shown_only_in_narrow_band_mode(monkeypatch):
     assert "stat_liquid_voxels" not in names(False)
     assert "stat_liquid_voxels" in names(True)
     assert names(True) == [name for name, _label in ui_stages.SIMULATE_READOUTS]
+
+
+def _apply_preset_enabled(layout):
+    ops = [op for op in layout.operators if op["id"] == "fluidsim.apply_product_preset"]
+    assert len(ops) == 1
+    return ops[0]["enabled"]
+
+
+def test_apply_preset_is_disabled_until_a_preset_is_chosen(monkeypatch):
+    # The enum's first item is shown before any choice, so the placeholder must
+    # be the default and Apply must stay greyed while it is selected.
+    layout, _domain = _setup_layout(monkeypatch)
+    assert _apply_preset_enabled(layout) is False
+
+
+def test_apply_preset_is_enabled_for_a_real_preset(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context()
+    context.scene.fluidsim.product_preset = "BUILTIN:honey"
+    layout = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_setup, context)
+    assert _apply_preset_enabled(layout) is True

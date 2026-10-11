@@ -423,7 +423,9 @@ class FLUIDSIM_PT_scene_presets(FluidSimScenePanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         layout.prop(fs, "product_preset", text="Preset")
         row = layout.row(align=True)
-        row.operator("fluidsim.apply_product_preset", text="Apply Selected Preset", icon="PRESET")
+        apply_row = row.row(align=True)
+        apply_row.enabled = fs.product_preset not in {"", "NONE"}
+        apply_row.operator("fluidsim.apply_product_preset", text="Apply Selected Preset", icon="PRESET")
         row.operator("fluidsim.save_product_preset", text="Save Current Settings as Preset…", icon="FILE_TICK")
         if fs.active_preset_id:
             layout.label(text=f"Applied: {fs.active_preset_id}", icon="CHECKMARK")

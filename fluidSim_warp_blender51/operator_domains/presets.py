@@ -41,6 +41,9 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
         from ..blender.scene_access import active_domain_settings
 
         identifier = str(context.scene.fluidsim.product_preset or "")
+        if identifier in {"", "NONE"}:
+            self.report({"WARNING"}, "Choose a preset from the list first")
+            return {"CANCELLED"}
         target = active_domain_settings(context.scene)
         if target is None:
             self.report({"ERROR"}, "Designate a FluidSim domain object before applying a preset")
