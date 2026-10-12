@@ -1189,7 +1189,13 @@ class SourceCompiler:
 
     @staticmethod
     def _sample_dense_volume(values, coords, index_min, background=0.0):
-        """Vectorized trilinear staging sample from an OpenVDB dense window."""
+        """Vectorized trilinear staging sample from an OpenVDB dense window.
+
+        Samples outside the active window read the grid background, as
+        OpenVDB's accessor does: clamping into the one-voxel pad lands on a
+        background cell. Weighting them to zero instead turned exterior
+        level-set padding into false coverage (zero passes ``sdf <= 0``).
+        """
         values = np.asarray(values)
         vector = values.ndim == 4
         pad_width = ((1, 1), (1, 1), (1, 1)) + (((0, 0),) if vector else ())
@@ -1204,16 +1210,15 @@ class SourceCompiler:
             for dy in range(2):
                 for dx in range(2):
                     sample = base + (dx, dy, dz)
-                    valid = np.all((sample >= 0) & (sample < limits), axis=1)
                     clipped = np.minimum(np.maximum(sample, 0), limits - 1)
                     weight = ((fraction[:, 0] if dx else 1.0 - fraction[:, 0])
                               * (fraction[:, 1] if dy else 1.0 - fraction[:, 1])
                               * (fraction[:, 2] if dz else 1.0 - fraction[:, 2]))
                     gathered = padded[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
                     if vector:
-                        result += gathered * (weight * valid)[:, None]
+                        result += gathered * weight[:, None]
                     else:
-                        result += gathered * weight * valid
+                        result += gathered * weight
         return result
 
     def _compile_volume(self, plan, context, key):
