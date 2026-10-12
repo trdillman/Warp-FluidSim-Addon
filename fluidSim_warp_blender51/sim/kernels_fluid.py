@@ -906,23 +906,19 @@ def trace_position(
 
 
 @wp.func
-def collision_sdf_gradient(
+def collision_sdf_difference(
     vp: wp.vec3,
+    eps: float,
     collision_sdf: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
 ) -> wp.vec3:
-    """Collider SDF change across one voxel, per axis.
+    """Collider SDF change across ``2 * eps`` voxels, per axis.
 
-    Central differences at +/-0.5 voxel. A sample with no allocated voxel
-    under it returns the 1e9 fallback; using it would swamp that component
-    and point the normal at a fixed diagonal (REVIEW-017). Such a sample is
-    replaced by a one-sided difference against the centre over the same
-    one-voxel scale, and an axis with no valid sample on either side
-    contributes nothing.
+    The fallback-safe difference behind :func:`collision_sdf_gradient`; the
+    relaxation push-out uses it at +/-1 voxel.
     """
-    eps = 0.5
     g = wp.vec3(0.0, 0.0, 0.0)
     for axis in range(3):
         offset = wp.vec3(0.0, 0.0, 0.0)
@@ -941,6 +937,26 @@ def collision_sdf_gradient(
                 else:
                     g[axis] = 2.0 * (centre - lo)
     return g
+
+
+@wp.func
+def collision_sdf_gradient(
+    vp: wp.vec3,
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+) -> wp.vec3:
+    """Collider SDF change across one voxel, per axis.
+
+    Central differences at +/-0.5 voxel. A sample with no allocated voxel
+    under it returns the 1e9 fallback; using it would swamp that component
+    and point the normal at a fixed diagonal (REVIEW-017). Such a sample is
+    replaced by a one-sided difference against the centre over the same
+    one-voxel scale, and an axis with no valid sample on either side
+    contributes nothing.
+    """
+    return collision_sdf_difference(vp, 0.5, collision_sdf, leaf_table, voxels_dim, leaves_dim)
 
 
 @wp.func
@@ -1382,13 +1398,25 @@ def k_forces_proxy_fields(
     time: float,
     dt: float,
 ):
-    """Apply native Blender force-field proxies to valid staggered faces."""
+    """Apply native Blender force-field proxies to valid staggered faces.
+
+    A face is checked for weight before its fields are evaluated: air faces
+    receive nothing, so they skip the per-field (noise/trig) work (P18).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    if wu[tid] <= 0.0 and wv[tid] <= 0.0 and ww[tid] <= 0.0:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     velocity = wp.vec3(u[tid], v[tid], w[tid])
     for axis in range(3):
+        if axis == 0 and wu[tid] <= 0.0:
+            continue
+        if axis == 1 and wv[tid] <= 0.0:
+            continue
+        if axis == 2 and ww[tid] <= 0.0:
+            continue
         point = origin + wp.vec3(
             (float(ijk[0]) + wp.where(axis == 0, 0.0, 0.5)) * voxel_size,
             (float(ijk[1]) + wp.where(axis == 1, 0.0, 0.5)) * voxel_size,
@@ -1741,7 +1769,13 @@ def k_attract_sdf_gradient_direction(
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
 ):
-    """fluidSimAttractSdfGradientDirection: pull fluid along -grad(SDF)."""
+    """fluidSimAttractSdfGradientDirection: pull fluid along -grad(SDF).
+
+    A neighbour holding the collider grid's far value (1e6, written outside
+    every collider's query band) is treated like a missing voxel: differencing
+    against it gave a ~1e6/(2h) gradient and a velocity spike at the band
+    edge whenever no domain-wall SDF lies underneath (B33).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
@@ -1757,9 +1791,9 @@ def k_attract_sdf_gradient_direction(
         fhi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, hi)
         s_hi = phi
         s_lo = phi
-        if fhi >= 0:
+        if fhi >= 0 and sdf[fhi] < 5.0e5:
             s_hi = sdf[fhi]
-        if flo >= 0:
+        if flo >= 0 and sdf[flo] < 5.0e5:
             s_lo = sdf[flo]
         g = (s_hi - s_lo) * inv2h
         dv = -strength * g * dt  # descend the SDF
@@ -2086,26 +2120,13 @@ def k_particles_relax(
         push = push * (max_push / push_len)
     p_new = p + push * (strength * separation)
     # If the relaxed position enters a collider, project it out along the SDF
-    # gradient instead of reverting to p, which may already be inside.
+    # gradient instead of reverting to p, which may already be inside. The
+    # +/-1 voxel samples skip the 1e9 out-of-topology fallback, which at the
+    # domain boundary would point the normal into a floor collider (B32).
     vp = world_to_voxel(p_new, origin, voxel_size)
     phi = sample_scalar_trilinear(collision_sdf, leaf_table, voxels_dim, leaves_dim, vp, 1.0e9)
     if phi < 0.0:
-        gx = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp + wp.vec3(1.0, 0.0, 0.0), 1.0e9) - sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp - wp.vec3(1.0, 0.0, 0.0), 1.0e9)
-        gy = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp + wp.vec3(0.0, 1.0, 0.0), 1.0e9) - sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp - wp.vec3(0.0, 1.0, 0.0), 1.0e9)
-        gz = sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp + wp.vec3(0.0, 0.0, 1.0), 1.0e9) - sample_scalar_trilinear(
-            collision_sdf, leaf_table, voxels_dim, leaves_dim,
-            vp - wp.vec3(0.0, 0.0, 1.0), 1.0e9)
-        n = wp.vec3(gx, gy, gz)
+        n = collision_sdf_difference(vp, 1.0, collision_sdf, leaf_table, voxels_dim, leaves_dim)
         ln = wp.length(n)
         if ln > 1.0e-8:
             n = n * (1.0 / ln)

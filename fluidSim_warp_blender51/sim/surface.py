@@ -375,12 +375,15 @@ class SurfacePipeline:
                     radius / h, band_voxels, smoothing,
                     sdf_filter_iterations),
             )
-        else:
+        elif grid is solver.grid:
             # Mirrors SurfaceTensionSolver.apply()'s own check-and-release: once
             # the capillary band is inactive (tension disabled or coefficient
             # <= 0), the propagation scratch it fed is unused for the rest of
             # the solver session unless tension comes back on, so drop it here
-            # rather than holding it for the session's lifetime.
+            # rather than holding it for the session's lifetime.  Only a
+            # solver-grid build can tell: a separate render grid never carries
+            # the band, and releasing there made the next solver build with
+            # tension on allocate the scratch again every frame (P11).
             self.release_band_buffers()
         # Equal to far_distance in "ball" mode: the reset below writes
         # far_distance into every cell, so a candidate at or beyond it can never
@@ -521,6 +524,20 @@ class SurfacePipeline:
     def invalidate_solver_sdf(self):
         """Mark the simulation SDF stale after particle positions change."""
         self.solver_sdf_key = None
+
+    def advance_solver_sdf_key(self, previous_key):
+        """Keep a current SDF current across a frame/time advance.
+
+        The key stands in for "these particle positions": the solver moves
+        frame or time without touching particles at the end of a substep and
+        of a frame, so an SDF built for ``previous_key`` (whitewater builds
+        one after advection) still describes them. Every position change has
+        its own explicit invalidation or a topology generation in the key, so
+        those still force a rebuild (P11).
+        """
+        key = getattr(self, "solver_sdf_key", None)
+        if key is not None and key == previous_key:
+            self.solver_sdf_key = self.solver_sdf_build_key()
 
     def invalidate_particle_state(self):
         """Invalidate every surface product after an out-of-step particle edit."""

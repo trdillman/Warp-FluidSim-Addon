@@ -218,11 +218,13 @@ def test_solver_sdf_expands_for_surface_tension_support():
 def test_frame_topology_expands_for_the_capillary_sdf_support():
     source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
     assert "def _surface_tension_topology_expand" in source
+    assert "capillary_expand = self._surface_tension_topology_expand()" in source
     frame_start = source.index("frame_topology_expand = max")
     frame_end = source.index("self.whitewater.reset_frame_diagnostics", frame_start)
-    assert "self._surface_tension_topology_expand()" in source[
-        frame_start:frame_end
-    ]
+    block = source[frame_start:frame_end]
+    # Both the frame-level and the per-substep expansion carry the halo (B37).
+    assert "capillary_expand," in block
+    assert "substep_topology_expand = max(int(s.topology_expand), capillary_expand)" in block
 
 
 def test_solver_capillary_halo_respects_authored_surface_splat_radius():

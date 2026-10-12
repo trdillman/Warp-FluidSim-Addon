@@ -203,9 +203,12 @@ class ParticleSystem:
         # APIC affine matrix (world units, 1/s), double buffered for compaction.
         # Allocated lazily, zeroed, only while the APIC transfer is active
         # (``ensure_affine``).  Invariant: every slot at or beyond ``count`` is
-        # zero, so emission needs no explicit write.
+        # zero, so emission needs no explicit write.  ``_affine2_bound`` is the
+        # end of the rows the spare buffer may still hold from when it was the
+        # primary; compaction zeroes up to it after the swap (B36).
         self.affine = None
         self._affine2 = None
+        self._affine2_bound = 0
         self._dummy_affine = wp.zeros(1, dtype=wp.mat33, device=device)
         # Per-particle time residual channel. Always zero since the removal of
         # ST-FLIP; kept because it is a public cache/checkpoint/effects channel.
@@ -243,12 +246,14 @@ class ParticleSystem:
                 self.capacity, dtype=wp.mat33, device=self.device)
             self._affine2 = wp.zeros(
                 self.capacity, dtype=wp.mat33, device=self.device)
+            self._affine2_bound = 0
         return self.affine
 
     def release_affine(self) -> None:
         """Free the affine channel (non-APIC transfer: nothing maintains it)."""
         self.affine = None
         self._affine2 = None
+        self._affine2_bound = 0
 
     def affine_for_kernels(self):
         """The real channel, or a length-1 placeholder when not allocated."""
@@ -296,6 +301,7 @@ class ParticleSystem:
         if self.affine is not None:
             self.affine.zero_()
             self._affine2.zero_()
+            self._affine2_bound = 0
         self.host_count = 0
         self.next_uid = 1
 
@@ -407,6 +413,7 @@ class ParticleSystem:
         if self.affine is not None:
             self.affine.zero_()
             self._affine2.zero_()
+            self._affine2_bound = 0
         if count:
             if self.affine is not None and affine_rows is not None:
                 # A checkpoint from another transfer mode carries no affine
@@ -503,8 +510,14 @@ class ParticleSystem:
         if count_out is self._count2:
             wp.copy(self.count, self._count2)
         if self.affine is not None:
-            fast_launch(k_zero_mat33_tail, dim=n,
+            # The new primary was the spare: besides the rows this compaction
+            # left past ``count`` it can hold rows up to the bound it had as
+            # primary, beyond a smaller hint now.  Emission and reseeding
+            # append there and rely on zero affine.
+            stale = max(n, self._affine2_bound)
+            fast_launch(k_zero_mat33_tail, dim=stale,
                         inputs=[self.count, self.affine], device=self.device)
+            self._affine2_bound = n
         fast_launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
                   device=self.device)
 

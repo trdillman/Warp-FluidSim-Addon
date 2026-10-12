@@ -821,10 +821,19 @@ class ViscositySolver:
     # which is what makes them capturable.
 
     def _record_solve_scalars(self, dt, tol_sq):
-        """Stage ``dt`` and the squared tolerance for the kernels to read."""
+        """Stage ``dt`` and the squared tolerance for the kernels to read.
+
+        Nothing else writes these two device scalars, so a launch is only
+        needed when the pair changes: the three component solves of one
+        viscosity solve (and usually consecutive substeps) share it (P18).
+        """
+        staged = (float(dt), float(tol_sq))
+        if getattr(self, "_staged_solve_scalars", None) == staged:
+            return
         wp.launch(k_viscosity_set_solve_scalars, dim=1,
                   inputs=[dt, tol_sq, self._solve_dt, self._pcg_tol_sq],
                   device=self.device)
+        self._staged_solve_scalars = staged
 
     def _record_setup(self, comp, weight, viscosity_field, voxel_type, n,
                       stencil):
