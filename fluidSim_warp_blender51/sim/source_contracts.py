@@ -23,6 +23,12 @@ from .enums import (
 )
 
 
+# SourceShape.shape code of the emitter derived from a PROFILE height source.
+# Never authored and never in SourceShapeShape; only the particle-emission
+# kernels understand it (see source_kernels.emission_shape_sdf).
+HEIGHT_SURFACE_SHAPE = 6
+
+
 def analytic_world_half_extents(shape, rotation, half_extents, radius, height, feather):
     """Per-axis world half extents that bound one rotated analytic shape.
 

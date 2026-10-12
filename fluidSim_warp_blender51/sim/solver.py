@@ -1182,9 +1182,13 @@ class FluidSolver:
                 g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
         if hs.enabled:
+            # Shared height model: the safety band sits above the profile's
+            # peak, not only above the base level.
+            from .source_regions import height_topology_top
             dmin = s.domain_min
             dmax = s.domain_max
-            g.mark_world_box(dmin, (dmax[0], dmax[1], hs.base_height + 4.0 * s.voxel_size))
+            g.mark_world_box(dmin, (dmax[0], dmax[1], height_topology_top(
+                hs.base_height, hs.back_mode, hs.profile, s.voxel_size)))
         # Gate on the setting, not the exact count: the mark kernel guards on
         # count[0] and host_count is an upper bound on it.
         if s.whitewater_enabled:

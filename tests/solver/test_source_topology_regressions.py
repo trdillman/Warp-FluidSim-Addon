@@ -98,3 +98,89 @@ def test_direct_append_points_have_topology_on_their_emission_frame(cuda_device)
         assert _active_leaves(solver) == {(0, 0, 0)}
     finally:
         solver.release()
+
+
+# B45/A7: planning, topology and particle emission share one profile-aware
+# height model (the level k_source_height fills to).
+
+def _height(back_mode, profile=None, base=0.3):
+    from fluidSim_warp_blender51.sim.enums import SourceEmissionMode, SourceHeightBackMode
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    return HeightSourceDesc(
+        enabled=True, base_height=base, back_mode=int(SourceHeightBackMode[back_mode]),
+        profile=None if profile is None else np.full((2, 2), profile, np.float32),
+        emit_particles=True, emit_rate=4.0,
+        emission_mode=int(SourceEmissionMode.CONTINUOUS_INFLOW))
+
+
+def _height_settings(device):
+    settings = _settings(device)
+    settings.domain_max = (1.6, 1.6, 1.6)  # 16 voxels = 2 leaves per axis
+    settings.max_particles = 200_000
+    return settings
+
+
+def test_height_profile_planning_covers_profile_peaks():
+    from fluidSim_warp_blender51.sim.source_compat import height_descriptor_to_plan
+    from fluidSim_warp_blender51.sim.source_regions import CompileContext, SourceCompiler
+
+    context = CompileContext(0, 0, 0, "cpu", (0.0, 0.0, 0.0), 0.1, (0.0, 0.0, 0.0),
+                             (1.6, 1.6, 1.6), upload=False)
+    peaked = SourceCompiler().compile(
+        (height_descriptor_to_plan(_height("PROFILE", 0.8)),), context).sources[0].region
+    assert {int(coord[2]) for coord in peaked.topology_leaf_coords} == {0, 1}
+    # Every voxel centre up to the profiled level 1.1 is covered.
+    assert peaked.covered_voxel_count == 16 * 16 * 11
+    flat = SourceCompiler().compile(
+        (height_descriptor_to_plan(_height("FLAT")),), context).sources[0].region
+    assert {int(coord[2]) for coord in flat.topology_leaf_coords} == {0}
+    assert flat.covered_voxel_count == 16 * 16 * 3
+
+
+def _height_solver(device, height):
+    solver = FluidSolver(_height_settings(device))
+    solver.set_height_source(height)
+    solver._rebuild_topology(expand=0)
+    solver._clear_grid_fields()
+    solver._index_particles()
+    return solver
+
+
+def test_height_profile_topology_and_emission_follow_the_profile(cuda_device):
+    solver = _height_solver(cuda_device, _height("PROFILE", 0.8))
+    try:
+        assert {leaf[2] for leaf in _active_leaves(solver)} == {0, 1}
+        solver.sourcing.apply(1.0 / 24.0)
+        count = solver.particles.host_count
+        z = solver.particles.position.numpy()[:count, 2]
+        # 16 x 16 columns x 11 voxels below the 1.1 level, 4 particles each.
+        assert count == 16 * 16 * 11 * 4
+        assert z.max() > 1.0 and z.max() <= 1.1 + 1e-6
+    finally:
+        solver.release()
+
+
+def test_height_profile_below_base_emits_below_the_surface(cuda_device):
+    solver = _height_solver(cuda_device, _height("PROFILE", -0.2))
+    try:
+        solver.sourcing.apply(1.0 / 24.0)
+        count = solver.particles.host_count
+        z = solver.particles.position.numpy()[:count, 2]
+        assert count == 16 * 16 * 1 * 4
+        assert z.max() <= 0.1 + 1e-6
+    finally:
+        solver.release()
+
+
+def test_flat_height_topology_and_emission_are_unchanged(cuda_device):
+    solver = _height_solver(cuda_device, _height("FLAT"))
+    try:
+        assert {leaf[2] for leaf in _active_leaves(solver)} == {0}
+        solver.sourcing.apply(1.0 / 24.0)
+        count = solver.particles.host_count
+        z = solver.particles.position.numpy()[:count, 2]
+        assert count == 16 * 16 * 3 * 4
+        assert z.max() <= 0.3 + 1e-6
+    finally:
+        solver.release()

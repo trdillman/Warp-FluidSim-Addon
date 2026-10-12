@@ -334,6 +334,51 @@ class HeightRegionPlan:
                 "it remains hidden and unsupported")
 
 
+# The height model shared by planning, topology and emission. Liquid fills
+# from the domain floor up to ``base_height`` (FLAT) or ``base_height`` plus
+# the bilinearly interpolated profile (PROFILE), exactly the level
+# ``source_kernels.height_surface_level`` evaluates on the GPU. Topology keeps
+# a four-voxel safety band above the highest point of that surface.
+HEIGHT_TOPOLOGY_BAND_VOXELS = 4.0
+
+
+def height_profile_peak(back_mode, profile):
+    """Highest profile offset the surface can reach (0 for a flat source)."""
+    if (int(back_mode) != SourceHeightBackMode.PROFILE or profile is None
+            or min(np.shape(profile)) < 2):
+        return 0.0
+    return max(0.0, float(np.max(profile)))
+
+
+def height_topology_top(base_height, back_mode, profile, voxel_size):
+    """World z up to which a height source needs active topology."""
+    return (float(base_height) + height_profile_peak(back_mode, profile)
+            + HEIGHT_TOPOLOGY_BAND_VOXELS * float(voxel_size))
+
+
+def height_surface_level(x, y, base_height, back_mode, profile, domain_min, domain_max):
+    """Surface level at world (x, y); NumPy twin of the GPU height function."""
+    x = np.asarray(x, np.float64)
+    y = np.asarray(y, np.float64)
+    if (int(back_mode) != SourceHeightBackMode.PROFILE or profile is None
+            or min(np.shape(profile)) < 2):
+        return np.full(np.broadcast(x, y).shape, float(base_height))
+    profile = np.asarray(profile, np.float64)
+    res_x, res_y = profile.shape
+    fx = np.clip((x - domain_min[0]) / max(domain_max[0] - domain_min[0], 1.0e-8),
+                 0.0, 1.0) * (res_x - 1)
+    fy = np.clip((y - domain_min[1]) / max(domain_max[1] - domain_min[1], 1.0e-8),
+                 0.0, 1.0) * (res_y - 1)
+    x0 = np.floor(fx).astype(np.int64)
+    y0 = np.floor(fy).astype(np.int64)
+    x1 = np.minimum(x0 + 1, res_x - 1)
+    y1 = np.minimum(y0 + 1, res_y - 1)
+    tx, ty = fx - x0, fy - y0
+    return float(base_height) + (
+        profile[x0, y0] * (1.0 - tx) * (1.0 - ty) + profile[x1, y0] * tx * (1.0 - ty)
+        + profile[x0, y1] * (1.0 - tx) * ty + profile[x1, y1] * tx * ty)
+
+
 RegionPlan = Union[
     AnalyticRegionPlan,
     MeshRegionPlan,
@@ -1305,28 +1350,22 @@ class SourceCompiler:
 
     def _compile_height(self, plan, context, key):
         r = plan.region
-        # Match FluidSolver._rebuild_topology's four-voxel height safety band;
-        # planner/compiler topology must not under-count the runtime contributor.
+        # The shared height model: the same topology top as
+        # FluidSolver._rebuild_topology and the same bilinear surface the GPU
+        # fills and emits to, so planning never under-counts the runtime.
         bounds = (context.domain_min,
                   (context.domain_max[0], context.domain_max[1],
-                   min(context.domain_max[2],
-                       r.base_height + 4.0 * context.voxel_size)))
+                   min(context.domain_max[2], height_topology_top(
+                       r.base_height, r.back_mode, r.profile, context.voxel_size))))
         leaves = self._candidate_leaves(bounds, context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=2)
         if rejected is not None:
             rejected.cache_key = key
             return rejected
         _, points = self._voxel_points(leaves, context)
-        if r.back_mode == SourceHeightBackMode.PROFILE:
-            x = np.clip((points[...,0]-context.domain_min[0]) /
-                        max(context.domain_max[0]-context.domain_min[0],1e-12),0,1)
-            y = np.clip((points[...,1]-context.domain_min[1]) /
-                        max(context.domain_max[1]-context.domain_min[1],1e-12),0,1)
-            ix = np.rint(x*(r.profile.shape[0]-1)).astype(int)
-            iy = np.rint(y*(r.profile.shape[1]-1)).astype(int)
-            top = r.base_height + r.profile[ix,iy]
-        else:
-            top = r.base_height
+        top = height_surface_level(
+            points[..., 0], points[..., 1], r.base_height, r.back_mode,
+            r.profile, context.domain_min, context.domain_max)
         coverage = (points[...,2] <= top).astype(np.float32)
         sdf = (points[...,2]-top).astype(np.float32)
         region = CompiledRegion(r.kind, key, leaves, coverage, sdf=sdf)

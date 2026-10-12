@@ -15,6 +15,7 @@ from .attributes import normalize_color, stable_source_id
 from .enums import (
     SourceEmissionMode,
     SourceEvaluationCadence,
+    SourceHeightBackMode,
     SourceLifecycle,
     SourceOperation,
     SourceShapeForceType,
@@ -22,6 +23,7 @@ from .enums import (
     SourceShapeType,
 )
 from .source_contracts import (
+    HEIGHT_SURFACE_SHAPE,
     DirectInjectionPacket,
     InjectionResult,
     NormalizedEmissionPlan,
@@ -628,10 +630,18 @@ class CompiledSourceExecution:
                 domain_min, domain_max = settings.domain_min, settings.domain_max
                 center_z = (domain_min[2] + height.base_height) * 0.5
                 half_z = max((height.base_height - domain_min[2]) * 0.5, 0.0)
+                # FLAT keeps the exact domain-floor-to-base box. PROFILE emits
+                # below the profiled level k_source_height fills to (the
+                # shared height model); a flat box left profile peaks without
+                # particles and filled above negative offsets.
+                profiled = (
+                    int(height.back_mode) == SourceHeightBackMode.PROFILE
+                    and getattr(height, "profile", None) is not None
+                )
                 emit_sources.append(
                     SourceShapeDesc(
                         enabled=True,
-                        shape=2,
+                        shape=HEIGHT_SURFACE_SHAPE if profiled else 2,
                         stype=0,
                         mode=1,
                         position=(
@@ -644,6 +654,7 @@ class CompiledSourceExecution:
                             (domain_max[1] - domain_min[1]) * 0.5,
                             half_z,
                         ),
+                        height=(float(height.base_height) if profiled else 0.5),
                         velocity=tuple(height.velocity),
                         emit_rate=height.emit_rate,
                         emission_mode=int(
@@ -803,6 +814,7 @@ class CompiledSourceExecution:
                     grid.num_leaves,
                     grid.origin,
                     owner.settings.voxel_size,
+                    *self._height_emission_inputs(),
                     self._emission_scratch_counts,
                     self._emission_state,
                 ],
@@ -834,6 +846,17 @@ class CompiledSourceExecution:
             device=self.device,
         )
         return True
+
+    def _height_emission_inputs(self):
+        """Profile inputs the shape-emission kernels need for the height emitter."""
+        settings = self.runtime.settings
+        res = self._height_profile_res
+        return [
+            self._height_profile,
+            wp.vec2i(int(res[0]), int(res[1])),
+            wp.vec3(*settings.domain_min),
+            wp.vec3(*settings.domain_max),
+        ]
 
     def _shape_emission_scan_buffers(self, nvox):
         """Per-voxel demand and exclusive-offset views for shape emission."""
@@ -1083,6 +1106,7 @@ class CompiledSourceExecution:
                     settings.voxel_size,
                     owner.voxel_counts.data,
                     self._emission_state,
+                    *self._height_emission_inputs(),
                 ],
                 outputs=[demand],
                 device=self.device,
@@ -1122,6 +1146,7 @@ class CompiledSourceExecution:
                     offsets,
                     self._point_slot_base,
                     self._point_slot_limit,
+                    *self._height_emission_inputs(),
                 ],
                 outputs=[
                     particles.position,
