@@ -542,7 +542,8 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
         }
 
     artist_ops = _operators("FLUIDSIM_PT_custom_effects")
-    if not {"fluidsim.preview_start", "fluidsim.apply_changes"}.issubset(artist_ops):
+    # 9bbebb0 retired the Preview button: Blender's own Play drives the simulation.
+    if not {"screen.animation_play", "fluidsim.apply_changes"}.issubset(artist_ops):
         raise AssertionError(f"Custom Effects artist actions are incomplete: {sorted(artist_ops)}")
     effect_ops = _operators("FLUIDSIM_PT_effect_engineering")
     if not {
@@ -633,7 +634,7 @@ def _assert_launcher_strip(module_name: str) -> dict[str, object]:
     if "fluidsim.open_scene_properties" in operators:
         raise AssertionError("launcher strip still offers the Scene Properties jump")
     if not operators & {
-        "fluidsim.preview_start", "fluidsim.preview_pause",
+        "screen.animation_play", "fluidsim.preview_pause",
         "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
     }:
         raise AssertionError(f"launcher strip has no transport action: {operators}")
@@ -691,7 +692,7 @@ def _assert_header_popover(module_name: str) -> dict[str, object]:
             raise AssertionError(f"header popover omitted {missing}: {domain_props}")
         domain_ops = operators(domain_events)
         if not domain_ops & {
-            "fluidsim.preview_start", "fluidsim.preview_pause",
+            "screen.animation_play", "fluidsim.preview_pause",
             "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
         }:
             raise AssertionError(f"header popover has no transport action: {domain_ops}")
