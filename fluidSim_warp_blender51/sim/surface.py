@@ -612,7 +612,11 @@ class SurfacePipeline:
             cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
             if (sdf_ready and s.surface_enabled
                     and cadence == int(SurfaceUpdateCadence.SUBSTEP)):
-                self.build(build_render=True, build_lowres=not s.whitewater_enabled)
+                # Like FRAME cadence, keep the solver SDF only on request (P11):
+                # its consumers (surface tension, whitewater, effects) build it
+                # on demand through ensure_solver_sdf_current.
+                self.build(build_render=True, build_lowres=bool(
+                    getattr(s, "surface_build_lowres_sdf", False)))
         return sdf_ready
 
     def after_frame(self):

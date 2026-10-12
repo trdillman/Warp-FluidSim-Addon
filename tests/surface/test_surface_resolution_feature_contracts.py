@@ -80,7 +80,15 @@ def test_surface_pipeline_observes_substep_frame_and_manual_cadence():
 
     pipeline.after_substep()
     pipeline.after_frame()
+    # P11: SUBSTEP cadence honours Keep Sim Surface Field like FRAME cadence.
+    # Surface tension, whitewater and effects build the solver SDF on demand.
+    assert calls == [("render", True, False)]
+
+    calls.clear()
+    pipeline.solver.settings.surface_build_lowres_sdf = True
+    pipeline.after_substep()
     assert calls == [("render", True, True)]
+    pipeline.solver.settings.surface_build_lowres_sdf = False
 
     calls.clear()
     pipeline.solver.settings.surface_update_cadence = SurfaceUpdateCadence.FRAME
