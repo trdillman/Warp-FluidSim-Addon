@@ -1211,6 +1211,7 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
         gravity=(0.0, 0.0, -9.81),
     )
     sess.scene_identity = id(scene)
+    running_settings = solver.settings
 
     sess.reset(scene, depsgraph=depsgraph)
 
@@ -1219,6 +1220,8 @@ def test_timeline_reset_reapplies_settings_and_resets_session_behavior(monkeypat
             "depsgraph": depsgraph,
             "runtime_capacity": 4096,
             "operation": "RESET",
+            # B53: Reset keeps the running solver's allocation.
+            "applied_allocation": running_settings,
         }
     ]
     assert "candidate-configure" in events

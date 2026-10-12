@@ -422,6 +422,18 @@ def _read_setting(owner, name):
     return None if owner is None else getattr(owner, name)
 
 
+def _participates(pg):
+    """Whether an object's FluidSim group feeds the simulation.
+
+    Every Blender object carries the group, so cameras, lights, the domain and
+    FluidSim's own output objects all have one at role ``NONE``. Only a tagged
+    role or an auto-injected seed enters the reset signature: adding or
+    deleting a bystander is not a simulation change. A role change still is,
+    since it moves the object into or out of this set.
+    """
+    return pg.role != "NONE" or bool(pg.auto_inject_seed)
+
+
 def _reset_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
     values = [(name, _stable_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name)))
@@ -429,7 +441,7 @@ def _reset_signature(scene):
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
         pg = getattr(obj, "fluidsim", None)
-        if pg is None:
+        if pg is None or not _participates(pg):
             continue
         object_id = _stable_value(obj)
         fields = tuple((name, _stable_value(getattr(pg, name)))
@@ -511,18 +523,39 @@ def _action_presentation(action, count):
     }
 
 
+def _new_presentation_epoch():
+    import secrets
+
+    return secrets.token_hex(8)
+
+
+# Tags the cached pending properties with the session that wrote them. The
+# properties are scene custom properties, so they are saved into the .blend;
+# a new epoch on every file load (and per process) keeps a saved "pending"
+# badge from describing a solver session that no longer exists.
+_presentation_epoch = _new_presentation_epoch()
+
+
 def _cache_pending_presentation(scene, state):
     action = _pending_label(state.pending_action)
     scene_set(scene, "fluidsim_pending_action", action)
     scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
+    scene_set(scene, "fluidsim_pending_epoch", _presentation_epoch)
 
 
 def pending_presentation(scene):
     """Return draw-safe cached pending data without inspecting RNA or geometry."""
     state = _INTERACTION_STATES.get(scene_identity(scene))
     if state is None:
+        if str(scene_get(scene, "fluidsim_pending_epoch", "")) != _presentation_epoch:
+            # Written by another session (a saved file): nothing is applied
+            # in this one, so nothing can be pending against it.
+            result = {"action": "NONE", "count": 0, "reasons": (),
+                      "blocked_reason": ""}
+            result.update(_action_presentation("NONE", 0))
+            return result
         reasons = tuple(filter(None, str(scene_get(
             scene, "fluidsim_pending_reasons", "")).splitlines()))
         action = str(scene_get(scene, "fluidsim_pending_action", "NONE"))
@@ -664,11 +697,34 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
         _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
                               quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
+        _refuse_narrow_band_conflicts(scene, settings)
     except Exception:
         for target, value in previous.items():
             setattr(settings, target, value)
         raise
     return True
+
+
+def _refuse_narrow_band_conflicts(scene, settings):
+    """Re-check the narrow-band admission refusal for an edit to a running solver.
+
+    Admission refuses narrow-band particles with features that keep
+    per-particle interior state. Some of those features are live (per-particle
+    viscosity) or synchronized (a Scalar field source), so an edit could
+    otherwise switch one on under an admitted narrow-band run, unchecked until
+    the next Reset. Raising here keeps the solver on its admitted values.
+    """
+    # ``settings`` is the running solver's SolverSettings (never an RNA group),
+    # which always declares the flag; partial solver doubles may not.
+    if not (hasattr(settings, "narrow_band_enabled")
+            and settings.narrow_band_enabled):
+        return
+    from ..sim import narrow_band
+
+    reasons = narrow_band.scene_blocking_reasons(
+        settings, getattr(scene, "objects", ()) or ())
+    if reasons:
+        raise RuntimeError(narrow_band.refusal_message(reasons))
 
 
 def apply_live_settings_safely(scene, sess: Session | None = None):
@@ -932,6 +988,37 @@ def apply_pending_on_rewind(scene, sess, *, depsgraph=None):
     return True
 
 
+def _revert_order(snapshot):
+    """Snapshot items in a fixed order, the authoritative divisions last.
+
+    ``voxel_size`` is derived from ``resolution_divisions`` and the domain's
+    size, so writing it after the divisions would re-derive them. Sorting also
+    keeps the restore independent of the string hash seed.
+    """
+    return sorted(snapshot.items(),
+                  key=lambda item: (item[0] == "resolution_divisions", item[0]))
+
+
+def _restore_applied_domain(scene, scene_fs, state):
+    """Put the applied run's domain back and return its settings group.
+
+    Returns ``None`` when that domain no longer exists (deleted since it was
+    applied): its values then have no owner, and writing them onto whichever
+    domain is selected now would overwrite that domain's own settings.
+    """
+    if "domain_object" not in state.reinit_snapshot or scene_fs is None:
+        return active_domain_settings(scene)
+    applied = state.reinit_snapshot["domain_object"]
+    try:
+        # Any attribute read of a deleted ID raises ReferenceError.
+        getattr(applied, "name", None)
+        if _stable_value(active_domain_object(scene)) != _stable_value(applied):
+            scene_fs.domain_object = applied
+    except ReferenceError:
+        return None
+    return active_domain_settings(scene)
+
+
 def revert_pending_values(scene):
     """Restore the successfully applied RNA snapshot without saving prefs."""
     state = _interaction_state(scene)
@@ -939,26 +1026,38 @@ def revert_pending_values(scene):
         return False
     state.suppress_callbacks = True
     try:
-        scene_fs, domain_fs = _signature_owners(scene)
+        scene_fs = getattr(scene, "fluidsim", None)
+        # The applied run's domain is restored first, and its values go to it:
+        # a domain selected since then keeps its own settings and transform.
+        domain_fs = _restore_applied_domain(scene, scene_fs, state)
+        domain = active_domain_object(scene) if domain_fs is not None else None
+        # The transform comes back before the resolution fields: ``voxel_size``
+        # is derived from ``resolution_divisions`` over the domain's size.
+        if domain is not None and state.domain_matrix_snapshot is not None:
+            domain.matrix_world = state.domain_matrix_snapshot
         # Restore each snapshot value to the datablock that AUTHORS it (matches
         # where capture_applied_state read it and where the UI writes it), so a
         # revert of a domain-authored edit targets obj.fluidsim_domain.
+        for name, value in _revert_order(state.reinit_snapshot):
+            if name == "domain_object":
+                continue
+            owner = _declaring_group(scene_fs, domain_fs, name)
+            if owner is not None:
+                setattr(owner, name, value)
         for name, value in state.reset_snapshot.items():
             owner = _declaring_group(scene_fs, domain_fs, name)
             if owner is not None:
                 setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
-            pg = getattr(obj, "fluidsim", None)
-            if pg is not None:
-                for name, value in values.items():
-                    setattr(pg, name, value)
-        for name, value in state.reinit_snapshot.items():
-            owner = _declaring_group(scene_fs, domain_fs, name)
-            if owner is not None:
-                setattr(owner, name, value)
-        domain = active_domain_object(scene)
-        if domain is not None and state.domain_matrix_snapshot is not None:
-            domain.matrix_world = state.domain_matrix_snapshot
+            # An object deleted since the snapshot has nothing to restore;
+            # skip it and finish the rest of the revert.
+            try:
+                pg = getattr(obj, "fluidsim", None)
+                if pg is not None:
+                    for name, value in values.items():
+                        setattr(pg, name, value)
+            except ReferenceError:
+                continue
     finally:
         state.suppress_callbacks = False
     refresh_pending_state(scene, session())
@@ -1130,7 +1229,13 @@ def request_scene_update(scene, action: SceneUpdate):
         # only a contained error replaces it with an actionable message.
         apply_live_settings_safely(scene, sess)
     elif action is SceneUpdate.SYNC:
-        sess.sync_scene(scene)
+        try:
+            _refuse_narrow_band_conflicts(scene, sess.solver.settings)
+        except RuntimeError as exc:
+            sess.set_error(scene, str(exc))
+            scene.fluidsim.status = f"Scene sync refused: {exc}"
+        else:
+            sess.sync_scene(scene)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
         output_publication.prepare_outputs(scene)
@@ -1171,9 +1276,12 @@ def _on_interaction_state_update(*args):
 def _on_load_pre(_filepath):
     from . import playback
 
+    global _presentation_epoch
+
     playback.clear_cache_cursors()
     session().force_release()
     _INTERACTION_STATES.clear()
+    _presentation_epoch = _new_presentation_epoch()
 
 
 def register_handlers():

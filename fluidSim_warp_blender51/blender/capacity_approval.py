@@ -144,7 +144,70 @@ def _resize_domain(domain, minimum, maximum, on_transform_changed):
     dimensions = tuple(maximum[i] - minimum[i] for i in range(3))
     if any(value <= 0.0 for value in dimensions):
         raise RuntimeError("Suggested domain bounds are not valid")
-    domain.location = tuple((minimum[i] + maximum[i]) * 0.5 for i in range(3))
+    local_min, local_max = _local_bounds(domain)
+    if any(local_max[i] - local_min[i] <= 0.0 for i in range(3)):
+        raise RuntimeError("The domain mesh has no volume to resize")
     domain.dimensions = dimensions
+    # The object origin need not sit at the mesh centre (a corner origin, or a
+    # mesh with transforms applied), so place the origin from the local bound
+    # box: on each axis the world minimum is
+    # location + delta_location + min(scale * local_min, scale * local_max).
+    scale = _effective_scale(domain)
+    delta_location = tuple(
+        float(value) for value in getattr(domain, "delta_location", (0.0, 0.0, 0.0)))
+    location = []
+    for i in range(3):
+        factor = math.copysign(dimensions[i] / (local_max[i] - local_min[i]), scale[i])
+        lowest = min(factor * local_min[i], factor * local_max[i])
+        location.append(minimum[i] - delta_location[i] - lowest)
+    domain.location = tuple(location)
     if on_transform_changed is not None:
         on_transform_changed()
+        _verify_world_bounds(domain, minimum, maximum)
+
+
+def _local_bounds(domain):
+    """The mesh's local bound box; a centred unit box when it has none."""
+    corners = getattr(domain, "bound_box", None)
+    if corners is None:
+        return (-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)
+    points = [tuple(float(value) for value in corner) for corner in corners]
+    return (tuple(min(point[i] for point in points) for i in range(3)),
+            tuple(max(point[i] for point in points) for i in range(3)))
+
+
+def _effective_scale(domain):
+    scale = tuple(float(value) for value in getattr(domain, "scale", (1.0, 1.0, 1.0)))
+    delta = tuple(float(value) for value in getattr(domain, "delta_scale", (1.0, 1.0, 1.0)))
+    return tuple(scale[i] * delta[i] for i in range(3))
+
+
+def _verify_world_bounds(domain, minimum, maximum):
+    """Refuse a resize whose evaluated world bounds are not the approved ones.
+
+    Runs after ``on_transform_changed`` refreshed Blender's evaluated
+    transform; an object without ``matrix_world`` and ``bound_box`` (a plain
+    stand-in) has nothing further to check.
+    """
+    matrix = getattr(domain, "matrix_world", None)
+    corners = getattr(domain, "bound_box", None)
+    if matrix is None or corners is None:
+        return
+    points = [
+        tuple(
+            sum(float(matrix[row][column]) * float(corner[column]) for column in range(3))
+            + float(matrix[row][3])
+            for row in range(3)
+        )
+        for corner in corners
+    ]
+    lowest = tuple(min(point[i] for point in points) for i in range(3))
+    highest = tuple(max(point[i] for point in points) for i in range(3))
+    for i in range(3):
+        tolerance = 1.0e-5 * max(1.0, maximum[i] - minimum[i])
+        if (abs(lowest[i] - minimum[i]) > tolerance
+                or abs(highest[i] - maximum[i]) > tolerance):
+            raise RuntimeError(
+                "The resized domain landed at "
+                f"{format_value(lowest)}..{format_value(highest)} instead of "
+                f"{format_value(minimum)}..{format_value(maximum)}")

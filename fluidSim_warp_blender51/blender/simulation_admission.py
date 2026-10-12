@@ -137,6 +137,17 @@ class AdmissionSnapshot:
         return inputs
 
 
+# The allocation the running solver was admitted with. These are the solver
+# settings that reinitialize-class edits (voxel size / divisions / Quality,
+# domain object and bounds, leaf and whitewater storage, device) feed; a Reset
+# keeps them so a pending "Reinitialize" stays true. The particle pool is
+# carried separately as the runtime capacity.
+RESET_PRESERVED_ALLOCATION_FIELDS = (
+    "device", "voxel_size", "domain_min", "domain_max", "leaf_capacity",
+    "max_whitewater",
+)
+
+
 def _integrity_blockers(capacity_plan):
     return tuple(blocker for blocker in capacity_plan.blockers
                  if blocker.code != "MEMORY_ESTIMATE")
@@ -315,16 +326,22 @@ def capture_snapshot(
 
 def replan_snapshot(
         snapshot, settings, *, resources=None, additional_transaction_bytes=0):
-    """Reassess capacity from the original snapshot without a second gather."""
-    snapshot.settings = settings
-    snapshot.configured_device = str(settings.device)
-    if resources is not None:
-        snapshot.resources = resources
-    snapshot.capacity_plan = _plan_capacity(
-        settings, snapshot.footprints, snapshot.seeds,
-        snapshot.collider_footprints, snapshot.resources,
-        additional_transaction_bytes=additional_transaction_bytes)
-    return snapshot
+    """Reassess capacity from the original snapshot without a second gather.
+
+    Returns a new snapshot that shares the original's gathered inputs; the
+    original is left untouched so a rejected candidate can fall back to it.
+    """
+    resources = snapshot.resources if resources is None else resources
+    return replace(
+        snapshot,
+        settings=settings,
+        configured_device=str(settings.device),
+        resources=resources,
+        capacity_plan=_plan_capacity(
+            settings, snapshot.footprints, snapshot.seeds,
+            snapshot.collider_footprints, resources,
+            additional_transaction_bytes=additional_transaction_bytes),
+    )
 
 
 def discard_prepared_solver(solver):
@@ -392,7 +409,8 @@ class SimulationAdmission:
 
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
                    ignore_memory_safeguard=False,
-                   defer_particle_growth=False, operation=None):
+                   defer_particle_growth=False, operation=None,
+                   applied_allocation=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
@@ -400,6 +418,13 @@ class SimulationAdmission:
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
         settings = build_settings(scene)
+        if applied_allocation is not None:
+            preserved = {
+                name: getattr(applied_allocation, name)
+                for name in RESET_PRESERVED_ALLOCATION_FIELDS
+                if hasattr(applied_allocation, name) and hasattr(settings, name)}
+            if preserved:
+                settings = replace(settings, **preserved)
         if bool(getattr(settings, "narrow_band_enabled", False)):
             reasons = narrow_band.scene_blocking_reasons(
                 settings, getattr(scene, "objects", ()))
@@ -709,7 +734,9 @@ class SimulationAdmission:
         try:
             snapshot, replacement_growth = self._preflight(
                 scene, depsgraph=depsgraph,
-                runtime_capacity=runtime_capacity, operation="RESET")
+                runtime_capacity=runtime_capacity, operation="RESET",
+                applied_allocation=getattr(
+                    self.session.solver, "settings", None))
             settings = snapshot.settings
             candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)

@@ -202,6 +202,104 @@ def test_planner_exposes_domain_margin_and_balanced_alternatives_without_applyin
     assert tightened.changes["domain_max"] == (16.0, 16.0, 16.0)
 
 
+def test_suggestion_estimates_cost_apic_and_narrow_band_like_the_applied_settings():
+    # B51: the suggestion must cost the settings the solver will actually
+    # allocate after the option is applied, including the APIC affine buffers
+    # and the narrow-band arrays; otherwise the approved option is refused.
+    for extra in ({"sample_type": 2}, {"narrow_band_enabled": True},
+                  {"sample_type": 2, "narrow_band_enabled": True}):
+        authored = settings(
+            domain_min=(-2.0, -2.0, 0.0), domain_max=(2.0, 2.0, 4.0),
+            voxel_size=0.02, max_particles=1_000_000, leaf_capacity=8192,
+            **extra)
+        plan = plan_initialization(
+            authored,
+            (Footprint("src", 20_000_000, DemandQuality.EXACT, ((0, 0, 0),)),),
+            (), (), resources())
+
+        suggestions = suggest_configurations(plan, authored)
+
+        assert suggestions, extra
+        for item in suggestions:
+            applied = dict(authored, **item.changes)
+            after_apply = (
+                int(estimate_solver_bytes(applied)) + plan.staging_bytes
+                + applied["leaf_capacity"] * 512 * 4
+                + plan.additional_transaction_bytes)
+            assert item.estimated_bytes == after_apply, (extra, item.key)
+            assert after_apply <= item.budget_bytes, (extra, item.key)
+
+
+def _reference_expanded(dims, radius, coords):
+    """The original per-offset walk, kept as the equivalence oracle for P03."""
+    expanded = set()
+    for coord in coords:
+        for dz in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    item = (coord[0] + dx, coord[1] + dy, coord[2] + dz)
+                    if all(0 <= item[i] < dims[i] for i in range(3)):
+                        expanded.add(item)
+    return tuple(sorted(expanded))
+
+
+def test_vectorized_leaf_dilation_matches_the_per_offset_walk():
+    from fluidSim_warp_blender51.sim import capacity_planner as planner
+
+    rng = np.random.default_rng(20261012)
+    authored = settings(domain_max=(96.0, 64.0, 40.0))  # 12 x 8 x 5 leaves
+    dims = planner._leaf_dims(authored)
+    assert dims == (12, 8, 5)
+    for radius in range(0, 4):
+        expand = settings(domain_max=(96.0, 64.0, 40.0), topology_expand=radius)
+        assert planner._effective_topology_expand(expand) == radius
+        for count in (0, 1, 3, 40, 400):
+            # Include coords up to 4 leaves outside the domain on each side:
+            # ones within the radius still dilate into the domain.
+            raw = rng.integers(-4, np.asarray(dims) + 4, size=(count, 3))
+            coords = {tuple(int(v) for v in row) for row in raw}
+            got = planner._expanded_leaf_coords(expand, coords)
+            assert got == _reference_expanded(dims, radius, coords), (radius, count)
+            assert all(type(axis) is int for coord in got for axis in coord)
+    assert planner._expanded_leaf_coords(authored, ((-1, 0, 0),)) == ()
+    assert planner._expanded_leaf_coords(
+        settings(domain_max=(96.0, 64.0, 40.0), topology_expand=1),
+        ((-1, 0, 0),)) == ((0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1))
+
+
+def test_vectorized_seed_leaf_classification_matches_the_per_point_walk():
+    from fluidSim_warp_blender51.sim import capacity_planner as planner
+
+    rng = np.random.default_rng(7)
+    authored = settings(domain_min=(-1.0, -2.0, 0.5),
+                        domain_max=(31.0, 14.0, 24.5), voxel_size=0.5)
+    dims = planner._leaf_dims(authored)
+    points = rng.uniform((-6.0, -8.0, -4.0), (40.0, 20.0, 30.0), size=(5000, 3))
+    expected = set()
+    leaves = np.floor((points - np.asarray(authored["domain_min"]))
+                      / authored["voxel_size"] / 8.0).astype(np.int64)
+    for coord in leaves:
+        item = tuple(int(axis) for axis in coord)
+        if all(0 <= item[i] < dims[i] for i in range(3)):
+            expected.add(item)
+
+    got = planner._seed_leaf_coords(
+        authored, (points[:2500], 3, points[2500:].astype(np.float32),
+                   np.zeros((0, 3))))
+
+    float32_tail = np.floor((points[2500:].astype(np.float32).astype(np.float64)
+                             - np.asarray(authored["domain_min"]))
+                            / authored["voxel_size"] / 8.0).astype(np.int64)
+    expected_f32 = set()
+    for coord in np.concatenate((leaves[:2500], float32_tail)):
+        item = tuple(int(axis) for axis in coord)
+        if all(0 <= item[i] < dims[i] for i in range(3)):
+            expected_f32.add(item)
+    assert got == expected_f32
+    assert expected  # the fixture really lands points inside the domain
+    assert all(type(axis) is int for coord in got for axis in coord)
+
+
 def test_scene_signature_is_stable_for_equivalent_inputs_and_changes_with_demand():
     first = plan_initialization(
         settings(), (Footprint("source", 4, DemandQuality.EXACT),),

@@ -35,7 +35,9 @@ def test_unknown_top_level_key_is_rejected():
         PresetV1.from_dict(_payload(script="dangerous"))
 
 
-@pytest.mark.parametrize("value", [True, "0.1", float("nan"), 0.001])
+# 1e-5 is below the voxel_size property's hard minimum (1e-4); the schema
+# admits everything the property stores (B56), nothing below it.
+@pytest.mark.parametrize("value", [True, "0.1", float("nan"), 1.0e-5])
 def test_voxel_size_type_range_and_finite_contract(value):
     with pytest.raises(ValueError):
         PresetV1.from_dict(_payload(settings={"voxel_size": value}))

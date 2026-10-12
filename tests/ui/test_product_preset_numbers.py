@@ -28,6 +28,29 @@ def test_presets_keep_their_list_position_and_the_placeholder_is_the_default(
     assert properties.PRODUCT_PRESET_NONE_NUMBER >= len(presets)
 
 
+def test_a_broken_user_preset_is_skipped_and_named_in_the_dropdown(
+        monkeypatch, tmp_path):
+    """B61: one malformed file must not hide the other user presets."""
+    fake_bpy, properties = _load_properties(monkeypatch)
+    fake_bpy.utils.user_resource = lambda _kind: str(tmp_path)
+    from fluidSim_warp_blender51.presets import library
+    from fluidSim_warp_blender51.presets.schema import PresetV1
+
+    folder = tmp_path / "fluidSim_warp_blender51" / "presets"
+    library.save_user_preset(PresetV1.from_dict({
+        "schema_version": 1, "id": "my_water", "name": "My Water",
+        "description": "User preset", "expected_scale": "metres",
+        "performance_cost": "Medium", "requires_reset": True,
+        "settings": {"flip_ratio": 0.9},
+    }), folder)
+    (folder / "broken.json").write_text("{not json", encoding="utf-8")
+
+    items = properties._product_preset_items(None, None)
+
+    assert "USER:my_water" in [item[0] for item in items]
+    assert "Skipped user preset broken.json" in items[0][2]
+
+
 def test_scan_failure_fallback_keeps_preview_water_at_its_old_number(monkeypatch):
     _fake_bpy, properties = _load_properties(monkeypatch)
     from fluidSim_warp_blender51.presets import library
