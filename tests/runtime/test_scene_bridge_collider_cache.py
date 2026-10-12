@@ -597,6 +597,39 @@ def test_collider_cache_rebuilds_for_depsgraph_object_update(monkeypatch):
     assert sess.collider_mesh_cache_stats == {"rebuilds": 2, "reuses": 0}
 
 
+def _depsgraph_at(frame, updates=()):
+    return SimpleNamespace(updates=list(updates),
+                           scene=SimpleNamespace(frame_current=frame))
+
+
+def test_deforming_collider_refreshes_on_a_frame_change_without_updates(monkeypatch):
+    # B30: a Production Bake syncs after frame_set from evaluated_depsgraph_get(),
+    # whose ``updates`` are always empty outside an update handler. A collider
+    # deformed by a shape key (same transform) was reused from the first frame
+    # for the whole bake while preview followed it.
+    scene_bridge, colliders, fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    scene = SimpleNamespace(objects=[obj])
+
+    colliders.gather_colliders(scene, sess, depsgraph=_depsgraph_at(1))
+    obj.mesh = _FakeMesh([(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 2.0, 0.0)], [(0, 1, 2)])
+    (desc,) = colliders.gather_colliders(scene, sess, depsgraph=_depsgraph_at(2))
+
+    assert obj.to_mesh_count == 2
+    assert desc.aabb_max[0] == 2.0
+    assert len(fake_warp.meshes) == 2
+
+    # Same frame, nothing reported: the cached mesh is still current.
+    colliders.gather_colliders(scene, sess, depsgraph=_depsgraph_at(2))
+    assert obj.to_mesh_count == 2
+    # A frame change whose updates do not name the collider: static, reused.
+    scene_update = SimpleNamespace(id=SimpleNamespace(original=scene))
+    colliders.gather_colliders(
+        scene, sess, depsgraph=_depsgraph_at(3, [scene_update]))
+    assert obj.to_mesh_count == 2
+
+
 def test_source_translation_uses_session_velocity_and_skips_disabled(monkeypatch):
     scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sources = importlib.import_module("fluidSim_warp_blender51.blender.sources")

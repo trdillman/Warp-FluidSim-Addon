@@ -437,18 +437,27 @@ class SceneInputs:
         object_id = _object_identity(obj)
         data_id = _data_identity(obj)
         updated_ids = _depsgraph_updates(depsgraph)
+        frame = getattr(getattr(depsgraph, "scene", None), "frame_current", None)
         entry = self._evaluated_mesh_cache.get(cache_key)
         matrix_world = obj.matrix_world
         matrix = np.asarray(matrix_world, dtype=np.float32)
         matrix_signature = _array_signature(matrix)
+        # ``updates`` is filled only inside an update handler; a bake syncs
+        # after frame_set from evaluated_depsgraph_get(), where it is always
+        # empty. A frame change always tags the scene, so an empty list on a
+        # new frame means "unknown", not "nothing moved": re-read the mesh
+        # (the signature check below still reuses an unchanged upload). B30.
+        updates_known = bool(updated_ids) or entry is None or entry.get("frame") == frame
         if (not force_refresh and entry is not None
                 and entry["device"] == self.device
                 and entry["data_id"] == data_id
                 and entry["matrix_signature"] == matrix_signature
                 and (entry.get("sync_generation") == sync_generation
-                     or (object_id not in updated_ids and data_id not in updated_ids))):
+                     or (updates_known and object_id not in updated_ids
+                         and data_id not in updated_ids))):
             if strict_degenerate and entry.get("had_degenerate", False):
                 return None, "evaluated mesh contains degenerate triangles"
+            entry["frame"] = frame
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
@@ -496,6 +505,7 @@ class SceneInputs:
             object_id, self.device, verts, tris, matrix)
         if entry is not None and entry["signature"] == signature:
             entry["sync_generation"] = sync_generation
+            entry["frame"] = frame
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
@@ -514,6 +524,7 @@ class SceneInputs:
             "data_id": data_id,
             "matrix_signature": matrix_signature,
             "sync_generation": sync_generation,
+            "frame": frame,
             "had_degenerate": had_degenerate,
             "mesh": warp_mesh,
             # Owned immutable adapter values for Phase 2 plans. No evaluated
