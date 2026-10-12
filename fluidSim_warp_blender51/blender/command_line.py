@@ -149,18 +149,23 @@ def _scene_validation(scene) -> tuple[bool, str]:
         return False, "FluidSim scene settings are not registered"
     if active_domain_object(scene) is None:
         return False, "No FluidSim domain is assigned"
-    sources = [
-        obj
-        for obj in getattr(scene, "objects", ())
-        if getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
-        and bool(getattr(getattr(obj, "fluidsim", None), "enabled", True))
-    ]
+    # Liquid comes from enabled SOURCE objects or from enabled auto-injected
+    # seeds of any role (sources.prepare_auto_seeds); seed-only scenes such as
+    # crown_splash and paddle_stir are valid.
+    sources = []
+    for obj in getattr(scene, "objects", ()):
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or not bool(getattr(pg, "enabled", True)):
+            continue
+        if (getattr(pg, "role", "NONE") == "SOURCE"
+                or bool(getattr(pg, "auto_inject_seed", False))):
+            sources.append(obj)
     # height_enabled is a solver setting: gather_height_source reads it from
     # the domain owner, so validating the scene group would pass a scene whose
     # height fill the solver will not run (and vice versa).
     height_owner = active_domain_settings(scene)
     if not sources and not bool(getattr(height_owner, "height_enabled", False)):
-        return False, "No enabled liquid source or height fill is configured"
+        return False, "No enabled liquid source, seed object or height fill is configured"
     return True, "Scene setup is valid"
 
 
