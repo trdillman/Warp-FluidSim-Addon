@@ -402,6 +402,7 @@ def test_pending_presentation_owns_reset_and_reinitialize_copy(monkeypatch):
         fluidsim_pending_count=1,
         fluidsim_pending_reasons="Reset: flip_ratio",
         fluidsim_pending_blocked="",
+        fluidsim_pending_epoch=bridge.pending._presentation_epoch,
     )
     reset = bridge.pending.pending_presentation(reset_scene)
     assert reset["summary"] == "1 change(s) staged for reset"
@@ -415,6 +416,7 @@ def test_pending_presentation_owns_reset_and_reinitialize_copy(monkeypatch):
         fluidsim_pending_reasons=(
             "Reinitialize: voxel_size\nReinitialize: max_particles"),
         fluidsim_pending_blocked="",
+        fluidsim_pending_epoch=bridge.pending._presentation_epoch,
     )
     reinitialize = bridge.pending.pending_presentation(reinitialize_scene)
     assert reinitialize["summary"] == (
@@ -688,3 +690,28 @@ def test_participants_seeds_and_role_changes_still_make_reset_pending(
     # Revert can still put a newly tagged object back to role NONE.
     assert bridge.pending.revert_pending_values(scene) is True
     assert bystander.fluidsim.role == "NONE"
+
+# --- B60: saved pending badges do not outlive the session that wrote them ---
+
+
+def test_pending_badges_saved_in_a_file_do_not_show_after_loading_it(
+        monkeypatch):
+    bridge = _bridge(monkeypatch)
+    from fluidSim_warp_blender51.blender import playback
+    monkeypatch.setattr(playback, "clear_cache_cursors", lambda: None)
+    scene = _scene()
+    sess, _solver = _activate(bridge, scene, frame=3)
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
+    bridge.pending.refresh_pending_state(scene, sess)
+    assert bridge.pending.pending_presentation(scene)["action"] == "REINIT_PENDING"
+
+    # Opening a file: load_pre drops the session and every applied snapshot;
+    # the scene's custom properties come back with whatever was saved.
+    bridge.pending._on_load_pre("saved.blend")
+
+    presentation = bridge.pending.pending_presentation(scene)
+    assert presentation["action"] == "NONE"
+    assert presentation["count"] == 0
+    assert presentation["reasons"] == ()
+    assert bridge.pending.reinitialize_eligibility(scene)[0] is False
+    assert bridge.pending.revert_eligibility(scene)[0] is False

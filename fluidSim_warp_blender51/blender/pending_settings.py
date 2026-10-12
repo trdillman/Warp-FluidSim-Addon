@@ -523,18 +523,39 @@ def _action_presentation(action, count):
     }
 
 
+def _new_presentation_epoch():
+    import secrets
+
+    return secrets.token_hex(8)
+
+
+# Tags the cached pending properties with the session that wrote them. The
+# properties are scene custom properties, so they are saved into the .blend;
+# a new epoch on every file load (and per process) keeps a saved "pending"
+# badge from describing a solver session that no longer exists.
+_presentation_epoch = _new_presentation_epoch()
+
+
 def _cache_pending_presentation(scene, state):
     action = _pending_label(state.pending_action)
     scene_set(scene, "fluidsim_pending_action", action)
     scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
+    scene_set(scene, "fluidsim_pending_epoch", _presentation_epoch)
 
 
 def pending_presentation(scene):
     """Return draw-safe cached pending data without inspecting RNA or geometry."""
     state = _INTERACTION_STATES.get(scene_identity(scene))
     if state is None:
+        if str(scene_get(scene, "fluidsim_pending_epoch", "")) != _presentation_epoch:
+            # Written by another session (a saved file): nothing is applied
+            # in this one, so nothing can be pending against it.
+            result = {"action": "NONE", "count": 0, "reasons": (),
+                      "blocked_reason": ""}
+            result.update(_action_presentation("NONE", 0))
+            return result
         reasons = tuple(filter(None, str(scene_get(
             scene, "fluidsim_pending_reasons", "")).splitlines()))
         action = str(scene_get(scene, "fluidsim_pending_action", "NONE"))
@@ -1226,9 +1247,12 @@ def _on_interaction_state_update(*args):
 def _on_load_pre(_filepath):
     from . import playback
 
+    global _presentation_epoch
+
     playback.clear_cache_cursors()
     session().force_release()
     _INTERACTION_STATES.clear()
+    _presentation_epoch = _new_presentation_epoch()
 
 
 def register_handlers():
