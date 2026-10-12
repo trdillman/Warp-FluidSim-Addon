@@ -273,6 +273,84 @@ def k_rasterize_collider_material(
 
 
 @wp.kernel
+def k_rasterize_collider_material_ranked(
+    mesh_id: wp.uint64,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    band: float,
+    linear_velocity: wp.vec3,
+    angular_velocity: wp.vec3,
+    center: wp.vec3,
+    friction: float,
+    restitution: float,
+    rank: wp.int32,
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    owner: wp.array(dtype=wp.int32),
+):
+    """``k_rasterize_collider_material`` in any collider order.
+
+    Rasterizing colliders in list order with a strict ``<`` keeps, per voxel,
+    the smallest distance and on a tie the earliest collider (walls, written
+    first, have rank -1). Recording the winner's rank and comparing
+    ``(distance, rank)`` reproduces that exactly when colliders are applied
+    out of order, so cached static colliders can be composed with moving
+    ones re-rasterized each substep (P08).
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    lc = leaf_coords[tid // C.LEAF_VOLUME]
+    local = tid - (tid // C.LEAF_VOLUME) * C.LEAF_VOLUME
+    li = local & C.LEAF_MASK
+    lj = (local >> C.LEAF_SHIFT) & C.LEAF_MASK
+    lk = local >> (2 * C.LEAF_SHIFT)
+    ijk = wp.vec3i(lc[0] * C.LEAF_DIM + li, lc[1] * C.LEAF_DIM + lj, lc[2] * C.LEAF_DIM + lk)
+    p = origin + wp.vec3(
+        (float(ijk[0]) + 0.5) * voxel_size,
+        (float(ijk[1]) + 0.5) * voxel_size,
+        (float(ijk[2]) + 0.5) * voxel_size,
+    )
+    q = wp.mesh_query_point_sign_normal(mesh_id, p, band)
+    if not q.result:
+        return
+    cp = wp.mesh_eval_position(mesh_id, q.face, q.u, q.v)
+    distance = wp.length(p - cp) * q.sign
+    current = collision_sdf[tid]
+    if distance < current or (distance == current and rank < owner[tid]):
+        collision_sdf[tid] = distance
+        collision_vel[tid] = linear_velocity + wp.cross(angular_velocity, p - center)
+        collision_friction[tid] = friction
+        collision_restitution[tid] = restitution
+        owner[tid] = rank
+
+
+@wp.kernel
+def k_copy_collision_state(
+    src_sdf: wp.array(dtype=float),
+    src_vel: wp.array(dtype=wp.vec3),
+    src_friction: wp.array(dtype=float),
+    src_restitution: wp.array(dtype=float),
+    src_owner: wp.array(dtype=wp.int32),
+    dst_sdf: wp.array(dtype=float),
+    dst_vel: wp.array(dtype=wp.vec3),
+    dst_friction: wp.array(dtype=float),
+    dst_restitution: wp.array(dtype=float),
+    dst_owner: wp.array(dtype=wp.int32),
+):
+    i = wp.tid()
+    dst_sdf[i] = src_sdf[i]
+    dst_vel[i] = src_vel[i]
+    dst_friction[i] = src_friction[i]
+    dst_restitution[i] = src_restitution[i]
+    dst_owner[i] = src_owner[i]
+
+
+@wp.kernel
 def k_transform_collider_points(
     base_points: wp.array(dtype=wp.vec3),
     center: wp.vec3,
@@ -683,6 +761,7 @@ class FluidSolver:
         # The meshes are the scene's cached collider meshes; hand back any we
         # re-posed before letting go of them (also covers a step that raised).
         self._restore_collider_poses()
+        self._static_collision_cache_ready = False
         self.colliders = list(colliders)
         for col in self.colliders:
             moving = col.mesh is not None and (
@@ -1263,6 +1342,10 @@ class FluidSolver:
         )
         if not clear_collision:
             return
+        self._reset_collision_grid()
+
+    def _reset_collision_grid(self):
+        nv = self._nvox
         fast_launch(
             k_reset_collision_grid, dim=nv,
             inputs=[self.collision_vel, self.collision_friction,
@@ -1326,29 +1409,104 @@ class FluidSolver:
             col.reposed = False
             col.pose_center = None
 
-    def _apply_collisions(self):
+    def _static_collision_cache_usable(self):
+        """True when this substep may restore static colliders from the cache.
+
+        The cache holds the walls plus every static collider as rasterized at
+        the last full collision pass; it stays valid until the topology or the
+        collider set changes, both of which clear the ready flag.
+        """
+        return bool(getattr(self, "_static_collision_cache_ready", False))
+
+    def _rasterize_collider(self, col, rank=None):
         g = self.grid
         s = self.settings
-        for col in self.colliders:
-            if col.mesh is None:
-                continue
-            extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
-            # Cover the entire resolved collider interior. A narrow query band
-            # turns sufficiently deep penetration into the +infinity default.
-            band = max(8.0 * s.voxel_size,
-                       math.sqrt(sum(value * value for value in extent)))
-            lv = col.linear_velocity
-            av = col.angular_velocity
-            center = getattr(col, "pose_center", None) or col.center
+        extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
+        # Cover the entire resolved collider interior. A narrow query band
+        # turns sufficiently deep penetration into the +infinity default.
+        band = max(8.0 * s.voxel_size,
+                   math.sqrt(sum(value * value for value in extent)))
+        lv = col.linear_velocity
+        av = col.angular_velocity
+        center = getattr(col, "pose_center", None) or col.center
+        inputs = [col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
+                  s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
+                  wp.vec3(*center), col.friction, col.restitution]
+        outputs = [self.collision_sdf.data, self.collision_vel,
+                   self.collision_friction, self.collision_restitution]
+        if rank is None:
+            fast_launch(k_rasterize_collider_material, dim=self._nvox,
+                        inputs=inputs, outputs=outputs, device=self.device)
+        else:
+            fast_launch(k_rasterize_collider_material_ranked, dim=self._nvox,
+                        inputs=inputs + [int(rank)],
+                        outputs=outputs + [self._collision_owner],
+                        device=self.device)
+
+    def _ensure_static_collision_cache(self, nv):
+        cache = getattr(self, "_static_collision_cache", None)
+        if cache is not None and cache[0].shape[0] >= nv:
+            return cache
+        dev = self.device
+        n = max(1, int(nv))
+        self._collision_owner = wp.full(n, -1, dtype=wp.int32, device=dev)
+        self._static_collision_cache = (
+            wp.zeros(n, dtype=float, device=dev),
+            wp.zeros(n, dtype=wp.vec3, device=dev),
+            wp.zeros(n, dtype=float, device=dev),
+            wp.zeros(n, dtype=float, device=dev),
+            wp.full(n, -1, dtype=wp.int32, device=dev),
+        )
+        return self._static_collision_cache
+
+    def _apply_collisions(self, reuse_static=False):
+        """Rasterize collider SDF, velocity and material into the grid.
+
+        With both moving and static colliders, the walls plus static colliders
+        are snapshotted after a full pass and later substeps restore that
+        snapshot and re-rasterize only the moving colliders (P08). The ranked
+        kernel keeps the full pass's min-distance / earliest-collider result
+        bit for bit. ``reuse_static`` requests the restore; the caller must
+        then have skipped the collision reset.
+        """
+        live = [(rank, col) for rank, col in enumerate(self.colliders)
+                if col.mesh is not None]
+        moving = [(rank, col) for rank, col in live
+                  if col.base_points is not None]
+        static = [(rank, col) for rank, col in live
+                  if col.base_points is None]
+        if not moving or not static:
+            self._static_collision_cache_ready = False
+            for _, col in live:
+                self._rasterize_collider(col)
+            return
+        nv = self._nvox
+        if reuse_static and self._static_collision_cache_usable():
+            cache = self._static_collision_cache
             fast_launch(
-                k_rasterize_collider_material, dim=self._nvox,
-                inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
-                        s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
-                        wp.vec3(*center), col.friction, col.restitution],
+                k_copy_collision_state, dim=nv,
+                inputs=[*cache],
                 outputs=[self.collision_sdf.data, self.collision_vel,
-                         self.collision_friction, self.collision_restitution],
-                device=self.device,
-            )
+                         self.collision_friction, self.collision_restitution,
+                         self._collision_owner],
+                device=self.device)
+        else:
+            if reuse_static:
+                # The caller skipped the reset expecting a usable cache.
+                self._reset_collision_grid()
+            cache = self._ensure_static_collision_cache(nv)
+            self._collision_owner[:nv].fill_(-1)
+            for rank, col in static:
+                self._rasterize_collider(col, rank)
+            fast_launch(
+                k_copy_collision_state, dim=nv,
+                inputs=[self.collision_sdf.data, self.collision_vel,
+                        self.collision_friction, self.collision_restitution,
+                        self._collision_owner],
+                outputs=[*cache], device=self.device)
+            self._static_collision_cache_ready = True
+        for rank, col in moving:
+            self._rasterize_collider(col, rank)
 
     def _index_particles(self):
         g = self.grid
@@ -2124,17 +2282,23 @@ class FluidSolver:
                 FrameFeaturePhase.BEFORE_EMISSION, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
             collision_rebuild = rebuild or moving_colliders
+            if rebuild:
+                # New leaf slots: the static collider snapshot is stale.
+                self._static_collision_cache_ready = False
+            reuse_static = (collision_rebuild and not rebuild
+                            and self._static_collision_cache_usable())
             with self._phase("misc"):
                 if rebuild:
                     self._rebuild_topology(
                         substep_topology_expand if rebuild_each_substep
                         else frame_topology_expand)
-                self._clear_grid_fields(clear_collision=collision_rebuild)
+                self._clear_grid_fields(
+                    clear_collision=collision_rebuild and not reuse_static)
             with self._phase("collision"):
                 if collision_rebuild:
                     if moving_colliders and substep_index > 0:
                         self._update_moving_colliders(substep_index * dt)
-                    self._apply_collisions()
+                    self._apply_collisions(reuse_static=reuse_static)
             self.features.run(
                 FrameFeaturePhase.BEFORE_SOURCING, self, time_ctx)
             with self._phase("indexing"):
