@@ -75,6 +75,10 @@ class EffectExecutionError(RuntimeError):
         )
 
 
+class EffectPrerequisiteError(RuntimeError):
+    """A solver product an effect reads could not be prepared this stage."""
+
+
 @dataclass(frozen=True)
 class EffectCandidateInstallDiagnostic:
     """Structured context for an unexpected candidate installation failure."""
@@ -423,7 +427,17 @@ class EffectRuntimeManager:
             return True
         return False
 
-    def run(self, stage: EffectStage | str, solver: Any, time_ctx: dict[str, object]) -> None:
+    def run(
+            self,
+            stage: EffectStage | str,
+            solver: Any,
+            time_ctx: dict[str, object],
+            *,
+            surface_sdf_error: str | None = None,
+    ) -> None:
+        """Run one stage. ``surface_sdf_error`` set means the solver SDF could
+        not be refreshed: any entry that reads it fails closed instead of
+        sampling stale or zero-initialized storage."""
         if self.failed_error is not None:
             raise EffectExecutionError(self.failed_error)
         stage_enum = stage if isinstance(stage, EffectStage) else EffectStage(str(stage))
@@ -436,6 +450,11 @@ class EffectRuntimeManager:
                 continue
             stats = self.stats[entry.key]
             try:
+                if (surface_sdf_error is not None
+                        and _requirements_for_entry(entry).surface_sdf):
+                    raise EffectPrerequisiteError(
+                        "required surface SDF is unavailable: "
+                        f"{surface_sdf_error or 'refresh failed'}")
                 elements, duration = launch_compiled_kernel(
                     entry, solver, time_ctx, self.device
                 )
