@@ -458,3 +458,62 @@ def test_suppress_callbacks_is_nested_and_exception_safe(monkeypatch):
     except RuntimeError as exc:
         assert str(exc) == "sentinel"
     assert state.suppress_callbacks
+
+
+# Object-group update callbacks that request a Reset: the plain one, and the
+# role callback, which stamps the source schema and then requests a Reset.
+_OBJECT_RESET_CALLBACKS = frozenset({"_request_reset", "_update_object_role"})
+
+
+def _object_fields_requesting_reset(properties):
+    tree = ast.parse(textwrap.dedent(inspect.getsource(properties.FLUIDSIM_PG_object)))
+    fields = set()
+    for node in tree.body[0].body:
+        if not (isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and isinstance(node.annotation, ast.Call)):
+            continue
+        for kw in node.annotation.keywords:
+            if (kw.arg == "update" and isinstance(kw.value, ast.Name)
+                    and kw.value.id in _OBJECT_RESET_CALLBACKS):
+                fields.add(node.target.id)
+    return fields
+
+
+def test_every_object_field_requesting_reset_is_in_the_reset_signature(monkeypatch):
+    """An object field whose callback requests a Reset must be signed.
+
+    ``request_scene_update(RESET)`` flags a pending Reset only when the reset
+    signature changed, so a field missing from ``_RESET_OBJECT_FIELDS`` asked
+    for a Reset and got nothing: editing a source's Target Particles / Voxel
+    (``emit_rate``) or its fill target during a live session flagged no pending
+    Reset and never reached the solver.
+    """
+    properties, pending, _bridge = _modules(monkeypatch)
+    monkeypatch.setattr(pending, "_configured_device", lambda: "cuda:0")
+    requesting = _object_fields_requesting_reset(properties)
+
+    assert {"emit_rate", "source_sampling_mode",
+            "source_sampling_multiplier"} <= requesting
+    assert sorted(requesting - pending._RESET_OBJECT_FIELDS) == []
+
+    scene, scene_group, domain_group = _migrated_scene()
+    scene_group.domain_object.name = "Domain"
+    scene_fields = _declared_fields(properties.FLUIDSIM_PG_scene)
+    for name in (set(pending._RESET_SCENE_FIELDS)
+                 | set(pending._REINIT_SETTING_FIELDS)) - {"domain_object"}:
+        setattr(scene_group if name in scene_fields else domain_group, name, 0)
+    pg = SimpleNamespace(role="SOURCE", auto_inject_seed=False)
+    for index, name in enumerate(sorted(requesting)):
+        if not hasattr(pg, name):
+            setattr(pg, name, f"applied-{index}")
+    scene.objects = [SimpleNamespace(name="Source", fluidsim=pg)]
+    reset, _reinit = pending.current_interaction_signatures(scene)
+    for name in sorted(requesting - {"role", "auto_inject_seed"}):
+        previous = getattr(pg, name)
+        setattr(pg, name, "edited")
+        try:
+            new_reset, _new_reinit = pending.current_interaction_signatures(scene)
+        finally:
+            setattr(pg, name, previous)
+        assert pending._signature_changes(reset, new_reset) == ("objects",), name

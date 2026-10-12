@@ -190,7 +190,8 @@ def test_reset_lifecycle_pending_applies_exactly_once(monkeypatch):
     source_pg = SimpleNamespace(
         role="SOURCE", point_source_representation="DIRECT_APPEND",
         mesh_evaluation_mode="FIRST_SIM_FRAME", emission_mode="INITIAL_FILL",
-        auto_inject_seed=False,
+        auto_inject_seed=False, emit_rate=8.0,
+        source_sampling_mode="LEGACY_ABSOLUTE", source_sampling_multiplier=1.0,
     )
     scene.objects = [SimpleNamespace(name="Source", fluidsim=split_settings(source_pg))]
     sess, _solver = _activate(bridge, scene, frame=4)
@@ -604,7 +605,8 @@ class _DeletableObject:
         self.group = SimpleNamespace(
             role="NONE", point_source_representation="DIRECT_APPEND",
             mesh_evaluation_mode="FIRST_SIM_FRAME", emission_mode="INITIAL_FILL",
-            auto_inject_seed=False)
+            auto_inject_seed=False, emit_rate=8.0,
+            source_sampling_mode="LEGACY_ABSOLUTE", source_sampling_multiplier=1.0)
 
     def __getattr__(self, name):
         if self.__dict__["removed"]:
@@ -651,7 +653,9 @@ def test_revert_skips_a_deleted_snapshot_object_and_restores_the_rest(
 def _object(name, role="NONE", **overrides):
     values = dict(role=role, point_source_representation="DIRECT_APPEND",
                   mesh_evaluation_mode="FIRST_SIM_FRAME",
-                  emission_mode="INITIAL_FILL", auto_inject_seed=False)
+                  emission_mode="INITIAL_FILL", auto_inject_seed=False,
+                  emit_rate=8.0, source_sampling_mode="LEGACY_ABSOLUTE",
+                  source_sampling_multiplier=1.0)
     values.update(overrides)
     return SimpleNamespace(name=name, fluidsim=SimpleNamespace(**values))
 
