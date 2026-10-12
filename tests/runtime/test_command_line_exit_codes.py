@@ -64,16 +64,18 @@ def cli(monkeypatch, tmp_path):
         resume_decision=lambda _scene: SimpleNamespace(
             allowed=True, code="OK", message=""),
         bake_run=None,
+        bake_calls=[],
     )
 
     class _Backend:
         def __init__(self, **_kwargs):
             pass
 
-        def resume_decision(self, scene):
-            return state.resume_decision(scene)
+        def resume_decision(self, scene, **kwargs):
+            return state.resume_decision(scene, **kwargs)
 
-    def _bake_run(*_args, **_kwargs):
+    def _bake_run(*_args, **kwargs):
+        state.bake_calls.append(kwargs)
         if state.bake_run is not None:
             state.bake_run()
         raise AssertionError("the bake loop is not under test")
@@ -109,7 +111,8 @@ def cli(monkeypatch, tmp_path):
 
     def run(**overrides):
         options = command_line.CliOptions(
-            scene=overrides.pop("scene", ""), frame_start=None, frame_end=None,
+            scene=overrides.pop("scene", ""), frame_start=None,
+            frame_end=overrides.pop("frame_end", None),
             cache=tmp_path / "cache", device="", resume="auto",
             checkpoint_interval=1, save_after_bake=False,
             report_json=tmp_path / "report.json")
@@ -155,3 +158,37 @@ def test_a_missing_scene_stays_a_scene_error(cli):
     code, report = cli(scene="Nope")
     assert code == command_line.EXIT_SCENE_INVALID
     assert "does not exist" in report["message"]
+
+
+def test_resume_extends_a_complete_cache_to_a_later_frame_end(cli):
+    """Review finding (f): the command line asked for the resume decision
+    without the end frame, so a complete cache was refused ALREADY_COMPLETE
+    where the GUI's Resume extends it (owner decision D4)."""
+    asked = []
+
+    def decide(_scene, **kwargs):
+        asked.append(kwargs)
+        if kwargs.get("end", 0) > 3:
+            return SimpleNamespace(allowed=True, code="RESUME_READY", message="")
+        return SimpleNamespace(
+            allowed=False, code="ALREADY_COMPLETE", message="complete through 3")
+
+    cli.state.resume_decision = decide
+    code, report = cli(frame_end=10)
+
+    assert "ALREADY_COMPLETE" not in report["message"]
+    assert code != command_line.EXIT_RESUME_INCOMPATIBLE
+    assert asked[-1] == {"end": 10}
+    assert cli.state.bake_calls[-1]["resume"] is True
+    assert cli.state.bake_calls[-1]["end"] == 10
+
+
+def test_a_complete_cache_without_a_later_end_is_still_refused(cli):
+    cli.state.resume_decision = lambda _scene, **_kwargs: SimpleNamespace(
+        allowed=False, code="ALREADY_COMPLETE", message="complete through 3")
+
+    code, report = cli()
+
+    assert code == command_line.EXIT_RESUME_INCOMPATIBLE
+    assert "ALREADY_COMPLETE" in report["message"]
+    assert cli.state.bake_calls == []

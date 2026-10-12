@@ -327,6 +327,10 @@ def run(options: CliOptions) -> int:
         if resume:
             try:
                 decision = backend.resume_decision(scene)
+                if decision.code == "ALREADY_COMPLETE":
+                    # A later end frame extends a complete cache, as the
+                    # GUI's Resume does (owner decision D4).
+                    decision = backend.resume_decision(scene, end=end)
             except ValueError as exc:
                 code = EXIT_RESUME_INCOMPATIBLE
                 report["message"] = (
