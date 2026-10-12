@@ -494,9 +494,15 @@ class FLUIDSIM_OT_effect_create_controller(bpy.types.Operator):
         if context.object is not None:
             controller.matrix_world.translation = context.object.matrix_world.translation
         parameter.object_value = controller
-        bpy.ops.object.select_all(action="DESELECT")
-        controller.select_set(True)
-        context.view_layer.objects.active = controller
+        # bpy.ops.object.select_all only polls in Object Mode; calling it from
+        # Edit Mode raised after the controller was already linked and
+        # assigned. Select directly, and leave the edited object active.
+        if str(getattr(context, "mode", "OBJECT")) == "OBJECT":
+            view_layer = context.view_layer
+            for selected in tuple(getattr(view_layer.objects, "selected", ())):
+                selected.select_set(False)
+            controller.select_set(True)
+            view_layer.objects.active = controller
         effects.refresh_stack_state(context.scene)
         self.report({"INFO"}, f"Created {controller.name}; move or animate it in the scene")
         return {"FINISHED"}

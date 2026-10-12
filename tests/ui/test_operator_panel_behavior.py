@@ -4312,6 +4312,67 @@ def test_add_effect_cancels_cleanly_when_the_package_vanished(monkeypatch):
     assert "user.removed_effect" in reports[-1][1]
 
 
+@pytest.mark.parametrize("mode", ["OBJECT", "EDIT_MESH"])
+def test_create_controller_completes_in_any_object_mode(monkeypatch, mode):
+    """B79: Edit Mode must not leave a linked, assigned controller after a raise."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    class _Vec(SimpleNamespace):
+        pass
+
+    class _Controller(dict):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+            self.selected = False
+            self.matrix_world = SimpleNamespace(translation=None)
+
+        def select_set(self, value):
+            self.selected = value
+
+    def _select_all(action):
+        # bpy.ops.object.select_all polls ED_operator_objectmode.
+        if mode != "OBJECT":
+            raise RuntimeError("Operator bpy.ops.object.select_all.poll() failed")
+        for obj in objects.selected:
+            obj.select_set(False)
+
+    fake_bpy.data = SimpleNamespace(
+        objects=SimpleNamespace(new=lambda name, _data: _Controller(name)))
+    fake_bpy.ops = SimpleNamespace(object=SimpleNamespace(select_all=_select_all))
+    monkeypatch.setattr(effect_ui.effects, "refresh_stack_state", lambda _scene: None)
+
+    edited = _Controller("Edited Mesh")
+    edited.selected = True
+    edited.matrix_world.translation = (1.0, 2.0, 3.0)
+    objects = SimpleNamespace(active=edited, selected=[edited])
+    linked = []
+    parameter = SimpleNamespace(key="controller", kind="OBJECT", object_value=None)
+    item = SimpleNamespace(
+        parameters=[parameter], display_name="Vortex", effect_id="vortex",
+        instance_id="effect-1")
+    scene = SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[item], active_index=0),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=linked.append)))
+    context = SimpleNamespace(
+        scene=scene, mode=mode, collection=None, object=edited,
+        view_layer=SimpleNamespace(objects=objects))
+    operator = effect_ui.FLUIDSIM_OT_effect_create_controller()
+    operator.parameter_key = "controller"
+    operator.report = lambda *_args: None
+
+    assert operator.execute(context) == {"FINISHED"}
+    controller = parameter.object_value
+    assert linked == [controller]
+    if mode == "OBJECT":
+        assert objects.active is controller and controller.selected
+        assert edited.selected is False
+    else:
+        # Edit Mode keeps the edited object active; the controller is ready.
+        assert objects.active is edited
+
+
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     """D9: an opted-in author can trust their own kernel edits for the session so
     the Review & Trust dialog does not re-prompt on every edit.  Session trust is
