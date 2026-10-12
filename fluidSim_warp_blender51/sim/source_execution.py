@@ -14,7 +14,6 @@ from . import constants as C
 from .attributes import normalize_color, stable_source_id
 from .enums import (
     SourceEmissionMode,
-    SourceEvaluationCadence,
     SourceHeightBackMode,
     SourceLifecycle,
     SourceOperation,
@@ -972,12 +971,7 @@ class CompiledSourceExecution:
         """Apply one all-or-nothing particle-emission transaction."""
         batch = None
         if getattr(self, "plans", ()):
-            dynamic = any(
-                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME for plan in self.plans
-            )
-            batch = getattr(self, "_compiled_batch", None)
-            if batch is None or dynamic:
-                batch = self.compile(frame=int(getattr(self.runtime, "frame", 0)), substep=0)
+            batch = self.compiled_batch_for(int(getattr(self.runtime, "frame", 0)))
 
         include_legacy = bool(self.sources or self.height_source.enabled)
         self._begin_emission_transaction(batch, include_legacy=include_legacy)

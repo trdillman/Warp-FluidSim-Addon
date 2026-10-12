@@ -452,12 +452,11 @@ class SourcePipeline(CompiledSourceExecution):
             )
         return count
 
-    def compile(self, frame=0, substep=0, *, upload=True):
-        """Compile current plans for the owner's sparse-grid context."""
+    def _compile_context(self, frame, substep, upload):
         from .source_regions import CompileContext
 
         owner, settings = self.runtime, self.runtime.settings
-        context = CompileContext(
+        return CompileContext(
             frame=int(frame),
             substep=int(substep),
             session_generation=self._session_generation,
@@ -470,7 +469,35 @@ class SourcePipeline(CompiledSourceExecution):
             particle_capacity=int(owner.particles.capacity),
             upload=upload,
         )
+
+    def compile(self, frame=0, substep=0, *, upload=True):
+        """Compile current plans for the owner's sparse-grid context."""
+        context = self._compile_context(frame, substep, upload)
         self._compiled_batch = self.compiler.compile(self.plans, context)
+        self._compiled_context = context
+        self.last_diagnostics = self._compiled_batch.diagnostics
+        return self._compiled_batch
+
+    def compiled_batch_for(self, frame):
+        """Return the compiled batch for ``frame``, compiling only if it can differ.
+
+        Static and first-frame plans keep their batch until the plans change.
+        With any EVERY_SIM_FRAME plan, the topology rebuild and every
+        sourcing substep used to recompile with the identical frame/substep-0
+        context, re-hashing every plan input to reach the same cache rows;
+        the batch is now reused while that context is unchanged.
+        """
+        batch = getattr(self, "_compiled_batch", None)
+        dynamic = any(
+            plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME for plan in self.plans
+        )
+        if batch is not None and not dynamic:
+            return batch
+        context = self._compile_context(frame, 0, True)
+        if batch is not None and getattr(self, "_compiled_context", None) == context:
+            return batch
+        self._compiled_batch = self.compiler.compile(self.plans, context)
+        self._compiled_context = context
         self.last_diagnostics = self._compiled_batch.diagnostics
         return self._compiled_batch
 

@@ -675,6 +675,9 @@ class SourceCompiler:
         # cadence. Edits, domain changes, and reset/session changes replace and
         # release the prior upload instead of leaking an unreachable cache row.
         self._source_keys: dict[SourceKey, str] = {}
+        # id(region plan) -> (region plan, content digest) for the plans of
+        # the latest compile call; see _region_digest.
+        self._region_digests: dict[int, tuple] = {}
         self.compile_count = 0
         self.cache_hits = 0
 
@@ -687,19 +690,35 @@ class SourceCompiler:
             region.release()
         self._cache.clear()
         self._source_keys.clear()
+        self._region_digests.clear()
 
     def _diagnostic(self, plan, severity, code, message):
         return SourceDiagnostic(severity, code, message, plan.stable_id)
 
-    def _cache_key(self, plan, context):
+    def _region_digest(self, region, current):
+        """Content digest of one region plan, memoized by object identity.
+
+        Region plans are frozen and own read-only array copies, so the same
+        object always has the same content; re-hashing a large unchanged
+        plan on every compile was pure overhead. ``current`` collects the
+        memo for this call only, so the table never outlives its plans.
+        """
+        cached = self._region_digests.get(id(region))
+        if cached is None or cached[0] is not region:
+            # repr() summarizes large NumPy arrays, so every region array is
+            # digested in full; an interior edit must never reuse a stale upload.
+            parts = [repr(region), *(_array_digest(getattr(region, name, None))
+                                     for name in _REGION_ARRAY_FIELDS)]
+            cached = (region, sha256("|".join(parts).encode("utf8")).hexdigest())
+        current[id(region)] = cached
+        return cached[1]
+
+    def _cache_key(self, plan, context, current=None):
         region = plan.region
-        # repr() summarizes large NumPy arrays, so every region array is
-        # digested in full; an interior edit must never reuse a stale upload.
         parts = [
             str(plan.stable_id), str(int(plan.operation)), str(int(plan.lifecycle)),
-            str(int(plan.cadence)), str(int(region.kind)), repr(region),
-            *(_array_digest(getattr(region, name, None))
-              for name in _REGION_ARRAY_FIELDS),
+            str(int(plan.cadence)), str(int(region.kind)),
+            self._region_digest(region, {} if current is None else current),
             repr((context.origin, context.voxel_size, context.domain_min,
                   context.domain_max, context.session_generation,
                   context.device, context.upload)),
@@ -714,6 +733,7 @@ class SourceCompiler:
             raise ValueError("voxel size must be positive")
         occurrences: dict[SourceKey, int] = {}
         in_use: set[str] = set()
+        digests: dict[int, tuple] = {}
         for plan in plans:
             if not plan.activation.active(context.frame):
                 continue
@@ -729,7 +749,7 @@ class SourceCompiler:
                 diagnostics.append(self._diagnostic(
                     plan, "WARNING", "DUPLICATE_SOURCE_ID",
                     "Another source shares this source identity; duplicated objects should be given their own identity"))
-            key = self._cache_key(plan, context)
+            key = self._cache_key(plan, context, digests)
             region = self._cache.get(key)
             if region is not None:
                 self.cache_hits += 1
@@ -748,6 +768,7 @@ class SourceCompiler:
             in_use.add(key)
             diagnostics.extend(region.diagnostics)
             compiled.append(CompiledSource(plan, region))
+        self._region_digests = digests
         coords = [source.region.leaf_coords for source in compiled
                   if len(source.region.leaf_coords)]
         required = (np.unique(np.concatenate(coords), axis=0).astype(np.int32)

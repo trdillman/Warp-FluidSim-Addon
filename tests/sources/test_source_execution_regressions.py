@@ -245,3 +245,39 @@ def test_skipped_field_passes_were_no_ops(cuda_device):
             np.testing.assert_array_equal(actual, expected)
     finally:
         solver.release()
+
+
+# P14: with an EVERY_SIM_FRAME plan, a frame compiles once and every
+# substep (topology rebuild and sourcing) reuses that batch.
+
+def test_dynamic_plans_compile_once_per_frame(cuda_device):
+    from fluidSim_warp_blender51.sim.enums import SourceEvaluationCadence as Cadence
+    from fluidSim_warp_blender51.sim.source_regions import AnalyticRegionPlan
+
+    settings = _settings(cuda_device)
+    settings.min_substeps = settings.max_substeps = 4
+    solver = FluidSolver(settings)
+    try:
+        field = SourcePlan(
+            SourceKey("field"), SourceOperation.PRESSURE, SourceLifecycle.EVERY_FRAME,
+            Cadence.EVERY_SIM_FRAME,
+            AnalyticRegionPlan(shape=SourceShapeShape.SPHERE, position=(1.0, 1.0, 0.5),
+                               radius=0.3),
+            PayloadPlan(kind=SourcePayloadKind.PRESSURE, pressure=0.5))
+        solver.set_source_batch(native_plans=(_rasterized_points(), field))
+        compiler = solver.sourcing.compiler
+        batches = []
+        original = solver.sourcing.compiler.compile
+
+        def recording(plans, context):
+            batch = original(plans, context)
+            batches.append((context.frame, batch))
+            return batch
+
+        compiler.compile = recording
+        for _ in range(3):
+            solver.step_frame()
+        assert [frame for frame, _ in batches] == [0, 1, 2]
+        assert solver.sourcing._compiled_batch is batches[-1][1]
+    finally:
+        solver.release()

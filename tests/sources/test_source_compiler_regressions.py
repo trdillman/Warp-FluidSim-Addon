@@ -398,3 +398,44 @@ def test_cpu_bvh_mesh_staging_matches_numpy_coverage():
             flat, vertices, triangles, solid, width)
         np.testing.assert_array_equal(coverage, expected_coverage)
         np.testing.assert_allclose(sdf, expected_sdf, rtol=0.0, atol=1.0e-6)
+
+
+# P14: an unchanged plan object is not re-hashed on a cache hit; an equal
+# but new plan object is digested again and reaches the same cache row.
+
+def test_cache_hits_do_not_rehash_unchanged_plan_objects(monkeypatch):
+    from fluidSim_warp_blender51.sim import source_regions
+
+    digested = []
+    original = source_regions._array_digest
+
+    def counting(value):
+        if value is not None:
+            digested.append(value.nbytes)
+        return original(value)
+
+    monkeypatch.setattr(source_regions, "_array_digest", counting)
+    count = 5000
+    velocities = np.zeros((count, 3), np.float32)
+    temperature = np.zeros(count, np.float32)
+    plan = _point_plan(velocities, temperature, cadence=SourceEvaluationCadence.EVERY_SIM_FRAME)
+    compiler = SourceCompiler()
+    first = compiler.compile((plan,), _small_context())
+    assert digested and compiler.compile_count == 1
+    digested.clear()
+    for _ in range(3):
+        again = compiler.compile((plan,), _small_context())
+        assert again.sources[0].region is first.sources[0].region
+    assert digested == []
+    assert compiler.compile_count == 1 and compiler.cache_hits == 3
+
+    rebuilt = _point_plan(velocities.copy(), temperature.copy(),
+                          cadence=SourceEvaluationCadence.EVERY_SIM_FRAME,
+                          positions=plan.region.positions.copy())
+    hit = compiler.compile((rebuilt,), _small_context())
+    assert digested
+    assert hit.sources[0].region is first.sources[0].region
+    assert compiler.compile_count == 1
+    # A new frame is still a new EVERY_SIM_FRAME row.
+    compiler.compile((rebuilt,), _small_context(frame=2))
+    assert compiler.compile_count == 2

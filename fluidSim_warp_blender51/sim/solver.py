@@ -1167,12 +1167,7 @@ class FluidSolver:
         if self.sourcing.plans:
             # Compile before topology so imported-volume active leaves and all
             # other normalized regions allocate through the same flat table.
-            dynamic_sources = any(
-                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
-                for plan in self.sourcing.plans)
-            batch = self.sourcing._compiled_batch
-            if batch is None or dynamic_sources:
-                batch = self.sourcing.compile(frame=self.frame, substep=0)
+            batch = self.sourcing.compiled_batch_for(self.frame)
             self.sourcing.mark_source_topology(g, batch)
         for col in self.colliders:
             # A collider with no domain overlap (placed outside, or animated
