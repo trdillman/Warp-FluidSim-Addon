@@ -11,6 +11,11 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
 from . import common as _runtime
 
+# The Solver Session is a process singleton; these operators read or mutate
+# the solver of the context scene only, and never take it over.
+_FOREIGN_SOLVER_MESSAGE = (
+    "Initialize this scene first: the solver belongs to another scene")
+
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
@@ -278,6 +283,10 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")
             return {"CANCELLED"}
+        scene = context.scene
+        if not sess.owns_scene(scene):
+            self.report({"ERROR"}, _FOREIGN_SOLVER_MESSAGE)
+            return {"CANCELLED"}
         obj = context.active_object
         if obj is None:
             self.report({"ERROR"}, "No active object")
@@ -285,7 +294,6 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         from ..blender import output_publication
         from ..blender import sources as _sources
 
-        scene = context.scene
         try:
             n = _sources.inject_object_particles(scene, obj, sess)
         except Exception as exc:  # noqa: BLE001

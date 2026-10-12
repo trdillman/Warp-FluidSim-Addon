@@ -13,6 +13,11 @@ from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
+# The Solver Session is a process singleton; these operators read or mutate
+# the solver of the context scene only, and never take it over.
+_FOREIGN_SOLVER_MESSAGE = (
+    "Initialize this scene first: the solver belongs to another scene")
+
 
 class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Export the current simulation frame (surface + particles) to disk"""
@@ -34,9 +39,12 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")
             return {"CANCELLED"}
+        scene = context.scene
+        if not sess.owns_scene(scene):
+            self.report({"ERROR"}, _FOREIGN_SOLVER_MESSAGE)
+            return {"CANCELLED"}
         from ..io import export as export_mod
 
-        scene = context.scene
         base = bpy.path.abspath(self.filepath)
         try:
             paths = export_mod.export_frame(sess.solver, base)

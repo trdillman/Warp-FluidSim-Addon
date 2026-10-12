@@ -1958,7 +1958,7 @@ def test_phase1_point_injection_capacity_refusal_is_recoverable_cancel(monkeypat
         total=1,
     )
     solver = SimpleNamespace(sourcing=SimpleNamespace(last_injection_result=result))
-    sess = SimpleNamespace(active=True, solver=solver)
+    sess = SimpleNamespace(active=True, solver=solver, owns_scene=lambda _scene: True)
     fatal_errors = []
     bridge = SimpleNamespace(
         session=lambda: sess, set_error=lambda *_args: fatal_errors.append(_args)
@@ -2012,7 +2012,7 @@ def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
             self.sourcing.last_injection_result = result
             return result
 
-    sess = SimpleNamespace(active=True, solver=Solver())
+    sess = SimpleNamespace(active=True, solver=Solver(), owns_scene=lambda _scene: True)
     monkeypatch.setattr(
         operators._operator_runtime,
         "_bridge",
@@ -2036,6 +2036,44 @@ def test_phase1_empty_point_injection_clears_refusal_and_finishes(monkeypatch):
     assert len(viewport_updates) == 1
     assert reports[-1][0] == {"INFO"}
     assert "Injected 0 particles" in reports[-1][1]
+
+
+def test_inject_and_export_frame_refuse_a_solver_owned_by_another_scene(monkeypatch):
+    """Review finding (c): Inject Active Object injected into, and published
+    from, another scene's solver; Export Current Frame exported it."""
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    from fluidSim_warp_blender51.blender import output_publication, sources
+    from fluidSim_warp_blender51.io import export as export_mod
+
+    owner = SimpleNamespace(fluidsim=SimpleNamespace(status="Solver ready"))
+    other = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    sess = SimpleNamespace(active=True, solver=object(),
+                           owns_scene=lambda scene: scene is owner)
+    monkeypatch.setattr(
+        operators._operator_runtime, "_bridge",
+        lambda: SimpleNamespace(session=lambda: sess, set_error=lambda *_a: None))
+    touched = []
+    monkeypatch.setattr(sources, "inject_object_particles",
+                        lambda *_args: touched.append("inject") or 0)
+    monkeypatch.setattr(output_publication, "update_outputs",
+                        lambda *_args: touched.append("publish"))
+    monkeypatch.setattr(export_mod, "export_frame",
+                        lambda *_args: touched.append("export") or [])
+    obj = SimpleNamespace(name="Seed", type="MESH", particle_systems=[])
+    context = SimpleNamespace(scene=other, active_object=obj)
+
+    for operator_cls in (operators.FLUIDSIM_OT_inject_particles,
+                         operators.FLUIDSIM_OT_export_frame):
+        reports = []
+        op = operator_cls()
+        op.filepath = "//frame"
+        op.report = lambda level, message, reports=reports: reports.append(
+            (level, message))
+        assert op.execute(context) == {"CANCELLED"}, operator_cls.__name__
+        assert "Initialize this scene first" in reports[-1][1]
+    assert touched == []
+    assert sess.owns_scene(owner)
 
 
 def test_single_output_removal_requires_owned_stable_identity(monkeypatch):
