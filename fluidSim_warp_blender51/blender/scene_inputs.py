@@ -164,6 +164,36 @@ def _set_source_status(pg, severity="", code="", message=""):
         pass
 
 
+_SOURCE_STATUS_TEXT = (
+    "source_status_severity", "source_status_code", "source_status_message")
+_SOURCE_STATUS_FIELDS = _SOURCE_STATUS_TEXT + (
+    "source_status_emitted", "source_status_capacity_limited")
+
+
+def _feeds_simulation(pg):
+    """A tagged role or an auto-injected seed; not a camera, light or output."""
+    return (getattr(pg, "role", "NONE") != "NONE"
+            or bool(getattr(pg, "auto_inject_seed", False)))
+
+
+def _source_status_values(pg):
+    return {name: getattr(pg, name, None) for name in _SOURCE_STATUS_FIELDS}
+
+
+def _write_changed_status(pg, values):
+    """Write only the status fields whose value differs from what is stored.
+
+    An RNA write tags the object for re-evaluation even when the value is the
+    same, and this runs after every live step.
+    """
+    for name, value in values.items():
+        try:
+            if getattr(pg, name, None) != value:
+                setattr(pg, name, value)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _scene_contains_object(scene, obj):
     getter = getattr(scene.objects, "get", None)
     if getter is not None:
@@ -785,46 +815,52 @@ class SceneInputs:
         return plans
 
     def update_source_status(self, scene, diagnostics, apply_result=None):
-        """Copy compiler/runtime results to bounded RNA status snapshots."""
+        """Copy compiler/runtime results to bounded RNA status snapshots.
+
+        Runs after every live step, so it visits only simulation inputs (a
+        tagged role or an auto-injected seed: every Blender object carries a
+        FluidSim group) and writes a status field only when its value changes.
+        """
         objects = {}
+        status = {}
         for obj in scene.objects:
             pg = getattr(obj, "fluidsim", None)
-            if pg is None:
+            if pg is None or not _feeds_simulation(pg):
                 continue
             objects[self._runtime_source_key(obj)] = pg
             objects[persistent_source_key(obj)] = pg
-            if getattr(pg, "source_status_code", "") != "SOURCE_INPUT_INVALID":
-                _set_source_status(pg)
-            try:
-                pg.source_status_emitted = 0
-                pg.source_status_capacity_limited = False
-            except (AttributeError, TypeError):
-                pass
+            current = _source_status_values(pg)
+            if current["source_status_code"] == "SOURCE_INPUT_INVALID":
+                # Set while gathering inputs this step; keep its message.
+                cleared = dict(current)
+            else:
+                cleared = dict.fromkeys(_SOURCE_STATUS_TEXT, "")
+            cleared["source_status_emitted"] = 0
+            cleared["source_status_capacity_limited"] = False
+            status[id(pg)] = (pg, cleared)
         for diagnostic in diagnostics or ():
             pg = objects.get(str(getattr(diagnostic, "stable_id", "")))
             if pg is not None:
-                _set_source_status(
-                    pg, getattr(diagnostic, "severity", ""),
-                    getattr(diagnostic, "code", ""),
-                    getattr(diagnostic, "message", ""))
+                status[id(pg)][1].update(
+                    source_status_severity=str(getattr(diagnostic, "severity", "")),
+                    source_status_code=str(getattr(diagnostic, "code", "")),
+                    source_status_message=str(getattr(diagnostic, "message", "")))
         if apply_result:
             # SourcePipeline currently reports one aggregate transaction. It is
             # truthful to attribute that count only when exactly one liquid
             # source is active; broadcasting it to every source/field panel
             # would present scene-global telemetry as per-object truth.
-            unique_objects = {id(pg): pg for pg in objects.values()}
-            active_liquid = [pg for pg in unique_objects.values()
+            active_liquid = [pg for pg, _values in status.values()
                              if getattr(pg, "role", "NONE") == "SOURCE"
                              and getattr(pg, "source_mode", "PARTICLES") != "FIELD"
                              and getattr(pg, "enabled", False)]
             if len(active_liquid) == 1:
-                pg = active_liquid[0]
-                try:
-                    pg.source_status_emitted = int(apply_result.get("emitted", 0))
-                    pg.source_status_capacity_limited = bool(
-                        apply_result.get("capacity_limited", False))
-                except (AttributeError, TypeError):
-                    pass
+                status[id(active_liquid[0])][1].update(
+                    source_status_emitted=int(apply_result.get("emitted", 0)),
+                    source_status_capacity_limited=bool(
+                        apply_result.get("capacity_limited", False)))
+        for pg, values in status.values():
+            _write_changed_status(pg, values)
 
     def gather_force_fields(self, scene, depsgraph=None):
         """Translate native Blender force-field objects into GPU proxies."""
