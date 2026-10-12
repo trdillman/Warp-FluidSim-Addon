@@ -2034,12 +2034,16 @@ class FluidSolver:
         rebuild_each_substep = self.features.rebuild_topology_each_substep
         moving_colliders = any(
             col.base_points is not None for col in self.colliders)
+        capillary_expand = self._surface_tension_topology_expand()
         frame_topology_expand = max(
             int(s.topology_expand),
             int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
             self._whitewater_topology_expand(frame_dt),
-            self._surface_tension_topology_expand(),
+            capillary_expand,
         )
+        # A rebuild every substep needs no frame-long motion margin, but the
+        # capillary SDF still needs its halo (B37).
+        substep_topology_expand = max(int(s.topology_expand), capillary_expand)
         self.whitewater.reset_frame_diagnostics()
         self._whitewater_launch_bound = self.whitewater.host_count
         for substep_index in range(substeps):
@@ -2053,7 +2057,8 @@ class FluidSolver:
             with self._phase("misc"):
                 if rebuild:
                     self._rebuild_topology(
-                        frame_topology_expand if not rebuild_each_substep else None)
+                        substep_topology_expand if rebuild_each_substep
+                        else frame_topology_expand)
                 self._clear_grid_fields(clear_collision=collision_rebuild)
             with self._phase("collision"):
                 if collision_rebuild:
