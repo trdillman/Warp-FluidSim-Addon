@@ -277,3 +277,47 @@ def test_duplicate_stable_ids_keep_both_compiled_regions():
         assert any(item.code == "DUPLICATE_SOURCE_ID" for item in batch.diagnostics)
     finally:
         compiler.release()
+
+
+# P04: stencil rasterization must equal the former every-candidate-voxel scan.
+
+def _reference_point_coverage(positions, leaves, context, radius):
+    _, centers = SourceCompiler._voxel_points(leaves, context)
+    coverage = np.zeros((len(leaves), 512), np.float32)
+    for position in positions:
+        distance = np.linalg.norm(centers - position, axis=-1)
+        coverage = np.maximum(coverage, (distance <= radius).astype(np.float32))
+    return coverage
+
+
+def test_point_rasterization_equals_the_full_candidate_scan():
+    from fluidSim_warp_blender51.sim.source_regions import PointRegionPlan
+
+    rng = np.random.default_rng(11)
+    cases = (
+        ((-1.0, -1.0, -1.0), 0.02, 0.05, 300, (-0.4, 0.4)),
+        ((0.13, -0.27, 0.05), 0.05, 0.0, 200, (0.1, 0.9)),     # radius floor h/2
+        ((0.0, 0.0, 0.0), 0.1, 0.33, 60, (-0.2, 1.2)),          # points past the domain
+        ((-0.5, 0.25, 0.0), 0.04, 0.04, 150, (-0.5, 0.5)),
+    )
+    for origin, voxel, raster_radius, count, (lo, hi) in cases:
+        size = 1.0
+        context = CompileContext(0, 0, 0, "cpu", origin, voxel, origin,
+                                 tuple(value + size for value in origin),
+                                 leaf_capacity=10 ** 6, upload=False)
+        positions = (np.asarray(origin) + rng.uniform(lo, hi, (count, 3))).astype(np.float32)
+        # Put some points exactly on voxel faces and leaf boundaries.
+        positions[:10] = (np.asarray(origin) + np.round(
+            rng.uniform(0.2, 0.8, (10, 3)) / (8 * voxel)) * 8 * voxel).astype(np.float32)
+        plan = SourcePlan(SourceKey("points"), SourceOperation.LIQUID,
+                          SourceLifecycle.TOP_UP, SourceEvaluationCadence.STATIC,
+                          PointRegionPlan(positions, rasterize_radius=raster_radius),
+                          PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES))
+        leaves = SourceCompiler._candidate_leaves(plan.region.bounds(), context)
+        radius = max(raster_radius, voxel * 0.5)
+        expected = _reference_point_coverage(plan.region.positions, leaves, context, radius)
+        actual = SourceCompiler._rasterize_points(
+            plan.region.positions, leaves, context, radius)
+        np.testing.assert_array_equal(actual, expected)
+        compiled = SourceCompiler().compile((plan,), context).sources[0].region
+        assert compiled.covered_voxel_count == int(np.count_nonzero(expected))

@@ -1147,14 +1147,66 @@ class SourceCompiler:
         if rejected is not None:
             rejected.cache_key = key
             return rejected
-        voxels, centers = self._voxel_points(leaves, context)
-        coverage = np.zeros((len(leaves), C.LEAF_VOLUME), np.float32)
         radius = max(float(r.rasterize_radius), context.voxel_size * 0.5)
-        if len(r.positions) and len(leaves):
-            for position in r.positions:
-                distance = np.linalg.norm(centers-position, axis=-1)
-                coverage = np.maximum(coverage, (distance <= radius).astype(np.float32))
+        coverage = self._rasterize_points(r.positions, leaves, context, radius)
         return CompiledRegion(r.kind, key, leaves, coverage, points=points)
+
+    @staticmethod
+    def _rasterize_points(positions, leaves, context, radius, max_rows=1_000_000):
+        """Cover candidate voxels whose centre lies within ``radius`` of a point.
+
+        Each point visits only the voxel stencil around it rather than every
+        candidate voxel, so the work is points x stencil instead of points x
+        region. Centres and distances use the same float64 arithmetic as
+        :meth:`_voxel_points`, so coverage equals the former full scan.
+        """
+        coverage = np.zeros((len(leaves), C.LEAF_VOLUME), np.float32)
+        if not len(positions) or not len(leaves):
+            return coverage
+        leaves = np.asarray(leaves, np.int64)
+        leaf_lo = leaves.min(axis=0)
+        leaf_dims = leaves.max(axis=0) - leaf_lo + 1
+        rows = np.full(int(np.prod(leaf_dims)), -1, np.int64)
+        relative = leaves - leaf_lo
+        rows[(relative[:, 0] * leaf_dims[1] + relative[:, 1]) * leaf_dims[2]
+             + relative[:, 2]] = np.arange(len(leaves))
+        origin = np.asarray(context.origin)
+        voxel_size = context.voxel_size
+        # A centre within radius lies at most ceil(radius/h) + 2 voxels from the
+        # point's own voxel on each axis (half-voxel centre offset + flooring).
+        reach = int(math.ceil(radius / voxel_size)) + 2
+        span = np.arange(-reach, reach + 1, dtype=np.int64)
+        stencil = np.stack(np.meshgrid(span, span, span, indexing="ij"),
+                           axis=-1).reshape(-1, 3)
+        # Drop stencil voxels no point of the base voxel can reach. The
+        # per-axis gap is under-estimated by a whole voxel (|d| - 1), so float
+        # rounding can never exclude a voxel the exact test would accept.
+        gap = np.maximum(np.abs(stencil) - 1, 0) * voxel_size
+        stencil = stencil[np.sum(gap * gap, axis=1) <= radius * radius]
+        chunk = max(1, int(max_rows) // len(stencil))
+        for start in range(0, len(positions), chunk):
+            points = positions[start:start + chunk]
+            base = np.floor((points.astype(np.float64) - origin)
+                            / voxel_size).astype(np.int64)
+            voxels = (base[:, None, :] + stencil[None, :, :]).reshape(-1, 3)
+            owner = np.repeat(np.arange(len(points)), len(stencil))
+            leaf = np.floor_divide(voxels, C.LEAF_DIM)
+            relative = leaf - leaf_lo
+            inside = np.all((relative >= 0) & (relative < leaf_dims), axis=1)
+            voxels, owner, leaf, relative = (
+                voxels[inside], owner[inside], leaf[inside], relative[inside])
+            row = rows[(relative[:, 0] * leaf_dims[1] + relative[:, 1])
+                       * leaf_dims[2] + relative[:, 2]]
+            candidate = row >= 0
+            voxels, owner, leaf, row = (
+                voxels[candidate], owner[candidate], leaf[candidate], row[candidate])
+            centers = origin + (voxels + 0.5) * voxel_size
+            hit = np.linalg.norm(centers - points[owner], axis=-1) <= radius
+            local = voxels[hit] - leaf[hit] * C.LEAF_DIM
+            # Flat in-leaf order is x fastest (see _voxel_points).
+            coverage[row[hit], local[:, 0] + C.LEAF_DIM * (
+                local[:, 1] + C.LEAF_DIM * local[:, 2])] = 1.0
+        return coverage
 
     def _compile_height(self, plan, context, key):
         r = plan.region
