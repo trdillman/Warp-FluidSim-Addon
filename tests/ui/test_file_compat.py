@@ -301,3 +301,28 @@ def test_sampling_migration_is_not_an_edit_and_skips_linked_sources(monkeypatch)
     assert linked.fluidsim.source_sampling_mode == "INHERIT"
     assert linked.fluidsim.source_sampling_multiplier == 2.0
     assert linked.fluidsim.source_ui_schema_version == 3
+
+
+def test_sampling_migration_keeps_a_pre_region_schema_mesh_source_a_mesh(monkeypatch):
+    """Lifting a liquid source past schema 3 must pin its legacy region kinds.
+
+    Below schema 3 the runtime simulates ``geometry_mode = 'MESH'`` as a
+    MESH_SHELL source (``legacy_region_kinds``). The sampling step lifted such
+    a source straight to schema 4, so the native step after it no longer saw
+    it as pre-region and the unread default ANALYTIC kind took over: an old
+    mesh source opened as an analytic box.
+    """
+    sources = _sources_module(monkeypatch)
+    mesh = _source_group("SOURCE", source_ui_schema_version=0,
+                         source_region_kind="ANALYTIC", geometry_mode="MESH")
+    analytic = _source_group("SOURCE", source_ui_schema_version=2,
+                             source_region_kind="POINTS", geometry_mode="ANALYTIC")
+    scene = SimpleNamespace(name="Scene", objects=[mesh, analytic])
+    simulated = [sources.legacy_region_kinds(obj.fluidsim)[0] for obj in (mesh, analytic)]
+
+    sources.migrate_source_schema(scene)
+
+    assert simulated == ["MESH_SHELL", "ANALYTIC"]
+    assert [obj.fluidsim.source_region_kind for obj in (mesh, analytic)] == simulated
+    for obj in (mesh, analytic):
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA

@@ -59,10 +59,10 @@ def migrate_source_sampling_schema(scene=None):
         pg = getattr(obj, "fluidsim", None)
         if pg is None or getattr(pg, "role", "NONE") != "SOURCE":
             continue
-        if (int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4
-                or getattr(obj, "library", None) is not None):
+        schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
+        if schema >= 4 or getattr(obj, "library", None) is not None:
             continue
-        pending.append(pg)
+        pending.append((pg, schema))
     with ExitStack() as stack:
         if pending and scenes:
             # Restoring saved behaviour is not an edit: no pending reset.
@@ -70,7 +70,11 @@ def migrate_source_sampling_schema(scene=None):
 
             for owner in scenes:
                 stack.enter_context(pending_settings.suppress_callbacks(owner))
-        for pg in pending:
+        for pg, schema in pending:
+            if schema < 3:
+                # Lifted past schema 3 here, so pin the region kinds the
+                # legacy geometry mode implied before they start being read.
+                pg.source_region_kind, pg.sink_region_kind = legacy_region_kinds(pg)
             pg.source_sampling_mode = "LEGACY_ABSOLUTE"
             pg.source_sampling_multiplier = 1.0
             pg.source_ui_schema_version = 4
@@ -89,7 +93,7 @@ def migrate_native_source_evaluation(scene=None):
     schema, so a later deliberate choice of First Sim Frame survives reloads;
     below schema 3 the region kinds were ignored, so they are pinned to the
     kinds the legacy geometry mode implied rather than revived by the stamp
-    (liquid sources already reach schema 4 in the sampling step). Run after
+    (the sampling step already pinned liquid sources it lifted). Run after
     :func:`migrate_source_sampling_schema`. Returns the number switched.
     """
     from contextlib import ExitStack
