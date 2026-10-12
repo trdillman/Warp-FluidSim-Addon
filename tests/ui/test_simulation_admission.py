@@ -419,6 +419,74 @@ def test_rejected_auto_grow_candidate_keeps_the_authored_capacity_plan(
     assert "available 100000" in str(raised.value)
 
 
+def test_reset_keeps_the_running_allocation_while_reinitialize_is_pending(
+        monkeypatch):
+    """B53: Reset must not adopt pending reinitialize-class settings.
+
+    The applied reinitialize signature is kept on Reset, so a Reset that
+    allocated the pending voxel size, domain bounds or storage capacities would
+    leave "Reinitialize pending" describing changes the solver already uses.
+    """
+    from dataclasses import replace
+
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    running = SolverSettings(
+        device="cuda:0", voxel_size=0.1, domain_min=(-2.0, -2.0, 0.0),
+        domain_max=(2.0, 2.0, 4.0), leaf_capacity=512, max_whitewater=1000,
+        max_particles=50_000, particles_per_voxel=8.0)
+    authored = replace(
+        running, device="cuda:1", voxel_size=0.05,
+        domain_min=(-3.0, -3.0, 0.0), domain_max=(3.0, 3.0, 6.0),
+        leaf_capacity=4096, max_whitewater=9000, max_particles=10,
+        particles_per_voxel=4.0)
+    monkeypatch.setattr(admission, "build_settings", lambda _scene: replace(authored))
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 64 * 1024**3, "gpu_free_bytes": 60 * 1024**3})
+
+    def plan_scene(_self, _scene, settings, resources, **kwargs):
+        plan = admission._plan_capacity(
+            settings, (), (), (), resources,
+            additional_transaction_bytes=kwargs.get(
+                "additional_transaction_bytes", 0))
+        return admission.AdmissionSnapshot(
+            scene_identity=1, scene_key="k", frame=1, frame_start=1,
+            depsgraph_generation=None, configured_device=str(settings.device),
+            domain_transform=None, domain_min=settings.domain_min,
+            domain_max=settings.domain_max, settings=settings,
+            profiling_enabled=False, profiling_sync=False, scene_inputs=None,
+            descriptors=(), extra_plans=(), colliders=(), force_fields=(),
+            height_source=None, seeds=(), footprints=(),
+            collider_footprints=(), resources=resources, capacity_plan=plan)
+
+    monkeypatch.setattr(admission.SimulationAdmission, "_plan_scene", plan_scene)
+    session = _Session()
+    session.solver.settings = running
+    session.solver.particles = SimpleNamespace(capacity=60_000)
+    session.set_capacity_plan = lambda *_args, **_kwargs: None
+    owner = _owner(session)
+    admitted = []
+
+    def prepare(_scene, settings, snapshot, _profiler):
+        admitted.append((settings, snapshot.settings, snapshot.configured_device))
+        raise RuntimeError("stop after admission")
+
+    monkeypatch.setattr(owner, "_prepare_solver_replacement", prepare)
+
+    with pytest.raises(RuntimeError, match="stop after admission"):
+        owner.reset(_scene())
+
+    (settings, snapshot_settings, device), = admitted
+    assert settings is snapshot_settings
+    assert device == "cuda:0"
+    for name in ("device", "voxel_size", "domain_min", "domain_max",
+                 "leaf_capacity", "max_whitewater"):
+        assert getattr(settings, name) == getattr(running, name), name
+    assert settings.max_particles == 60_000  # the runtime pool, as before
+    # Reset-tier edits still apply on Reset.
+    assert settings.particles_per_voxel == 4.0
+
+
 def _install_bpy_depsgraph_stub(monkeypatch, depsgraph):
     fake_bpy = types.ModuleType("bpy")
     calls = []
