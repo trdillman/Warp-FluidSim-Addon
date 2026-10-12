@@ -45,15 +45,17 @@ class PreparedParticleSeed:
         object.__setattr__(self, "positions", positions)
 
 
-def migrate_source_sampling_schema(scene=None):
+def migrate_source_sampling_schema(scene=None, *, objects=None, scenes=None):
     """Persist old source occupancy as LEGACY_ABSOLUTE without guessing intent."""
     from contextlib import ExitStack
 
     data = getattr(bpy, "data", None)
-    objects = (getattr(scene, "objects", ()) if scene is not None
-               else getattr(data, "objects", ()))
-    scenes = ((scene,) if scene is not None
-              else tuple(getattr(data, "scenes", ()) or ()))
+    if objects is None:
+        objects = (getattr(scene, "objects", ()) if scene is not None
+                   else getattr(data, "objects", ()))
+    if scenes is None:
+        scenes = ((scene,) if scene is not None
+                  else tuple(getattr(data, "scenes", ()) or ()))
     pending = []
     for obj in objects:
         pg = getattr(obj, "fluidsim", None)
@@ -81,7 +83,7 @@ def migrate_source_sampling_schema(scene=None):
     return len(pending)
 
 
-def migrate_native_source_evaluation(scene=None):
+def migrate_native_source_evaluation(scene=None, *, objects=None, scenes=None):
     """Keep pre-B47 point/volume/field sources animating, once per object.
 
     Before schema 5, point, volume and field inputs were re-gathered every
@@ -99,10 +101,12 @@ def migrate_native_source_evaluation(scene=None):
     from contextlib import ExitStack
 
     data = getattr(bpy, "data", None)
-    objects = (getattr(scene, "objects", ()) if scene is not None
-               else getattr(data, "objects", ()))
-    scenes = ((scene,) if scene is not None
-              else tuple(getattr(data, "scenes", ()) or ()))
+    if objects is None:
+        objects = (getattr(scene, "objects", ()) if scene is not None
+                   else getattr(data, "objects", ()))
+    if scenes is None:
+        scenes = ((scene,) if scene is not None
+                  else tuple(getattr(data, "scenes", ()) or ()))
     pending = []
     for obj in objects:
         pg = getattr(obj, "fluidsim", None)
@@ -131,10 +135,15 @@ def migrate_native_source_evaluation(scene=None):
     return switched
 
 
-def migrate_source_schema(scene=None):
-    """Bring saved sources to the current schema; see the two steps."""
-    migrate_source_sampling_schema(scene)
-    return migrate_native_source_evaluation(scene)
+def migrate_source_schema(scene=None, *, objects=None, scenes=None):
+    """Bring saved sources to the current schema; see the two steps.
+
+    ``objects`` limits the migration to those objects (an append), with
+    ``scenes`` the scenes whose pending callbacks are suppressed meanwhile;
+    by default it covers ``scene`` or, without one, every object in the file.
+    """
+    migrate_source_sampling_schema(scene, objects=objects, scenes=scenes)
+    return migrate_native_source_evaluation(scene, objects=objects, scenes=scenes)
 
 
 @persistent

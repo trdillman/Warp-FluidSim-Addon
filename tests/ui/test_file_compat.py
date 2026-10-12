@@ -326,3 +326,25 @@ def test_sampling_migration_keeps_a_pre_region_schema_mesh_source_a_mesh(monkeyp
     assert [obj.fluidsim.source_region_kind for obj in (mesh, analytic)] == simulated
     for obj in (mesh, analytic):
         assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+def test_enabling_the_addon_migrates_the_open_files_particle_colour_mode(monkeypatch):
+    """Load-time migrations also run for the file open when the add-on is enabled.
+
+    ``register_handlers`` ran the domain-resolution step for the already-open
+    file but not the removed Time Offset colour step, so a file opened before
+    enabling FluidSim kept the unreadable colour mode until it was reloaded.
+    """
+    file_compat = _file_compat(monkeypatch)
+    from fluidSim_warp_blender51.properties import PARTICLE_ATTR_ITEMS
+
+    stale, stale_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS))
+    monkeypatch.setattr(file_compat, "bpy", SimpleNamespace(
+        app=SimpleNamespace(handlers=SimpleNamespace(load_post=[])),
+        data=SimpleNamespace(objects=[], scenes=[stale])))
+
+    file_compat.register_handlers()
+    try:
+        assert stale_seen == {"particle_attribute_mode": "NONE"}
+    finally:
+        file_compat.unregister_handlers()
