@@ -13,6 +13,11 @@ from . import common as _runtime
 
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
+# The Solver Session is a process singleton; these operators read or mutate
+# the solver of the context scene only, and never take it over.
+_FOREIGN_SOLVER_MESSAGE = (
+    "Initialize this scene first: the solver belongs to another scene")
+
 
 class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
     """Export the current simulation frame (surface + particles) to disk"""
@@ -34,9 +39,12 @@ class FLUIDSIM_OT_export_frame(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")
             return {"CANCELLED"}
+        scene = context.scene
+        if not sess.owns_scene(scene):
+            self.report({"ERROR"}, _FOREIGN_SOLVER_MESSAGE)
+            return {"CANCELLED"}
         from ..io import export as export_mod
 
-        scene = context.scene
         base = bpy.path.abspath(self.filepath)
         try:
             paths = export_mod.export_frame(sess.solver, base)
@@ -57,14 +65,20 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime._runtime_poll(cls)
+        # This is a bake too, and the Solver Session is a process singleton.
+        return _runtime._mutation_poll(cls, context)
 
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
         bridge = _runtime._bridge()
+        from ..blender import production_bake
         from ..io import cache
 
+        if production_bake.any_bake_active():
+            fs.status = "A Production Bake is running; export the cache sequence after it finishes"
+            self.report({"ERROR"}, fs.status)
+            return {"CANCELLED"}
         try:
             start, end = cache.resolve_frame_range(
                 scene,

@@ -131,3 +131,27 @@ def test_right_click_passes_through_and_only_esc_cancels(monkeypatch, tmp_path):
     finished = operator.modal(context, SimpleNamespace(type="TIMER", value="NOTHING"))
     assert finished == {"CANCELLED"}
     assert not production_bake.any_bake_active()
+
+
+def test_cache_sequence_export_refuses_while_any_bake_runs(monkeypatch):
+    """Finding (b): the synchronous export bake polled only the runtime, so it
+    started a second bake that took the running bake's session."""
+    baking = SimpleNamespace(name="A", fluidsim=SimpleNamespace())
+    operators = _operators(monkeypatch, baking)
+    other = SimpleNamespace(
+        name="B", frame_start=1, frame_end=2,
+        fluidsim=SimpleNamespace(
+            cache_use_custom_range=False, cache_frame_start=1,
+            cache_frame_end=2, status=""))
+    context = SimpleNamespace(scene=other)
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    baked = []
+    monkeypatch.setattr(cache_bake, "bake",
+                        lambda *args, **_kwargs: baked.append(args) or "cache")
+    export_sequence = operators.FLUIDSIM_OT_export_cache_sequence
+
+    assert export_sequence.poll(context) is False
+    assert export_sequence().execute(context) == {"CANCELLED"}
+    assert baked == []
+    assert "Production Bake" in other.fluidsim.status

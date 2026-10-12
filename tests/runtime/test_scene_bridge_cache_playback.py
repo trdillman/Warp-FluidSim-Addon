@@ -1693,15 +1693,18 @@ def test_production_bake_registry_is_scene_owned_and_compare_cleared():
     second = SimpleNamespace(status=production_bake.BakeStatus.CANCELLING)
 
     production_bake.register_active_bake(first_scene, first)
-    production_bake.register_active_bake(second_scene, second)
     try:
         assert production_bake.active_bake(first_scene) is first
-        assert production_bake.active_bake(second_scene) is second
         assert production_bake.bake_is_active(first_scene)
+        # One bake per process: the Solver Session is a singleton.
+        with pytest.raises(RuntimeError, match="only one bake"):
+            production_bake.register_active_bake(second_scene, second)
+        assert production_bake.active_bake(second_scene) is None
         production_bake.clear_active_bake(first_scene, second)
         assert production_bake.active_bake(first_scene) is first
         production_bake.clear_active_bake(first_scene, first)
         assert production_bake.active_bake(first_scene) is None
+        production_bake.register_active_bake(second_scene, second)
         assert production_bake.active_bake(second_scene) is second
     finally:
         production_bake.clear_active_bake(first_scene)
