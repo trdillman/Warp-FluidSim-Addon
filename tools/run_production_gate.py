@@ -160,6 +160,8 @@ MANUAL_BLENDER_PROBES = {
         "headless, no GPU; prints RESOLUTION_DIVISIONS_OK (lane G, run by hand until the gate lists it)",
     "tests/acceptance/blender_artist_bake_deleted_scene_acceptance.py":
         "needs a real GUI modal bake; exits silently in --background",
+    "tests/acceptance/blender_load_during_bake_acceptance.py":
+        "needs a real GUI modal bake; self-driving: run without --background (B29)",
     "tests/acceptance/blender_artist_bake_gui_acceptance.py":
         "timer-driven GUI probe: call start(report_path) in a GUI session",
     "tests/acceptance/blender_artist_context_consent_acceptance.py":
