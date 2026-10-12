@@ -602,8 +602,8 @@ class CompiledSourceBatch:
     required_leaf_coords: np.ndarray
     diagnostics: tuple[SourceDiagnostic, ...]
     device_bytes: int
-    # (device leaf coords, count) uploaded once for topology marking; owned
-    # by SourcePipeline.mark_source_topology.
+    # (included source indices, device leaf coords, count) uploaded for
+    # topology marking; owned by SourcePipeline.mark_source_topology.
     topology_upload: object = field(default=None, repr=False)
 
     @property
@@ -1213,8 +1213,14 @@ class SourceCompiler:
         points = CompiledPoints(r.positions, r.velocities, r.temperature,
                                 r.viscosity, r.density, r.lifespan)
         if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
-            return CompiledRegion(r.kind, key, np.empty((0,3),np.int32),
-                                  np.empty((0,C.LEAF_VOLUME),np.float32), points=points)
+            region = CompiledRegion(r.kind, key, np.empty((0,3),np.int32),
+                                    np.empty((0,C.LEAF_VOLUME),np.float32), points=points)
+            # No coverage, but the leaves holding the points must be active on
+            # the frame they are appended: topology is rebuilt before
+            # emission, so otherwise they get no grid support until the next
+            # rebuild sees them.
+            region.topology_leaf_coords = self._point_leaves(r.positions, context)
+            return region
         leaves = self._candidate_leaves(r.bounds(), context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=1)
         if rejected is not None:
@@ -1223,6 +1229,22 @@ class SourceCompiler:
         radius = max(float(r.rasterize_radius), context.voxel_size * 0.5)
         coverage = self._rasterize_points(r.positions, leaves, context, radius)
         return CompiledRegion(r.kind, key, leaves, coverage, points=points)
+
+    @staticmethod
+    def _point_leaves(positions, context):
+        """Unique flat leaves containing in-domain points (domain voxel range)."""
+        if not len(positions):
+            return np.empty((0, 3), np.int32)
+        origin = np.asarray(context.origin, np.float64)
+        voxels = np.floor((np.asarray(positions, np.float64) - origin)
+                          / context.voxel_size).astype(np.int64)
+        domain_lo = np.floor((np.asarray(context.domain_min) - origin)
+                             / context.voxel_size).astype(np.int64)
+        domain_hi = np.ceil((np.asarray(context.domain_max) - origin)
+                            / context.voxel_size).astype(np.int64) - 1
+        inside = np.all((voxels >= domain_lo) & (voxels <= domain_hi), axis=1)
+        leaves = np.floor_divide(voxels[inside], C.LEAF_DIM)
+        return np.ascontiguousarray(np.unique(leaves, axis=0), dtype=np.int32)
 
     @staticmethod
     def _rasterize_points(positions, leaves, context, radius, max_rows=1_000_000):

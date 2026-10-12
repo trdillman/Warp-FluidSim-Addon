@@ -407,22 +407,29 @@ class SourcePipeline(CompiledSourceExecution):
         """
         from .source_regions import plan_requires_source_topology
 
+        # A DIRECT_APPEND packet needs its leaves only until it has fired;
+        # after that its particles mark their own leaves.
+        included = tuple(
+            index for index, compiled in enumerate(batch.sources)
+            if plan_requires_source_topology(compiled.plan)
+            and not (compiled.plan.lifecycle == SourceLifecycle.DIRECT_APPEND
+                     and str(compiled.plan.stable_id) in self._initial_fired)
+        )
         upload = batch.topology_upload
-        if upload is None:
+        if upload is None or upload[0] != included:
             coords = [
-                (compiled.region.topology_leaf_coords
-                 if compiled.region.topology_leaf_coords is not None
-                 else compiled.region.leaf_coords)
-                for compiled in batch.sources
-                if plan_requires_source_topology(compiled.plan)
+                (region.topology_leaf_coords
+                 if region.topology_leaf_coords is not None
+                 else region.leaf_coords)
+                for region in (batch.sources[index].region for index in included)
             ]
             coords = [value for value in coords if len(value)]
             host = (np.unique(np.concatenate(coords), axis=0).astype(np.int32)
                     if coords else np.empty((0, 3), np.int32))
             device = (wp.array(host, dtype=wp.vec3i, device=self.device)
                       if len(host) else None)
-            upload = batch.topology_upload = (device, int(len(host)))
-        device, count = upload
+            upload = batch.topology_upload = (included, device, int(len(host)))
+        _, device, count = upload
         if count:
             fast_launch(
                 k_mark_source_leaves,

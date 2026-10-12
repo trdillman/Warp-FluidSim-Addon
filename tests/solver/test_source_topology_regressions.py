@@ -66,3 +66,35 @@ def test_compiled_source_marks_exactly_its_leaves(cuda_device):
         assert _active_leaves(solver) == expected
     finally:
         solver.release()
+
+
+# B48: DIRECT_APPEND points need grid support on the frame they are appended,
+# and only until they have fired.
+
+def test_direct_append_points_have_topology_on_their_emission_frame(cuda_device):
+    solver = FluidSolver(_settings(cuda_device))
+    try:
+        points = np.array([(2.55, 2.55, 2.55), (2.65, 2.45, 2.75)], np.float32)
+        solver.set_source_batch(native_plans=(SourcePlan(
+            SourceKey("append"), SourceOperation.LIQUID, SourceLifecycle.DIRECT_APPEND,
+            SourceEvaluationCadence.STATIC, PointRegionPlan(points),
+            PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES)),))
+        solver._rebuild_topology(expand=0)
+        assert _active_leaves(solver) == {(3, 3, 3)}
+        footprint = solver.sourcing._compiled_batch.footprints[0]
+        assert footprint.leaf_coords == ((3, 3, 3),)
+
+        solver._clear_grid_fields()
+        solver._index_particles()
+        solver.sourcing.apply(1.0 / 24.0)
+        assert solver.sourcing.last_apply_result.emitted == 2
+        # Once fired, the source no longer pins its leaf: moved particles
+        # mark their own leaves.
+        count = solver.particles.host_count
+        positions = solver.particles.position.numpy()
+        positions[:count] = (0.35, 0.35, 0.35)
+        solver.particles.position.assign(positions)
+        solver._rebuild_topology(expand=0)
+        assert _active_leaves(solver) == {(0, 0, 0)}
+    finally:
+        solver.release()
