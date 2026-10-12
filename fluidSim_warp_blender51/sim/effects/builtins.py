@@ -36,7 +36,7 @@ def _object(key, label, description):
 
 
 def _kernel(kernel_id, label, source, *, domain=EffectDomain.PARTICLES,
-            stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+            stage=EffectStage.BEFORE_EMISSION,
             cadence=EffectCadence.EVERY_SUBSTEP, fields=(), params=(), description=""):
     return KernelDefinitionV2(
         kernel_id=kernel_id,
@@ -51,11 +51,19 @@ def _kernel(kernel_id, label, source, *, domain=EffectDomain.PARTICLES,
     )
 
 
+# 1.1.0: particle-velocity kernels run at BEFORE_EMISSION, before
+# particle-to-grid transfer, instead of AFTER_PARTICLE_TRANSFER where PIC/APIC
+# discarded the edit (review B68). The 1.0.0 content digests stay trusted
+# through trust.RETIRED_BUILTIN_DIGESTS so saved scenes keep running.
+_VELOCITY_STAGE_VERSION = "1.1.0"
+
+
 def _definition(effect_id, name, summary, description, category, *,
-                parameters, kernels, tags=(), cost="LOW"):
+                parameters, kernels, tags=(), cost="LOW",
+                version=_VELOCITY_STAGE_VERSION):
     return EffectDefinitionV2(
         effect_id=effect_id,
-        version="1.0.0",
+        version=version,
         name=name,
         summary=summary,
         description=description,
@@ -221,7 +229,7 @@ particle_velocity[particle_index] = particle_velocity[particle_index] * factor""
     temperature_lift = _definition(
         "fluidsim.temperature_lift", "Temperature Lift",
         "Convert particle temperature into buoyant lift and cool it after advection.",
-        "A two-kernel effect: the first applies lift after particle-to-grid transfer; the second cools "
+        "A two-kernel effect: the first applies lift before particle-to-grid transfer; the second cools "
         "temperature after particle update. It demonstrates one artist effect spanning two solver stages.",
         "Thermal",
         parameters=(
@@ -240,7 +248,7 @@ if direction_length > 1.0e-6:
     particle_velocity[particle_index] = particle_velocity[particle_index] + direction_n * (excess * buoyancy * solver_time_step)""",
                 fields=(temperature_r, velocity_rw),
                 params=("direction", "ambient", "buoyancy"),
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 description="Converts excess particle temperature into directional acceleration.",
             ),
             _kernel(
@@ -281,7 +289,10 @@ if speed > maximum_speed:
         "fluidsim.voxel_cooling", "Voxel Cooling",
         "Relax active-grid temperature toward ambient once per frame.",
         "Runs on active sparse voxels and therefore requests topology. It provides a clear example of a "
-        "grid-domain effect whose cadence is once per frame rather than every solver substep.",
+        "grid-domain effect whose cadence is once per frame rather than every solver substep. No solver "
+        "phase reads grid temperature (it is cleared every substep and is separate from particle "
+        "temperature), so this effect does not change the liquid's motion or output; use Temperature "
+        "Lift to act on particle temperature.",
         "Thermal",
         parameters=(
             _float("ambient", "Ambient", 0.0, -10000.0, 10000.0, "TEMPERATURE", "Target grid temperature."),
@@ -297,7 +308,8 @@ temperature[flat_voxel_index] = ambient + (temperature[flat_voxel_index] - ambie
             fields=(voxel_temperature_rw,), params=("ambient", "cooling"),
             description="Relaxes temperature on active non-collision voxels once per display frame.",
         ),),
-        tags=("temperature", "grid", "cooling"), cost="MEDIUM",
+        # Behaviour unchanged (documentation only), so the version stays.
+        tags=("temperature", "grid", "cooling"), cost="MEDIUM", version="1.0.0",
     )
 
     return (

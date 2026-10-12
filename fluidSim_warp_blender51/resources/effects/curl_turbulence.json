@@ -32,7 +32,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "sample = position * frequency + wp.vec3(seed, seed * 1.37, seed * 2.11)\nphase = time * drift\nnoise = wp.vec3(\n    wp.sin(sample[1] + phase) - wp.sin(sample[2] - phase),\n    wp.sin(sample[2] + phase * 1.17) - wp.sin(sample[0] - phase),\n    wp.sin(sample[0] + phase * 0.73) - wp.sin(sample[1] - phase * 1.31),\n)\nparticle_velocity[particle_index] = particle_velocity[particle_index] + noise * (strength * solver_time_step)",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -113,5 +113,5 @@
     "noise",
     "turbulence"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

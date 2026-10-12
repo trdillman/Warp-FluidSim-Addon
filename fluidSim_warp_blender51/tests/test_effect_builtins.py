@@ -90,6 +90,48 @@ def test_builtins_are_trusted_without_local_records(tmp_path):
         ) is TrustState.BUILT_IN_TRUSTED
 
 
+def _shipped_definitions():
+    from fluidsim_testpkg.resources.examples.custom_effects.example_effects import (
+        EXAMPLE_EFFECT_DEFINITIONS,
+    )
+    from fluidsim_testpkg.sim.effects.templates import TEMPLATES
+
+    yield from builtin_effect_definitions()
+    yield from (builder() for builder in TEMPLATES.values())
+    yield from EXAMPLE_EFFECT_DEFINITIONS
+
+
+def test_shipped_effects_write_only_where_the_solver_consumes_the_write():
+    # B68: built-ins, starter templates and example packages wrote particle
+    # velocity after particle-to-grid transfer, where PIC/APIC discard it.
+    for definition in _shipped_definitions():
+        result = validate_effect(EffectInstanceV2("shipped", definition))
+        assert result.issues == (), (definition.effect_id, result.issues)
+
+
+def _retired_builtins():
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent / "data" / "retired_builtin_effects_1_0_0.json"
+    return [EffectDefinitionV2.from_dict(item)
+            for item in json.loads(path.read_text(encoding="utf-8"))]
+
+
+def test_previously_shipped_builtins_stay_trusted_in_saved_scenes(tmp_path):
+    # A .blend embeds the built-in definition it was authored with; the B68
+    # stage fix changed their content digests, which must not turn every
+    # saved built-in effect into untrusted code.
+    store = TrustStore(tmp_path / "trust.json")
+    retired = _retired_builtins()
+    assert len(retired) == len(EXPECTED)
+    for definition in retired:
+        digest = content_trust_digest(definition)
+        assert store.status(digest, built_in=True) is TrustState.BUILT_IN_TRUSTED
+        # The built_in flag alone (spoofable in a .blend) never grants trust.
+        assert store.status(digest, built_in=False) is TrustState.UNTRUSTED_IMPORTED
+
+
 def test_library_search_and_categories():
     library = EffectLibrary(builtin_effect_definitions())
     assert library.get("fluidsim.vortex_force").name == "Vortex Force"

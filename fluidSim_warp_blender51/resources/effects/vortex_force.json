@@ -34,7 +34,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "offset = position - controller\naxis_length = wp.length(axis)\ndistance = wp.length(offset)\nif axis_length > 1.0e-6 and distance < radius:\n    axis_n = axis / axis_length\n    radial = offset - axis_n * wp.dot(offset, axis_n)\n    radial_length = wp.length(radial)\n    if radial_length > 1.0e-6:\n        influence = wp.clamp(1.0 - radial_length / radius, 0.0, 1.0)\n        tangent = wp.normalize(wp.cross(axis_n, radial))\n        updated = particle_velocity[particle_index]\n        updated = updated + tangent * (strength * influence * solver_time_step)\n        updated = updated - radial * (suction * influence * solver_time_step)\n        updated = updated + axis_n * (lift * influence * solver_time_step)\n        particle_velocity[particle_index] = updated",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -151,5 +151,5 @@
     "force",
     "swirl"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

@@ -29,7 +29,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "factor = wp.clamp(1.0 - damping * solver_time_step, 0.0, 1.0)\nparticle_velocity[particle_index] = particle_velocity[particle_index] * factor",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -62,5 +62,5 @@
     "stability",
     "utility"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

@@ -35,7 +35,7 @@ def _instance(source: str, *, domain=EffectDomain.PARTICLES, fields=(), safe_mod
                 kernel_id="kernel",
                 label="Kernel",
                 domain=domain,
-                stage=(EffectStage.AFTER_PARTICLE_TRANSFER
+                stage=(EffectStage.BEFORE_EMISSION
                        if domain is EffectDomain.PARTICLES
                        else EffectStage.BEFORE_PRESSURE),
                 cadence=EffectCadence.EVERY_SUBSTEP,

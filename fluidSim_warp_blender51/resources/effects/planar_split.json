@@ -32,7 +32,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "normal_length = wp.length(normal)\nif normal_length > 1.0e-6:\n    normal_n = normal / normal_length\n    signed_distance = wp.dot(position - controller, normal_n)\n    absolute_distance = wp.abs(signed_distance)\n    if absolute_distance < width:\n        side = 1.0\n        if signed_distance < 0.0:\n            side = -1.0\n        influence = wp.clamp(1.0 - absolute_distance / width, 0.0, 1.0)\n        particle_velocity[particle_index] = particle_velocity[particle_index] + normal_n * (side * strength * influence * solver_time_step)",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -117,5 +117,5 @@
     "plane",
     "separation"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

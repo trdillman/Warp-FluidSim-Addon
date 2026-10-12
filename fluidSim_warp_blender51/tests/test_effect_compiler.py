@@ -148,6 +148,21 @@ def test_candidate_build_is_fail_closed_and_enforces_trust(tmp_path):
 
 
 @REQUIRES_WARP
+def test_successful_candidate_keeps_advisory_warnings(tmp_path):
+    # B68: a valid effect whose write the solver overwrites must still reach
+    # the user, so success no longer drops validation warnings.
+    store = TrustStore(tmp_path / "trust.json")
+    late = _particle_instance(
+        "particle_velocity[particle_index] = velocity * strength", built_in=False)
+    store.trust(content_trust_digest(late.definition), "Compiler Test")
+    result = build_candidate_effects((late,), device="cpu", trust_store=store)
+    assert result.success is True
+    codes = [(issue.code, issue.severity, issue.instance_id) for issue in result.issues]
+    assert codes == [("PARTICLE_VELOCITY_WRITE_OVERWRITTEN", "WARNING", "particle-1")]
+    assert result.compiled_effects[0].issues == result.issues
+
+
+@REQUIRES_WARP
 def test_candidate_failure_does_not_return_partial_compiled_stack(tmp_path):
     store = TrustStore(tmp_path / "trust.json")
     valid = _particle_instance("particle_velocity[particle_index] = velocity")

@@ -164,7 +164,7 @@ def test_rename_installed_package_is_atomic_preserves_code_and_removes_old_path(
     )
 
     assert not old_path.exists()
-    assert installed.path == root / "studio.renamed-vortex-1.0.0.fseffect"
+    assert installed.path == root / f"studio.renamed-vortex-{original.version}.fseffect"
     restored = read_effect_package(installed.path)
     assert restored.effect_id == "studio.renamed-vortex"
     assert restored.name == "Renamed Vortex"

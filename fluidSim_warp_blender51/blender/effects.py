@@ -55,8 +55,10 @@ _STATUS_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for 
 _TRUST_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for item in TrustState)
 _DOMAIN_ITEMS = (("PARTICLES", "Particles", "Run over live liquid particles"), ("ACTIVE_VOXELS", "Active Voxels", "Run over active sparse-grid voxels"))
 _STAGE_ITEMS = (
-    ("BEFORE_EMISSION", "Before Emission", "Before sources emit this substep"),
-    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer", "After particle-to-grid transfer"),
+    ("BEFORE_EMISSION", "Before Emission",
+     "Start of the substep, before emission and particle-to-grid transfer; use for particle velocity forces"),
+    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer",
+     "After particle-to-grid transfer; edit grid fields here (the grid transfer replaces particle velocity edits)"),
     ("BEFORE_PRESSURE", "Before Pressure", "Immediately before pressure projection"),
     ("AFTER_PARTICLE_UPDATE", "After Particle Update", "After advection and lifecycle"),
 )
@@ -861,6 +863,8 @@ def _mirror_issues(stack, issues):
         diagnostic.line = issue.line
         diagnostic.column = issue.column
         diagnostic.hint = issue.hint
+        if issue.severity != "ERROR":
+            continue  # advisory: shown, but neither blocks nor marks the code line
         for kernel in pg.kernels:
             if kernel.kernel_id == issue.kernel_id:
                 kernel.error_line = issue.line
@@ -890,6 +894,8 @@ def test_draft(scene, *, device: str) -> CandidateBuildResult:
             pg.status = "TESTED"
         else:
             pg.status = "DISABLED"
+    # A successful candidate carries only advisory warnings; show them.
+    _mirror_issues(stack, candidate.issues)
     compile_seconds = 0.0
     sandbox_seconds = 0.0
     warp_version = ""

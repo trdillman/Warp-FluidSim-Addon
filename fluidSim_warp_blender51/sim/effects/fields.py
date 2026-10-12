@@ -91,6 +91,53 @@ FIELD_SPECS: dict[str, FieldSpec] = {
 }
 
 
+# Voxel fields the solver zeroes in _clear_grid_fields immediately after the
+# BEFORE_EMISSION stage of every substep; a write there never reaches a reader.
+GRID_CLEARED_FIELDS = frozenset({
+    "velocity_u", "velocity_v", "velocity_w", "weight_u", "weight_v", "weight_w",
+    "temperature", "viscosity", "density",
+})
+# Stages between particle-to-grid transfer and grid-to-particle transfer: G2P
+# replaces particle velocity with the grid value under PIC/APIC, and FLIP keeps
+# only flip_ratio of an edit made here, without pressure projection.
+_AFTER_P2G_BEFORE_G2P = frozenset({
+    EffectStage.AFTER_PARTICLE_TRANSFER, EffectStage.BEFORE_PRESSURE,
+})
+
+
+def _stage_consumption_issues(
+    binding: FieldBindingV2,
+    kernel: KernelDefinitionV2,
+) -> list[EffectIssue]:
+    """Writes the solver overwrites before any phase reads them (B68)."""
+    if binding.access is FieldAccess.READ:
+        return []
+    if (kernel.domain is EffectDomain.ACTIVE_VOXELS
+            and kernel.stage is EffectStage.BEFORE_EMISSION
+            and binding.field in GRID_CLEARED_FIELDS):
+        return [EffectIssue(
+            "FIELD_WRITE_DISCARDED",
+            f"Field {binding.field!r} is cleared right after BEFORE_EMISSION, "
+            "so a write at this stage never reaches the simulation.",
+            kernel_id=kernel.kernel_id,
+            hint="Write grid fields at AFTER_PARTICLE_TRANSFER or BEFORE_PRESSURE.",
+        )]
+    if (kernel.domain is EffectDomain.PARTICLES
+            and kernel.stage in _AFTER_P2G_BEFORE_G2P
+            and binding.field == "particle_velocity"):
+        return [EffectIssue(
+            "PARTICLE_VELOCITY_WRITE_OVERWRITTEN",
+            f"particle_velocity written at {kernel.stage.value} is replaced by the "
+            "grid velocity under PIC/APIC transfer, and FLIP keeps only part of "
+            "it without pressure projection.",
+            severity="WARNING",
+            kernel_id=kernel.kernel_id,
+            hint="Apply particle velocity changes at BEFORE_EMISSION (before "
+                 "particle-to-grid transfer) or AFTER_PARTICLE_UPDATE.",
+        )]
+    return []
+
+
 def validate_field_binding(
     binding: FieldBindingV2,
     kernel: KernelDefinitionV2,
@@ -141,6 +188,8 @@ def validate_field_binding(
             f"Structural field {binding.field!r} is read-only.",
             kernel_id=kernel.kernel_id,
         ))
+    if spec.domain is kernel.domain:
+        issues.extend(_stage_consumption_issues(binding, kernel))
     return tuple(issues)
 
 
