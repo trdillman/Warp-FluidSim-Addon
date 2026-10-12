@@ -239,6 +239,37 @@ def test_capture_scene_preset_snapshots_explicit_source():
     assert preset.settings["flip_ratio"] == 0.9
 
 
+@pytest.mark.parametrize("overrides", [
+    # 4 m domain at 1100 divisions: voxel 0.0036 and divisions above 1024.
+    {"resolution_divisions": 1100, "voxel_size": 4.0 / 1100},
+    # 0.3 m domain at 64 divisions: voxel 0.0047.
+    {"resolution_divisions": 64, "voxel_size": 0.3 / 64},
+    # The splat radius property stores up to 16.
+    {"surface_splat_radius": 12},
+])
+def test_save_preset_accepts_values_the_ui_can_store(tmp_path: Path, overrides):
+    """B56: Save Preset must not reject settings the properties can hold."""
+    valid = {key: _spec_valid_value(spec) for key, spec in library.SETTING_SPECS.items()}
+    valid.update(resolution_divisions=64, voxel_size=4.0 / 64, surface_splat_radius=2)
+    valid.update(overrides)
+    domain = SimpleNamespace(**valid)
+
+    preset = library.capture_scene_preset(
+        SimpleNamespace(fluidsim=domain),
+        identifier="fine_grid",
+        name="Fine Grid",
+        description="Captured from a UI-valid scene",
+        expected_scale="metres",
+        performance_cost="High",
+        source=domain,
+    )
+    library.save_user_preset(preset, tmp_path)
+
+    loaded = library.load_preset("USER:fine_grid", tmp_path)
+    for key, value in overrides.items():
+        assert loaded.settings[key] == pytest.approx(value)
+
+
 def test_apply_preset_rolls_back_on_assignment_failure():
     class Target:
         voxel_size = 0.05
