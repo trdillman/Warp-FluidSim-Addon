@@ -603,6 +603,9 @@ class SparseGrid:
             device=self.device,
         )
         self._candidate_pending = True
+        # Slots are re-ranked on every rebuild, so data addressed by the old
+        # leaf table (e.g. a cached SDF) is stale once this increments.
+        self.topology_generation = getattr(self, "topology_generation", 0) + 1
         if not sync:
             return self.active_leaf_count
         return self.refresh_topology_counts()

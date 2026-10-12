@@ -504,6 +504,9 @@ class SurfacePipeline:
         return (
             int(getattr(solver, "frame", 0)),
             round(float(getattr(solver, "sim_time", 0.0)), 12),
+            # A topology rebuild re-ranks leaf slots without moving time, so a
+            # frame-end SDF would otherwise be read through the new leaf table.
+            int(getattr(getattr(solver, "grid", None), "topology_generation", 0)),
             round(float(s.voxel_size), 12),
             round(float(s.particle_radius_scale), 6),
             int(s.surface_splat_radius),

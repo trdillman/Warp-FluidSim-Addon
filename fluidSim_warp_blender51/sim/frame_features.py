@@ -59,6 +59,11 @@ class FrameFeatures:
         if requirements.surface_sdf:
             solver.surface.ensure_solver_sdf_current()
         self.effects.run(effect_stage, solver, time_context)
+        if requirements.moves_particles:
+            # The solver SDF is keyed on frame/time, not on positions; an
+            # effect that moved particles would otherwise leave surface
+            # tension and whitewater reading the pre-effect interface.
+            solver.surface.invalidate_solver_sdf()
         if self.effects.runtime_errors:
             latest = self.effects.runtime_errors[-1]
             raise RuntimeError(

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .enums import EffectCadence, EffectDomain, EffectStage
+from .enums import EffectCadence, EffectDomain, EffectStage, FieldAccess
 from .fields import FIELD_SPECS, requirements_for_bindings
 from .fingerprint import effective_stack_instances, execution_stack_fingerprint
 from .source import parameter_runtime_inputs
@@ -21,6 +21,9 @@ class EffectRuntimeRequirements:
     surface_sdf: bool = False
     collision: bool = False
     rebuild_topology_each_substep: bool = False
+    # A binding writes particle_position: products derived from particle
+    # positions (the solver SDF) are stale after the stage runs.
+    moves_particles: bool = False
 
     def merged(self, other: EffectRuntimeRequirements) -> EffectRuntimeRequirements:
         return EffectRuntimeRequirements(
@@ -31,6 +34,7 @@ class EffectRuntimeRequirements:
             rebuild_topology_each_substep=(
                 self.rebuild_topology_each_substep or other.rebuild_topology_each_substep
             ),
+            moves_particles=self.moves_particles or other.moves_particles,
         )
 
 
@@ -129,12 +133,17 @@ def _requirements_for_entry(entry: EffectRuntimeEntry) -> EffectRuntimeRequireme
     topology = kernel.domain is EffectDomain.ACTIVE_VOXELS or "TOPOLOGY" in names
     surface_sdf = "SURFACE_SDF" in names
     collision = "COLLISION" in names
+    moves_particles = any(
+        str(getattr(binding, "field", "")) == "particle_position"
+        and getattr(binding, "access", FieldAccess.READ) != FieldAccess.READ
+        for binding in kernel.fields)
     return EffectRuntimeRequirements(
         particles=particles,
         topology=topology,
         surface_sdf=surface_sdf,
         collision=collision,
         rebuild_topology_each_substep=topology,
+        moves_particles=moves_particles,
     )
 
 

@@ -21,7 +21,7 @@ class _Effects:
 
     def requirements_for_stage(self, stage):
         self.events.append(("requirements", stage))
-        return SimpleNamespace(surface_sdf=self.surface_sdf)
+        return SimpleNamespace(surface_sdf=self.surface_sdf, moves_particles=False)
 
     def run(self, stage, solver, time_context):
         self.events.append(("effect", stage, solver, time_context))
