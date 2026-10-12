@@ -130,27 +130,37 @@ def k_viscosity_smooth(
     nu = viscosity_field[tid]
     # stability-clamped explicit blend factor
     t = wp.clamp(nu * dt / (voxel_size * voxel_size) * 6.0, 0.0, 1.0)
+    # Average each component only over neighbour faces that carry liquid
+    # (positive weight): empty faces hold zero velocity and would drag a
+    # uniformly moving surface toward rest.
     su = float(0.0)
     sv = float(0.0)
     sw = float(0.0)
-    n = float(0.0)
+    nu_ = float(0.0)
+    nv_ = float(0.0)
+    nw_ = float(0.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
             f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
-                su += u_in[f]
-                sv += v_in[f]
-                sw += w_in[f]
-                n += 1.0
-    if n > 0.0:
-        inv = 1.0 / n
-        u_out[tid] = u_in[tid] + t * (su * inv - u_in[tid]) * wp.where(wu[tid] > 0.0, 1.0, 0.0)
-        v_out[tid] = v_in[tid] + t * (sv * inv - v_in[tid]) * wp.where(wv[tid] > 0.0, 1.0, 0.0)
-        w_out[tid] = w_in[tid] + t * (sw * inv - w_in[tid]) * wp.where(ww[tid] > 0.0, 1.0, 0.0)
-    else:
-        u_out[tid] = u_in[tid]
-        v_out[tid] = v_in[tid]
-        w_out[tid] = w_in[tid]
+                if wu[f] > 0.0:
+                    su += u_in[f]
+                    nu_ += 1.0
+                if wv[f] > 0.0:
+                    sv += v_in[f]
+                    nv_ += 1.0
+                if ww[f] > 0.0:
+                    sw += w_in[f]
+                    nw_ += 1.0
+    u_out[tid] = u_in[tid]
+    v_out[tid] = v_in[tid]
+    w_out[tid] = w_in[tid]
+    if nu_ > 0.0 and wu[tid] > 0.0:
+        u_out[tid] = u_in[tid] + t * (su / nu_ - u_in[tid])
+    if nv_ > 0.0 and wv[tid] > 0.0:
+        v_out[tid] = v_in[tid] + t * (sv / nv_ - v_in[tid])
+    if nw_ > 0.0 and ww[tid] > 0.0:
+        w_out[tid] = w_in[tid] + t * (sw / nw_ - w_in[tid])
 
 
 # Implicit path: (I + c*D - c*L) x = u  with c = dt*nu/h^2 per voxel

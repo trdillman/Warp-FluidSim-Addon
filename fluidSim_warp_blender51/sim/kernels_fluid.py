@@ -1558,10 +1558,15 @@ def k_forces_diffusion(
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
+    # Average each component only over neighbour faces that carry liquid
+    # (positive weight): empty faces hold zero velocity and would drag a
+    # uniformly moving surface toward rest.
     su = float(0.0)
     sv = float(0.0)
     sw = float(0.0)
-    n = float(0.0)
+    nu_ = float(0.0)
+    nv_ = float(0.0)
+    nw_ = float(0.0)
     for a in range(3):
         for s in range(-1, 2, 2):
             o = wp.vec3i(ijk[0], ijk[1], ijk[2])
@@ -1573,19 +1578,24 @@ def k_forces_diffusion(
                 o = wp.vec3i(ijk[0], ijk[1], ijk[2] + s)
             flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, o)
             if flat >= 0:
-                su += u_in[flat]
-                sv += v_in[flat]
-                sw += w_in[flat]
-                n += 1.0
-    if n > 0.0:
-        inv = 1.0 / n
-        u_out[tid] = u_in[tid] + amount * (su * inv - u_in[tid]) * wp.where(wu[tid] > 0.0, 1.0, 0.0)
-        v_out[tid] = v_in[tid] + amount * (sv * inv - v_in[tid]) * wp.where(wv[tid] > 0.0, 1.0, 0.0)
-        w_out[tid] = w_in[tid] + amount * (sw * inv - w_in[tid]) * wp.where(ww[tid] > 0.0, 1.0, 0.0)
-    else:
-        u_out[tid] = u_in[tid]
-        v_out[tid] = v_in[tid]
-        w_out[tid] = w_in[tid]
+                if wu[flat] > 0.0:
+                    su += u_in[flat]
+                    nu_ += 1.0
+                if wv[flat] > 0.0:
+                    sv += v_in[flat]
+                    nv_ += 1.0
+                if ww[flat] > 0.0:
+                    sw += w_in[flat]
+                    nw_ += 1.0
+    u_out[tid] = u_in[tid]
+    v_out[tid] = v_in[tid]
+    w_out[tid] = w_in[tid]
+    if nu_ > 0.0 and wu[tid] > 0.0:
+        u_out[tid] = u_in[tid] + amount * (su / nu_ - u_in[tid])
+    if nv_ > 0.0 and wv[tid] > 0.0:
+        v_out[tid] = v_in[tid] + amount * (sv / nv_ - v_in[tid])
+    if nw_ > 0.0 and ww[tid] > 0.0:
+        w_out[tid] = w_in[tid] + amount * (sw / nw_ - w_in[tid])
 
 
 @wp.kernel
