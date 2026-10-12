@@ -3075,6 +3075,52 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     assert active_holder.active is created, "the new domain becomes the active object"
 
 
+def test_every_domain_designation_presents_a_wire_unrendered_boundary(monkeypatch):
+    """B72: Add > Fluid Domain and Use Active as Domain match Guided Setup."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    class _Mesh:
+        def from_pydata(self, *_args):
+            pass
+
+        def update(self):
+            pass
+
+    linked = []
+    fake_bpy.data = SimpleNamespace(
+        meshes=SimpleNamespace(new=lambda _name: _Mesh()),
+        objects=SimpleNamespace(
+            new=lambda name, data: SimpleNamespace(
+                name=name, data=data, display_type="TEXTURED",
+                hide_render=False, show_in_front=False,
+            )
+        ),
+    )
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(domain_object=None),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=linked.append)),
+    )
+    added = menus.create_domain_object(scene)
+    assert scene.fluidsim.domain_object is added and linked == [added]
+    assert (added.display_type, added.hide_render, added.show_in_front) == (
+        "WIRE", True, True)
+
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    artist_box = SimpleNamespace(
+        name="Tank", type="MESH", fluidsim=SimpleNamespace(role="NONE"),
+        display_type="SOLID", hide_render=False, show_in_front=False,
+    )
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None, status="")),
+        active_object=artist_box,
+        object=artist_box,
+    )
+    assert operators.FLUIDSIM_OT_use_active_as_domain().execute(context) == {"FINISHED"}
+    assert (artist_box.display_type, artist_box.hide_render, artist_box.show_in_front) == (
+        "WIRE", True, True)
+
+
 def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
     """Scene-Properties domain settings follow the designated domain object.
 

@@ -310,6 +310,18 @@ def _ensure_domain(helpers, owner_id: str):
     return domain, created
 
 
+def present_as_domain(obj) -> None:
+    """Show a domain as the simulation boundary: wireframe, in front, unrendered.
+
+    Every path that designates a domain (Guided Setup, Add > Fluid Domain, Use
+    Active as Domain) uses this, so a domain never renders as a solid box that
+    hides the liquid it contains.
+    """
+    obj.display_type = "WIRE"
+    obj.hide_render = True
+    obj.show_in_front = True
+
+
 def _fit_domain(scene, domain, bounds) -> None:
     """Size the domain box to ``bounds``, then designate it for the scene."""
     minimum, maximum = bounds
@@ -318,9 +330,7 @@ def _fit_domain(scene, domain, bounds) -> None:
     domain.location = center
     domain.rotation_euler = (0.0, 0.0, 0.0)
     domain.scale = dimensions
-    domain.display_type = "WIRE"
-    domain.hide_render = True
-    domain.show_in_front = True
+    present_as_domain(domain)
     scene.fluidsim.domain_object = domain
 
 

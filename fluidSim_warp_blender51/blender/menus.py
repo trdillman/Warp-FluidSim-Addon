@@ -52,6 +52,9 @@ def create_domain_object(scene):
     mesh.from_pydata(verts, [], faces)
     mesh.update()
     obj = bpy.data.objects.new("FluidSim Domain", mesh)
+    from .setup_wizard import present_as_domain
+
+    present_as_domain(obj)
     scene.collection.objects.link(obj)
     fs.domain_object = obj
     return obj
