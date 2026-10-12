@@ -4237,6 +4237,26 @@ def test_warp_code_workspace_gated_by_authoring_pref(monkeypatch):
     assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(on) is True
 
 
+def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch):
+    """B74: Blender does not copy dynamic enum strings; Python must retain them."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    definition = SimpleNamespace(
+        effect_id="vortex", name="Vortex", summary="Spin liquid",
+        cost_hint="low",
+    )
+    snapshot = SimpleNamespace(
+        library=SimpleNamespace(definitions=lambda: (definition,))
+    )
+    monkeypatch.setattr(effect_ui.effect_library, "library_snapshot", lambda: snapshot)
+
+    first = effect_ui._effect_items(None, None)
+    assert first == [("vortex", "Vortex", "Spin liquid  Cost: Low")]
+    assert effect_ui._EFFECT_ITEMS is first
+    second = effect_ui._effect_items(None, None)
+    assert effect_ui._EFFECT_ITEMS is second
+
+
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     """D9: an opted-in author can trust their own kernel edits for the session so
     the Review & Trust dialog does not re-prompt on every edit.  Session trust is

@@ -29,6 +29,10 @@ _STATUS_ICONS = {
 }
 
 _LAST_LIBRARY_FATAL = ""
+# Blender does not copy the strings a dynamic EnumProperty ``items`` callback
+# returns; Python must keep them alive until the next call, or the search popup
+# can show corrupted names/tooltips or crash.
+_EFFECT_ITEMS: list[tuple[str, str, str]] = []
 
 
 def _active_effect(scene):
@@ -51,14 +55,14 @@ def _definition_from_pg(item):
 
 
 def _effect_items(_self, _context):
-    global _LAST_LIBRARY_FATAL
+    global _LAST_LIBRARY_FATAL, _EFFECT_ITEMS
     try:
         definitions = effect_library.library_snapshot().library.definitions()
         _LAST_LIBRARY_FATAL = ""
     except Exception as exc:
         _LAST_LIBRARY_FATAL = f"{type(exc).__name__}: {exc}"
         definitions = effect_library.builtin_library().definitions()
-    return [
+    _EFFECT_ITEMS = [
         (
             definition.effect_id,
             definition.name,
@@ -66,6 +70,7 @@ def _effect_items(_self, _context):
         )
         for definition in definitions
     ]
+    return _EFFECT_ITEMS
 
 
 def _compile_device(context, explicit: str = "") -> str:
