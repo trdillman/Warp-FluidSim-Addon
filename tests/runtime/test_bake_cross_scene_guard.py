@@ -149,3 +149,18 @@ def test_without_a_bake_another_scene_still_takes_the_free_session(monkeypatch):
 
     assert playback.set_live_enabled(other, True) is True
     assert sess.calls == [("initialize", other)]
+
+
+def test_a_second_bake_in_another_scene_is_refused(monkeypatch):
+    """Finding (b): the registry was per scene, the session is per process."""
+    _scene_bridge, _playback, _render, production_bake = _load(monkeypatch)
+    baking, other = _Scene(101), _Scene(202)
+    first = _bake_in(production_bake, baking)
+
+    with pytest.raises(RuntimeError, match="already running"):
+        _bake_in(production_bake, other)
+    assert production_bake.active_bake(other) is None
+
+    first.status = production_bake.BakeStatus.COMPLETE  # a finished bake frees it
+    _bake_in(production_bake, other)
+    assert production_bake.bake_is_active(other)

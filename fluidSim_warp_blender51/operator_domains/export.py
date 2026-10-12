@@ -57,14 +57,20 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _runtime._runtime_poll(cls)
+        # This is a bake too, and the Solver Session is a process singleton.
+        return _runtime._mutation_poll(cls, context)
 
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
         bridge = _runtime._bridge()
+        from ..blender import production_bake
         from ..io import cache
 
+        if production_bake.any_bake_active():
+            fs.status = "A Production Bake is running; export the cache sequence after it finishes"
+            self.report({"ERROR"}, fs.status)
+            return {"CANCELLED"}
         try:
             start, end = cache.resolve_frame_range(
                 scene,

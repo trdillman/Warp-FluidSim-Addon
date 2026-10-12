@@ -298,6 +298,15 @@ def register_active_bake(scene, controller: BakeController) -> None:
             if owner is not controller and _active_cache_path(owner) == intended_path:
                 raise RuntimeError(
                     f"Production Bake cache path is already active: {intended_path}")
+    # One bake per process: the Solver Session it steps is a singleton, so a
+    # bake in another scene would take it over mid-bake.
+    for owner_scene, owner in active_bakes():
+        if owner is not controller:
+            name = getattr(owner_scene, "name", "")
+            where = f" in scene '{name}'" if name else ""
+            raise RuntimeError(
+                f"A Production Bake is already running{where}; "
+                "only one bake can run at a time")
     _ACTIVE_BAKES[key] = (scene, controller)
 
 
