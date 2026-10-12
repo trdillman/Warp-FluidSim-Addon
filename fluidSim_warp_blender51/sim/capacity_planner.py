@@ -102,7 +102,12 @@ def _value(settings: Any, name: str, default: Any) -> Any:
 
 
 def _settings_dict(settings: Any) -> dict[str, Any]:
+    # Every setting ``estimate_solver_bytes`` reads must be carried here, or a
+    # suggestion is costed with that setting's default instead of the scene's
+    # (APIC affine buffers and narrow-band arrays were dropped this way).
     defaults = {
+        "sample_type": 1,
+        "narrow_band_enabled": False,
         "domain_min": (-2.0, -2.0, 0.0),
         "domain_max": (2.0, 2.0, 4.0),
         "voxel_size": 0.1,

@@ -202,6 +202,34 @@ def test_planner_exposes_domain_margin_and_balanced_alternatives_without_applyin
     assert tightened.changes["domain_max"] == (16.0, 16.0, 16.0)
 
 
+def test_suggestion_estimates_cost_apic_and_narrow_band_like_the_applied_settings():
+    # B51: the suggestion must cost the settings the solver will actually
+    # allocate after the option is applied, including the APIC affine buffers
+    # and the narrow-band arrays; otherwise the approved option is refused.
+    for extra in ({"sample_type": 2}, {"narrow_band_enabled": True},
+                  {"sample_type": 2, "narrow_band_enabled": True}):
+        authored = settings(
+            domain_min=(-2.0, -2.0, 0.0), domain_max=(2.0, 2.0, 4.0),
+            voxel_size=0.02, max_particles=1_000_000, leaf_capacity=8192,
+            **extra)
+        plan = plan_initialization(
+            authored,
+            (Footprint("src", 20_000_000, DemandQuality.EXACT, ((0, 0, 0),)),),
+            (), (), resources())
+
+        suggestions = suggest_configurations(plan, authored)
+
+        assert suggestions, extra
+        for item in suggestions:
+            applied = dict(authored, **item.changes)
+            after_apply = (
+                int(estimate_solver_bytes(applied)) + plan.staging_bytes
+                + applied["leaf_capacity"] * 512 * 4
+                + plan.additional_transaction_bytes)
+            assert item.estimated_bytes == after_apply, (extra, item.key)
+            assert after_apply <= item.budget_bytes, (extra, item.key)
+
+
 def test_scene_signature_is_stable_for_equivalent_inputs_and_changes_with_demand():
     first = plan_initialization(
         settings(), (Footprint("source", 4, DemandQuality.EXACT),),
