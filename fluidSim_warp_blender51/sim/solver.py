@@ -30,6 +30,11 @@ from .enums import (
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
     SourceEvaluationCadence,
+    SourceEmissionMode,
+    SourceLifecycle,
+    SourceOperation,
+    SourceShapeSourceMode,
+    SourceShapeType,
 )
 from .fields import (
     SparseGrid,
@@ -1946,12 +1951,67 @@ class FluidSolver:
             vmax = max(vmax, tip_speed)
         return vmax
 
+    def _armed_source_max_speed(self):
+        """Fastest velocity an armed liquid source will emit with this frame.
+
+        Host-side only. Mirrors the arming rules of sourcing: an initial-fill
+        legacy source or a ONCE/DIRECT_APPEND plan is armed until it fires.
+        """
+        sourcing = getattr(self, "sourcing", None)
+        if sourcing is None:
+            return 0.0
+        fired = getattr(sourcing, "_initial_fired", ())
+
+        def speed(vector):
+            return math.sqrt(sum(float(v) * float(v) for v in vector))
+
+        vmax = 0.0
+        height = getattr(sourcing, "height_source", None)
+        legacy = list(getattr(sourcing, "sources", ()))
+        for desc in legacy + ([height] if height is not None else []):
+            if desc is height:
+                emits = bool(getattr(desc, "enabled", False)
+                             and getattr(desc, "emit_particles", False))
+            else:
+                emits = bool(
+                    getattr(desc, "enabled", False)
+                    and int(getattr(desc, "stype", SourceShapeType.SOURCE))
+                    == SourceShapeType.SOURCE
+                    and int(getattr(desc, "mode", SourceShapeSourceMode.PARTICLES))
+                    == SourceShapeSourceMode.PARTICLES)
+            if not emits or float(getattr(desc, "emit_rate", 0.0)) < 1.0:
+                continue
+            if (int(getattr(desc, "emission_mode",
+                            SourceEmissionMode.CONTINUOUS_INFLOW))
+                    == SourceEmissionMode.INITIAL_FILL
+                    and getattr(desc, "source_id", "") in fired):
+                continue
+            vmax = max(vmax, speed(getattr(desc, "velocity", (0.0, 0.0, 0.0))))
+        for plan in getattr(sourcing, "plans", ()):
+            if (plan.operation != SourceOperation.LIQUID
+                    or not plan.activation.enabled):
+                continue
+            if (plan.lifecycle in (SourceLifecycle.ONCE,
+                                   SourceLifecycle.DIRECT_APPEND)
+                    and str(plan.stable_id) in fired):
+                continue
+            vmax = max(vmax, speed(plan.payload.velocity))
+            velocities = getattr(plan.region, "velocities", None)
+            if velocities is not None and len(velocities):
+                vmax = max(vmax, float(np.sqrt(
+                    (np.asarray(velocities, dtype=np.float64) ** 2)
+                    .sum(axis=1).max())))
+        return vmax
+
     def _compute_substeps(self, frame_dt):
         """Measure live speed and delegate pure schedule selection."""
         policy = SubstepPolicy.from_settings(self.settings)
         has_particles = self.particles.host_count > 0
         fluid_max_speed = 0.0
         collider_max_speed = 0.0
+        # Scheduling runs before emission: count what armed sources will add.
+        source_max_speed = (
+            self._armed_source_max_speed() if policy.adaptive else 0.0)
         # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
         # device reduction/readback entirely. Pure capillary demand is still
         # calculated by select_substeps so clamp diagnostics remain truthful.
@@ -1970,6 +2030,7 @@ class FluidSolver:
             has_particles=has_particles,
             fluid_max_speed=fluid_max_speed,
             collider_max_speed=collider_max_speed,
+            source_max_speed=source_max_speed,
         )
         self._last_substep_diagnostics = schedule.diagnostics()
         return schedule.substeps, schedule.cfl_clamped
