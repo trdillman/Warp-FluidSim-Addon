@@ -633,16 +633,31 @@ class SourceCompiler:
         compiled, diagnostics = [], []
         if context.voxel_size <= 0.0:
             raise ValueError("voxel size must be positive")
+        occurrences: dict[SourceKey, int] = {}
+        in_use: set[str] = set()
         for plan in plans:
             if not plan.activation.active(context.frame):
                 continue
+            # A duplicated object (Shift+D copies its stored identity) can
+            # submit two plans with one stable id. Give each occurrence its
+            # own cache slot: sharing one let the second compile release the
+            # first region's uploads while it was still in this batch.
+            occurrence = occurrences.get(plan.stable_id, 0)
+            occurrences[plan.stable_id] = occurrence + 1
+            slot = plan.stable_id
+            if occurrence:
+                slot = SourceKey(f"{plan.stable_id}#duplicate{occurrence}")
+                diagnostics.append(self._diagnostic(
+                    plan, "WARNING", "DUPLICATE_SOURCE_ID",
+                    "Another source shares this source identity; duplicated objects should be given their own identity"))
             key = self._cache_key(plan, context)
             region = self._cache.get(key)
             if region is not None:
                 self.cache_hits += 1
             else:
-                previous = self._source_keys.get(plan.stable_id)
-                if previous is not None and previous != key:
+                previous = self._source_keys.get(slot)
+                if (previous is not None and previous != key
+                        and previous not in in_use):
                     stale = self._cache.pop(previous, None)
                     if stale is not None:
                         stale.release()
@@ -650,7 +665,8 @@ class SourceCompiler:
                 self.compile_count += 1
                 if not any(d.severity == "ERROR" for d in region.diagnostics):
                     self._cache[key] = region
-                    self._source_keys[plan.stable_id] = key
+                    self._source_keys[slot] = key
+            in_use.add(key)
             diagnostics.extend(region.diagnostics)
             compiled.append(CompiledSource(plan, region))
         coords = [source.region.leaf_coords for source in compiled

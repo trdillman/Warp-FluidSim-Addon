@@ -245,3 +245,35 @@ def test_interior_point_attribute_edits_miss_the_compiler_cache():
         (_point_plan(edited_velocities, edited_temperature),), _small_context())
     assert third.sources[0].region.points.temperature[count // 2] == 300.0
     assert compiler.compile_count == 3
+
+
+# B49: two plans sharing one stable id (a Shift+D duplicate) must not
+# evict each other's compiled region.
+
+def _pressure_box(x, stable_id="object:shared"):
+    from fluidSim_warp_blender51.sim.source_regions import AnalyticRegionPlan
+
+    return SourcePlan(
+        SourceKey(stable_id), SourceOperation.PRESSURE, SourceLifecycle.EVERY_FRAME,
+        SourceEvaluationCadence.FIRST_SIM_FRAME,
+        AnalyticRegionPlan(shape=SourceShapeShape.BOX, position=(x, 0.5, 0.5),
+                           half_extents=(0.2, 0.2, 0.2)),
+        PayloadPlan(kind=SourcePayloadKind.PRESSURE, pressure=1.0))
+
+
+def test_duplicate_stable_ids_keep_both_compiled_regions():
+    context = CompileContext(1, 0, 1, "cpu", (0.0, 0.0, 0.0), 0.05,
+                             (0.0, 0.0, 0.0), (2.0, 1.0, 1.0), upload=True)
+    compiler = SourceCompiler()
+    try:
+        for _frame in range(3):
+            batch = compiler.compile((_pressure_box(0.4), _pressure_box(1.4)), context)
+            first, second = (source.region for source in batch.sources)
+            assert first.device_coverage is not None
+            assert second.device_coverage is not None
+            assert first.covered_voxel_count and second.covered_voxel_count
+            assert not np.array_equal(first.leaf_coords, second.leaf_coords)
+        assert compiler.compile_count == 2
+        assert any(item.code == "DUPLICATE_SOURCE_ID" for item in batch.diagnostics)
+    finally:
+        compiler.release()
