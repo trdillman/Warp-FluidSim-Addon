@@ -321,6 +321,7 @@ _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
 _RESET_OBJECT_FIELDS = frozenset({
     "role", "point_source_representation", "mesh_evaluation_mode",
     "emission_mode", "auto_inject_seed",
+    "emit_rate", "source_sampling_mode", "source_sampling_multiplier",
 })
 
 def _signature_owners(scene):

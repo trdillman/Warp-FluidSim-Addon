@@ -45,25 +45,45 @@ class PreparedParticleSeed:
         object.__setattr__(self, "positions", positions)
 
 
-def migrate_source_sampling_schema(scene=None):
+def migrate_source_sampling_schema(scene=None, *, objects=None, scenes=None):
     """Persist old source occupancy as LEGACY_ABSOLUTE without guessing intent."""
-    objects = (getattr(scene, "objects", ()) if scene is not None
-               else getattr(getattr(bpy, "data", None), "objects", ()))
-    migrated = 0
+    from contextlib import ExitStack
+
+    data = getattr(bpy, "data", None)
+    if objects is None:
+        objects = (getattr(scene, "objects", ()) if scene is not None
+                   else getattr(data, "objects", ()))
+    if scenes is None:
+        scenes = ((scene,) if scene is not None
+                  else tuple(getattr(data, "scenes", ()) or ()))
+    pending = []
     for obj in objects:
         pg = getattr(obj, "fluidsim", None)
         if pg is None or getattr(pg, "role", "NONE") != "SOURCE":
             continue
-        if int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4:
+        schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
+        if schema >= 4 or getattr(obj, "library", None) is not None:
             continue
-        pg.source_sampling_mode = "LEGACY_ABSOLUTE"
-        pg.source_sampling_multiplier = 1.0
-        pg.source_ui_schema_version = 4
-        migrated += 1
-    return migrated
+        pending.append((pg, schema))
+    with ExitStack() as stack:
+        if pending and scenes:
+            # Restoring saved behaviour is not an edit: no pending reset.
+            from . import pending_settings
+
+            for owner in scenes:
+                stack.enter_context(pending_settings.suppress_callbacks(owner))
+        for pg, schema in pending:
+            if schema < 3:
+                # Lifted past schema 3 here, so pin the region kinds the
+                # legacy geometry mode implied before they start being read.
+                pg.source_region_kind, pg.sink_region_kind = legacy_region_kinds(pg)
+            pg.source_sampling_mode = "LEGACY_ABSOLUTE"
+            pg.source_sampling_multiplier = 1.0
+            pg.source_ui_schema_version = 4
+    return len(pending)
 
 
-def migrate_native_source_evaluation(scene=None):
+def migrate_native_source_evaluation(scene=None, *, objects=None, scenes=None):
     """Keep pre-B47 point/volume/field sources animating, once per object.
 
     Before schema 5, point, volume and field inputs were re-gathered every
@@ -75,16 +95,18 @@ def migrate_native_source_evaluation(scene=None):
     schema, so a later deliberate choice of First Sim Frame survives reloads;
     below schema 3 the region kinds were ignored, so they are pinned to the
     kinds the legacy geometry mode implied rather than revived by the stamp
-    (liquid sources already reach schema 4 in the sampling step). Run after
+    (the sampling step already pinned liquid sources it lifted). Run after
     :func:`migrate_source_sampling_schema`. Returns the number switched.
     """
     from contextlib import ExitStack
 
     data = getattr(bpy, "data", None)
-    objects = (getattr(scene, "objects", ()) if scene is not None
-               else getattr(data, "objects", ()))
-    scenes = ((scene,) if scene is not None
-              else tuple(getattr(data, "scenes", ()) or ()))
+    if objects is None:
+        objects = (getattr(scene, "objects", ()) if scene is not None
+                   else getattr(data, "objects", ()))
+    if scenes is None:
+        scenes = ((scene,) if scene is not None
+                  else tuple(getattr(data, "scenes", ()) or ()))
     pending = []
     for obj in objects:
         pg = getattr(obj, "fluidsim", None)
@@ -113,10 +135,15 @@ def migrate_native_source_evaluation(scene=None):
     return switched
 
 
-def migrate_source_schema(scene=None):
-    """Bring saved sources to the current schema; see the two steps."""
-    migrate_source_sampling_schema(scene)
-    return migrate_native_source_evaluation(scene)
+def migrate_source_schema(scene=None, *, objects=None, scenes=None):
+    """Bring saved sources to the current schema; see the two steps.
+
+    ``objects`` limits the migration to those objects (an append), with
+    ``scenes`` the scenes whose pending callbacks are suppressed meanwhile;
+    by default it covers ``scene`` or, without one, every object in the file.
+    """
+    migrate_source_sampling_schema(scene, objects=objects, scenes=scenes)
+    return migrate_native_source_evaluation(scene, objects=objects, scenes=scenes)
 
 
 @persistent

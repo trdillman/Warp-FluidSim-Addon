@@ -273,8 +273,11 @@ def _on_blend_import_post(context):
             if data not in scenes:
                 scenes.append(data)
     if objects or imported_scenes:
+        from . import sources
+
         migrate_domain_resolution(objects=objects, scenes=scenes)
         migrate_removed_particle_color_mode(scenes=imported_scenes)
+        sources.migrate_source_schema(objects=objects, scenes=scenes)
 
 
 @persistent
@@ -328,7 +331,9 @@ def register_handlers():
         if callbacks is not None:
             callbacks.append(callback)
     try:
-        migrate_domain_resolution()  # the file that is already open
+        # The file that is already open; sources migrate it on their own.
+        migrate_domain_resolution()
+        migrate_removed_particle_color_mode()
     except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
         pass
 
