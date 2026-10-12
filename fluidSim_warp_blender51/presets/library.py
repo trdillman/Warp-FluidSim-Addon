@@ -71,10 +71,59 @@ def _files(directory: Path) -> tuple[Path, ...]:
     return tuple(sorted(path for path in directory.glob("*.json") if path.is_file()))
 
 
+# Parsed folders keyed by their files' stat identity. The preset dropdown's
+# items callback discovers presets on every redraw; re-reading and validating
+# every JSON file there cost milliseconds per draw. A folder is re-read only
+# when a file is added, removed, replaced or rewritten, or after an explicit
+# ``invalidate_preset_cache`` (Save Preset, legacy migration).
+_FOLDER_CACHE: dict[tuple[str, str], tuple[tuple, object]] = {}
+
+
+def invalidate_preset_cache() -> None:
+    """Forget every parsed preset folder; the next discovery re-reads them."""
+    _FOLDER_CACHE.clear()
+
+
+def _folder_key(directory: Path) -> tuple:
+    # ``scandir`` returns each entry's size and times with the listing on
+    # Windows, so keying a folder costs one directory read, not a stat per file.
+    key = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    stat = entry.stat()
+                except OSError:
+                    continue
+                key.append((entry.name, stat.st_size, stat.st_mtime_ns))
+    except OSError:  # missing or unreadable folder: nothing to offer
+        return ()
+    return tuple(sorted(key))
+
+
+def _cached_folder(kind: str, directory: Path, scan):
+    cache_key = (kind, str(directory))
+    folder_key = _folder_key(directory)
+    entry = _FOLDER_CACHE.get(cache_key)
+    if entry is not None and entry[0] == folder_key:
+        return entry[1]
+    result = scan(directory)
+    _FOLDER_CACHE[cache_key] = (folder_key, result)
+    return result
+
+
 def built_in_presets() -> tuple[PresetRecord, ...]:
+    return _cached_folder("BUILTIN", _RESOURCE_DIR, _scan_built_in_presets)
+
+
+def _scan_built_in_presets(directory: Path) -> tuple[PresetRecord, ...]:
     records = []
     seen: set[str] = set()
-    for path in _files(_RESOURCE_DIR):
+    for path in _files(directory):
         preset = _read(path)
         if preset.id in seen:
             raise ValueError(f"duplicate built-in preset id {preset.id!r}")
@@ -99,10 +148,18 @@ def _user_preset_scan(directory: Path | None):
     with its reason; it never hides the folder's healthy presets.
     """
     directory = Path(directory) if directory is not None else user_preset_dir()
+    # The scan also depends on the built-in ids (collisions), so a built-in
+    # change re-reads the user folder through a new cache key.
+    builtin_ids = frozenset(record.preset.id for record in built_in_presets())
+    return _cached_folder(
+        "USER:" + ",".join(sorted(builtin_ids)), directory,
+        lambda folder: _scan_user_folder(folder, builtin_ids))
+
+
+def _scan_user_folder(directory: Path, builtin_ids):
     records = []
     skipped: dict[Path, str] = {}
     seen: set[str] = set()
-    builtin_ids = {record.preset.id for record in built_in_presets()}
     for path in _files(directory):
         try:
             preset = _read(path)
@@ -213,7 +270,10 @@ def save_user_preset(
         raise FileExistsError(f"user preset already exists: {preset.id}")
     payload = preset.to_dict()
     payload["source_version"] = payload.get("source_version") or VERSION_STRING
-    _write_atomic(path, payload)
+    try:
+        _write_atomic(path, payload)
+    finally:
+        invalidate_preset_cache()
     return path
 
 
@@ -343,4 +403,6 @@ def migrate_legacy_presets(
             _write_atomic(target, preset.to_dict())
             migrated.append(target)
     _write_atomic(marker, {"schema_version": 1, "migrated": [str(p) for p in migrated]})
+    if migrated:
+        invalidate_preset_cache()
     return tuple(migrated)

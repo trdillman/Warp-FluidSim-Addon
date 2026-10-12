@@ -85,6 +85,50 @@ def test_one_invalid_user_preset_does_not_hide_the_healthy_ones(tmp_path: Path):
         library.load_preset("USER:broken", tmp_path)
 
 
+def test_cached_discovery_matches_a_fresh_scan_through_every_folder_change(
+        tmp_path: Path, monkeypatch):
+    """P16: discovery is cached, but never stale against the files on disk."""
+    reads = []
+    real_read = library._read
+    monkeypatch.setattr(library, "_read", lambda path: reads.append(path.name) or real_read(path))
+
+    def fresh():
+        library.invalidate_preset_cache()
+        records = library.discover_presets(tmp_path)
+        return records, library.preset_diagnostics()
+
+    def cached():
+        return library.discover_presets(tmp_path), library.preset_diagnostics()
+
+    library.invalidate_preset_cache()
+    first = cached()
+    reads.clear()
+    assert cached() == first
+    assert reads == []  # an unchanged folder is not re-read
+
+    def check():
+        got = cached()
+        assert got == fresh()
+        return got
+
+    path = library.save_user_preset(_user_preset(), tmp_path)  # add
+    assert [r.preset.id for r in check()[0] if r.source == "USER"] == ["my_water"]
+    edited = _user_preset().to_dict()
+    edited["settings"]["flip_ratio"] = 0.5
+    before = path.stat().st_mtime_ns
+    path.write_text(__import__("json").dumps(edited), encoding="utf-8")  # rewrite
+    # A same-size hand edit lands seconds later; make that explicit rather
+    # than rely on the file-time tick between two writes in this test.
+    __import__("os").utime(path, ns=(before + 2_000_000_000,) * 2)
+    users = [r for r in check()[0] if r.source == "USER"]
+    assert users[0].preset.settings["flip_ratio"] == 0.5
+    (tmp_path / "broken.json").write_text("{", encoding="utf-8")  # bad file
+    assert len(check()[1]) == 1
+    (tmp_path / "broken.json").unlink()  # delete
+    path.unlink()
+    assert check() == first
+
+
 @pytest.mark.parametrize("error", [ImportError("no bpy"), RuntimeError("no profile")])
 def test_discovery_tolerates_only_unavailable_user_profile(monkeypatch, error):
     monkeypatch.setattr(library, "user_presets", lambda _directory=None: (_ for _ in ()).throw(error))
