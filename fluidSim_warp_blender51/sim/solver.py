@@ -832,7 +832,9 @@ class FluidSolver:
         if self.narrow_band is not None:
             self.narrow_band.reset()
         self.churn.zero()
-        self.ww_density.zero()
+        ww_density = getattr(self, "ww_density", None)
+        if ww_density is not None:
+            ww_density.zero()
         self.frame = 0
         self.sim_time = 0.0
         settings = getattr(self, "settings", None)
