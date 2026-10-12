@@ -8,7 +8,12 @@ import bpy
 import numpy as np
 
 from ..sim.attributes import stable_source_id
-from .scene_inputs import persistent_source_key
+from .scene_inputs import (
+    CURRENT_SOURCE_UI_SCHEMA,
+    legacy_region_kinds,
+    persistent_source_key,
+    uses_native_source_plan,
+)
 
 # Recorded in every cache-v3 manifest. Bump it when what a source or collider
 # contributes to a frame's identity changes, so older caches stop resuming.
@@ -58,9 +63,65 @@ def migrate_source_sampling_schema(scene=None):
     return migrated
 
 
+def migrate_native_source_evaluation(scene=None):
+    """Keep pre-B47 point/volume/field sources animating, once per object.
+
+    Before schema 5, point, volume and field inputs were re-gathered every
+    frame even when ``mesh_evaluation_mode`` said First Sim Frame (the
+    default), so they followed animation. First Sim Frame now really freezes
+    them; a saved source that stored First Sim Frame is switched to Every Sim
+    Frame, which is what it did. Mesh sources always froze and keep their mode.
+    Every source, sink and field object is then stamped with the current
+    schema, so a later deliberate choice of First Sim Frame survives reloads;
+    below schema 3 the region kinds were ignored, so they are pinned to the
+    kinds the legacy geometry mode implied rather than revived by the stamp
+    (liquid sources already reach schema 4 in the sampling step). Run after
+    :func:`migrate_source_sampling_schema`. Returns the number switched.
+    """
+    from contextlib import ExitStack
+
+    data = getattr(bpy, "data", None)
+    objects = (getattr(scene, "objects", ()) if scene is not None
+               else getattr(data, "objects", ()))
+    scenes = ((scene,) if scene is not None
+              else tuple(getattr(data, "scenes", ()) or ()))
+    pending = []
+    for obj in objects:
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or getattr(pg, "role", "NONE") not in {"SOURCE", "SINK", "FIELD"}:
+            continue
+        schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
+        if schema >= CURRENT_SOURCE_UI_SCHEMA or getattr(obj, "library", None) is not None:
+            continue
+        pending.append((pg, schema, uses_native_source_plan(pg)))
+    switched = 0
+    with ExitStack() as stack:
+        if pending and scenes:
+            # Restoring saved behaviour is not an edit: no pending reset.
+            from . import pending_settings
+
+            for owner in scenes:
+                stack.enter_context(pending_settings.suppress_callbacks(owner))
+        for pg, schema, native in pending:
+            if (native and getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
+                    != "EVERY_SIM_FRAME"):
+                pg.mesh_evaluation_mode = "EVERY_SIM_FRAME"
+                switched += 1
+            if schema < 3:
+                pg.source_region_kind, pg.sink_region_kind = legacy_region_kinds(pg)
+            pg.source_ui_schema_version = CURRENT_SOURCE_UI_SCHEMA
+    return switched
+
+
+def migrate_source_schema(scene=None):
+    """Bring saved sources to the current schema; see the two steps."""
+    migrate_source_sampling_schema(scene)
+    return migrate_native_source_evaluation(scene)
+
+
 @persistent
 def _on_load_post(_filepath):
-    migrate_source_sampling_schema()
+    migrate_source_schema()
 
 
 def register_handlers():
@@ -69,7 +130,7 @@ def register_handlers():
     load_post = getattr(handlers, "load_post", None)
     if load_post is not None:
         load_post.append(_on_load_post)
-    migrate_source_sampling_schema(getattr(bpy.context, "scene", None))
+    migrate_source_schema(getattr(bpy.context, "scene", None))
 
 
 def unregister_handlers():
@@ -86,7 +147,7 @@ def tag_source(obj, shape="BOX", mode="PARTICLES"):
     obj.fluidsim.role = "SOURCE"
     obj.fluidsim.shape = shape
     obj.fluidsim.source_mode = mode
-    obj.fluidsim.source_ui_schema_version = 4
+    obj.fluidsim.source_ui_schema_version = CURRENT_SOURCE_UI_SCHEMA
     obj.fluidsim.source_sampling_mode = "INHERIT"
     obj.fluidsim.source_sampling_multiplier = 1.0
     obj.fluidsim.source_region_kind = "ANALYTIC"
@@ -99,7 +160,7 @@ def tag_source(obj, shape="BOX", mode="PARTICLES"):
 def tag_sink(obj, shape="BOX"):
     obj.fluidsim.role = "SINK"
     obj.fluidsim.shape = shape
-    obj.fluidsim.source_ui_schema_version = 4
+    obj.fluidsim.source_ui_schema_version = CURRENT_SOURCE_UI_SCHEMA
     obj.fluidsim.sink_region_kind = "ANALYTIC"
     obj.display_type = "WIRE"
     obj.hide_render = True
@@ -111,7 +172,7 @@ def tag_field(obj, shape="BOX"):
     obj.fluidsim.role = "FIELD"
     obj.fluidsim.shape = shape
     obj.fluidsim.source_mode = "FIELD"
-    obj.fluidsim.source_ui_schema_version = 4
+    obj.fluidsim.source_ui_schema_version = CURRENT_SOURCE_UI_SCHEMA
     obj.fluidsim.field_operation = "PRESSURE"
     obj.fluidsim.field_region_kind = "ANALYTIC"
     obj.display_type = "WIRE"

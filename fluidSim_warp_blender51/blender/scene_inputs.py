@@ -323,6 +323,27 @@ def _guide_control_points(obj, matrix, direction):
     return tuple(points)
 
 
+# The source UI schema new source/sink/field objects are stamped with
+# (``source_ui_schema_version``): from 3 the runtime reads the Emission/Removal
+# Region kinds, from 4 the Source Fill Target sampling controls, and from 5
+# First Sim Frame freezes point/volume/field inputs (B47). Files below 5 are
+# migrated once on load by ``sources.migrate_source_schema``.
+CURRENT_SOURCE_UI_SCHEMA = 5
+
+
+def legacy_region_kinds(pg) -> tuple[str, str]:
+    """``(source, sink)`` region kinds a pre-schema-3 object is simulated with.
+
+    Before schema 3 the region kinds were not read; the legacy geometry mode
+    (and sink region mode) decided the mesh region instead.
+    """
+    mesh = getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
+    source = "MESH_SHELL" if mesh else "ANALYTIC"
+    sink = ("MESH_SOLID" if mesh and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
+            else "MESH_SHELL" if mesh else "ANALYTIC")
+    return source, sink
+
+
 def uses_native_source_plan(pg) -> bool:
     """True when ``pg`` is a point, volume or field input.
 
@@ -615,16 +636,11 @@ class SceneInputs:
             legacy_field = (role == "SOURCE"
                             and getattr(pg, "source_mode", "PARTICLES") == "FIELD")
             schema_version = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-            source_region = (getattr(pg, "source_region_kind", "ANALYTIC")
-                             if schema_version >= 3 else
-                             ("MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                              else "ANALYTIC"))
-            sink_region = (getattr(pg, "sink_region_kind", "ANALYTIC")
-                           if schema_version >= 3 else
-                           ("MESH_SOLID" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
-                            else "MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            else "ANALYTIC"))
+            if schema_version >= 3:
+                source_region = getattr(pg, "source_region_kind", "ANALYTIC")
+                sink_region = getattr(pg, "sink_region_kind", "ANALYTIC")
+            else:
+                source_region, sink_region = legacy_region_kinds(pg)
             direct_plan_role = (legacy_field or role == "FIELD"
                                 or (role == "SOURCE" and source_region in {"POINTS", "VOLUME_GRID"})
                                 or (role == "SINK" and sink_region == "VOLUME_GRID"))

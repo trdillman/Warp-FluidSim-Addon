@@ -3110,6 +3110,49 @@ def test_object_role_panel_leads_with_native_type_dropdown_then_batch_helpers(mo
     } <= op_ids, "the Apply-to-Selected batch tag operators must remain available"
 
 
+@pytest.mark.parametrize("role, overrides, shown", [
+    ("SOURCE", {"source_region_kind": "POINTS"}, True),
+    ("SOURCE", {"source_region_kind": "VOLUME_GRID"}, True),
+    ("SINK", {"sink_region_kind": "VOLUME_GRID"}, True),
+    ("FIELD", {"field_region_kind": "ANALYTIC"}, True),
+    ("FIELD", {"field_region_kind": "VOLUME_GRID"}, True),
+    ("SOURCE", {"source_region_kind": "MESH_SOLID"}, True),
+    ("SINK", {"sink_region_kind": "MESH_SHELL"}, True),
+    ("SOURCE", {"source_region_kind": "ANALYTIC"}, False),
+    ("SINK", {"sink_region_kind": "ANALYTIC"}, False),
+    ("FORCE", {}, False),
+])
+def test_region_panel_shows_evaluation_for_every_evaluated_input(
+        monkeypatch, role, overrides, shown):
+    """B47: point, volume and field inputs follow ``mesh_evaluation_mode`` too.
+
+    The setting was drawn only for mesh regions, so a point/volume/field
+    source's First Sim Frame / Every Sim Frame choice was invisible.
+    Analytic liquid sources/sinks and force regions are re-read every frame
+    and have no evaluation choice.
+    """
+    _install_bpy_stub(monkeypatch)
+    ui_object = _reload_module("fluidSim_warp_blender51.blender.ui_object")
+    settings = _PermissiveSettings(dict(
+        role=role, enabled=True, source_ui_schema_version=5,
+        source_mode="PARTICLES",
+        point_source_representation="RASTERIZED_REGION", **overrides))
+    obj = SimpleNamespace(fluidsim=settings)
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace()), object=obj,
+        selected_objects=(obj,))
+
+    panel = ui_object.FLUIDSIM_PT_object_region()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    drawn = [call for call in panel.layout.prop_calls
+             if call["name"] == "mesh_evaluation_mode"]
+    assert bool(drawn) is shown
+    assert all(call["data"] is settings for call in drawn)
+    assert len(drawn) <= 1
+
+
 def test_add_menu_exposes_a_fluid_domain_entry(monkeypatch):
     """The ``VIEW3D_MT_add`` draw contributes a first-class Fluid Domain entry.
 

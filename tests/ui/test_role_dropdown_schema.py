@@ -1,6 +1,6 @@
 """B57: a role picked from the Role dropdown gets the current source schema.
 
-The batch "Set Selected as ..." operators stamp ``source_ui_schema_version = 4``
+The batch "Set Selected as ..." operators stamp the current ``source_ui_schema_version``
 when they tag an object. The Role dropdown on the Object panel wrote only
 ``role``, so the object stayed at schema 0: the sampling controls the panel
 shows (Inherit / Multiplier) were ignored for a legacy absolute rate, and a
@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from fluidSim_warp_blender51.blender.scene_inputs import CURRENT_SOURCE_UI_SCHEMA
 from test_artist_mode_callback_ownership import _load_properties
 
 _PROPERTIES = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "properties.py"
@@ -58,7 +59,7 @@ def test_a_dropdown_source_honours_the_sampling_the_panel_shows(monkeypatch):
     pg = _object_group(role="SOURCE")
     properties._update_object_role(pg, SimpleNamespace(scene=scene))
 
-    assert pg.source_ui_schema_version == 4
+    assert pg.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
     # A new source inherits the simulation's Liquid Sampling, as the
     # "Set Selected as Liquid Sources" operator gives it.
     assert pg.source_sampling_mode == "INHERIT"
@@ -76,7 +77,7 @@ def test_a_dropdown_sink_or_field_uses_the_current_region_schema(monkeypatch, ro
     pg = _object_group(role=role, sink_region_kind="MESH_SOLID")
     properties._update_object_role(pg, SimpleNamespace(scene=_scene()))
 
-    assert pg.source_ui_schema_version == 4
+    assert pg.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
     # Sampling choices belong to liquid sources only.
     assert pg.source_sampling_mode == "LEGACY_ABSOLUTE"
 
@@ -95,4 +96,19 @@ def test_other_roles_and_current_schema_objects_are_left_alone(monkeypatch, role
                             source_sampling_multiplier=2.0)
     properties._update_object_role(current, SimpleNamespace(scene=_scene()))
     assert (current.source_sampling_mode, current.source_sampling_multiplier) == (
+        "MULTIPLIER", 2.0)
+
+
+def test_a_sampling_schema_object_keeps_its_sampling_when_restamped(monkeypatch):
+    """Schema 5 (B47) changed no sampling rule: a schema-4 choice survives."""
+    _fake_bpy, properties = _load_properties(monkeypatch)
+    monkeypatch.setattr(properties, "_request_scene_update", lambda *_args: None)
+
+    pg = _object_group(role="SOURCE", source_ui_schema_version=4,
+                       source_sampling_mode="MULTIPLIER",
+                       source_sampling_multiplier=2.0)
+    properties._update_object_role(pg, SimpleNamespace(scene=_scene()))
+
+    assert pg.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
+    assert (pg.source_sampling_mode, pg.source_sampling_multiplier) == (
         "MULTIPLIER", 2.0)
