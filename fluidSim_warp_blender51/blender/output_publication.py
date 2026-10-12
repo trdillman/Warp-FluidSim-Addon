@@ -834,25 +834,36 @@ def _swap_vertex_cloud(obj, positions, colors=None, attributes=None):
 
 
 def _particle_values(solver, mode, positions, velocities=None, indices=None,
-                     host=None):
+                     host=None, stride=1):
+    """Selected per-particle display values.
+
+    With a HostFrame, ``stride`` decimates on the device so Display Fraction
+    reads back only the shown rows; ``indices`` subsets a full host read.
+    """
     if mode == "NONE":
         return None
     if mode == "HEIGHT":
         return positions[:, 2]
+    stride = max(1, int(stride))
     if mode == "SPEED":
         if velocities is None:
-            velocities = host.velocities if host is not None else solver.particle_velocities()
+            if host is not None:
+                velocities = host.velocities_strided(stride)
+            else:
+                velocities = solver.particle_velocities()[::stride]
             if indices is not None:
                 velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
     if mode == "COLOR":
-        values = (host.particle_attr("color") if host is not None else
-                  solver.particles.attr("color").numpy()[:solver.particles.host_count])
+        values = (host.particle_attr("color", stride=stride) if host is not None else
+                  solver.particles.attr("color").numpy()[
+                      :solver.particles.host_count:stride])
         return values[indices] if indices is not None else values
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
-        vals = (host.particle_attr(name) if host is not None else
-                solver.particles.attr(name).numpy()[:solver.particles.host_count])
+        vals = (host.particle_attr(name, stride=stride) if host is not None else
+                solver.particles.attr(name).numpy()[
+                    :solver.particles.host_count:stride])
         return vals[indices] if indices is not None else vals
     return None
 
@@ -865,17 +876,17 @@ def _whitewater_values(solver, mode, positions, host=None, stride=1):
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
-        vel = (host.whitewater_attr("velocity")[::stride] if host is not None else
+        vel = (host.whitewater_attr("velocity", stride=stride) if host is not None else
                solver.whitewater.velocity.numpy()[:n])
         return np.linalg.norm(vel, axis=1)
     if mode == "AGE":
-        return (host.whitewater_attr("age")[::stride] if host is not None else
+        return (host.whitewater_attr("age", stride=stride) if host is not None else
                 solver.whitewater.age.numpy()[:n])
     if mode == "LIFE":
-        return (host.whitewater_attr("life")[::stride] if host is not None else
+        return (host.whitewater_attr("life", stride=stride) if host is not None else
                 solver.whitewater.life.numpy()[:n])
     if mode == "TYPE":
-        return (host.whitewater_attr("type")[::stride] if host is not None else
+        return (host.whitewater_attr("type", stride=stride) if host is not None else
                 solver.whitewater.type.numpy()[:n])
     return None
 
@@ -1004,7 +1015,6 @@ def prepare_live_payload(scene, host, publish_surface=True):
     ds = _domain_settings(scene)
     inventory = _AdmittedAttributeInventory(ds, getattr(solver, "settings", None))
     step = _display_stride(fs)
-    indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_attributes = (
@@ -1016,8 +1026,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
             and (particle_key is None
                  or particle_key not in particle_attributes)):
         particle_values = _particle_values(
-            solver, fs.particle_attribute_mode, positions, indices=indices,
-            host=host)
+            solver, fs.particle_attribute_mode, positions, host=host,
+            stride=step)
     particle_attributes = _merge_selected_attribute(
         particle_attributes, fs.particle_attribute_mode, particle_values)
 

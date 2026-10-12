@@ -204,19 +204,27 @@ class HostFrame:
 
     @property
     def velocities(self):
+        return self.velocities_strided(1)
+
+    def velocities_strided(self, stride=1):
+        """Read back every `stride`-th live particle velocity, on device."""
+        stride = max(1, int(stride))
+
         def load():
             if not hasattr(self.solver, "particles"):
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    self.solver.particle_velocities(), dtype=np.float32)
+                    self.solver.particle_velocities()[::stride],
+                    dtype=np.float32)
             n = self._live_count("particles")
             if n:
                 _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    _live_numpy(self.solver.particles.velocity, n),
+                    _live_numpy(self.solver.particles.velocity, n, stride),
                     dtype=np.float32)
             return np.zeros((0, 3), dtype=np.float32)
-        return self._get("velocities", load)
+        return self._get(
+            "velocities" if stride == 1 else ("velocities", stride), load)
 
     @property
     def particle_vorticity(self):
@@ -360,65 +368,99 @@ class HostFrame:
 
         return self._get("surface_velocity", load)
 
-    def particle_attr(self, name):
+    def particle_attr(self, name, *, stride=1):
+        """Read back one live particle channel, decimated on device."""
+        stride = max(1, int(stride))
+
         def load():
             try:
                 n = self._live_count("particles")
                 if n:
                     _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    _live_numpy(self.solver.particles.attr(name), n))
+                    _live_numpy(self.solver.particles.attr(name), n, stride))
             except (AttributeError, KeyError):
                 return np.zeros(0, dtype=np.float32)
-        return self._get(("particle", name), load)
+        key = ("particle", name) if stride == 1 else ("particle", name, stride)
+        return self._get(key, load)
 
-    def whitewater_attr(self, name):
+    def whitewater_attr(self, name, *, stride=1):
+        """Read back one live whitewater channel, decimated on device."""
+        stride = max(1, int(stride))
+
         def load():
             try:
                 n = self._live_count("whitewater")
                 if n:
                     _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
                 return np.ascontiguousarray(
-                    _live_numpy(getattr(self.solver.whitewater, name), n))
+                    _live_numpy(getattr(self.solver.whitewater, name), n, stride))
             except AttributeError:
                 if name == "type":
                     from .whitewater_types import LEGACY_UNCLASSIFIED
 
                     return np.full(
-                        len(self.whitewater), LEGACY_UNCLASSIFIED,
+                        len(self.whitewater_strided(stride)), LEGACY_UNCLASSIFIED,
                         dtype=ATTRIBUTE_SPECS["type"].numpy_dtype)
                 return np.zeros(0, dtype=np.float32)
-        return self._get(("whitewater", name), load)
+        key = (("whitewater", name) if stride == 1
+               else ("whitewater", name, stride))
+        return self._get(key, load)
+
+    def _particle_vorticity_strided(self, stride):
+        if stride == 1:
+            return self.particle_vorticity
+
+        def load():
+            particles = getattr(self.solver, "particles", None)
+            if particles is not None and isinstance(
+                getattr(particles, "position", None), wp.array
+            ):
+                n = self._live_count("particles")
+                if not n:
+                    return np.zeros((0, 3), dtype=np.float32)
+                _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
+                return np.ascontiguousarray(
+                    self.particle_vorticity_device[:n:stride].numpy(),
+                    dtype=np.float32,
+                )
+            return np.ascontiguousarray(self.particle_vorticity[::stride])
+        return self._get(("particle_vorticity", stride), load)
 
     def particle_attribute(self, key: str, *, stride: int = 1):
-        """Return one authoritative liquid-particle output channel."""
+        """Return one authoritative liquid-particle output channel.
+
+        ``stride`` decimates on the device (Display Fraction), so only the
+        displayed rows cross the bus; values equal the full read sliced
+        ``[::stride]``.
+        """
         stride = max(1, int(stride))
         key = str(key)
-        n = len(self.positions)
+        n = len(self.positions_strided(stride))
         if key == "velocity":
-            values = self.velocities
+            values = self.velocities_strided(stride)
         elif key == "speed":
-            values = speed_from_velocity(self.velocities)
+            values = speed_from_velocity(self.velocities_strided(stride))
         elif key == "vorticity":
-            values = self.particle_vorticity
+            values = self._particle_vorticity_strided(stride)
         elif key == "age":
-            values = self.particle_attr("age")
+            values = self.particle_attr("age", stride=stride)
         elif key == "lifetime":
-            values = self.particle_attr("life")
+            values = self.particle_attr("life", stride=stride)
         elif key in {"color", "source_id", "uid", "viscosity", "density"}:
-            values = self.particle_attr(key)
+            values = self.particle_attr(key, stride=stride)
             if key in {"color", "source_id", "uid"} and len(values) != n:
                 raise RuntimeError(
                     f"enabled particle attribute {key!r} is not allocated")
         elif key == "motion":
             values = motion_from_velocity(
-                self.velocities,
+                self.velocities_strided(stride),
                 frame_rate=float(self.solver.settings.frame_rate),
                 time_scale=float(self.solver.settings.time_scale),
             )
         else:
             raise ValueError(f"unsupported particle attribute {key!r}")
-        return np.ascontiguousarray(values[::stride])
+        return np.ascontiguousarray(values)
 
     def particle_attribute_device(self, key: str):
         """Return one nearest-transfer particle channel without host readback."""
@@ -482,18 +524,19 @@ class HostFrame:
         stride = max(1, int(stride))
         key = str(key)
         if key == "velocity":
-            values = self.whitewater_attr("velocity")
+            values = self.whitewater_attr("velocity", stride=stride)
         elif key == "speed":
-            values = speed_from_velocity(self.whitewater_attr("velocity"))
+            values = speed_from_velocity(
+                self.whitewater_attr("velocity", stride=stride))
         elif key == "age":
-            values = self.whitewater_attr("age")
+            values = self.whitewater_attr("age", stride=stride)
         elif key == "lifetime":
-            values = self.whitewater_attr("life")
+            values = self.whitewater_attr("life", stride=stride)
         elif key == "type":
-            values = self.whitewater_attr("type")
+            values = self.whitewater_attr("type", stride=stride)
         else:
             raise ValueError(f"unsupported whitewater attribute {key!r}")
-        return np.ascontiguousarray(values[::stride])
+        return np.ascontiguousarray(values)
 
     def _surface_output_attributes(
         self,
