@@ -2235,6 +2235,31 @@ def test_activity_ui_state_reports_playing_from_the_scene_window(monkeypatch):
     assert ui_common.activity_ui_state(scene)["label"] == "Playing Cache"
 
 
+def test_profiling_drawer_shows_only_the_owning_scenes_timings(monkeypatch):
+    """B79: the singleton session's profiler must not appear under another scene."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    owner = SimpleNamespace(name="Owner")
+    other = SimpleNamespace(name="Other")
+    profiler = SimpleNamespace(
+        history=[1], summary=lambda last_n: {"compute_0": 3.0, "compute_1": 4.0})
+    bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    bridge.session = lambda: SimpleNamespace(
+        profiler=profiler, owns_scene=lambda scene: scene is owner)
+    monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    monkeypatch.setattr(
+        ui_scene, "_domain_owner",
+        lambda _context: SimpleNamespace(profiling_enabled=True, profiling_sync=False))
+
+    def labels(scene):
+        layout = _draw_stage(
+            ui_scene.FLUIDSIM_PT_diagnostics_profiling, SimpleNamespace(scene=scene))
+        return [label["text"] for label in layout.labels]
+
+    assert "Average phase times" in labels(owner)
+    assert "Average phase times" not in labels(other)
+
+
 def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
     """`Solver not owned by this scene` was jargon; say what Play will do."""
     _panels, layout = _draw_launcher(monkeypatch, owns_scene=True, label="Live Ready")

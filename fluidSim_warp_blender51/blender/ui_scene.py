@@ -1255,7 +1255,10 @@ class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
             layout.prop(fs, "profiling_sync")
         from .scene_bridge import session
         sess = session()
-        if sess.profiler is not None and sess.profiler.history:
+        # The Solver Session is a process singleton: its profiler times
+        # whichever scene owns it, so another scene must not present them.
+        if (sess.profiler is not None and sess.profiler.history
+                and sess.owns_scene(context.scene)):
             summary = sess.profiler.summary(last_n=30)
             box = layout.box()
             box.label(text="Average phase times", icon="TIME")
@@ -1284,6 +1287,8 @@ class FLUIDSIM_PT_diagnostics_benchmark(FluidSimScenePanel, bpy.types.Panel):
         layout.prop(fs, "benchmark_baseline")
         layout.operator("fluidsim.run_benchmark", text="Run Benchmark…", icon="TIME")
         from .scene_bridge import session
+        # Deliberately not scene-scoped: Run Benchmark times a fixed synthetic
+        # scenario on the configured device, not this scene.
         result = session().benchmark_result
         if result:
             box = layout.box()
