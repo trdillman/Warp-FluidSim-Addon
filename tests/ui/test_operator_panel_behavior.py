@@ -2888,6 +2888,35 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     assert domain_panel.poll(context) is False
 
 
+@pytest.mark.parametrize("kind", ["FOAM", "BUBBLES", "SPRAY"])
+def test_separate_whitewater_outputs_keep_the_common_whitewater_panels(monkeypatch, kind):
+    """B73: SEPARATE-mode stream outputs keep emission/classification/lifetime."""
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    ui_scene = ui_physics.ui_scene
+    always = classmethod(lambda cls, _context: True)
+    monkeypatch.setattr(ui_physics.FluidSimPhysicsPanel, "poll", always)
+    monkeypatch.setattr(ui_scene.FluidSimScenePanel, "poll", always)
+    for name in ("_domain_visible", "_whitewater_enabled", "_advanced_visible"):
+        monkeypatch.setattr(ui_scene, name, lambda _context: True)
+    current = {"kind": kind}
+    monkeypatch.setattr(ui_physics, "physics_object_kind", lambda _c: current["kind"])
+    by_suffix = {
+        cls.bl_idname.removeprefix("FLUIDSIM_PT_physics_whitewater_"): cls
+        for cls in ui_physics.WHITEWATER_PANEL_CLASSES
+    }
+
+    for suffix in ("scene_whitewater", "whitewater_emission",
+                   "whitewater_classification", "whitewater_life"):
+        assert by_suffix[suffix].poll(SimpleNamespace()), suffix
+    # The stream's own output panel draws its dynamics; no duplicate grid.
+    assert not by_suffix["whitewater_dynamics"].poll(SimpleNamespace())
+    current["kind"] = "WHITEWATER"
+    assert all(cls.poll(SimpleNamespace()) for cls in by_suffix.values())
+    current["kind"] = "SURFACE"
+    assert not any(cls.poll(SimpleNamespace()) for cls in by_suffix.values())
+
+
 SCENE_TAB_PANEL_IDS = frozenset({
     "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control",

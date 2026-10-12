@@ -65,13 +65,22 @@ def _physics_id(group: str, source_id: str) -> str:
     return f"FLUIDSIM_PT_physics_{group}_{suffix}"
 
 
-def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str]):
+def _make_panel_mirrors(
+    source_panels,
+    *,
+    group: str,
+    accepted_kinds: frozenset[str],
+    kinds_by_panel=None,
+):
     """Mirror existing panels under the Physics root without copying state.
 
     The source panels resolve their settings group themselves (the domain
     panels through ``ui_scene._domain_owner``), and the DOMAIN kind already
     means a domain object is designated, so a mirror needs no redirect.
+    ``kinds_by_panel`` narrows individual source panels to fewer kinds than
+    the group accepts.
     """
+    kinds_by_panel = dict(kinds_by_panel or {})
     source_panels = tuple(source_panels)
     id_map = {
         str(source_panel.bl_idname): _physics_id(group, str(source_panel.bl_idname))
@@ -85,11 +94,13 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
         return draw
 
     def poll_for(source_panel):
+        kinds = kinds_by_panel.get(source_panel, accepted_kinds)
+
         @classmethod
         def poll(cls, context):
             if not FluidSimPhysicsPanel.poll(context):
                 return False
-            if physics_object_kind(context) not in accepted_kinds:
+            if physics_object_kind(context) not in kinds:
                 return False
             source_poll = getattr(source_panel, "poll", None)
             return bool(source_panel.poll(context)) if callable(source_poll) else True
@@ -262,10 +273,17 @@ WHITEWATER_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_whitewater_life,
     ui_scene.FLUIDSIM_PT_whitewater_dynamics,
 )
+# Emission, classification and lifetime are common to every whitewater stream,
+# so SEPARATE-mode Foam/Bubbles/Spray outputs keep them (the combined shell is
+# hidden in that mode). Per-stream dynamics stay on the combined output only:
+# each separate output already draws its own stream's dynamics.
 WHITEWATER_PANEL_CLASSES = _make_panel_mirrors(
     WHITEWATER_SOURCE_PANELS,
     group="whitewater",
-    accepted_kinds=frozenset({"WHITEWATER"}),
+    accepted_kinds=frozenset({"WHITEWATER", "FOAM", "BUBBLES", "SPRAY"}),
+    kinds_by_panel={
+        ui_scene.FLUIDSIM_PT_whitewater_dynamics: frozenset({"WHITEWATER"}),
+    },
 )
 
 
