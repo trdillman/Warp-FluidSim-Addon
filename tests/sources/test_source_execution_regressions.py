@@ -127,3 +127,121 @@ def test_compiled_emission_jitters_particles_within_their_voxel(cuda_device):
     order = np.lexsort(positions.T)
     again_order = np.lexsort(again.T)
     np.testing.assert_array_equal(positions[order], again[again_order])
+
+
+# P15: liquid-only analytic shapes and SOURCE mesh emitters skip their no-op
+# full-grid field passes; collision/sink/activation shapes and mesh sinks
+# still run them.
+
+def _cube_mesh(device, lo=0.4, hi=1.6):
+    import warp as wp
+
+    vertices = np.array([(lo, lo, lo), (hi, lo, lo), (hi, hi, lo), (lo, hi, lo),
+                         (lo, lo, hi), (hi, lo, hi), (hi, hi, hi), (lo, hi, hi)], np.float32)
+    triangles = np.array([(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5),
+                          (0, 5, 4), (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6),
+                          (3, 0, 4), (3, 4, 7)], np.int32)
+    return wp.Mesh(points=wp.array(vertices, dtype=wp.vec3, device=device),
+                   indices=wp.array(triangles.reshape(-1), dtype=int, device=device))
+
+
+def _shape(stype, mode=SourceShapeSourceMode.PARTICLES, source_id="shape"):
+    return SourceShapeDesc(
+        enabled=True, shape=int(SourceShapeShape.BOX), stype=int(stype), mode=int(mode),
+        position=(1.0, 1.0, 1.0), half_extents=(0.5, 0.5, 0.5), emit_rate=2.0,
+        emission_mode=int(SourceEmissionMode.CONTINUOUS_INFLOW), source_id=source_id)
+
+
+def _mesh(device, stype, source_id="mesh"):
+    from fluidSim_warp_blender51.sim.sourcing import MeshSourceDesc
+
+    return MeshSourceDesc(
+        enabled=True, stype=int(stype), mode=int(SourceShapeSourceMode.PARTICLES),
+        mesh=_cube_mesh(device), aabb_min=(0.4,) * 3, aabb_max=(1.6,) * 3,
+        emit_rate=2.0, source_id=source_id,
+        emission_mode=int(SourceEmissionMode.CONTINUOUS_INFLOW))
+
+
+def _field_launches(monkeypatch, solver, descriptors):
+    from fluidSim_warp_blender51.sim import source_execution
+    from fluidSim_warp_blender51.sim.source_kernels import k_mesh_source_field, k_source_shapes
+
+    launched = []
+    original = source_execution.fast_launch
+
+    def recording(kernel, *args, **kwargs):
+        launched.append(kernel)
+        return original(kernel, *args, **kwargs)
+
+    monkeypatch.setattr(source_execution, "fast_launch", recording)
+    solver.set_source_batch(legacy_descriptors=descriptors)
+    _prepare_substep(solver)
+    solver.sourcing.apply(1.0 / 24.0)
+    monkeypatch.setattr(source_execution, "fast_launch", original)
+    return launched.count(k_source_shapes), launched.count(k_mesh_source_field)
+
+
+def test_field_passes_run_only_for_roles_that_write(monkeypatch, cuda_device):
+    solver = FluidSolver(_settings(cuda_device))
+    try:
+        assert _field_launches(monkeypatch, solver, (
+            _shape(SourceShapeType.SOURCE),
+            _shape(SourceShapeType.SOURCE, SourceShapeSourceMode.FIELD, "field"),
+            _mesh(cuda_device, SourceShapeType.SOURCE))) == (0, 0)
+        assert _field_launches(monkeypatch, solver, (
+            _shape(SourceShapeType.SOURCE),
+            _shape(SourceShapeType.SINK, source_id="sink"),
+            _mesh(cuda_device, SourceShapeType.SINK))) == (1, 1)
+        assert _field_launches(monkeypatch, solver, (
+            _shape(SourceShapeType.ACTIVATION, source_id="act"),)) == (1, 0)
+    finally:
+        solver.release()
+
+
+def _field_snapshot(solver):
+    return [array.numpy().copy() for array in (
+        solver.voxel_type.data, solver.collision_sdf.data, solver.collision_vel,
+        solver.vel.u, solver.vel.v, solver.vel.w, solver.temperature.data,
+        solver.viscosity_field.data)]
+
+
+def test_skipped_field_passes_were_no_ops(cuda_device):
+    import warp as wp
+    from fluidSim_warp_blender51.sim.source_contracts import SourceShape
+    from fluidSim_warp_blender51.sim.source_kernels import k_mesh_source_field, k_source_shapes
+
+    solver = FluidSolver(_settings(cuda_device))
+    try:
+        solver.set_source_batch(legacy_descriptors=(_shape(SourceShapeType.SOURCE),))
+        _prepare_substep(solver)
+        rng = np.random.default_rng(5)
+        for array in (solver.vel.u, solver.vel.v, solver.vel.w,
+                      solver.temperature.data, solver.viscosity_field.data,
+                      solver.collision_sdf.data):
+            array.assign(rng.normal(size=array.shape).astype(np.float32))
+        before = _field_snapshot(solver)
+        grid, settings = solver.grid, solver.settings
+        shapes = wp.array([
+            _shape(SourceShapeType.SOURCE).to_struct(),
+            _shape(SourceShapeType.SOURCE, SourceShapeSourceMode.FIELD).to_struct(),
+        ], dtype=SourceShape, device=cuda_device)
+        wp.launch(k_source_shapes, dim=solver._nvox,
+                  inputs=[shapes, 2, grid.leaf_coords, grid.num_leaves, grid.origin,
+                          settings.voxel_size, 1.0 / 24.0],
+                  outputs=[solver.voxel_type.data, solver.collision_sdf.data,
+                           solver.collision_vel, solver.vel.u, solver.vel.v, solver.vel.w,
+                           solver.temperature.data, solver.viscosity_field.data],
+                  device=cuda_device)
+        source_mesh = _mesh(cuda_device, SourceShapeType.SOURCE)
+        wp.launch(k_mesh_source_field, dim=solver._nvox,
+                  inputs=[source_mesh.mesh.id, source_mesh.to_struct(),
+                          source_mesh.query_radius(), grid.leaf_coords, grid.num_leaves,
+                          grid.origin, settings.voxel_size],
+                  outputs=[solver.voxel_type.data, solver.vel.u, solver.vel.v,
+                           solver.vel.w, solver.temperature.data,
+                           solver.viscosity_field.data],
+                  device=cuda_device)
+        for expected, actual in zip(before, _field_snapshot(solver)):
+            np.testing.assert_array_equal(actual, expected)
+    finally:
+        solver.release()

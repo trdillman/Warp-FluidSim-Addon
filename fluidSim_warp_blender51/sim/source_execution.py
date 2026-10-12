@@ -971,7 +971,13 @@ class CompiledSourceExecution:
         shape_count = len(analytic_sources)
         shapes = self._shapes()
 
-        if shape_count:
+        # k_source_shapes only writes for collision, sink and activation
+        # shapes; liquid emitters (particle or FIELD mode) read and store back
+        # every active voxel unchanged, so skip that full-grid pass.
+        if any(
+            source.enabled and int(source.stype) != SourceShapeType.SOURCE
+            for source in analytic_sources
+        ):
             fast_launch(
                 k_source_shapes,
                 dim=owner._nvox,
@@ -998,7 +1004,10 @@ class CompiledSourceExecution:
             )
 
         for source in mesh_sources:
-            if not source.enabled or source.mesh is None:
+            # Only sinks write here; a SOURCE mesh would run BVH membership
+            # queries over every active voxel and then write nothing.
+            if (not source.enabled or source.mesh is None
+                    or int(source.stype) != SourceShapeType.SINK):
                 continue
             fast_launch(
                 k_mesh_source_field,
