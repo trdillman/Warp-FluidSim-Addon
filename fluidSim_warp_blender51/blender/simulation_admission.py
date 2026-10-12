@@ -208,6 +208,8 @@ def capture_snapshot(
     # sampled for capacity only; its first allocation belongs to the committed
     # replacement after Cutover.
     inputs.device = "cpu"
+    # Nothing queries a mesh BVH before the replacement materializes its own.
+    inputs.stage_meshes = True
     compiler = SourceCompiler()
     try:
         sync_generation = inputs.begin_sync()
@@ -533,6 +535,8 @@ class SimulationAdmission:
 
     def _configure_candidate(self, candidate, snapshot, scene):
         inputs = snapshot.scene_inputs
+        # Staging ends here: build real meshes even on a CPU solver device.
+        inputs.stage_meshes = False
         inputs.materialize_device_meshes(
             snapshot.descriptors, snapshot.colliders,
             snapshot.configured_device)
