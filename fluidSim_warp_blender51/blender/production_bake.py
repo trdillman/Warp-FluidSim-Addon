@@ -510,6 +510,7 @@ class ProductionBakeBackend:
         self._original_live = False
         self._original_session_payload = None
         self._original_session_signatures = None
+        self._original_reinit_signature = None
         self._original_session_active = False
         self._initialized = False
         # True from the pre-bake snapshot until it is restored, so a start that
@@ -806,6 +807,7 @@ class ProductionBakeBackend:
                 effect_inventory=original_effect_inventory,
             )
             self._original_session_signatures = signatures
+            self._original_reinit_signature = self._reinit_signature_now(scene)
 
     def _clear_for_restart(self, base: Path) -> None:
         from .cache_manager import (
@@ -1142,16 +1144,25 @@ class ProductionBakeBackend:
         if restore_error is not None:
             raise RuntimeError(f"could not restore pre-bake live state: {restore_error}")
 
-    def _held_settings_changed(self, scene) -> bool:
-        """Whether the settings identity moved since the pre-bake snapshot."""
-        from . import cache_identity
+    @staticmethod
+    def _reinit_signature_now(scene):
+        from . import pending_settings
 
-        captured = (self._original_session_signatures or {}).get("settings_signature")
+        return pending_settings.current_interaction_signatures(scene)[1]
+
+    def _held_settings_changed(self, scene) -> bool:
+        """Whether a held edit changed a Reinitialize-tier setting since the snapshot.
+
+        Only those change the grid or capacity the pre-bake checkpoint was
+        captured with. A held live or Reset-tier edit restores the preview as
+        before and then shows as pending like any other edit.
+        """
+        captured = self._original_reinit_signature
         if captured is None:
             return False
 
         def current():
-            return cache_identity.settings_signature(scene)
+            return self._reinit_signature_now(scene)
 
         # At the snapshot's frame, so a keyframed setting does not read as an edit.
         if self._original_frame is None:

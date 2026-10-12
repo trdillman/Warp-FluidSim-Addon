@@ -203,7 +203,7 @@ class _PreviewSession:
         self.owner = None
 
 
-def _held_edit_world(backend, monkeypatch, *, current_settings):
+def _held_edit_world(backend, monkeypatch, *, current_settings, current_reinit="before"):
     from fluidSim_warp_blender51.blender import cache_identity
 
     suppressed = []
@@ -241,6 +241,8 @@ def _held_edit_world(backend, monkeypatch, *, current_settings):
                         lambda solver, payload: restored.append(payload))
     monkeypatch.setattr(cache_identity, "settings_signature",
                         lambda _scene: current_settings)
+    monkeypatch.setattr(backend, "_reinit_signature_now", lambda _scene: current_reinit)
+    backend._original_reinit_signature = "before"
     session.owner = scene  # the bake's own session owns the scene until restore
     backend.sess = session
     backend._original_frame = 37
@@ -258,7 +260,7 @@ def test_a_held_settings_edit_leaves_the_preview_released(backend, monkeypatch):
     a held Reinitialize-tier edit restored the pre-bake checkpoint into a solver
     admitted from the edited settings (or failed a COMPLETE bake)."""
     scene, session, restored = _held_edit_world(
-        backend, monkeypatch, current_settings="edited")
+        backend, monkeypatch, current_settings="edited", current_reinit="edited")
     session.initialized.clear()
 
     backend.finish(scene)
@@ -274,6 +276,19 @@ def test_a_held_settings_edit_leaves_the_preview_released(backend, monkeypatch):
 def test_unchanged_settings_still_restore_the_preview(backend, monkeypatch):
     scene, session, restored = _held_edit_world(
         backend, monkeypatch, current_settings="before")
+
+    backend.finish(scene)
+
+    assert restored == ["pre-bake checkpoint"]
+    assert session.initialized == [scene]
+    assert backend.restore_notice == ""
+
+
+def test_a_held_live_tier_edit_still_restores_the_preview(backend, monkeypatch):
+    # Only a Reinitialize-tier edit changes the grid the checkpoint fits; a
+    # live edit (viscosity, say) restores the preview and shows as pending.
+    scene, session, restored = _held_edit_world(
+        backend, monkeypatch, current_settings="edited", current_reinit="before")
 
     backend.finish(scene)
 
