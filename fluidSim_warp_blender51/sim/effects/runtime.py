@@ -292,6 +292,14 @@ class EffectRuntimeManager:
         self._frame_baseline = {}
         return True
 
+    def applied_instances(self) -> tuple[Any, ...]:
+        """The installed effect instances, one per instance id, in stack order."""
+        seen: dict[str, Any] = {}
+        for entries in self.by_stage.values():
+            for entry in entries:
+                seen.setdefault(entry.instance.instance_id, entry.instance)
+        return tuple(sorted(seen.values(), key=lambda item: int(item.order)))
+
     def update_runtime_bindings(self, instances: Any) -> bool:
         """Update launch-time values without replacing compiled kernels or solver state.
 

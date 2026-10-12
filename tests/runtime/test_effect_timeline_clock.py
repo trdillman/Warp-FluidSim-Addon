@@ -32,6 +32,36 @@ def test_session_step_hands_the_timeline_frame_to_the_solver(monkeypatch):
     assert seen == [1004]
 
 
+def test_session_step_syncs_effect_bindings_before_the_solver_steps(monkeypatch):
+    # B66: animated/moved runtime-bindable effect values are re-read in the
+    # Solver Session step path, before the solver advances.
+    import importlib
+    import sys
+    import types
+
+    import test_scene_bridge_cache_playback as harness
+
+    scene_bridge = harness._install_scene_bridge_stubs(monkeypatch)
+    sys.modules["bpy"].props = types.SimpleNamespace()
+    events = []
+    fake_effects = types.ModuleType("fluidSim_warp_blender51.blender.effects")
+    fake_effects.sync_animated_effect_bindings = (
+        lambda scene, sess: events.append(("sync", scene.frame_current)))
+    blender_pkg = importlib.import_module("fluidSim_warp_blender51.blender")
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.effects", fake_effects)
+    monkeypatch.setattr(blender_pkg, "effects", fake_effects, raising=False)
+    scene = harness._scene(frame=12, playback=False)
+    scene.fluidsim_effects = SimpleNamespace(items=[])
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=3, step_frame=lambda: events.append(("step",)) or {})
+    sess.scene_identity = id(scene)
+    try:
+        sess.step(scene, write_cache=False, publish_outputs=False)
+    except Exception:  # noqa: BLE001 - only the ordering matters here
+        pass
+    assert events[:2] == [("sync", 12), ("step",)]
+
+
 def _entry(key, frame_start, cadence=EffectCadence.INITIALIZATION):
     def active(frame, start=frame_start):
         return frame >= start

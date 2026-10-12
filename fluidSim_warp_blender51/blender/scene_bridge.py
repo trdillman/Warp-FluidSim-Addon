@@ -346,6 +346,10 @@ class Session:
         # frame counters start from different origins) agree (decision D6).
         self.solver.effect_frame = int(
             scene.frame_current if timeline_frame is None else timeline_frame)
+        if hasattr(bpy, "props") and getattr(scene, "fluidsim_effects", None) is not None:
+            from . import effects  # animated effect values (B66, lane E)
+
+            effects.sync_animated_effect_bindings(scene, self)
         stats = self.solver.step_frame()
         sourcing = getattr(self.solver, "sourcing", None)
         apply_result = (getattr(sourcing, "last_apply_result", {})
