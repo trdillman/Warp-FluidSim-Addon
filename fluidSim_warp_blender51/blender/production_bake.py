@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+import hashlib
 import os
 from pathlib import Path
 import platform as _platform
@@ -532,7 +533,7 @@ class ProductionBakeBackend:
 
         A plain resume continues after the last committed frame and is refused
         with ``SOURCE_ANIMATION_CHANGED`` when any committed frame was baked
-        from a different animation of a source or collider; the decision then
+        from a different animation of a source, collider or effect value; the decision then
         names the first such frame. ``rebake_from=N`` keeps the frames below N
         (which must still match the animation) and bakes N onward. ``end``
         later than the manifest's end frame extends the cache (owner decision
@@ -558,9 +559,9 @@ class ProductionBakeBackend:
                 "SOLVER_VERSION_MISMATCH",
                 f"Cache solver {manifest.solver_version} is incompatible with {VERSION_STRING}",
             )
-        from .effects import effect_identity
         try:
-            current_effect_signature, current_effect_inventory = effect_identity(scene)
+            current_effect_signature, current_effect_inventory = (
+                self._effect_identity_at(scene, manifest.frame_start))
         except ValueError as exc:
             return ResumeDecision(False, None, "EFFECT_STACK_NOT_APPLIED", str(exc))
         if manifest.effect_signature != current_effect_signature:
@@ -637,11 +638,11 @@ class ProductionBakeBackend:
             if target is not None:
                 message = (
                     f"Cannot re-bake from frame {target}: the animation of a "
-                    f"source or collider already differs at frame {changed}"
+                    f"source, collider or effect already differs at frame {changed}"
                 )
             else:
                 message = (
-                    "The animation of a source or collider changed since this "
+                    "The animation of a source, collider or effect changed since this "
                     f"cache was baked; the first changed frame is {changed}. "
                     f"Re-bake from frame {changed}, or restart the bake"
                 )
@@ -706,11 +707,36 @@ class ProductionBakeBackend:
                     scene.frame_set(original)
 
     def _stamp_now(self, scene, frame: int) -> str:
-        """Stamp of the sources as the scene stands, which must be at ``frame``."""
-        from . import cache_identity
+        """Stamp of the sources as the scene stands, which must be at ``frame``.
 
-        return cache_identity.source_frame_stamp(
+        Keyframed effect values and controller motion are animation too: when
+        the running effects have any, their values at ``frame`` are folded in,
+        so resume finds the first frame whose effect animation changed.
+        """
+        from . import cache_identity
+        from .effects import effect_frame_stamp
+
+        stamp = cache_identity.source_frame_stamp(
             scene, self._bpy().context.evaluated_depsgraph_get(), frame)
+        effects = effect_frame_stamp(scene)
+        if not effects:
+            return stamp
+        return hashlib.sha256(
+            f"{stamp}|effects={effects}".encode("utf-8")).hexdigest()
+
+    def _at_frame(self, scene, frame: int, evaluate):
+        """``evaluate()`` with the scene at ``frame``; the playhead is restored."""
+        from . import playback
+
+        current = int(scene.frame_current)
+        with playback.suppress_frame_handlers():
+            try:
+                if current != int(frame):
+                    scene.frame_set(int(frame))
+                return evaluate()
+            finally:
+                if int(scene.frame_current) != current:
+                    scene.frame_set(current)
 
     def _signatures_at(self, scene, frame: int) -> dict[str, str]:
         """Scene identity evaluated at the bake's reference frame.
@@ -721,19 +747,21 @@ class ProductionBakeBackend:
         initialize and the one checked on resume agree wherever the playhead
         happens to be.
         """
-        from . import cache_identity, playback
+        from . import cache_identity
 
         bpy = self._bpy()
-        current = int(scene.frame_current)
-        with playback.suppress_frame_handlers():
-            try:
-                if current != int(frame):
-                    scene.frame_set(int(frame))
-                return cache_identity.signature_bundle(
-                    scene, bpy.context.evaluated_depsgraph_get())
-            finally:
-                if int(scene.frame_current) != current:
-                    scene.frame_set(current)
+        return self._at_frame(scene, frame, lambda: cache_identity.signature_bundle(
+            scene, bpy.context.evaluated_depsgraph_get()))
+
+    def _effect_identity_at(self, scene, frame: int):
+        """Effect identity at the bake's reference frame, like :meth:`_signatures_at`.
+
+        It hashes the parameter values, so a keyframed value would otherwise
+        give a different identity wherever the playhead happens to be.
+        """
+        from .effects import effect_identity
+
+        return self._at_frame(scene, frame, lambda: effect_identity(scene))
 
     def _snapshot_live_state(self, scene) -> None:
         from . import cache_identity, scene_bridge
@@ -795,8 +823,8 @@ class ProductionBakeBackend:
         self.base_dir = self.cache_path(scene)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.signatures = self._signatures_at(scene, int(start))
-        from .effects import effect_identity
-        self.effect_signature, self.effect_inventory = effect_identity(scene)
+        self.effect_signature, self.effect_inventory = self._effect_identity_at(
+            scene, int(start))
 
         stale_from = None
         extended = False

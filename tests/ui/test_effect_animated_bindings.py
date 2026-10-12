@@ -3,7 +3,9 @@
 F-curve/driver evaluation and controller-object motion change effect values
 without an RNA update callback, so before this fix they stayed frozen at the
 values captured at admission. Preview now re-reads runtime-bindable values
-each step; a Production Bake keeps its admitted values (decision D2).
+each step. A Production Bake follows keyframed/driven values and controller
+motion, but holds any other edit (decision D2); its cache identity is taken at
+the bake start frame and the per-frame values go into each frame's stamp.
 """
 from __future__ import annotations
 
@@ -132,16 +134,81 @@ def test_no_animation_and_no_controller_reads_nothing(monkeypatch):
     assert effects.sync_animated_effect_bindings(scene, session) is False
 
 
-def test_production_bake_keeps_admitted_values(monkeypatch):
-    # D2: a bake keeps the values its cache identity was recorded with; the
-    # keyframe-following part of B66 for bakes is deferred.
-    effects, scene, pg, controller, manager, session, published = _setup(
+def _strength_path(pg):
+    index = next(slot for slot, item in enumerate(pg.parameters) if item.key == "strength")
+    return f"fluidsim_effects.items[0].parameters[{index}].float_value"
+
+
+def test_production_bake_follows_keyframed_values_and_holds_edits(monkeypatch):
+    # A bake follows a keyframed value (the frame changed it), never an edit to
+    # a value nothing animates, and publishes nothing: its identity is pinned.
+    effects, scene, pg, _controller, manager, session, published = _setup(
         monkeypatch, bake_active=True)
+    monkeypatch.setattr(effects, "animated_parameter_keys",
+                        lambda scene: {"vortex-1": frozenset({"strength"})})
     next(item for item in pg.parameters if item.key == "strength").float_value = 9.5
+    next(item for item in pg.parameters if item.key == "radius").float_value = 7.0
+
+    assert effects.sync_animated_effect_bindings(scene, session) is True
+
+    running = _running_inputs(manager)
+    assert running["strength"] == 9.5
+    assert running["radius"] != 7.0
+    assert published == []
+
+
+def test_production_bake_follows_controller_motion_not_a_swap(monkeypatch):
+    effects, scene, pg, controller, manager, session, _published = _setup(
+        monkeypatch, bake_active=True)
+    monkeypatch.setattr(effects, "animated_parameter_keys", lambda scene: {})
     controller.matrix_world = _Matrix(-4.0, 0.5, 2.0)
 
-    assert effects.sync_animated_effect_bindings(scene, session) is False
+    assert effects.sync_animated_effect_bindings(scene, session) is True
+    assert _running_inputs(manager)["controller"] == (-4.0, 0.5, 2.0)
 
-    assert _running_inputs(manager)["strength"] == 4.0
-    assert _running_inputs(manager)["controller"] == (1.0, 2.0, 3.0)
-    assert published == []
+    other = SimpleNamespace(name="Other Controller", matrix_world=_Matrix(9.0, 9.0, 9.0))
+    pg.parameters[0].object_value = other
+    assert effects.sync_animated_effect_bindings(scene, session) is False
+    assert _running_inputs(manager)["controller"] == (-4.0, 0.5, 2.0)
+
+
+def _fcurves(*paths):
+    return [SimpleNamespace(data_path=path) for path in paths]
+
+
+def test_animated_keys_come_from_slotted_actions_nla_and_drivers(monkeypatch):
+    effects, scene, pg, *_rest = _setup(monkeypatch)
+    strength = _strength_path(pg)
+    radius_index = next(slot for slot, item in enumerate(pg.parameters) if item.key == "radius")
+    radius = f"fluidsim_effects.items[0].parameters[{radius_index}].float_value"
+    slot = SimpleNamespace(handle=7)
+    layered = SimpleNamespace(layers=[SimpleNamespace(strips=[SimpleNamespace(channelbags=[
+        SimpleNamespace(slot_handle=7, fcurves=_fcurves(strength, "frame_end")),
+        SimpleNamespace(slot_handle=8, fcurves=_fcurves(radius)),  # another ID's slot
+    ])])])
+    scene.animation_data = SimpleNamespace(
+        action=layered, action_slot=slot, drivers=(), nla_tracks=())
+    assert effects.animated_parameter_keys(scene) == {"vortex-1": frozenset({"strength"})}
+
+    scene.animation_data = SimpleNamespace(
+        action=None, drivers=_fcurves(radius), nla_tracks=[
+            SimpleNamespace(mute=False, strips=[SimpleNamespace(
+                mute=False, action=SimpleNamespace(fcurves=_fcurves(strength)))]),
+            SimpleNamespace(mute=True, strips=[SimpleNamespace(
+                mute=False, action=SimpleNamespace(fcurves=_fcurves("ignored")))]),
+        ])
+    assert effects.animated_parameter_keys(scene) == {
+        "vortex-1": frozenset({"strength", "radius"})}
+
+    scene.animation_data = None
+    assert effects.animated_parameter_keys(scene) == {}
+
+
+def test_effect_frame_stamp_is_empty_without_animation_or_controllers(monkeypatch):
+    # An empty stamp keeps the per-frame cache stamp of scenes without
+    # animated effects exactly as before, so their caches still resume.
+    effects, scene, pg, *_rest = _setup(monkeypatch, animated=False)
+    monkeypatch.setattr(effects, "scene_effect_instances", lambda scene: ())
+    for item in pg.parameters:
+        item.object_value = None
+    assert effects.effect_frame_stamp(scene) == ""
