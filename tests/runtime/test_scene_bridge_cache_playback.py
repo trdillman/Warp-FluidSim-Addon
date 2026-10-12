@@ -1927,3 +1927,90 @@ def test_release_session_no_argument_preserves_current_scene_compatibility(monke
 
     assert scene_bridge.release_session() is True
     assert not sess.active
+
+
+# --- B58: scene sync re-checks the narrow-band admission refusal -------------
+
+
+class _RecordingSyncSolver:
+    """Solver double that records what Session.sync_scene installs."""
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.device = "cpu"
+        self.source_batches = []
+        self.collider_batches = []
+
+    def set_source_batch(self, sources, plans):
+        self.source_batches.append((sources, plans))
+
+    def set_colliders(self, colliders):
+        self.collider_batches.append(colliders)
+
+    def set_force_fields(self, _fields):
+        pass
+
+    def set_height_source(self, _height):
+        pass
+
+
+class _SyncInputs:
+    device = None
+
+    def begin_sync(self):
+        return 1
+
+    def gather_sources(self, _scene, _depsgraph=None, **_kwargs):
+        return ["gathered-source"]
+
+    def gather_source_plans(self, _scene, _depsgraph=None):
+        return ("gathered-plan",)
+
+    def gather_colliders(self, _scene, _depsgraph=None, **_kwargs):
+        return ["collider"]
+
+    def gather_force_fields(self, _scene, _depsgraph=None):
+        return []
+
+    def gather_height_source(self, _scene, _depsgraph=None):
+        return None
+
+
+def test_scene_sync_does_not_install_a_source_narrow_band_refuses(monkeypatch):
+    """Playback syncs the scene every frame, past the SYNC property callback.
+
+    A Scalar field source added during an admitted narrow-band run must not
+    reach the solver through that per-frame sync: the previously admitted
+    sources stay installed and the admission refusal is reported.
+    """
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    field = SimpleNamespace(
+        name="Heat",
+        fluidsim=SimpleNamespace(role="FIELD", field_operation="SCALAR"))
+    scene.objects = [field]
+    sess = scene_bridge.Session()
+    solver = _RecordingSyncSolver(
+        SolverSettings(device="cpu", narrow_band_enabled=True))
+    sess.solver = solver
+    sess.scene_inputs = _SyncInputs()
+    sess.scene_identity = scene_bridge.scene_identity(scene)
+
+    sess.sync_scene(scene, object())
+
+    assert solver.source_batches == []
+    # Colliders are not part of the refusal and keep following the scene.
+    assert solver.collider_batches == [["collider"]]
+    assert "Narrow-Band Particles cannot run" in sess.current_error(scene)
+    assert "Scalar / Temperature" in sess.current_error(scene)
+    assert "Narrow-Band Particles cannot run" in scene.fluidsim.status
+
+    # Removing the conflict lets the next sync install the scene's sources
+    # and retires the refusal it reported.
+    field.fluidsim.field_operation = "PRESSURE"
+    sess.sync_scene(scene, object())
+
+    assert solver.source_batches == [(["gathered-source"], ("gathered-plan",))]
+    assert sess.current_error(scene) == ""

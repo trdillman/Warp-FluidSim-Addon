@@ -714,17 +714,11 @@ def _refuse_narrow_band_conflicts(scene, settings):
     otherwise switch one on under an admitted narrow-band run, unchecked until
     the next Reset. Raising here keeps the solver on its admitted values.
     """
-    # ``settings`` is the running solver's SolverSettings (never an RNA group),
-    # which always declares the flag; partial solver doubles may not.
-    if not (hasattr(settings, "narrow_band_enabled")
-            and settings.narrow_band_enabled):
-        return
-    from ..sim import narrow_band
+    from .simulation_admission import narrow_band_refusal
 
-    reasons = narrow_band.scene_blocking_reasons(
-        settings, getattr(scene, "objects", ()) or ())
-    if reasons:
-        raise RuntimeError(narrow_band.refusal_message(reasons))
+    refusal = narrow_band_refusal(settings, getattr(scene, "objects", ()))
+    if refusal:
+        raise RuntimeError(refusal)
 
 
 def apply_live_settings_safely(scene, sess: Session | None = None):

@@ -19,7 +19,7 @@ from .scene_access import (
     scene_set,
 )
 from .scene_inputs import SceneInputs
-from .simulation_admission import capacity_blocking_message
+from .simulation_admission import capacity_blocking_message, narrow_band_refusal
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -44,6 +44,9 @@ class Session:
         self.benchmark_result = None
         self.benchmark_compare = None
         self.error = ""
+        # The narrow-band refusal the last scene sync reported, so the sync
+        # that finds the conflict removed can retire exactly that error.
+        self.sync_refusal = ""
         self.device = None
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
@@ -213,6 +216,7 @@ class Session:
         self.device = None
         self.bind_scene(None, "")
         self.admitted_effects = ()
+        self.sync_refusal = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
         del solver
@@ -303,11 +307,27 @@ class Session:
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
-        self.solver.set_source_batch(
-            self.scene_inputs.gather_sources(
-                scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                sync_generation=sync_generation),
-            self.scene_inputs.gather_source_plans(scene, depsgraph))
+        # A narrow-band run was admitted without features that keep
+        # per-particle interior state. Playback syncs every frame, so a
+        # source edit admission would refuse (a Scalar field source) must not
+        # reach the solver here: the admitted sources stay installed and the
+        # refusal is reported until the conflict is removed or Reset re-admits.
+        refusal = narrow_band_refusal(
+            self.solver.settings, getattr(scene, "objects", ()))
+        if refusal:
+            self.sync_refusal = refusal
+            self.set_error(scene, refusal)
+            scene.fluidsim.status = f"Scene sync refused: {refusal}"
+        else:
+            if self.sync_refusal:
+                if self.current_error(scene) == self.sync_refusal:
+                    self.clear_error(scene)
+                self.sync_refusal = ""
+            self.solver.set_source_batch(
+                self.scene_inputs.gather_sources(
+                    scene, depsgraph, capture_first_mesh=capture_first_mesh,
+                    sync_generation=sync_generation),
+                self.scene_inputs.gather_source_plans(scene, depsgraph))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_force_fields(
