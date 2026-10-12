@@ -105,6 +105,49 @@ def _rna_int_buffer(values, *, unsigned=False):
     return memoryview(values).cast("B").cast("I" if unsigned else "i")
 
 
+class _PaddedScratch:
+    """Reusable zero-padded host buffers for capacity-sized bulk uploads.
+
+    Point outputs are padded to their capacity, so every published frame used
+    to allocate (and page-fault) several capacity-sized arrays. ``foreach_set``
+    copies synchronously, so one buffer per shape can be reused: ``take``
+    re-zeroes only the rows the previous user wrote beyond the new live count,
+    keeping the padding exactly zero.
+    """
+
+    _MAX_BUFFERS = 16
+
+    def __init__(self):
+        self._buffers = {}
+
+    def take(self, purpose, shape, dtype, live):
+        """Return a ``shape`` buffer whose rows ``[live:]`` are zero.
+
+        The caller must write rows ``[:live]`` before uploading it.
+        """
+        shape = tuple(int(axis) for axis in shape)
+        dtype = np.dtype(dtype)
+        live = max(0, min(int(live), shape[0] if shape else 0))
+        key = (purpose, shape, dtype.str)
+        entry = self._buffers.pop(key, None)
+        if entry is None:
+            buffer, dirty = np.zeros(shape, dtype=dtype), 0
+        else:
+            buffer, dirty = entry
+            if dirty > live:
+                buffer[live:dirty] = 0
+        self._buffers[key] = (buffer, live)
+        while len(self._buffers) > self._MAX_BUFFERS:
+            self._buffers.pop(next(iter(self._buffers)))
+        return buffer
+
+    def clear(self):
+        self._buffers.clear()
+
+
+_SCRATCH = _PaddedScratch()
+
+
 def publish_attribute(data, spec, values, *, live_count=None):
     """Create/update one Blender attribute with strict type/domain alignment."""
     attributes = getattr(data, "attributes", None)
@@ -128,7 +171,8 @@ def publish_attribute(data, spec, values, *, live_count=None):
             name=spec.blender_name, type=spec.data_type, domain=spec.domain)
     target_shape = ((total,) if spec.components == 1 else
                     (total, spec.components))
-    padded = np.zeros(target_shape, dtype=spec.numpy_dtype)
+    padded = _SCRATCH.take(
+        ("attribute", spec.blender_name), target_shape, spec.numpy_dtype, count)
     if count:
         padded[:count] = normalized
     flat = padded.ravel()
@@ -797,8 +841,8 @@ def _swap_points(
         pc = pc_old
     capacity = len(pc.points)
 
-    coords = np.zeros((capacity, 3), dtype=np.float32)
-    radii = np.zeros(capacity, dtype=np.float32)
+    coords = _SCRATCH.take("position", (capacity, 3), np.float32, n)
+    radii = _SCRATCH.take("radius", (capacity,), np.float32, n)
     if n:
         coords[:n] = positions
         radii[:n] = radius
@@ -806,7 +850,8 @@ def _swap_points(
     pc.attributes["radius"].data.foreach_set("value", radii)
     color_attr = pc.attributes.get(COLOR_ATTR)
     if color_attr is not None:
-        channels = np.zeros((capacity, 4), dtype=np.float32)
+        color_live = n if wants_color else 0
+        channels = _SCRATCH.take("color", (capacity, 4), np.float32, color_live)
         if wants_color:
             channels[:n] = np.asarray(colors, dtype=np.float32)
         color_attr.data.foreach_set("color", channels.ravel())
