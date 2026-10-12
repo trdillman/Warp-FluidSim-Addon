@@ -1009,7 +1009,7 @@ def _restore_applied_domain(scene, scene_fs, state):
     try:
         # Any attribute read of a deleted ID raises ReferenceError.
         getattr(applied, "name", None)
-        if _stable_value(scene_fs.domain_object) != _stable_value(applied):
+        if _stable_value(active_domain_object(scene)) != _stable_value(applied):
             scene_fs.domain_object = applied
     except ReferenceError:
         return None
