@@ -766,7 +766,7 @@ class SimulationAdmission:
             self.session.clear_error(scene)
             from . import output_publication
 
-            output_publication.update_outputs(scene, self.session)
+            publication = output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(scene, self.session, reset_only=True)
             self._publish_effect_snapshot(scene, snapshot)
             if replacement_growth is None:
@@ -775,6 +775,11 @@ class SimulationAdmission:
                 scene.fluidsim.status = (
                     "Simulation reset — particle capacity grew "
                     f"{replacement_growth[0]:,} → {replacement_growth[1]:,}")
+            # Reported like a live step's publication warning (Session.step).
+            warning = str(getattr(publication, "warning", "") or "")
+            if warning:
+                self.session.set_error(scene, warning)
+                scene.fluidsim.status = f"{scene.fluidsim.status} — {warning}"
 
         except Exception as exc:
             self.session.set_error(scene, repr(exc))

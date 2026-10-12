@@ -754,3 +754,20 @@ def test_reinitialize_capacity_preflight_refusal_retains_active_solver(monkeypat
     assert cuda_releases == []
     assert sess.capacity_plan_for_scene(scene) is plan
     assert sess.capacity_plan_operation == "REINITIALIZE"
+
+
+def test_reset_keeps_the_output_publication_warning(monkeypatch):
+    """Review finding (g): reset published outputs and discarded the result,
+    so a publication warning was lost where a live step reports it."""
+    _bridge_mod, scene, sess, _old, _released, _planned, _prepared = _active_reset(
+        monkeypatch, authored=4, runtime=12, demand=10, auto_grow=False)
+    publication = sys.modules["fluidSim_warp_blender51.blender.output_publication"]
+    warning = "Surface output skipped: mesh too large"
+    monkeypatch.setattr(publication, "update_outputs",
+                        lambda *_a, **_k: SimpleNamespace(warning=warning))
+
+    sess.reset(scene)
+
+    assert sess.error == warning
+    assert scene.fluidsim.status.startswith("Simulation reset")
+    assert warning in scene.fluidsim.status
