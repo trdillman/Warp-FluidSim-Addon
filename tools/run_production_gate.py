@@ -126,6 +126,10 @@ BACKGROUND_ACCEPTANCE = (
     ("tests/acceptance/blender_whitewater_truth_acceptance.py", "WHITEWATER-TRUTH-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_animated_cache_playback_acceptance.py",
      "ANIMATED-CACHE-PLAYBACK-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_animated_effect_bake_acceptance.py",
+     "ANIMATED-EFFECT-BAKE-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_deforming_collider_bake_acceptance.py",
+     "DEFORMING-COLLIDER-BAKE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
 )

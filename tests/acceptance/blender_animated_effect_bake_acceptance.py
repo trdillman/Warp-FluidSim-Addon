@@ -28,6 +28,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _test_device import script_device  # noqa: E402
+
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 FAILURES = []
@@ -110,7 +113,7 @@ def main(cache_root):
     _key_strength(scene, KEYED)
     scene.frame_set(START)
     check("effect applied",
-          bpy.ops.fluidsim.effect_apply_stack(device="cuda:0") == {"FINISHED"},
+          bpy.ops.fluidsim.effect_apply_stack(device=script_device()) == {"FINISHED"},
           scene.fluidsim_effects.blocking_reason)
 
     recorder = _Recorder()

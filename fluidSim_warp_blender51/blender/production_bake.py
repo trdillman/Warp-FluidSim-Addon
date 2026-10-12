@@ -761,6 +761,9 @@ class ProductionBakeBackend:
         """
         from .effects import effect_identity
 
+        stack = getattr(scene, "fluidsim_effects", None)
+        if stack is None or not len(getattr(stack, "items", ())):
+            return effect_identity(scene)  # nothing frame-dependent to pin
         return self._at_frame(scene, frame, lambda: effect_identity(scene))
 
     def _snapshot_live_state(self, scene) -> None:
