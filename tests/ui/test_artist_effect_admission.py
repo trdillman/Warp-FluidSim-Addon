@@ -85,6 +85,45 @@ def test_successful_replacement_clears_previous_runtime_error(monkeypatch):
     assert item.status == 'APPLIED'
 
 
+class _Diagnostics(list):
+    def add(self):
+        item = SimpleNamespace()
+        self.append(item)
+        return item
+
+
+def test_test_draft_shows_warnings_without_invalidating_the_effect(monkeypatch):
+    # B68: a successful candidate's advisory warnings (e.g. a particle
+    # velocity write the transfer overwrites) were dropped; errors still block.
+    from fluidSim_warp_blender51.sim.effects.schema import EffectIssue
+
+    _install_bpy_stub(monkeypatch)
+    effects = _reload_module('fluidSim_warp_blender51.blender.effects')
+    instance = EffectInstanceV2('drafted', builtin_effect_definitions()[0])
+    kernel = SimpleNamespace(kernel_id='vortex_force', error_line=0, error_column=0)
+    item = SimpleNamespace(instance_id='drafted', effect_id=instance.definition.effect_id,
+                           diagnostics=_Diagnostics(), kernels=[kernel], runtime_error='',
+                           draft_fingerprint='draft', status='DRAFT')
+    scene = SimpleNamespace(fluidsim_effects=SimpleNamespace(items=[item]))
+    warning = EffectIssue('PARTICLE_VELOCITY_WRITE_OVERWRITTEN', 'replaced by G2P',
+                          severity='WARNING', effect_id=instance.definition.effect_id,
+                          instance_id='drafted', kernel_id='vortex_force', line=2)
+    monkeypatch.setattr(effects, 'refresh_stack_state', lambda scene: None)
+    monkeypatch.setattr(effects, 'scene_effect_instances', lambda scene: (instance,))
+    monkeypatch.setattr(effects, 'build_effect_candidate', lambda scene, device: SimpleNamespace(
+        success=True, issues=(warning,), compiled_effects=(), sandbox_reports=()))
+
+    result = effects.test_draft(scene, device='cpu')
+
+    assert result.success is True
+    assert item.status == 'TESTED'
+    assert [(d.code, d.severity) for d in item.diagnostics] == [
+        ('PARTICLE_VELOCITY_WRITE_OVERWRITTEN', 'WARNING')]
+    assert kernel.error_line == 0
+    effects._mirror_issues(scene.fluidsim_effects, (replace(warning, severity='ERROR'),))
+    assert item.status == 'INVALID' and kernel.error_line == 2
+
+
 def test_revoked_trust_pauses_and_cannot_publish_hot_bindings(monkeypatch, tmp_path):
     bpy = _install_bpy_stub(monkeypatch)
     effects = _reload_module('fluidSim_warp_blender51.blender.effects')

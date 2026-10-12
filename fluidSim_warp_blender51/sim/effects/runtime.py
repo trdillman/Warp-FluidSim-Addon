@@ -75,6 +75,10 @@ class EffectExecutionError(RuntimeError):
         )
 
 
+class EffectPrerequisiteError(RuntimeError):
+    """A solver product an effect reads could not be prepared this stage."""
+
+
 @dataclass(frozen=True)
 class EffectCandidateInstallDiagnostic:
     """Structured context for an unexpected candidate installation failure."""
@@ -288,6 +292,14 @@ class EffectRuntimeManager:
         self._frame_baseline = {}
         return True
 
+    def applied_instances(self) -> tuple[Any, ...]:
+        """The installed effect instances, one per instance id, in stack order."""
+        seen: dict[str, Any] = {}
+        for entries in self.by_stage.values():
+            for entry in entries:
+                seen.setdefault(entry.instance.instance_id, entry.instance)
+        return tuple(sorted(seen.values(), key=lambda item: int(item.order)))
+
     def update_runtime_bindings(self, instances: Any) -> bool:
         """Update launch-time values without replacing compiled kernels or solver state.
 
@@ -423,7 +435,17 @@ class EffectRuntimeManager:
             return True
         return False
 
-    def run(self, stage: EffectStage | str, solver: Any, time_ctx: dict[str, object]) -> None:
+    def run(
+            self,
+            stage: EffectStage | str,
+            solver: Any,
+            time_ctx: dict[str, object],
+            *,
+            surface_sdf_error: str | None = None,
+    ) -> None:
+        """Run one stage. ``surface_sdf_error`` set means the solver SDF could
+        not be refreshed: any entry that reads it fails closed instead of
+        sampling stale or zero-initialized storage."""
         if self.failed_error is not None:
             raise EffectExecutionError(self.failed_error)
         stage_enum = stage if isinstance(stage, EffectStage) else EffectStage(str(stage))
@@ -436,6 +458,11 @@ class EffectRuntimeManager:
                 continue
             stats = self.stats[entry.key]
             try:
+                if (surface_sdf_error is not None
+                        and _requirements_for_entry(entry).surface_sdf):
+                    raise EffectPrerequisiteError(
+                        "required surface SDF is unavailable: "
+                        f"{surface_sdf_error or 'refresh failed'}")
                 elements, duration = launch_compiled_kernel(
                     entry, solver, time_ctx, self.device
                 )
@@ -507,13 +534,16 @@ def launch_compiled_kernel(
     inputs: list[object]
     if kernel_definition.domain is EffectDomain.PARTICLES:
         particles = solver.particles
-        count = int(particles.refresh_host_count()) if hasattr(particles, "refresh_host_count") else int(
-            getattr(particles, "host_count", 0)
-        )
-        launch_dim = max(0, int(getattr(particles, "capacity", count)))
+        # The launch spans capacity and the generated prelude returns past
+        # count[0] on the device, so no host count readback is needed (P13).
+        launch_dim = max(0, int(getattr(
+            particles, "capacity", getattr(particles, "host_count", 0))))
         inputs = [particles.position, particles.velocity, particles.alive, particles.count]
     else:
         grid = solver.grid
+        # Normally free: the solver's topology rebuild already committed the
+        # count. It only reads back when a rebuilt candidate is still pending,
+        # which it must commit before voxel data is addressed.
         leaf_count = int(grid.refresh_topology_counts()) if hasattr(grid, "refresh_topology_counts") else int(
             getattr(grid, "host_leaf_count", 0)
         )
@@ -532,6 +562,24 @@ def launch_compiled_kernel(
         inputs.append(0.0)
     started = time.perf_counter()
     wp.launch(entry.compiled_kernel.kernel, dim=launch_dim, inputs=inputs, device=device)
-    wp.synchronize_device(device)
+    if _launch_needs_sync(entry):
+        wp.synchronize_device(device)
     duration = max(0.0, time.perf_counter() - started)
     return launch_dim, duration
+
+
+def _launch_needs_sync(entry: EffectRuntimeEntry) -> bool:
+    """Synchronize only after a kernel that can fault (P13).
+
+    Safe-mode kernels touch only the current element of capacity-sized
+    arrays behind the device-side count guard, so they cannot fault and
+    queue asynchronously like the solver's own kernels. Expert kernels may
+    index arbitrarily; a sync right after them makes a device fault surface
+    here, attributed to this effect, instead of at a later solver sync.
+    """
+    from .validation import effective_safe_mode
+
+    kernel = entry.compiled_kernel.kernel_definition
+    return not effective_safe_mode(entry.instance, kernel) or any(
+        binding.access in {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}
+        for binding in kernel.fields)

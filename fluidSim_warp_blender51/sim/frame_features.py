@@ -56,9 +56,15 @@ class FrameFeatures:
         if effect_stage is None:
             return
         requirements = self.effects.requirements_for_stage(effect_stage)
-        if requirements.surface_sdf:
-            solver.surface.ensure_solver_sdf_current()
-        self.effects.run(effect_stage, solver, time_context)
+        if requirements.surface_sdf and not solver.surface.ensure_solver_sdf_current():
+            # Fail closed: an effect reading the SDF must not run on stale or
+            # zero-initialized storage (the runtime raises a structured error).
+            self.effects.run(
+                effect_stage, solver, time_context,
+                surface_sdf_error=str(
+                    getattr(solver.surface, "solver_sdf_error", "") or ""))
+        else:
+            self.effects.run(effect_stage, solver, time_context)
         if requirements.moves_particles:
             # The solver SDF is keyed on frame/time, not on positions; an
             # effect that moved particles would otherwise leave surface

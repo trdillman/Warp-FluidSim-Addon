@@ -148,7 +148,9 @@ def compile_effect(
             break
     if issues:
         return CompiledEffect(instance, False, (), tuple(issues))
-    return CompiledEffect(instance, True, tuple(kernels), ())
+    # A valid effect can still carry advisory warnings (e.g. a write the
+    # solver overwrites); keep them so the authoring UI can show them.
+    return CompiledEffect(instance, True, tuple(kernels), validation.issues)
 
 
 def build_candidate_effects(
@@ -194,4 +196,5 @@ def build_candidate_effects(
             return CandidateBuildResult(False, (), (), tuple(issues), trust_states)
         compiled.append(result)
         reports.append(report)
-    return CandidateBuildResult(True, tuple(compiled), tuple(reports), (), trust_states)
+    warnings = tuple(issue for result in compiled for issue in result.issues)
+    return CandidateBuildResult(True, tuple(compiled), tuple(reports), warnings, trust_states)

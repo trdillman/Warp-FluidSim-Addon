@@ -55,8 +55,10 @@ _STATUS_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for 
 _TRUST_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for item in TrustState)
 _DOMAIN_ITEMS = (("PARTICLES", "Particles", "Run over live liquid particles"), ("ACTIVE_VOXELS", "Active Voxels", "Run over active sparse-grid voxels"))
 _STAGE_ITEMS = (
-    ("BEFORE_EMISSION", "Before Emission", "Before sources emit this substep"),
-    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer", "After particle-to-grid transfer"),
+    ("BEFORE_EMISSION", "Before Emission",
+     "Start of the substep, before emission and particle-to-grid transfer; use for particle velocity forces"),
+    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer",
+     "After particle-to-grid transfer; edit grid fields here (the grid transfer replaces particle velocity edits)"),
     ("BEFORE_PRESSURE", "Before Pressure", "Immediately before pressure projection"),
     ("AFTER_PARTICLE_UPDATE", "After Particle Update", "After advection and lifecycle"),
 )
@@ -766,6 +768,99 @@ def _try_live_parameter_update(scene) -> bool:
     return True
 
 
+def _live_bindable_values(pg, applied: EffectInstanceV2) -> EffectInstanceV2:
+    """``applied`` with its runtime-bindable values re-read from the scene.
+
+    F-curve/driver evaluation and controller-object motion change these
+    values without an RNA update callback, so they are read every step.
+    Non-bindable values keep their applied snapshot.
+    """
+    by_key = {str(item.key): item for item in pg.parameters}
+    values = dict(applied.parameter_values)
+    controllers = dict(applied.controller_bindings)
+    for definition in applied.definition.parameters:
+        item = by_key.get(definition.key)
+        if item is None or not definition.runtime_bindable:
+            continue
+        values[definition.key] = _parameter_value(item)
+        if definition.kind is ParameterKind.OBJECT:
+            snapshot = _controller_snapshot(item)
+            if snapshot:
+                controllers[definition.key] = snapshot
+            else:
+                controllers.pop(definition.key, None)
+    return replace(applied, parameter_values=values, controller_bindings=controllers)
+
+
+def _effect_values_may_change(scene, stack) -> bool:
+    """Cheap gate: can an effect value change without an update callback?
+
+    Effect parameters live on the Scene, so their F-curves, NLA strips and
+    drivers are on the Scene's animation data; controllers are objects that
+    can move. With neither, a step reads nothing else.
+    """
+    anim = getattr(scene, "animation_data", None)
+    if anim is not None and (
+            getattr(anim, "action", None) is not None
+            or len(getattr(anim, "drivers", ()) or ())
+            or len(getattr(anim, "nla_tracks", ()) or ())):
+        return True
+    return any(
+        getattr(item, "object_value", None) is not None
+        for pg in stack.items
+        for item in pg.parameters
+        if getattr(item, "kind", "") == ParameterKind.OBJECT.value)
+
+
+def sync_animated_effect_bindings(scene, session) -> bool:
+    """Rebind animated or moved runtime-bindable effect values before a step.
+
+    Preview only: during a Production Bake the solver keeps its admitted
+    values (decision D2); following keyframes there is deferred (B66).
+    Costs no rebinding unless a value actually changed since the last step.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None or not stack.applied_signature:
+        return False
+    runtime = getattr(getattr(session.solver, "features", None), "effects", None)
+    if runtime is None or not runtime.has_any():
+        return False
+    from . import production_bake
+
+    if production_bake.any_bake_active():
+        return False
+    if not _effect_values_may_change(scene, stack):
+        return False
+    by_id = {str(pg.instance_id): pg for pg in stack.items}
+    applied = runtime.applied_instances()
+    updated = []
+    try:
+        for instance in applied:
+            pg = by_id.get(instance.instance_id)
+            live = instance if pg is None else _live_bindable_values(pg, instance)
+            updated.append(live)
+    except (ReferenceError, ValueError):
+        # A deleted controller or an animated value outside its limits keeps
+        # the applied values; the next apply reports the authoring problem.
+        return False
+    if all(live is instance or (
+            live.parameter_values == instance.parameter_values
+            and live.controller_bindings == instance.controller_bindings)
+           for live, instance in zip(updated, applied, strict=True)):
+        return False
+    if not runtime.update_runtime_bindings(tuple(updated)):
+        return False
+    try:
+        instances = scene_effect_instances(scene)
+    except (RuntimeError, ValueError):
+        return True
+    if execution_stack_fingerprint(instances)[0] == runtime.applied_signature:
+        # The draft matches what now runs: keep the published applied state
+        # (status, cache identity) in step with the animated values.
+        _publish_applied_state(scene, instances)
+    return True
+
+
 def refresh_stack_state(scene):
     stack = scene.fluidsim_effects
     try:
@@ -861,6 +956,8 @@ def _mirror_issues(stack, issues):
         diagnostic.line = issue.line
         diagnostic.column = issue.column
         diagnostic.hint = issue.hint
+        if issue.severity != "ERROR":
+            continue  # advisory: shown, but neither blocks nor marks the code line
         for kernel in pg.kernels:
             if kernel.kernel_id == issue.kernel_id:
                 kernel.error_line = issue.line
@@ -890,6 +987,8 @@ def test_draft(scene, *, device: str) -> CandidateBuildResult:
             pg.status = "TESTED"
         else:
             pg.status = "DISABLED"
+    # A successful candidate carries only advisory warnings; show them.
+    _mirror_issues(stack, candidate.issues)
     compile_seconds = 0.0
     sandbox_seconds = 0.0
     warp_version = ""
