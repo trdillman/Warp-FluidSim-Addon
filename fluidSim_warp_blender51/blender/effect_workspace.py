@@ -105,6 +105,8 @@ def _generate_kernel_boilerplate(kernel, item) -> str:
         "# AVAILABLE CONSTANTS:",
         "#   voxel_size (float), frame (int), time (float), real_time_step (float),",
         "#   solver_time_step (float), time_scale (float), substeps (int)",
+        "#   real_time_step = simulated seconds per frame (time_scale / fps);",
+        "#   solver_time_step = simulated seconds per substep.",
         "#",
     ]
     if kernel.domain == "PARTICLES":
