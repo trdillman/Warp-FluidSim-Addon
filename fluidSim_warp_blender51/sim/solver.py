@@ -2155,8 +2155,12 @@ class FluidSolver:
         fluid_max_speed = 0.0
         collider_max_speed = 0.0
         # Scheduling runs before emission: count what armed sources will add.
+        # Release validation drives this method on a stand-in solver without
+        # sources, so a missing helper means no armed source.
+        armed_speed = getattr(self, "_armed_source_max_speed", None)
         source_max_speed = (
-            self._armed_source_max_speed() if policy.adaptive else 0.0)
+            armed_speed() if policy.adaptive and armed_speed is not None
+            else 0.0)
         # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
         # device reduction/readback entirely. Pure capillary demand is still
         # calculated by select_substeps so clamp diagnostics remain truthful.
