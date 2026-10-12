@@ -805,11 +805,14 @@ def detect_cache_format(base_dir: str | os.PathLike[str]) -> int:
     A manifest that cannot be parsed counts as current, so ``load_manifest``
     reports the precise problem rather than this function guessing.
     """
+    from .cache_schema import _manifest_record
+
     base = Path(base_dir)
     manifest_file = base / "fluidsim_cache.json"
     if manifest_file.is_file():
         try:
-            value = json.loads(manifest_file.read_text(encoding="utf-8"))
+            # Shared with load_manifest: unchanged bytes are parsed once.
+            value = _manifest_record(manifest_file)[1]
         except (OSError, ValueError):
             return CACHE_FORMAT_VERSION
         if (isinstance(value, dict)
