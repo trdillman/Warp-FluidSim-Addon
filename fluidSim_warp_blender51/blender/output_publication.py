@@ -1492,21 +1492,32 @@ def refresh_existing_output_settings(scene):
 
 
 def ensure_render_visibility(scene):
-    """Apply render visibility to persistent simulation outputs."""
+    """Apply render visibility to persistent simulation outputs.
+
+    Uses the same visibility rule as the viewport
+    (``refresh_existing_output_settings``): the scene display toggle *and* the
+    domain's Surface/Whitewater switch, so an output the viewport hides never
+    renders.
+    """
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
+    surface_visible = bool(
+        fs.show_surface and getattr(ds, "surface_enabled", False))
+    whitewater_visible = bool(
+        fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     combined_enabled, separate_enabled = _whitewater_mode_flags(
         getattr(fs, "whitewater_output_mode", "COMBINED"))
     for name, show in (
-        (SURFACE_NAME, fs.show_surface),
+        (SURFACE_NAME, surface_visible),
         (PARTICLES_NAME, fs.show_particles),
-        (WHITEWATER_NAME, fs.show_whitewater and combined_enabled),
-        (FOAM_NAME, fs.show_whitewater and separate_enabled),
-        (BUBBLES_NAME, fs.show_whitewater and separate_enabled),
-        (SPRAY_NAME, fs.show_whitewater and separate_enabled),
+        (WHITEWATER_NAME, whitewater_visible and combined_enabled),
+        (FOAM_NAME, whitewater_visible and separate_enabled),
+        (BUBBLES_NAME, whitewater_visible and separate_enabled),
+        (SPRAY_NAME, whitewater_visible and separate_enabled),
     ):
         obj = output_object(scene, name)
         if obj is not None:
-            if (name == WHITEWATER_NAME and fs.show_whitewater
+            if (name == WHITEWATER_NAME and whitewater_visible
                     and int(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0)) > 0):
                 show = True
             obj.hide_render = not show
