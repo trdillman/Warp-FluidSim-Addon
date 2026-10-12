@@ -130,6 +130,8 @@ BACKGROUND_ACCEPTANCE = (
      "ANIMATED-EFFECT-BAKE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_deforming_collider_bake_acceptance.py",
      "DEFORMING-COLLIDER-BAKE-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_headless_bake_cli_acceptance.py",
+     "HEADLESS-BAKE-CLI-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
 )
