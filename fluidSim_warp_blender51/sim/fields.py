@@ -445,6 +445,14 @@ class TopologyCapacityError(RuntimeError):
             "increase the domain leaf allocation.")
 
 
+def _world_box_voxels(grid, lo_world, hi_world):
+    """Inclusive voxel index range of a world box, before any clamping."""
+    h = grid.voxel_size
+    lo = [int(np.floor((lo_world[i] - grid.origin[i]) / h)) for i in range(3)]
+    hi = [int(np.floor((hi_world[i] - grid.origin[i]) / h)) for i in range(3)]
+    return lo, hi
+
+
 class SparseGrid:
     """Sparse leaf-tile grid over a world-space domain box."""
 
@@ -527,20 +535,14 @@ class SparseGrid:
             device=self.device,
         )
 
-    def _world_box_voxels(self, lo_world, hi_world):
-        h = self.voxel_size
-        lo = [int(np.floor((lo_world[i] - self.origin[i]) / h)) for i in range(3)]
-        hi = [int(np.floor((hi_world[i] - self.origin[i]) / h)) for i in range(3)]
-        return lo, hi
-
     def overlaps_world_box(self, lo_world, hi_world):
         """Whether a world box touches at least one domain voxel."""
-        lo, hi = self._world_box_voxels(lo_world, hi_world)
+        lo, hi = _world_box_voxels(self, lo_world, hi_world)
         return not any(hi[i] < 0 or lo[i] > int(self.voxels_dim[i]) - 1
                        for i in range(3))
 
     def mark_world_box(self, lo_world, hi_world):
-        lo, hi = self._world_box_voxels(lo_world, hi_world)
+        lo, hi = _world_box_voxels(self, lo_world, hi_world)
         # A box with no domain overlap must be rejected, not clamped: clamping
         # glues it to the domain boundary corner and marks leaves there, so an
         # out-of-domain source appears to work from the wrong place. A box that
