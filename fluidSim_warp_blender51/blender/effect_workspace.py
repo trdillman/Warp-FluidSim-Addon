@@ -92,9 +92,8 @@ def _text_area(context):
 
 
 def _generate_kernel_boilerplate(kernel, item) -> str:
-    param_keys = [k.strip() for k in getattr(kernel, "parameter_keys_csv", "").split(",") if k.strip()]
-    if not param_keys:
-        param_keys = [p.key for p in item.parameters]
+    # Same resolver as execution, so the header lists what the kernel binds.
+    param_keys = effects.bound_parameter_keys(item, kernel)
     param_map = {p.key: p for p in item.parameters}
 
     header = [

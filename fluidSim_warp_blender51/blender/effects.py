@@ -372,6 +372,16 @@ def _kernel_parameter_keys(kernel_pg, base: KernelDefinitionV2 | None) -> tuple[
     return base.parameter_keys  # .blend saved before the field existed
 
 
+def bound_parameter_keys(pg, kernel_pg) -> tuple[str, ...]:
+    """The parameter keys execution binds for ``kernel_pg`` of effect ``pg``."""
+    base = None
+    if pg.definition_json:
+        definition = EffectDefinitionV2.from_dict(json.loads(pg.definition_json))
+        base = next((kernel for kernel in definition.kernels
+                     if kernel.kernel_id == kernel_pg.kernel_id), None)
+    return _kernel_parameter_keys(kernel_pg, base)
+
+
 def unbind_parameter_key(pg, key: str) -> None:
     """Drop ``key`` from every kernel's bound parameters (before removing the parameter)."""
     original = {}
@@ -1175,15 +1185,15 @@ def apply_stack(scene, *, device: str) -> CandidateBuildResult:
         stack.applied_inventory_json = previous_inventory
         stack.applied_snapshot_json = previous_snapshot
         return candidate
-    try:
-        from . import scene_bridge
+    from . import scene_bridge
 
-        session = scene_bridge.session()
-        if session.active and session.owns_scene(scene):
-            if not session.solver.set_custom_effect_candidate(candidate):
-                raise RuntimeError("live solver rejected the complete candidate stack")
-    except AttributeError:
-        pass
+    session = scene_bridge.session()
+    if session.active and session.owns_scene(scene):
+        # Test for the method, not ``except AttributeError``: an error raised
+        # inside installation must not publish the stack as APPLIED.
+        install = getattr(session.solver, "set_custom_effect_candidate", None)
+        if install is not None and not install(candidate):
+            raise RuntimeError("live solver rejected the complete candidate stack")
     instances = scene_effect_instances(scene)
     _publish_applied_state(scene, instances)
     return candidate
