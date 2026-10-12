@@ -111,6 +111,84 @@ def test_validation_issues_identify_the_exact_effect_instance():
     assert all(issue.instance_id == instance.instance_id for issue in result.issues)
 
 
+def _generated_identifiers(domain):
+    """Every name the generated wrapper binds around the user body (B65)."""
+    import ast
+
+    from fluidsim_testpkg.sim.effects.source import generate_kernel_source
+
+    instance = _instance("pass", domain=domain)
+    generated = generate_kernel_source(instance, 0)
+    tree = ast.parse(generated.source)
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.FunctionDef):
+            names.update(arg.arg for arg in node.args.args)
+            prelude = [s for s in node.body if s.lineno < generated.user_line_start]
+            for statement in prelude:
+                for child in ast.walk(statement):
+                    if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+                        names.add(child.id)
+    names.discard("strength")  # the test instance's own parameter
+    return names
+
+
+def _instance_with_parameter(key, *, domain=EffectDomain.PARTICLES):
+    definition = EffectDefinitionV2(
+        effect_id="test.reserved",
+        version="1.0.0",
+        name="Reserved",
+        summary="Reserved",
+        description="Reserved",
+        category="Tests",
+        author="Tests",
+        license="GPL-3.0-or-later",
+        parameters=(ParameterDefinitionV2(key, key, ParameterKind.FLOAT, 1.0),),
+        kernels=(
+            KernelDefinitionV2(
+                kernel_id="kernel",
+                label="Kernel",
+                domain=domain,
+                stage=EffectStage.BEFORE_PRESSURE,
+                cadence=EffectCadence.EVERY_SUBSTEP,
+                source="pass",
+                parameter_keys=(key,),
+            ),
+        ),
+    )
+    return EffectInstanceV2("reserved-1", definition)
+
+
+def test_every_generated_identifier_is_a_reserved_parameter_name():
+    assert {"_count", "_positions", "_tid"} <= _generated_identifiers(EffectDomain.PARTICLES)
+    for domain in (EffectDomain.PARTICLES, EffectDomain.ACTIVE_VOXELS):
+        generated = _generated_identifiers(domain)
+        for name in sorted(generated):
+            codes = _codes(_instance_with_parameter(name, domain=domain))
+            assert "RESERVED_PARAMETER_NAME" in codes, (domain, name)
+
+
+def test_body_using_generated_underscore_names_gets_a_reserved_name_diagnostic():
+    binding = FieldBindingV2("particle_velocity", FieldAccess.READ_WRITE_CURRENT)
+    instance = _instance(
+        "_tid = 0\nparticle_velocity[particle_index] = velocity * float(_count[0])",
+        fields=(binding,),
+    )
+    result = validate_effect(instance)
+    reserved = [issue for issue in result.issues if issue.code == "RESERVED_NAME"]
+    assert result.valid is False
+    assert [(issue.line, issue.column) for issue in reserved] == [(1, 1), (2, 54)]
+    assert "reserved for generated kernel code" in reserved[0].message
+    assert "UNKNOWN_NAME" not in {issue.code for issue in result.issues}
+
+
+def test_bare_underscore_loop_variable_stays_allowed():
+    instance = _instance("total = 0.0\nfor _ in range(4):\n    total = total + strength")
+    assert validate_effect(instance).valid is True
+
+
 def test_validation_keeps_mixed_ast_issue_order_and_locations():
     instance = _instance(
         "while strength > 0.0:\n"

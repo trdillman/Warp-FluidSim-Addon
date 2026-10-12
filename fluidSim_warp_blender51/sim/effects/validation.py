@@ -54,7 +54,22 @@ _VOXEL_CONTEXT = {
     "flat_voxel_index", "leaf_index", "local_x", "local_y", "local_z",
     "global_x", "global_y", "global_z", "world_position", "voxel_size",
 }
-_RESERVED_ARGUMENTS = _TIME_CONTEXT | _PARTICLE_CONTEXT | _VOXEL_CONTEXT | _ALLOWED_GLOBALS
+# Module-level names the generated wrapper imports (source.py). Its generated
+# arguments and prelude locals (_positions, _count, _tid, _ijk, ...) all start
+# with an underscore and are covered by _is_generated_name.
+_GENERATED_MODULE_NAMES = {"voxel_coord_of_flat", "voxel_center_world"}
+_RESERVED_ARGUMENTS = (
+    _TIME_CONTEXT | _PARTICLE_CONTEXT | _VOXEL_CONTEXT | _ALLOWED_GLOBALS
+    | _GENERATED_MODULE_NAMES
+)
+_GENERATED_NAME_MESSAGE = (
+    "Names starting with '_' are reserved for generated kernel code."
+)
+
+
+def _is_generated_name(name: str) -> bool:
+    """Whether ``name`` is in the generated-code namespace (bare ``_`` is not)."""
+    return len(name) > 1 and name.startswith("_")
 
 
 def _assigned_names(tree: ast.AST) -> set[str]:
@@ -182,7 +197,18 @@ def _append_name_issues(
     assigned: set[str],
     known: list[str],
 ) -> None:
-    if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+    if not isinstance(node, ast.Name):
+        return
+    if _is_generated_name(node.id):
+        issues.append(_line_issue(
+            "RESERVED_NAME",
+            f"{node.id!r}: {_GENERATED_NAME_MESSAGE}",
+            node,
+            kernel,
+            hint="Rename it without the leading underscore.",
+        ))
+        return
+    if not isinstance(node.ctx, ast.Load):
         return
     if node.id not in allowed and node.id not in assigned:
         close = difflib.get_close_matches(node.id, known, n=1, cutoff=0.6)
@@ -237,10 +263,19 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
 
     parameter_map = instance.definition.parameter_map()
     for key in kernel.parameter_keys:
-        if key in _RESERVED_ARGUMENTS or key in FIELD_SPECS:
+        if _is_generated_name(key):
             issues.append(EffectIssue(
                 "RESERVED_PARAMETER_NAME",
-                f"Parameter {key!r} conflicts with an effect context or field name.",
+                f"Parameter {key!r}: {_GENERATED_NAME_MESSAGE}",
+                effect_id=instance.definition.effect_id,
+                kernel_id=kernel.kernel_id,
+                hint="Rename the parameter without the leading underscore.",
+            ))
+        elif key in _RESERVED_ARGUMENTS or key in FIELD_SPECS:
+            issues.append(EffectIssue(
+                "RESERVED_PARAMETER_NAME",
+                f"Parameter {key!r} conflicts with an effect context, field, "
+                "or generated kernel name.",
                 effect_id=instance.definition.effect_id,
                 kernel_id=kernel.kernel_id,
             ))
