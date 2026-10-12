@@ -210,14 +210,17 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
+        # Blender requires Operator.cancel to return None (it calls this when a
+        # file is opened mid-bake); a returned set raised inside Blender.
         run = self._run
         if run is None:
-            return {"CANCELLED"}
+            return
         if not _scene_is_available(run.scene, run.scene_key):
-            return self._cancel_removed_scene(context)
+            self._cancel_removed_scene(context)
+            return
         run.request_cancel()
         self._advance("Production bake cleanup failed")
-        return self._finish(context)
+        self._finish(context)
 
 
 class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):

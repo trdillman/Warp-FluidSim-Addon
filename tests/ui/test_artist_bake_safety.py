@@ -713,3 +713,40 @@ def test_removed_scene_restore_failure_still_removes_timer_and_reservation(
     assert production_bake.cache_path_is_active(cache_dir) is False
     assert len(removed_timers) == 1
     assert controller.cancel_requests == 1
+
+
+@pytest.mark.parametrize("scene_removed", [False, True])
+def test_modal_bake_cancel_returns_none_and_releases_the_bake(
+    monkeypatch, tmp_path, scene_removed
+):
+    """Blender calls a modal operator's cancel() when a file is opened mid-bake.
+
+    Operator.cancel must return None; returning {'CANCELLED'} raised
+    "function cancel to return None, not set" inside Blender (B29 GUI run).
+    """
+    fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    _ModalController.instances.clear()
+    monkeypatch.setattr(production_bake, "BakeController", _ModalController)
+    monkeypatch.setattr(production_bake, "ProductionBakeBackend", _ModalBackend)
+    scene = _Scene(808, tmp_path / "cancel")
+    fake_bpy.data.scenes[:] = [scene]
+    context, removed_timers = _modal_context(scene)
+    operator = cache_operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = False
+
+    assert cache_operators.FLUIDSIM_OT_bake_start().cancel(context) is None
+    assert operator.execute(context) == {"RUNNING_MODAL"}
+    controller = _ModalController.instances[-1]
+    registration_proxy = SimpleNamespace(as_pointer=lambda: 808)
+    if scene_removed:
+        scene.removed = True
+        fake_bpy.data.scenes.clear()
+    try:
+        assert operator.cancel(context) is None
+        assert controller.cancel_requests == 1
+        assert production_bake.cache_path_is_active(tmp_path / "cancel") is False
+        assert len(removed_timers) == 1
+    finally:
+        production_bake.clear_active_bake(registration_proxy, controller)
