@@ -372,6 +372,16 @@ def _kernel_parameter_keys(kernel_pg, base: KernelDefinitionV2 | None) -> tuple[
     return base.parameter_keys  # .blend saved before the field existed
 
 
+def bound_parameter_keys(pg, kernel_pg) -> tuple[str, ...]:
+    """The parameter keys execution binds for ``kernel_pg`` of effect ``pg``."""
+    base = None
+    if pg.definition_json:
+        definition = EffectDefinitionV2.from_dict(json.loads(pg.definition_json))
+        base = next((kernel for kernel in definition.kernels
+                     if kernel.kernel_id == kernel_pg.kernel_id), None)
+    return _kernel_parameter_keys(kernel_pg, base)
+
+
 def unbind_parameter_key(pg, key: str) -> None:
     """Drop ``key`` from every kernel's bound parameters (before removing the parameter)."""
     original = {}
