@@ -277,6 +277,49 @@ def test_voxel_current_index_cannot_be_rebound():
     assert "RESERVED_NAME_ASSIGNMENT" in _codes(instance)
 
 
+_EXPERT_SOURCE = "particle_velocity[0] = velocity"
+
+
+def _expert_instance(*, instance_safe, kernel_safe, acknowledged):
+    from dataclasses import replace
+
+    instance = _instance(
+        _EXPERT_SOURCE, fields=_velocity(FieldAccess.UNSAFE_ARBITRARY))
+    kernel = replace(instance.definition.kernels[0], safe_mode=kernel_safe)
+    definition = replace(instance.definition, kernels=(kernel,))
+    return replace(instance, definition=definition, safe_mode=instance_safe,
+                   expert_acknowledged=acknowledged)
+
+
+def test_turning_off_safety_without_acknowledgement_keeps_safe_restrictions():
+    # B64: kernel (or instance) safety off used to grant Expert access even
+    # though the instance never acknowledged it.
+    for instance_safe, kernel_safe in ((True, False), (False, True), (False, False)):
+        result = validate_effect(_expert_instance(
+            instance_safe=instance_safe, kernel_safe=kernel_safe, acknowledged=False))
+        codes = {issue.code for issue in result.issues}
+        assert result.valid is False, (instance_safe, kernel_safe)
+        assert {"UNSAFE_ACCESS_REQUIRES_EXPERT",
+                "EXPERT_ACKNOWLEDGEMENT_REQUIRED"} <= codes
+        # Callers report issues[0]; it must be the blocking error.
+        assert result.issues[0].severity == "ERROR"
+
+
+def test_acknowledged_expert_access_lifts_safe_restrictions():
+    for instance_safe, kernel_safe in ((True, False), (False, True), (False, False)):
+        result = validate_effect(_expert_instance(
+            instance_safe=instance_safe, kernel_safe=kernel_safe, acknowledged=True))
+        assert result.valid is True, (instance_safe, kernel_safe)
+        assert result.issues == ()
+
+
+def test_safe_effect_needs_no_acknowledgement():
+    instance = _instance(
+        "particle_velocity[particle_index] = velocity",
+        fields=_velocity(FieldAccess.READ_WRITE_CURRENT))
+    assert validate_effect(instance).issues == ()
+
+
 def test_validation_keeps_mixed_ast_issue_order_and_locations():
     instance = _instance(
         "while strength > 0.0:\n"

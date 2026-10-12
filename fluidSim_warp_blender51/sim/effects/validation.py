@@ -368,7 +368,21 @@ def _append_binding_name_issues(
 
 def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> list[EffectIssue]:
     issues: list[EffectIssue] = []
-    safe_mode = bool(instance.safe_mode and kernel.safe_mode)
+    # Turning safety off (instance or kernel) only requests Expert access; it
+    # is granted once the instance acknowledges it. Until then the safe-mode
+    # restrictions still apply.
+    expert_requested = not (instance.safe_mode and kernel.safe_mode)
+    safe_mode = not (expert_requested and instance.expert_acknowledged)
+    if expert_requested and safe_mode:
+        issues.append(EffectIssue(
+            "EXPERT_ACKNOWLEDGEMENT_REQUIRED",
+            "Safe Mode is off but Expert access is not acknowledged; "
+            "Safe Mode restrictions still apply.",
+            severity="WARNING",
+            effect_id=instance.definition.effect_id,
+            kernel_id=kernel.kernel_id,
+            hint="Enable Expert Access Acknowledged to lift Safe Mode restrictions.",
+        ))
     for binding in kernel.fields:
         issues.extend(validate_field_binding(binding, kernel, safe_mode=safe_mode))
 
@@ -483,6 +497,9 @@ def validate_effect(instance: EffectInstanceV2, *, safe_mode: bool | None = None
         )
         for issue in issues
     )
+    # Blocking errors first (stable), so callers that report issues[0] never
+    # surface an advisory warning in place of the error.
+    enriched = tuple(sorted(enriched, key=lambda issue: issue.severity != "ERROR"))
     return ValidationResult(
         valid=not any(issue.severity == "ERROR" for issue in enriched),
         issues=enriched,
