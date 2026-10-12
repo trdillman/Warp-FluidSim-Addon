@@ -2006,9 +2006,15 @@ class FluidSolver:
             with self._phase("sourcing"):
                 if self.narrow_band is not None:
                     self.narrow_band.credit_interior_counts()
+                bins_before = self.bins
                 emitted = self._source(dt)
                 if self.narrow_band is not None:
                     self.narrow_band.release_interior_counts()
+                # A successful pool growth swaps in fresh, empty bins and
+                # defers the emission, so the index must be rebuilt even
+                # though nothing was emitted.
+                if not emitted and self.bins is not bins_before:
+                    self._index_particles()
                 # Re-count after emission so P2G activity sees new particles.
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:

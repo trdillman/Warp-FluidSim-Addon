@@ -299,9 +299,13 @@ class SourcePipeline(CompiledSourceExecution):
         self.last_apply_result = replace(self.last_apply_result, available=max(0, int(available)))
 
     def replace_particle_storage(self, particles) -> None:
-        """Rebind source execution after the solver atomically swaps its pool."""
+        """Rebind source execution after the solver atomically swaps its pool.
+
+        The compiled batch holds region data only, so it survives the swap:
+        growth happens mid-substep, and dropping it skipped the compiled field
+        and pressure stages for the rest of that substep.
+        """
         self.runtime = replace(self.runtime, particles=particles)
-        self._compiled_batch = None
         self.update_available_capacity(
             int(particles.capacity) - int(particles.host_count)
         )
