@@ -2207,6 +2207,34 @@ def test_viewport_launcher_is_a_pinned_status_strip_not_a_settings_shelf(monkeyp
     assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
 
 
+def test_activity_ui_state_reports_playing_from_the_scene_window(monkeypatch):
+    """B79: the shared helper must pass timeline playback to the snapshot."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    monkeypatch.setattr(production_bake, "active_bake", lambda _scene: None)
+    bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    bridge.session = lambda: SimpleNamespace(owns_scene=lambda _scene: True)
+    monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    scene = SimpleNamespace(name="Scene", fluidsim=SimpleNamespace(
+        bake_status="IDLE", cache_playback_enabled=False, live=True, status=""))
+    other = SimpleNamespace(name="Other", fluidsim=scene.fluidsim)
+    screen = SimpleNamespace(is_animation_playing=True)
+    fake_bpy.context.window_manager = SimpleNamespace(windows=[
+        SimpleNamespace(scene=scene, screen=screen)])
+
+    assert ui_common.activity_ui_state(scene)["label"] == "Playing Live"
+    assert ui_common.activity_ui_state(scene)["busy"] is True
+    # A window playing another scene does not make this one "playing".
+    assert ui_common.activity_ui_state(other)["label"] == "Live Ready"
+    screen.is_animation_playing = False
+    assert ui_common.activity_ui_state(scene)["label"] == "Live Ready"
+    scene.fluidsim.cache_playback_enabled = True
+    screen.is_animation_playing = True
+    assert ui_common.activity_ui_state(scene)["label"] == "Playing Cache"
+
+
 def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
     """`Solver not owned by this scene` was jargon; say what Play will do."""
     _panels, layout = _draw_launcher(monkeypatch, owns_scene=True, label="Live Ready")
