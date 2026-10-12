@@ -157,6 +157,32 @@ def check_migration(tmpdir):
           bpy.data.objects[name].fluidsim_domain.resolution_divisions == 33)
 
 
+def check_schema_stamp(tmpdir):
+    """B62: a saved domain carries the domain schema, even an untouched one."""
+    from fluidSim_warp_blender51.blender import file_compat
+
+    scene, domain = fresh_domain()
+    name = domain.name
+    raw_props = domain.bl_system_properties_get(do_create=True)
+    untouched = raw_props.get("fluidsim_domain")
+    check("fixture: untouched domain stores no divisions",
+          untouched is None or "resolution_divisions" not in untouched,
+          None if untouched is None else dict(untouched))
+    path = str(Path(tmpdir) / "stamped.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=path)
+    bpy.ops.wm.open_mainfile(filepath=path)
+    domain = bpy.data.objects[name]
+    raw = raw_domain_group(domain)
+    check("save stamps the domain schema",
+          raw is not None and raw.get(file_compat.DOMAIN_SCHEMA_KEY)
+          == file_compat.CURRENT_DOMAIN_SCHEMA, None if raw is None else dict(raw))
+    check("stamped untouched domain keeps the default divisions",
+          domain.fluidsim_domain.resolution_divisions == 64,
+          domain.fluidsim_domain.resolution_divisions)
+    check("stamp is not mistaken for authored divisions",
+          "resolution_divisions" not in raw, dict(raw))
+
+
 def check_domain_scale_is_pending():
     from fluidSim_warp_blender51.blender import pending_settings
 
@@ -191,21 +217,25 @@ def demo_table():
         scene = bpy.context.scene
         obj = active_domain_object(scene)
         raw = raw_domain_group(obj)
-        check(f"{name}: demo stores a legacy voxel_size", raw is not None
-              and "voxel_size" in raw)
-        stored = float(raw["voxel_size"])
+        # A demo rebuilt by 3.x stores its divisions; an older one stores the
+        # legacy voxel size the load migration converts.
+        legacy = raw is not None and "voxel_size" in raw
+        check(f"{name}: demo stores its grid (legacy voxel_size or divisions)",
+              legacy or (raw is not None and "resolution_divisions" in raw))
         group = obj.fluidsim_domain
         longest = longest_axis(obj)
         derived = float(group.voxel_size)
-        old_dims = padded(stored, scene, tolerance=0.0)  # as shipped before 3.0
+        stored = float(raw["voxel_size"]) if legacy else None
+        old_dims = (padded(stored, scene, tolerance=0.0)  # as shipped before 3.0
+                    if legacy else None)
         new_dims = padded(derived, scene)
-        equal = f32(stored) == derived
+        equal = legacy and f32(stored) == derived
         print(f"DEMO_TABLE {name} | {stored!r} | {longest!r} | "
               f"{group.resolution_divisions} | {derived!r} | {equal} | "
               f"{old_dims} | {new_dims}", flush=True)
         check(f"{name}: migrated padded dims are the expected ones",
               new_dims == EXPECTED_NEW_DIMS[name], (old_dims, new_dims))
-        if name != "crown_splash":
+        if legacy and name != "crown_splash":
             check(f"{name}: migrated padded dims equal the stored ones",
                   old_dims == new_dims, (old_dims, new_dims))
         check(f"{name}: migration ran again is a no-op",
@@ -221,6 +251,7 @@ def main():
     check_get_set()
     with tempfile.TemporaryDirectory() as tmpdir:
         check_migration(tmpdir)
+        check_schema_stamp(tmpdir)
     check_domain_scale_is_pending()
     demo_table()
 

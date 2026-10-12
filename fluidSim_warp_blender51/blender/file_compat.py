@@ -92,6 +92,62 @@ def draw_pre_bridge_warning(layout, scene) -> None:
     box.label(text="Open and re-save this file in FluidSim 1.1 first.")
 
 
+# The domain-settings schema a domain object was saved under, stored raw in its
+# ``fluidsim_domain`` group. 3 = the grid is authored as Resolution Divisions
+# (default 64). Files saved before 3.1 carry no stamp, and an unstamped domain
+# that stores neither ``voxel_size`` nor ``resolution_divisions`` may come from
+# 2.x (default voxel 0.05) or from 3.0 (default 64 divisions): nothing in the
+# file tells them apart, so it keeps the 3.0 default (decision B62). The stamp
+# lets the next change to a default migrate untouched domains exactly.
+DOMAIN_SCHEMA_KEY = "domain_schema_version"
+CURRENT_DOMAIN_SCHEMA = 3
+
+
+def _writable_domain_group(obj):
+    """``obj``'s raw ``fluidsim_domain`` group, created when missing."""
+    getter = getattr(obj, "bl_system_properties_get", None)
+    if not callable(getter):
+        return None
+    try:
+        stored = getter(do_create=True)
+        if stored is None:
+            return None
+        if stored.get("fluidsim_domain") is None:
+            stored["fluidsim_domain"] = {}
+        return stored.get("fluidsim_domain")
+    except (AttributeError, KeyError, TypeError):
+        return None
+
+
+def stamp_domain_schema(objects=None, scenes=None) -> int:
+    """Stamp every local domain object with :data:`CURRENT_DOMAIN_SCHEMA`.
+
+    Covers each scene's designated domain, even one whose group was never
+    written, and any object that stores a domain group. Linked library data
+    belongs to its own file and is left alone. Returns the number stamped.
+    """
+    from .scene_access import active_domain_object
+
+    data = getattr(bpy, "data", None)
+    objects = getattr(data, "objects", ()) if objects is None else objects
+    scenes = getattr(data, "scenes", ()) if scenes is None else scenes
+    candidates = {}
+    for obj in [active_domain_object(scene) for scene in scenes] + [
+            obj for obj in objects
+            if _stored_scene_group(obj, "fluidsim_domain") is not None]:
+        if obj is not None and getattr(obj, "library", None) is None:
+            pointer = getattr(obj, "as_pointer", None)
+            candidates[pointer() if callable(pointer) else id(obj)] = obj
+    stamped = 0
+    for obj in candidates.values():
+        group = _writable_domain_group(obj)
+        if group is None or group.get(DOMAIN_SCHEMA_KEY) == CURRENT_DOMAIN_SCHEMA:
+            continue
+        group[DOMAIN_SCHEMA_KEY] = CURRENT_DOMAIN_SCHEMA
+        stamped += 1
+    return stamped
+
+
 def migrate_domain_resolution(objects=None, scenes=None, *, _evaluate_views=True) -> int:
     """Give a pre-3.0 domain object the Resolution Divisions its voxel size implied.
 
@@ -227,6 +283,11 @@ def _on_compat_load_pre(_arg):
 
 
 @persistent
+def _on_save_pre(_arg):
+    stamp_domain_schema()
+
+
+@persistent
 def _on_imported_domain_update(scene, _depsgraph):
     """Resolve only queued, newly linked domains after dependency evaluation."""
     global _migrating_imports
@@ -254,6 +315,7 @@ _COMPAT_HANDLERS = (
     ("load_post", _on_load_post),
     ("blend_import_post", _on_blend_import_post),
     ("load_pre", _on_compat_load_pre),
+    ("save_pre", _on_save_pre),
     ("depsgraph_update_post", _on_imported_domain_update),
 )
 

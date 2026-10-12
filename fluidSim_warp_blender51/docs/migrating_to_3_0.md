@@ -42,6 +42,13 @@ What that means for your scene:
 - The Setup stage and the Physics tab show the effective cell size and the padded
   grid (the solver pads each axis to whole 8 × 8 × 8 leaves) as read-only labels.
 - Changing divisions needs a Reinitialize, as changing the voxel size did.
+- **A 2.x domain whose Voxel Size was never changed opens at 64 divisions**, not
+  at the 2.x default of 0.05 m. Blender does not save a value left at its
+  default, so such a domain looks exactly like a 3.0 domain whose divisions were
+  never changed, and 3.0 files keep their 64. On a 4 m domain the 2.x grid was
+  80 divisions; set Resolution Divisions to `longest axis / 0.05` to match it.
+  From 3.1 every saved domain is stamped with its settings schema, so a future
+  default change can migrate untouched domains exactly.
 - `voxel_size` still exists as a derived property. Reading it gives the cell size,
   and writing it sets the nearest whole divisions. Presets that store a voxel
   size still apply. Quality tiers still scale the cell size, not the divisions.

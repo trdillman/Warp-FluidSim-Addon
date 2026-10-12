@@ -233,3 +233,54 @@ def test_load_migration_maps_stored_voxel_size_to_divisions(monkeypatch):
     # and must not run again once divisions are stored (the real RNA stores them).
     legacy.bl_system_properties_get()["fluidsim_domain"]["resolution_divisions"] = 80
     assert file_compat.migrate_domain_resolution([legacy], scenes=()) == 0
+
+
+def _stampable(stored_group, *, library=None):
+    """A domain object whose raw system-properties dict can grow a group."""
+    stored = {} if stored_group is None else {"fluidsim_domain": stored_group}
+
+    def getter(do_create=False):
+        return stored
+
+    obj = SimpleNamespace(library=library, bl_system_properties_get=getter)
+    return obj, stored
+
+
+def test_save_stamps_every_domain_group_with_the_domain_schema(monkeypatch):
+    # B62: a 2.x domain that never stored voxel_size and a 3.0 domain that never
+    # stored divisions are indistinguishable; from now on a saved domain says
+    # which schema its untouched defaults belong to.
+    _modules(monkeypatch)
+    import importlib
+
+    file_compat = importlib.import_module("fluidSim_warp_blender51.blender.file_compat")
+    key = file_compat.DOMAIN_SCHEMA_KEY
+    authored, authored_raw = _stampable({"resolution_divisions": 90})
+    untouched, untouched_raw = _stampable(None)
+    linked, linked_raw = _stampable({"time_scale": 1.0}, library="lib.blend")
+    other, other_raw = _stampable(None)  # not a domain: never gains a group
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=untouched))
+
+    assert file_compat.stamp_domain_schema(
+        objects=[authored, untouched, linked, other], scenes=[scene]) == 2
+
+    current = file_compat.CURRENT_DOMAIN_SCHEMA
+    assert authored_raw["fluidsim_domain"] == {
+        "resolution_divisions": 90, key: current}
+    assert untouched_raw["fluidsim_domain"] == {key: current}
+    assert key not in linked_raw["fluidsim_domain"]
+    assert other_raw == {}
+    assert file_compat.stamp_domain_schema(
+        objects=[authored, untouched], scenes=[scene]) == 0  # idempotent
+
+
+def test_save_pre_handler_stamps(monkeypatch):
+    _modules(monkeypatch)
+    import importlib
+
+    file_compat = importlib.import_module("fluidSim_warp_blender51.blender.file_compat")
+    assert ("save_pre", file_compat._on_save_pre) in file_compat._COMPAT_HANDLERS
+    calls = []
+    monkeypatch.setattr(file_compat, "stamp_domain_schema", lambda: calls.append(1) or 0)
+    file_compat._on_save_pre(None)
+    assert calls == [1]
