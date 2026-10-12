@@ -274,11 +274,11 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:886` |
-| `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:487`, `fluidSim_warp_blender51/blender/scene_bridge.py:397` |
-| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:495`, `fluidSim_warp_blender51/blender/scene_bridge.py:426` |
-| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:496`, `fluidSim_warp_blender51/blender/scene_bridge.py:428` |
-| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:497`, `fluidSim_warp_blender51/blender/scene_bridge.py:430` |
-| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:498`, `fluidSim_warp_blender51/blender/scene_bridge.py:432` |
-| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:499`, `fluidSim_warp_blender51/blender/scene_bridge.py:434` |
-| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:500`, `fluidSim_warp_blender51/blender/scene_bridge.py:436` |
+| `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:487`, `fluidSim_warp_blender51/blender/scene_bridge.py:417` |
+| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:495`, `fluidSim_warp_blender51/blender/scene_bridge.py:446` |
+| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:496`, `fluidSim_warp_blender51/blender/scene_bridge.py:448` |
+| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:497`, `fluidSim_warp_blender51/blender/scene_bridge.py:450` |
+| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:498`, `fluidSim_warp_blender51/blender/scene_bridge.py:452` |
+| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:499`, `fluidSim_warp_blender51/blender/scene_bridge.py:454` |
+| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:500`, `fluidSim_warp_blender51/blender/scene_bridge.py:456` |
 
