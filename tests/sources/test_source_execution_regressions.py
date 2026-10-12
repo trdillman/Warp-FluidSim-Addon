@@ -86,3 +86,44 @@ def test_removed_legacy_emitters_leave_no_phantom_demand(cuda_device):
         assert solver.particles.host_count == emitted + 50
     finally:
         solver.release()
+
+
+# B41: compiled coverage emission must spread a voxel's particles inside the
+# voxel (deterministically), not stack them all on its centre.
+
+def _rasterized_points(target=8.0):
+    return SourcePlan(
+        SourceKey("raster"), SourceOperation.LIQUID, SourceLifecycle.TOP_UP,
+        SourceEvaluationCadence.STATIC,
+        PointRegionPlan([[1.0, 1.0, 1.0]], rasterize_radius=0.3),
+        PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
+                    target_particles_per_voxel=target))
+
+
+def _emit_rasterized(device):
+    solver = FluidSolver(_settings(device))
+    try:
+        solver.set_source_batch(native_plans=(_rasterized_points(),))
+        _prepare_substep(solver)
+        solver.sourcing.apply(1.0 / 24.0)
+        count = solver.particles.host_count
+        return solver.particles.position.numpy()[:count].copy()
+    finally:
+        solver.release()
+
+
+def test_compiled_emission_jitters_particles_within_their_voxel(cuda_device):
+    positions = _emit_rasterized(cuda_device)
+    voxel = 0.25
+    voxels = np.floor(positions / voxel).astype(np.int64)
+    covered = np.unique(voxels, axis=0)
+    assert len(positions) == 8 * len(covered)
+    # Every particle is distinct and still inside the voxel it was emitted for.
+    assert len(np.unique(positions, axis=0)) == len(positions)
+    centres = (voxels + 0.5) * voxel
+    assert np.all(np.abs(positions - centres) <= 0.5 * voxel + 1e-6)
+    # The layout is a function of the grid and the source, not of thread order.
+    again = _emit_rasterized(cuda_device)
+    order = np.lexsort(positions.T)
+    again_order = np.lexsort(again.T)
+    np.testing.assert_array_equal(positions[order], again[again_order])

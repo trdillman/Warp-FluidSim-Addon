@@ -1795,6 +1795,7 @@ def k_emit_compiled_source_particles(
     life_value: float,
     use_lifespan: int,
     capacity: int,
+    seed: int,
     voxel_counts: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -1811,6 +1812,15 @@ def k_emit_compiled_source_particles(
     result: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
+    """Top covered voxels up to their target occupancy.
+
+    Each particle is jittered inside its voxel like legacy shape emission;
+    stacking them on the centre left them inseparable (relaxation skips
+    zero-distance pairs). The random stream is keyed by the transaction
+    ``seed``, the voxel's global index and its occupancy before this pass,
+    never by slot or thread order, so the emitted positions are
+    reproducible even though slots are taken with an atomic cursor.
+    """
     if emission_state[1] == 0:
         return
     tid = wp.tid()
@@ -1828,8 +1838,11 @@ def k_emit_compiled_source_particles(
     if flat < 0:
         return
     desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
-    missing = wp.max(0, desired - voxel_counts[flat])
+    have = voxel_counts[flat]
+    missing = wp.max(0, desired - have)
     center = voxel_center_world(ijk, origin, voxel_size)
+    voxel_key = ijk[0] + voxels_dim[0] * (ijk[1] + voxels_dim[1] * ijk[2])
+    state = wp.rand_init(seed + have * 7919, voxel_key)
     for sample in range(C.MAX_PARTICLES_PER_VOXEL):
         if sample >= missing:
             break
@@ -1839,7 +1852,11 @@ def k_emit_compiled_source_particles(
             result[1] = 1
             emission_state[3] = 1
             break
-        positions[slot] = center
+        positions[slot] = center + wp.vec3(
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+        )
         velocities[slot] = emission_velocity
         age[slot] = 0.0
         life[slot] = wp.where(use_lifespan != 0, life_value, 1.0e30)

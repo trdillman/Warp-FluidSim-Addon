@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from hashlib import sha256
 
 import numpy as np
 import warp as wp
@@ -303,6 +304,7 @@ class CompiledSourceExecution:
                         payload.lifespan,
                         1 if payload.use_lifespan else 0,
                         particles.capacity,
+                        self._compiled_emission_seed(stable_id),
                         owner.voxel_counts.data,
                     ],
                     outputs=[
@@ -332,6 +334,17 @@ class CompiledSourceExecution:
         if finalize:
             return self._finish_emission_transaction()
         return False
+
+    def _compiled_emission_seed(self, stable_id):
+        """Jitter seed for one compiled source in the current transaction.
+
+        Derived from the source identity, the frame and the particle count
+        the transaction started from, all of which a checkpoint restores, so
+        a resumed run jitters exactly like the continuous one and each
+        emitting substep draws fresh positions.
+        """
+        raw = f"{stable_id}|{self.runtime.frame}|{int(self._emission_initial_count)}"
+        return int.from_bytes(sha256(raw.encode("utf8")).digest()[:4], "little") & 0x7FFFFFFF
 
     def apply_post_p2g_fields(self, dt):
         """Apply scalar/vector/staggered fields after P2G so they persist."""
