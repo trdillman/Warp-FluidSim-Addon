@@ -1808,6 +1808,76 @@ def test_phase1_tag_operator_supports_force_and_has_disabled_state(monkeypatch):
     )
 
 
+class _TaggedObject(SimpleNamespace):
+    """Object stand-in carrying ID properties (``obj.get``) like a real ID."""
+
+    def __init__(self, tags=None, **attrs):
+        super().__init__(**attrs)
+        self._tags = dict(tags or {})
+
+    def get(self, key, default=None):
+        return self._tags.get(key, default)
+
+
+def _phase1_tagged(role, tags):
+    plain = _phase1_object(role)
+    return _TaggedObject(
+        tags,
+        name=plain.name,
+        type=plain.type,
+        fluidsim=plain.fluidsim,
+        display_type=plain.display_type,
+        hide_render=plain.hide_render,
+    )
+
+
+@pytest.mark.parametrize("role", ["SOURCE", "SINK", "COLLIDER", "FORCE", "FIELD"])
+def test_batch_role_tag_skips_the_domain_and_fluidsim_outputs(monkeypatch, role):
+    """B70: Set Selected as ... must never turn the domain or an output into an input."""
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    liquid = _phase1_object("NONE")
+    domain = _phase1_object("NONE")
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    wizard_domain = _phase1_tagged("NONE", {"fluidsim_kind": "DOMAIN"})
+    output = _phase1_tagged("NONE", {"fluidsim_output_kind": "FluidSim Surface"})
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain))
+    context = SimpleNamespace(
+        scene=scene, selected_objects=[liquid, domain, wizard_domain, output]
+    )
+    op = operators.FLUIDSIM_OT_tag_object()
+    op.role = role
+
+    assert op.execute(context) == {"FINISHED"}
+    assert liquid.fluidsim.role == role
+    for reserved in (domain, wizard_domain, output):
+        assert reserved.fluidsim.role == "NONE"
+    assert (domain.display_type, domain.hide_render) == ("WIRE", True)
+
+    only_reserved = SimpleNamespace(scene=scene, selected_objects=[domain, output])
+    assert op.execute(only_reserved) == {"CANCELLED"}
+    assert domain.fluidsim.role == "NONE" and output.fluidsim.role == "NONE"
+
+
+def test_clearing_a_stray_role_on_the_domain_keeps_its_presentation(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    domain = _phase1_object("SOURCE")
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain)),
+        selected_objects=[domain],
+    )
+    op = operators.FLUIDSIM_OT_tag_object()
+    op.role = "NONE"
+
+    assert op.execute(context) == {"FINISHED"}
+    assert domain.fluidsim.role == "NONE"
+    assert (domain.display_type, domain.hide_render) == ("WIRE", True)
+
+
 def test_phase3_aggregate_emission_is_not_broadcast_as_per_source_truth():
     from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
 

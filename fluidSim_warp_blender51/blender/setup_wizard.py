@@ -397,14 +397,40 @@ def _capacity_summary(scene) -> str:
     )
 
 
+def reserved_object_reason(scene, obj) -> str:
+    """Why ``obj`` must never become a simulation input, or ``""``.
+
+    The designated domain, a wizard-owned domain and the add-on's own output
+    objects are simulation boundaries and results; tagging them as sources,
+    sinks or colliders would feed the simulation its own container or output.
+    """
+    if obj is None:
+        return ""
+    if obj is active_domain_object(scene):
+        return "the FluidSim domain"
+    try:
+        kind = obj.get(KIND_TAG)
+    except (AttributeError, TypeError):
+        kind = None
+    if kind == "DOMAIN":
+        return "a FluidSim domain"
+    from .output_publication import is_output_object
+
+    if kind == "OUTPUT" or is_output_object(obj):
+        return "a FluidSim output"
+    return ""
+
+
 def _selected_meshes(context):
     accepted_roles = {"NONE", "SOURCE", "COLLIDER", "SINK"}
+    scene = getattr(context, "scene", None)
     return tuple(
         obj
         for obj in getattr(context, "selected_objects", ())
         if getattr(obj, "type", None) == "MESH"
         and getattr(getattr(obj, "fluidsim", None), "role", "NONE")
         in accepted_roles
+        and not reserved_object_reason(scene, obj)
     )
 
 
@@ -637,7 +663,10 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         raise RuntimeError("Production Bake owns this scene; finish or cancel it before setup")
     selected = _selected_meshes(context)
     if not selected:
-        raise ValueError("Select at least one mesh object")
+        raise ValueError(
+            "Select at least one mesh object other than the FluidSim domain "
+            "and outputs"
+        )
 
     from ..presets import library
     from . import colliders, geometry_nodes, output_publication

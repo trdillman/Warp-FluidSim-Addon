@@ -327,6 +327,14 @@ def _output_collection(scene):
 OUTPUT_TAG = "fluidsim_output_kind"
 
 
+def is_output_object(obj) -> bool:
+    """Whether ``obj`` carries the add-on output tag (any output kind)."""
+    try:
+        return bool(obj.get(OUTPUT_TAG))
+    except (AttributeError, TypeError):
+        return False
+
+
 def output_object(scene, kind):
     """Resolve an add-on-owned output by tag inside its output collection.
 

@@ -88,6 +88,36 @@ def _operator(module, *, start_preview):
     return operator
 
 
+class _Tagged(SimpleNamespace):
+    def __init__(self, tags=None, **attrs):
+        super().__init__(**attrs)
+        self._tags = dict(tags or {})
+
+    def get(self, key, default=None):
+        return self._tags.get(key, default)
+
+
+def test_quick_setup_never_admits_the_domain_or_outputs_as_inputs():
+    """B70: Select All + Quick Liquid must not tag the domain or outputs."""
+    from fluidSim_warp_blender51.blender import setup_wizard
+
+    def mesh(name, tags=None):
+        return _Tagged(tags, name=name, type="MESH", fluidsim=SimpleNamespace(role="NONE"))
+
+    liquid = mesh("Liquid")
+    domain = mesh("Artist Domain")
+    wizard_domain = mesh("FluidSim Domain", {setup_wizard.KIND_TAG: "DOMAIN"})
+    owned_output = mesh("FluidSim Surface", {setup_wizard.KIND_TAG: "OUTPUT"})
+    tagged_output = mesh("Old Surface", {"fluidsim_output_kind": "FluidSim Surface"})
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain)),
+        selected_objects=[liquid, domain, wizard_domain, owned_output, tagged_output],
+    )
+
+    assert setup_wizard._selected_meshes(context) == (liquid,)
+    assert setup_wizard.reserved_object_reason(context.scene, liquid) == ""
+
+
 def test_setup_rollback_journal_unwinds_once_in_reverse_order():
     from fluidSim_warp_blender51.blender.setup_wizard import _SetupRollbackJournal
 

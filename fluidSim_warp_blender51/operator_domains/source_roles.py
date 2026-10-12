@@ -93,10 +93,23 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
 def _execute_role_tag(operator, context, role):
     from ..blender import colliders as _colliders
     from ..blender import sources as _sources
+    from ..blender.setup_wizard import reserved_object_reason
 
+    scene = getattr(context, "scene", None)
     count = 0
     skipped = 0
+    reserved = 0
     for obj in context.selected_objects:
+        if reserved_object_reason(scene, obj):
+            # The domain and the add-on's outputs are never simulation inputs.
+            # Clearing only drops a stray role; it must not restyle them.
+            fluidsim = getattr(obj, "fluidsim", None)
+            if role == "NONE" and getattr(fluidsim, "role", "NONE") != "NONE":
+                fluidsim.role = "NONE"
+                count += 1
+            else:
+                reserved += 1
+            continue
         if role == "SOURCE":
             _sources.tag_source(obj)
         elif role == "SINK":
@@ -116,11 +129,16 @@ def _execute_role_tag(operator, context, role):
             obj.hide_render = False
         count += 1
     if count == 0:
-        message = ("Colliders require a selected mesh object"
-                   if role == "COLLIDER" else "No supported selected objects")
+        if reserved and not skipped:
+            message = "The FluidSim domain and outputs cannot take a simulation role"
+        else:
+            message = ("Colliders require a selected mesh object"
+                       if role == "COLLIDER" else "No supported selected objects")
         operator.report({"WARNING"}, message)
         return {"CANCELLED"}
     detail = f"; skipped {skipped} non-mesh object(s)" if skipped else ""
+    if reserved:
+        detail += f"; skipped {reserved} FluidSim domain/output object(s)"
     operator.report({"INFO"}, f"Tagged {count} object(s) as {role}{detail}")
     return {"FINISHED"}
 
