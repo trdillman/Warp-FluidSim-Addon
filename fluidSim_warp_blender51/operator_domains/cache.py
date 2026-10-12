@@ -43,12 +43,18 @@ def _update_bake_rna(scene, controller) -> bool:
     return True
 
 
+_DEFAULT_BAKE_TIMER_INTERVAL = 0.05
+_MIN_BAKE_TIMER_INTERVAL = 0.001
+
+
 class _FLUIDSIM_OT_production_bake_modal:
     resume_existing = False
     restart_existing = False
     rebake = False
     rebake_frame = 0
     _timer = None
+    _timer_interval = _DEFAULT_BAKE_TIMER_INTERVAL
+    _window = None
     _run = None
     _window_manager = None
 
@@ -79,8 +85,10 @@ class _FLUIDSIM_OT_production_bake_modal:
             )
             self._run = run
             _update_bake_rna(run.scene, run.controller)
+            self._window = context.window
+            self._timer_interval = _DEFAULT_BAKE_TIMER_INTERVAL
             self._timer = self._window_manager.event_timer_add(
-                0.05, window=context.window
+                self._timer_interval, window=self._window
             )
             self._window_manager.modal_handler_add(self)
         except Exception as exc:  # noqa: BLE001
@@ -105,16 +113,43 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"RUNNING_MODAL"}
 
     def _advance(self, failure):
-        """Tick the run once; a failure to settle its cache fails the bake."""
+        """Tick the run once; a failure to settle its cache fails the bake.
+
+        Returns the controller's suggested delay before the next tick, or
+        ``None`` when it has no suggestion (or the tick failed).
+        """
         from ..blender.production_bake import BakeStatus
 
         try:
-            self._run.tick()
+            return self._run.tick()
         except Exception as exc:  # noqa: BLE001
             controller = self._run.controller
             controller.status = BakeStatus.FAILED
             controller.error = f"{type(exc).__name__}: {exc}"
             controller.message = f"{failure}: {exc}"
+            return None
+
+    def _retime(self, context, delay):
+        """Re-arm the modal timer at the controller's suggested delay.
+
+        A fixed 50 ms timer capped light frames at 20 per second although the
+        controller asks to be ticked again after 10 ms. The timer is replaced
+        only when the suggestion changes.
+        """
+        if delay is None or self._timer is None:
+            return
+        try:
+            delay = max(_MIN_BAKE_TIMER_INTERVAL, float(delay))
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(delay) or math.isclose(delay, self._timer_interval):
+            return
+        window_manager = self._window_manager or context.window_manager
+        previous = self._timer
+        self._timer = window_manager.event_timer_add(
+            delay, window=self._window or context.window)
+        self._timer_interval = delay
+        window_manager.event_timer_remove(previous)
 
     def _finish(self, context, *, scene_available=None):
         from ..blender.production_bake import BakeStatus
@@ -167,10 +202,11 @@ class _FLUIDSIM_OT_production_bake_modal:
             return {"RUNNING_MODAL"}
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
-        self._advance("Production bake failed")
+        delay = self._advance("Production bake failed")
         _update_bake_rna(run.scene, run.controller)
         if run.finished:
             return self._finish(context)
+        self._retime(context, delay)
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
