@@ -1175,7 +1175,11 @@ class FluidSolver:
                     hi = tuple(value + leaf_world for value in lo)
                     g.mark_world_box(lo, hi)
         for col in self.colliders:
-            g.mark_world_box(col.aabb_min, col.aabb_max)
+            # A collider with no domain overlap (placed outside, or animated
+            # out) has no influence this frame, matching the capacity planner;
+            # strict rejection stays for sources, where it is an authoring error.
+            if g.overlaps_world_box(col.aabb_min, col.aabb_max):
+                g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
         if hs.enabled:
             dmin = s.domain_min
