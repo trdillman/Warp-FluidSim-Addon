@@ -101,6 +101,67 @@ def test_refreshed_point_radius_uses_the_quality_scaled_cell(
     assert objects[output.PARTICLES_NAME].hide_viewport is False
 
 
+class _CountingOutput(dict):
+    """Output whose hide flags count RNA writes, like Blender's update path."""
+
+    def __init__(self, name, *, hidden):
+        super().__init__()
+        self.name = name
+        self.type = "POINTCLOUD"
+        self._viewport = hidden
+        self._render = hidden
+        self.writes = 0
+
+    @property
+    def hide_viewport(self):
+        return self._viewport
+
+    @hide_viewport.setter
+    def hide_viewport(self, value):
+        self.writes += 1
+        self._viewport = bool(value)
+
+    @property
+    def hide_render(self):
+        return self._render
+
+    @hide_render.setter
+    def hide_render(self, value):
+        self.writes += 1
+        self._render = bool(value)
+
+
+def test_steady_state_publication_never_rewrites_visibility(monkeypatch):
+    """P06: each hide_* assignment re-syncs collections and rebuilds depsgraph
+    relations in Blender, so unchanged flags must not be written per frame."""
+    shown = _CountingOutput(output.WHITEWATER_NAME, hidden=True)
+    hidden = _CountingOutput(output.FOAM_NAME, hidden=False)
+    objects = {shown.name: shown, hidden.name: hidden}
+    monkeypatch.setattr(output, "output_object", lambda _scene, name: objects.get(name))
+    monkeypatch.setattr(output, "_ensure_point_object", lambda _s, name, _k=(): objects[name])
+    monkeypatch.setattr(output, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output, "_swap_points", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(output, "_clear_points", lambda *_args: None)
+    monkeypatch.setattr(output, "_ensure_material", lambda *_args: None)
+    import numpy as np
+
+    def frame():
+        output._publish_whitewater_points(
+            None, shown.name, np.zeros((4, 3), np.float32), {}, "NONE", 0.01,
+            None)
+        output._hide_and_clear_output(None, hidden.name)
+
+    frame()  # the first frame flips both outputs: one write per flag
+    assert (shown.hide_viewport, shown.hide_render) == (False, False)
+    assert (hidden.hide_viewport, hidden.hide_render) == (True, True)
+    assert (shown.writes, hidden.writes) == (2, 2)
+    for _ in range(5):
+        frame()
+    assert (shown.writes, hidden.writes) == (2, 2)
+    assert shown[output.LEGACY_UNCLASSIFIED_COUNT_TAG] == 0
+    assert hidden[output.LEGACY_UNCLASSIFIED_COUNT_TAG] == 0
+
+
 def test_render_visibility_still_shows_enabled_outputs(monkeypatch):
     objects = _outputs(monkeypatch)
     output.ensure_render_visibility(

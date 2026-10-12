@@ -1291,6 +1291,30 @@ def _subset_aligned_attributes(attributes, indices, count):
     return result
 
 
+def _set_hidden(obj, hidden, *, viewport=True, render=True):
+    """Assign output hide flags only when they change.
+
+    Blender's ``Object.hide_viewport``/``hide_render`` RNA update re-syncs
+    collections and tags a depsgraph relations rebuild on *every* assignment,
+    equal value or not, so per-frame publication must not rewrite them.
+    """
+    hidden = bool(hidden)
+    if viewport and bool(obj.hide_viewport) != hidden:
+        obj.hide_viewport = hidden
+    if render and bool(obj.hide_render) != hidden:
+        obj.hide_render = hidden
+
+
+def _set_id_property(obj, key, value):
+    """Write one ID property only when its value changes."""
+    try:
+        if obj.get(key) == value:
+            return
+        obj[key] = value
+    except (AttributeError, TypeError):
+        pass
+
+
 def _publish_whitewater_points(
         scene, name, positions, attributes, attribute_mode, radius,
         ensure_material, *, legacy_unclassified_count=0):
@@ -1303,12 +1327,9 @@ def _publish_whitewater_points(
         _swap_points(obj, positions, radius, colors, attributes)
     else:
         _swap_vertex_cloud(obj, positions, colors, attributes)
-    obj.hide_viewport = False
-    obj.hide_render = False
-    try:
-        obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = int(legacy_unclassified_count)
-    except (AttributeError, TypeError):
-        pass
+    _set_hidden(obj, False)
+    _set_id_property(
+        obj, LEGACY_UNCLASSIFIED_COUNT_TAG, int(legacy_unclassified_count))
     _ensure_material(ensure_material, scene, obj)
     return obj
 
@@ -1317,9 +1338,8 @@ def _hide_and_clear_output(scene, name):
     _clear_points(scene, name)
     obj = output_object(scene, name)
     if obj is not None:
-        obj.hide_viewport = True
-        obj.hide_render = True
-        obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = 0
+        _set_hidden(obj, True)
+        _set_id_property(obj, LEGACY_UNCLASSIFIED_COUNT_TAG, 0)
 
 
 @_cost_phase("output_publication")
@@ -1461,16 +1481,14 @@ def refresh_existing_output_settings(scene):
     surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
         visible = fs.show_surface and getattr(ds, "surface_enabled", False)
-        surface.hide_viewport = not visible
-        surface.hide_render = not visible
+        _set_hidden(surface, not visible)
         if visible:
             _ensure_material(
                 materials.ensure_surface_material, scene, surface)
 
     particles = output_object(scene, PARTICLES_NAME)
     if particles is not None:
-        particles.hide_viewport = not fs.show_particles
-        particles.hide_render = not fs.show_particles
+        _set_hidden(particles, not fs.show_particles)
         if fs.show_particles:
             radius = (voxel_size * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
@@ -1497,8 +1515,7 @@ def refresh_existing_output_settings(scene):
         selected = (combined_enabled or legacy_visible
                     if name == WHITEWATER_NAME else separate_enabled)
         obj_visible = visible and selected
-        obj.hide_viewport = not obj_visible
-        obj.hide_render = not obj_visible
+        _set_hidden(obj, not obj_visible)
         if obj_visible:
             radius = (voxel_size * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
@@ -1536,7 +1553,7 @@ def ensure_render_visibility(scene):
             if (name == WHITEWATER_NAME and whitewater_visible
                     and int(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0)) > 0):
                 show = True
-            obj.hide_render = not show
+            _set_hidden(obj, not show, viewport=False)
 
 
 def configure_cycles_points(scene):
