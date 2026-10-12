@@ -382,6 +382,50 @@ def _platform_record(solver) -> dict[str, str]:
     }
 
 
+# Checkpoint contents already parsed and validated in this process, keyed by
+# their SHA-256 and everything the parse was checked against. A resume asks
+# for its decision two or three times (command line pre-check,
+# controller.resume, initialize) and each once loaded every checkpoint of the
+# history in full. Bytes with the same digest parse the same way, so a repeat
+# only needs the file's digest re-verified, which verified_contiguous_frames
+# does on every decision.
+_PARSED_CHECKPOINT_LIMIT = 4096
+_parsed_checkpoints: dict[tuple, tuple[int, float]] = {}
+
+
+def _verified_checkpoint_header(base: Path, entry: FrameEntry, manifest) -> tuple[int, float]:
+    """``(frame, sim_time)`` of a committed checkpoint, read in full once.
+
+    The caller must have just verified the file against
+    ``entry.checkpoint_sha256`` (``verified_contiguous_frames``).
+    """
+    key = (
+        entry.checkpoint_sha256,
+        entry.checkpoint_size,
+        entry.frame,
+        manifest.settings_signature,
+        manifest.source_signature,
+        manifest.effect_signature,
+    )
+    known = _parsed_checkpoints.get(key)
+    if known is not None:
+        return known
+    checkpoint = read_checkpoint(
+        base / entry.checkpoint_file,
+        expected_sha256=entry.checkpoint_sha256,
+        expected_size=entry.checkpoint_size,
+        expected_frame=entry.frame,
+        expected_settings_signature=manifest.settings_signature,
+        expected_source_signature=manifest.source_signature,
+        expected_effect_signature=manifest.effect_signature,
+    )
+    known = (int(checkpoint.frame), float(checkpoint.sim_time))
+    while len(_parsed_checkpoints) >= _PARSED_CHECKPOINT_LIMIT:
+        _parsed_checkpoints.pop(next(iter(_parsed_checkpoints)))
+    _parsed_checkpoints[key] = known
+    return known
+
+
 def _liquid_sdf_arrays(solver, enabled: bool):
     """The frame's ``liquid_sdf_*`` arrays: the solver's persistent phi when on."""
     if not enabled:
@@ -576,20 +620,13 @@ class ProductionBakeBackend:
             verified_contiguous_frames(base, manifest)
             for frame in manifest.committed_frames:
                 entry = manifest.frames[frame]
-                checkpoint = read_checkpoint(
-                    base / entry.checkpoint_file,
-                    expected_sha256=entry.checkpoint_sha256,
-                    expected_size=entry.checkpoint_size,
-                    expected_frame=frame,
-                    expected_settings_signature=manifest.settings_signature,
-                    expected_source_signature=manifest.source_signature,
-                    expected_effect_signature=manifest.effect_signature,
-                )
-                if checkpoint.frame != entry.solver_frame:
+                checkpoint_frame, sim_time = _verified_checkpoint_header(
+                    base, entry, manifest)
+                if checkpoint_frame != entry.solver_frame:
                     raise ValueError(
-                        f"checkpoint frame {checkpoint.frame} does not match manifest"
+                        f"checkpoint frame {checkpoint_frame} does not match manifest"
                     )
-                if abs(checkpoint.sim_time - entry.simulation_time) > 1.0e-12:
+                if abs(sim_time - entry.simulation_time) > 1.0e-12:
                     raise ValueError(
                         f"checkpoint time for frame {frame} does not match manifest"
                     )
