@@ -4285,6 +4285,33 @@ def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch):
     assert effect_ui._EFFECT_ITEMS is second
 
 
+def test_add_effect_cancels_cleanly_when_the_package_vanished(monkeypatch):
+    """B79: an effect removed between search and execute is a controlled cancel."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    class _Library:
+        def get(self, effect_id):
+            raise KeyError(f"unknown effect {effect_id!r}")
+
+    monkeypatch.setattr(effect_ui.effect_library, "combined_library", _Library)
+    added = []
+    monkeypatch.setattr(
+        effect_ui.effects, "add_instance_to_scene",
+        lambda *args: added.append(args))
+    reports = []
+    operator = effect_ui.FLUIDSIM_OT_effect_add()
+    operator.effect_id = "user.removed_effect"
+    operator.report = lambda level, message: reports.append((level, message))
+    stack = SimpleNamespace(items=[], selected_library_effect="")
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=stack))
+
+    assert operator.execute(context) == {"CANCELLED"}
+    assert not added
+    assert reports and reports[-1][0] == {"ERROR"}
+    assert "user.removed_effect" in reports[-1][1]
+
+
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     """D9: an opted-in author can trust their own kernel edits for the session so
     the Review & Trust dialog does not re-prompt on every edit.  Session trust is

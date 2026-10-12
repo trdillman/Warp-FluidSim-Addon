@@ -262,7 +262,15 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        definition = effect_library.combined_library().get(self.effect_id)
+        try:
+            definition = effect_library.combined_library().get(self.effect_id)
+        except Exception as exc:  # noqa: BLE001 - package removed/broken since the search
+            self.report(
+                {"ERROR"},
+                f"Effect {self.effect_id!r} is no longer available in the library "
+                f"({type(exc).__name__}); refresh the library and choose again",
+            )
+            return {"CANCELLED"}
         instance = EffectInstanceV2(
             instance_id=f"effect-{uuid.uuid4().hex[:12]}",
             definition=definition,
