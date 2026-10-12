@@ -231,17 +231,19 @@ def leaf_coords_for_world_bounds(settings: Any, minimum: Iterable[float],
 def _seed_leaf_coords(settings: Any, payloads: Iterable[Any]) -> set[tuple[int, int, int]]:
     lo = np.asarray(_value(settings, "domain_min", (0.0, 0.0, 0.0)), np.float64)
     h = max(1.0e-4, float(_value(settings, "voxel_size", 0.1)))
-    dims = _leaf_dims(settings)
+    dims = np.asarray(_leaf_dims(settings), np.int64)
     result: set[tuple[int, int, int]] = set()
     for payload in payloads:
         points = _seed_positions(payload)
-        if points is None:
+        if points is None or len(points) == 0:
             continue
         leaves = np.floor((points.astype(np.float64) - lo) / h / 8.0).astype(np.int64)
-        for coord in leaves:
-            item = tuple(int(axis) for axis in coord)
-            if all(0 <= item[i] < dims[i] for i in range(3)):
-                result.add(item)
+        inside = leaves[np.all((leaves >= 0) & (leaves < dims), axis=1)]
+        # Deduplicate on the flat leaf index: a 1-D unique is far cheaper than
+        # a row-wise one over millions of seed points.
+        flat = np.unique(np.ravel_multi_index(inside.T, tuple(dims)))
+        unique = np.stack(np.unravel_index(flat, tuple(dims)), axis=1)
+        result.update(map(tuple, unique.tolist()))
     return result
 
 
@@ -270,17 +272,51 @@ def _effective_topology_expand(settings: Any) -> int:
 
 
 def _expanded_leaf_coords(settings: Any, coords: Iterable[tuple[int, int, int]]) -> tuple[tuple[int, int, int], ...]:
-    dims = _leaf_dims(settings)
+    """Sorted in-domain leaves within ``radius`` (Chebyshev) of any coord.
+
+    Dilates a dense occupancy mask over the coords' bounding box, padded by the
+    radius and clipped to the domain's leaf table, one axis at a time (a box
+    dilation is separable). The mask is never larger than the leaf table the
+    solver allocates for the same domain. Coords outside the domain still
+    dilate into it, exactly as a per-offset walk would.
+    """
+    dims = np.asarray(_leaf_dims(settings), np.int64)
     radius = _effective_topology_expand(settings)
-    expanded: set[tuple[int, int, int]] = set()
-    for coord in coords:
-        for dz in range(-radius, radius + 1):
-            for dy in range(-radius, radius + 1):
-                for dx in range(-radius, radius + 1):
-                    item = (coord[0] + dx, coord[1] + dy, coord[2] + dz)
-                    if all(0 <= item[i] < dims[i] for i in range(3)):
-                        expanded.add(item)
-    return tuple(sorted(expanded))
+    points = np.asarray(
+        coords if isinstance(coords, np.ndarray) else list(coords),
+        np.int64).reshape(-1, 3)
+    if len(points) == 0:
+        return ()
+    # Coords farther than ``radius`` outside the leaf table reach no leaf.
+    reach = np.all((points >= -radius) & (points < dims + radius), axis=1)
+    points = points[reach]
+    if len(points) == 0:
+        return ()
+    lo = np.maximum(points.min(axis=0) - radius, 0)
+    hi = np.minimum(points.max(axis=0) + radius + 1, dims)
+    if np.any(hi <= lo):
+        return ()
+    # Mask indices are offset by ``lo - radius`` so out-of-domain coords that
+    # still reach the domain have a cell; the padding is cropped afterwards.
+    origin = lo - radius
+    shape = hi - lo + 2 * radius
+    mask = np.zeros(tuple(int(axis) for axis in shape), dtype=bool)
+    local = points - origin
+    mask[local[:, 0], local[:, 1], local[:, 2]] = True
+    for axis in range(3):
+        source = mask.copy()
+        for step in range(1, radius + 1):
+            ahead = [slice(None)] * 3
+            behind = [slice(None)] * 3
+            ahead[axis] = slice(step, None)
+            behind[axis] = slice(None, -step)
+            mask[tuple(ahead)] |= source[tuple(behind)]
+            mask[tuple(behind)] |= source[tuple(ahead)]
+    crop = tuple(slice(radius, radius + int(hi[axis] - lo[axis]))
+                 for axis in range(3))
+    hits = np.argwhere(mask[crop]) + lo
+    # ``argwhere`` walks the mask in C order, which is sorted tuple order.
+    return tuple(map(tuple, hits.tolist()))
 
 
 def _expanded_leaf_count(settings: Any, coords: Iterable[tuple[int, int, int]]) -> int:
