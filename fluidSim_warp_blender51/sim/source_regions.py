@@ -62,6 +62,36 @@ def _k_query_compiled_mesh(
                 coverage[tid] = 1.0
 
 
+@wp.kernel
+def _k_query_compiled_mesh_parity(
+        mesh_id: wp.uint64,
+        points: wp.array(dtype=wp.vec3),
+        solid: int,
+        shell_width: float,
+        coverage: wp.array(dtype=float),
+        sdf: wp.array(dtype=float)):
+    """CPU-BVH staging matching the NumPy fallback's semantics.
+
+    Unsigned closest distance plus orientation-independent ray parity for
+    solids, like ``SourceCompiler._mesh_inside``; the CUDA kernel above keeps
+    its winding-number sign unchanged.
+    """
+    tid = wp.tid()
+    point = points[tid]
+    query = wp.mesh_query_point_no_sign(mesh_id, point, 1.0e20)
+    if query.result:
+        closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        distance = wp.length(closest - point)
+        sdf[tid] = distance
+        if solid != 0:
+            inside = wp.mesh_query_point_sign_parity(mesh_id, point, 1.0e20, 3, 0.1)
+            if inside.result and inside.sign < 0.0:
+                sdf[tid] = -distance
+                coverage[tid] = 1.0
+        elif distance <= shell_width:
+            coverage[tid] = 1.0
+
+
 def _owned_array(value, dtype, shape_tail=()):
     if value is None:
         return None
@@ -1028,8 +1058,40 @@ class SourceCompiler:
             result[ps:ps + len(p)] = (hits & 1).astype(bool)
         return result
 
+    @classmethod
+    def _compile_mesh_cpu_bvh(cls, points, vertices, triangles, solid, shell_width):
+        """Warp CPU BVH staging with the NumPy fallback's exact decisions.
+
+        The BVH runs in float32. Voxels whose BVH distance sits within a
+        float32-scale tolerance of the coverage decision (the shell width, or
+        the surface for solids) are recomputed with the float64 NumPy path,
+        so coverage matches the full NumPy result instead of tie-breaking
+        differently on grid-aligned meshes. SDF magnitudes elsewhere differ
+        from the NumPy values only at float32 rounding (~1e-7); no runtime
+        kernel reads the compiled mesh SDF.
+        """
+        coverage, sdf = cls._compile_mesh_gpu(
+            points, vertices, triangles, solid, shell_width, "cpu",
+            kernel=_k_query_compiled_mesh_parity)
+        scale = max(1.0, float(np.max(np.abs(vertices))),
+                    float(np.max(np.abs(points))))
+        threshold = 0.0 if solid else float(shell_width)
+        near = np.nonzero(np.abs(np.abs(sdf) - threshold) <= 1.0e-5 * scale)[0]
+        if len(near):
+            exact = np.asarray(points, np.float64)[near]
+            distances = cls._mesh_distances(exact, vertices, triangles)
+            if solid:
+                inside = cls._mesh_inside(exact, vertices, triangles)
+                sdf[near] = np.where(inside, -distances, distances)
+                coverage[near] = inside
+            else:
+                sdf[near] = distances
+                coverage[near] = distances <= shell_width
+        return coverage, sdf
+
     @staticmethod
-    def _compile_mesh_gpu(points, vertices, triangles, solid, shell_width, device):
+    def _compile_mesh_gpu(points, vertices, triangles, solid, shell_width, device,
+                          kernel=None):
         """Use Warp's mesh BVH for production-scale static mesh compilation."""
         points = np.ascontiguousarray(points, dtype=np.float32)
         vertices = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -1041,7 +1103,7 @@ class SourceCompiler:
         device_coverage = wp.zeros(len(points), dtype=float, device=device)
         device_sdf = wp.zeros(len(points), dtype=float, device=device)
         wp.launch(
-            _k_query_compiled_mesh, dim=len(points),
+            kernel or _k_query_compiled_mesh, dim=len(points),
             inputs=[mesh.id, device_points, int(bool(solid)), float(shell_width),
                     device_coverage, device_sdf],
             device=device,
@@ -1108,11 +1170,18 @@ class SourceCompiler:
         flat = points.reshape(-1,3)
         requested_width = max(0.0, float(region.shell_half_width))
         width = max(requested_width, context.voxel_size * 0.5)
-        use_gpu_bvh = str(context.device).startswith("cuda") and comparisons > 500_000
-        if use_gpu_bvh:
+        on_cuda = str(context.device).startswith("cuda")
+        if on_cuda and comparisons > 500_000:
             flat_coverage, flat_sdf = self._compile_mesh_gpu(
                 flat, region.vertices, region.triangles, region.solid, width,
                 context.device)
+            coverage = flat_coverage.reshape(len(leaves), C.LEAF_VOLUME)
+            sdf = flat_sdf.reshape(len(leaves), C.LEAF_VOLUME)
+        elif not on_cuda and comparisons > 500_000:
+            # CPU-staged admission: the Cartesian NumPy path took seconds per
+            # mesh (13-17 s for a 960-triangle sphere) on Initialize/Reset.
+            flat_coverage, flat_sdf = self._compile_mesh_cpu_bvh(
+                flat, region.vertices, region.triangles, region.solid, width)
             coverage = flat_coverage.reshape(len(leaves), C.LEAF_VOLUME)
             sdf = flat_sdf.reshape(len(leaves), C.LEAF_VOLUME)
         else:

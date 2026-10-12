@@ -321,3 +321,80 @@ def test_point_rasterization_equals_the_full_candidate_scan():
         np.testing.assert_array_equal(actual, expected)
         compiled = SourceCompiler().compile((plan,), context).sources[0].region
         assert compiled.covered_voxel_count == int(np.count_nonzero(expected))
+
+
+# P05: the CPU Warp BVH staging path must reproduce the NumPy fallback's
+# coverage exactly, including grid-aligned distance ties.
+
+def _uv_sphere(n_lat, n_lon, radius=0.3):
+    vertices = [(0.0, 0.0, radius), (0.0, 0.0, -radius)]
+    for i in range(1, n_lat):
+        theta = math.pi * i / n_lat
+        for j in range(n_lon):
+            phi = 2.0 * math.pi * j / n_lon
+            vertices.append((radius * math.sin(theta) * math.cos(phi),
+                             radius * math.sin(theta) * math.sin(phi),
+                             radius * math.cos(theta)))
+
+    def index(i, j):
+        return 2 + (i - 1) * n_lon + (j % n_lon)
+
+    triangles = []
+    for j in range(n_lon):
+        triangles.append((0, index(1, j), index(1, j + 1)))
+        triangles.append((1, index(n_lat - 1, j + 1), index(n_lat - 1, j)))
+    for i in range(1, n_lat - 1):
+        for j in range(n_lon):
+            a, b = index(i, j), index(i + 1, j)
+            c, d = index(i + 1, j + 1), index(i, j + 1)
+            triangles.extend(((a, b, c), (a, c, d)))
+    return np.array(vertices, np.float32), np.array(triangles, np.int32)
+
+
+def _unit_cube():
+    vertices = np.array([(0.5, 0.5, 0.5), (1.5, 0.5, 0.5), (1.5, 1.5, 0.5),
+                         (0.5, 1.5, 0.5), (0.5, 0.5, 1.5), (1.5, 0.5, 1.5),
+                         (1.5, 1.5, 1.5), (0.5, 1.5, 1.5)], np.float32)
+    triangles = np.array([(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5),
+                          (0, 5, 4), (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6),
+                          (3, 0, 4), (3, 4, 7)], np.int32)
+    return vertices, triangles
+
+
+def _numpy_mesh_coverage(points, vertices, triangles, solid, width):
+    distances = SourceCompiler._mesh_distances(points.astype(np.float64), vertices, triangles)
+    if solid:
+        inside = SourceCompiler._mesh_inside(points, vertices, triangles)
+        return inside.astype(np.float32), np.where(inside, -distances, distances)
+    return (distances <= width).astype(np.float32), distances
+
+
+def test_cpu_bvh_mesh_staging_matches_numpy_coverage():
+    from fluidSim_warp_blender51.sim.source_regions import MeshRegionPlan
+
+    cube_vertices, cube_triangles = _unit_cube()
+    sphere_vertices, sphere_triangles = _uv_sphere(10, 20)
+    cube_context = CompileContext(1, 0, 1, "cpu", (0.0, 0.0, 0.0), 0.05,
+                                  (0.0, 0.0, 0.0), (2.0, 2.0, 2.0), upload=False)
+    sphere_context = CompileContext(0, 0, 0, "cpu", (-1.0, -1.0, -1.0), 0.06,
+                                    (-1.0, -1.0, -1.0), (1.0, 1.0, 1.0),
+                                    leaf_capacity=10 ** 6, upload=False)
+    cases = (
+        # Voxel centres lie exactly half a voxel from the cube faces: ties.
+        (cube_vertices, cube_triangles, cube_context, False, 0.025),
+        (cube_vertices, cube_triangles, cube_context, True, 0.025),
+        (sphere_vertices, sphere_triangles, sphere_context, True, 0.03),
+        (sphere_vertices, sphere_triangles, sphere_context, False, 0.1),
+        (sphere_vertices, sphere_triangles[:, ::-1].copy(), sphere_context, True, 0.03),
+    )
+    for vertices, triangles, context, solid, width in cases:
+        region = MeshRegionPlan(vertices, triangles, solid=solid, shell_half_width=width)
+        leaves = SourceCompiler._candidate_leaves(region.bounds(), context)
+        _, points = SourceCompiler._voxel_points(leaves, context)
+        flat = points.reshape(-1, 3)
+        expected_coverage, expected_sdf = _numpy_mesh_coverage(
+            flat, vertices, triangles, solid, width)
+        coverage, sdf = SourceCompiler._compile_mesh_cpu_bvh(
+            flat, vertices, triangles, solid, width)
+        np.testing.assert_array_equal(coverage, expected_coverage)
+        np.testing.assert_allclose(sdf, expected_sdf, rtol=0.0, atol=1.0e-6)
