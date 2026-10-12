@@ -339,10 +339,84 @@ def test_capacity_replan_reuses_original_owned_demand(monkeypatch):
             seen.append((settings, footprints, seeds, colliders, resources))
             or "candidate-plan"))
 
-    assert admission.replan_snapshot(snapshot, candidate) is snapshot
-    assert snapshot.capacity_plan == "candidate-plan"
-    assert snapshot.scene_inputs is inputs
+    original_settings = snapshot.settings
+    original_plan = snapshot.capacity_plan
+    replanned = admission.replan_snapshot(snapshot, candidate)
+    # B52: a replan is a candidate; the original snapshot stays intact so a
+    # rejected candidate can fall back to it.
+    assert replanned is not snapshot
+    assert replanned.capacity_plan == "candidate-plan"
+    assert replanned.settings is candidate
+    assert replanned.scene_inputs is inputs
+    assert snapshot.settings is original_settings
+    assert snapshot.capacity_plan is original_plan
     assert seen == [(candidate, original_footprints, (), (), {})]
+
+
+def test_rejected_auto_grow_candidate_keeps_the_authored_capacity_plan(
+        monkeypatch):
+    """B52: a rejected grown candidate must not replace the authored plan."""
+    from dataclasses import replace
+
+    from fluidSim_warp_blender51.sim.capacity_planner import DemandQuality
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    authored = SolverSettings(
+        device="cpu", max_particles=100_000, leaf_capacity=16,
+        auto_grow_particles=True)
+    footprint = SimpleNamespace(
+        stable_id="src", particle_demand=150_000,
+        particle_quality=DemandQuality.EXACT,
+        # 40 expanded leaves > 16 leaf capacity: the grown candidate is refused for
+        # an integrity blocker no particle growth can fix.
+        leaf_coords=tuple((i, 0, 0) for i in range(10)), staging_bytes=0,
+        reason="")
+    monkeypatch.setattr(admission, "build_settings", lambda _scene: replace(authored))
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {
+        "gpu_total_bytes": 64 * 1024**3, "gpu_free_bytes": 60 * 1024**3})
+
+    def plan_scene(_self, _scene, settings, resources, **kwargs):
+        plan = admission._plan_capacity(
+            settings, (footprint,), (), (), resources,
+            additional_transaction_bytes=kwargs.get(
+                "additional_transaction_bytes", 0))
+        return admission.AdmissionSnapshot(
+            scene_identity=1, scene_key="k", frame=1, frame_start=1,
+            depsgraph_generation=None, configured_device="cpu",
+            domain_transform=None, domain_min=settings.domain_min,
+            domain_max=settings.domain_max, settings=settings,
+            profiling_enabled=False, profiling_sync=False, scene_inputs=None,
+            descriptors=(), extra_plans=(), colliders=(), force_fields=(),
+            height_source=None, seeds=(), footprints=(footprint,),
+            collider_footprints=(), resources=resources, capacity_plan=plan)
+
+    monkeypatch.setattr(admission.SimulationAdmission, "_plan_scene", plan_scene)
+    stored = []
+
+    class Session:
+        solver = None
+
+        def owns_scene(self, _scene):
+            return False
+
+        def set_capacity_plan(self, _scene, plan, **_kwargs):
+            stored.append(plan)
+            return plan
+
+    owner = admission.SimulationAdmission(
+        Session(), scene_identity=lambda _scene: 1,
+        applied_state_capture=None, reset_settings_apply=None)
+
+    with pytest.raises(RuntimeError) as raised:
+        owner._preflight(
+            SimpleNamespace(objects=(), frame_start=1), operation="INITIALIZE")
+
+    assert stored
+    particle = [item for item in stored[-1].blockers
+                if item.code == "PARTICLE_CAPACITY"]
+    assert particle and particle[0].required == 150_000
+    assert particle[0].available == 100_000
+    assert "available 100000" in str(raised.value)
 
 
 def _install_bpy_depsgraph_stub(monkeypatch, depsgraph):

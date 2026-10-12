@@ -313,16 +313,22 @@ def capture_snapshot(
 
 def replan_snapshot(
         snapshot, settings, *, resources=None, additional_transaction_bytes=0):
-    """Reassess capacity from the original snapshot without a second gather."""
-    snapshot.settings = settings
-    snapshot.configured_device = str(settings.device)
-    if resources is not None:
-        snapshot.resources = resources
-    snapshot.capacity_plan = _plan_capacity(
-        settings, snapshot.footprints, snapshot.seeds,
-        snapshot.collider_footprints, snapshot.resources,
-        additional_transaction_bytes=additional_transaction_bytes)
-    return snapshot
+    """Reassess capacity from the original snapshot without a second gather.
+
+    Returns a new snapshot that shares the original's gathered inputs; the
+    original is left untouched so a rejected candidate can fall back to it.
+    """
+    resources = snapshot.resources if resources is None else resources
+    return replace(
+        snapshot,
+        settings=settings,
+        configured_device=str(settings.device),
+        resources=resources,
+        capacity_plan=_plan_capacity(
+            settings, snapshot.footprints, snapshot.seeds,
+            snapshot.collider_footprints, resources,
+            additional_transaction_bytes=additional_transaction_bytes),
+    )
 
 
 def discard_prepared_solver(solver):
