@@ -706,6 +706,15 @@ class CompiledSourceExecution:
         if include_legacy:
             legacy_attempted, pending = self._prepare_legacy_emission()
             pending_fired |= pending
+        else:
+            # Nothing legacy takes part in this transaction. Drop the shapes
+            # and meshes frozen by an earlier one: the count passes read them
+            # unconditionally, so emitters removed since then would still add
+            # phantom demand (and refuse or over-grow real emission).
+            self._transaction_shapes = None
+            self._transaction_shape_count = 0
+            self._transaction_mesh_sources = ()
+            self._transaction_height_armed = False
         return NormalizedEmissionPlan(
             compiled_sources=tuple(compiled_candidates),
             legacy_attempted=legacy_attempted,
