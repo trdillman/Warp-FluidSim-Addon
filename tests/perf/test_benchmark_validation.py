@@ -145,7 +145,12 @@ def operators_module(monkeypatch):
     for name in previous:
         sys.modules.pop(name, None)
     try:
-        yield importlib.import_module(module_name)
+        module = importlib.import_module(module_name)
+        # Run Benchmark resolves the configured CUDA device (B77); the stub bpy
+        # has no add-on preferences, so pin the device the way Blender would.
+        monkeypatch.setattr(
+            module._operator_runtime, "_configured_device", lambda: "cuda:0")
+        yield module
     finally:
         for name in tuple(sys.modules):
             if name == module_name or name.startswith(operator_domain_prefix):
@@ -201,6 +206,54 @@ def test_benchmark_operator_cancels_with_actionable_malformed_baseline(
     assert messages[-1][1] == fs.status
     assert session.benchmark_compare["result"] == "fail"
     assert session.benchmark_compare["error"] == fs.status
+
+
+def test_benchmark_runs_on_the_configured_cuda_device(
+    monkeypatch, tmp_path, operators_module
+):
+    """B77: Run Benchmark must use the configured device, not always cuda:0."""
+    operators = operators_module
+    from fluidSim_warp_blender51.diagnostics import benchmark as benchmark_module
+    from fluidSim_warp_blender51.sim import solver as solver_module
+
+    built = []
+
+    class _Solver:
+        def __init__(self, settings):
+            built.append(settings)
+
+        def set_source_batch(self, *_args):
+            pass
+
+        def step_frame(self):
+            return SimpleNamespace(step_time=0.01, active_voxels=8)
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(solver_module, "FluidSolver", _Solver)
+    monkeypatch.setattr(
+        operators._operator_runtime, "_configured_device", lambda: "cuda:2")
+    session = SimpleNamespace(benchmark_result=None, benchmark_compare=None)
+    monkeypatch.setattr(
+        operators._operator_runtime,
+        "_bridge",
+        lambda: SimpleNamespace(session=lambda: session),
+    )
+    fs = SimpleNamespace(
+        benchmark_frames=1,
+        benchmark_baseline=str(tmp_path / "missing.json"),
+        status="",
+    )
+    operator = operators.FLUIDSIM_OT_run_benchmark()
+    operator.save_baseline = False
+    operator.report = lambda *_args: None
+
+    result = operator.execute(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
+
+    assert result == {"FINISHED"}
+    assert [settings.device for settings in built] == ["cuda:2"]
+    assert benchmark_module.default_benchmark_settings().device == "cuda:0"
 
 
 def test_benchmark_operator_preserves_valid_baseline_comparison(
