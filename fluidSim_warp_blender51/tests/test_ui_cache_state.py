@@ -87,6 +87,37 @@ def test_production_bake_restarts_an_invalid_manifest(tmp_path):
     assert state.message != LEGACY_2X_CACHE_MESSAGE
 
 
+def test_bake_panel_parses_the_manifest_once_per_manifest_change(tmp_path, monkeypatch):
+    """P16: redraws reuse the presentation until the manifest file changes."""
+    import os
+
+    from fluidsim_testpkg.blender import ui_cache_state
+
+    calls = []
+    real_load = ui_cache_state.load_manifest
+    monkeypatch.setattr(
+        ui_cache_state, "load_manifest",
+        lambda path: calls.append(path) or real_load(path))
+    manifest_file = tmp_path / "fluidsim_cache.json"
+    write_manifest_atomic(manifest_file, _manifest())
+
+    first = production_bake_action(tmp_path)
+    for _ in range(10):
+        assert production_bake_action(tmp_path) == first
+    assert first.action == "RESUME"
+    assert len(calls) == 1
+
+    # A replaced manifest (here: invalid) is re-read and re-presented.
+    manifest_file.write_text("{}", encoding="utf-8")
+    stat = manifest_file.stat()
+    os.utime(manifest_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    changed = production_bake_action(tmp_path)
+    assert changed.action == "RESTART" and "invalid" in changed.message.lower()
+    assert len(calls) == 2
+    manifest_file.unlink()
+    assert production_bake_action(tmp_path).action == "START"
+
+
 def test_production_bake_restarts_a_fluidsim_2x_cache_with_the_rebake_message(tmp_path):
     (tmp_path / "fluidsim_cache.json").write_text(
         json.dumps({"format_version": 2, "frames": {}}), encoding="utf-8")

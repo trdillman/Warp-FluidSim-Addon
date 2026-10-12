@@ -550,6 +550,89 @@ def test_modal_bake_cancels_and_unregisters_when_initiating_scene_is_removed(
         production_bake.clear_active_bake(registration_proxy, controller)
 
 
+def test_modal_bake_ticks_at_the_controller_suggested_delay(monkeypatch, tmp_path):
+    """P18: the modal bake honoured a fixed 50 ms timer, capping light frames at
+    20 per second although the controller asks for the next tick after 10 ms."""
+    fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    class _FastController(_ModalController):
+        def tick(self, scene):
+            super().tick(scene)
+            return 0.01
+
+    _ModalController.instances.clear()
+    monkeypatch.setattr(production_bake, "BakeController", _FastController)
+    monkeypatch.setattr(production_bake, "ProductionBakeBackend", _ModalBackend)
+    scene = _Scene(707, tmp_path / "fast")
+    fake_bpy.data.scenes[:] = [scene]
+    added, removed = [], []
+
+    def event_timer_add(interval, **_kwargs):
+        timer = SimpleNamespace(interval=interval)
+        added.append(timer)
+        return timer
+
+    manager = SimpleNamespace(
+        event_timer_add=event_timer_add,
+        event_timer_remove=removed.append,
+        modal_handler_add=lambda _operator: None,
+    )
+    context = SimpleNamespace(scene=scene, window_manager=manager, window=object())
+    operator = cache_operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = False
+    timer_event = SimpleNamespace(type="TIMER", value="NOTHING")
+
+    assert operator.execute(context) == {"RUNNING_MODAL"}
+    assert [timer.interval for timer in added] == [0.05]
+    assert operator.modal(context, timer_event) == {"RUNNING_MODAL"}
+    assert [timer.interval for timer in added] == [0.05, 0.01]
+    assert removed == [added[0]]
+    for _ in range(3):  # an unchanged suggestion keeps the same timer
+        assert operator.modal(context, timer_event) == {"RUNNING_MODAL"}
+    assert len(added) == 2 and removed == [added[0]]
+
+    assert cache_operators.FLUIDSIM_OT_bake_cancel().execute(context) == {"FINISHED"}
+    assert operator.modal(context, timer_event) == {"CANCELLED"}
+    assert removed == [added[0], added[1]], "every timer is removed exactly once"
+
+
+@pytest.mark.parametrize("cache_path", ["//fluidsim_cache/", "relative_cache"])
+def test_bake_refuses_a_relative_cache_path_in_an_unsaved_file(
+    monkeypatch, tmp_path, cache_path
+):
+    """B31x: '//cache' of an unsaved file resolves against Blender's CWD and
+    points somewhere else once the file is saved; refuse before baking."""
+    fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    _ModalController.instances.clear()
+    monkeypatch.setattr(production_bake, "BakeController", _ModalController)
+    monkeypatch.setattr(production_bake, "ProductionBakeBackend", _ModalBackend)
+    fake_bpy.data.filepath = ""
+    # ``from . import common`` reuses the package attribute, which can be a
+    # common module bound to an earlier test's stub bpy; pin this test's bpy.
+    monkeypatch.setattr(cache_operators._runtime, "bpy", fake_bpy)
+    scene = _Scene(606, tmp_path)
+    scene.fluidsim.cache_path = cache_path
+    fake_bpy.data.scenes[:] = [scene]
+    context, _removed = _modal_context(scene)
+    reports = []
+    operator = cache_operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = False
+    operator.report = lambda level, message: reports.append((level, message))
+
+    assert operator.execute(context) == {"CANCELLED"}
+    assert not _ModalController.instances, "no bake run may start"
+    assert reports and "Save the .blend file first" in reports[-1][1]
+    with pytest.raises(ValueError, match="Save the .blend file first"):
+        cache_operators._runtime._resolved_cache_path(scene)
+
+    # Once saved, the same relative setting has a folder and is accepted.
+    fake_bpy.data.filepath = str(tmp_path / "shot.blend")
+    assert cache_operators._runtime._unsaved_relative_cache_path(scene) is False
+
+
 @pytest.mark.parametrize("failure_point", ["timer", "modal_handler"])
 def test_modal_start_acquisition_failure_restores_cache_and_releases_ownership(
     monkeypatch, tmp_path, failure_point

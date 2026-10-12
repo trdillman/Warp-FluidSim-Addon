@@ -105,6 +105,49 @@ def _rna_int_buffer(values, *, unsigned=False):
     return memoryview(values).cast("B").cast("I" if unsigned else "i")
 
 
+class _PaddedScratch:
+    """Reusable zero-padded host buffers for capacity-sized bulk uploads.
+
+    Point outputs are padded to their capacity, so every published frame used
+    to allocate (and page-fault) several capacity-sized arrays. ``foreach_set``
+    copies synchronously, so one buffer per shape can be reused: ``take``
+    re-zeroes only the rows the previous user wrote beyond the new live count,
+    keeping the padding exactly zero.
+    """
+
+    _MAX_BUFFERS = 16
+
+    def __init__(self):
+        self._buffers = {}
+
+    def take(self, purpose, shape, dtype, live):
+        """Return a ``shape`` buffer whose rows ``[live:]`` are zero.
+
+        The caller must write rows ``[:live]`` before uploading it.
+        """
+        shape = tuple(int(axis) for axis in shape)
+        dtype = np.dtype(dtype)
+        live = max(0, min(int(live), shape[0] if shape else 0))
+        key = (purpose, shape, dtype.str)
+        entry = self._buffers.pop(key, None)
+        if entry is None:
+            buffer, dirty = np.zeros(shape, dtype=dtype), 0
+        else:
+            buffer, dirty = entry
+            if dirty > live:
+                buffer[live:dirty] = 0
+        self._buffers[key] = (buffer, live)
+        while len(self._buffers) > self._MAX_BUFFERS:
+            self._buffers.pop(next(iter(self._buffers)))
+        return buffer
+
+    def clear(self):
+        self._buffers.clear()
+
+
+_SCRATCH = _PaddedScratch()
+
+
 def publish_attribute(data, spec, values, *, live_count=None):
     """Create/update one Blender attribute with strict type/domain alignment."""
     attributes = getattr(data, "attributes", None)
@@ -128,7 +171,8 @@ def publish_attribute(data, spec, values, *, live_count=None):
             name=spec.blender_name, type=spec.data_type, domain=spec.domain)
     target_shape = ((total,) if spec.components == 1 else
                     (total, spec.components))
-    padded = np.zeros(target_shape, dtype=spec.numpy_dtype)
+    padded = _SCRATCH.take(
+        ("attribute", spec.blender_name), target_shape, spec.numpy_dtype, count)
     if count:
         padded[:count] = normalized
     flat = padded.ravel()
@@ -325,6 +369,14 @@ def _output_collection(scene):
 
 
 OUTPUT_TAG = "fluidsim_output_kind"
+
+
+def is_output_object(obj) -> bool:
+    """Whether ``obj`` carries the add-on output tag (any output kind)."""
+    try:
+        return bool(obj.get(OUTPUT_TAG))
+    except (AttributeError, TypeError):
+        return False
 
 
 def output_object(scene, kind):
@@ -789,8 +841,8 @@ def _swap_points(
         pc = pc_old
     capacity = len(pc.points)
 
-    coords = np.zeros((capacity, 3), dtype=np.float32)
-    radii = np.zeros(capacity, dtype=np.float32)
+    coords = _SCRATCH.take("position", (capacity, 3), np.float32, n)
+    radii = _SCRATCH.take("radius", (capacity,), np.float32, n)
     if n:
         coords[:n] = positions
         radii[:n] = radius
@@ -798,7 +850,8 @@ def _swap_points(
     pc.attributes["radius"].data.foreach_set("value", radii)
     color_attr = pc.attributes.get(COLOR_ATTR)
     if color_attr is not None:
-        channels = np.zeros((capacity, 4), dtype=np.float32)
+        color_live = n if wants_color else 0
+        channels = _SCRATCH.take("color", (capacity, 4), np.float32, color_live)
         if wants_color:
             channels[:n] = np.asarray(colors, dtype=np.float32)
         color_attr.data.foreach_set("color", channels.ravel())
@@ -826,25 +879,36 @@ def _swap_vertex_cloud(obj, positions, colors=None, attributes=None):
 
 
 def _particle_values(solver, mode, positions, velocities=None, indices=None,
-                     host=None):
+                     host=None, stride=1):
+    """Selected per-particle display values.
+
+    With a HostFrame, ``stride`` decimates on the device so Display Fraction
+    reads back only the shown rows; ``indices`` subsets a full host read.
+    """
     if mode == "NONE":
         return None
     if mode == "HEIGHT":
         return positions[:, 2]
+    stride = max(1, int(stride))
     if mode == "SPEED":
         if velocities is None:
-            velocities = host.velocities if host is not None else solver.particle_velocities()
+            if host is not None:
+                velocities = host.velocities_strided(stride)
+            else:
+                velocities = solver.particle_velocities()[::stride]
             if indices is not None:
                 velocities = velocities[indices]
         return np.linalg.norm(velocities, axis=1)
     if mode == "COLOR":
-        values = (host.particle_attr("color") if host is not None else
-                  solver.particles.attr("color").numpy()[:solver.particles.host_count])
+        values = (host.particle_attr("color", stride=stride) if host is not None else
+                  solver.particles.attr("color").numpy()[
+                      :solver.particles.host_count:stride])
         return values[indices] if indices is not None else values
     name = mode.lower()
     if name in {"age", "life", "temperature", "viscosity", "density"}:
-        vals = (host.particle_attr(name) if host is not None else
-                solver.particles.attr(name).numpy()[:solver.particles.host_count])
+        vals = (host.particle_attr(name, stride=stride) if host is not None else
+                solver.particles.attr(name).numpy()[
+                    :solver.particles.host_count:stride])
         return vals[indices] if indices is not None else vals
     return None
 
@@ -857,17 +921,17 @@ def _whitewater_values(solver, mode, positions, host=None, stride=1):
     if mode == "HEIGHT":
         return positions[:, 2]
     if mode == "SPEED":
-        vel = (host.whitewater_attr("velocity")[::stride] if host is not None else
+        vel = (host.whitewater_attr("velocity", stride=stride) if host is not None else
                solver.whitewater.velocity.numpy()[:n])
         return np.linalg.norm(vel, axis=1)
     if mode == "AGE":
-        return (host.whitewater_attr("age")[::stride] if host is not None else
+        return (host.whitewater_attr("age", stride=stride) if host is not None else
                 solver.whitewater.age.numpy()[:n])
     if mode == "LIFE":
-        return (host.whitewater_attr("life")[::stride] if host is not None else
+        return (host.whitewater_attr("life", stride=stride) if host is not None else
                 solver.whitewater.life.numpy()[:n])
     if mode == "TYPE":
-        return (host.whitewater_attr("type")[::stride] if host is not None else
+        return (host.whitewater_attr("type", stride=stride) if host is not None else
                 solver.whitewater.type.numpy()[:n])
     return None
 
@@ -996,7 +1060,6 @@ def prepare_live_payload(scene, host, publish_surface=True):
     ds = _domain_settings(scene)
     inventory = _AdmittedAttributeInventory(ds, getattr(solver, "settings", None))
     step = _display_stride(fs)
-    indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_attributes = (
@@ -1008,8 +1071,8 @@ def prepare_live_payload(scene, host, publish_surface=True):
             and (particle_key is None
                  or particle_key not in particle_attributes)):
         particle_values = _particle_values(
-            solver, fs.particle_attribute_mode, positions, indices=indices,
-            host=host)
+            solver, fs.particle_attribute_mode, positions, host=host,
+            stride=step)
     particle_attributes = _merge_selected_attribute(
         particle_attributes, fs.particle_attribute_mode, particle_values)
 
@@ -1283,6 +1346,30 @@ def _subset_aligned_attributes(attributes, indices, count):
     return result
 
 
+def _set_hidden(obj, hidden, *, viewport=True, render=True):
+    """Assign output hide flags only when they change.
+
+    Blender's ``Object.hide_viewport``/``hide_render`` RNA update re-syncs
+    collections and tags a depsgraph relations rebuild on *every* assignment,
+    equal value or not, so per-frame publication must not rewrite them.
+    """
+    hidden = bool(hidden)
+    for enabled, name in ((viewport, "hide_viewport"), (render, "hide_render")):
+        current = getattr(obj, name, None)  # unknown state: write it
+        if enabled and (current is None or bool(current) != hidden):
+            setattr(obj, name, hidden)
+
+
+def _set_id_property(obj, key, value):
+    """Write one ID property only when its value changes."""
+    try:
+        if obj.get(key) == value:
+            return
+        obj[key] = value
+    except (AttributeError, TypeError):
+        pass
+
+
 def _publish_whitewater_points(
         scene, name, positions, attributes, attribute_mode, radius,
         ensure_material, *, legacy_unclassified_count=0):
@@ -1295,12 +1382,9 @@ def _publish_whitewater_points(
         _swap_points(obj, positions, radius, colors, attributes)
     else:
         _swap_vertex_cloud(obj, positions, colors, attributes)
-    obj.hide_viewport = False
-    obj.hide_render = False
-    try:
-        obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = int(legacy_unclassified_count)
-    except (AttributeError, TypeError):
-        pass
+    _set_hidden(obj, False)
+    _set_id_property(
+        obj, LEGACY_UNCLASSIFIED_COUNT_TAG, int(legacy_unclassified_count))
     _ensure_material(ensure_material, scene, obj)
     return obj
 
@@ -1309,9 +1393,8 @@ def _hide_and_clear_output(scene, name):
     _clear_points(scene, name)
     obj = output_object(scene, name)
     if obj is not None:
-        obj.hide_viewport = True
-        obj.hide_render = True
-        obj[LEGACY_UNCLASSIFIED_COUNT_TAG] = 0
+        _set_hidden(obj, True)
+        _set_id_property(obj, LEGACY_UNCLASSIFIED_COUNT_TAG, 0)
 
 
 @_cost_phase("output_publication")
@@ -1424,6 +1507,21 @@ def publish_payload(scene, payload):
             _hide_and_clear_output(scene, name)
     return _sync_render_inputs(scene)
 
+def _effective_voxel_size(scene, ds):
+    """Cell size published point radii derive from, without a solver.
+
+    Publication scales radii by the solver's voxel size, which is the authored
+    ``voxel_size`` projected through the scene Quality tier; refreshing from
+    the authored value alone would be 2x (Draft) or 0.5x (Final) off.
+    """
+    from ..sim.quality_contract import scale_quality_value
+    from .solver_settings import scene_quality_fidelity
+
+    return float(scale_quality_value(
+        "voxel_size", float(getattr(ds, "voxel_size", 0.05)),
+        scene_quality_fidelity(scene)))
+
+
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
     _require_bpy()
@@ -1434,21 +1532,20 @@ def refresh_existing_output_settings(scene):
     # still respond to visibility and material picker changes.
     fs = scene.fluidsim
     ds = _domain_settings(scene)
+    voxel_size = _effective_voxel_size(scene, ds)
     surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
         visible = fs.show_surface and getattr(ds, "surface_enabled", False)
-        surface.hide_viewport = not visible
-        surface.hide_render = not visible
+        _set_hidden(surface, not visible)
         if visible:
             _ensure_material(
                 materials.ensure_surface_material, scene, surface)
 
     particles = output_object(scene, PARTICLES_NAME)
     if particles is not None:
-        particles.hide_viewport = not fs.show_particles
-        particles.hide_render = not fs.show_particles
+        _set_hidden(particles, not fs.show_particles)
         if fs.show_particles:
-            radius = (getattr(ds, "voxel_size", 0.05) * 0.25 *
+            radius = (voxel_size * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
             _set_point_radius(particles, radius)
             _ensure_material(
@@ -1473,10 +1570,9 @@ def refresh_existing_output_settings(scene):
         selected = (combined_enabled or legacy_visible
                     if name == WHITEWATER_NAME else separate_enabled)
         obj_visible = visible and selected
-        obj.hide_viewport = not obj_visible
-        obj.hide_render = not obj_visible
+        _set_hidden(obj, not obj_visible)
         if obj_visible:
-            radius = (getattr(ds, "voxel_size", 0.05) * 0.15 *
+            radius = (voxel_size * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(obj, radius)
             _ensure_material(ensure_material, scene, obj)
@@ -1484,24 +1580,35 @@ def refresh_existing_output_settings(scene):
 
 
 def ensure_render_visibility(scene):
-    """Apply render visibility to persistent simulation outputs."""
+    """Apply render visibility to persistent simulation outputs.
+
+    Uses the same visibility rule as the viewport
+    (``refresh_existing_output_settings``): the scene display toggle *and* the
+    domain's Surface/Whitewater switch, so an output the viewport hides never
+    renders.
+    """
     fs = scene.fluidsim
+    ds = _domain_settings(scene)
+    surface_visible = bool(
+        fs.show_surface and getattr(ds, "surface_enabled", False))
+    whitewater_visible = bool(
+        fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     combined_enabled, separate_enabled = _whitewater_mode_flags(
         getattr(fs, "whitewater_output_mode", "COMBINED"))
     for name, show in (
-        (SURFACE_NAME, fs.show_surface),
+        (SURFACE_NAME, surface_visible),
         (PARTICLES_NAME, fs.show_particles),
-        (WHITEWATER_NAME, fs.show_whitewater and combined_enabled),
-        (FOAM_NAME, fs.show_whitewater and separate_enabled),
-        (BUBBLES_NAME, fs.show_whitewater and separate_enabled),
-        (SPRAY_NAME, fs.show_whitewater and separate_enabled),
+        (WHITEWATER_NAME, whitewater_visible and combined_enabled),
+        (FOAM_NAME, whitewater_visible and separate_enabled),
+        (BUBBLES_NAME, whitewater_visible and separate_enabled),
+        (SPRAY_NAME, whitewater_visible and separate_enabled),
     ):
         obj = output_object(scene, name)
         if obj is not None:
-            if (name == WHITEWATER_NAME and fs.show_whitewater
+            if (name == WHITEWATER_NAME and whitewater_visible
                     and int(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0)) > 0):
                 show = True
-            obj.hide_render = not show
+            _set_hidden(obj, not show, viewport=False)
 
 
 def configure_cycles_points(scene):

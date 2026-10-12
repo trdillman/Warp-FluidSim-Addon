@@ -1808,6 +1808,76 @@ def test_phase1_tag_operator_supports_force_and_has_disabled_state(monkeypatch):
     )
 
 
+class _TaggedObject(SimpleNamespace):
+    """Object stand-in carrying ID properties (``obj.get``) like a real ID."""
+
+    def __init__(self, tags=None, **attrs):
+        super().__init__(**attrs)
+        self._tags = dict(tags or {})
+
+    def get(self, key, default=None):
+        return self._tags.get(key, default)
+
+
+def _phase1_tagged(role, tags):
+    plain = _phase1_object(role)
+    return _TaggedObject(
+        tags,
+        name=plain.name,
+        type=plain.type,
+        fluidsim=plain.fluidsim,
+        display_type=plain.display_type,
+        hide_render=plain.hide_render,
+    )
+
+
+@pytest.mark.parametrize("role", ["SOURCE", "SINK", "COLLIDER", "FORCE", "FIELD"])
+def test_batch_role_tag_skips_the_domain_and_fluidsim_outputs(monkeypatch, role):
+    """B70: Set Selected as ... must never turn the domain or an output into an input."""
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    liquid = _phase1_object("NONE")
+    domain = _phase1_object("NONE")
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    wizard_domain = _phase1_tagged("NONE", {"fluidsim_kind": "DOMAIN"})
+    output = _phase1_tagged("NONE", {"fluidsim_output_kind": "FluidSim Surface"})
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain))
+    context = SimpleNamespace(
+        scene=scene, selected_objects=[liquid, domain, wizard_domain, output]
+    )
+    op = operators.FLUIDSIM_OT_tag_object()
+    op.role = role
+
+    assert op.execute(context) == {"FINISHED"}
+    assert liquid.fluidsim.role == role
+    for reserved in (domain, wizard_domain, output):
+        assert reserved.fluidsim.role == "NONE"
+    assert (domain.display_type, domain.hide_render) == ("WIRE", True)
+
+    only_reserved = SimpleNamespace(scene=scene, selected_objects=[domain, output])
+    assert op.execute(only_reserved) == {"CANCELLED"}
+    assert domain.fluidsim.role == "NONE" and output.fluidsim.role == "NONE"
+
+
+def test_clearing_a_stray_role_on_the_domain_keeps_its_presentation(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    domain = _phase1_object("SOURCE")
+    domain.display_type = "WIRE"
+    domain.hide_render = True
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain)),
+        selected_objects=[domain],
+    )
+    op = operators.FLUIDSIM_OT_tag_object()
+    op.role = "NONE"
+
+    assert op.execute(context) == {"FINISHED"}
+    assert domain.fluidsim.role == "NONE"
+    assert (domain.display_type, domain.hide_render) == ("WIRE", True)
+
+
 def test_phase3_aggregate_emission_is_not_broadcast_as_per_source_truth():
     from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
 
@@ -2135,6 +2205,59 @@ def test_viewport_launcher_is_a_pinned_status_strip_not_a_settings_shelf(monkeyp
     assert play["enabled"] is True
     assert "fluidsim.preview_start" not in {op["id"] for op in layout.operators}
     assert "fluidsim.restart_simulation" not in {op["id"] for op in layout.operators}
+
+
+def test_activity_ui_state_reports_playing_from_the_scene_window(monkeypatch):
+    """B79: the shared helper must pass timeline playback to the snapshot."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    monkeypatch.setattr(production_bake, "active_bake", lambda _scene: None)
+    bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    bridge.session = lambda: SimpleNamespace(owns_scene=lambda _scene: True)
+    monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    scene = SimpleNamespace(name="Scene", fluidsim=SimpleNamespace(
+        bake_status="IDLE", cache_playback_enabled=False, live=True, status=""))
+    other = SimpleNamespace(name="Other", fluidsim=scene.fluidsim)
+    screen = SimpleNamespace(is_animation_playing=True)
+    fake_bpy.context.window_manager = SimpleNamespace(windows=[
+        SimpleNamespace(scene=scene, screen=screen)])
+
+    assert ui_common.activity_ui_state(scene)["label"] == "Playing Live"
+    assert ui_common.activity_ui_state(scene)["busy"] is True
+    # A window playing another scene does not make this one "playing".
+    assert ui_common.activity_ui_state(other)["label"] == "Live Ready"
+    screen.is_animation_playing = False
+    assert ui_common.activity_ui_state(scene)["label"] == "Live Ready"
+    scene.fluidsim.cache_playback_enabled = True
+    screen.is_animation_playing = True
+    assert ui_common.activity_ui_state(scene)["label"] == "Playing Cache"
+
+
+def test_profiling_drawer_shows_only_the_owning_scenes_timings(monkeypatch):
+    """B79: the singleton session's profiler must not appear under another scene."""
+    _install_bpy_stub(monkeypatch)
+    ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    owner = SimpleNamespace(name="Owner")
+    other = SimpleNamespace(name="Other")
+    profiler = SimpleNamespace(
+        history=[1], summary=lambda last_n: {"compute_0": 3.0, "compute_1": 4.0})
+    bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
+    bridge.session = lambda: SimpleNamespace(
+        profiler=profiler, owns_scene=lambda scene: scene is owner)
+    monkeypatch.setitem(sys.modules, bridge.__name__, bridge)
+    monkeypatch.setattr(
+        ui_scene, "_domain_owner",
+        lambda _context: SimpleNamespace(profiling_enabled=True, profiling_sync=False))
+
+    def labels(scene):
+        layout = _draw_stage(
+            ui_scene.FLUIDSIM_PT_diagnostics_profiling, SimpleNamespace(scene=scene))
+        return [label["text"] for label in layout.labels]
+
+    assert "Average phase times" in labels(owner)
+    assert "Average phase times" not in labels(other)
 
 
 def test_viewport_launcher_status_note_is_plain_language(monkeypatch):
@@ -2818,6 +2941,35 @@ def test_physics_domain_panel_edits_the_object_datablock(monkeypatch):
     assert domain_panel.poll(context) is False
 
 
+@pytest.mark.parametrize("kind", ["FOAM", "BUBBLES", "SPRAY"])
+def test_separate_whitewater_outputs_keep_the_common_whitewater_panels(monkeypatch, kind):
+    """B73: SEPARATE-mode stream outputs keep emission/classification/lifetime."""
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    ui_scene = ui_physics.ui_scene
+    always = classmethod(lambda cls, _context: True)
+    monkeypatch.setattr(ui_physics.FluidSimPhysicsPanel, "poll", always)
+    monkeypatch.setattr(ui_scene.FluidSimScenePanel, "poll", always)
+    for name in ("_domain_visible", "_whitewater_enabled", "_advanced_visible"):
+        monkeypatch.setattr(ui_scene, name, lambda _context: True)
+    current = {"kind": kind}
+    monkeypatch.setattr(ui_physics, "physics_object_kind", lambda _c: current["kind"])
+    by_suffix = {
+        cls.bl_idname.removeprefix("FLUIDSIM_PT_physics_whitewater_"): cls
+        for cls in ui_physics.WHITEWATER_PANEL_CLASSES
+    }
+
+    for suffix in ("scene_whitewater", "whitewater_emission",
+                   "whitewater_classification", "whitewater_life"):
+        assert by_suffix[suffix].poll(SimpleNamespace()), suffix
+    # The stream's own output panel draws its dynamics; no duplicate grid.
+    assert not by_suffix["whitewater_dynamics"].poll(SimpleNamespace())
+    current["kind"] = "WHITEWATER"
+    assert all(cls.poll(SimpleNamespace()) for cls in by_suffix.values())
+    current["kind"] = "SURFACE"
+    assert not any(cls.poll(SimpleNamespace()) for cls in by_suffix.values())
+
+
 SCENE_TAB_PANEL_IDS = frozenset({
     "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control",
@@ -3003,6 +3155,52 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     assert result == {"FINISHED"}
     assert created.selected is True
     assert active_holder.active is created, "the new domain becomes the active object"
+
+
+def test_every_domain_designation_presents_a_wire_unrendered_boundary(monkeypatch):
+    """B72: Add > Fluid Domain and Use Active as Domain match Guided Setup."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+
+    class _Mesh:
+        def from_pydata(self, *_args):
+            pass
+
+        def update(self):
+            pass
+
+    linked = []
+    fake_bpy.data = SimpleNamespace(
+        meshes=SimpleNamespace(new=lambda _name: _Mesh()),
+        objects=SimpleNamespace(
+            new=lambda name, data: SimpleNamespace(
+                name=name, data=data, display_type="TEXTURED",
+                hide_render=False, show_in_front=False,
+            )
+        ),
+    )
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(domain_object=None),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=linked.append)),
+    )
+    added = menus.create_domain_object(scene)
+    assert scene.fluidsim.domain_object is added and linked == [added]
+    assert (added.display_type, added.hide_render, added.show_in_front) == (
+        "WIRE", True, True)
+
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    artist_box = SimpleNamespace(
+        name="Tank", type="MESH", fluidsim=SimpleNamespace(role="NONE"),
+        display_type="SOLID", hide_render=False, show_in_front=False,
+    )
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None, status="")),
+        active_object=artist_box,
+        object=artist_box,
+    )
+    assert operators.FLUIDSIM_OT_use_active_as_domain().execute(context) == {"FINISHED"}
+    assert (artist_box.display_type, artist_box.hide_render, artist_box.show_in_front) == (
+        "WIRE", True, True)
 
 
 def test_scene_domain_panel_keys_off_the_active_domain_object(monkeypatch):
@@ -4090,6 +4288,160 @@ def test_warp_code_workspace_gated_by_authoring_pref(monkeypatch):
 
     on = _effect_authoring_context(authoring=True, item=item)
     assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(on) is True
+
+
+def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch, tmp_path):
+    """B74: Blender does not copy dynamic enum strings; Python must retain them."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    monkeypatch.setattr(effect_ui.effect_library, "user_library_path", lambda: tmp_path)
+    definition = SimpleNamespace(
+        effect_id="vortex", name="Vortex", summary="Spin liquid",
+        cost_hint="low",
+    )
+    snapshot = SimpleNamespace(
+        library=SimpleNamespace(definitions=lambda: (definition,))
+    )
+    monkeypatch.setattr(effect_ui.effect_library, "library_snapshot", lambda: snapshot)
+
+    first = effect_ui._effect_items(None, None)
+    assert first == [("vortex", "Vortex", "Spin liquid  Cost: Low")]
+    assert effect_ui._EFFECT_ITEMS is first
+    second = effect_ui._effect_items(None, None)
+    assert effect_ui._EFFECT_ITEMS is second
+
+
+def test_effect_packages_drawer_scans_the_library_once_until_it_changes(
+        monkeypatch, tmp_path):
+    """P16: the drawer scanned every package twice per redraw (diagnostics,
+    then the installed check); it now reuses one snapshot until a package
+    file changes."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    library = effect_ui.effect_library
+    installed = SimpleNamespace(
+        path=tmp_path / "user.fseffect",
+        definition=SimpleNamespace(effect_id="user.swirl"))
+    scans = []
+
+    def snapshot():
+        scans.append("snapshot")
+        return SimpleNamespace(diagnostics=(), installed=(installed,))
+
+    def entries():
+        scans.append("entries")
+        return (installed,), ()
+
+    monkeypatch.setattr(library, "library_snapshot", snapshot)
+    monkeypatch.setattr(library, "installed_user_entries", entries)
+    monkeypatch.setattr(library, "user_library_path", lambda: tmp_path)
+    monkeypatch.setattr(effect_ui, "_active_effect", lambda _scene: SimpleNamespace())
+    monkeypatch.setattr(
+        effect_ui, "_definition_from_pg",
+        lambda _item: SimpleNamespace(built_in=False, effect_id="user.swirl"))
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=SimpleNamespace()))
+
+    def draw():
+        panel = effect_ui.FLUIDSIM_PT_effect_packages()
+        panel.layout = _Layout()
+        panel.draw(context)
+        return {op["id"] for op in panel.layout.operators}
+
+    for _ in range(3):
+        assert "fluidsim.effect_delete_installed" in draw()
+    assert scans == ["snapshot"]
+
+    (tmp_path / "other.fseffect").write_text("{}", encoding="utf-8")
+    draw()
+    assert scans == ["snapshot", "snapshot"]
+
+
+def test_add_effect_cancels_cleanly_when_the_package_vanished(monkeypatch):
+    """B79: an effect removed between search and execute is a controlled cancel."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    class _Library:
+        def get(self, effect_id):
+            raise KeyError(f"unknown effect {effect_id!r}")
+
+    monkeypatch.setattr(effect_ui.effect_library, "combined_library", _Library)
+    added = []
+    monkeypatch.setattr(
+        effect_ui.effects, "add_instance_to_scene",
+        lambda *args: added.append(args))
+    reports = []
+    operator = effect_ui.FLUIDSIM_OT_effect_add()
+    operator.effect_id = "user.removed_effect"
+    operator.report = lambda level, message: reports.append((level, message))
+    stack = SimpleNamespace(items=[], selected_library_effect="")
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=stack))
+
+    assert operator.execute(context) == {"CANCELLED"}
+    assert not added
+    assert reports and reports[-1][0] == {"ERROR"}
+    assert "user.removed_effect" in reports[-1][1]
+
+
+@pytest.mark.parametrize("mode", ["OBJECT", "EDIT_MESH"])
+def test_create_controller_completes_in_any_object_mode(monkeypatch, mode):
+    """B79: Edit Mode must not leave a linked, assigned controller after a raise."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+
+    class _Vec(SimpleNamespace):
+        pass
+
+    class _Controller(dict):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+            self.selected = False
+            self.matrix_world = SimpleNamespace(translation=None)
+
+        def select_set(self, value):
+            self.selected = value
+
+    def _select_all(action):
+        # bpy.ops.object.select_all polls ED_operator_objectmode.
+        if mode != "OBJECT":
+            raise RuntimeError("Operator bpy.ops.object.select_all.poll() failed")
+        for obj in objects.selected:
+            obj.select_set(False)
+
+    fake_bpy.data = SimpleNamespace(
+        objects=SimpleNamespace(new=lambda name, _data: _Controller(name)))
+    fake_bpy.ops = SimpleNamespace(object=SimpleNamespace(select_all=_select_all))
+    monkeypatch.setattr(effect_ui.effects, "refresh_stack_state", lambda _scene: None)
+
+    edited = _Controller("Edited Mesh")
+    edited.selected = True
+    edited.matrix_world.translation = (1.0, 2.0, 3.0)
+    objects = SimpleNamespace(active=edited, selected=[edited])
+    linked = []
+    parameter = SimpleNamespace(key="controller", kind="OBJECT", object_value=None)
+    item = SimpleNamespace(
+        parameters=[parameter], display_name="Vortex", effect_id="vortex",
+        instance_id="effect-1")
+    scene = SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[item], active_index=0),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=linked.append)))
+    context = SimpleNamespace(
+        scene=scene, mode=mode, collection=None, object=edited,
+        view_layer=SimpleNamespace(objects=objects))
+    operator = effect_ui.FLUIDSIM_OT_effect_create_controller()
+    operator.parameter_key = "controller"
+    operator.report = lambda *_args: None
+
+    assert operator.execute(context) == {"FINISHED"}
+    controller = parameter.object_value
+    assert linked == [controller]
+    if mode == "OBJECT":
+        assert objects.active is controller and controller.selected
+        assert edited.selected is False
+    else:
+        # Edit Mode keeps the edited object active; the controller is ready.
+        assert objects.active is edited
 
 
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):

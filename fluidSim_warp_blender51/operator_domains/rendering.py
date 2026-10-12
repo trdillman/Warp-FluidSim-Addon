@@ -65,6 +65,9 @@ class FLUIDSIM_OT_use_active_as_domain(bpy.types.Operator):
                 "Clear the object's FluidSim input role before using it as the domain",
             )
             return {"CANCELLED"}
+        from ..blender.setup_wizard import present_as_domain
+
+        present_as_domain(obj)
         scene.fluidsim.domain_object = obj
         scene.fluidsim.status = f"FluidSim domain assigned to {obj.name}"
         self.report({"INFO"}, scene.fluidsim.status)

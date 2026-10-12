@@ -187,6 +187,16 @@ def _is_legacy_2x_cache(cache: Path) -> bool:
     return detect_cache_format(cache) == LEGACY_2X_FORMAT_VERSION
 
 
+def _is_resume_refusal(exc: BaseException) -> bool:
+    """Whether ``exc`` is production_bake.ResumeRefused, without importing it.
+
+    production_bake needs Blender; this module stays importable without it.
+    """
+    module = sys.modules.get(f"{__package__}.production_bake")
+    refused = getattr(module, "ResumeRefused", None)
+    return isinstance(refused, type) and isinstance(exc, refused)
+
+
 def _report_path(options: CliOptions) -> Path:
     return options.report_json or options.cache / "fluidsim_bake_report.json"
 
@@ -303,12 +313,26 @@ def run(options: CliOptions) -> int:
             checkpoint_interval=options.checkpoint_interval,
             compressed=bool(getattr(fs, "cache_compress", False)),
         )
-        existing = load_manifest(manifest_path(options.cache))
+        try:
+            existing = load_manifest(manifest_path(options.cache))
+        except ValueError as exc:
+            # A corrupt or unreadable manifest is a cache problem, not an
+            # invalid scene: farms remediate it by fixing/clearing the cache.
+            code = EXIT_RESUME_INCOMPATIBLE
+            report["message"] = f"Cache manifest is unreadable: {type(exc).__name__}: {exc}"
+            return code
         resume = options.resume == "required" or (
             options.resume == "auto" and existing is not None
         )
         if resume:
-            decision = backend.resume_decision(scene)
+            try:
+                decision = backend.resume_decision(scene)
+            except ValueError as exc:
+                code = EXIT_RESUME_INCOMPATIBLE
+                report["message"] = (
+                    f"Cache could not be verified for resume: "
+                    f"{type(exc).__name__}: {exc}")
+                return code
             if not decision.allowed:
                 code = EXIT_RESUME_INCOMPATIBLE
                 report["message"] = f"{decision.code}: {decision.message}"
@@ -359,7 +383,10 @@ def run(options: CliOptions) -> int:
         report["message"] = result.message
         return code
     except ValueError as exc:
-        code = EXIT_SCENE_INVALID
+        # ResumeRefused (raised when the resume decision changes between the
+        # CLI's check and the bake's own) is a resume/cache category error.
+        code = (EXIT_RESUME_INCOMPATIBLE if _is_resume_refusal(exc)
+                else EXIT_SCENE_INVALID)
         report["message"] = f"{type(exc).__name__}: {exc}"
         return code
     except Exception as exc:  # Blender log retains the traceback via stderr

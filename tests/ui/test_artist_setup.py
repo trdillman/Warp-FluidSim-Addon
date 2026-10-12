@@ -88,6 +88,126 @@ def _operator(module, *, start_preview):
     return operator
 
 
+class _Tagged(SimpleNamespace):
+    def __init__(self, tags=None, **attrs):
+        super().__init__(**attrs)
+        self._tags = dict(tags or {})
+
+    def get(self, key, default=None):
+        return self._tags.get(key, default)
+
+
+def test_quick_setup_never_admits_the_domain_or_outputs_as_inputs():
+    """B70: Select All + Quick Liquid must not tag the domain or outputs."""
+    from fluidSim_warp_blender51.blender import setup_wizard
+
+    def mesh(name, tags=None):
+        return _Tagged(tags, name=name, type="MESH", fluidsim=SimpleNamespace(role="NONE"))
+
+    liquid = mesh("Liquid")
+    domain = mesh("Artist Domain")
+    wizard_domain = mesh("FluidSim Domain", {setup_wizard.KIND_TAG: "DOMAIN"})
+    owned_output = mesh("FluidSim Surface", {setup_wizard.KIND_TAG: "OUTPUT"})
+    tagged_output = mesh("Old Surface", {"fluidsim_output_kind": "FluidSim Surface"})
+    context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain)),
+        selected_objects=[liquid, domain, wizard_domain, owned_output, tagged_output],
+    )
+
+    assert setup_wizard._selected_meshes(context) == (liquid,)
+    assert setup_wizard.reserved_object_reason(context.scene, liquid) == ""
+
+
+@pytest.mark.parametrize("preset_fields", [("voxel_size", "flip_ratio"), ()])
+def test_reused_domain_rollback_restores_transform_then_divisions(preset_fields):
+    """B71: a 3 m / 25-division domain fitted to 6 m must roll back to 3 m / 25.
+
+    ``voxel_size`` is derived (longest axis / divisions); restoring it before
+    the transform re-derives 50 divisions against the fitted 6 m box.
+    """
+    from fluidSim_warp_blender51.blender.setup_wizard import (
+        _record_domain_state,
+        _SetupRollbackJournal,
+    )
+
+    class DomainSettings:
+        def __init__(self, owner):
+            self._owner = owner
+            self.resolution_divisions = 25
+            self.flip_ratio = 0.95
+
+        @property
+        def voxel_size(self):
+            return max(self._owner.scale) / self.resolution_divisions
+
+        @voxel_size.setter
+        def voxel_size(self, value):
+            self.resolution_divisions = max(8, round(max(self._owner.scale) / value))
+
+    domain = SimpleNamespace(
+        location=(0.0, 0.0, 0.0), rotation_euler=(0.0, 0.0, 0.0),
+        scale=(3.0, 3.0, 3.0), display_type="WIRE", hide_render=True,
+        show_in_front=True,
+    )
+    domain.fluidsim_domain = DomainSettings(domain)
+    journal = _SetupRollbackJournal()
+    _record_domain_state(journal, domain, preset_fields, "QUICK_LIQUID")
+
+    # The wizard applies its preset cell size, fits to 6 m and keeps the cell.
+    domain.fluidsim_domain.voxel_size = 0.12
+    domain.fluidsim_domain.flip_ratio = 0.5
+    domain.scale = (6.0, 6.0, 6.0)
+    domain.fluidsim_domain.voxel_size = 0.12
+    journal.rollback()
+
+    assert domain.scale == (3.0, 3.0, 3.0)
+    assert domain.fluidsim_domain.resolution_divisions == 25
+    assert domain.fluidsim_domain.voxel_size == pytest.approx(0.12)
+    if preset_fields:
+        assert domain.fluidsim_domain.flip_ratio == 0.95
+
+
+@pytest.mark.parametrize("placeholder", [1.0, 0.3, 3.0])
+def test_preset_cell_size_does_not_depend_on_the_pre_fit_domain(placeholder):
+    """B79: preview_water's 0.12 m cell must survive whatever box is refitted.
+
+    Writing the preset through the derived voxel_size quantizes it against the
+    pre-fit box (1 m -> 0.125, 0.3 m -> 0.0375 via the 8-division minimum).
+    """
+    from fluidSim_warp_blender51.blender import setup_wizard
+
+    class DomainSettings:
+        def __init__(self, size):
+            self.size = size
+            self.resolution_divisions = 64
+
+        @property
+        def voxel_size(self):
+            return self.size / self.resolution_divisions
+
+        @voxel_size.setter
+        def voxel_size(self, value):
+            self.resolution_divisions = max(8, round(self.size / value))
+
+    domain_fs = DomainSettings(placeholder)
+    preset = SimpleNamespace(settings={"voxel_size": 0.12, "flip_ratio": 0.95})
+    domain_fs.voxel_size = preset.settings["voxel_size"]  # library.apply_preset
+    # What the wizard used to fit to: the value quantized on the old box.
+    quantized = domain_fs.voxel_size
+    if placeholder != 3.0:
+        assert quantized != pytest.approx(0.12, abs=1e-4)
+
+    cell = setup_wizard._wizard_cell_size(domain_fs, preset)
+    lo, hi = setup_wizard.align_bounds((0.0, 0.0, 0.0), (2.35, 1.0, 1.0), cell)
+    domain_fs.size = max(b - a for a, b in zip(lo, hi))  # _fit_domain
+    domain_fs.voxel_size = cell  # _fit_domain_keeping_voxel
+
+    assert cell == pytest.approx(0.12)
+    assert domain_fs.voxel_size == pytest.approx(0.12)
+    no_preset = setup_wizard._wizard_cell_size(domain_fs, None)
+    assert no_preset == pytest.approx(domain_fs.voxel_size)
+
+
 def test_setup_rollback_journal_unwinds_once_in_reverse_order():
     from fluidSim_warp_blender51.blender.setup_wizard import _SetupRollbackJournal
 

@@ -379,16 +379,17 @@ def draw_cache_refusal(layout, context) -> None:
     matches the frames already baked, which offers "Re-bake from frame N" with N
     the first frame that differs.
     """
-    from ..io.cache import LEGACY_2X_CACHE_MESSAGE, detect_cache_format
+    from ..io.cache import LEGACY_2X_CACHE_MESSAGE
     from . import ui_scene
     from .cache_bake import rebake_offer
     from .production_bake import bake_is_active
+    from .ui_cache_state import cache_format_for_ui
 
     scene = context.scene
     if bake_is_active(scene):
         return
     directory = ui_scene._cache_directory(scene)
-    if directory is not None and detect_cache_format(directory) == 2:
+    if directory is not None and cache_format_for_ui(directory) == 2:
         ui_scene._draw_wrapped(layout, LEGACY_2X_CACHE_MESSAGE, icon="ERROR")
         return
     frame = rebake_offer(scene)

@@ -310,6 +310,18 @@ def _ensure_domain(helpers, owner_id: str):
     return domain, created
 
 
+def present_as_domain(obj) -> None:
+    """Show a domain as the simulation boundary: wireframe, in front, unrendered.
+
+    Every path that designates a domain (Guided Setup, Add > Fluid Domain, Use
+    Active as Domain) uses this, so a domain never renders as a solid box that
+    hides the liquid it contains.
+    """
+    obj.display_type = "WIRE"
+    obj.hide_render = True
+    obj.show_in_front = True
+
+
 def _fit_domain(scene, domain, bounds) -> None:
     """Size the domain box to ``bounds``, then designate it for the scene."""
     minimum, maximum = bounds
@@ -318,10 +330,26 @@ def _fit_domain(scene, domain, bounds) -> None:
     domain.location = center
     domain.rotation_euler = (0.0, 0.0, 0.0)
     domain.scale = dimensions
-    domain.display_type = "WIRE"
-    domain.hide_render = True
-    domain.show_in_front = True
+    present_as_domain(domain)
     scene.fluidsim.domain_object = domain
+
+
+def _wizard_cell_size(domain_fs, preset) -> float:
+    """Cell size Guided Setup fits the domain to.
+
+    A preset's ``voxel_size`` is written through the derived property, which
+    quantizes it against the domain's *current* (pre-fit) size: 0.12 on the
+    1 m placeholder reads back 0.125, and on a reused 0.3 m domain the
+    8-division minimum turns it into 0.0375. Fitting uses the preset's authored
+    value instead, so the cell size does not depend on the box being replaced.
+    """
+    settings = getattr(preset, "settings", None) or {}
+    authored = settings.get("voxel_size") if hasattr(settings, "get") else None
+    if authored is not None:
+        value = float(authored)
+        if math.isfinite(value) and value > 0.0:
+            return value
+    return float(domain_fs.voxel_size)
 
 
 def _fit_domain_keeping_voxel(context, scene, domain, domain_fs, bounds, voxel_size) -> None:
@@ -397,14 +425,40 @@ def _capacity_summary(scene) -> str:
     )
 
 
+def reserved_object_reason(scene, obj) -> str:
+    """Why ``obj`` must never become a simulation input, or ``""``.
+
+    The designated domain, a wizard-owned domain and the add-on's own output
+    objects are simulation boundaries and results; tagging them as sources,
+    sinks or colliders would feed the simulation its own container or output.
+    """
+    if obj is None:
+        return ""
+    if obj is active_domain_object(scene):
+        return "the FluidSim domain"
+    try:
+        kind = obj.get(KIND_TAG)
+    except (AttributeError, TypeError):
+        kind = None
+    if kind == "DOMAIN":
+        return "a FluidSim domain"
+    from .output_publication import is_output_object
+
+    if kind == "OUTPUT" or is_output_object(obj):
+        return "a FluidSim output"
+    return ""
+
+
 def _selected_meshes(context):
     accepted_roles = {"NONE", "SOURCE", "COLLIDER", "SINK"}
+    scene = getattr(context, "scene", None)
     return tuple(
         obj
         for obj in getattr(context, "selected_objects", ())
         if getattr(obj, "type", None) == "MESH"
         and getattr(getattr(obj, "fluidsim", None), "role", "NONE")
         in accepted_roles
+        and not reserved_object_reason(scene, obj)
     )
 
 
@@ -547,14 +601,23 @@ def _record_selected_state(journal, selected) -> None:
 
 
 def _record_domain_state(journal, domain, preset_fields, mode) -> None:
+    # ``voxel_size`` is derived from ``resolution_divisions`` and the domain's
+    # world size, and the wizard rewrites both the transform and the divisions.
+    # Restoring the derived value against the fitted box re-derives the wrong
+    # divisions, so the authoritative divisions are recorded instead -- always,
+    # since fitting changes them even without a preset -- and recorded *before*
+    # the transform so the LIFO rollback puts the transform back first.
+    fields = [name for name in preset_fields if name != "voxel_size"]
+    if mode == "QUICK_CONTAINER":
+        fields.extend(("height_enabled", "height_emission_mode", "height_base"))
+    if "resolution_divisions" in fields:
+        fields.remove("resolution_divisions")
+    fields.append("resolution_divisions")
+    _record_settings(journal, domain.fluidsim_domain, fields)
     _record_attributes(
         journal, domain,
         ("location", "rotation_euler", "scale", "display_type", "hide_render", "show_in_front"),
     )
-    fields = list(preset_fields)
-    if mode == "QUICK_CONTAINER":
-        fields.extend(("height_enabled", "height_emission_mode", "height_base"))
-    _record_settings(journal, domain.fluidsim_domain, fields)
 
 
 def _record_output_state(journal, obj, property_keys):
@@ -637,7 +700,10 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         raise RuntimeError("Production Bake owns this scene; finish or cancel it before setup")
     selected = _selected_meshes(context)
     if not selected:
-        raise ValueError("Select at least one mesh object")
+        raise ValueError(
+            "Select at least one mesh object other than the FluidSim domain "
+            "and outputs"
+        )
 
     from ..presets import library
     from . import colliders, geometry_nodes, output_publication
@@ -763,7 +829,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
                 if bool(domain_fs.use_scene_gravity)
                 else tuple(domain_fs.gravity)
             )
-            wizard_voxel = float(domain_fs.voxel_size)
+            wizard_voxel = _wizard_cell_size(domain_fs, preset)
             bounds = compute_domain_bounds(
                 selected,
                 wizard_voxel,

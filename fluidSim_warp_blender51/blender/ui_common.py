@@ -53,13 +53,29 @@ _ACTIVITY_ICONS = {
 }
 
 
+def scene_animation_playing(scene) -> bool:
+    """Whether a window showing ``scene`` is playing its timeline."""
+    try:
+        manager = getattr(bpy.context, "window_manager", None)
+        for window in getattr(manager, "windows", ()) or ():
+            screen = getattr(window, "screen", None)
+            if (getattr(window, "scene", None) == scene
+                    and bool(getattr(screen, "is_animation_playing", False))):
+                return True
+    except (AttributeError, ReferenceError, RuntimeError):
+        return False
+    return False
+
+
 def activity_ui_state(scene) -> dict[str, object]:
     """Return the shared derived activity plus current-scene ownership."""
     from .playback import activity_snapshot
     from .scene_bridge import session
 
     owns_scene = bool(session().owns_scene(scene))
-    result = dict(activity_snapshot(scene, owns_scene=owns_scene))
+    result = dict(activity_snapshot(
+        scene, owns_scene=owns_scene,
+        is_animation_playing=scene_animation_playing(scene)))
     result["icon"] = _ACTIVITY_ICONS.get(str(result.get("id", "IDLE")), "INFO")
     return result
 

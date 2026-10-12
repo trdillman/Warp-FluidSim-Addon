@@ -108,6 +108,61 @@ def test_display_fraction_strides_the_readback_but_not_the_cache_frame(monkeypat
     assert reads() == [16, count]
 
 
+def test_display_fraction_strides_attribute_readbacks_with_equal_values(monkeypatch):
+    """P09: selected values and enabled attributes read only the shown rows.
+
+    Before, positions were strided but SPEED values, velocity/age/lifetime
+    attributes and whitewater channels were read back in full and sliced on
+    the host, undoing Display Fraction.
+    """
+    monkeypatch.setitem(sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.sim.frame_output import HostFrame
+
+    count, ww_count, step = 64, 40, 4
+    log = []
+    solver = _solver(log, count, ww_count=ww_count)
+    solver.settings.frame_rate = 24.0
+    solver.settings.time_scale = 1.0
+    domain = SimpleNamespace(
+        whitewater_enabled=True, surface_enabled=False,
+        particles_attribute_velocity=True, particles_attribute_age=True,
+        particles_attribute_lifetime=True,
+        whitewater_attribute_velocity=True, whitewater_attribute_age=True,
+        whitewater_attribute_lifetime=True)
+    fs = SimpleNamespace(
+        domain_object=SimpleNamespace(fluidsim_domain=domain),
+        show_particles=True, particle_attribute_mode="SPEED",
+        particle_display_fraction=1.0 / step,
+        show_whitewater=True, whitewater_display_fraction=1.0 / step,
+        whitewater_attribute_mode="SPEED", whitewater_output_mode="SEPARATE",
+        show_surface=False, surface_attribute_mode="NONE")
+
+    frame = output_publication.prepare_live_payload(
+        SimpleNamespace(fluidsim=fs), HostFrame(solver))
+
+    shown, ww_shown = count // step, ww_count // step
+    assert {n for _name, n in log} == {shown, ww_shown}, log
+    reference = HostFrame(_solver([], count, ww_count=ww_count))
+    reference.solver.settings.frame_rate = 24.0
+    reference.solver.settings.time_scale = 1.0
+    particles = frame.particle_attributes
+    np.testing.assert_array_equal(
+        particles["velocity"], reference.velocities[::step])
+    np.testing.assert_array_equal(
+        particles["age"], reference.particle_attr("age")[::step])
+    np.testing.assert_array_equal(
+        particles["lifetime"], reference.particle_attr("life")[::step])
+    np.testing.assert_allclose(
+        particles["speed"],  # the selected SPEED display values
+        np.linalg.norm(reference.velocities[::step], axis=1))
+    whitewater = frame.whitewater_attributes
+    for key, name in (("velocity", "velocity"), ("age", "age"),
+                      ("lifetime", "life"), ("type", "type")):
+        np.testing.assert_array_equal(
+            whitewater[key], reference.whitewater_attr(name)[::step])
+
+
 def test_whitewater_display_fraction_strides_the_readback_but_not_the_cache_frame(
         monkeypatch):
     monkeypatch.setitem(sys.modules, "bpy", sys.modules.get("bpy", types.ModuleType("bpy")))

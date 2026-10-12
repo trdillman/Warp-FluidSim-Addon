@@ -29,6 +29,10 @@ _STATUS_ICONS = {
 }
 
 _LAST_LIBRARY_FATAL = ""
+# Blender does not copy the strings a dynamic EnumProperty ``items`` callback
+# returns; Python must keep them alive until the next call, or the search popup
+# can show corrupted names/tooltips or crash.
+_EFFECT_ITEMS: list[tuple[str, str, str]] = []
 
 
 def _active_effect(scene):
@@ -50,15 +54,67 @@ def _definition_from_pg(item):
     return EffectDefinitionV2.from_dict(json.loads(item.definition_json))
 
 
-def _effect_items(_self, _context):
-    global _LAST_LIBRARY_FATAL
+_LIBRARY_SNAPSHOT_CACHE: dict = {"stamp": None, "snapshot": None}
+
+
+def _library_stamp():
+    """Cheap identity of the installed library: names, mtimes and sizes.
+
+    Listing and stat-ing the package files costs far less than reading and
+    validating every package, which ``library_snapshot`` does.
+    """
+    root = effect_library.user_library_path()
+    entries = []
+    for path in sorted(root.glob("*.fseffect")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append((path.name, int(stat.st_mtime_ns), int(stat.st_size)))
+    return str(root), tuple(entries)
+
+
+def _cached_library_snapshot():
+    """``effect_library.library_snapshot()`` reused until a package changes.
+
+    Panels and the Add Effect search call this on every redraw; installing,
+    renaming or removing a package changes the stamp and forces a rescan.
+    """
     try:
-        definitions = effect_library.library_snapshot().library.definitions()
+        stamp = _library_stamp()
+    except Exception:  # no stamp, no reuse: scan every time as before
+        return effect_library.library_snapshot()
+    cache = _LIBRARY_SNAPSHOT_CACHE
+    if cache["snapshot"] is not None and cache["stamp"] == stamp:
+        return cache["snapshot"]
+    snapshot = effect_library.library_snapshot()
+    cache["stamp"] = stamp
+    cache["snapshot"] = snapshot
+    return snapshot
+
+
+def _installed_package_for_effect(snapshot, effect_id: str) -> bool:
+    """Whether exactly one installed package provides ``effect_id``.
+
+    Same rule as ``effect_library.installed_package_for_effect`` (none or a
+    conflict is "not installed"), answered from an already-taken snapshot.
+    """
+    matches = [
+        item for item in snapshot.installed
+        if item.definition.effect_id == str(effect_id)
+    ]
+    return len(matches) == 1
+
+
+def _effect_items(_self, _context):
+    global _LAST_LIBRARY_FATAL, _EFFECT_ITEMS
+    try:
+        definitions = _cached_library_snapshot().library.definitions()
         _LAST_LIBRARY_FATAL = ""
     except Exception as exc:
         _LAST_LIBRARY_FATAL = f"{type(exc).__name__}: {exc}"
         definitions = effect_library.builtin_library().definitions()
-    return [
+    _EFFECT_ITEMS = [
         (
             definition.effect_id,
             definition.name,
@@ -66,6 +122,7 @@ def _effect_items(_self, _context):
         )
         for definition in definitions
     ]
+    return _EFFECT_ITEMS
 
 
 def _compile_device(context, explicit: str = "") -> str:
@@ -202,11 +259,12 @@ def _draw_status(layout, scene, stack, item):
     box.operator("fluidsim.effect_refresh_status", text="Refresh Status", icon="FILE_REFRESH")
 
 
-def _draw_library_diagnostics(layout):
+def _draw_library_diagnostics(layout, snapshot=None):
     diagnostics = ()
     fatal = _LAST_LIBRARY_FATAL
     try:
-        diagnostics = effect_library.library_diagnostics()
+        snapshot = snapshot or _cached_library_snapshot()
+        diagnostics = snapshot.diagnostics
     except Exception as exc:
         fatal = f"{type(exc).__name__}: {exc}"
     if not fatal and not diagnostics:
@@ -257,7 +315,15 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        definition = effect_library.combined_library().get(self.effect_id)
+        try:
+            definition = effect_library.combined_library().get(self.effect_id)
+        except Exception as exc:  # noqa: BLE001 - package removed/broken since the search
+            self.report(
+                {"ERROR"},
+                f"Effect {self.effect_id!r} is no longer available in the library "
+                f"({type(exc).__name__}); refresh the library and choose again",
+            )
+            return {"CANCELLED"}
         instance = EffectInstanceV2(
             instance_id=f"effect-{uuid.uuid4().hex[:12]}",
             definition=definition,
@@ -481,9 +547,15 @@ class FLUIDSIM_OT_effect_create_controller(bpy.types.Operator):
         if context.object is not None:
             controller.matrix_world.translation = context.object.matrix_world.translation
         parameter.object_value = controller
-        bpy.ops.object.select_all(action="DESELECT")
-        controller.select_set(True)
-        context.view_layer.objects.active = controller
+        # bpy.ops.object.select_all only polls in Object Mode; calling it from
+        # Edit Mode raised after the controller was already linked and
+        # assigned. Select directly, and leave the edited object active.
+        if str(getattr(context, "mode", "OBJECT")) == "OBJECT":
+            view_layer = context.view_layer
+            for selected in tuple(getattr(view_layer.objects, "selected", ())):
+                selected.select_set(False)
+            controller.select_set(True)
+            view_layer.objects.active = controller
         effects.refresh_stack_state(context.scene)
         self.report({"INFO"}, f"Created {controller.name}; move or animate it in the scene")
         return {"FINISHED"}
@@ -882,7 +954,12 @@ class FLUIDSIM_PT_effect_packages(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        _draw_library_diagnostics(layout)
+        # One library scan serves the diagnostics and the installed check.
+        try:
+            snapshot = _cached_library_snapshot()
+        except Exception:
+            snapshot = None
+        _draw_library_diagnostics(layout, snapshot)
 
         row = layout.row(align=True)
         row.operator("fluidsim.effect_import_package", text="Import Package", icon="IMPORT")
@@ -900,11 +977,8 @@ class FLUIDSIM_PT_effect_packages(bpy.types.Panel):
         except Exception:
             definition = None
         if definition is not None and not definition.built_in:
-            try:
-                effect_library.installed_package_for_effect(definition.effect_id)
-                installed = True
-            except (FileNotFoundError, ValueError):
-                installed = False
+            installed = snapshot is not None and _installed_package_for_effect(
+                snapshot, definition.effect_id)
             if installed:
                 package_actions = layout.row(align=True)
                 package_actions.operator(
