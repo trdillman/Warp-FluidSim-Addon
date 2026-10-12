@@ -56,15 +56,32 @@ def test_user_cannot_override_builtin(tmp_path: Path):
         library.save_user_preset(_user_preset("preview_water"), tmp_path)
 
 
-def test_discovery_and_load_propagate_invalid_user_preset(tmp_path: Path):
+def test_one_invalid_user_preset_does_not_hide_the_healthy_ones(tmp_path: Path):
+    """B61: a malformed file is skipped with a diagnostic, not fatal to all."""
+    library.save_user_preset(_user_preset(), tmp_path)
+    library.save_user_preset(_user_preset("other_water"), tmp_path)
     (tmp_path / "broken.json").write_text(
         '{"schema_version": 1, "id": "broken"}',
         encoding="utf-8",
     )
+    (tmp_path / "garbage.json").write_text("{not json", encoding="utf-8")
+    duplicate = _user_preset("my_water").to_dict()
+    (tmp_path / "z_duplicate.json").write_text(
+        __import__("json").dumps(duplicate), encoding="utf-8")
 
-    with pytest.raises(ValueError):
-        library.discover_presets(tmp_path)
-    with pytest.raises(ValueError):
+    records = library.discover_presets(tmp_path)
+
+    users = [record.preset.id for record in records if record.source == "USER"]
+    assert users == ["my_water", "other_water"]
+    diagnostics = library.preset_diagnostics()
+    assert len(diagnostics) == 3
+    assert any("broken.json" in item for item in diagnostics)
+    assert any("garbage.json" in item for item in diagnostics)
+    assert any("z_duplicate.json" in item and "duplicate" in item
+               for item in diagnostics)
+    assert library.load_preset("USER:my_water", tmp_path) == _user_preset()
+    # Loading the broken preset by name still explains why it cannot load.
+    with pytest.raises(ValueError, match="broken.json"):
         library.load_preset("USER:broken", tmp_path)
 
 

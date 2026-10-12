@@ -83,20 +83,54 @@ def built_in_presets() -> tuple[PresetRecord, ...]:
     return tuple(records)
 
 
-def user_presets(directory: Path | None = None) -> tuple[PresetRecord, ...]:
+# Why each user preset file the last discovery skipped could not be offered.
+_DIAGNOSTICS: tuple[str, ...] = ()
+
+
+def preset_diagnostics() -> tuple[str, ...]:
+    """Messages for the user preset files the last discovery skipped."""
+    return _DIAGNOSTICS
+
+
+def _user_preset_scan(directory: Path | None):
+    """Return (records, {path: reason}) for a user preset folder.
+
+    One unreadable, invalid, duplicate or built-in-colliding file is skipped
+    with its reason; it never hides the folder's healthy presets.
+    """
     directory = Path(directory) if directory is not None else user_preset_dir()
     records = []
+    skipped: dict[Path, str] = {}
     seen: set[str] = set()
     builtin_ids = {record.preset.id for record in built_in_presets()}
     for path in _files(directory):
-        preset = _read(path)
+        try:
+            preset = _read(path)
+        except ValueError as exc:
+            skipped[path] = str(exc)
+            continue
         if preset.id in builtin_ids:
-            raise ValueError(f"user preset {preset.id!r} collides with a built-in preset")
-        if preset.id in seen:
-            raise ValueError(f"duplicate user preset id {preset.id!r}")
-        seen.add(preset.id)
-        records.append(PresetRecord(preset.id, preset, "USER", str(path)))
-    return tuple(records)
+            skipped[path] = f"user preset {preset.id!r} collides with a built-in preset"
+        elif preset.id in seen:
+            skipped[path] = f"duplicate user preset id {preset.id!r}"
+        else:
+            seen.add(preset.id)
+            records.append(PresetRecord(preset.id, preset, "USER", str(path)))
+    return tuple(records), skipped
+
+
+def _record_diagnostics(skipped) -> None:
+    global _DIAGNOSTICS
+    _DIAGNOSTICS = tuple(
+        f"Skipped user preset {path.name}: {reason}"
+        for path, reason in skipped.items())
+
+
+def user_presets(directory: Path | None = None) -> tuple[PresetRecord, ...]:
+    """The folder's valid user presets; skipped files go to ``preset_diagnostics``."""
+    records, skipped = _user_preset_scan(directory)
+    _record_diagnostics(skipped)
+    return records
 
 
 def discover_presets(directory: Path | None = None) -> tuple[PresetRecord, ...]:
@@ -104,6 +138,7 @@ def discover_presets(directory: Path | None = None) -> tuple[PresetRecord, ...]:
     try:
         users = user_presets(directory)
     except (ImportError, RuntimeError):
+        _record_diagnostics({})
         users = ()
     return builtins + users
 
@@ -120,6 +155,13 @@ def load_preset(identifier: str, directory: Path | None = None) -> PresetV1:
         if record.preset.id == identifier
         and (not source_filter or record.source == source_filter)
     ]
+    if not matches and source_filter != "BUILTIN":
+        # A file named after the preset that discovery had to skip explains
+        # the miss better than "not found".
+        reasons = [item for item in _DIAGNOSTICS
+                   if item.startswith(f"Skipped user preset {identifier}.json:")]
+        if reasons:
+            raise ValueError(reasons[0])
     if len(matches) != 1:
         raise KeyError(f"expected one preset {identifier!r}, found {len(matches)}")
     return matches[0].preset

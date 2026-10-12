@@ -302,10 +302,17 @@ _PRODUCT_PRESET_PLACEHOLDER = (
 def _product_preset_items(_self, _context):
     global _PRODUCT_PRESET_ITEMS
     try:
-        from .presets.library import discover_presets
+        from .presets.library import discover_presets, preset_diagnostics
 
         records = discover_presets()
-        items = [_PRODUCT_PRESET_PLACEHOLDER] + [
+        placeholder = _PRODUCT_PRESET_PLACEHOLDER
+        skipped = preset_diagnostics()
+        if skipped:
+            # A broken user preset file is skipped, not fatal; say so where the
+            # user looks for the preset that went missing.
+            placeholder = placeholder[:2] + (
+                placeholder[2] + ". " + "; ".join(skipped),) + placeholder[3:]
+        items = [placeholder] + [
             (
                 f"{record.source}:{record.preset.id}",
                 record.preset.name,
