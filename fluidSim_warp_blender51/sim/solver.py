@@ -832,6 +832,7 @@ class FluidSolver:
         if self.narrow_band is not None:
             self.narrow_band.reset()
         self.churn.zero()
+        self.ww_density.zero()
         self.frame = 0
         self.sim_time = 0.0
         settings = getattr(self, "settings", None)
@@ -1011,6 +1012,11 @@ class FluidSolver:
         self._force_fields_dev = None
         self._host_frame_cache = None
         self._nvox = max(1, self.grid.active_voxel_count)
+        # Not checkpointed, but not scratch either: the next frame's foam
+        # ageing reads it. Checkpoints are taken after _finalize_whitewater,
+        # so re-splatting the restored whitewater reproduces it exactly.
+        if self.settings.whitewater_enabled:
+            self._splat_whitewater_density(self.whitewater.refresh_host_count())
         self.surface.reset()
         self.surface_tension.reset()
         self.whitewater.reset_frame_diagnostics()
@@ -1205,7 +1211,9 @@ class FluidSolver:
         g.finalize_topology(sync=True)
         self._nvox = max(1, g.active_voxel_count)
 
-        # Carry churn across the rebuild (only persistent grid field).
+        # Carry the persistent grid fields across the rebuild: churn, and the
+        # end-of-frame whitewater density that foam ageing reads next frame.
+        # churn_tmp is free scratch again once the churn swap is done.
         fast_launch(
             k_remap_leaf_field, dim=self._nvox,
             inputs=[self.churn.data, self.old_leaf_table, g.leaf_coords,
@@ -1213,6 +1221,15 @@ class FluidSolver:
             outputs=[self.churn_tmp.data], device=self.device,
         )
         self.churn.data, self.churn_tmp.data = self.churn_tmp.data, self.churn.data
+        if s.whitewater_enabled:
+            fast_launch(
+                k_remap_leaf_field, dim=self._nvox,
+                inputs=[self.ww_density.data, self.old_leaf_table, g.leaf_coords,
+                        g.num_leaves, g.leaves_dim],
+                outputs=[self.churn_tmp.data], device=self.device,
+            )
+            self.ww_density.data, self.churn_tmp.data = (
+                self.churn_tmp.data, self.ww_density.data)
         if self.narrow_band is not None:
             self.narrow_band.remap(self.old_leaf_table)
         return g.active_leaf_count
@@ -1868,9 +1885,15 @@ class FluidSolver:
             ww.update_type_counts(active_whitewater)
             return active_whitewater
 
-        g = self.grid
         ww.compact(active_whitewater)
         active_whitewater = ww.refresh_host_count()
+        self._splat_whitewater_density(active_whitewater)
+        return active_whitewater
+
+    def _splat_whitewater_density(self, active_whitewater):
+        """Rebuild the end-of-frame whitewater density from whitewater positions."""
+        g = self.grid
+        ww = self.whitewater
         self.ww_density.data[:self._nvox].zero_()
         fast_launch(
             k_whitewater_set_grid_data, dim=max(1, active_whitewater),
@@ -1879,7 +1902,6 @@ class FluidSolver:
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
-        return active_whitewater
 
     # CFL
 

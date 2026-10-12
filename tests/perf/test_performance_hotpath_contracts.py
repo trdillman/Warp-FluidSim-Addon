@@ -263,7 +263,8 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
 
 def test_whitewater_compaction_is_frame_batched_without_substep_readback():
     substep_source = inspect.getsource(FluidSolver._whitewater)
-    finalize_source = inspect.getsource(FluidSolver._finalize_whitewater)
+    finalize_source = (inspect.getsource(FluidSolver._finalize_whitewater)
+                       + inspect.getsource(FluidSolver._splat_whitewater_density))
     frame_source = inspect.getsource(FluidSolver.step_frame)
 
     assert "synchronize_device" not in substep_source
@@ -333,6 +334,8 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
             _nvox=1,
             device="cuda:0",
         )
+        solver._splat_whitewater_density = types.MethodType(
+            FluidSolver._splat_whitewater_density, solver)
 
         active_count = FluidSolver._finalize_whitewater(solver)
         results.append((
