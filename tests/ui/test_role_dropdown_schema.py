@@ -112,3 +112,80 @@ def test_a_sampling_schema_object_keeps_its_sampling_when_restamped(monkeypatch)
     assert pg.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
     assert (pg.source_sampling_mode, pg.source_sampling_multiplier) == (
         "MULTIPLIER", 2.0)
+
+
+# Regression (mesh-source acceptance): once the role stamps schema >= 3 the
+# runtime reads only the region kinds, so a script that tags the role and then
+# writes the legacy geometry_mode / sink_region_mode got an analytic box.
+
+def _property_update(name):
+    tree = ast.parse(_PROPERTIES.read_text(encoding="utf-8"))
+    group = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "FLUIDSIM_PG_object")
+    statement = next(statement for statement in group.body
+                     if isinstance(statement, ast.AnnAssign)
+                     and getattr(statement.target, "id", "") == name)
+    return ast.unparse({kw.arg: kw.value for kw in statement.annotation.keywords}["update"])
+
+
+def test_legacy_region_fields_route_through_their_alias_callbacks():
+    assert _property_update("geometry_mode") == "_update_geometry_mode"
+    assert _property_update("sink_region_mode") == "_update_sink_region_mode"
+
+
+def test_a_scripted_mesh_source_after_the_role_reaches_the_mesh_region(monkeypatch):
+    _fake_bpy, properties = _load_properties(monkeypatch)
+    monkeypatch.setattr(properties, "_request_scene_update", lambda *_args: None)
+    from fluidSim_warp_blender51.blender.scene_inputs import legacy_region_kinds
+
+    context = SimpleNamespace(scene=_scene())
+    pg = _object_group(sink_region_mode="SOLID")
+    pg.role = "SOURCE"
+    properties._update_object_role(pg, context)
+    pg.geometry_mode = "MESH"
+    properties._update_geometry_mode(pg, context)
+
+    # The same mesh region the legacy schema simulated it with.
+    assert (pg.source_region_kind, pg.sink_region_kind) == legacy_region_kinds(pg)
+    assert pg.source_region_kind == "MESH_SHELL"
+
+    pg.role = "SINK"
+    properties._update_object_role(pg, context)
+    pg.sink_region_mode = "SURFACE"
+    properties._update_sink_region_mode(pg, context)
+    assert pg.sink_region_kind == "MESH_SHELL"
+    pg.sink_region_mode = "SOLID"
+    properties._update_sink_region_mode(pg, context)
+    assert pg.sink_region_kind == "MESH_SOLID"
+
+
+def test_a_mesh_geometry_set_before_the_role_survives_the_stamp(monkeypatch):
+    _fake_bpy, properties = _load_properties(monkeypatch)
+    monkeypatch.setattr(properties, "_request_scene_update", lambda *_args: None)
+
+    pg = _object_group(role="SINK", geometry_mode="MESH", sink_region_mode="SOLID")
+    properties._update_object_role(pg, SimpleNamespace(scene=_scene()))
+    assert pg.sink_region_kind == "MESH_SOLID"
+
+
+def test_legacy_alias_never_overrides_a_chosen_region(monkeypatch):
+    _fake_bpy, properties = _load_properties(monkeypatch)
+    monkeypatch.setattr(properties, "_request_scene_update", lambda *_args: None)
+    context = SimpleNamespace(scene=_scene())
+
+    chosen = _object_group(role="SOURCE", source_ui_schema_version=CURRENT_SOURCE_UI_SCHEMA,
+                           source_region_kind="MESH_SOLID", sink_region_kind="ANALYTIC",
+                           geometry_mode="ANALYTIC", sink_region_mode="SOLID")
+    properties._update_geometry_mode(chosen, context)       # Analytic write
+    properties._update_sink_region_mode(chosen, context)    # analytic sink kind
+    assert (chosen.source_region_kind, chosen.sink_region_kind) == (
+        "MESH_SOLID", "ANALYTIC")
+    chosen.geometry_mode = "MESH"
+    properties._update_geometry_mode(chosen, context)
+    assert chosen.source_region_kind == "MESH_SOLID"
+
+    # Below schema 3 the runtime reads geometry_mode itself: nothing to forward.
+    legacy = _object_group(role="SOURCE", source_ui_schema_version=0,
+                           geometry_mode="MESH", sink_region_mode="SOLID")
+    properties._update_geometry_mode(legacy, context)
+    assert legacy.source_region_kind == "ANALYTIC"
