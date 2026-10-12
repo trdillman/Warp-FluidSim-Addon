@@ -46,17 +46,27 @@ class _FakeMesh:
 
 
 class _FakeMatrix:
-    def __init__(self, tx=0.0, angle=0.0):
+    def __init__(self, tx=0.0, angle=0.0, tilt_x=0.0):
         self._array = np.eye(4, dtype=np.float32)
         self._array[0, 3] = tx
         self.translation = _FakeVector(tx, 0.0, 0.0)
         self.angle = angle
+        self.tilt_x = tilt_x
 
     def to_translation(self):
         return self.translation
 
     def to_quaternion(self):
-        return _FakeQuaternion(self.angle)
+        spin = _FakeQuaternion(self.angle)
+        if not self.tilt_x:
+            return spin
+        # Blender XYZ Euler: world pose = Rz(angle) @ Rx(tilt), canonical w >= 0.
+        half = self.tilt_x * 0.5
+        tilt = _FakeQuaternion._from_components(math.cos(half), math.sin(half), 0.0, 0.0)
+        pose = spin @ tilt
+        if pose.w < 0.0:
+            pose.negate()
+        return pose
 
     def __array__(self, dtype=None, copy=None):
         return self._array.astype(dtype) if dtype is not None else self._array
@@ -130,6 +140,20 @@ class _FakeQuaternion:
 
     def copy(self):
         return _FakeQuaternion._from_components(self.w, self.x, self.y, self.z)
+
+    def conjugated(self):
+        return _FakeQuaternion._from_components(self.w, -self.x, -self.y, -self.z)
+
+    def __matmul__(self, other):
+        # Hamilton product, as mathutils.Quaternion @ Quaternion.
+        aw, ax, ay, az = self.w, self.x, self.y, self.z
+        bw, bx, by, bz = other.w, other.x, other.y, other.z
+        return _FakeQuaternion._from_components(
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        )
 
 
 class _FakeEvalObject:
@@ -488,6 +512,34 @@ def test_angular_velocity_survives_quaternion_hemisphere_flip(
     assert angular[0] == pytest.approx(0.0, abs=1e-9), label
     assert angular[1] == pytest.approx(0.0, abs=1e-9), label
     assert angular[2] == pytest.approx(expected_z, rel=1e-6), label
+
+
+def test_tilted_collider_reports_world_space_angular_velocity(monkeypatch):
+    """Review item B12: the solver consumes omega in world space.
+
+    ``conj(previous) * current`` is the delta in the previous body frame. A
+    paddle stood upright (90 deg about X) and spun about world Z reported a
+    Y-axis angular velocity, so collision velocity and sub-frame re-posing
+    turned the wrong way.
+    """
+    scene_bridge, colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    obj = _FakeObject(_triangle_mesh())
+    obj.fluidsim.transfer_velocity = True
+    scene = SimpleNamespace(
+        objects=[obj], frame_current=1,
+        render=SimpleNamespace(fps=24, fps_base=1),
+    )
+    spin = math.radians(15.0)
+    obj.evaluated_matrix_world = _FakeMatrix(angle=0.0, tilt_x=math.pi / 2.0)
+    colliders.gather_colliders(scene, sess, depsgraph=object())
+    scene.frame_current = 2
+    obj.evaluated_matrix_world = _FakeMatrix(angle=spin, tilt_x=math.pi / 2.0)
+    angular = colliders.gather_colliders(scene, sess, depsgraph=object())[0].angular_velocity
+
+    assert angular[0] == pytest.approx(0.0, abs=1e-9)
+    assert angular[1] == pytest.approx(0.0, abs=1e-9)
+    assert angular[2] == pytest.approx(spin * 24.0, rel=1e-6)
 
 
 def test_animated_collider_reports_linear_velocity(monkeypatch):

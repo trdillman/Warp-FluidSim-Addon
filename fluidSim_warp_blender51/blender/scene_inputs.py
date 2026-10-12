@@ -415,10 +415,15 @@ class SceneInputs:
         if previous is None or frame <= previous[1]:
             return (0.0, 0.0, 0.0)
         dt = (frame - previous[1]) / fps
-        delta = previous[0].rotation_difference(current)
-        # rotation_difference is conj(prev) * current with no hemisphere
-        # normalization, and Quaternion.angle is 2 * acos(w) over [0, 2 * pi]
-        # rather than the shortest arc.  matrix_world.to_quaternion() hands back
+        # The solver consumes omega in world space (k_rasterize_collider_material
+        # and _update_moving_colliders), so take the world-frame delta
+        # current * conj(prev). rotation_difference is conj(prev) * current,
+        # the delta in the previous body frame: for a tilted collider its axis
+        # is rotated away from the true spin axis.
+        delta = current @ previous[0].conjugated()
+        # The product carries no hemisphere normalization, and Quaternion.angle
+        # is 2 * acos(w) over [0, 2 * pi] rather than the shortest arc.
+        # matrix_world.to_quaternion() hands back
         # the canonical w >= 0 representative, so consecutive samples straddling
         # a half-turn (where w = cos(z / 2) changes sign) land in opposite
         # hemispheres and the delta comes back negated -- the long way round,
