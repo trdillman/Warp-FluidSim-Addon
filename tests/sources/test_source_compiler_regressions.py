@@ -201,3 +201,47 @@ def test_dense_level_set_coverage_matches_the_accessor_path(tmp_path, monkeypatc
     assert dense.covered_voxel_count == accessor.covered_voxel_count
     np.testing.assert_array_equal(dense.leaf_coords, accessor.leaf_coords)
     np.testing.assert_array_equal(dense.coverage, accessor.coverage)
+
+
+# B50: every point attribute array is part of the compiled-region key.
+
+def _point_plan(velocities, temperature, *, cadence=SourceEvaluationCadence.STATIC,
+                stable_id="points", positions=None):
+    from fluidSim_warp_blender51.sim.source_regions import PointRegionPlan
+
+    count = len(velocities)
+    if positions is None:
+        rng = np.random.default_rng(3)
+        positions = rng.uniform(0.2, 0.8, (count, 3)).astype(np.float32)
+    region = PointRegionPlan(positions, velocities=velocities,
+                             temperature=temperature)
+    return SourcePlan(SourceKey(stable_id), SourceOperation.LIQUID,
+                      SourceLifecycle.DIRECT_APPEND, cadence, region,
+                      PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES))
+
+
+def _small_context(frame=1):
+    return CompileContext(frame, 0, 1, "cpu", (0.0, 0.0, 0.0), 0.1,
+                          (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), upload=False)
+
+
+def test_interior_point_attribute_edits_miss_the_compiler_cache():
+    count = 2000
+    velocities = np.zeros((count, 3), np.float32)
+    temperature = np.zeros(count, np.float32)
+    compiler = SourceCompiler()
+    first = compiler.compile((_point_plan(velocities, temperature),), _small_context())
+    assert first.sources[0].region.points.velocities[count // 2, 0] == 0.0
+
+    edited_velocities = velocities.copy()
+    edited_velocities[count // 2] = (4.0, 0.0, 0.0)
+    second = compiler.compile(
+        (_point_plan(edited_velocities, temperature),), _small_context())
+    assert second.sources[0].region.points.velocities[count // 2, 0] == 4.0
+
+    edited_temperature = temperature.copy()
+    edited_temperature[count // 2] = 300.0
+    third = compiler.compile(
+        (_point_plan(edited_velocities, edited_temperature),), _small_context())
+    assert third.sources[0].region.points.temperature[count // 2] == 300.0
+    assert compiler.compile_count == 3

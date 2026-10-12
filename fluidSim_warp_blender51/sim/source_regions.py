@@ -79,6 +79,13 @@ def _owned_array(value, dtype, shape_tail=()):
     return array
 
 
+# Every array-valued field of any region plan; all are part of the cache key.
+_REGION_ARRAY_FIELDS = (
+    "vertices", "triangles", "positions", "velocities", "temperature",
+    "viscosity", "density", "lifespan", "profile",
+)
+
+
 def _array_digest(value):
     if value is None:
         return "-"
@@ -607,13 +614,13 @@ class SourceCompiler:
 
     def _cache_key(self, plan, context):
         region = plan.region
+        # repr() summarizes large NumPy arrays, so every region array is
+        # digested in full; an interior edit must never reuse a stale upload.
         parts = [
             str(plan.stable_id), str(int(plan.operation)), str(int(plan.lifecycle)),
             str(int(plan.cadence)), str(int(region.kind)), repr(region),
-            _array_digest(getattr(region, "vertices", None)),
-            _array_digest(getattr(region, "triangles", None)),
-            _array_digest(getattr(region, "positions", None)),
-            _array_digest(getattr(region, "profile", None)),
+            *(_array_digest(getattr(region, name, None))
+              for name in _REGION_ARRAY_FIELDS),
             repr((context.origin, context.voxel_size, context.domain_min,
                   context.domain_max, context.session_generation,
                   context.device, context.upload)),
