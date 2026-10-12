@@ -47,20 +47,34 @@ class PreparedParticleSeed:
 
 def migrate_source_sampling_schema(scene=None):
     """Persist old source occupancy as LEGACY_ABSOLUTE without guessing intent."""
+    from contextlib import ExitStack
+
+    data = getattr(bpy, "data", None)
     objects = (getattr(scene, "objects", ()) if scene is not None
-               else getattr(getattr(bpy, "data", None), "objects", ()))
-    migrated = 0
+               else getattr(data, "objects", ()))
+    scenes = ((scene,) if scene is not None
+              else tuple(getattr(data, "scenes", ()) or ()))
+    pending = []
     for obj in objects:
         pg = getattr(obj, "fluidsim", None)
         if pg is None or getattr(pg, "role", "NONE") != "SOURCE":
             continue
-        if int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4:
+        if (int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 4
+                or getattr(obj, "library", None) is not None):
             continue
-        pg.source_sampling_mode = "LEGACY_ABSOLUTE"
-        pg.source_sampling_multiplier = 1.0
-        pg.source_ui_schema_version = 4
-        migrated += 1
-    return migrated
+        pending.append(pg)
+    with ExitStack() as stack:
+        if pending and scenes:
+            # Restoring saved behaviour is not an edit: no pending reset.
+            from . import pending_settings
+
+            for owner in scenes:
+                stack.enter_context(pending_settings.suppress_callbacks(owner))
+        for pg in pending:
+            pg.source_sampling_mode = "LEGACY_ABSOLUTE"
+            pg.source_sampling_multiplier = 1.0
+            pg.source_ui_schema_version = 4
+    return len(pending)
 
 
 def migrate_native_source_evaluation(scene=None):

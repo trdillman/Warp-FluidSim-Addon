@@ -253,3 +253,51 @@ def test_newly_tagged_inputs_are_stamped_current(monkeypatch, tag):
     getattr(sources, tag)(obj)
     assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
     assert obj.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+
+
+class _RecordingGroup(SimpleNamespace):
+    """An object group that records whether callbacks were suppressed per write."""
+
+    def __setattr__(self, name, value):
+        import importlib
+
+        writes = self.__dict__.setdefault("_writes", [])
+        scene = self.__dict__.get("_scene")
+        if scene is not None:
+            pending = importlib.import_module(
+                "fluidSim_warp_blender51.blender.pending_settings")
+            writes.append((name, pending._interaction_state(scene).suppress_callbacks))
+        super().__setattr__(name, value)
+
+
+def test_sampling_migration_is_not_an_edit_and_skips_linked_sources(monkeypatch):
+    """The sampling step restores saved behaviour, like the step after it.
+
+    It wrote ``source_sampling_mode`` and ``source_sampling_multiplier`` with
+    their Reset callbacks live, so opening an old file with a running session
+    could flag a pending Reset, and it wrote into linked-library objects, whose
+    data is read-only and owned by the library file.
+    """
+    sources = _sources_module(monkeypatch)
+    local = _source_group("SOURCE", source_ui_schema_version=3,
+                          source_sampling_mode="INHERIT",
+                          source_sampling_multiplier=2.0)
+    linked = _source_group("SOURCE", source_ui_schema_version=3,
+                           source_sampling_mode="INHERIT",
+                           source_sampling_multiplier=2.0)
+    linked.library = SimpleNamespace(name="lib.blend")
+    scene = SimpleNamespace(name="Scene", objects=[local, linked])
+    local.fluidsim = _RecordingGroup(**vars(local.fluidsim))
+    local.fluidsim._scene = scene
+
+    assert sources.migrate_source_sampling_schema(scene) == 1
+
+    assert local.fluidsim.source_sampling_mode == "LEGACY_ABSOLUTE"
+    assert local.fluidsim.source_sampling_multiplier == 1.0
+    assert local.fluidsim.source_ui_schema_version == 4
+    sampling_writes = [(name, suppressed) for name, suppressed in local.fluidsim._writes
+                       if name.startswith("source_")]
+    assert sampling_writes and all(suppressed for _name, suppressed in sampling_writes)
+    assert linked.fluidsim.source_sampling_mode == "INHERIT"
+    assert linked.fluidsim.source_sampling_multiplier == 2.0
+    assert linked.fluidsim.source_ui_schema_version == 3
