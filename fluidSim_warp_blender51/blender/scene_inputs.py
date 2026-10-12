@@ -323,6 +323,49 @@ def _guide_control_points(obj, matrix, direction):
     return tuple(points)
 
 
+# The source UI schema new source/sink/field objects are stamped with
+# (``source_ui_schema_version``): from 3 the runtime reads the Emission/Removal
+# Region kinds, from 4 the Source Fill Target sampling controls, and from 5
+# First Sim Frame freezes point/volume/field inputs (B47). Files below 5 are
+# migrated once on load by ``sources.migrate_source_schema``.
+CURRENT_SOURCE_UI_SCHEMA = 5
+
+
+def legacy_region_kinds(pg) -> tuple[str, str]:
+    """``(source, sink)`` region kinds a pre-schema-3 object is simulated with.
+
+    Before schema 3 the region kinds were not read; the legacy geometry mode
+    (and sink region mode) decided the mesh region instead.
+    """
+    mesh = getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
+    source = "MESH_SHELL" if mesh else "ANALYTIC"
+    sink = ("MESH_SOLID" if mesh and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
+            else "MESH_SHELL" if mesh else "ANALYTIC")
+    return source, sink
+
+
+def uses_native_source_plan(pg) -> bool:
+    """True when ``pg`` is a point, volume or field input.
+
+    Those are translated by :meth:`SceneInputs.gather_source_plans` into
+    native source plans whose evaluation cadence is ``mesh_evaluation_mode``;
+    analytic and mesh sources/sinks remain legacy descriptors. Below source UI
+    schema 3 the runtime ignores the region kinds, so only fields qualify.
+    """
+    role = getattr(pg, "role", "NONE")
+    if role == "FIELD" or (
+            role == "SOURCE"
+            and getattr(pg, "source_mode", "PARTICLES") == "FIELD"):
+        return True
+    if int(getattr(pg, "source_ui_schema_version", 0) or 0) < 3:
+        return False
+    if role == "SOURCE":
+        return getattr(pg, "source_region_kind", "ANALYTIC") in {"POINTS", "VOLUME_GRID"}
+    if role == "SINK":
+        return getattr(pg, "sink_region_kind", "ANALYTIC") == "VOLUME_GRID"
+    return False
+
+
 class SceneInputs:
     """Own animated-object history and reusable collider mesh state."""
 
@@ -365,6 +408,10 @@ class SceneInputs:
         self._mesh_consumers = []
         self._source_mesh_cache_keys = set()
         self._collider_mesh_cache_keys = set()
+        # First Sim Frame point/volume/field inputs captured for this
+        # lifecycle; see _native_plan_input.
+        self._native_plan_inputs = {}
+        self._native_plan_regions = {}
         self._sync_generation = 0
         # Compatibility alias for older diagnostics/tests.
         self._collider_mesh_cache = self._evaluated_mesh_cache
@@ -589,16 +636,11 @@ class SceneInputs:
             legacy_field = (role == "SOURCE"
                             and getattr(pg, "source_mode", "PARTICLES") == "FIELD")
             schema_version = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-            source_region = (getattr(pg, "source_region_kind", "ANALYTIC")
-                             if schema_version >= 3 else
-                             ("MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                              else "ANALYTIC"))
-            sink_region = (getattr(pg, "sink_region_kind", "ANALYTIC")
-                           if schema_version >= 3 else
-                           ("MESH_SOLID" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
-                            else "MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            else "ANALYTIC"))
+            if schema_version >= 3:
+                source_region = getattr(pg, "source_region_kind", "ANALYTIC")
+                sink_region = getattr(pg, "sink_region_kind", "ANALYTIC")
+            else:
+                source_region, sink_region = legacy_region_kinds(pg)
             direct_plan_role = (legacy_field or role == "FIELD"
                                 or (role == "SOURCE" and source_region in {"POINTS", "VOLUME_GRID"})
                                 or (role == "SINK" and sink_region == "VOLUME_GRID"))
@@ -735,15 +777,12 @@ class SceneInputs:
         return f"session:{self._session_generation}:object:{_object_identity(obj)}"
 
     @staticmethod
-    def _analytic_region_plan(obj, pg):
-        from ..sim.enums import SourceShapeShape
-        from ..sim.source_regions import AnalyticRegionPlan
-
+    def _analytic_placement(obj):
+        """The frame-dependent part of an analytic region: the object's pose."""
         location = obj.matrix_world.to_translation()
         rotation = obj.matrix_world.to_quaternion()
         dimensions = obj.dimensions
-        return AnalyticRegionPlan(
-            shape=SourceShapeShape[pg.shape],
+        return dict(
             position=(location.x, location.y, location.z),
             rotation=(rotation.x, rotation.y, rotation.z, rotation.w),
             half_extents=tuple(max(float(v), 1.0e-4) / 2.0 for v in
@@ -751,15 +790,34 @@ class SceneInputs:
             radius=max(float(dimensions.x), float(dimensions.y),
                        float(dimensions.z)) / 2.0,
             height=max(float(dimensions.z), 1.0e-4) / 2.0,
+        )
+
+    @classmethod
+    def _analytic_region_plan(cls, obj, pg, *, placement=None):
+        from ..sim.enums import SourceShapeShape
+        from ..sim.source_regions import AnalyticRegionPlan
+
+        placement = cls._analytic_placement(obj) if placement is None else placement
+        return AnalyticRegionPlan(
+            shape=SourceShapeShape[pg.shape],
             feather=float(pg.feather),
+            **placement,
         )
 
     @staticmethod
-    def _volume_region_plan(obj, pg, *, include_field_payload=False):
-        import bpy
-        from ..sim.source_regions import VolumeRegionPlan
+    def _volume_input_object(obj, pg):
+        return getattr(pg, "volume_input_object", None) or obj
 
-        volume_obj = getattr(pg, "volume_input_object", None) or obj
+    @classmethod
+    def _volume_placement(cls, obj, pg):
+        """The frame-dependent part of a volume region: VDB path and transform.
+
+        An animated VDB sequence reports a different ``frame_filepath`` on
+        every frame, and the object may be animated as well.
+        """
+        import bpy
+
+        volume_obj = cls._volume_input_object(obj, pg)
         if getattr(volume_obj, "type", None) != "VOLUME":
             raise ValueError("Choose a Blender Volume object")
         data = getattr(volume_obj, "data", None)
@@ -769,6 +827,16 @@ class SceneInputs:
         filepath = bpy.path.abspath(filepath) if filepath else ""
         if not filepath:
             raise ValueError("The selected Volume has no VDB filepath")
+        return (filepath, tuple(float(value) for value in
+                                np.asarray(volume_obj.matrix_world).reshape(-1)))
+
+    @classmethod
+    def _volume_region_plan(cls, obj, pg, *, include_field_payload=False,
+                            placement=None):
+        from ..sim.source_regions import VolumeRegionPlan
+
+        filepath, transform = (cls._volume_placement(obj, pg)
+                               if placement is None else placement)
         use_sdf = getattr(pg, "volume_grid_type", "FOG") == "SDF"
         scalar_grid = (getattr(pg, "volume_scalar_grid", "")
                        if include_field_payload else "")
@@ -789,10 +857,37 @@ class SceneInputs:
             vector_x_grid=vector_x,
             vector_y_grid=vector_y,
             vector_z_grid=vector_z,
-            transform=tuple(float(value) for value in
-                            np.asarray(volume_obj.matrix_world).reshape(-1)),
+            transform=transform,
             fog_threshold=float(getattr(pg, "volume_fog_threshold", 0.0)),
         )
+
+    def _native_plan_input(self, cache_key, frozen, capture):
+        """Return one native plan's frame-dependent input.
+
+        ``mesh_evaluation_mode`` is the evaluation cadence of every source
+        input, not only of meshes. With First Sim Frame the input (point
+        coordinates, VDB path and transform, or field placement) is captured
+        the first time it is gathered and kept until ``clear()``, which
+        Initialize/Reset/load perform. Re-gathering it every frame, as before,
+        changed the compiler cache key, so a "first frame" plan recompiled and
+        followed the animation. A failed capture stores nothing and retries.
+        """
+        self._native_plan_keys.add(cache_key)
+        if not frozen:
+            self._native_plan_inputs.pop(cache_key, None)
+            return capture()
+        entry = self._native_plan_inputs.get(cache_key)
+        if entry is None:
+            entry = self._native_plan_inputs[cache_key] = capture()
+        return entry
+
+    def _prune_native_plan_inputs(self):
+        for cache_key in list(self._native_plan_inputs):
+            if cache_key not in self._native_plan_keys:
+                del self._native_plan_inputs[cache_key]
+        for cache_key in list(self._native_plan_regions):
+            if cache_key not in self._native_plan_keys:
+                del self._native_plan_regions[cache_key]
 
     def gather_source_plans(self, scene, depsgraph=None):
         """Translate P3-only Point/Volume/Field workflows to frozen plans.
@@ -813,42 +908,63 @@ class SceneInputs:
 
         depsgraph = depsgraph or __import__("bpy").context.evaluated_depsgraph_get()
         plans = []
+        self._native_plan_keys = set()
         for obj in scene.objects:
             pg = getattr(obj, "fluidsim", None)
             if pg is None or not getattr(pg, "enabled", False) or obj.hide_viewport:
                 continue
+            if not uses_native_source_plan(pg):
+                continue
             role = getattr(pg, "role", "NONE")
             schema_version = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-            legacy_field = (role == "SOURCE"
-                            and getattr(pg, "source_mode", "PARTICLES") == "FIELD")
-            presentation_role = "FIELD" if legacy_field else role
             source_region = (getattr(pg, "source_region_kind", "ANALYTIC")
                              if schema_version >= 3 else "ANALYTIC")
             sink_region = (getattr(pg, "sink_region_kind", "ANALYTIC")
                            if schema_version >= 3 else "ANALYTIC")
-            needs_plan = (presentation_role == "FIELD"
-                          or (role == "SOURCE" and source_region in {"POINTS", "VOLUME_GRID"})
-                          or (role == "SINK" and sink_region == "VOLUME_GRID"))
-            if not needs_plan:
-                continue
             _set_source_status(pg)
-            key = SourceKey(persistent_source_key(obj))
-            cadence = (SourceEvaluationCadence.EVERY_SIM_FRAME
-                       if getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
-                       == "EVERY_SIM_FRAME" else SourceEvaluationCadence.FIRST_SIM_FRAME)
+            identity = persistent_source_key(obj)
+            key = SourceKey(identity)
+            frozen = (getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
+                      != "EVERY_SIM_FRAME")
+            cadence = (SourceEvaluationCadence.FIRST_SIM_FRAME if frozen
+                       else SourceEvaluationCadence.EVERY_SIM_FRAME)
+            volume_key = (identity, "VOLUME", _object_identity(
+                self._volume_input_object(obj, pg)))
+
+            def volume_placement(obj=obj, pg=pg, volume_key=volume_key):
+                return self._native_plan_input(
+                    volume_key, frozen,
+                    lambda: self._volume_placement(obj, pg))
+
             try:
                 if role == "SOURCE" and source_region == "POINTS":
                     point_obj = getattr(pg, "point_input_object", None) or obj
-                    positions = source_inputs.object_points_world(point_obj, depsgraph)
-                    if not len(positions):
-                        raise ValueError(
-                            "Point input must provide mesh vertices, PointCloud points, or a particle system")
+                    point_key = (identity, "POINTS", _object_identity(point_obj))
+
+                    def capture_points(point_obj=point_obj):
+                        positions = np.array(
+                            source_inputs.object_points_world(point_obj, depsgraph),
+                            dtype=np.float32, copy=True)
+                        if not len(positions):
+                            raise ValueError(
+                                "Point input must provide mesh vertices, PointCloud points, or a particle system")
+                        positions.setflags(write=False)
+                        return positions
+
+                    positions = self._native_plan_input(point_key, frozen, capture_points)
                     direct = getattr(pg, "point_source_representation", "DIRECT_APPEND") == "DIRECT_APPEND"
-                    region = PointRegionPlan(
-                        positions,
-                        rasterize_radius=(0.0 if direct else float(
-                            getattr(pg, "point_rasterize_radius", 0.1))),
-                    )
+                    radius = 0.0 if direct else float(
+                        getattr(pg, "point_rasterize_radius", 0.1))
+                    reused = self._native_plan_regions.get(point_key) if frozen else None
+                    if (reused is not None and reused[0] is positions
+                            and reused[1] == radius):
+                        # Same frozen object: the compiler's digest memo hits.
+                        region = reused[2]
+                    else:
+                        region = PointRegionPlan(positions, rasterize_radius=radius)
+                        if frozen:
+                            self._native_plan_regions[point_key] = (
+                                positions, radius, region)
                     lifecycle = (SourceLifecycle.DIRECT_APPEND if direct else
                                  (SourceLifecycle.ONCE
                                   if pg.emission_mode == SourceEmissionMode.INITIAL_FILL.name
@@ -856,14 +972,16 @@ class SceneInputs:
                     operation = SourceOperation.LIQUID
                     payload_kind = SourcePayloadKind.LIQUID_ATTRIBUTES
                 elif role == "SOURCE" and source_region == "VOLUME_GRID":
-                    region = self._volume_region_plan(obj, pg)
+                    region = self._volume_region_plan(
+                        obj, pg, placement=volume_placement())
                     lifecycle = (SourceLifecycle.ONCE
                                  if pg.emission_mode == SourceEmissionMode.INITIAL_FILL.name
                                  else SourceLifecycle.TOP_UP)
                     operation = SourceOperation.LIQUID
                     payload_kind = SourcePayloadKind.LIQUID_ATTRIBUTES
                 elif role == "SINK" and sink_region == "VOLUME_GRID":
-                    region = self._volume_region_plan(obj, pg)
+                    region = self._volume_region_plan(
+                        obj, pg, placement=volume_placement())
                     lifecycle = SourceLifecycle.EVERY_FRAME
                     operation = SourceOperation.SINK
                     payload_kind = SourcePayloadKind.MASK
@@ -878,8 +996,12 @@ class SceneInputs:
                     use_volume = (getattr(pg, "field_region_kind", "ANALYTIC") == "VOLUME_GRID"
                                   or getattr(pg, "field_value_source", "CONSTANT") == "VOLUME_GRID")
                     region = (self._volume_region_plan(
-                        obj, pg, include_field_payload=True) if use_volume
-                        else self._analytic_region_plan(obj, pg))
+                        obj, pg, include_field_payload=True,
+                        placement=volume_placement()) if use_volume
+                        else self._analytic_region_plan(
+                            obj, pg, placement=self._native_plan_input(
+                                (identity, "ANALYTIC", _object_identity(obj)),
+                                frozen, lambda: self._analytic_placement(obj))))
                     lifecycle = SourceLifecycle.EVERY_FRAME
                     payload_kind = {
                         SourceOperation.PRESSURE: SourcePayloadKind.PRESSURE,
@@ -917,6 +1039,7 @@ class SceneInputs:
                 ))
             except Exception as exc:
                 _set_source_status(pg, "ERROR", "SOURCE_INPUT_INVALID", str(exc))
+        self._prune_native_plan_inputs()
         return plans
 
     def update_source_status(self, scene, diagnostics, apply_result=None):

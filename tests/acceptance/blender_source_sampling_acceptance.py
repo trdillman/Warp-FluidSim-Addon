@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 import fluidSim_warp_blender51 as addon  # noqa: E402
 from fluidSim_warp_blender51.blender.scene_inputs import (  # noqa: E402
+    CURRENT_SOURCE_UI_SCHEMA,
     _effective_source_target,
 )
 from fluidSim_warp_blender51.blender.sources import (  # noqa: E402
@@ -38,7 +39,7 @@ def main():
     bpy.context.view_layer.objects.active = new
     new.select_set(True)
     assert bpy.ops.fluidsim.tag_liquid_emitter() == {"FINISHED"}
-    assert new.fluidsim.source_ui_schema_version == 4
+    assert new.fluidsim.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
     assert new.fluidsim.source_sampling_mode == "INHERIT"
     assert new.fluidsim.source_sampling_multiplier == 1.0
     assert _effective_source_target(scene, new.fluidsim) == 12

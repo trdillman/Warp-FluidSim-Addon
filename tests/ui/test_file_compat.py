@@ -154,3 +154,102 @@ def test_removed_time_offset_particle_mode_falls_back_to_none(monkeypatch):
     assert file_compat.migrate_removed_particle_color_mode([stale, valid]) == 1
     assert stale_seen == {"particle_attribute_mode": "NONE"}
     assert valid_seen == {}
+
+
+def _source_group(role, **overrides):
+    values = dict(
+        role=role, enabled=True, source_ui_schema_version=4,
+        source_mode="PARTICLES", source_region_kind="ANALYTIC",
+        sink_region_kind="ANALYTIC", field_region_kind="ANALYTIC",
+        mesh_evaluation_mode="FIRST_SIM_FRAME",
+        source_sampling_mode="INHERIT", source_sampling_multiplier=1.0)
+    values.update(overrides)
+    return SimpleNamespace(fluidsim=SimpleNamespace(**values), library=None)
+
+
+def _sources_module(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    return _reload_module("fluidSim_warp_blender51.blender.sources")
+
+
+def test_saved_native_sources_keep_animating_after_the_first_frame_fix(monkeypatch):
+    """B47: pre-fix point/volume/field sources stored First Sim Frame but animated.
+
+    First Sim Frame now really freezes those inputs, so a file saved before the
+    fix is switched once to Every Sim Frame, which is what it did in practice.
+    Mesh sources always froze and keep their mode; new sources keep theirs.
+    """
+    sources = _sources_module(monkeypatch)
+    points = _source_group("SOURCE", source_region_kind="POINTS")
+    volume = _source_group("SOURCE", source_region_kind="VOLUME_GRID")
+    volume_sink = _source_group("SINK", sink_region_kind="VOLUME_GRID")
+    field = _source_group("FIELD", source_ui_schema_version=0)
+    legacy_field = _source_group(
+        "SOURCE", source_ui_schema_version=2, source_mode="FIELD",
+        source_sampling_mode="INHERIT")
+    mesh = _source_group("SOURCE", source_region_kind="MESH_SOLID")
+    every = _source_group("SOURCE", source_region_kind="POINTS",
+                          mesh_evaluation_mode="EVERY_SIM_FRAME")
+    new = _source_group("SOURCE", source_region_kind="POINTS",
+                        source_ui_schema_version=sources.CURRENT_SOURCE_UI_SCHEMA)
+    untagged = _source_group("NONE", source_region_kind="POINTS")
+    scene = SimpleNamespace(objects=[
+        points, volume, volume_sink, field, legacy_field, mesh, every, new,
+        untagged])
+
+    assert sources.migrate_source_schema(scene) == 5
+
+    for obj in (points, volume, volume_sink, field, legacy_field, every):
+        assert obj.fluidsim.mesh_evaluation_mode == "EVERY_SIM_FRAME"
+    assert mesh.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    assert new.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    assert untagged.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    for obj in (points, volume, volume_sink, field, legacy_field, mesh, every, new):
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+    assert untagged.fluidsim.source_ui_schema_version == 4
+    # The legacy field still went through the sampling migration first.
+    assert legacy_field.fluidsim.source_sampling_mode == "LEGACY_ABSOLUTE"
+
+    # Stamped: a user's later choice of First Sim Frame survives reloads.
+    points.fluidsim.mesh_evaluation_mode = "FIRST_SIM_FRAME"
+    assert sources.migrate_source_schema(scene) == 0
+    assert points.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+
+
+def test_cadence_migration_preserves_pre_region_schema_semantics(monkeypatch):
+    """Below schema 3 the runtime ignored region kinds; stamping must not revive them."""
+    sources = _sources_module(monkeypatch)
+    sink = _source_group("SINK", source_ui_schema_version=2,
+                         sink_region_kind="VOLUME_GRID")
+    mesh_sink = _source_group("SINK", source_ui_schema_version=0,
+                              sink_region_kind="ANALYTIC", geometry_mode="MESH",
+                              sink_region_mode="SURFACE")
+    scene = SimpleNamespace(objects=[sink, mesh_sink])
+
+    assert sources.migrate_source_schema(scene) == 0
+    assert sink.fluidsim.sink_region_kind == "ANALYTIC"
+    assert mesh_sink.fluidsim.sink_region_kind == "MESH_SHELL"
+    for obj in (sink, mesh_sink):
+        assert obj.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+def test_source_schema_migration_runs_on_file_load(monkeypatch):
+    sources = _sources_module(monkeypatch)
+    points = _source_group("SOURCE", source_region_kind="POINTS")
+    monkeypatch.setattr(sources.bpy, "data", SimpleNamespace(objects=[points]),
+                        raising=False)
+
+    sources._on_load_post(None)
+
+    assert points.fluidsim.mesh_evaluation_mode == "EVERY_SIM_FRAME"
+    assert points.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+@pytest.mark.parametrize("tag", ["tag_source", "tag_sink", "tag_field"])
+def test_newly_tagged_inputs_are_stamped_current(monkeypatch, tag):
+    sources = _sources_module(monkeypatch)
+    obj = _source_group("NONE", source_ui_schema_version=0)
+    getattr(sources, tag)(obj)
+    assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+    assert obj.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"

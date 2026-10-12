@@ -53,6 +53,7 @@ def main():
     from fluidSim_warp_blender51.blender import scene_bridge
     from fluidSim_warp_blender51.blender.menus import create_domain_object
     from fluidSim_warp_blender51.blender.scene_inputs import (
+        CURRENT_SOURCE_UI_SCHEMA,
         SceneInputs,
         persistent_source_key,
     )
@@ -84,7 +85,8 @@ def main():
     emitter = add_cube("P3_MeshSolid", (0, 0, 0))
     select_only(emitter)
     check("role-specific emitter operator", bpy.ops.fluidsim.tag_liquid_emitter() == {"FINISHED"})
-    check("new emitter schema/default", emitter.fluidsim.source_ui_schema_version == 4
+    check("new emitter schema/default",
+          emitter.fluidsim.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
           and emitter.fluidsim.emission_mode == "INITIAL_FILL"
           and emitter.fluidsim.source_sampling_mode == "INHERIT")
     emitter.fluidsim.source_region_kind = "MESH_SOLID"
@@ -266,7 +268,7 @@ def main():
     reopened_legacy = bpy.data.objects["P3_LegacyShell"].fluidsim
     check("legacy values migrate without occupancy drift",
           reopened_legacy.geometry_mode == "MESH"
-          and reopened_legacy.source_ui_schema_version == 4
+          and reopened_legacy.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
           and reopened_legacy.source_sampling_mode == "LEGACY_ABSOLUTE"
           and reopened_legacy.emit_rate == 5.0)
 

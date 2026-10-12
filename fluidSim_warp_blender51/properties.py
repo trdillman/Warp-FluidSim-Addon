@@ -20,6 +20,9 @@ from bpy.props import (
     StringProperty,
 )
 
+# The source UI schema the tagging operators stamp (``blender/sources.py``);
+# see ``CURRENT_SOURCE_UI_SCHEMA`` for what each version means.
+from .blender.scene_inputs import CURRENT_SOURCE_UI_SCHEMA as _CURRENT_SOURCE_UI_SCHEMA
 from .sim import constants as _C
 from .sim.enums import (
     BlendMode,
@@ -198,10 +201,6 @@ def _request_sync(self, context):
     _request_scene_update(context, SceneUpdate.SYNC)
 
 
-# The source UI schema the tagging operators stamp (``blender/sources.py``):
-# from 3 the runtime reads the Emission/Removal Region kinds, from 4 the
-# Source Fill Target sampling controls the Object panel shows.
-_CURRENT_SOURCE_UI_SCHEMA = 4
 
 
 def _update_object_role(self, context):
@@ -211,10 +210,11 @@ def _update_object_role(self, context):
     controls the Object panel shows for sources, sinks and field sources, so
     a dropdown-tagged object is brought to the schema the "Set Selected as"
     operators stamp; a new liquid source inherits Liquid Sampling as theirs do.
+    An object already at the sampling schema (4) keeps its sampling choice.
     """
     if (self.role in {"SOURCE", "SINK", "FIELD"}
             and int(self.source_ui_schema_version) < _CURRENT_SOURCE_UI_SCHEMA):
-        if self.role == "SOURCE":
+        if self.role == "SOURCE" and int(self.source_ui_schema_version) < 4:
             self.source_sampling_mode = "INHERIT"
             self.source_sampling_multiplier = 1.0
         self.source_ui_schema_version = _CURRENT_SOURCE_UI_SCHEMA
@@ -541,16 +541,21 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         description="Optional mesh object; empty uses this tagged object's mesh",
     )
     mesh_evaluation_mode: EnumProperty(
-        name="Mesh Evaluation",
+        # Applies to every evaluated input (mesh, points, volume, field), not
+        # only meshes; the identifier is kept so saved files read back.
+        name="Evaluation",
         items=_items(MeshEvaluationMode, {
             "FIRST_SIM_FRAME": (
-                "Capture evaluated geometry on the first simulated frame and retain it until reset"),
+                "Capture the input (mesh geometry, points, volume file and "
+                "transform, or field placement) on the first simulated frame "
+                "and retain it until reset"),
             "EVERY_SIM_FRAME": (
-                "Reevaluate modifiers, transforms, animation, and topology before every simulation frame"),
+                "Reevaluate the input, including modifiers, transforms, "
+                "animation, topology and VDB sequences, before every simulation frame"),
         }),
         default=MeshEvaluationMode.FIRST_SIM_FRAME.name,
         update=_request_reset,
-        description="Choose whether evaluated mesh geometry is captured once or refreshed every simulation frame; refreshing tracks animation but costs more CPU time",
+        description="Choose whether the input geometry is captured once on the first simulated frame or refreshed every simulation frame; refreshing tracks animation but costs more CPU time",
     )
     mesh_surface_thickness: FloatProperty(
         name="Surface Band",

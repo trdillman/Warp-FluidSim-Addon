@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bpy
 
+from .scene_inputs import uses_native_source_plan
 from .ui_common import (
     FluidSimObjectPanel,
     active_object_role,
@@ -151,6 +152,10 @@ class FLUIDSIM_PT_object_region(FluidSimObjectPanel, bpy.types.Panel):
             layout.prop(settings, "point_input_object")
             if settings.point_source_representation == "RASTERIZED_REGION":
                 layout.prop(settings, "point_rasterize_radius")
+        # Point, volume and field inputs are evaluated on the same First /
+        # Every Sim Frame cadence as meshes (B47).
+        if uses_native_source_plan(settings):
+            layout.prop(settings, "mesh_evaluation_mode")
 
 
 class FLUIDSIM_PT_object_source(FluidSimObjectPanel, bpy.types.Panel):

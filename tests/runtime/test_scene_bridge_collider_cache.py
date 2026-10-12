@@ -819,6 +819,208 @@ def test_every_frame_mesh_source_refreshes_transform_and_topology(monkeypatch):
     assert second.aabb_max == (3.0, 1.0, 1.0)
 
 
+class _NativeSourceObject(SimpleNamespace):
+    """Object stand-in with ID properties, for persistent source identity."""
+
+    def get(self, key, default=None):
+        return self.__dict__.get(f"_id_{key}", default)
+
+    def __setitem__(self, key, value):
+        self.__dict__[f"_id_{key}"] = value
+
+    def as_pointer(self):
+        return id(self)
+
+
+def _native_plan_settings(**overrides):
+    values = dict(
+        role="SOURCE", enabled=True, source_ui_schema_version=5,
+        source_mode="PARTICLES", source_region_kind="POINTS",
+        sink_region_kind="ANALYTIC", field_region_kind="ANALYTIC",
+        field_value_source="CONSTANT", field_operation="PRESSURE",
+        mesh_evaluation_mode="FIRST_SIM_FRAME",
+        point_source_representation="RASTERIZED_REGION",
+        point_input_object=None, point_rasterize_radius=0.1,
+        volume_input_object=None, volume_grid_type="FOG",
+        volume_mask_grid="density", volume_fog_threshold=0.0,
+        emission_mode="CONTINUOUS_INFLOW", shape="BOX", feather=0.0,
+        initial_velocity=(0.0, 0.0, 0.0), use_object_velocity=False,
+        field_scalar_value=1.0, field_vector_value=(0.0, 0.0, 0.0),
+        temperature=0.0, viscosity=0.0, density=1.0,
+        source_color=(0.1, 0.45, 1.0, 1.0),
+        use_lifespan=False, life_min=1.0, life_max=1.0,
+        blend_mode="REPLACE", field_amount=1.0,
+        source_status_severity="", source_status_code="",
+        source_status_message="",
+    )
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _native_plan_inputs(monkeypatch):
+    """A SceneInputs whose animated point/volume inputs the test controls."""
+    # The plan dataclasses need the real Warp module (structs); import them
+    # before the stubs replace ``warp`` for the Blender-side modules.
+    pytest.importorskip("warp")
+    importlib.import_module("fluidSim_warp_blender51.sim.source_regions")
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sys.modules["bpy"].path = SimpleNamespace(abspath=lambda value: value)
+    from fluidSim_warp_blender51.blender import scene_inputs as si
+    from fluidSim_warp_blender51.blender import sources
+
+    monkeypatch.setattr(si, "_effective_source_target", lambda _scene, _pg: 8)
+    monkeypatch.setattr(
+        sources, "object_points_world",
+        lambda obj, _depsgraph=None: np.array(obj.points, dtype=np.float32))
+    return scene_bridge.Session().scene_inputs
+
+
+def _point_source(mode):
+    return _NativeSourceObject(
+        name=f"points-{mode}", hide_viewport=False, type="MESH",
+        data=SimpleNamespace(name_full="cloud"), matrix_world=_FakeMatrix(),
+        dimensions=SimpleNamespace(x=1.0, y=1.0, z=1.0),
+        points=[(0.0, 0.0, 0.0), (0.5, 0.0, 0.0)],
+        fluidsim=_native_plan_settings(mesh_evaluation_mode=mode))
+
+
+def _volume_source(mode, role="SOURCE"):
+    obj = _NativeSourceObject(
+        name=f"volume-{role}-{mode}", hide_viewport=False, type="VOLUME",
+        data=SimpleNamespace(
+            name_full="vdb", filepath="",
+            grids=SimpleNamespace(frame_filepath="C:/cache/smoke_0001.vdb")),
+        matrix_world=_FakeMatrix(),
+        dimensions=SimpleNamespace(x=1.0, y=1.0, z=1.0),
+        fluidsim=_native_plan_settings(
+            role=role, mesh_evaluation_mode=mode,
+            source_region_kind="VOLUME_GRID", sink_region_kind="VOLUME_GRID"))
+    return obj
+
+
+def _field_source(mode):
+    return _NativeSourceObject(
+        name=f"field-{mode}", hide_viewport=False, type="MESH",
+        data=SimpleNamespace(name_full="box"), matrix_world=_FakeMatrix(),
+        dimensions=SimpleNamespace(x=1.0, y=1.0, z=1.0),
+        fluidsim=_native_plan_settings(role="FIELD", mesh_evaluation_mode=mode))
+
+
+def _animate_native_inputs(objects, scene):
+    """Move every input as an animation would between two simulated frames."""
+    scene.frame_current += 1
+    for obj in objects:
+        if obj.type == "VOLUME":
+            obj.data.grids.frame_filepath = "C:/cache/smoke_0002.vdb"
+            obj.matrix_world = _FakeMatrix(tx=2.0)
+        elif hasattr(obj, "points"):
+            obj.points = [(3.0, 0.0, 0.0), (3.5, 0.0, 0.0), (4.0, 0.0, 0.0)]
+        else:
+            obj.matrix_world = _FakeMatrix(tx=2.0)
+
+
+def _plans_by_name(inputs, scene):
+    from fluidSim_warp_blender51.blender.scene_inputs import persistent_source_key
+
+    plans = inputs.gather_source_plans(scene, depsgraph=object())
+    keys = {persistent_source_key(obj): obj.name for obj in scene.objects}
+    return {keys[str(plan.stable_id)]: plan for plan in plans}
+
+
+def _region_inputs(region):
+    """The frame-dependent inputs a region plan was built from."""
+    if hasattr(region, "positions"):
+        return ("points", region.positions.tolist())
+    if hasattr(region, "filepath"):
+        return ("volume", region.filepath, region.transform)
+    return ("analytic", region.position, region.rotation, region.half_extents)
+
+
+@pytest.mark.parametrize("factory", [
+    _point_source, _volume_source,
+    lambda mode: _volume_source(mode, role="SINK"), _field_source,
+], ids=["points", "volume-source", "volume-sink", "field"])
+def test_first_sim_frame_native_plan_ignores_later_animation(monkeypatch, factory):
+    """B47: a FIRST_SIM_FRAME point/volume/field plan is captured once.
+
+    Native plans used to re-gather point coordinates, the per-frame VDB path
+    and the object transform on every sync, so a plan labelled First Sim
+    Frame recompiled and followed the animation after its first frame.
+    """
+    inputs = _native_plan_inputs(monkeypatch)
+    obj = factory("FIRST_SIM_FRAME")
+    scene = SimpleNamespace(objects=[obj], frame_current=1,
+                            render=SimpleNamespace(fps=24, fps_base=1))
+
+    first = _plans_by_name(inputs, scene)[obj.name]
+    _animate_native_inputs([obj], scene)
+    later = _plans_by_name(inputs, scene)[obj.name]
+
+    assert obj.fluidsim.source_status_code == ""
+    assert first.cadence.name == "FIRST_SIM_FRAME"
+    assert _region_inputs(later.region) == _region_inputs(first.region)
+
+    # Reset/Initialize clears the snapshot; the next capture sees the new pose.
+    inputs.clear()
+    recaptured = _plans_by_name(inputs, scene)[obj.name]
+    assert _region_inputs(recaptured.region) != _region_inputs(first.region)
+
+
+@pytest.mark.parametrize("factory", [
+    _point_source, _volume_source, _field_source,
+], ids=["points", "volume-source", "field"])
+def test_every_sim_frame_native_plan_follows_animation(monkeypatch, factory):
+    inputs = _native_plan_inputs(monkeypatch)
+    obj = factory("EVERY_SIM_FRAME")
+    scene = SimpleNamespace(objects=[obj], frame_current=1,
+                            render=SimpleNamespace(fps=24, fps_base=1))
+
+    first = _plans_by_name(inputs, scene)[obj.name]
+    _animate_native_inputs([obj], scene)
+    later = _plans_by_name(inputs, scene)[obj.name]
+
+    assert later.cadence.name == "EVERY_SIM_FRAME"
+    assert _region_inputs(later.region) != _region_inputs(first.region)
+
+
+def test_first_sim_frame_point_plan_keeps_live_settings_and_reuses_region(monkeypatch):
+    """Only the animated input is frozen; authored settings still apply.
+
+    An unchanged frozen point plan is handed back as the same region object,
+    so the compiler's per-region digest memo skips re-hashing the points.
+    """
+    inputs = _native_plan_inputs(monkeypatch)
+    obj = _point_source("FIRST_SIM_FRAME")
+    scene = SimpleNamespace(objects=[obj], frame_current=1,
+                            render=SimpleNamespace(fps=24, fps_base=1))
+
+    first = _plans_by_name(inputs, scene)[obj.name]
+    _animate_native_inputs([obj], scene)
+    second = _plans_by_name(inputs, scene)[obj.name]
+    assert second.region is first.region
+
+    obj.fluidsim.point_rasterize_radius = 0.25
+    edited = _plans_by_name(inputs, scene)[obj.name]
+    assert edited.region.rasterize_radius == pytest.approx(0.25)
+    assert edited.region.positions.tolist() == first.region.positions.tolist()
+
+
+def test_first_sim_frame_point_snapshot_is_dropped_with_its_source(monkeypatch):
+    inputs = _native_plan_inputs(monkeypatch)
+    obj = _point_source("FIRST_SIM_FRAME")
+    scene = SimpleNamespace(objects=[obj], frame_current=1,
+                            render=SimpleNamespace(fps=24, fps_base=1))
+    _plans_by_name(inputs, scene)
+
+    obj.fluidsim.enabled = False
+    assert inputs.gather_source_plans(scene, depsgraph=object()) == []
+    _animate_native_inputs([obj], scene)
+    obj.fluidsim.enabled = True
+    recaptured = _plans_by_name(inputs, scene)[obj.name]
+
+    assert recaptured.region.positions[0, 0] == pytest.approx(3.0)
+
+
 def test_mesh_sink_validation_is_visible_and_never_falls_back(monkeypatch):
     scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
     sess = scene_bridge.Session()
