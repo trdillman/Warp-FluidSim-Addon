@@ -1398,13 +1398,25 @@ def k_forces_proxy_fields(
     time: float,
     dt: float,
 ):
-    """Apply native Blender force-field proxies to valid staggered faces."""
+    """Apply native Blender force-field proxies to valid staggered faces.
+
+    A face is checked for weight before its fields are evaluated: air faces
+    receive nothing, so they skip the per-field (noise/trig) work (P18).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    if wu[tid] <= 0.0 and wv[tid] <= 0.0 and ww[tid] <= 0.0:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     velocity = wp.vec3(u[tid], v[tid], w[tid])
     for axis in range(3):
+        if axis == 0 and wu[tid] <= 0.0:
+            continue
+        if axis == 1 and wv[tid] <= 0.0:
+            continue
+        if axis == 2 and ww[tid] <= 0.0:
+            continue
         point = origin + wp.vec3(
             (float(ijk[0]) + wp.where(axis == 0, 0.0, 0.5)) * voxel_size,
             (float(ijk[1]) + wp.where(axis == 1, 0.0, 0.5)) * voxel_size,
