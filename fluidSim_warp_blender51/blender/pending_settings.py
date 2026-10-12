@@ -932,6 +932,37 @@ def apply_pending_on_rewind(scene, sess, *, depsgraph=None):
     return True
 
 
+def _revert_order(snapshot):
+    """Snapshot items in a fixed order, the authoritative divisions last.
+
+    ``voxel_size`` is derived from ``resolution_divisions`` and the domain's
+    size, so writing it after the divisions would re-derive them. Sorting also
+    keeps the restore independent of the string hash seed.
+    """
+    return sorted(snapshot.items(),
+                  key=lambda item: (item[0] == "resolution_divisions", item[0]))
+
+
+def _restore_applied_domain(scene, scene_fs, state):
+    """Put the applied run's domain back and return its settings group.
+
+    Returns ``None`` when that domain no longer exists (deleted since it was
+    applied): its values then have no owner, and writing them onto whichever
+    domain is selected now would overwrite that domain's own settings.
+    """
+    if "domain_object" not in state.reinit_snapshot or scene_fs is None:
+        return active_domain_settings(scene)
+    applied = state.reinit_snapshot["domain_object"]
+    try:
+        # Any attribute read of a deleted ID raises ReferenceError.
+        getattr(applied, "name", None)
+        if _stable_value(scene_fs.domain_object) != _stable_value(applied):
+            scene_fs.domain_object = applied
+    except ReferenceError:
+        return None
+    return active_domain_settings(scene)
+
+
 def revert_pending_values(scene):
     """Restore the successfully applied RNA snapshot without saving prefs."""
     state = _interaction_state(scene)
@@ -939,26 +970,38 @@ def revert_pending_values(scene):
         return False
     state.suppress_callbacks = True
     try:
-        scene_fs, domain_fs = _signature_owners(scene)
+        scene_fs = getattr(scene, "fluidsim", None)
+        # The applied run's domain is restored first, and its values go to it:
+        # a domain selected since then keeps its own settings and transform.
+        domain_fs = _restore_applied_domain(scene, scene_fs, state)
+        domain = active_domain_object(scene) if domain_fs is not None else None
+        # The transform comes back before the resolution fields: ``voxel_size``
+        # is derived from ``resolution_divisions`` over the domain's size.
+        if domain is not None and state.domain_matrix_snapshot is not None:
+            domain.matrix_world = state.domain_matrix_snapshot
         # Restore each snapshot value to the datablock that AUTHORS it (matches
         # where capture_applied_state read it and where the UI writes it), so a
         # revert of a domain-authored edit targets obj.fluidsim_domain.
+        for name, value in _revert_order(state.reinit_snapshot):
+            if name == "domain_object":
+                continue
+            owner = _declaring_group(scene_fs, domain_fs, name)
+            if owner is not None:
+                setattr(owner, name, value)
         for name, value in state.reset_snapshot.items():
             owner = _declaring_group(scene_fs, domain_fs, name)
             if owner is not None:
                 setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
-            pg = getattr(obj, "fluidsim", None)
-            if pg is not None:
-                for name, value in values.items():
-                    setattr(pg, name, value)
-        for name, value in state.reinit_snapshot.items():
-            owner = _declaring_group(scene_fs, domain_fs, name)
-            if owner is not None:
-                setattr(owner, name, value)
-        domain = active_domain_object(scene)
-        if domain is not None and state.domain_matrix_snapshot is not None:
-            domain.matrix_world = state.domain_matrix_snapshot
+            # An object deleted since the snapshot has nothing to restore;
+            # skip it and finish the rest of the revert.
+            try:
+                pg = getattr(obj, "fluidsim", None)
+                if pg is not None:
+                    for name, value in values.items():
+                        setattr(pg, name, value)
+            except ReferenceError:
+                continue
     finally:
         state.suppress_callbacks = False
     refresh_pending_state(scene, session())

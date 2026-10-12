@@ -492,3 +492,151 @@ def test_reserve_edit_debounces_owned_plan_refresh_outside_rna_callback(monkeypa
 
     assert refreshed == [scene]
     assert sess.capacity_plan_for_scene(scene) is new_plan
+
+
+# --- B55: Revert restores the applied run, not the current selection ---------
+
+
+class _ScaledMatrix:
+    """``matrix_world`` of an unrotated object scaled uniformly by ``s``."""
+
+    def __init__(self, s):
+        self.s = float(s)
+
+    def __matmul__(self, vector):
+        x, y, z = (float(component) * self.s for component in vector)
+        return SimpleNamespace(x=x, y=y, z=z)
+
+    def __getitem__(self, row):
+        return tuple((self.s if row == column else 0.0) if column < 3
+                     else (1.0 if row == 3 else 0.0) for column in range(4))
+
+    def copy(self):
+        return _ScaledMatrix(self.s)
+
+
+def _second_domain(scene, **changes):
+    from settings_doubles import domain_object
+
+    values = dict(vars(scene.fluidsim.domain_object.fluidsim_domain))
+    values.update(changes)
+    obj = domain_object(**values)
+    obj.name = "Second Domain"
+    return obj
+
+
+def test_revert_after_switching_domains_restores_the_applied_domain_only(
+        monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    applied = scene.fluidsim.domain_object
+    _activate(bridge, scene, frame=3)
+    applied.fluidsim_domain.leaf_capacity = 128  # a pending edit on A
+    second = _second_domain(scene, leaf_capacity=999, particles_per_voxel=3.0,
+                            voxel_size=0.3)
+    untouched = dict(vars(second.fluidsim_domain))
+    scene.fluidsim.domain_object = second
+    bridge.pending.refresh_pending_state(scene, bridge.session())
+
+    assert bridge.pending.revert_pending_values(scene) is True
+
+    assert scene.fluidsim.domain_object is applied
+    assert applied.fluidsim_domain.leaf_capacity == 64
+    # The newly selected domain keeps every one of its own values.
+    assert vars(second.fluidsim_domain) == untouched
+    assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
+
+
+def test_revert_under_a_scale_change_restores_divisions_in_any_snapshot_order(
+        monkeypatch):
+    from fluidSim_warp_blender51.sim.quality_contract import (
+        divisions_for_voxel_size, voxel_size_for_divisions)
+
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    obj = scene.fluidsim.domain_object
+    obj.matrix_world = _ScaledMatrix(1.0)
+    values = dict(vars(obj.fluidsim_domain))
+    values.pop("voxel_size")
+
+    class DerivedGroup(SimpleNamespace):
+        """voxel_size derived from divisions over the domain's longest axis."""
+
+        @property
+        def voxel_size(self):
+            return voxel_size_for_divisions(
+                self.resolution_divisions, 4.0 * obj.matrix_world.s)
+
+        @voxel_size.setter
+        def voxel_size(self, value):
+            self.resolution_divisions = divisions_for_voxel_size(
+                value, 4.0 * obj.matrix_world.s)
+
+    obj.fluidsim_domain = DerivedGroup(**values)
+    obj.fluidsim_domain.resolution_divisions = 64
+    sess, _solver = _activate(bridge, scene, frame=3)
+    state = bridge.pending._interaction_state(scene)
+    # The snapshot used to be a frozenset walk, so its order followed the
+    # string hash seed; put divisions first, the order that used to lose.
+    snapshot = dict(state.reinit_snapshot)
+    state.reinit_snapshot = {
+        "resolution_divisions": snapshot.pop("resolution_divisions"), **snapshot}
+
+    obj.matrix_world = _ScaledMatrix(2.0)  # the user scales the domain 2x
+    bridge.pending.refresh_pending_state(scene, sess)
+    assert bridge.pending.pending_presentation(scene)["action"] == "REINIT_PENDING"
+
+    assert bridge.pending.revert_pending_values(scene) is True
+
+    assert obj.matrix_world.s == 1.0
+    assert obj.fluidsim_domain.resolution_divisions == 64
+    assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
+
+
+class _DeletableObject:
+    """A bpy Object wrapper whose ID can be deleted (pyrna then raises)."""
+
+    def __init__(self, name):
+        self.name_ = name
+        self.removed = False
+        self.group = SimpleNamespace(
+            role="NONE", point_source_representation="DIRECT_APPEND",
+            mesh_evaluation_mode="FIRST_SIM_FRAME", emission_mode="INITIAL_FILL",
+            auto_inject_seed=False)
+
+    def __getattr__(self, name):
+        if self.__dict__["removed"]:
+            raise ReferenceError("StructRNA of type Object has been removed")
+        if name == "fluidsim":
+            return self.__dict__["group"]
+        if name == "name":
+            return self.__dict__["name_"]
+        raise AttributeError(name)
+
+    def as_pointer(self):
+        if self.removed:
+            raise ReferenceError("StructRNA of type Object has been removed")
+        return id(self)
+
+
+def test_revert_skips_a_deleted_snapshot_object_and_restores_the_rest(
+        monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    doomed = _DeletableObject("Camera")
+    kept = _DeletableObject("Source")
+    scene.objects = [doomed, kept]
+    _activate(bridge, scene, frame=3)
+
+    scene.fluidsim.domain_object.fluidsim_domain.voxel_size = 0.025
+    kept.group.emission_mode = "CONTINUOUS_INFLOW"
+    doomed.removed = True
+    scene.objects = [kept]
+    bridge.pending.refresh_pending_state(scene, bridge.session())
+
+    bridge.pending.revert_pending_values(scene)  # must not raise
+
+    assert scene.fluidsim.domain_object.fluidsim_domain.voxel_size == 0.1
+    assert kept.group.emission_mode == "INITIAL_FILL"
+    reasons = bridge.pending.pending_presentation(scene)["reasons"]
+    assert not any(reason.startswith("Reinitialize") for reason in reasons)
