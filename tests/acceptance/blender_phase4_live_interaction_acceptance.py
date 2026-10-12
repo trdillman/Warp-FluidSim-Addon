@@ -164,7 +164,18 @@ def main():
     advanced_particles = advanced_solver.particles
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
+    applied_voxel = float(advanced_solver.settings.voxel_size)
+    # voxel_size is derived (longest domain axis / resolution_divisions), so
+    # writing 0.1 selects the nearest whole division count; the authored cell
+    # is whatever the domain reads back, not the literal 0.1. Guided Setup
+    # fits the domain to the preset's 0.12 m cell (B79), so 0.1 does not
+    # divide it evenly.
     domain_settings.voxel_size = 0.1
+    authored_voxel = float(domain_settings.voxel_size)
+    check("allocation edit changes the authored cell size",
+          abs(authored_voxel - 0.1) < 0.01
+          and abs(authored_voxel - applied_voxel) > 1e-6,
+          f"authored={authored_voxel} applied={applied_voxel}")
     pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
@@ -172,7 +183,7 @@ def main():
     scene.frame_set(scene.frame_start)
     check("timeline rewind applies pending reinitialize", sess.active
           and sess.solver is not advanced_solver
-          and abs(sess.solver.settings.voxel_size - 0.1) < 1e-8
+          and abs(sess.solver.settings.voxel_size - authored_voxel) < 1e-6
           and pending_settings.pending_presentation(scene)["action"] == "NONE",
           pending_settings.pending_presentation(scene))
 
