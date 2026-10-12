@@ -40,7 +40,7 @@ from .fields import (
 )
 from .particles import ParticleSystem, ParticleBins
 from .attributes import persistent_particle_channels
-from .checkpoint_state import CheckpointSchema
+from .checkpoint_state import CheckpointSchema, host_prefix
 from .color_mixing import ColorMixTransport
 from .frame_features import FrameFeaturePhase, FrameFeatures
 from .frame_runtime import FrameStats, SubstepPolicy, select_substeps
@@ -859,6 +859,8 @@ class FluidSolver:
     def export_checkpoint_state(self):
         """Synchronize once and return host-owned deterministic restart state.
 
+        Each array is sliced to its live count on the device before readback,
+        so unused particle, whitewater and leaf capacity never crosses the bus.
         Scratch pressure, collision, binning, surface-extraction, and temporary
         reduction arrays are omitted because ``import_checkpoint_state`` clears
         or rebuilds them before the next source/P2G transaction.
@@ -871,38 +873,38 @@ class FluidSolver:
 
         arrays = {
             "grid_leaf_coords": np.ascontiguousarray(
-                self.grid.leaf_coords.numpy()[:leaf_count], dtype=np.int32),
+                host_prefix(self.grid.leaf_coords, leaf_count), dtype=np.int32),
             "grid_old_leaf_table": np.ascontiguousarray(
                 self.old_leaf_table.numpy(), dtype=np.int32),
             "particle_position": np.ascontiguousarray(
-                self.particles.position.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.position, particle_count), dtype=np.float32),
             "particle_velocity": np.ascontiguousarray(
-                self.particles.velocity.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.velocity, particle_count), dtype=np.float32),
             "particle_alive": np.ascontiguousarray(
-                self.particles.alive.numpy()[:particle_count], dtype=np.int32),
+                host_prefix(self.particles.alive, particle_count), dtype=np.int32),
             "particle_time_offset": np.ascontiguousarray(
-                self.particles.time_offset.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.time_offset, particle_count), dtype=np.float32),
             "whitewater_position": np.ascontiguousarray(
-                self.whitewater.position.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.position, whitewater_count), dtype=np.float32),
             "whitewater_velocity": np.ascontiguousarray(
-                self.whitewater.velocity.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.velocity, whitewater_count), dtype=np.float32),
             "whitewater_age": np.ascontiguousarray(
-                self.whitewater.age.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.age, whitewater_count), dtype=np.float32),
             "whitewater_life": np.ascontiguousarray(
-                self.whitewater.life.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.life, whitewater_count), dtype=np.float32),
             "whitewater_alive": np.ascontiguousarray(
-                self.whitewater.alive.numpy()[:whitewater_count], dtype=np.int32),
+                host_prefix(self.whitewater.alive, whitewater_count), dtype=np.int32),
             "whitewater_type": np.ascontiguousarray(
-                self.whitewater.type.numpy()[:whitewater_count], dtype=np.int32),
+                host_prefix(self.whitewater.type, whitewater_count), dtype=np.int32),
         }
         for name in self.particles.ATTR_NAMES:
             arrays[f"particle_attr_{name}"] = np.ascontiguousarray(
-                self.particles.attrs[name].numpy()[:particle_count],
+                host_prefix(self.particles.attrs[name], particle_count),
                 dtype=np.float32)
         arrays.update(self.particles.checkpoint_arrays(particle_count))
         for dotted_name in self._checkpoint_field_names():
             arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
-                _resolve_attr(self, dotted_name).numpy()[:active_voxels])
+                host_prefix(_resolve_attr(self, dotted_name), active_voxels))
 
         if self.narrow_band is not None:
             arrays["narrow_band_seed_state"] = np.asarray(
@@ -1036,18 +1038,18 @@ class FluidSolver:
         if not 0 <= whitewater_count <= self.whitewater.capacity:
             raise ValueError("restored whitewater count violates capacity")
         for name, value in (
-                ("particle_position", self.particles.position.numpy()[:particle_count]),
-                ("particle_velocity", self.particles.velocity.numpy()[:particle_count]),
-                ("whitewater_position", self.whitewater.position.numpy()[:whitewater_count]),
-                ("whitewater_velocity", self.whitewater.velocity.numpy()[:whitewater_count])):
+                ("particle_position", host_prefix(self.particles.position, particle_count)),
+                ("particle_velocity", host_prefix(self.particles.velocity, particle_count)),
+                ("whitewater_position", host_prefix(self.whitewater.position, whitewater_count)),
+                ("whitewater_velocity", host_prefix(self.whitewater.velocity, whitewater_count))):
             if not np.all(np.isfinite(value)):
                 raise ValueError(f"restored {name} contains non-finite values")
         validate_type_values(
-            self.whitewater.type.numpy()[:whitewater_count],
+            host_prefix(self.whitewater.type, whitewater_count),
             allow_unclassified=False,
         )
         if "uid" in self.particles.optional_channels and particle_count:
-            uid = self.particles.int_attrs["uid"].numpy()[:particle_count]
+            uid = host_prefix(self.particles.int_attrs["uid"], particle_count)
             if np.any(uid <= 0) or len(np.unique(uid)) != particle_count:
                 raise ValueError("restored particle UIDs are invalid")
             if int(self.particles.next_uid) <= int(np.max(uid)):
