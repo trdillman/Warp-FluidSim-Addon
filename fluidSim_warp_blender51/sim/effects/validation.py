@@ -366,13 +366,21 @@ def _append_binding_name_issues(
         ))
 
 
+def effective_safe_mode(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> bool:
+    """Whether Safe Mode rules govern ``kernel`` in ``instance``.
+
+    Turning safety off (instance or kernel) only requests Expert access; it is
+    granted once the instance acknowledges it. Until then the safe-mode
+    restrictions still apply.
+    """
+    expert_requested = not (instance.safe_mode and kernel.safe_mode)
+    return not (expert_requested and instance.expert_acknowledged)
+
+
 def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> list[EffectIssue]:
     issues: list[EffectIssue] = []
-    # Turning safety off (instance or kernel) only requests Expert access; it
-    # is granted once the instance acknowledges it. Until then the safe-mode
-    # restrictions still apply.
     expert_requested = not (instance.safe_mode and kernel.safe_mode)
-    safe_mode = not (expert_requested and instance.expert_acknowledged)
+    safe_mode = effective_safe_mode(instance, kernel)
     if expert_requested and safe_mode:
         issues.append(EffectIssue(
             "EXPERT_ACKNOWLEDGEMENT_REQUIRED",
