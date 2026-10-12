@@ -129,6 +129,10 @@ def main(cache_root):
               [(r[0], r[1]) for r in rows]
               == [(f, KEYED[f]) for f in range(START, PARTIAL_END + 1)], rows)
 
+        effect = scene.fluidsim_effects.items[0]
+        check("effect telemetry reaches the effect panel",
+              effect.calls > 0 and effect.elements > 0 and not effect.runtime_error,
+              (effect.calls, effect.elements, effect.submission_ms, effect.runtime_error))
         scene.frame_set(END - 1)
         decision = production_bake.ProductionBakeBackend().resume_decision(scene, end=END)
         check("partial bake resumes with the playhead elsewhere",

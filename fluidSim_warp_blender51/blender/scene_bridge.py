@@ -18,6 +18,7 @@ from .scene_access import (
     scene_identity,
     scene_set,
 )
+from ..sim.effects.runtime import EffectExecutionError
 from .scene_inputs import SceneInputs
 from .simulation_admission import capacity_blocking_message, narrow_band_refusal
 
@@ -366,11 +367,21 @@ class Session:
         # frame counters start from different origins) agree (decision D6).
         self.solver.effect_frame = int(
             scene.frame_current if timeline_frame is None else timeline_frame)
+        effects = None
         if hasattr(bpy, "props") and getattr(scene, "fluidsim_effects", None) is not None:
             from . import effects  # animated effect values (B66, lane E)
 
             effects.sync_animated_effect_bindings(scene, self)
-        stats = self.solver.step_frame()
+        try:
+            stats = self.solver.step_frame()
+        except EffectExecutionError as exc:
+            if effects is not None:
+                # Before any caller releases the solver and its runtime error.
+                effects.publish_runtime_error(scene, exc)
+            raise
+        if effects is not None:
+            effects.publish_runtime_telemetry(
+                scene, getattr(stats, "custom_effects", None) or ())
         sourcing = getattr(self.solver, "sourcing", None)
         apply_result = (getattr(sourcing, "last_apply_result", {})
                         if sourcing is not None else {})

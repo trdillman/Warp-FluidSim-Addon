@@ -985,6 +985,52 @@ def sync_animated_effect_bindings(scene, session) -> bool:
     return True
 
 
+def _set_if_changed(pg, name, value) -> None:
+    # An RNA write tags the scene for re-evaluation even when the value is equal.
+    if getattr(pg, name) != value:
+        setattr(pg, name, value)
+
+
+def publish_runtime_telemetry(scene, records) -> None:
+    """Show each effect's work for the frame just stepped.
+
+    ``records`` is the solver's per-kernel ``custom_effects`` frame snapshot;
+    an effect's calls, elements and submission time are summed over its kernels.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None or not records:
+        return
+    totals = {}
+    for record in records:
+        calls, elements, seconds = totals.get(str(record.get("instanceId", "")), (0, 0, 0.0))
+        totals[str(record.get("instanceId", ""))] = (
+            calls + int(record.get("calls", 0)),
+            elements + int(record.get("elements", 0)),
+            seconds + float(record.get("submissionSeconds", 0.0)))
+    for pg in stack.items:
+        total = totals.get(str(pg.instance_id))
+        if total is None:
+            continue
+        _set_if_changed(pg, "calls", total[0])
+        _set_if_changed(pg, "elements", total[1])
+        _set_if_changed(pg, "submission_ms", round(total[2] * 1000.0, 6))
+
+
+def publish_runtime_error(scene, error) -> None:
+    """Mark the effect whose launch failed; Test or Compile & Apply clears it."""
+    stack = getattr(scene, "fluidsim_effects", None)
+    runtime_error = getattr(error, "runtime_error", None)
+    if stack is None or runtime_error is None:
+        return
+    message = (f"{runtime_error.kernel_id} at {runtime_error.stage}, frame "
+               f"{runtime_error.frame}, substep {runtime_error.substep_index}: "
+               f"{runtime_error.message}")
+    for pg in stack.items:
+        if str(pg.instance_id) == str(runtime_error.instance_id):
+            _set_if_changed(pg, "runtime_error", message)
+    refresh_stack_state(scene)
+
+
 def _running_effect_trust_revoked(stack, store) -> bool:
     """Is code the solver may be running no longer trusted?
 
