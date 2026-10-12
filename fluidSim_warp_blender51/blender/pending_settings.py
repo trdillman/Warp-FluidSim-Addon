@@ -697,11 +697,31 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
         _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
                               quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
+        _refuse_narrow_band_conflicts(scene, settings)
     except Exception:
         for target, value in previous.items():
             setattr(settings, target, value)
         raise
     return True
+
+
+def _refuse_narrow_band_conflicts(scene, settings):
+    """Re-check the narrow-band admission refusal for an edit to a running solver.
+
+    Admission refuses narrow-band particles with features that keep
+    per-particle interior state. Some of those features are live (per-particle
+    viscosity) or synchronized (a Scalar field source), so an edit could
+    otherwise switch one on under an admitted narrow-band run, unchecked until
+    the next Reset. Raising here keeps the solver on its admitted values.
+    """
+    if not bool(getattr(settings, "narrow_band_enabled", False)):
+        return
+    from ..sim import narrow_band
+
+    reasons = narrow_band.scene_blocking_reasons(
+        settings, getattr(scene, "objects", ()) or ())
+    if reasons:
+        raise RuntimeError(narrow_band.refusal_message(reasons))
 
 
 def apply_live_settings_safely(scene, sess: Session | None = None):
@@ -1206,7 +1226,13 @@ def request_scene_update(scene, action: SceneUpdate):
         # only a contained error replaces it with an actionable message.
         apply_live_settings_safely(scene, sess)
     elif action is SceneUpdate.SYNC:
-        sess.sync_scene(scene)
+        try:
+            _refuse_narrow_band_conflicts(scene, sess.solver.settings)
+        except RuntimeError as exc:
+            sess.set_error(scene, str(exc))
+            scene.fluidsim.status = f"Scene sync refused: {exc}"
+        else:
+            sess.sync_scene(scene)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
         output_publication.prepare_outputs(scene)

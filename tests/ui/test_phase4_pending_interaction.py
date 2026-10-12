@@ -715,3 +715,64 @@ def test_pending_badges_saved_in_a_file_do_not_show_after_loading_it(
     assert presentation["reasons"] == ()
     assert bridge.pending.reinitialize_eligibility(scene)[0] is False
     assert bridge.pending.revert_eligibility(scene)[0] is False
+
+# --- B58: live/sync edits re-check the narrow-band admission refusal ---------
+
+
+def _narrow_band_run(bridge, monkeypatch):
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    scene = _scene()
+    domain = scene.fluidsim.domain_object.fluidsim_domain
+    domain.narrow_band_enabled = True
+    domain.viscosity_enabled = True
+    domain.viscosity_from_particles = False
+    sess, solver = _activate(bridge, scene, frame=3)
+    solver.settings = SolverSettings(
+        device="cpu", narrow_band_enabled=True, viscosity_enabled=True,
+        viscosity_from_particles=False, flip_ratio=0.95)
+    errors = []
+    monkeypatch.setattr(sess, "set_error", lambda _scene, message: errors.append(message))
+    return scene, domain, sess, solver, errors
+
+
+def test_a_live_edit_narrow_band_refuses_is_refused_and_not_applied(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene, domain, _sess, solver, errors = _narrow_band_run(bridge, monkeypatch)
+
+    domain.flip_ratio = 0.5
+    domain.viscosity_from_particles = True  # per-particle viscosity
+    bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.LIVE)
+
+    # The running narrow-band solver keeps its admitted, admissible values.
+    assert solver.settings.viscosity_from_particles is False
+    assert solver.settings.flip_ratio == 0.95
+    assert "Narrow-Band Particles cannot run" in scene.fluidsim.status
+    assert any("Viscosity from particles" in message for message in errors)
+
+    # Removing the conflict lets the held live edits through.
+    domain.viscosity_from_particles = False
+    errors.clear()
+    bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.LIVE)
+    assert solver.settings.flip_ratio == 0.5
+    assert errors == []
+
+
+def test_a_sync_edit_adding_a_scalar_field_source_is_refused(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene, _domain, sess, _solver, errors = _narrow_band_run(bridge, monkeypatch)
+    synced = []
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: synced.append(True))
+    field = _object("Heat", "FIELD")
+    field.fluidsim.field_operation = "SCALAR"
+    scene.objects = [field]
+
+    bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.SYNC)
+
+    assert synced == []
+    assert "Narrow-Band Particles cannot run" in scene.fluidsim.status
+    assert any("Scalar / Temperature" in message for message in errors)
+
+    field.fluidsim.field_operation = "PRESSURE"
+    bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.SYNC)
+    assert synced == [True]
