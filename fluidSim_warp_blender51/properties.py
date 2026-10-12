@@ -214,11 +214,58 @@ def _update_object_role(self, context):
     """
     if (self.role in {"SOURCE", "SINK", "FIELD"}
             and int(self.source_ui_schema_version) < _CURRENT_SOURCE_UI_SCHEMA):
-        if self.role == "SOURCE" and int(self.source_ui_schema_version) < 4:
+        schema = int(self.source_ui_schema_version)
+        if self.role == "SOURCE" and schema < 4:
             self.source_sampling_mode = "INHERIT"
             self.source_sampling_multiplier = 1.0
         self.source_ui_schema_version = _CURRENT_SOURCE_UI_SCHEMA
+        if schema < 3:
+            # A Mesh geometry chosen before the role must survive the stamp.
+            _forward_legacy_geometry(self)
     _request_reset(self, context)
+
+
+_MESH_REGION_KINDS = frozenset({"MESH_SOLID", "MESH_SHELL"})
+
+
+def _legacy_sink_mesh_kind(pg) -> str:
+    return ("MESH_SOLID" if getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
+            else "MESH_SHELL")
+
+
+def _forward_legacy_geometry(pg) -> None:
+    """Carry a legacy ``geometry_mode = 'MESH'`` into the region kinds.
+
+    From source UI schema 3 the runtime reads only the Emission/Removal Region
+    kinds, so a script that writes the older ``geometry_mode`` (and
+    ``sink_region_mode``) would otherwise get an analytic box silently. An
+    analytic region kind is switched to the mesh kind the legacy fields mean
+    (see ``scene_inputs.legacy_region_kinds``); a region kind already chosen
+    is never overridden, and Analytic writes change nothing.
+    """
+    if getattr(pg, "geometry_mode", "ANALYTIC") != "MESH":
+        return
+    if getattr(pg, "source_region_kind", "ANALYTIC") == "ANALYTIC":
+        pg.source_region_kind = "MESH_SHELL"
+    if getattr(pg, "sink_region_kind", "ANALYTIC") == "ANALYTIC":
+        pg.sink_region_kind = _legacy_sink_mesh_kind(pg)
+
+
+def _update_geometry_mode(self, context):
+    """Legacy Region alias: a Mesh write reaches the schema-3 region kinds."""
+    if int(getattr(self, "source_ui_schema_version", 0) or 0) >= 3:
+        _forward_legacy_geometry(self)
+    _request_sync(self, context)
+
+
+def _update_sink_region_mode(self, context):
+    """Legacy Sink Region alias: solid/surface picks the mesh removal kind."""
+    if (int(getattr(self, "source_ui_schema_version", 0) or 0) >= 3
+            and getattr(self, "sink_region_kind", "ANALYTIC") in _MESH_REGION_KINDS):
+        desired = _legacy_sink_mesh_kind(self)
+        if self.sink_region_kind != desired:
+            self.sink_region_kind = desired
+    _request_sync(self, context)
 
 
 def _update_field_region_kind(self, context):
@@ -530,7 +577,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              SourceGeometryMode.MESH.value),
         ],
         default=SourceGeometryMode.ANALYTIC.name,
-        update=_request_sync,
+        update=_update_geometry_mode,
         description="Choose an exact analytic shape or evaluated mesh triangles for the region; changing it replaces the geometry controls and membership method",
     )
     mesh_object: PointerProperty(
@@ -576,7 +623,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              MeshSinkRegionMode.SURFACE.value),
         ],
         default=MeshSinkRegionMode.SOLID.name,
-        update=_request_sync,
+        update=_update_sink_region_mode,
         description="Choose whether a mesh sink removes liquid from its validated interior or only near its triangle surface; changing it changes the removal region",
     )
     mesh_error: StringProperty(name="Mesh Error", default="")
