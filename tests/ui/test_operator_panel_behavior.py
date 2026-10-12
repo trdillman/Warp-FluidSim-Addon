@@ -4290,10 +4290,11 @@ def test_warp_code_workspace_gated_by_authoring_pref(monkeypatch):
     assert effect_workspace.FLUIDSIM_PT_effect_warp_code.poll(on) is True
 
 
-def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch):
+def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch, tmp_path):
     """B74: Blender does not copy dynamic enum strings; Python must retain them."""
     _install_bpy_stub(monkeypatch)
     effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    monkeypatch.setattr(effect_ui.effect_library, "user_library_path", lambda: tmp_path)
     definition = SimpleNamespace(
         effect_id="vortex", name="Vortex", summary="Spin liquid",
         cost_hint="low",
@@ -4308,6 +4309,51 @@ def test_add_effect_enum_items_stay_referenced_after_return(monkeypatch):
     assert effect_ui._EFFECT_ITEMS is first
     second = effect_ui._effect_items(None, None)
     assert effect_ui._EFFECT_ITEMS is second
+
+
+def test_effect_packages_drawer_scans_the_library_once_until_it_changes(
+        monkeypatch, tmp_path):
+    """P16: the drawer scanned every package twice per redraw (diagnostics,
+    then the installed check); it now reuses one snapshot until a package
+    file changes."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    library = effect_ui.effect_library
+    installed = SimpleNamespace(
+        path=tmp_path / "user.fseffect",
+        definition=SimpleNamespace(effect_id="user.swirl"))
+    scans = []
+
+    def snapshot():
+        scans.append("snapshot")
+        return SimpleNamespace(diagnostics=(), installed=(installed,))
+
+    def entries():
+        scans.append("entries")
+        return (installed,), ()
+
+    monkeypatch.setattr(library, "library_snapshot", snapshot)
+    monkeypatch.setattr(library, "installed_user_entries", entries)
+    monkeypatch.setattr(library, "user_library_path", lambda: tmp_path)
+    monkeypatch.setattr(effect_ui, "_active_effect", lambda _scene: SimpleNamespace())
+    monkeypatch.setattr(
+        effect_ui, "_definition_from_pg",
+        lambda _item: SimpleNamespace(built_in=False, effect_id="user.swirl"))
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=SimpleNamespace()))
+
+    def draw():
+        panel = effect_ui.FLUIDSIM_PT_effect_packages()
+        panel.layout = _Layout()
+        panel.draw(context)
+        return {op["id"] for op in panel.layout.operators}
+
+    for _ in range(3):
+        assert "fluidsim.effect_delete_installed" in draw()
+    assert scans == ["snapshot"]
+
+    (tmp_path / "other.fseffect").write_text("{}", encoding="utf-8")
+    draw()
+    assert scans == ["snapshot", "snapshot"]
 
 
 def test_add_effect_cancels_cleanly_when_the_package_vanished(monkeypatch):
