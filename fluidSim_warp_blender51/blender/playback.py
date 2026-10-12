@@ -25,6 +25,12 @@ _RENDER_RESTORE_FRAME = None
 _IN_MODE_TRANSITION = False
 _CACHE_CURSORS = {}
 
+# The Solver Session is a process singleton, so a bake in one scene owns it
+# for every scene: Live in any other scene must not admit, step or reset it.
+_BAKE_ELSEWHERE_MESSAGE = (
+    "A Production Bake is running in another scene - Live Playback is "
+    "unavailable until it finishes")
+
 _ACTIVE_BAKE_STATUSES = frozenset({
     "PREFLIGHT",
     "INITIALIZING",
@@ -344,6 +350,14 @@ def set_live_enabled(scene, enabled: bool):
         if getattr(fs, "cache_playback_enabled", False):
             fs.status = "Cache playback enabled - press play"
         elif not sess.owns_scene(scene):
+            if production_bake.any_bake_active():
+                _IN_MODE_TRANSITION = True
+                try:
+                    fs.live = False
+                finally:
+                    _IN_MODE_TRANSITION = False
+                fs.status = _BAKE_ELSEWHERE_MESSAGE
+                return False
             from ..runtime.warp_runtime import prewarm_simulation_kernels
 
             prewarm_simulation_kernels()
@@ -521,6 +535,11 @@ def ensure_session_before_frames(scene, reason):
     sess = bridge.session()
     if sess.owns_scene(scene):
         return
+    from . import production_bake
+
+    if production_bake.any_bake_active():
+        fs.status = _BAKE_ELSEWHERE_MESSAGE
+        return
     try:
         from ..runtime.warp_runtime import (
             is_kernels_prewarmed,
@@ -556,6 +575,13 @@ def handle_frame_change(sess, scene, depsgraph):
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"
             print(f"fluidSim cache playback failed: {exc!r}")
+        return
+    from . import production_bake
+
+    if production_bake.any_bake_active():
+        # The baking scene has Live off, so this is another scene: stepping,
+        # resetting or re-admitting here would move the bake's solver.
+        fs.status = _BAKE_ELSEWHERE_MESSAGE
         return
     if frame == sess.last_frame:
         return
