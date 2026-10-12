@@ -313,6 +313,11 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
     source = _require_managed_cache_directory(source)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
+    # Freeing the source after publishing would delete a destination nested
+    # inside it, losing both copies.
+    if destination.resolve().is_relative_to(source.resolve()):
+        raise ValueError(
+            f"cache destination {destination} is inside the cache being moved")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_name(f".{destination.name}.fluidsim-copy-{uuid.uuid4().hex}")
     try:

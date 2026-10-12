@@ -249,6 +249,20 @@ def test_move_rename_and_free_preserve_verified_cache(tmp_path):
     assert not renamed.exists()
 
 
+def test_move_into_its_own_subfolder_is_refused_and_keeps_the_cache(tmp_path):
+    # Review item B02: copying into source/archive and then freeing the source
+    # tree deleted both copies while reporting success.
+    source = tmp_path / "cache"
+    _make_cache(source)
+    before = _tree(source)
+
+    with pytest.raises(ValueError):
+        move_cache(source, source / "archive")
+
+    assert _tree(source) == before
+    assert inspect_cache(source).healthy
+
+
 @pytest.mark.parametrize("name", ["", ".", "..", "a/b", r"a\\b"])
 def test_rename_rejects_non_leaf_names(name):
     with pytest.raises(ValueError):
