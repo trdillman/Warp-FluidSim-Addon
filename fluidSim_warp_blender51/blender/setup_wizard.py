@@ -573,14 +573,23 @@ def _record_selected_state(journal, selected) -> None:
 
 
 def _record_domain_state(journal, domain, preset_fields, mode) -> None:
+    # ``voxel_size`` is derived from ``resolution_divisions`` and the domain's
+    # world size, and the wizard rewrites both the transform and the divisions.
+    # Restoring the derived value against the fitted box re-derives the wrong
+    # divisions, so the authoritative divisions are recorded instead -- always,
+    # since fitting changes them even without a preset -- and recorded *before*
+    # the transform so the LIFO rollback puts the transform back first.
+    fields = [name for name in preset_fields if name != "voxel_size"]
+    if mode == "QUICK_CONTAINER":
+        fields.extend(("height_enabled", "height_emission_mode", "height_base"))
+    if "resolution_divisions" in fields:
+        fields.remove("resolution_divisions")
+    fields.append("resolution_divisions")
+    _record_settings(journal, domain.fluidsim_domain, fields)
     _record_attributes(
         journal, domain,
         ("location", "rotation_euler", "scale", "display_type", "hide_render", "show_in_front"),
     )
-    fields = list(preset_fields)
-    if mode == "QUICK_CONTAINER":
-        fields.extend(("height_enabled", "height_emission_mode", "height_base"))
-    _record_settings(journal, domain.fluidsim_domain, fields)
 
 
 def _record_output_state(journal, obj, property_keys):

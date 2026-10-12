@@ -118,6 +118,55 @@ def test_quick_setup_never_admits_the_domain_or_outputs_as_inputs():
     assert setup_wizard.reserved_object_reason(context.scene, liquid) == ""
 
 
+@pytest.mark.parametrize("preset_fields", [("voxel_size", "flip_ratio"), ()])
+def test_reused_domain_rollback_restores_transform_then_divisions(preset_fields):
+    """B71: a 3 m / 25-division domain fitted to 6 m must roll back to 3 m / 25.
+
+    ``voxel_size`` is derived (longest axis / divisions); restoring it before
+    the transform re-derives 50 divisions against the fitted 6 m box.
+    """
+    from fluidSim_warp_blender51.blender.setup_wizard import (
+        _record_domain_state,
+        _SetupRollbackJournal,
+    )
+
+    class DomainSettings:
+        def __init__(self, owner):
+            self._owner = owner
+            self.resolution_divisions = 25
+            self.flip_ratio = 0.95
+
+        @property
+        def voxel_size(self):
+            return max(self._owner.scale) / self.resolution_divisions
+
+        @voxel_size.setter
+        def voxel_size(self, value):
+            self.resolution_divisions = max(8, round(max(self._owner.scale) / value))
+
+    domain = SimpleNamespace(
+        location=(0.0, 0.0, 0.0), rotation_euler=(0.0, 0.0, 0.0),
+        scale=(3.0, 3.0, 3.0), display_type="WIRE", hide_render=True,
+        show_in_front=True,
+    )
+    domain.fluidsim_domain = DomainSettings(domain)
+    journal = _SetupRollbackJournal()
+    _record_domain_state(journal, domain, preset_fields, "QUICK_LIQUID")
+
+    # The wizard applies its preset cell size, fits to 6 m and keeps the cell.
+    domain.fluidsim_domain.voxel_size = 0.12
+    domain.fluidsim_domain.flip_ratio = 0.5
+    domain.scale = (6.0, 6.0, 6.0)
+    domain.fluidsim_domain.voxel_size = 0.12
+    journal.rollback()
+
+    assert domain.scale == (3.0, 3.0, 3.0)
+    assert domain.fluidsim_domain.resolution_divisions == 25
+    assert domain.fluidsim_domain.voxel_size == pytest.approx(0.12)
+    if preset_fields:
+        assert domain.fluidsim_domain.flip_ratio == 0.95
+
+
 def test_setup_rollback_journal_unwinds_once_in_reverse_order():
     from fluidSim_warp_blender51.blender.setup_wizard import _SetupRollbackJournal
 
