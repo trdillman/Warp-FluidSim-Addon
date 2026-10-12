@@ -19,6 +19,7 @@ import warp as wp
 
 from . import constants as C
 from .capacity_planner import DemandQuality
+from .source_contracts import analytic_world_half_extents
 from .enums import (
     BlendMode,
     SourceEvaluationCadence,
@@ -127,10 +128,9 @@ class AnalyticRegionPlan:
         default=SourceRegionKind.ANALYTIC_SDF, init=False)
 
     def bounds(self):
-        extent = max(
-            abs(float(self.radius)), abs(float(self.height)),
-            *(abs(float(v)) for v in self.half_extents),
-        ) + max(0.0, float(self.feather))
+        extent = np.asarray(analytic_world_half_extents(
+            self.shape, self.rotation, self.half_extents, self.radius,
+            self.height, self.feather), dtype=np.float64)
         p = np.asarray(self.position, dtype=np.float64)
         return tuple(p - extent), tuple(p + extent)
 

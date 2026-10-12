@@ -105,6 +105,94 @@ def _compile_level_set(tmp_path, monkeypatch, dense):
     return SourceCompiler().compile((plan,), context).sources[0].region
 
 
+def _z_rotation(angle):
+    return (0.0, 0.0, math.sin(angle / 2.0), math.cos(angle / 2.0))
+
+
+def _rotate(quaternion, vector):
+    x, y, z, w = quaternion
+    matrix = np.array([
+        (1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w),
+        (2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w),
+        (2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y),
+    ])
+    return matrix @ np.asarray(vector, np.float64)
+
+
+def _box_corners(position, rotation, half_extents):
+    return np.array([
+        np.asarray(position) + _rotate(rotation, (sx * half_extents[0],
+                                                  sy * half_extents[1],
+                                                  sz * half_extents[2]))
+        for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+
+
+# B43: analytic bounds must contain the rotated shape, not only its
+# unrotated largest extent.
+
+def test_rotated_analytic_box_compiles_its_full_coverage():
+    from fluidSim_warp_blender51.sim.source_regions import AnalyticRegionPlan
+
+    context = CompileContext(0, 0, 0, "cpu", (-4.0, -4.0, -4.0), 0.05,
+                             (-4.0, -4.0, -4.0), (4.0, 4.0, 4.0),
+                             leaf_capacity=10 ** 6, upload=False)
+    rotation = _z_rotation(math.pi / 4.0)
+    region = AnalyticRegionPlan(
+        shape=SourceShapeShape.BOX, rotation=rotation,
+        half_extents=(1.5, 1.5, 0.1), radius=1.5, height=0.1)
+    plan = SourcePlan(SourceKey("box"), SourceOperation.LIQUID,
+                      SourceLifecycle.TOP_UP, SourceEvaluationCadence.STATIC,
+                      region, PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES))
+    compiled = SourceCompiler().compile((plan,), context).sources[0].region
+    whole = SourceCompiler._candidate_leaves(
+        (context.domain_min, context.domain_max), context)
+    _, points = SourceCompiler._voxel_points(whole, context)
+    expected = int(np.count_nonzero(SourceCompiler._analytic_sdf(region, points) <= 0.0))
+    assert compiled.covered_voxel_count == expected
+    lo, hi = region.bounds()
+    corners = _box_corners(region.position, rotation, region.half_extents)
+    assert np.all(corners >= np.asarray(lo) - 1e-9)
+    assert np.all(corners <= np.asarray(hi) + 1e-9)
+
+
+def test_rotated_legacy_descriptor_aabb_contains_every_corner():
+    from fluidSim_warp_blender51.sim.source_contracts import SourceShapeDesc
+
+    rotation = _z_rotation(math.pi / 4.0)
+    for shape, half_extents, radius, height in (
+            (SourceShapeShape.BOX, (1.5, 1.5, 0.1), 1.5, 0.1),
+            (SourceShapeShape.CYLINDER, (1.0, 1.0, 0.1), 1.0, 0.1)):
+        tilt = (math.sin(math.pi / 8.0), 0.0, 0.0, math.cos(math.pi / 8.0))
+        for quaternion in (rotation, tilt):
+            desc = SourceShapeDesc(shape=int(shape), position=(0.2, -0.1, 0.3),
+                                   rotation=quaternion, half_extents=half_extents,
+                                   radius=radius, height=height)
+            extents = (half_extents if shape == SourceShapeShape.BOX
+                       else (radius, radius, height))
+            corners = _box_corners(desc.position, quaternion, extents)
+            lo, hi = desc.aabb()
+            assert np.all(corners >= np.asarray(lo) - 1e-9), (shape, quaternion)
+            assert np.all(corners <= np.asarray(hi) + 1e-9), (shape, quaternion)
+
+
+def test_unrotated_analytic_bounds_are_unchanged():
+    from fluidSim_warp_blender51.sim.source_contracts import SourceShapeDesc
+    from fluidSim_warp_blender51.sim.source_regions import AnalyticRegionPlan
+
+    for shape in SourceShapeShape:
+        region = AnalyticRegionPlan(shape=shape, position=(0.5, 0.25, -0.5),
+                                    half_extents=(0.3, 0.7, 0.2), radius=0.4,
+                                    height=0.6, feather=0.05)
+        extent = 0.7 + 0.05
+        assert region.bounds() == ((0.5 - extent, 0.25 - extent, -0.5 - extent),
+                                   (0.5 + extent, 0.25 + extent, -0.5 + extent))
+        desc = SourceShapeDesc(shape=int(shape), position=(0.5, 0.25, -0.5),
+                               half_extents=(0.3, 0.7, 0.2), radius=0.4,
+                               height=0.6, feather=0.05)
+        assert desc.aabb() == ((0.5 - extent, 0.25 - extent, -0.5 - extent),
+                               (0.5 + extent, 0.25 + extent, -0.5 + extent))
+
+
 def test_dense_level_set_coverage_matches_the_accessor_path(tmp_path, monkeypatch):
     accessor = _compile_level_set(tmp_path, monkeypatch, dense=False)
     dense = _compile_level_set(tmp_path, monkeypatch, dense=True)

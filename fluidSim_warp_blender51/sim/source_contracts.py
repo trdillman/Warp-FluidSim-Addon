@@ -23,6 +23,38 @@ from .enums import (
 )
 
 
+def analytic_world_half_extents(shape, rotation, half_extents, radius, height, feather):
+    """Per-axis world half extents that bound one rotated analytic shape.
+
+    The historical bound is a cube of the largest authored size. It stays the
+    floor, so every unrotated shape keeps its exact previous bound, and each
+    axis widens to the rotated local box (sum of |R| times the local half
+    extents) so a rotated shape's corners are no longer clipped. Spheres are
+    rotation-invariant and planes are half-spaces, so both keep the cube.
+    """
+    feather = max(0.0, float(feather))
+    cube = max(abs(float(radius)), abs(float(height)),
+               *(abs(float(value)) for value in half_extents)) + feather
+    shape = int(shape)
+    if shape in (SourceShapeShape.SPHERE, SourceShapeShape.PLANE):
+        return (cube, cube, cube)
+    if shape == SourceShapeShape.BOX:
+        local = np.abs(np.asarray(half_extents, np.float64))
+    else:
+        # Cylinder, cone and pyramid: radius across x/y, half height on z.
+        local = np.abs(np.array((radius, radius, height), np.float64))
+    q = np.asarray(rotation, np.float64)
+    norm = float(np.linalg.norm(q))
+    x, y, z, w = (q / norm) if norm > 0.0 else (0.0, 0.0, 0.0, 1.0)
+    matrix = np.array([
+        (1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w, 2*x*z + 2*y*w),
+        (2*x*y + 2*z*w, 1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w),
+        (2*x*z - 2*y*w, 2*y*z + 2*x*w, 1 - 2*x*x - 2*y*y),
+    ])
+    world = np.abs(matrix) @ local + feather
+    return tuple(max(cube, float(value)) for value in world)
+
+
 @wp.struct
 class SourceShape:
     enabled: wp.int32
@@ -126,15 +158,11 @@ class SourceShapeDesc:
 
     def aabb(self):
         """Return a conservative world AABB for topology marking."""
-        radius = max(
-            self.radius,
-            self.height,
-            self.half_extents[0],
-            self.half_extents[1],
-            self.half_extents[2],
-        ) + max(self.feather, 0.0)
+        ex, ey, ez = analytic_world_half_extents(
+            self.shape, self.rotation, self.half_extents, self.radius,
+            self.height, self.feather)
         x, y, z = self.position
-        return ((x - radius, y - radius, z - radius), (x + radius, y + radius, z + radius))
+        return ((x - ex, y - ey, z - ez), (x + ex, y + ey, z + ez))
 
     def to_struct(self):
         shape = SourceShape()
