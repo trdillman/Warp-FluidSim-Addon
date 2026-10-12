@@ -184,6 +184,65 @@ def test_species_toggle_rebuilds_storage_but_rate_updates_live(monkeypatch):
     )
 
 
+# LIVE settings that reach the solver through a path other than the hot-field
+# projection: gravity through _apply_gravity, the growth policy through
+# _request_particle_capacity.
+_LIVE_APPLIED_ELSEWHERE = frozenset({
+    "gravity", "use_scene_gravity",
+    "auto_grow_particles", "particle_growth_failure_policy",
+})
+
+
+def test_every_tiered_setting_reaches_its_apply_or_signature_set(monkeypatch):
+    """Review items B04/B05: a tier classification is inert without wiring.
+
+    surface_tension_* and species_mixing_rate were classified LIVE but never
+    projected into the running solver, and surface_tension_enabled /
+    species_enabled were classified RESET but absent from the reset
+    signature, so editing them did nothing and flagged nothing.
+    """
+    _properties, pending, _bridge = _modules(monkeypatch)
+
+    assert sorted(pending._LIVE_REGISTRY_FIELDS - pending._LIVE_SETTING_FIELDS
+                  - _LIVE_APPLIED_ELSEWHERE) == []
+    assert sorted(pending._RESET_REGISTRY_FIELDS - pending._RESET_SCENE_FIELDS) == []
+    assert sorted(pending._REINITIALIZE_REGISTRY_FIELDS
+                  - pending._REINIT_SETTING_FIELDS) == []
+    assert sorted(pending._SURFACE_REGISTRY_FIELDS
+                  - pending._SURFACE_SETTING_FIELDS) == []
+
+
+def test_live_surface_tension_and_mixing_edits_reach_the_running_solver(monkeypatch):
+    _properties, pending, _bridge = _modules(monkeypatch)
+    from fluidSim_warp_blender51.blender import solver_settings as ss
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    defaults = SolverSettings()
+    values = {src: getattr(defaults, ss.SETTING_ALIASES.get(src, src))
+              for src in ss.DIRECT_SETTING_FIELDS}
+    for target, (src, enum_type) in ss.enum_setting_fields().items():
+        values[src] = enum_type(getattr(defaults, ss.SETTING_ALIASES.get(target, target))).name
+    values.update(gravity=(0.0, 0.0, -9.81), use_scene_gravity=False)
+    domain = SimpleNamespace(**values)
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(quality="PREVIEW",
+                                 domain_object=SimpleNamespace(fluidsim_domain=domain)),
+        use_gravity=True, gravity=(0.0, 0.0, -9.81))
+    solver = SimpleNamespace(settings=SolverSettings())
+    sess = SimpleNamespace(owns_scene=lambda _scene: True, solver=solver)
+
+    domain.surface_tension_coefficient = 0.5
+    domain.surface_tension_safety = 0.2
+    domain.surface_tension_band_voxels = 2.5
+    domain.species_mixing_rate = 30.0
+    assert pending._apply_realtime_solver_settings(scene, sess)
+
+    assert solver.settings.surface_tension_coefficient == 0.5
+    assert solver.settings.surface_tension_safety == 0.2
+    assert solver.settings.surface_tension_band_voxels == 2.5
+    assert solver.settings.species_mixing_rate == 30.0
+
+
 def test_scene_bridge_no_longer_owns_pending_policy(monkeypatch):
     properties, pending, bridge = _modules(monkeypatch)
     source = inspect.getsource(bridge)

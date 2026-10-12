@@ -267,6 +267,9 @@ _HOT_SETTING_FIELDS = frozenset({
     "viscosity_enabled", "viscosity_solver",
     "viscosity_constant", "viscosity_from_particles",
     "viscosity_iterations", "viscosity_tolerance",
+    "surface_tension_coefficient", "surface_tension_density",
+    "surface_tension_band_voxels", "surface_tension_safety",
+    "surface_tension_smoothing_iterations", "species_mixing_rate",
     "ww_churn_decay", "ww_churn_gain", "ww_churn_threshold",
     "ww_emission_rate", "ww_min_speed", "ww_life_min", "ww_life_max",
     "ww_bubble_drag", "ww_spray_drag", "ww_surface_band", "ww_foam_band",
@@ -282,6 +285,7 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
+    "surface_tension_enabled", "species_enabled",
     "narrow_band_enabled", "narrow_band_voxels",
     "export_attributes",
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
