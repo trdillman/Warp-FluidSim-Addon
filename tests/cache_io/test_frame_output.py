@@ -734,7 +734,50 @@ def test_live_payload_reads_attribute_inventory_from_designated_domain():
     output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
 
     assert len(host.attribute_settings) == 3
-    assert all(item is domain_settings for item in host.attribute_settings)
+    for item in host.attribute_settings:
+        assert item.particles_attribute_age is True
+        assert item.whitewater_attribute_velocity is True
+        assert item.surface_attribute_velocity is True
+
+
+@pytest.mark.usefixtures("bpy_stub")
+def test_live_payload_never_requests_a_channel_the_solver_did_not_admit():
+    """Review item B06: ticking Color mid-run killed the live session.
+
+    Attribute toggles are RESET-tier, so the running solver has not allocated
+    a newly ticked channel; the live payload asked for it anyway and the
+    readback raised. Unticking still applies immediately.
+    """
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.sim.attributes import enabled_attribute_keys
+
+    fs = split_settings(_live_settings(
+        particles_attribute_age=True, particles_attribute_color=True,
+        export_attributes=True))
+    host = _LiveAttributeHost()
+    host.solver = SimpleNamespace(settings=SimpleNamespace(
+        voxel_size=0.1, export_attributes=True,
+        particles_attribute_age=True, particles_attribute_color=False))
+    requested = []
+    original = host.output_attributes
+
+    def strict_output_attributes(settings, output_kind, **kwargs):
+        keys = enabled_attribute_keys(settings, output_kind)
+        requested.append((output_kind, keys))
+        if output_kind == "particles" and "color" in keys:
+            raise RuntimeError("enabled particle attribute 'color' is not allocated")
+        return original(settings, output_kind, **kwargs)
+
+    host.output_attributes = strict_output_attributes
+    output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
+
+    assert ("particles", ("age",)) in requested
+
+    domain = fs.domain_object.fluidsim_domain
+    domain.particles_attribute_age = False
+    requested.clear()
+    output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
+    assert ("particles", ()) in requested
 
 
 @pytest.mark.usefixtures("bpy_stub")

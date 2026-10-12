@@ -967,18 +967,40 @@ def _whitewater_display_stride(fs):
     return max(1, int(round(1.0 / fraction)))
 
 
+class _AdmittedAttributeInventory:
+    """Domain attribute toggles narrowed to what the running solver admitted.
+
+    Attribute toggles are RESET-tier: a newly ticked channel (color, source_id,
+    uid) is not allocated until the next reset, so asking the live frame for it
+    raises and playback releases the session. Unticking still applies at once;
+    ticking waits for the reset that allocates the channel. Settings the solver
+    object does not carry (test doubles, older payloads) defer to the domain.
+    """
+
+    def __init__(self, authored, admitted):
+        self._authored = authored
+        self._admitted = admitted
+
+    def __getattr__(self, name):
+        value = getattr(self._authored, name)
+        if self._admitted is not None and isinstance(value, bool) and value:
+            return bool(getattr(self._admitted, name, value))
+        return value
+
+
 @_cost_phase("live_adaptation")
 def prepare_live_payload(scene, host, publish_surface=True):
     """Perform one live readback/adaptation stage from an acquired frame."""
     fs = scene.fluidsim
-    ds = _domain_settings(scene)
     solver = host.solver
+    ds = _domain_settings(scene)
+    inventory = _AdmittedAttributeInventory(ds, getattr(solver, "settings", None))
     step = _display_stride(fs)
     indices = slice(None, None, step) if step > 1 else None
     positions = (host.positions_strided(step) if fs.show_particles else
                  np.zeros((0, 3), dtype=np.float32))
     particle_attributes = (
-        host.output_attributes(ds, "particles", stride=step)
+        host.output_attributes(inventory, "particles", stride=step)
         if fs.show_particles else {})
     particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
     particle_values = None
@@ -997,7 +1019,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
                   np.zeros((0, 3), dtype=np.float32))
     whitewater_visible = bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
     whitewater_attributes = (
-        host.output_attributes(ds, "whitewater", stride=ww_step)
+        host.output_attributes(inventory, "whitewater", stride=ww_step)
         if whitewater_visible else {})
     whitewater_key = _canonical_attribute_key(fs.whitewater_attribute_mode)
     whitewater_values = None
@@ -1021,7 +1043,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
     if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
         surface_attributes = host.output_attributes(
-            ds, "surface", positions=verts)
+            inventory, "surface", positions=verts)
         surface_key = _canonical_attribute_key(fs.surface_attribute_mode)
         surface_values = None
         if surface_key is None or surface_key not in surface_attributes:
