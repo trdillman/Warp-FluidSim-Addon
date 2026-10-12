@@ -1518,9 +1518,20 @@ def k_forces_speed_limit(
     xp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
     yp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
     zp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1))
-    cx = 0.5 * (u[tid] + wp.where(xp >= 0, u[xp], u[tid]))
-    cy = 0.5 * (v[tid] + wp.where(yp >= 0, v[yp], v[tid]))
-    cz = 0.5 * (w[tid] + wp.where(zp >= 0, w[zp], w[tid]))
+    # Branches, not wp.where: both wp.where operands are evaluated, which
+    # read index -1 at a positive edge.
+    ux1 = u[tid]
+    uy1 = v[tid]
+    uz1 = w[tid]
+    if xp >= 0:
+        ux1 = u[xp]
+    if yp >= 0:
+        uy1 = v[yp]
+    if zp >= 0:
+        uz1 = w[zp]
+    cx = 0.5 * (u[tid] + ux1)
+    cy = 0.5 * (v[tid] + uy1)
+    cz = 0.5 * (w[tid] + uz1)
     speed = wp.length(wp.vec3(cx, cy, cz))
     if speed <= max_speed or speed < 1.0e-9:
         return
@@ -1699,7 +1710,13 @@ def k_attract_direction(
         hi = wp.vec3i(ijk[0] + wp.where(axis == 0, 1, 0), ijk[1] + wp.where(axis == 1, 1, 0), ijk[2] + wp.where(axis == 2, 1, 0))
         flo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, lo)
         fhi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, hi)
-        g = (wp.where(fhi >= 0, attract_field[fhi], c) - wp.where(flo >= 0, attract_field[flo], c)) * inv2h
+        a_hi = c
+        a_lo = c
+        if fhi >= 0:
+            a_hi = attract_field[fhi]
+        if flo >= 0:
+            a_lo = attract_field[flo]
+        g = (a_hi - a_lo) * inv2h
         dv = strength * g * dt
         if axis == 0 and wu[tid] > 0.0:
             u[tid] = u[tid] + dv
@@ -1738,7 +1755,13 @@ def k_attract_sdf_gradient_direction(
         hi = wp.vec3i(ijk[0] + wp.where(axis == 0, 1, 0), ijk[1] + wp.where(axis == 1, 1, 0), ijk[2] + wp.where(axis == 2, 1, 0))
         flo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, lo)
         fhi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, hi)
-        g = (wp.where(fhi >= 0, sdf[fhi], phi) - wp.where(flo >= 0, sdf[flo], phi)) * inv2h
+        s_hi = phi
+        s_lo = phi
+        if fhi >= 0:
+            s_hi = sdf[fhi]
+        if flo >= 0:
+            s_lo = sdf[flo]
+        g = (s_hi - s_lo) * inv2h
         dv = -strength * g * dt  # descend the SDF
         if axis == 0 and wu[tid] > 0.0:
             u[tid] = u[tid] + dv

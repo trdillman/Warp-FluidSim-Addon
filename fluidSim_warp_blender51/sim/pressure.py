@@ -212,17 +212,28 @@ def k_compute_divergence(
     for axis in range(3):
         hi = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, 1)
         lo_n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        # A missing neighbour (domain edge or unallocated leaf) is a solid
+        # wall to k_project, which zeroes that face; count it as zero here
+        # too, or pressure compensates for a flux projection then deletes.
+        # Branch rather than wp.where: both wp.where operands are evaluated,
+        # which read index -1.
         f_lo = float(0.0)
         f_hi = float(0.0)
         if axis == 0:
-            f_lo = u[tid]
-            f_hi = wp.where(hi >= 0, u[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = u[tid]
+            if hi >= 0:
+                f_hi = u[hi]
         elif axis == 1:
-            f_lo = v[tid]
-            f_hi = wp.where(hi >= 0, v[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = v[tid]
+            if hi >= 0:
+                f_hi = v[hi]
         else:
-            f_lo = w[tid]
-            f_hi = wp.where(hi >= 0, w[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = w[tid]
+            if hi >= 0:
+                f_hi = w[hi]
         # solid neighbors: face takes collider velocity component
         if lo_n >= 0 and (voxel_type[lo_n] & VOXEL_COLLISION) != 0:
             f_lo = collision_vel[lo_n][axis]
