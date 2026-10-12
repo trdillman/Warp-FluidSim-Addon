@@ -59,16 +59,50 @@ def _object_identity(obj):
     as_pointer = getattr(obj, "as_pointer", None)
     return int(as_pointer()) if as_pointer is not None else id(obj)
 
+_PERSISTENT_ID = "fluidsim_persistent_id"
+# Name of the object the stored identity was issued to. Duplicating an object
+# (Shift+D) copies both custom properties; the copy then carries another
+# object's name here, which is how it is told apart from a rename.
+_PERSISTENT_OWNER = "fluidsim_persistent_owner"
+
+
+def _object_named(name):
+    try:
+        import bpy
+
+        return bpy.data.objects.get(name)
+    except (ImportError, AttributeError, TypeError):
+        return None
+
+
 def persistent_source_key(obj) -> str:
     """Return a process-independent source identity stored with the object.
 
     Local objects receive a UUID custom property that survives save/reopen.
     Read-only linked objects fall back to their library path and full name.
+    A duplicate whose identity still belongs to its original is re-issued
+    its own identity; a renamed object keeps its identity.
     """
     try:
-        existing = str(obj.get("fluidsim_persistent_id", "") or "")
+        existing = str(obj.get(_PERSISTENT_ID, "") or "")
+        owner = str(obj.get(_PERSISTENT_OWNER, "") or "")
     except (AttributeError, TypeError):
-        existing = ""
+        existing = owner = ""
+    name = str(getattr(obj, "name_full", getattr(obj, "name", "object")))
+    if existing and owner != name:
+        original = _object_named(owner) if owner else None
+        try:
+            duplicate = (original is not None and original is not obj
+                         and str(original.get(_PERSISTENT_ID, "") or "") == existing)
+        except (AttributeError, TypeError):
+            duplicate = False
+        if duplicate:
+            existing = ""
+        else:
+            try:
+                obj[_PERSISTENT_OWNER] = name
+            except (AttributeError, TypeError, RuntimeError):
+                pass
     if existing:
         return existing
     name = str(getattr(obj, "name_full", getattr(obj, "name", "object")))
@@ -86,7 +120,8 @@ def persistent_source_key(obj) -> str:
         basis = f"local:{blend_path}:{name}:{data_name}"
     value = f"object:{hashlib.sha256(basis.encode('utf-8')).hexdigest()}"
     try:
-        obj["fluidsim_persistent_id"] = value
+        obj[_PERSISTENT_ID] = value
+        obj[_PERSISTENT_OWNER] = name
         return value
     except (AttributeError, TypeError, RuntimeError):
         return f"object-name:{getattr(obj, 'name_full', getattr(obj, 'name', 'object'))}"

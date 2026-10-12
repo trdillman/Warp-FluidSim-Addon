@@ -1256,27 +1256,8 @@ class FluidSolver:
         if self.sourcing.plans:
             # Compile before topology so imported-volume active leaves and all
             # other normalized regions allocate through the same flat table.
-            from .source_regions import plan_requires_source_topology
-            dynamic_sources = any(
-                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
-                for plan in self.sourcing.plans)
-            batch = self.sourcing._compiled_batch
-            if batch is None or dynamic_sources:
-                batch = self.sourcing.compile(frame=self.frame, substep=0)
-            leaf_world = C.LEAF_DIM * s.voxel_size
-            origin = s.domain_min
-            for compiled in batch.sources:
-                if not plan_requires_source_topology(compiled.plan):
-                    continue
-                topology_coords = (
-                    compiled.region.topology_leaf_coords
-                    if compiled.region.topology_leaf_coords is not None
-                    else compiled.region.leaf_coords)
-                for coord in topology_coords:
-                    lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
-                               for axis in range(3))
-                    hi = tuple(value + leaf_world for value in lo)
-                    g.mark_world_box(lo, hi)
+            batch = self.sourcing.compiled_batch_for(self.frame)
+            self.sourcing.mark_source_topology(g, batch)
         for col in self.colliders:
             # A collider with no domain overlap (placed outside, or animated
             # out) has no influence this frame, matching the capacity planner;
@@ -1285,9 +1266,13 @@ class FluidSolver:
                 g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
         if hs.enabled:
+            # Shared height model: the safety band sits above the profile's
+            # peak, not only above the base level.
+            from .source_regions import height_topology_top
             dmin = s.domain_min
             dmax = s.domain_max
-            g.mark_world_box(dmin, (dmax[0], dmax[1], hs.base_height + 4.0 * s.voxel_size))
+            g.mark_world_box(dmin, (dmax[0], dmax[1], height_topology_top(
+                hs.base_height, hs.back_mode, hs.profile, s.voxel_size)))
         # Gate on the setting, not the exact count: the mark kernel guards on
         # count[0] and host_count is an upper bound on it.
         if s.whitewater_enabled:
