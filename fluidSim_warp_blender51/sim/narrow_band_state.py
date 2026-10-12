@@ -236,7 +236,8 @@ class NarrowBand:
         fast_launch(
             k_nb_union_band, dim=nv,
             inputs=[self.phi_tmp, self.splat, sv.collision_sdf.data,
-                    g.num_leaves, self.pin_depth, self.limit],
+                    sv.voxel_type.data, g.num_leaves, self.pin_depth,
+                    self.limit],
             outputs=[self.phi], device=dev)
         for _ in range(self.eikonal_iterations):
             fast_launch(

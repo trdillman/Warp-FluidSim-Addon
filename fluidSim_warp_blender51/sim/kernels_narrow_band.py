@@ -22,6 +22,7 @@ from .constants import (
     VOXEL_ACTIVE,
     VOXEL_COLLISION,
     VOXEL_FLUID,
+    VOXEL_SINK,
 )
 from .fields import (
     leaf_coord_of_voxel,
@@ -184,6 +185,7 @@ def k_nb_union_band(
     phi_adv: wp.array(dtype=float),
     splat: wp.array(dtype=float),
     collision_sdf: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
     num_leaves: wp.array(dtype=wp.int32),
     pin_depth: float,
     limit: float,
@@ -194,12 +196,14 @@ def k_nb_union_band(
     Deeper than ``pin_depth`` the advected value is kept (no particle
     witnesses it).  Elsewhere the splat decides: positive splat is air, and a
     negative splat is liquid of unknown depth (``-limit``) for the Eikonal
-    sweep to refine.
+    sweep to refine.  A sink voxel is air at any depth: the sink kills the
+    particles that would witness liquid there, and keeping the deep advected
+    value left a drain at the bottom of a tank full forever (B34).
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
-    if collision_sdf[tid] < 0.0:
+    if collision_sdf[tid] < 0.0 or (voxel_type[tid] & VOXEL_SINK) != 0:
         phi_out[tid] = limit
         return
     p = phi_adv[tid]
@@ -316,12 +320,16 @@ def k_nb_set_fluid_from_phi(
     num_leaves: wp.array(dtype=wp.int32),
     voxel_type: wp.array(dtype=wp.int32),
 ):
-    """Additive fluid mask for liquid the particles no longer witness."""
+    """Additive fluid mask for liquid the particles no longer witness.
+
+    Same precedence as sourcing (collision > sink > fluid): a sink voxel is
+    never made fluid.
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
     vt = voxel_type[tid]
-    if phi[tid] < 0.0 and (vt & VOXEL_COLLISION) == 0:
+    if phi[tid] < 0.0 and (vt & (VOXEL_COLLISION | VOXEL_SINK)) == 0:
         voxel_type[tid] = vt | VOXEL_FLUID | VOXEL_ACTIVE
 
 
