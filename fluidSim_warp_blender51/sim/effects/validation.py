@@ -222,6 +222,64 @@ def _append_name_issues(
         ))
 
 
+_EXPERT_ACCESS = {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}
+# Names whose rebinding would defeat a check: the current-element index the
+# same-element rule compares against, and the modules/builtins it trusts.
+_CURRENT_INDEX_NAMES = {"particle_index", "flat_voxel_index"}
+_PROTECTED_NAMES = _CURRENT_INDEX_NAMES | _ALLOWED_GLOBALS | _GENERATED_MODULE_NAMES
+
+
+def _atomic_call_field(node: ast.AST, binding_map: dict[str, FieldBindingV2]):
+    """Return (call, field Name) when ``node`` is ``wp.atomic_*(field, ...)``."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "wp"
+        and node.func.attr.startswith("atomic_")
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id in binding_map
+    ):
+        return None
+    return node, node.args[0]
+
+
+def _subscript_root(node: ast.AST) -> ast.AST:
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node
+
+
+def _append_element_access_issues(
+    node: ast.AST,
+    index: ast.AST | None,
+    binding: FieldBindingV2,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+    *,
+    safe_mode: bool,
+    is_write: bool,
+) -> None:
+    spec = FIELD_SPECS[binding.field]
+    if safe_mode and binding.access not in _EXPERT_ACCESS:
+        if index is None or not _same_index(index, spec.current_index):
+            issues.append(_line_issue(
+                "NON_CURRENT_ELEMENT_ACCESS",
+                f"Safe mode requires {binding.field}[{spec.current_index}].",
+                node,
+                kernel,
+                hint="Use the current element index or switch to reviewed Expert access.",
+            ))
+    if is_write and binding.access is FieldAccess.READ:
+        issues.append(_line_issue(
+            "WRITE_REQUIRES_PERMISSION",
+            f"Field {binding.field!r} is declared READ-only.",
+            node,
+            kernel,
+        ))
+
+
 def _append_field_access_issues(
     node: ast.AST,
     kernel: KernelDefinitionV2,
@@ -230,28 +288,81 @@ def _append_field_access_issues(
     safe_mode: bool,
     binding_map: dict[str, FieldBindingV2],
 ) -> None:
-    if not isinstance(node, ast.Subscript) or not isinstance(node.value, ast.Name):
+    atomic = _atomic_call_field(node, binding_map)
+    if atomic is not None:
+        call, field_name = atomic
+        _append_element_access_issues(
+            call, call.args[1] if len(call.args) > 1 else None,
+            binding_map[field_name.id], kernel, issues,
+            safe_mode=safe_mode, is_write=True,
+        )
         return
-    binding = binding_map.get(node.value.id)
-    if binding is None:
+    if not isinstance(node, ast.Subscript):
         return
-    spec = FIELD_SPECS[binding.field]
-    if safe_mode and binding.access not in {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}:
-        if not _same_index(node.slice, spec.current_index):
+    if isinstance(node.value, ast.Name):
+        binding = binding_map.get(node.value.id)
+        if binding is None:
+            return
+        _append_element_access_issues(
+            node, node.slice, binding, kernel, issues,
+            safe_mode=safe_mode, is_write=isinstance(node.ctx, ast.Store),
+        )
+        return
+    # field[i][c] = x stores into field[i]; the inner subscript is a Load
+    # node, so check the write against the field at the chain's root.
+    root = _subscript_root(node)
+    if isinstance(node.ctx, ast.Store) and isinstance(root, ast.Name):
+        binding = binding_map.get(root.id)
+        if binding is not None and binding.access is FieldAccess.READ:
             issues.append(_line_issue(
-                "NON_CURRENT_ELEMENT_ACCESS",
-                f"Safe mode requires {binding.field}[{spec.current_index}].",
+                "WRITE_REQUIRES_PERMISSION",
+                f"Field {binding.field!r} is declared READ-only.",
                 node,
                 kernel,
-                hint="Use the current element index or switch to reviewed Expert access.",
             ))
-    is_write = isinstance(node.ctx, ast.Store)
-    if is_write and binding.access is FieldAccess.READ:
+
+
+def _direct_field_uses(tree: ast.AST, binding_map: dict[str, FieldBindingV2]) -> set[int]:
+    """ids of field Name nodes used as ``field[...]`` or ``wp.atomic_*(field, ...)``."""
+    direct: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            direct.add(id(node.value))
+        atomic = _atomic_call_field(node, binding_map)
+        if atomic is not None:
+            direct.add(id(atomic[1]))
+    return direct
+
+
+def _append_binding_name_issues(
+    node: ast.AST,
+    kernel: KernelDefinitionV2,
+    issues: list[EffectIssue],
+    *,
+    binding_map: dict[str, FieldBindingV2],
+    direct_uses: set[int],
+) -> None:
+    """Reject aliases of bound fields and rebinding of names checks rely on."""
+    if not isinstance(node, ast.Name):
+        return
+    if isinstance(node.ctx, ast.Store):
+        if node.id in _PROTECTED_NAMES or node.id in binding_map:
+            issues.append(_line_issue(
+                "RESERVED_NAME_ASSIGNMENT",
+                f"{node.id!r} cannot be reassigned in an effect kernel.",
+                node,
+                kernel,
+                hint="Use a new local variable name.",
+            ))
+        return
+    if node.id in binding_map and id(node) not in direct_uses:
         issues.append(_line_issue(
-            "WRITE_REQUIRES_PERMISSION",
-            f"Field {binding.field!r} is declared READ-only.",
+            "FIELD_ALIAS_FORBIDDEN",
+            f"Field {node.id!r} may only be used as {node.id}[index] "
+            "or as the array of a wp.atomic_* call.",
             node,
             kernel,
+            hint="Index the field directly instead of assigning or passing the array.",
         ))
 
 
@@ -308,6 +419,7 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
     assigned = _assigned_names(tree)
     known = sorted(allowed | set(FIELD_SPECS))
     binding_map = {binding.field: binding for binding in kernel.fields}
+    direct_uses = _direct_field_uses(tree, binding_map)
 
     for node in ast.walk(tree):
         _append_forbidden_node_issue(node, kernel, issues)
@@ -338,6 +450,13 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
             issues,
             safe_mode=safe_mode,
             binding_map=binding_map,
+        )
+        _append_binding_name_issues(
+            node,
+            kernel,
+            issues,
+            binding_map=binding_map,
+            direct_uses=direct_uses,
         )
 
     return issues

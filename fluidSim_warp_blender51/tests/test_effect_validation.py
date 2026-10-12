@@ -189,6 +189,94 @@ def test_bare_underscore_loop_variable_stays_allowed():
     assert validate_effect(instance).valid is True
 
 
+def _velocity(access):
+    return (FieldBindingV2("particle_velocity", access),)
+
+
+def test_array_alias_cannot_bypass_field_permissions():
+    # B63: subscripts on an alias were never checked, so a READ binding could
+    # be written (and a safe binding indexed arbitrarily) through it.
+    for access, safe_mode in ((FieldAccess.READ, True),
+                              (FieldAccess.READ_WRITE_CURRENT, True),
+                              (FieldAccess.READ, False)):
+        instance = _instance(
+            "arr = particle_velocity\narr[0] = arr[0] + wp.vec3(1.0, 0.0, 0.0)",
+            fields=_velocity(access), safe_mode=safe_mode,
+        )
+        result = validate_effect(instance)
+        assert result.valid is False, (access, safe_mode)
+        assert "FIELD_ALIAS_FORBIDDEN" in {issue.code for issue in result.issues}
+
+
+def test_field_passed_to_a_non_atomic_call_is_an_alias():
+    instance = _instance(
+        "value = wp.length(particle_velocity)",
+        fields=_velocity(FieldAccess.READ),
+    )
+    assert "FIELD_ALIAS_FORBIDDEN" in _codes(instance)
+
+
+def test_atomic_on_read_binding_is_a_write_without_permission():
+    for safe_mode in (True, False):
+        instance = _instance(
+            "wp.atomic_add(particle_velocity, particle_index, wp.vec3(1.0, 0.0, 0.0))",
+            fields=_velocity(FieldAccess.READ), safe_mode=safe_mode,
+        )
+        assert "WRITE_REQUIRES_PERMISSION" in _codes(instance), safe_mode
+
+
+def test_atomic_on_structural_voxel_field_is_rejected():
+    instance = _instance(
+        "wp.atomic_add(voxel_type, flat_voxel_index, 4)",
+        domain=EffectDomain.ACTIVE_VOXELS,
+        fields=(FieldBindingV2("voxel_type", FieldAccess.READ),),
+    )
+    assert "WRITE_REQUIRES_PERMISSION" in _codes(instance)
+
+
+def test_safe_atomic_must_target_the_current_element():
+    current = _instance(
+        "wp.atomic_add(particle_velocity, particle_index, velocity)",
+        fields=_velocity(FieldAccess.READ_WRITE_CURRENT),
+    )
+    assert validate_effect(current).valid is True
+    neighbour = _instance(
+        "wp.atomic_add(particle_velocity, 0, velocity)",
+        fields=_velocity(FieldAccess.READ_WRITE_CURRENT),
+    )
+    assert "NON_CURRENT_ELEMENT_ACCESS" in _codes(neighbour)
+
+
+def test_component_write_through_nested_subscript_needs_write_permission():
+    instance = _instance(
+        "particle_velocity[particle_index][0] = 1.0",
+        fields=_velocity(FieldAccess.READ),
+    )
+    assert "WRITE_REQUIRES_PERMISSION" in _codes(instance)
+
+
+def test_current_index_and_field_names_cannot_be_rebound():
+    for source in (
+        "particle_index = 0\nparticle_velocity[particle_index] = velocity",
+        "for particle_index in range(4):\n    particle_velocity[particle_index] = velocity",
+        "particle_velocity = particle_velocity\nparticle_velocity[particle_index] = velocity",
+        "wp = 0",
+    ):
+        instance = _instance(source, fields=_velocity(FieldAccess.READ_WRITE_CURRENT))
+        result = validate_effect(instance)
+        assert result.valid is False, source
+        assert "RESERVED_NAME_ASSIGNMENT" in {issue.code for issue in result.issues}, source
+
+
+def test_voxel_current_index_cannot_be_rebound():
+    instance = _instance(
+        "flat_voxel_index = 0\ntemperature[flat_voxel_index] = 1.0",
+        domain=EffectDomain.ACTIVE_VOXELS,
+        fields=(FieldBindingV2("temperature", FieldAccess.READ_WRITE_CURRENT),),
+    )
+    assert "RESERVED_NAME_ASSIGNMENT" in _codes(instance)
+
+
 def test_validation_keeps_mixed_ast_issue_order_and_locations():
     instance = _instance(
         "while strength > 0.0:\n"
