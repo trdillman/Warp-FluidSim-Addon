@@ -1,5 +1,66 @@
 # Changelog
 
+## 3.2.0 — Reliability, bake safety and speed
+
+A full review of the add-on: about 80 fixes and 20 speed-ups.
+
+### Upgrade notes
+
+- **Simulation results change.** Bake caches again. Fixes that change
+  results: pressure no longer leaves liquid compressible at domain walls and
+  topology edges; particle-pool growth no longer drops a substep's grid
+  transfer; compiled sources mark exactly their own leaves and jitter
+  particles inside each voxel; rotated sources keep their corners; height
+  profiles shape emission; viscosity sees mesh colliders and walls; JACOBI
+  viscosity and Diffusion no longer slow moving liquid at its surface;
+  collider velocity is correct for tilted and translating spinners; and
+  several narrow-band, APIC, whitewater and surface-tension fixes.
+- **Existing caches still play**: a cache no longer depends on which GPU baked
+  it, and caches baked by 3.0/3.1 are still accepted.
+- **Point, volume and field sources show Evaluation** (First Sim Frame /
+  Every Sim Frame). First Sim Frame now really freezes the input. Files saved
+  before 3.2 switch those sources to Every Sim Frame once, so they keep
+  animating as they did.
+
+### Production Bake
+
+- A running bake owns the solver. Initialize, Step, Apply Preset, Apply or
+  Revert pending changes, Inject, Cache Playback and Load Demo wait until it
+  ends, in every scene. Settings and effect edits made during a bake are held
+  and applied when it ends; keyframed solver settings do not animate inside a
+  bake.
+- Only Esc cancels a bake; right-click works normally again.
+- Resuming with a later end frame extends the cache. A failed start restores
+  the live solver, Live is restored after a bake, the bake starts from its
+  start frame wherever the playhead is, and resumed colliders keep their
+  velocity history.
+- Command-line bakes accept seed-only scenes (crown_splash, paddle_stir), and
+  cache errors exit with code 14.
+
+### Fixed
+
+- Ticking Color, Source ID or UID mid-run no longer stops the live session.
+- Live Surface Tension and Mixing Strength edits reach the running solver;
+  toggling Surface Tension or Species shows "Reset pending".
+- Moving a cache into a folder inside itself is refused instead of deleting it.
+- A collider outside the domain is ignored instead of stopping the frame.
+- Whitewater with Type Hysteresis 0 no longer fails.
+- A collider that stops moving no longer keeps an extrapolated pose.
+- Revert, presets, capacity options and narrow-band refusals behave as shown.
+- Custom Effects: safe mode closes several permission bypasses, Expert access
+  needs the acknowledgement, generated names are reserved, effects use the
+  timeline frame in preview and bake, and particle velocity effects move to
+  Before Emission so PIC/APIC keep them.
+- Quick Liquid and Set Selected As no longer tag the domain or outputs; Add >
+  Fluid Domain draws as wire and does not render.
+
+### Faster
+
+- Point sources (8,000 points: 69 s to 1 s), CPU mesh admission (seconds to
+  under 0.1 s), capacity planning on fine grids (9 s to under 1 s), checkpoint
+  export, cache manifests and resume, static colliders, Bake panel and effect
+  panel redraws, and display-fraction readback.
+
 ## 3.1.0 — Play drives the simulation, VDB export, pressure-solve fix
 
 - **Changed: Play is the preview.** The Preview / Resume Preview button is
