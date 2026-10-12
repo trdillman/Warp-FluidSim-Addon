@@ -167,6 +167,47 @@ def test_reused_domain_rollback_restores_transform_then_divisions(preset_fields)
         assert domain.fluidsim_domain.flip_ratio == 0.95
 
 
+@pytest.mark.parametrize("placeholder", [1.0, 0.3, 3.0])
+def test_preset_cell_size_does_not_depend_on_the_pre_fit_domain(placeholder):
+    """B79: preview_water's 0.12 m cell must survive whatever box is refitted.
+
+    Writing the preset through the derived voxel_size quantizes it against the
+    pre-fit box (1 m -> 0.125, 0.3 m -> 0.0375 via the 8-division minimum).
+    """
+    from fluidSim_warp_blender51.blender import setup_wizard
+
+    class DomainSettings:
+        def __init__(self, size):
+            self.size = size
+            self.resolution_divisions = 64
+
+        @property
+        def voxel_size(self):
+            return self.size / self.resolution_divisions
+
+        @voxel_size.setter
+        def voxel_size(self, value):
+            self.resolution_divisions = max(8, round(self.size / value))
+
+    domain_fs = DomainSettings(placeholder)
+    preset = SimpleNamespace(settings={"voxel_size": 0.12, "flip_ratio": 0.95})
+    domain_fs.voxel_size = preset.settings["voxel_size"]  # library.apply_preset
+    # What the wizard used to fit to: the value quantized on the old box.
+    quantized = domain_fs.voxel_size
+    if placeholder != 3.0:
+        assert quantized != pytest.approx(0.12, abs=1e-4)
+
+    cell = setup_wizard._wizard_cell_size(domain_fs, preset)
+    lo, hi = setup_wizard.align_bounds((0.0, 0.0, 0.0), (2.35, 1.0, 1.0), cell)
+    domain_fs.size = max(b - a for a, b in zip(lo, hi))  # _fit_domain
+    domain_fs.voxel_size = cell  # _fit_domain_keeping_voxel
+
+    assert cell == pytest.approx(0.12)
+    assert domain_fs.voxel_size == pytest.approx(0.12)
+    no_preset = setup_wizard._wizard_cell_size(domain_fs, None)
+    assert no_preset == pytest.approx(domain_fs.voxel_size)
+
+
 def test_setup_rollback_journal_unwinds_once_in_reverse_order():
     from fluidSim_warp_blender51.blender.setup_wizard import _SetupRollbackJournal
 

@@ -334,6 +334,24 @@ def _fit_domain(scene, domain, bounds) -> None:
     scene.fluidsim.domain_object = domain
 
 
+def _wizard_cell_size(domain_fs, preset) -> float:
+    """Cell size Guided Setup fits the domain to.
+
+    A preset's ``voxel_size`` is written through the derived property, which
+    quantizes it against the domain's *current* (pre-fit) size: 0.12 on the
+    1 m placeholder reads back 0.125, and on a reused 0.3 m domain the
+    8-division minimum turns it into 0.0375. Fitting uses the preset's authored
+    value instead, so the cell size does not depend on the box being replaced.
+    """
+    settings = getattr(preset, "settings", None) or {}
+    authored = settings.get("voxel_size") if hasattr(settings, "get") else None
+    if authored is not None:
+        value = float(authored)
+        if math.isfinite(value) and value > 0.0:
+            return value
+    return float(domain_fs.voxel_size)
+
+
 def _fit_domain_keeping_voxel(context, scene, domain, domain_fs, bounds, voxel_size) -> None:
     """Fit the domain, then keep the cell size the bounds were aligned to.
 
@@ -811,7 +829,7 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
                 if bool(domain_fs.use_scene_gravity)
                 else tuple(domain_fs.gravity)
             )
-            wizard_voxel = float(domain_fs.voxel_size)
+            wizard_voxel = _wizard_cell_size(domain_fs, preset)
             bounds = compute_domain_bounds(
                 selected,
                 wizard_voxel,
