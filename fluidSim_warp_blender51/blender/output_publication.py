@@ -1432,6 +1432,21 @@ def publish_payload(scene, payload):
             _hide_and_clear_output(scene, name)
     return _sync_render_inputs(scene)
 
+def _effective_voxel_size(scene, ds):
+    """Cell size published point radii derive from, without a solver.
+
+    Publication scales radii by the solver's voxel size, which is the authored
+    ``voxel_size`` projected through the scene Quality tier; refreshing from
+    the authored value alone would be 2x (Draft) or 0.5x (Final) off.
+    """
+    from ..sim.quality_contract import scale_quality_value
+    from .solver_settings import scene_quality_fidelity
+
+    return float(scale_quality_value(
+        "voxel_size", float(getattr(ds, "voxel_size", 0.05)),
+        scene_quality_fidelity(scene)))
+
+
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
     _require_bpy()
@@ -1442,6 +1457,7 @@ def refresh_existing_output_settings(scene):
     # still respond to visibility and material picker changes.
     fs = scene.fluidsim
     ds = _domain_settings(scene)
+    voxel_size = _effective_voxel_size(scene, ds)
     surface = output_object(scene, SURFACE_NAME)
     if surface is not None:
         visible = fs.show_surface and getattr(ds, "surface_enabled", False)
@@ -1456,7 +1472,7 @@ def refresh_existing_output_settings(scene):
         particles.hide_viewport = not fs.show_particles
         particles.hide_render = not fs.show_particles
         if fs.show_particles:
-            radius = (getattr(ds, "voxel_size", 0.05) * 0.25 *
+            radius = (voxel_size * 0.25 *
                       getattr(fs, "particle_display_scale", 1.0))
             _set_point_radius(particles, radius)
             _ensure_material(
@@ -1484,7 +1500,7 @@ def refresh_existing_output_settings(scene):
         obj.hide_viewport = not obj_visible
         obj.hide_render = not obj_visible
         if obj_visible:
-            radius = (getattr(ds, "voxel_size", 0.05) * 0.15 *
+            radius = (voxel_size * 0.15 *
                       getattr(fs, "whitewater_display_scale", 1.0))
             _set_point_radius(obj, radius)
             _ensure_material(ensure_material, scene, obj)
